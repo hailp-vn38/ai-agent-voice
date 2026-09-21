@@ -4,6 +4,7 @@ use std::{
     thread,
     time::Instant,
 };
+use tokio::sync::mpsc as session_mpsc;
 
 use crate::{audio::PcmF32Mono, providers::AsrProvider};
 
@@ -60,6 +61,7 @@ pub struct AsrWorkerRuntime {
     state: Mutex<State>,
     events_rx: Mutex<mpsc::Receiver<AsrWorkerEvent>>,
     events_tx: mpsc::Sender<AsrWorkerEvent>,
+    routes: Mutex<HashMap<String, session_mpsc::Sender<AsrWorkerEvent>>>,
 }
 
 struct State {
@@ -93,7 +95,26 @@ impl AsrWorkerRuntime {
             }),
             events_rx: Mutex::new(events_rx),
             events_tx,
+            routes: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Registers exactly one actor mailbox for this Voice Session. The runtime is the sole
+    /// consumer of worker events and routes them by immutable session identity.
+    pub fn register_session(&self, session: &str) -> session_mpsc::Receiver<AsrWorkerEvent> {
+        let (sender, receiver) = session_mpsc::channel(self.config.command_capacity);
+        self.routes
+            .lock()
+            .expect("ASR worker routes poisoned")
+            .insert(session.to_owned(), sender);
+        receiver
+    }
+
+    pub fn unregister_session(&self, session: &str) {
+        self.routes
+            .lock()
+            .expect("ASR worker routes poisoned")
+            .remove(session);
     }
 
     pub fn open(&self, identity: WorkerIdentity) -> Result<AsrStreamLease, AsrWorkerError> {
@@ -171,6 +192,22 @@ impl AsrWorkerRuntime {
         Some(event)
     }
 
+    /// Drives the application-owned event router once. Production calls this from
+    /// `WorkerSupervisor`; direct actor tests may call it through `pump_workers`.
+    pub fn supervise_pending(&self) {
+        while let Ok(event) = self
+            .events_rx
+            .lock()
+            .expect("ASR worker events poisoned")
+            .try_recv()
+        {
+            self.dispatch(event);
+        }
+        while let Some(event) = self.reap_timeouts() {
+            self.dispatch(event);
+        }
+    }
+
     pub fn reap_timeouts(&self) -> Option<AsrWorkerEvent> {
         let mut state = self.state.lock().expect("ASR worker state poisoned");
         let now = Instant::now();
@@ -225,6 +262,27 @@ impl AsrWorkerRuntime {
                 return;
             }
             state.slots.remove(&lease);
+        }
+    }
+
+    fn dispatch(&self, event: AsrWorkerEvent) {
+        self.observe(&event);
+        let session = match &event {
+            AsrWorkerEvent::Opened { identity }
+            | AsrWorkerEvent::Final { identity, .. }
+            | AsrWorkerEvent::Failed { identity }
+            | AsrWorkerEvent::Cancelled { identity }
+            | AsrWorkerEvent::FinalTimedOut { identity }
+            | AsrWorkerEvent::CleanupTimedOut { identity } => identity.session(),
+        };
+        let route = self
+            .routes
+            .lock()
+            .expect("ASR worker routes poisoned")
+            .get(session)
+            .cloned();
+        if let Some(route) = route {
+            let _ = route.try_send(event);
         }
     }
 }

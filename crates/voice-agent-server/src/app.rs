@@ -6,7 +6,7 @@ use crate::{
     },
     providers::ProviderSet,
     session::{OutboundMessage, SessionActor, SessionEvent},
-    workers::{AsrWorkerRuntime, WorkerRuntimeConfig},
+    workers::{AsrWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig, WorkerSupervisor},
 };
 use axum::{
     extract::{
@@ -34,6 +34,8 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub providers: Arc<ProviderSet>,
     pub asr_runtime: Arc<AsrWorkerRuntime>,
+    pub vad_runtime: Arc<VadWorkerRuntime>,
+    pub worker_supervisor: Arc<WorkerSupervisor>,
 }
 
 /// Application seam for tests and other callers that have already initialized providers.
@@ -41,6 +43,14 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
     let asr_runtime = Arc::new(AsrWorkerRuntime::new(
         providers.asr_provider(),
         WorkerRuntimeConfig::default(),
+    ));
+    let vad_runtime = Arc::new(VadWorkerRuntime::new(
+        providers.vad_provider(),
+        WorkerRuntimeConfig::default(),
+    ));
+    let worker_supervisor = Arc::new(WorkerSupervisor::start(
+        Arc::clone(&asr_runtime),
+        Arc::clone(&vad_runtime),
     ));
     Router::new()
         .route("/health", get(health))
@@ -50,6 +60,8 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
             config: Arc::new(config),
             providers,
             asr_runtime,
+            vad_runtime,
+            worker_supervisor,
         })
         .layer(TraceLayer::new_for_http())
 }

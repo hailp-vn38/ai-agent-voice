@@ -2,9 +2,11 @@
 //! identity-tagged commands and events.
 
 mod asr;
+mod supervisor;
 mod vad;
 
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
+pub use supervisor::WorkerSupervisor;
 pub use vad::{VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime};
 
 use std::time::Duration;

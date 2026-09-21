@@ -102,6 +102,10 @@ impl ProviderSet {
         Arc::clone(&self.asr)
     }
 
+    pub(crate) fn vad_provider(&self) -> Arc<dyn VadProvider> {
+        Arc::clone(&self.vad)
+    }
+
     pub fn vad_adapter(&self) -> &'static str {
         self.vad.adapter()
     }

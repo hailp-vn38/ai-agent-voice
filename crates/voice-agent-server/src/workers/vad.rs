@@ -4,6 +4,7 @@ use std::{
     thread,
     time::Instant,
 };
+use tokio::sync::mpsc as session_mpsc;
 
 use crate::{
     audio::PcmF32Mono,
@@ -50,6 +51,7 @@ pub struct VadWorkerRuntime {
     state: Mutex<State>,
     events_rx: Mutex<mpsc::Receiver<VadWorkerEvent>>,
     events_tx: mpsc::Sender<VadWorkerEvent>,
+    routes: Mutex<HashMap<String, session_mpsc::Sender<VadWorkerEvent>>>,
 }
 struct State {
     next_lease: u64,
@@ -80,7 +82,26 @@ impl VadWorkerRuntime {
             }),
             events_rx: Mutex::new(events_rx),
             events_tx,
+            routes: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Registers one actor mailbox for a complete Auto cycle. Worker events are routed by
+    /// session identity by the application-owned supervisor, never consumed by actors globally.
+    pub fn register_session(&self, session: &str) -> session_mpsc::Receiver<VadWorkerEvent> {
+        let (sender, receiver) = session_mpsc::channel(self.config.command_capacity);
+        self.routes
+            .lock()
+            .expect("VAD worker routes poisoned")
+            .insert(session.to_owned(), sender);
+        receiver
+    }
+
+    pub fn unregister_session(&self, session: &str) {
+        self.routes
+            .lock()
+            .expect("VAD worker routes poisoned")
+            .remove(session);
     }
     pub fn open(&self, identity: WorkerIdentity) -> Result<VadWorkerLease, VadWorkerError> {
         let mut state = self.state.lock().expect("VAD worker state poisoned");
@@ -152,6 +173,20 @@ impl VadWorkerRuntime {
         self.observe(&event);
         Some(event)
     }
+    /// Drives routing and timeout quarantine once. Production uses `WorkerSupervisor`.
+    pub fn supervise_pending(&self) {
+        while let Ok(event) = self
+            .events_rx
+            .lock()
+            .expect("VAD worker events poisoned")
+            .try_recv()
+        {
+            self.dispatch(event);
+        }
+        while let Some(event) = self.reap_timeouts() {
+            self.dispatch(event);
+        }
+    }
     pub fn reap_timeouts(&self) -> Option<VadWorkerEvent> {
         let mut state = self.state.lock().expect("VAD worker state poisoned");
         let now = Instant::now();
@@ -193,6 +228,29 @@ impl VadWorkerRuntime {
             ) {
                 state.slots.remove(&lease);
             }
+        }
+    }
+
+    fn dispatch(&self, event: VadWorkerEvent) {
+        self.observe(&event);
+        let session = match &event {
+            VadWorkerEvent::Opened { identity }
+            | VadWorkerEvent::SpeechStart { identity }
+            | VadWorkerEvent::SpeechEnd { identity }
+            | VadWorkerEvent::ResetDone { identity }
+            | VadWorkerEvent::Closed { identity }
+            | VadWorkerEvent::Failed { identity }
+            | VadWorkerEvent::ResetTimedOut { identity }
+            | VadWorkerEvent::CleanupTimedOut { identity } => identity.session(),
+        };
+        let route = self
+            .routes
+            .lock()
+            .expect("VAD worker routes poisoned")
+            .get(session)
+            .cloned();
+        if let Some(route) = route {
+            let _ = route.try_send(event);
         }
     }
 }

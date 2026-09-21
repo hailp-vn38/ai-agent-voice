@@ -18,6 +18,7 @@ pub struct SessionActor {
     uplink_decoder: UplinkOpusDecoder,
     manual_capture: ManualCapture,
     asr_runtime: std::sync::Arc<AsrWorkerRuntime>,
+    asr_events: mpsc::Receiver<AsrWorkerEvent>,
     asr_stream: Option<(AsrStreamLease, WorkerIdentity)>,
     generation: u64,
     dialogue_history: DialogueHistory,
@@ -119,6 +120,7 @@ impl SessionActor {
         max_history_messages: usize,
         asr_runtime: std::sync::Arc<AsrWorkerRuntime>,
     ) -> Result<Self, crate::audio::AudioError> {
+        let asr_events = asr_runtime.register_session(&session_id);
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
@@ -126,6 +128,7 @@ impl SessionActor {
             uplink_decoder: UplinkOpusDecoder::new()?,
             manual_capture: ManualCapture::new(max_capture_frames)?,
             asr_runtime,
+            asr_events,
             asr_stream: None,
             generation: 0,
             dialogue_history: DialogueHistory::new(max_history_messages),
@@ -147,12 +150,15 @@ impl SessionActor {
         &self.dialogue_history.messages
     }
 
-    /// Applies queued worker events without ever invoking a mutable provider from the actor.
+    /// Deterministic test helper: advances the runtime router then drains this session mailbox.
+    /// Production routing is advanced only by `WorkerSupervisor`.
     pub fn pump_workers(&mut self) {
-        while let Some(event) = self.asr_runtime.try_recv() {
-            self.on_asr_event(event);
-        }
-        if let Some(event) = self.asr_runtime.reap_timeouts() {
+        self.asr_runtime.supervise_pending();
+        self.drain_worker_events();
+    }
+
+    fn drain_worker_events(&mut self) {
+        while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
         }
     }
@@ -168,7 +174,7 @@ impl SessionActor {
         let mut worker_tick = tokio::time::interval(std::time::Duration::from_millis(1));
         loop {
             tokio::select! {
-                _ = worker_tick.tick() => self.pump_workers(),
+                _ = worker_tick.tick() => self.drain_worker_events(),
                 event = ingress.recv() => match event {
                     Some(SessionEvent::ClientMessage(message)) => self.on_client_message(message),
                     Some(SessionEvent::ClientAudio(payload)) => { self.on_binary(payload); }
@@ -252,17 +258,25 @@ impl SessionActor {
                 self.commit_final(text);
                 self.phase = SessionPhase::Ready;
             }
-            AsrWorkerEvent::Failed { .. }
-            | AsrWorkerEvent::FinalTimedOut { .. }
-            | AsrWorkerEvent::CleanupTimedOut { .. }
-                if current =>
-            {
+            AsrWorkerEvent::Failed { .. } if current => {
                 self.asr_stream = None;
                 self.phase = SessionPhase::Ready;
+            }
+            AsrWorkerEvent::FinalTimedOut { .. } | AsrWorkerEvent::CleanupTimedOut { .. }
+                if current =>
+            {
+                self.fail_closed()
             }
             AsrWorkerEvent::Cancelled { .. } if current => self.asr_stream = None,
             _ => {}
         }
+    }
+
+    fn fail_closed(&mut self) {
+        self.cancel_asr();
+        self.asr_stream = None;
+        self.phase = SessionPhase::Closed;
+        let _ = self.control_tx.try_send(OutboundMessage::Close(1011));
     }
 
     fn commit_final(&mut self, final_text: String) {
@@ -324,5 +338,14 @@ impl SessionActor {
         } else {
             false
         }
+    }
+}
+
+impl Drop for SessionActor {
+    fn drop(&mut self) {
+        // The application-owned supervisor continues to observe the acknowledgement or timeout
+        // after this actor and its WebSocket have gone away.
+        self.cancel_asr();
+        self.asr_runtime.unregister_session(&self.session_id);
     }
 }
