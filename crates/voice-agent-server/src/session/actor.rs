@@ -3,6 +3,10 @@ use crate::{
     audio::{CaptureOutcome, DecodeOutcome, ManualCapture, PcmF32Mono, UplinkOpusDecoder},
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::ProviderSet,
+    workers::{
+        AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, WorkerIdentity,
+        WorkerRuntimeConfig,
+    },
 };
 use tokio::sync::mpsc;
 
@@ -13,9 +17,10 @@ pub struct SessionActor {
     accepted_binary_frames: u64,
     uplink_decoder: UplinkOpusDecoder,
     manual_capture: ManualCapture,
-    asr_stream: Option<Box<dyn crate::providers::AsrSession>>,
+    asr_runtime: std::sync::Arc<AsrWorkerRuntime>,
+    asr_stream: Option<(AsrStreamLease, WorkerIdentity)>,
+    generation: u64,
     dialogue_history: DialogueHistory,
-    providers: std::sync::Arc<ProviderSet>,
     control_tx: mpsc::Sender<OutboundMessage>,
     _audio_tx: mpsc::Sender<OutboundMessage>,
 }
@@ -91,15 +96,39 @@ impl SessionActor {
         providers: std::sync::Arc<ProviderSet>,
         max_history_messages: usize,
     ) -> Result<Self, crate::audio::AudioError> {
+        let asr_runtime = std::sync::Arc::new(AsrWorkerRuntime::new(
+            providers.asr_provider(),
+            WorkerRuntimeConfig::default(),
+        ));
+        Self::new_with_history_and_runtime(
+            session_id,
+            control_tx,
+            audio_tx,
+            max_capture_frames,
+            max_history_messages,
+            asr_runtime,
+        )
+    }
+
+    /// Production passes an application-owned runtime so ASR worker capacity is global.
+    pub fn new_with_history_and_runtime(
+        session_id: String,
+        control_tx: mpsc::Sender<OutboundMessage>,
+        audio_tx: mpsc::Sender<OutboundMessage>,
+        max_capture_frames: usize,
+        max_history_messages: usize,
+        asr_runtime: std::sync::Arc<AsrWorkerRuntime>,
+    ) -> Result<Self, crate::audio::AudioError> {
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
             accepted_binary_frames: 0,
             uplink_decoder: UplinkOpusDecoder::new()?,
             manual_capture: ManualCapture::new(max_capture_frames)?,
+            asr_runtime,
             asr_stream: None,
+            generation: 0,
             dialogue_history: DialogueHistory::new(max_history_messages),
-            providers,
             control_tx,
             _audio_tx: audio_tx,
         })
@@ -118,6 +147,16 @@ impl SessionActor {
         &self.dialogue_history.messages
     }
 
+    /// Applies queued worker events without ever invoking a mutable provider from the actor.
+    pub fn pump_workers(&mut self) {
+        while let Some(event) = self.asr_runtime.try_recv() {
+            self.on_asr_event(event);
+        }
+        if let Some(event) = self.asr_runtime.reap_timeouts() {
+            self.on_asr_event(event);
+        }
+    }
+
     pub fn send_control(
         &self,
         text: String,
@@ -126,11 +165,14 @@ impl SessionActor {
     }
 
     pub async fn run(mut self, mut ingress: mpsc::Receiver<SessionEvent>) {
-        while let Some(event) = ingress.recv().await {
-            match event {
-                SessionEvent::ClientMessage(message) => self.on_client_message(message),
-                SessionEvent::ClientAudio(payload) => {
-                    self.on_binary(payload);
+        let mut worker_tick = tokio::time::interval(std::time::Duration::from_millis(1));
+        loop {
+            tokio::select! {
+                _ = worker_tick.tick() => self.pump_workers(),
+                event = ingress.recv() => match event {
+                    Some(SessionEvent::ClientMessage(message)) => self.on_client_message(message),
+                    Some(SessionEvent::ClientAudio(payload)) => { self.on_binary(payload); }
+                    None => break,
                 }
             }
         }
@@ -144,9 +186,12 @@ impl SessionActor {
             }) => {
                 self.cancel_asr();
                 self.manual_capture.restart();
-                match self.providers.open_asr() {
-                    Ok(stream) => {
-                        self.asr_stream = Some(stream);
+                self.generation += 1;
+                let identity =
+                    WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
+                match self.asr_runtime.open(identity.clone()) {
+                    Ok(lease) => {
+                        self.asr_stream = Some((lease, identity));
                         self.phase = SessionPhase::Listening;
                     }
                     Err(_) => self.phase = SessionPhase::Ready,
@@ -162,8 +207,8 @@ impl SessionActor {
                         self.finish_manual();
                     } else {
                         self.cancel_asr();
+                        self.phase = SessionPhase::Ready;
                     }
-                    self.phase = SessionPhase::Ready;
                 }
             }
             ClientMessage::Abort => {
@@ -178,13 +223,50 @@ impl SessionActor {
     }
 
     fn finish_manual(&mut self) {
-        let Some(mut stream) = self.asr_stream.take() else {
+        let Some((lease, _)) = self.asr_stream else {
             return;
         };
-        let Ok(final_result) = stream.finish() else {
-            return;
+        if self.asr_runtime.send(lease, AsrCommand::Finish).is_err() {
+            self.cancel_asr();
+            self.phase = SessionPhase::Ready;
+        }
+    }
+
+    fn on_asr_event(&mut self, event: AsrWorkerEvent) {
+        let identity = match &event {
+            AsrWorkerEvent::Opened { identity }
+            | AsrWorkerEvent::Final { identity, .. }
+            | AsrWorkerEvent::Failed { identity }
+            | AsrWorkerEvent::Cancelled { identity }
+            | AsrWorkerEvent::FinalTimedOut { identity }
+            | AsrWorkerEvent::CleanupTimedOut { identity } => identity,
         };
-        let text = final_result.text().trim();
+        let current = self
+            .asr_stream
+            .as_ref()
+            .is_some_and(|(_, current)| current == identity)
+            && identity.generation() == self.generation;
+        match event {
+            AsrWorkerEvent::Final { text, .. } if current => {
+                self.asr_stream = None;
+                self.commit_final(text);
+                self.phase = SessionPhase::Ready;
+            }
+            AsrWorkerEvent::Failed { .. }
+            | AsrWorkerEvent::FinalTimedOut { .. }
+            | AsrWorkerEvent::CleanupTimedOut { .. }
+                if current =>
+            {
+                self.asr_stream = None;
+                self.phase = SessionPhase::Ready;
+            }
+            AsrWorkerEvent::Cancelled { .. } if current => self.asr_stream = None,
+            _ => {}
+        }
+    }
+
+    fn commit_final(&mut self, final_text: String) {
+        let text = final_text.trim();
         if text.is_empty() {
             return;
         }
@@ -202,8 +284,8 @@ impl SessionActor {
     }
 
     fn cancel_asr(&mut self) {
-        if let Some(mut stream) = self.asr_stream.take() {
-            stream.cancel();
+        if let Some((lease, _)) = self.asr_stream {
+            let _ = self.asr_runtime.send(lease, AsrCommand::Cancel);
         }
     }
 
@@ -216,11 +298,11 @@ impl SessionActor {
                         self.cancel_asr();
                         return false;
                     }
-                    let Some(stream) = self.asr_stream.as_mut() else {
+                    let Some((lease, _)) = self.asr_stream else {
                         self.phase = SessionPhase::Ready;
                         return false;
                     };
-                    if stream.push_pcm(&pcm).is_err() {
+                    if self.asr_runtime.send(lease, AsrCommand::Push(pcm)).is_err() {
                         self.cancel_asr();
                         self.manual_capture.abort();
                         self.phase = SessionPhase::Ready;

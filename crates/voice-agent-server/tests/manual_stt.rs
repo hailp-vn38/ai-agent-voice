@@ -2,6 +2,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use voice_agent_server::{
@@ -18,9 +19,31 @@ struct FakeAsr {
 struct FakeVad;
 
 impl VadProvider for FakeVad {
+    fn open(
+        &self,
+    ) -> Result<
+        Box<dyn voice_agent_server::providers::VadSession>,
+        voice_agent_server::providers::VadError,
+    > {
+        Err(voice_agent_server::providers::VadError::Failed(
+            "not used by Manual".into(),
+        ))
+    }
+
     fn adapter(&self) -> &'static str {
         "fake_vad"
     }
+}
+
+fn wait_for_worker(actor: &mut SessionActor) {
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Ready {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("ASR worker did not reach terminal state");
 }
 
 impl AsrProvider for FakeAsr {
@@ -95,6 +118,7 @@ fn manual_final_commits_history_then_enqueues_one_stt_without_partial() {
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    wait_for_worker(&mut actor);
 
     assert_eq!(actor.phase(), SessionPhase::Ready);
     assert_eq!(actor.dialogue_history(), &["xin chào"]);
@@ -121,6 +145,7 @@ fn manual_empty_final_does_not_commit_or_enqueue_stt() {
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    wait_for_worker(&mut actor);
 
     assert_eq!(actor.phase(), SessionPhase::Ready);
     assert!(actor.dialogue_history().is_empty());
@@ -140,6 +165,7 @@ fn manual_failed_final_does_not_commit_or_enqueue_stt() {
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    wait_for_worker(&mut actor);
 
     assert_eq!(actor.phase(), SessionPhase::Ready);
     assert!(actor.dialogue_history().is_empty());
@@ -163,6 +189,7 @@ fn dialogue_history_evicts_the_oldest_manual_final_at_its_configured_limit() {
         }));
         assert!(actor.on_binary(packet.as_bytes().to_vec()));
         actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+        wait_for_worker(&mut actor);
     }
 
     assert_eq!(actor.dialogue_history(), &["xin chào"]);
@@ -214,6 +241,13 @@ fn manual_capture_overflow_stops_feeding_the_asr_stream() {
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     assert!(!actor.on_binary(packet.as_bytes().to_vec()));
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+
+    for _ in 0..100 {
+        if pushed_frames.load(Ordering::Relaxed) == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
 
     assert_eq!(pushed_frames.load(Ordering::Relaxed), 1);
     assert!(actor.dialogue_history().is_empty());

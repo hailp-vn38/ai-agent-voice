@@ -6,6 +6,7 @@ use crate::{
     },
     providers::ProviderSet,
     session::{OutboundMessage, SessionActor, SessionEvent},
+    workers::{AsrWorkerRuntime, WorkerRuntimeConfig},
 };
 use axum::{
     extract::{
@@ -32,10 +33,15 @@ use uuid::Uuid;
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub providers: Arc<ProviderSet>,
+    pub asr_runtime: Arc<AsrWorkerRuntime>,
 }
 
 /// Application seam for tests and other callers that have already initialized providers.
 pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
+    let asr_runtime = Arc::new(AsrWorkerRuntime::new(
+        providers.asr_provider(),
+        WorkerRuntimeConfig::default(),
+    ));
     Router::new()
         .route("/health", get(health))
         .route("/voice/ota/", get(ota).post(ota))
@@ -43,6 +49,7 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
         .with_state(AppState {
             config: Arc::new(config),
             providers,
+            asr_runtime,
         })
         .layer(TraceLayer::new_for_http())
 }
@@ -84,7 +91,7 @@ async fn websocket(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config;
-    let providers = state.providers;
+    let asr_runtime = state.asr_runtime;
     if !header_is(&headers, "protocol-version", "1")
         || !headers.contains_key("device-id")
         || !headers.contains_key("client-id")
@@ -107,7 +114,7 @@ async fn websocket(
     let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
-        .on_upgrade(move |socket| handle_socket(socket, config, providers))
+        .on_upgrade(move |socket| handle_socket(socket, config, asr_runtime))
         .into_response()
 }
 
@@ -115,7 +122,11 @@ fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
     headers.get(name).and_then(|value| value.to_str().ok()) == Some(expected)
 }
 
-async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, providers: Arc<ProviderSet>) {
+async fn handle_socket(
+    socket: WebSocket,
+    config: Arc<AppConfig>,
+    asr_runtime: Arc<AsrWorkerRuntime>,
+) {
     let (mut sender, mut receiver) = socket.split();
     let first = timeout(
         Duration::from_millis(config.server.hello_timeout_ms),
@@ -147,13 +158,13 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, providers: Arc
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
-    let actor = match SessionActor::new_with_history(
+    let actor = match SessionActor::new_with_history_and_runtime(
         Uuid::new_v4().to_string(),
         control_tx.clone(),
         audio_tx,
         config.max_capture_frames(),
-        providers,
         config.llm.max_history_messages,
+        asr_runtime,
     ) {
         Ok(actor) => actor,
         Err(error) => {

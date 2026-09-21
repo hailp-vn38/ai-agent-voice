@@ -31,6 +31,13 @@ async fn raw_binary_is_only_accepted_while_listening() {
         .unwrap();
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Ready {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
     assert_eq!(actor.phase(), SessionPhase::Ready);
     assert_eq!(actor.accepted_binary_frames(), 1);
 }
