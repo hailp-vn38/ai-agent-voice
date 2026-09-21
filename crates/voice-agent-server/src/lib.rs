@@ -4,4 +4,5 @@ pub mod app;
 pub mod audio;
 pub mod config;
 pub mod protocol;
+pub mod providers;
 pub mod session;

@@ -16,6 +16,7 @@ http.workspace = true
 opus2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sherpa-onnx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true

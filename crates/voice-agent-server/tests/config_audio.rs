@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 
 use url::Url;
 use voice_agent_server::config::{
-    AppConfig, AudioConfig, AuthConfig, LimitsConfig, ServerConfig, WebsocketConfig,
+    AppConfig, AudioConfig, AuthConfig, LimitsConfig, LlmConfig, ProvidersConfig, ServerConfig,
+    WebsocketConfig,
 };
 
 fn valid_config() -> AppConfig {
@@ -16,6 +17,8 @@ fn valid_config() -> AppConfig {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
+        providers: ProvidersConfig::default(),
+        llm: LlmConfig::default(),
     }
 }
 
@@ -35,4 +38,9 @@ fn invalid_audio_and_transport_limits_fail_fast() {
     let mut config = valid_config();
     config.websocket.max_frame_bytes = 3_999;
     assert!(config.validate().is_err());
+}
+
+#[test]
+fn application_rejects_missing_local_model_artifacts_before_binding() {
+    assert!(voice_agent_server::app::application(valid_config()).is_err());
 }

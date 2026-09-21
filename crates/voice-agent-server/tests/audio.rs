@@ -57,8 +57,8 @@ fn decoder_drops_empty_and_oversized_packets_without_panicking() {
 fn manual_capture_preserves_frames_in_order() {
     let mut capture = ManualCapture::new(2).unwrap();
     capture.start();
-    capture.push(uplink_frame(1));
-    capture.push(uplink_frame(2));
+    assert!(capture.push(uplink_frame(1)));
+    assert!(capture.push(uplink_frame(2)));
 
     let CaptureOutcome::Utterance(utterance) = capture.stop() else {
         panic!("expected an uplink audio utterance");
@@ -72,8 +72,8 @@ fn manual_capture_preserves_frames_in_order() {
 fn manual_capture_overflow_discards_the_whole_utterance() {
     let mut capture = ManualCapture::new(1).unwrap();
     capture.start();
-    capture.push(uplink_frame(7));
-    capture.push(uplink_frame(8));
+    assert!(capture.push(uplink_frame(7)));
+    assert!(!capture.push(uplink_frame(8)));
 
     assert_eq!(capture.stop(), CaptureOutcome::Overflowed);
 }
@@ -82,12 +82,12 @@ fn manual_capture_overflow_discards_the_whole_utterance() {
 fn manual_capture_restart_and_abort_discard_collected_pcm() {
     let mut capture = ManualCapture::new(2).unwrap();
     capture.start();
-    capture.push(uplink_frame(3));
+    assert!(capture.push(uplink_frame(3)));
     capture.restart();
     assert_eq!(capture.stop(), CaptureOutcome::Empty);
 
     capture.start();
-    capture.push(uplink_frame(4));
+    assert!(capture.push(uplink_frame(4)));
     capture.abort();
     assert_eq!(capture.stop(), CaptureOutcome::Empty);
 }

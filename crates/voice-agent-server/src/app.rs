@@ -4,6 +4,7 @@ use crate::{
         parse_client_message, ClientMessage, Firmware, OtaResponse, OtaWebsocket, ServerHello,
         ServerTime,
     },
+    providers::ProviderSet,
     session::{OutboundMessage, SessionActor, SessionEvent},
 };
 use axum::{
@@ -30,17 +31,26 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    pub providers: Arc<ProviderSet>,
 }
 
-pub fn router(config: AppConfig) -> Router {
+/// Application seam for tests and other callers that have already initialized providers.
+pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/voice/ota/", get(ota).post(ota))
         .route("/voice/v1/", get(websocket))
         .with_state(AppState {
             config: Arc::new(config),
+            providers,
         })
         .layer(TraceLayer::new_for_http())
+}
+
+/// Builds the public application only after local provider validation and warmup succeed.
+pub fn application(config: AppConfig) -> Result<Router, crate::providers::ProviderLoadError> {
+    let providers = Arc::new(ProviderSet::load(&config.providers)?);
+    Ok(router_with_providers(config, providers))
 }
 
 async fn health() -> &'static str {
@@ -74,6 +84,7 @@ async fn websocket(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config;
+    let providers = state.providers;
     if !header_is(&headers, "protocol-version", "1")
         || !headers.contains_key("device-id")
         || !headers.contains_key("client-id")
@@ -96,7 +107,7 @@ async fn websocket(
     let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
-        .on_upgrade(move |socket| handle_socket(socket, config))
+        .on_upgrade(move |socket| handle_socket(socket, config, providers))
         .into_response()
 }
 
@@ -104,7 +115,7 @@ fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
     headers.get(name).and_then(|value| value.to_str().ok()) == Some(expected)
 }
 
-async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>) {
+async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, providers: Arc<ProviderSet>) {
     let (mut sender, mut receiver) = socket.split();
     let first = timeout(
         Duration::from_millis(config.server.hello_timeout_ms),
@@ -136,11 +147,13 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>) {
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
-    let actor = match SessionActor::new(
+    let actor = match SessionActor::new_with_history(
         Uuid::new_v4().to_string(),
         control_tx.clone(),
         audio_tx,
         config.max_capture_frames(),
+        providers,
+        config.llm.max_history_messages,
     ) {
         Ok(actor) => actor,
         Err(error) => {

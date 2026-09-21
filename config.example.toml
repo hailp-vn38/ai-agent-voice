@@ -20,3 +20,16 @@ max_frame_bytes = 65536
 session_event_queue = 64
 outbound_control_queue = 32
 outbound_audio_queue = 32
+
+[providers.vad]
+adapter = "silero_onnx"
+model = "models/vad/silero_vad.onnx"
+num_threads = 1
+
+[providers.asr]
+adapter = "zipformer_sherpa"
+model_dir = "models/asr/zipformer-30m-vi"
+num_threads = 2
+
+[llm]
+max_history_messages = 20

@@ -1,5 +1,5 @@
 use anyhow::Context;
-use voice_agent_server::{app::router, config::AppConfig};
+use voice_agent_server::{app::application, config::AppConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -8,9 +8,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let path = std::env::var("VOICE_AGENT_CONFIG").unwrap_or_else(|_| "config.toml".into());
     let config = AppConfig::load(&path).with_context(|| format!("load {path}"))?;
+    let app = application(config.clone()).context("initialize local VAD/ASR providers")?;
     let listener = tokio::net::TcpListener::bind(config.server.bind).await?;
     tracing::info!(address = %listener.local_addr()?, "voice protocol server listening");
-    axum::serve(listener, router(config))
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())

@@ -14,6 +14,70 @@ pub struct AppConfig {
     pub websocket: WebsocketConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub providers: ProvidersConfig,
+    #[serde(default)]
+    pub llm: LlmConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ProvidersConfig {
+    pub vad: VadProviderConfig,
+    pub asr: AsrProviderConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct VadProviderConfig {
+    #[serde(default = "default_vad_adapter")]
+    pub adapter: String,
+    #[serde(default = "default_vad_model")]
+    pub model: std::path::PathBuf,
+    #[serde(default = "default_provider_threads")]
+    pub num_threads: i32,
+}
+
+impl Default for VadProviderConfig {
+    fn default() -> Self {
+        Self {
+            adapter: default_vad_adapter(),
+            model: default_vad_model(),
+            num_threads: default_provider_threads(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AsrProviderConfig {
+    #[serde(default = "default_asr_adapter")]
+    pub adapter: String,
+    #[serde(default = "default_asr_model_dir")]
+    pub model_dir: std::path::PathBuf,
+    #[serde(default = "default_provider_threads")]
+    pub num_threads: i32,
+}
+
+impl Default for AsrProviderConfig {
+    fn default() -> Self {
+        Self {
+            adapter: default_asr_adapter(),
+            model_dir: default_asr_model_dir(),
+            num_threads: default_provider_threads(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct LlmConfig {
+    #[serde(default = "default_max_history_messages")]
+    pub max_history_messages: usize,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            max_history_messages: default_max_history_messages(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -114,6 +178,24 @@ fn default_max_utterance_ms() -> u64 {
 fn default_queue_capacity() -> usize {
     32
 }
+fn default_vad_adapter() -> String {
+    "silero_onnx".into()
+}
+fn default_vad_model() -> std::path::PathBuf {
+    "models/vad/silero_vad.onnx".into()
+}
+fn default_asr_adapter() -> String {
+    "zipformer_sherpa".into()
+}
+fn default_asr_model_dir() -> std::path::PathBuf {
+    "models/asr/zipformer-30m-vi".into()
+}
+fn default_provider_threads() -> i32 {
+    1
+}
+fn default_max_history_messages() -> usize {
+    20
+}
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -174,6 +256,11 @@ impl AppConfig {
         {
             return Err(ConfigError::Validation(
                 "queue capacities must be positive".into(),
+            ));
+        }
+        if self.llm.max_history_messages == 0 {
+            return Err(ConfigError::Validation(
+                "llm.max_history_messages must be positive".into(),
             ));
         }
         Ok(())

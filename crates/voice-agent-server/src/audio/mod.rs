@@ -37,6 +37,34 @@ impl Pcm16Mono {
     }
 }
 
+/// Float PCM passed to inference providers with an explicit canonical rate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PcmF32Mono {
+    samples: Vec<f32>,
+    sample_rate_hz: u32,
+}
+
+impl PcmF32Mono {
+    pub fn from_uplink(frame: &UplinkPcmFrame) -> Self {
+        Self {
+            samples: frame
+                .samples()
+                .iter()
+                .map(|sample| f32::from(*sample) / f32::from(i16::MAX))
+                .collect(),
+            sample_rate_hz: 16_000,
+        }
+    }
+
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    pub fn sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UplinkPcmFrame(Pcm16Mono);
 
@@ -125,17 +153,19 @@ impl ManualCapture {
         self.start();
     }
 
-    pub fn push(&mut self, frame: UplinkPcmFrame) {
+    /// Returns false after the capture has overflowed, so callers can stop downstream work.
+    pub fn push(&mut self, frame: UplinkPcmFrame) -> bool {
         if !self.active || self.overflowed {
-            return;
+            return false;
         }
         if self.received_frames == self.max_frames {
             self.samples.clear();
             self.overflowed = true;
-            return;
+            return false;
         }
         self.samples.extend(frame.into_pcm().into_samples());
         self.received_frames += 1;
+        true
     }
 
     pub fn stop(&mut self) -> CaptureOutcome {

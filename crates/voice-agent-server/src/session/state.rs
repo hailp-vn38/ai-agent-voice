@@ -2,5 +2,6 @@
 pub enum SessionPhase {
     Ready,
     Listening,
+    Processing,
     Closed,
 }

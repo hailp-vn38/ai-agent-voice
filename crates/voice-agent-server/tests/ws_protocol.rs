@@ -1,5 +1,6 @@
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
+use std::sync::Arc;
 use tokio::{
     net::TcpListener,
     task::JoinHandle,
@@ -11,8 +12,12 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use voice_agent_server::{
-    app::router,
-    config::{AppConfig, AudioConfig, AuthConfig, LimitsConfig, ServerConfig, WebsocketConfig},
+    app::router_with_providers,
+    config::{
+        AppConfig, AudioConfig, AuthConfig, LimitsConfig, LlmConfig, ProvidersConfig, ServerConfig,
+        WebsocketConfig,
+    },
+    providers::ProviderSet,
 };
 
 async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
@@ -28,8 +33,10 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig { max_frame_bytes },
         limits: LimitsConfig::default(),
+        providers: ProvidersConfig::default(),
+        llm: LlmConfig::default(),
     };
-    let app: Router = router(config);
+    let app: Router = router_with_providers(config, Arc::new(ProviderSet::unavailable()));
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

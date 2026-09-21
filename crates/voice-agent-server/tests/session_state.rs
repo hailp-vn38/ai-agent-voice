@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 use voice_agent_server::{
     audio::{DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono},
     protocol::{ClientMessage, ListenCommand, ListenMode},
+    providers::ProviderSet,
     session::{SessionActor, SessionPhase},
 };
 
@@ -9,7 +12,14 @@ use voice_agent_server::{
 async fn raw_binary_is_only_accepted_while_listening() {
     let (control, _) = mpsc::channel(1);
     let (audio, _) = mpsc::channel(1);
-    let mut actor = SessionActor::new("session".into(), control, audio, 2).unwrap();
+    let mut actor = SessionActor::new(
+        "session".into(),
+        control,
+        audio,
+        2,
+        Arc::new(ProviderSet::unavailable()),
+    )
+    .unwrap();
     assert!(!actor.on_binary(vec![1]));
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
         mode: ListenMode::Manual,
@@ -29,7 +39,14 @@ async fn raw_binary_is_only_accepted_while_listening() {
 async fn unsupported_listen_mode_does_not_reset_manual_capture() {
     let (control, _) = mpsc::channel(1);
     let (audio, _) = mpsc::channel(1);
-    let mut actor = SessionActor::new("session".into(), control, audio, 2).unwrap();
+    let mut actor = SessionActor::new(
+        "session".into(),
+        control,
+        audio,
+        2,
+        Arc::new(ProviderSet::unavailable()),
+    )
+    .unwrap();
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
