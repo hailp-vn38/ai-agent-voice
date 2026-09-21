@@ -10,7 +10,7 @@ tools/list
 tools/call
 ```
 
-MCP payload được bọc trong Xiaozhi message:
+MCP payload được bọc trong protocol message:
 
 ```json
 {

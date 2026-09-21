@@ -12,7 +12,7 @@
 ```toml
 [server]
 bind = "0.0.0.0:8000"
-public_ws_url = "ws://192.168.1.10:8000/xiaozhi/v1/"
+public_ws_url = "ws://192.168.1.10:8000/voice/v1/"
 timezone_offset_minutes = 420
 hello_timeout_ms = 5000
 shutdown_grace_ms = 5000
@@ -87,10 +87,10 @@ allowed_tools = ["self.get_device_status", "self.audio_speaker.set_volume"]
 Khuyến nghị:
 
 ```text
-XIAOZHI_AUTH_TOKEN
-XIAOZHI_ASR_API_KEY
-XIAOZHI_LLM_API_KEY
-XIAOZHI_TTS_API_KEY
+VOICE_AGENT_AUTH_TOKEN
+VOICE_AGENT_ASR_API_KEY
+VOICE_AGENT_LLM_API_KEY
+VOICE_AGENT_TTS_API_KEY
 ```
 
 Không commit API key vào repository.

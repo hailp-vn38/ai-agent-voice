@@ -1,6 +1,6 @@
 # 06 — Implementation plan
 
-## Phase 0 — Project skeleton
+## Phase 0 foundation — prerequisite của Phase 1
 
 Deliverables:
 
@@ -23,8 +23,10 @@ Deliverables:
 - single writer.
 - SessionActor skeleton.
 - bounded ingress/outbound queue và overload policy.
+- Rust CLI **Reference Client** độc lập: OTA, WS headers, ClientHello, raw binary payload và protocol-fault cases.
+- Rust integration tests: OTA, handshake, protocol fault/close code, control/state và binary forwarding.
 
-Exit criteria: fake client hoàn tất hello và gửi/nhận binary frame.
+Exit criteria: Reference Client hoàn tất hello và gửi/nhận binary payload; automated protocol-conformance tests pass không cần phần cứng ESP.
 
 ## Phase 2 — Audio foundation
 

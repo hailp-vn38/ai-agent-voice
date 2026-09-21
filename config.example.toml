@@ -1,0 +1,19 @@
+[server]
+bind = "127.0.0.1:8000"
+public_ws_url = "ws://127.0.0.1:8000/voice/v1/"
+hello_timeout_ms = 5000
+
+[auth]
+token = ""
+
+[audio]
+input_sample_rate = 16000
+output_sample_rate = 24000
+channels = 1
+frame_ms = 60
+max_ws_frame_bytes = 8192
+
+[limits]
+session_event_queue = 64
+outbound_control_queue = 32
+outbound_audio_queue = 32

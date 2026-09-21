@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-    ESP[ESP32 Xiaozhi] -->|HTTP OTA| HTTP[Axum HTTP]
+    CLIENT[Voice Protocol Client] -->|HTTP OTA| HTTP[Axum HTTP]
     ESP <-->|WebSocket JSON + Opus| WS[WebSocket Transport]
     WS --> ACTOR[SessionActor]
     ACTOR --> VAD[VAD]

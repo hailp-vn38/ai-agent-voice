@@ -3,7 +3,7 @@
 ## 1. Cây thư mục
 
 ```text
-xiaozhi-lite-rs/
+voice-agent-server/
 ├── Cargo.toml
 ├── config.example.toml
 ├── README.md

@@ -2,16 +2,16 @@
 
 ## 1. Mục tiêu
 
-Duy trì tương thích firmware Xiaozhi bằng OTA discovery + WebSocket protocol v1.
+Duy trì protocol conformance bằng OTA discovery + WebSocket protocol v1.
 
 ## 2. OTA discovery
 
 ```mermaid
 sequenceDiagram
-    participant ESP as ESP32
+    participant CLIENT as Voice Protocol Client
     participant HTTP as Rust HTTP
-    ESP->>HTTP: POST /xiaozhi/ota/\nDevice-Id, Client-Id
-    HTTP-->>ESP: websocket.url + token + server_time
+    CLIENT->>HTTP: POST /voice/ota/\nDevice-Id, Client-Id
+    HTTP-->>CLIENT: websocket.url + token + server_time
 ```
 
 V1 không cần firmware hosting. `firmware.url` có thể rỗng.
@@ -33,13 +33,13 @@ Sau upgrade:
 
 ```mermaid
 sequenceDiagram
-    participant ESP as ESP32
+    participant CLIENT as Voice Protocol Client
     participant WS as WS Transport
     participant A as SessionActor
-    ESP->>WS: text {type:"hello", ...}
+    CLIENT->>WS: text {type:"hello", ...}
     WS->>A: ClientMessage::Hello
     A->>WS: ServerHello(session_id, audio_params)
-    WS-->>ESP: text hello
+    WS-->>CLIENT: text hello
     A->>A: phase = Listening
 ```
 
@@ -98,7 +98,7 @@ flowchart LR
   ACTOR --> A[bounded audio queue]
   C --> WRITER[WS Writer]
   A --> WRITER
-  WRITER --> ESP[ESP32]
+  WRITER --> CLIENT[Voice Protocol Client]
 ```
 
 Actor là producer duy nhất của hai queue; writer là task duy nhất gọi WebSocket send. Writer ưu tiên control hợp lệ; audio luôn mang generation và bị gate kiểm tra trước enqueue lẫn trước send. `SpeechOutput` và MCP trả event về actor, không gửi thẳng vào queue.

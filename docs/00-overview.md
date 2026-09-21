@@ -2,12 +2,12 @@
 
 ## 1. Mục tiêu sản phẩm
 
-`xiaozhi-lite-rs` là một voice-agent server cá nhân, chạy như **một binary Rust duy nhất**, tương thích với firmware Xiaozhi qua OTA discovery + WebSocket.
+`voice-agent-server` là một voice-agent server cá nhân, chạy như **một binary Rust duy nhất**, dùng OTA discovery + WebSocket protocol v1.
 
 Hệ thống phải đạt được chuỗi hành vi:
 
 ```text
-ESP32 boot
+Voice Protocol Client boot
   -> OTA discovery
   -> WebSocket connect
   -> hello / hello
@@ -25,7 +25,7 @@ ESP32 boot
 
 ### 2.1 Protocol-compatible, implementation-independent
 
-ESP32 chỉ phụ thuộc wire protocol. Rust server không cần sao chép kiến trúc Python.
+Mọi Voice Protocol Client chỉ phụ thuộc wire protocol. Rust server không cần sao chép kiến trúc reference hay phụ thuộc một loại phần cứng cụ thể.
 
 ### 2.2 Một state owner duy nhất
 
@@ -51,7 +51,7 @@ Chỉ một task ghi WebSocket. Các module khác gửi `OutboundMessage` vào c
 
 ### 2.7 Compatibility baseline
 
-V1 chỉ cam kết Compatibility Profile `xiaozhi-fw-v2.5.0-ws-v1`: `78/xiaozhi-esp32` v2.5.0 tại commit `ac6deed3d8e75348475364bf40ad953c6cd48054`, WebSocket v1 raw Opus và MCP `type:"mcp"` bọc JSON-RPC 2.0. `main` chỉ dùng theo dõi upstream; fixture lấy từ commit đã pin. HIL Reference Profile là `bread-compact-wifi`.
+V1 cam kết Compatibility Profile `voice-ws-v1-baseline`: WebSocket v1 raw Opus và MCP `type:"mcp"` bọc JSON-RPC 2.0. Reference source là `78/xiaozhi-esp32` v2.5.0 tại commit `ac6deed3d8e75348475364bf40ad953c6cd48054`; source này chỉ cung cấp provenance và fixture. HIL Reference Profile là `bread-compact-wifi`.
 
 ### 2.8 Ranh giới vận hành V1
 
@@ -98,8 +98,8 @@ Protocol V1 fail closed trong `AwaitHello`, fail soft cho từng application mes
 
 V1 chỉ hoàn thành khi cả ba gate sau pass:
 
-1. **Gate A — CI-compatible:** unit, integration, protocol fixture, fake Xiaozhi client, cancellation, queue/backpressure và MCP mock test đều pass.
-2. **Gate B — Xiaozhi firmware-compatible:** trên Firmware Baseline và HIL Reference Profile, pass OTA, WebSocket connect (kèm Bearer auth khi `auth.token` được bật), `hello`, real Opus uplink/downlink, STT, `tts:start`/`tts:stop`, `abort`, MCP discovery/call và reconnect.
-3. **Gate C — Real AI pipeline smoke:** ít nhất một chuỗi real ASR → streaming LLM → real TTS → ESP32 playback pass, gồm multi-turn context, cancellation, provider timeout và reconnect.
+1. **Gate A — Protocol Conformance:** unit, integration, protocol fixture, Reference Client, cancellation, queue/backpressure và MCP mock test đều pass.
+2. **Gate B — Independent Client Interoperability:** một Voice Protocol Client độc lập hoàn tất OTA, WebSocket connect (kèm Bearer auth khi `auth.token` được bật), `hello`, raw payload uplink/downlink, `tts:start`/`tts:stop`, `abort`, MCP discovery/call và reconnect.
+3. **Gate C — Real Voice Pipeline:** ít nhất một chuỗi real ASR → streaming LLM → real TTS → một Voice Protocol Client pass, gồm multi-turn context, cancellation, provider timeout và reconnect.
 
-Fake client chỉ đủ chứng minh Gate A, không đủ để gọi V1 firmware-compatible hay hoàn thành.
+Reference Client độc lập cung cấp bằng chứng Gate A/B theo phạm vi tương ứng. Firmware từ reference source trên HIL Reference Profile là **Reference Hardware Compatibility Test** có giá trị bổ sung, không phải định nghĩa duy nhất của protocol compatibility.

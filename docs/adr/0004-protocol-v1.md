@@ -4,7 +4,7 @@
 Accepted for V1
 
 ## Decision
-V1 chỉ hỗ trợ raw Opus binary frame theo Xiaozhi protocol version 1.
+V1 chỉ hỗ trợ raw Opus binary frame theo voice protocol version 1.
 
 ## Rationale
 Firmware mặc định dùng version 1; v2 chủ yếu cần metadata/timestamp cho AEC và tăng độ phức tạp.
