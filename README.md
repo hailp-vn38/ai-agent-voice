@@ -23,6 +23,29 @@ Core V1:
 
 Không nằm trong V1: manager web/mobile, multi-user, database bắt buộc, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory.
 
+## Chạy nhanh Protocol V1
+
+Khởi động server với cấu hình mẫu:
+
+```bash
+VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server
+```
+
+Sau đó xác nhận OTA → WebSocket → ClientHello bằng Voice Reference Client độc lập:
+
+```bash
+cargo run -p voice-reference-client -- \
+  --ota http://127.0.0.1:8000/voice/ota/ handshake
+```
+
+CLI tự lấy WebSocket URL/token từ OTA response và thêm các header V1 cần thiết. Hướng dẫn cho `listen`, raw Opus uplink/downlink và protocol-fault cases ở [Voice Reference Client](docs/voice-reference-client.md).
+
+Chạy các gate tự động hiện có:
+
+```bash
+./scripts/test-all.sh
+```
+
 ## Thứ tự đọc
 
 1. [`docs/00-overview.md`](docs/00-overview.md)
@@ -34,6 +57,7 @@ Không nằm trong V1: manager web/mobile, multi-user, database bắt buộc, MQ
 7. Các flow trong [`docs/flows/`](docs/flows/)
 8. Chiến lược test trong [`docs/testing/`](docs/testing/)
 9. ADR trong [`docs/adr/`](docs/adr/)
+10. [Voice Reference Client](docs/voice-reference-client.md)
 
 ## Nguồn tham chiếu external
 

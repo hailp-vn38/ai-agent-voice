@@ -1589,6 +1589,7 @@ name = "voice-reference-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
  "futures-util",
  "http 1.5.0",

@@ -30,6 +30,11 @@ enum Command {
     SendOpus {
         file: std::path::PathBuf,
     },
+    /// Complete hello, then require one raw binary packet matching this hex fixture.
+    ReceiveBinary {
+        #[arg(long)]
+        expected_hex: String,
+    },
     ProtocolTest {
         #[arg(long)]
         case: String,
@@ -38,7 +43,10 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    run(Args::parse()).await
+}
+
+async fn run(args: Args) -> anyhow::Result<()> {
     let ota: serde_json::Value = reqwest::Client::new()
         .post(&args.ota)
         .json(&json!({}))
@@ -97,11 +105,41 @@ async fn main() -> anyhow::Result<()> {
                         .send(Message::Binary(tokio::fs::read(file).await?))
                         .await?;
                 }
+                Command::ReceiveBinary { expected_hex } => {
+                    let expected = decode_hex(&expected_hex)?;
+                    match socket.next().await {
+                        Some(Ok(Message::Binary(actual))) if actual == expected => {
+                            println!("received matching binary packet ({} bytes)", actual.len());
+                        }
+                        Some(Ok(Message::Binary(actual))) => bail!(
+                            "binary payload mismatch: expected {} bytes, received {} bytes",
+                            expected.len(),
+                            actual.len()
+                        ),
+                        Some(Ok(other)) => bail!("expected binary packet, received {other:?}"),
+                        Some(Err(error)) => return Err(error.into()),
+                        None => bail!("WebSocket closed before a binary packet arrived"),
+                    }
+                }
                 Command::ProtocolTest { .. } => unreachable!(),
             }
         }
     }
     Ok(())
+}
+
+fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
+    if value.len() % 2 != 0 {
+        bail!("expected hex must contain an even number of characters");
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).expect("hex input is valid UTF-8");
+            u8::from_str_radix(text, 16).with_context(|| format!("invalid hex byte {text:?}"))
+        })
+        .collect()
 }
 
 async fn send_protocol_case<S>(
@@ -127,4 +165,84 @@ where
         println!("{:?}", message?);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        extract::ws::{Message as AxumMessage, WebSocketUpgrade},
+        response::IntoResponse,
+        routing::{get, post},
+        Json, Router,
+    };
+    use tokio::net::TcpListener;
+
+    #[test]
+    fn receive_binary_requires_an_even_length_hex_fixture() {
+        assert!(decode_hex("abc").is_err());
+    }
+
+    #[test]
+    fn receive_binary_decodes_a_raw_packet_fixture() {
+        assert_eq!(decode_hex("00fF10").unwrap(), vec![0, 255, 16]);
+    }
+
+    async fn fixture_ws(upgrade: WebSocketUpgrade) -> impl IntoResponse {
+        upgrade.on_upgrade(|mut socket| async move {
+            let _ = socket.recv().await;
+            socket
+                .send(AxumMessage::Text(
+                    json!({
+                        "type": "hello",
+                        "transport": "websocket",
+                        "session_id": "fixture",
+                        "audio_params": {
+                            "format": "opus",
+                            "sample_rate": 24000,
+                            "channels": 1,
+                            "frame_duration": 60
+                        }
+                    })
+                    .to_string(),
+                ))
+                .await
+                .unwrap();
+            socket
+                .send(AxumMessage::Binary(vec![0, 255, 16]))
+                .await
+                .unwrap();
+        })
+    }
+
+    #[tokio::test]
+    async fn receive_binary_accepts_the_exact_packet_from_an_ota_peer() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let ws_url = format!("ws://{address}/voice/v1/");
+        let ota_url = format!("http://{address}/voice/ota/");
+        let app = Router::new()
+            .route(
+                "/voice/ota/",
+                post(move || {
+                    let ws_url = ws_url.clone();
+                    async move { Json(json!({"websocket": {"url": ws_url, "token": ""}})) }
+                }),
+            )
+            .route("/voice/v1/", get(fixture_ws));
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let result = run(Args {
+            ota: ota_url,
+            device_id: "reference-client-01".into(),
+            client_id: "reference-client".into(),
+            command: Command::ReceiveBinary {
+                expected_hex: "00ff10".into(),
+            },
+        })
+        .await;
+
+        task.abort();
+        assert!(result.is_ok(), "{result:?}");
+    }
 }

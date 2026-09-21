@@ -7,6 +7,7 @@
 - [LLM](04-llm.md)
 - [TTS](05-tts.md)
 - [End-to-end](06-e2e.md)
+- [Voice Reference Client](../voice-reference-client.md)
 
 Scripts:
 
