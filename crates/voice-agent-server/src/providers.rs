@@ -110,32 +110,38 @@ impl Default for ProviderCapacityLimits {
 
 struct ProviderCapacity {
     limits: ProviderCapacityLimits,
-    in_use: Mutex<(usize, usize)>,
+    in_use: Mutex<ProviderCapacityUsage>,
+}
+
+#[derive(Default)]
+struct ProviderCapacityUsage {
+    asr_streams: usize,
+    vad_sessions: usize,
 }
 
 impl ProviderCapacity {
     fn new(limits: ProviderCapacityLimits) -> Self {
         Self {
             limits,
-            in_use: Mutex::new((0, 0)),
+            in_use: Mutex::new(ProviderCapacityUsage::default()),
         }
     }
 
     fn acquire_asr(self: &Arc<Self>) -> Result<CapacityLease, AsrError> {
         let mut in_use = self.in_use.lock().expect("capacity mutex poisoned");
-        if in_use.0 == self.limits.max_asr_streams {
+        if in_use.asr_streams == self.limits.max_asr_streams {
             return Err(AsrError::Failed("ASR stream capacity exhausted".into()));
         }
-        in_use.0 += 1;
+        in_use.asr_streams += 1;
         Ok(CapacityLease::Asr(Arc::clone(self)))
     }
 
     fn acquire_vad(self: &Arc<Self>) -> Result<CapacityLease, VadError> {
         let mut in_use = self.in_use.lock().expect("capacity mutex poisoned");
-        if in_use.1 == self.limits.max_vad_sessions {
+        if in_use.vad_sessions == self.limits.max_vad_sessions {
             return Err(VadError::Failed("VAD session capacity exhausted".into()));
         }
-        in_use.1 += 1;
+        in_use.vad_sessions += 1;
         Ok(CapacityLease::Vad(Arc::clone(self)))
     }
 }
@@ -153,9 +159,9 @@ impl Drop for CapacityLease {
         };
         let mut in_use = capacity.in_use.lock().expect("capacity mutex poisoned");
         if is_asr {
-            in_use.0 -= 1;
+            in_use.asr_streams -= 1;
         } else {
-            in_use.1 -= 1;
+            in_use.vad_sessions -= 1;
         }
     }
 }
