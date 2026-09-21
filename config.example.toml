@@ -17,8 +17,6 @@ max_utterance_ms = 30000
 max_frame_bytes = 65536
 
 [limits]
-max_asr_streams = 8
-max_vad_sessions = 8
 session_event_queue = 64
 outbound_control_queue = 32
 outbound_audio_queue = 32

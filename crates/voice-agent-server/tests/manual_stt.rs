@@ -18,17 +18,6 @@ struct FakeAsr {
 struct FakeVad;
 
 impl VadProvider for FakeVad {
-    fn open(
-        &self,
-    ) -> Result<
-        Box<dyn voice_agent_server::providers::VadSession>,
-        voice_agent_server::providers::VadError,
-    > {
-        Err(voice_agent_server::providers::VadError::Failed(
-            "not used by Manual".into(),
-        ))
-    }
-
     fn adapter(&self) -> &'static str {
         "fake_vad"
     }

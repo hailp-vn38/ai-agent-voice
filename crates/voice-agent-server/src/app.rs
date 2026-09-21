@@ -49,7 +49,7 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
 
 /// Builds the public application only after local provider validation and warmup succeed.
 pub fn application(config: AppConfig) -> Result<Router, crate::providers::ProviderLoadError> {
-    let providers = Arc::new(ProviderSet::load(&config.providers, &config.limits)?);
+    let providers = Arc::new(ProviderSet::load(&config.providers)?);
     Ok(router_with_providers(config, providers))
 }
 
