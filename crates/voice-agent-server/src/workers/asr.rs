@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Instant,
 };
@@ -97,6 +97,10 @@ impl AsrWorkerRuntime {
             events_tx,
             routes: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn runtime_config(&self) -> WorkerRuntimeConfig {
+        self.config.clone()
     }
 
     /// Registers exactly one actor mailbox for this Voice Session. The runtime is the sole

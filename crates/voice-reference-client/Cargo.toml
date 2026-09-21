@@ -14,6 +14,7 @@ opus2.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sherpa-onnx.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 url.workspace = true

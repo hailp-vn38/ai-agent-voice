@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 use voice_agent_server::{
     audio::PcmF32Mono,
     providers::{
-        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, VadError, VadEvent, VadProvider,
-        VadSession,
+        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, VadError, VadInput, VadProbability,
+        VadProvider, VadSession,
     },
     workers::{
         AsrCommand, AsrWorkerEvent, AsrWorkerRuntime, VadCommand, VadWorkerEvent, VadWorkerRuntime,
@@ -31,8 +31,12 @@ impl VadProvider for FakeVad {
 }
 struct FakeVadSession;
 impl VadSession for FakeVadSession {
-    fn push_pcm(&mut self, _: &PcmF32Mono) -> Result<Vec<VadEvent>, VadError> {
-        Ok(Vec::new())
+    fn push(&mut self, input: VadInput) -> Result<VadProbability, VadError> {
+        Ok(VadProbability {
+            start_sample: input.start_sample,
+            end_sample: input.start_sample + 512,
+            probability: 0.0,
+        })
     }
     fn reset(&mut self) -> Result<(), VadError> {
         Ok(())

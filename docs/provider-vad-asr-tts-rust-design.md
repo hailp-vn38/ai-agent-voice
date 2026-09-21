@@ -120,7 +120,7 @@ crates/voice-agent-server/src/
 │   ├── vad/
 │   │   ├── mod.rs
 │   │   ├── traits.rs
-│   │   └── silero_sherpa.rs
+│   │   └── silero_onnx.rs
 │   │
 │   ├── asr/
 │   │   ├── mod.rs
@@ -303,7 +303,7 @@ Khuyến nghị tên ổn định:
 
 ```text
 VAD:
-  silero_sherpa
+  silero_onnx
 
 ASR:
   zipformer_sherpa
@@ -355,7 +355,7 @@ Register:
 
 ```rust
 let registry = ProviderRegistry::builder()
-    .register_vad("silero_sherpa", SileroVadFactory)
+    .register_vad("silero_onnx", SileroVadFactory)
     .register_asr("zipformer_sherpa", ZipformerAsrFactory)
     .register_tts("zerotts_onnx", ZeroTtsFactory)
     .build();
@@ -384,17 +384,18 @@ Nên phân biệt:
 
 ```toml
 [vad]
-adapter = "silero_sherpa"
+adapter = "silero_onnx"
 
 # Core segmentation policy.
 min_speech_ms = 180
 end_silence_ms = 600
 pre_roll_ms = 300
 max_utterance_ms = 30000
+speech_threshold = 0.50
+exit_threshold = 0.35
 
 [vad.adapter_config]
 model = "models/vad/silero_vad.onnx"
-threshold = 0.50
 sample_rate_hz = 16000
 window_samples = 512
 num_threads = 1
@@ -463,6 +464,8 @@ pub struct VadConfig {
     pub end_silence_ms: u32,
     pub pre_roll_ms: u32,
     pub max_utterance_ms: u32,
+    pub speech_threshold: f32,
+    pub exit_threshold: f32,
 
     #[serde(default)]
     pub adapter_config: toml::Table,
@@ -1010,7 +1013,6 @@ pub struct ZipformerProvider {
 pub struct ZipformerSession {
     recognizer: Arc<OnlineRecognizer>,
     stream: OnlineStream,
-    last_partial: String,
     cancelled: bool,
 }
 ```
@@ -1034,20 +1036,6 @@ fn push_pcm(
 
     while self.recognizer.is_ready(&self.stream) {
         self.recognizer.decode(&self.stream);
-    }
-
-    let result = self.recognizer
-        .get_result(&self.stream)
-        .ok_or(AsrError::MissingResult)?;
-
-    if result.text != self.last_partial {
-        self.last_partial.clone_from(&result.text);
-
-        return Ok(vec![
-            AsrEvent::Partial(AsrPartial {
-                text: result.text,
-            })
-        ]);
     }
 
     Ok(Vec::new())
@@ -1074,27 +1062,11 @@ fn finish(&mut self) -> Result<AsrResult, AsrError> {
 }
 ```
 
-## 14.4 Partial result coalescing
+## 14.4 Partial result không được orchestration Phase 3 consume
 
-Không gửi partial cho actor mỗi decode tick.
+Worker vẫn phải `accept_waveform` và decode mọi ready frame để giữ recognizer streaming đúng trạng thái, nhưng Phase 3 không đọc/emit intermediate hypothesis. Không có `AsrPartial` vào SessionActor, WebSocket, dialogue, LLM, telemetry hay tracing text; do đó không cần `last_partial` hoặc `partial_emit_interval_ms` trong orchestration Phase 3.
 
-Core config:
-
-```text
-partial_emit_interval_ms = 200
-```
-
-Worker chỉ phát partial nếu:
-
-```text
-text changed
-AND
-elapsed >= partial_emit_interval
-```
-
-Partial STT không được commit vào dialogue.
-
-Chỉ `AsrFinal` hợp lệ mới commit user message.
+Chỉ `AsrFinal` current-generation, non-empty mới commit user message, enqueue đúng một existing `type:"stt"` trước LLM. V1 không thêm `stt_partial`, `asr_partial`, `asr_final`, `vad_start`, `vad_stop` hoặc field wire mới.
 
 ---
 
@@ -1122,6 +1094,8 @@ Opus uplink ────→ │ OpusDecoder 16 kHz │
                   │        │                       │
                   └───────→│                       │
                            ▼                       ▼
+             acquire AsrStreamLease    acquire ActiveTurnPermit
+                           │                       │
                    open AsrSession          AsrSession.finish
                            │                       │
                            ├── feed pre-roll      │
@@ -1145,20 +1119,27 @@ AsrStreamLease
 ActiveTurnPermit
 ```
 
-Đề xuất:
+Quyết định:
 
 ```text
 SpeechStart
-  → acquire ASR stream slot
+  → acquire AsrStreamLease (`max_asr_streams`)
+  → open AsrSession
+  → feed pre-roll + live PCM
 
-SpeechEnd + valid final
-  → acquire ActiveTurnPermit
+SpeechEnd
+  → try acquire ActiveTurnPermit
+  → nếu thất bại: cancel AsrSession, release AsrStreamLease, bỏ turn
+  → AsrSession.finish()
+  → AsrFinal: release AsrStreamLease
   → LLM
   → TTS
-  → terminal
+  → Drained/terminal: release ActiveTurnPermit
 ```
 
-Nếu cần limit tổng CPU ASR, có semaphore riêng:
+`AsrStreamLease` chỉ giới hạn recognition streaming và không phải Conversational Turn. `ActiveTurnPermit` bắt đầu tại utterance terminal boundary, giữ xuyên ASR finalization, LLM, MCP và SpeechOutput. Hai resource overlap ngắn trong `finish()` là có chủ ý. Final rỗng là `CompletedSilent` và release cả hai; ASR failure/cancel cũng release cả hai.
+
+ASR stream capacity dùng semaphore riêng:
 
 ```text
 max_asr_streams
@@ -1849,7 +1830,7 @@ drop current ingress audio frame
 telemetry++
 ```
 
-Tùy severity có thể abort capture nếu continuity không còn đáng tin.
+Không abort capture hay đóng WS. `VadSegmenter` phải giữ sample/time cursor theo input timeline thực, kể cả frame bị drop.
 
 ### ASR PCM full
 
@@ -1862,6 +1843,8 @@ fail current recognition
 cancel ASR session
 return controlled turn failure
 ```
+
+Ở Auto, không mở stream mới cho phần audio còn lại của cùng utterance: giữ `ignore_asr_until_endpoint` nội bộ, để VAD tiếp tục tìm `SpeechEnd`, rồi reset/re-arm cho utterance kế tiếp. State này không đi vào wire protocol hay public SessionPhase.
 
 ### TTS PCM full
 
@@ -2454,12 +2437,15 @@ PCM → VAD → SpeechStart/SpeechEnd
 ```text
 listen:start
   ↓
-capture PCM
+acquire AsrStreamLease
   ↓
-ASR stream open/feed
+open AsrSession + feed live PCM
+  ↓
 listen:stop
   ↓
-ASR finish
+try acquire ActiveTurnPermit
+  ↓
+finish ASR, rồi release AsrStreamLease
 ```
 
 VAD provider có thể không tham gia manual mode.
@@ -2468,29 +2454,21 @@ Không biến `listen:detect` thành `listen:start` nếu protocol contract khô
 
 ---
 
-# 43. Barge-in
+# 43. Acoustic barge-in là future work, không thuộc V1
 
-Khi đang speaking:
+V1 không chạy VAD/microphone để interrupt khi `Speaking`: speaker audio có thể quay lại microphone khi chưa có server-side AEC và tạo self-interruption loop. Matrix V1 giữ binary audio ở `Ready`, `Processing` và `Speaking` là drop; chỉ `Listening` mới decode/VAD/ASR.
+
+Interruption khi `Speaking` chỉ qua protocol control explicit:
 
 ```text
-microphone vẫn decode
-   ↓
-Silero confirms new speech
-   ↓
-generation++
-   ↓
-GenerationGate updated
-   ↓
-cancel old TTS
-   ↓
-drop stale queued audio
-   ↓
-open new ASR stream
+abort hoặc listen:start hợp lệ
+  → actor tăng generation
+  → GenerationGate cập nhật
+  → cancel TTS/ASR cũ và drop audio stale
+  → enter Listening
 ```
 
-Provider không tự tăng generation.
-
-Actor làm việc đó.
+Future AEC-capable mode mới có thể dùng `echo-cancelled microphone → VAD → actor policy → cancel generation`. Điều đó cần AEC contract, protocol capability negotiation, false-trigger tests và ADR state-machine mới. Provider không bao giờ tự tăng generation hoặc cancel turn.
 
 ---
 
@@ -2691,45 +2669,14 @@ model manifest/license docs
 
 ---
 
-# 47. Thay đổi tài liệu hiện tại của repo
+# 47. Đồng bộ tài liệu repository
 
-`docs/03-module-contracts.md` đang mô tả batch ASR:
+Đã đồng bộ các quyết định Phase 3 vào tài liệu chuẩn:
 
-```rust
-async fn transcribe(...)
-```
-
-Cần thay thành streaming session contract.
-
-Ngoài ra tài liệu hiện ghi VAD local và “chỉ tạo VadProvider khi có ít nhất hai adapter”.
-
-Yêu cầu mới đã xác định VAD cũng phải replaceable, vì vậy cần sửa thành:
-
-```text
-VAD là provider seam chính thức giống ASR/TTS.
-Segmentation policy vẫn thuộc audio/core.
-```
-
-`docs/06-implementation-plan.md` Phase 3 hiện ghi:
-
-```text
-ASR trait + first HTTP provider
-```
-
-Nên đổi:
-
-```text
-VadProvider + Silero local
-Streaming AsrProvider + Zipformer local
-ASR worker + partial/final
-```
-
-Phase 4:
-
-```text
-TtsProvider + ZeroTTS local Rust
-SpeechOutput PCM normalization/resample/Opus/pacing
-```
+- `docs/03-module-contracts.md` dùng `VadProvider` probability-level và `AsrProvider` streaming thay cho batch `transcribe`; segmentation vẫn thuộc core.
+- `docs/06-implementation-plan.md` thay HTTP ASR baseline bằng Silero ONNX + Zipformer/sherpa-onnx local, bounded workers, `AsrStreamLease` và `ActiveTurnPermit` tại utterance terminal boundary.
+- ADR-0017 tách capacity recognition streaming khỏi global capacity của Conversational Turn.
+- V1 giữ ADR-0010: không acoustic barge-in khi `Speaking`; đây là future AEC work.
 
 ---
 
@@ -2771,13 +2718,13 @@ min_speech_ms = 180
 end_silence_ms = 600
 pre_roll_ms = 300
 max_utterance_ms = 30000
+speech_threshold = 0.50
+exit_threshold = 0.35
 
 [vad.adapter_config]
 model = "models/vad/silero_vad.onnx"
 sample_rate_hz = 16000
 window_samples = 512
-speech_threshold = 0.50
-exit_threshold = 0.35
 num_threads = 1
 
 

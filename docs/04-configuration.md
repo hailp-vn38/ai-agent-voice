@@ -41,7 +41,7 @@ max_utterance_ms = 30000
 [limits]
 max_connections = 4
 max_active_turns = 2
-asr_concurrency = 2
+max_asr_streams = 2
 llm_concurrency = 2
 tts_concurrency = 2
 audio_in_queue = 64
@@ -50,16 +50,35 @@ outbound_control_queue = 32
 outbound_audio_queue = 32
 
 [vad]
-provider = "local"
+adapter = "silero_onnx"
 min_speech_ms = 180
 end_silence_ms = 600
 pre_roll_ms = 300
+speech_threshold = 0.50
+exit_threshold = 0.35
+
+[vad.adapter_config]
+model = "models/vad/silero_vad.onnx"
+sample_rate_hz = 16000
+window_samples = 512
+num_threads = 1
+provider = "cpu"
 
 [asr]
-adapter = "openai_transcription_v1"
-base_url = "http://127.0.0.1:9001"
-model = "gpt-4o-mini-transcribe"
+adapter = "zipformer_sherpa"
 timeout_ms = 15000
+partial_emit_interval_ms = 200
+
+[asr.adapter_config]
+encoder = "models/asr/zipformer-30m-vi/encoder.onnx"
+decoder = "models/asr/zipformer-30m-vi/decoder.onnx"
+joiner = "models/asr/zipformer-30m-vi/joiner.onnx"
+tokens = "models/asr/zipformer-30m-vi/tokens.txt"
+sample_rate_hz = 16000
+num_threads = 2
+provider = "cpu"
+decoding_method = "greedy_search"
+enable_internal_endpoint = false
 
 [llm]
 adapter = "openai_chat_completions_v1"
@@ -90,7 +109,6 @@ Khuyến nghị:
 
 ```text
 VOICE_AGENT_AUTH_TOKEN
-VOICE_AGENT_ASR_API_KEY
 VOICE_AGENT_LLM_API_KEY
 VOICE_AGENT_TTS_API_KEY
 ```
@@ -105,8 +123,10 @@ Không commit API key vào repository.
 - `audio.max_utterance_ms` nằm trong 1.000–120.000 ms và chia hết cho `audio.frame_ms`. Đây là giới hạn chung của Manual Capture và VAD Capture, không phải tham số riêng của VAD; capacity được tính một lần từ integer frame count.
 - `unsupported_protocol_policy` V1 chỉ là `reject`; không advertise v2/v3 khi chưa có parser.
 - timeout > 0.
+- adapter phải được build vào binary; model artifact local bắt buộc phải tồn tại và match sample rate/tokenizer trước khi server bind public socket.
 - `shutdown_grace_ms > 0`; config chỉ có hiệu lực khi process khởi động lại.
 - `prompt_budget_tokens > 0`, `max_tool_result_chars > 0`, `max_tool_depth > 0`.
+- `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
 - public WS URL hợp lệ nếu OTA được bật.
 - `auth.token = ""` tắt authentication; token không rỗng bắt buộc Bearer token. Device-Id và Client-Id không phải credential.
 - OTA trả static token khi auth bật và không phải security boundary; Internet không nằm trong supported V1 profile.

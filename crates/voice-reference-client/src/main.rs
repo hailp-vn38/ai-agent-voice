@@ -1,12 +1,16 @@
-use anyhow::{bail, Context};
-use clap::{Parser, Subcommand};
+use anyhow::{Context, bail};
+use clap::{Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use opus2::{Application, Channels, Encoder};
 use serde_json::json;
+use sherpa_onnx::{
+    OnlineRecognizer, OnlineRecognizerConfig, SileroVadModelConfig, VadModelConfig,
+    VoiceActivityDetector,
+};
 use std::path::{Path, PathBuf};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{client::IntoClientRequest, Message},
+    tungstenite::{Message, client::IntoClientRequest},
 };
 
 #[derive(Debug, Parser)]
@@ -27,6 +31,15 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Run local Silero VAD and Zipformer ASR smoke checks against a WAV without a server.
+    TestVadAsrWav {
+        #[arg(default_value = "docs/audio.wav")]
+        file: PathBuf,
+        #[arg(long, default_value = "models/vad/silero_vad.onnx")]
+        vad_model: PathBuf,
+        #[arg(long, default_value = "models/asr/zipformer-30m-vi")]
+        asr_model_dir: PathBuf,
+    },
     Handshake,
     Listen,
     SendOpus {
@@ -36,6 +49,8 @@ enum Command {
     SendWav {
         #[arg(default_value = "docs/audio.wav")]
         file: PathBuf,
+        #[arg(long, value_enum, default_value_t = ListenModeArg::Manual)]
+        mode: ListenModeArg,
     },
     /// Complete hello, then require one raw binary packet matching this hex fixture.
     ReceiveBinary {
@@ -48,12 +63,26 @@ enum Command {
     },
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ListenModeArg {
+    Manual,
+    Auto,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     run(Args::parse()).await
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
+    if let Command::TestVadAsrWav {
+        file,
+        vad_model,
+        asr_model_dir,
+    } = &args.command
+    {
+        return test_vad_asr_wav(file, vad_model, asr_model_dir);
+    }
     let ota: serde_json::Value = reqwest::Client::new()
         .post(&args.ota)
         .json(&json!({}))
@@ -86,7 +115,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     match args.command {
         Command::ProtocolTest { case } => send_protocol_case(&mut socket, &case).await?,
         command => {
-            socket.send(Message::Text(hello.to_string())).await?;
+            socket.send(Message::Text(hello.to_string().into())).await?;
             print_next(&mut socket).await?;
             match command {
                 Command::Handshake => {}
@@ -94,10 +123,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 Command::SendOpus { file } => {
                     send_listen_start(&mut socket).await?;
                     socket
-                        .send(Message::Binary(tokio::fs::read(file).await?))
+                        .send(Message::Binary(tokio::fs::read(file).await?.into()))
                         .await?;
                 }
-                Command::SendWav { file } => send_wav(&mut socket, &file).await?,
+                Command::SendWav { file, mode } => send_wav(&mut socket, &file, mode).await?,
                 Command::ReceiveBinary { expected_hex } => {
                     let expected = decode_hex(&expected_hex)?;
                     match socket.next().await {
@@ -115,9 +144,75 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     }
                 }
                 Command::ProtocolTest { .. } => unreachable!(),
+                Command::TestVadAsrWav { .. } => unreachable!(),
             }
         }
     }
+    Ok(())
+}
+
+fn test_vad_asr_wav(file: &Path, vad_model: &Path, asr_model_dir: &Path) -> anyhow::Result<()> {
+    let pcm = read_wav_as_uplink_pcm(file)?;
+    let samples = pcm
+        .iter()
+        .map(|sample| *sample as f32 / i16::MAX as f32)
+        .collect::<Vec<_>>();
+    let vad_config = VadModelConfig {
+        sample_rate: 16_000,
+        num_threads: 1,
+        provider: Some("cpu".into()),
+        silero_vad: SileroVadModelConfig {
+            model: Some(vad_model.display().to_string()),
+            threshold: 0.5,
+            min_silence_duration: 0.6,
+            min_speech_duration: 0.18,
+            window_size: 512,
+            max_speech_duration: 30.0,
+        },
+        ..VadModelConfig::default()
+    };
+    let vad = VoiceActivityDetector::create(&vad_config, 60.0)
+        .context("create Silero VAD; verify --vad-model")?;
+    for chunk in samples.chunks(512) {
+        vad.accept_waveform(chunk);
+    }
+    vad.flush();
+    if vad.is_empty() {
+        bail!("Silero VAD detected no speech in {}", file.display());
+    }
+
+    let mut config = OnlineRecognizerConfig::default();
+    config.model_config.transducer.encoder =
+        Some(asr_model_dir.join("encoder.onnx").display().to_string());
+    config.model_config.transducer.decoder =
+        Some(asr_model_dir.join("decoder.onnx").display().to_string());
+    config.model_config.transducer.joiner =
+        Some(asr_model_dir.join("joiner.onnx").display().to_string());
+    config.model_config.tokens = Some(asr_model_dir.join("tokens.txt").display().to_string());
+    config.model_config.num_threads = 2;
+    config.model_config.provider = Some("cpu".into());
+    config.decoding_method = Some("greedy_search".into());
+    let recognizer = OnlineRecognizer::create(&config)
+        .context("create Zipformer recognizer; verify --asr-model-dir")?;
+    let stream = recognizer.create_stream();
+    stream.accept_waveform(16_000, &samples);
+    stream.input_finished();
+    while recognizer.is_ready(&stream) {
+        recognizer.decode(&stream);
+    }
+    let text = recognizer
+        .get_result(&stream)
+        .context("Zipformer returned no result")?
+        .text
+        .trim()
+        .to_owned();
+    if text.is_empty() {
+        bail!(
+            "Zipformer produced an empty transcript for {}",
+            file.display()
+        );
+    }
+    println!("VAD speech detected; ASR final: {text}");
     Ok(())
 }
 
@@ -128,7 +223,7 @@ where
     send_listen_start(socket).await?;
     socket
         .send(Message::Text(
-            json!({"type":"listen","state":"stop"}).to_string(),
+            json!({"type":"listen","state":"stop"}).to_string().into(),
         ))
         .await?;
     Ok(())
@@ -142,7 +237,9 @@ where
 {
     socket
         .send(Message::Text(
-            json!({"type":"listen","state":"start","mode":"manual"}).to_string(),
+            json!({"type":"listen","state":"start","mode":"manual"})
+                .to_string()
+                .into(),
         ))
         .await?;
     Ok(())
@@ -151,6 +248,7 @@ where
 async fn send_wav<S>(
     socket: &mut tokio_tungstenite::WebSocketStream<S>,
     path: &Path,
+    mode: ListenModeArg,
 ) -> anyhow::Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -161,7 +259,7 @@ where
     }
     let mut encoder = Encoder::new(16_000, Channels::Mono, Application::Voip)
         .context("initialize uplink Opus encoder")?;
-    send_listen_start(socket).await?;
+    send_listen_start_mode(socket, mode).await?;
     let mut packets = 0usize;
     for frame in pcm.chunks(960) {
         let mut canonical_frame = [0_i16; 960];
@@ -174,20 +272,84 @@ where
             bail!("Opus encoder produced an empty uplink packet");
         }
         socket
-            .send(Message::Binary(packet[..encoded].to_vec()))
+            .send(Message::Binary(packet[..encoded].to_vec().into()))
             .await?;
         packets += 1;
+        // A captured WAV is replayed at the wire cadence of a real 60 ms microphone frame.
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
     }
-    socket
-        .send(Message::Text(
-            json!({"type":"listen","state":"stop"}).to_string(),
-        ))
-        .await?;
+    if matches!(mode, ListenModeArg::Manual) {
+        socket
+            .send(Message::Text(
+                json!({"type":"listen","state":"stop"}).to_string().into(),
+            ))
+            .await?;
+    } else {
+        // Auto mode must endpoint from audio, never from a client stop command.
+        for _ in 0..20 {
+            let mut packet = [0_u8; 4_000];
+            let encoded = encoder.encode(&[0_i16; 960], &mut packet)?;
+            socket
+                .send(Message::Binary(packet[..encoded].to_vec().into()))
+                .await?;
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        }
+    }
+    wait_for_stt(socket).await?;
     println!(
         "sent {packets} canonical 60 ms Opus packets from {}",
         path.display()
     );
     Ok(())
+}
+
+async fn send_listen_start_mode<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    mode: ListenModeArg,
+) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mode = match mode {
+        ListenModeArg::Manual => "manual",
+        ListenModeArg::Auto => "auto",
+    };
+    socket
+        .send(Message::Text(
+            json!({"type":"listen","state":"start","mode": mode})
+                .to_string()
+                .into(),
+        ))
+        .await?;
+    Ok(())
+}
+
+/// The reference client treats a final STT message as the observable Manual recognition result.
+async fn wait_for_stt<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    loop {
+        let message = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
+            .await
+            .context("timed out waiting for STT")?
+            .context("WebSocket closed before STT")??;
+        match message {
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text)?;
+                if value.get("type").and_then(|item| item.as_str()) == Some("stt") {
+                    let transcript = value
+                        .get("text")
+                        .and_then(|item| item.as_str())
+                        .context("STT message has no text")?;
+                    println!("STT: {transcript}");
+                    return Ok(());
+                }
+            }
+            Message::Close(frame) => bail!("WebSocket closed before STT: {frame:?}"),
+            _ => {}
+        }
+    }
 }
 
 fn read_wav_as_uplink_pcm(path: &Path) -> anyhow::Result<Vec<i16>> {
@@ -249,8 +411,8 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     match case {
-        "binary-before-hello" => socket.send(Message::Binary(vec![1, 2, 3])).await?,
-        "invalid-audio-profile" => socket.send(Message::Text(json!({"type":"hello","version":1,"transport":"websocket","audio_params":{"format":"opus","sample_rate":48000,"channels":1,"frame_duration":60}}).to_string())).await?,
+        "binary-before-hello" => socket.send(Message::Binary(vec![1, 2, 3].into())).await?,
+        "invalid-audio-profile" => socket.send(Message::Text(json!({"type":"hello","version":1,"transport":"websocket","audio_params":{"format":"opus","sample_rate":48000,"channels":1,"frame_duration":60}}).to_string().into())).await?,
         other => bail!("unknown protocol case: {other}"),
     }
     print_next(socket).await
@@ -270,10 +432,10 @@ where
 mod tests {
     use super::*;
     use axum::{
+        Json, Router,
         extract::ws::{Message as AxumMessage, WebSocketUpgrade},
         response::IntoResponse,
         routing::{get, post},
-        Json, Router,
     };
     use tokio::net::TcpListener;
 
@@ -302,6 +464,17 @@ mod tests {
         assert!(pcm.chunks(960).all(|frame| frame.len() <= 960));
     }
 
+    #[test]
+    #[ignore = "requires locally downloaded Silero and Zipformer model artifacts"]
+    fn docs_audio_wav_passes_local_vad_and_asr_smoke() {
+        test_vad_asr_wav(
+            Path::new("../../docs/audio.wav"),
+            Path::new("../../models/vad/silero_vad.onnx"),
+            Path::new("../../models/asr/zipformer-30m-vi"),
+        )
+        .unwrap();
+    }
+
     async fn fixture_ws(upgrade: WebSocketUpgrade) -> impl IntoResponse {
         upgrade.on_upgrade(|mut socket| async move {
             let _ = socket.recv().await;
@@ -318,12 +491,13 @@ mod tests {
                             "frame_duration": 60
                         }
                     })
-                    .to_string(),
+                    .to_string()
+                    .into(),
                 ))
                 .await
                 .unwrap();
             socket
-                .send(AxumMessage::Binary(vec![0, 255, 16]))
+                .send(AxumMessage::Binary(vec![0, 255, 16].into()))
                 .await
                 .unwrap();
         })

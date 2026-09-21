@@ -28,13 +28,13 @@ pub enum VadEvent {
 flowchart TB
     OPUS[Opus frame] --> DEC[Decode PCM]
     DEC --> PR[Pre-roll ring buffer]
-    DEC --> V[VAD]
-    V -->|no voice| IDLE[Keep bounded pre-roll]
-    V -->|speech start| START[Start utterance]
-    START --> ACC[Accumulate PCM]
-    V -->|voice| ACC
-    V -->|silence < threshold| ACC
-    V -->|silence >= threshold| END[Emit SpeechEnded]
+    DEC --> V[VadProvider probability]
+    V --> SEG[Core VadSegmenter]
+    SEG -->|no voice| IDLE[Keep bounded pre-roll]
+    SEG -->|speech start| START[Acquire AsrStreamLease; open AsrSession; feed pre-roll]
+    START --> ACC[Feed live PCM to ASR]
+    SEG -->|voice/silence < threshold| ACC
+    SEG -->|silence >= threshold| END[Acquire Active Turn permit; finish ASR]
 ```
 
 ## 3. Pre-roll
@@ -76,9 +76,9 @@ V1 không chạy VAD khi phase là `Speaking`: server AEC đang ngoài phạm vi
 ## 7. Resource limits
 
 - `max_utterance_ms`: tránh buffer vô hạn; V1 default 30 giây, validate trong khoảng 1.000–120.000 ms và chia hết cho 60 ms. Capacity được tính bằng integer frame count: 30 giây là 500 frame/480.000 samples; frame thứ 500 hợp lệ và frame thứ 501 mới overflow. `ManualCapture` pre-reserve capacity fallible ở runtime init trước ServerHello và không realloc khi thu.
-- Auto/VAD vượt giới hạn: force-endpoint utterance, dừng collector và chuyển Processing; không thu utterance mới song song.
+- Auto/VAD vượt giới hạn: force-endpoint, try-acquire `Active Turn` permit rồi `finish()` ASR stream; không thu turn mới song song. Nếu permit không có, cancel stream và release `AsrStreamLease`, không xếp chờ.
 - Manual vượt giới hạn: discard buffer, đánh dấu capture overflow, ignore audio đến `listen:stop` và cần `listen:start` mới để thu lại. `listen:stop` trả `Overflowed`, không gọi ASR/STT/LLM/TTS và chuyển manual mode về Ready.
-- PCM buffer thuộc một utterance, giải phóng sau khi gửi ASR.
+- `AsrStreamLease` chỉ giới hạn recognition stream và release sau final/cancel/lỗi; `Active Turn` permit bắt đầu ở endpoint và release ở terminal turn.
 
 ## 8. Test contract
 

@@ -1,5 +1,5 @@
 use voice_agent_server::protocol::{
-    parse_client_message, ClientMessage, ListenCommand, ListenMode,
+    ClientMessage, ListenCommand, ListenMode, parse_client_message,
 };
 
 #[test]

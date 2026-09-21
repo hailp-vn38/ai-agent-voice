@@ -32,6 +32,10 @@ _Avoid_: device session, persistent session
 Trạng thái Voice Session còn kết nối nhưng không nhận microphone audio.
 _Avoid_: Idle, Listening
 
+**Processing**:
+Trạng thái Voice Session đã endpoint một utterance và đang hoàn tất Conversational Turn; microphone audio bị drop cho tới terminal outcome.
+_Avoid_: Listening, queued turn
+
 **Listening Mode**:
 Ý nghĩa capture do Voice Protocol Client khai báo trong `listen:start`; V1 có Manual, Auto và Realtime là các giá trị wire riêng, không được server suy đoán hoặc đổi thay thế.
 _Avoid_: capture option, implicit manual mode
@@ -41,8 +45,64 @@ Một lượt xử lý giọng nói có thể hủy độc lập trong một Voi
 _Avoid_: request, job
 
 **Active Turn**:
-Conversational Turn đã có utterance hoàn tất và đang giữ global capacity từ trước ASR đến terminal state.
+Conversational Turn đã qua utterance terminal boundary và đang giữ global capacity từ ASR finalization đến terminal state.
 _Avoid_: listening turn, queued turn
+
+**Active Turn Limiter**:
+Capacity domain toàn application giới hạn số Active Turn đồng thời, độc lập với capacity provider worker.
+_Avoid_: ASR semaphore, provider limit
+
+**ASR Stream Lease**:
+Quyền capacity dành riêng cho một recognition stream đang mở, từ lúc bắt đầu thu cho tới khi ASR final, cancel hoặc lỗi.
+_Avoid_: Active Turn, ASR queue slot
+
+**Inference Worker Runtime**:
+Nhóm worker bounded thuộc application, mỗi worker sở hữu mutable provider stream/session và chỉ trao đổi command/event mang identity; không sở hữu Voice Session state hay WebSocket.
+_Avoid_: provider pool, background task, SessionActor worker
+
+**VAD Probability**:
+Kết quả inference Silero cho đúng một khoảng PCM liên tục của Auto cycle, gồm xác suất speech và sample cursor `[start_sample, end_sample)`; đây chưa phải ranh giới utterance.
+_Avoid_: SpeechStart, SpeechEnd, speech decision
+
+**VAD Stream Integrity Failure**:
+Lỗi khi một Auto cycle nhận VAD Probability có gap, duplicate, thứ tự sai hoặc sample range không hợp lệ; Voice Session bị ảnh hưởng fail closed vì endpoint không còn đáng tin.
+_Avoid_: dropped VAD frame, recoverable VAD delay
+
+**Worker Cleanup Acknowledgement**:
+Event xác nhận worker đã kết thúc hoặc reset mutable runtime của một lease, là điều kiện duy nhất để slot trở lại reusable; vẫn được xử lý khi generation logic đã stale.
+_Avoid_: cancel requested, Drop, logical cancellation
+
+**Dialogue History**:
+Lịch sử message bounded, RAM-only thuộc một Voice Session; user message được commit sau ASR final non-empty.
+_Avoid_: persistent memory, transcript log
+
+**Model Artifact Manifest**:
+Tài liệu versioned pin source, revision, license, tên upstream, tên cài đặt, checksum và derivation của từng model artifact; path directory không tự xác nhận model identity.
+_Avoid_: model folder name, latest model
+
+**Typed Provider Configuration**:
+Cấu hình selection adapter bằng `[providers.<kind>].adapter` và cấu hình concrete dưới bảng cùng tên adapter; startup chỉ chấp nhận bảng khớp adapter được compile vào binary.
+_Avoid_: adapter_config table, compatibility parser, runtime provider discovery
+
+**Worker Runtime Configuration**:
+Cấu hình `[workers.vad]` hoặc `[workers.asr]` điều khiển capacity, mailbox, timeout, cleanup và quarantine của Inference Worker Runtime; không chứa model hoặc inference option.
+_Avoid_: provider config, model option, adapter setting
+
+**Provider Adapter**:
+Implementation compile-time của một provider trait, được chọn một lần tại startup bằng typed provider configuration; adapter không biết Voice Session, WebSocket hoặc worker runtime.
+_Avoid_: dynamic plugin, provider platform, service locator
+
+**Logical Model Identity**:
+Khoá model do typed provider configuration chọn, dùng để lookup đúng entry authoritative trong Model Artifact Manifest; không phải filesystem path hoặc tên thư mục.
+_Avoid_: model directory, latest model, adapter name
+
+**Model License Acknowledgement**:
+Khai báo deployment khớp chính xác logical model, revision và license trong Model Artifact Manifest; thiếu hoặc lệch thì server fail trước bind.
+_Avoid_: license bypass, generic agreement flag
+
+**Phase Completion Gate**:
+Gate bắt buộc để một phase được đánh dấu hoàn tất; với Phase 3 là real-model Voice Protocol E2E Manual và Auto qua canonical Opus tới exactly one STT, tách biệt implementation gate dùng fake provider.
+_Avoid_: ignored smoke test, compile success
 
 **Canonical Audio Profile**:
 Wire-audio profile cố định của Compatibility Profile: uplink Opus 16 kHz mono 60 ms và downlink Opus 24 kHz mono 60 ms.

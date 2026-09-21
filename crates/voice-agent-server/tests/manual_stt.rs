@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
@@ -9,7 +9,7 @@ use voice_agent_server::{
     audio::{DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono},
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::{AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadProvider},
-    session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionPhase},
+    session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionPhase, SessionRuntimes},
     workers::{AsrWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig},
 };
 
@@ -299,16 +299,18 @@ struct BoundaryVadSession {
 }
 
 impl voice_agent_server::providers::VadSession for BoundaryVadSession {
-    fn push_pcm(
+    fn push(
         &mut self,
-        _: &PcmF32Mono,
-    ) -> Result<Vec<voice_agent_server::providers::VadEvent>, voice_agent_server::providers::VadError>
-    {
+        input: voice_agent_server::providers::VadInput,
+    ) -> Result<
+        voice_agent_server::providers::VadProbability,
+        voice_agent_server::providers::VadError,
+    > {
         self.frames += 1;
-        Ok(match self.frames {
-            1 => vec![voice_agent_server::providers::VadEvent::SpeechStart],
-            2 => vec![voice_agent_server::providers::VadEvent::SpeechEnd],
-            _ => Vec::new(),
+        Ok(voice_agent_server::providers::VadProbability {
+            start_sample: input.start_sample,
+            end_sample: input.start_sample + 512,
+            probability: if self.frames == 1 { 1.0 } else { 0.0 },
         })
     }
 
@@ -396,9 +398,11 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
         first_audio,
         2,
         20,
-        Arc::clone(&runtime),
-        Arc::clone(&vad),
-        Arc::clone(&limiter),
+        SessionRuntimes {
+            asr: Arc::clone(&runtime),
+            vad: Arc::clone(&vad),
+            active_turn_limiter: Arc::clone(&limiter),
+        },
     )
     .unwrap();
     let mut second = SessionActor::new_with_runtimes_and_limiter(
@@ -407,9 +411,11 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
         second_audio,
         2,
         20,
-        runtime,
-        vad,
-        limiter,
+        SessionRuntimes {
+            asr: runtime,
+            vad,
+            active_turn_limiter: limiter,
+        },
     )
     .unwrap();
     let packet = uplink_packet();

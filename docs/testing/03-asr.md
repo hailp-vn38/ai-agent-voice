@@ -1,18 +1,19 @@
 # Testing 03 — ASR module
 
-## Mock HTTP contract
+## Streaming provider contract
 
-Mock server nên kiểm tra request audio metadata và trả response fixture.
+Fake provider phải mô phỏng `open → push_pcm* → partial* → finish → final`, với PCM 16 kHz và session state không share giữa hai stream.
 
 Cases:
 
 - success -> normalized text.
 - Vietnamese Unicode giữ nguyên.
-- upstream 401 -> `AsrError::Auth` hoặc mapped error.
-- 500 -> provider error.
-- invalid JSON -> provider protocol error.
 - timeout -> timeout error.
 - empty text -> actor không khởi tạo LLM turn.
+- `finish()` drain recognizer trước final.
+- partial thay đổi/coalesce chỉ là event nội bộ: không WebSocket, dialogue hoặc LLM.
+- final current-generation, non-empty enqueue đúng một `type:"stt"` trước LLM.
+- final empty/error/cancel/stale không gửi `stt`.
 
 ## Generation test
 
@@ -21,6 +22,13 @@ Cases:
 3. actor chuyển sang generation 11.
 4. ASR generation 10 trả về.
 5. assert không gửi STT và không gọi LLM.
+
+## Permit và lease test
+
+1. `SpeechStart`/`listen:start` acquire `AsrStreamLease` rồi mở stream.
+2. `SpeechEnd`/`listen:stop` không lấy được Active Turn permit.
+3. assert stream bị cancel, lease được release, không có `finish()`, STT hay LLM.
+4. final rỗng/lỗi/cancel release đúng các resource đang giữ.
 
 ## Command
 

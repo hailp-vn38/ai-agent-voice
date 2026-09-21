@@ -1,26 +1,25 @@
 use crate::{
     config::AppConfig,
     protocol::{
-        parse_client_message, ClientMessage, Firmware, OtaResponse, OtaWebsocket, ServerHello,
-        ServerTime,
+        ClientMessage, Firmware, OtaResponse, OtaWebsocket, ServerHello, ServerTime,
+        parse_client_message,
     },
     providers::ProviderSet,
-    session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent},
+    session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent, SessionRuntimes},
     workers::{AsrWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig, WorkerSupervisor},
 };
 use axum::{
+    Json, Router,
     extract::{
-        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::{
-    borrow::Cow,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -45,19 +44,19 @@ impl AppState {
         let asr_runtime = Arc::new(AsrWorkerRuntime::new(
             providers.asr_provider(),
             WorkerRuntimeConfig {
-                max_workers: config.providers.asr.max_workers,
-                command_capacity: config.providers.asr.command_queue_capacity,
-                final_timeout: Duration::from_millis(config.providers.asr.final_timeout_ms),
-                cleanup_grace: Duration::from_millis(config.providers.asr.cleanup_grace_ms),
+                max_workers: config.workers.asr.max_workers,
+                command_capacity: config.workers.asr.command_queue_capacity,
+                final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
+                cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
             },
         ));
         let vad_runtime = Arc::new(VadWorkerRuntime::new(
             providers.vad_provider(),
             WorkerRuntimeConfig {
-                max_workers: config.providers.vad.max_workers,
-                command_capacity: config.providers.vad.command_queue_capacity,
-                final_timeout: Duration::from_millis(config.providers.vad.reset_timeout_ms),
-                cleanup_grace: Duration::from_millis(config.providers.vad.cleanup_grace_ms),
+                max_workers: config.workers.vad.max_workers,
+                command_capacity: config.workers.vad.command_queue_capacity,
+                final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
+                cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
             },
         ));
         let worker_supervisor = Arc::new(WorkerSupervisor::start(
@@ -88,7 +87,7 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
 
 /// Builds the public application only after local provider validation and warmup succeed.
 pub fn application(config: AppConfig) -> Result<Router, crate::providers::ProviderLoadError> {
-    let providers = Arc::new(ProviderSet::load(&config.providers)?);
+    let providers = Arc::new(ProviderSet::load(&config)?);
     Ok(router_with_providers(config, providers))
 }
 
@@ -208,9 +207,11 @@ async fn handle_socket(
         audio_tx,
         config.max_capture_frames(),
         config.llm.max_history_messages,
-        asr_runtime,
-        vad_runtime,
-        active_turn_limiter,
+        SessionRuntimes {
+            asr: asr_runtime,
+            vad: vad_runtime,
+            active_turn_limiter,
+        },
     ) {
         Ok(actor) => actor,
         Err(error) => {
@@ -267,7 +268,7 @@ async fn handle_socket(
                     break;
                 }
                 if ingress_tx
-                    .try_send(SessionEvent::ClientAudio(payload))
+                    .try_send(SessionEvent::ClientAudio(payload.to_vec()))
                     .is_err()
                 {
                     debug!("dropped binary because bounded ingress is full or session is closed");
@@ -298,13 +299,13 @@ async fn send_outbound(
 ) -> bool {
     let closes = matches!(message, OutboundMessage::Close(_));
     let result = match message {
-        OutboundMessage::Text(text) => sender.send(Message::Text(text)).await,
-        OutboundMessage::Binary(bytes) => sender.send(Message::Binary(bytes)).await,
+        OutboundMessage::Text(text) => sender.send(Message::Text(text.into())).await,
+        OutboundMessage::Binary(bytes) => sender.send(Message::Binary(bytes.into())).await,
         OutboundMessage::Close(code) => {
             sender
                 .send(Message::Close(Some(CloseFrame {
                     code,
-                    reason: Cow::Borrowed(""),
+                    reason: "".into(),
                 })))
                 .await
         }
@@ -319,7 +320,7 @@ async fn close_direct(sender: &mut futures_util::stream::SplitSink<WebSocket, Me
     let _ = sender
         .send(Message::Close(Some(CloseFrame {
             code,
-            reason: Cow::Borrowed(""),
+            reason: "".into(),
         })))
         .await;
 }

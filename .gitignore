@@ -1,4 +1,6 @@
 xiaozhi-esp32-server-reference/
 /target/
 /config.toml
+/models/**
+!/models/manifest.toml
 .DS_Store

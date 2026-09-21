@@ -1,0 +1,35 @@
+# Authoritative artifact identities. Deployment config selects only these logical names.
+
+[[model]]
+identity = "silero_vad_v5"
+adapter = "silero_onnx"
+source = "https://github.com/snakers4/silero-vad"
+revision = "v5"
+license = "MIT"
+
+[[model.artifacts]]
+path = "models/vad/silero_vad.onnx"
+sha256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+
+[[model]]
+identity = "zipformer_vi_streaming"
+adapter = "zipformer_sherpa"
+source = "https://huggingface.co/hynt/Zipformer-30M-RNNT-Streaming-6000h"
+revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
+license = "CC-BY-NC-ND-4.0"
+
+[[model.artifacts]]
+path = "models/asr/zipformer-30m-vi/encoder.onnx"
+sha256 = "49577079b22ace4ade7a994743279ce9128c92803dd04b5e7ead809a30107358"
+
+[[model.artifacts]]
+path = "models/asr/zipformer-30m-vi/decoder.onnx"
+sha256 = "12274189a3ef638905e0d966a4f1ab090c96447f165190c4aa6b8053ac49b014"
+
+[[model.artifacts]]
+path = "models/asr/zipformer-30m-vi/joiner.onnx"
+sha256 = "54f469ec6841deca336e33808514640be9bc1cb222dedfda312cdb2155ae37df"
+
+[[model.artifacts]]
+path = "models/asr/zipformer-30m-vi/tokens.txt"
+sha256 = "ca8171f8bbd516c050b627582f2125c8f5f1f6ed967ab41b0fa9aae2cf61b492"

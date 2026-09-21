@@ -13,3 +13,4 @@
 ## Comments
 
 - Implemented worker-owned ASR/VAD runtime with identity-tagged events, acknowledgement-driven cleanup and quarantining; production WebSocket sessions share the application ASR runtime. Verified with `cargo fmt --check`, `cargo check --workspace`, and `cargo test --workspace` (the real-model reference-client smoke remains ignored because local model artifacts are absent).
+- Post-commit review found that actors competed for a global worker event receiver, disconnect could leak a stream lease, and final timeout did not close the affected session. The corrective implementation gives each Voice Session a routed mailbox, keeps `WorkerSupervisor` alive at application scope for VAD/ASR routing and timeout quarantine, cancels on actor drop, and emits `1011` for current ASR final/cleanup timeout. Regression tests cover all three cases.

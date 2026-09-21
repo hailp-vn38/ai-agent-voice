@@ -6,8 +6,8 @@ mod opus;
 mod vad_segmenter;
 
 pub use opus::{
-    AudioFrameDropReason, DecodeOutcome, DownlinkOpusEncoder, OpusPacket, UplinkOpusDecoder,
-    DOWNLINK_ENCODE_BUFFER_BYTES, MAX_UPLINK_OPUS_PACKET_BYTES,
+    AudioFrameDropReason, DOWNLINK_ENCODE_BUFFER_BYTES, DecodeOutcome, DownlinkOpusEncoder,
+    MAX_UPLINK_OPUS_PACKET_BYTES, OpusPacket, UplinkOpusDecoder,
 };
 pub use vad_segmenter::{VadBoundary, VadSegmenter};
 
@@ -47,6 +47,12 @@ pub struct PcmF32Mono {
 }
 
 impl PcmF32Mono {
+    pub fn new(samples: Vec<f32>, sample_rate_hz: u32) -> Self {
+        Self {
+            samples,
+            sample_rate_hz,
+        }
+    }
     pub fn from_uplink(frame: &UplinkPcmFrame) -> Self {
         Self {
             samples: frame

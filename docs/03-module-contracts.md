@@ -15,6 +15,7 @@ pub enum SessionEvent {
 }
 
 pub enum TurnEvent {
+    AsrPartial(AsrPartial),
     AsrFinal(AsrResult),
     Llm(LlmEvent),
     SpeechOutput(SpeechOutputEvent),
@@ -33,9 +34,23 @@ Actor phải bỏ mọi `SessionEvent::Turn` có `generation != current_generati
 Conceptual contract:
 
 ```rust
-#[async_trait]
+pub trait VadProvider: Send + Sync {
+    fn open(&self) -> Result<Box<dyn VadSession>, VadError>;
+}
+
+pub trait VadSession: Send {
+    fn push_pcm(&mut self, pcm: &[f32]) -> Result<Vec<VadFrame>, VadError>;
+    fn reset(&mut self) -> Result<(), VadError>;
+}
+
 pub trait AsrProvider: Send + Sync {
-    async fn transcribe(&self, req: AsrRequest) -> Result<AsrResult, AsrError>;
+    fn open(&self, request: AsrStartRequest) -> Result<Box<dyn AsrSession>, AsrError>;
+}
+
+pub trait AsrSession: Send {
+    fn push_pcm(&mut self, pcm: &[f32]) -> Result<Vec<AsrEvent>, AsrError>;
+    fn finish(&mut self) -> Result<AsrResult, AsrError>;
+    fn cancel(&mut self);
 }
 
 pub trait LlmProvider: Send + Sync {
@@ -47,9 +62,9 @@ pub trait TtsProvider: Send + Sync {
 }
 ```
 
-Trait không nhận `SessionActor`, WebSocket sender hoặc config global mutable.
+`VadProvider` trả probability/frame metadata; `VadSegmenter` ở core sở hữu `min_speech_ms`, `end_silence_ms`, pre-roll và endpoint semantics. `AsrProvider` canonical là streaming: adapter offline/HTTP tương lai có thể buffer trong `push_pcm()` rồi infer ở `finish()`, nhưng không đổi contract. Trait không nhận `SessionActor`, WebSocket sender hoặc config global mutable.
 
-VAD V1 là implementation local bên trong `audio/`, không phải Seam provider. Chỉ tạo `VadProvider` khi có ít nhất hai Adapter cần hỗ trợ; tránh tạo một Interface giả định.
+Phase 3 default dùng `silero_onnx` local Rust cho VAD và `zipformer_sherpa` local Rust cho ASR; không có Python sidecar hoặc HTTP ASR trong baseline. Provider event chỉ quay về actor qua bounded worker boundary và phải mang Voice Session identity cùng generation khi thuộc turn.
 
 ## 3. SpeechOutput contract
 
@@ -92,22 +107,24 @@ pub enum OutboundPayload {
 
 Actor là producer duy nhất của outbound message. WS writer nhận control và audio qua hai queue bounded riêng, ưu tiên control hợp lệ, và giữ `GenerationGate` read-only để drop mọi `Turn` không còn là generation hiện tại. Actor cập nhật gate trước rồi enqueue `SessionControl(tts:stop)`; packet cũ đã xếp hàng bị drop trước stop. `tts:start` phải được writer gửi trước AudioPacket đầu tiên của generation.
 
+`AsrPartial` là internal-only: có thể coalesce nhưng không đi vào dialogue, không khởi động LLM và không tạo WebSocket message. Chỉ `AsrFinal` current-generation với `text.trim()` non-empty mới commit user utterance, enqueue đúng một message V1 hiện có `{"session_id":"...","type":"stt","text":"..."}`, rồi bắt đầu LLM. Final rỗng, lỗi, cancel hoặc stale không gửi `stt`; V1 không thêm `stt_partial`, `asr_partial`, `asr_final`, `vad_start`, `vad_stop` hay field wire mới.
+
 ## 5. Audio và queue invariants
 
 - Uplink V1: raw Opus packet.
 - Uplink Canonical Audio Profile: raw Opus 16 kHz, mono, 60 ms; validate ở hello trước Ready.
-- PCM internal chỉ có `Pcm16Mono(Vec<i16>)`; `UplinkPcmFrame`, `DownlinkPcmFrame` và `UplinkAudioUtterance` bọc type này để biểu thị boundary semantic, không lặp sample rate/channels và không để `Vec<i16>` lan trong domain. Constructors frame chỉ nhận đúng 960 samples uplink hoặc 1.440 samples downlink; `UplinkAudioUtterance` có độ dài biến thiên trong giới hạn capture.
-- Phase 2 giữ xử lý audio theo thứ tự trong `SessionActor`: actor sở hữu private `UplinkOpusDecoder` và `ManualCapture` nhưng không biết type `opus2`, PCM storage hay capacity calculation. Chỉ tách audio worker khi profiling cho thấy decode/VAD làm block actor đáng kể.
+- PCM canonical ở core là `Pcm16Mono`; `UplinkPcmFrame`, `DownlinkPcmFrame` và `UplinkAudioUtterance` bọc type này để biểu thị boundary semantic. Provider VAD/ASR nhận conversion `PcmF32Mono` có sample rate tường minh, không nhận `Vec<u8>`. Constructors frame chỉ nhận đúng 960 samples uplink hoặc 1.440 samples downlink; `UplinkAudioUtterance` có độ dài biến thiên trong giới hạn capture.
+- Phase 3 đưa local inference qua worker boundary bounded để không block Tokio executor. `AsrStreamLease` được lấy lúc `SpeechStart` (Auto) hoặc `listen:start` (Manual); `Active Turn` permit chỉ được lấy ở `SpeechEnd` hoặc `listen:stop`, trước `AsrSession.finish()`. Không có permit thì cancel stream và release lease, không xếp chờ.
 - Decoder trả `DecodeOutcome::Frame(UplinkPcmFrame)` hoặc `DecodeOutcome::Dropped(AudioFrameDropReason)` cho packet rỗng, packet vượt `MAX_UPLINK_OPUS_PACKET_BYTES = 4.000`, decode lỗi và sample count sai. `AudioFrameDropReason` phân biệt `EmptyPacket`, `PacketTooLarge`, `DecodeError` và `InvalidSampleCount`; đây là local frame fault expected, actor chỉ ghi tracing metadata privacy-safe rồi tiếp tục. 4.000 bytes uplink là V1 implementation policy, không phải giới hạn format Opus. `DownlinkOpusEncoder` chỉ nhận `DownlinkPcmFrame`.
 - `DownlinkOpusEncoder` dùng profile implementation constant: VoIP, 32 kbps, VBR/constrained VBR bật, DTX/FEC tắt, packet-loss percent 0 và complexity 10. Không lấy các controls này từ config ở Phase 2. Encoder luôn dùng `DOWNLINK_ENCODE_BUFFER_BYTES = 4.000`, tách cả `MAX_UPLINK_OPUS_PACKET_BYTES` lẫn `websocket.max_frame_bytes`; `encode(DownlinkPcmFrame)` trả `Result<OpusPacket, AudioCodecError>`; encoder error, packet rỗng và packet lớn hơn transport cap là internal delivery failure, không phải local frame drop và không đóng WS 1009.
 - Downlink Canonical Audio Profile: Opus 24 kHz, mono, 60 ms. Provider PCM có thể normalize/resample nội bộ về profile này.
 - Pacer không được nhận unbounded queue.
-- Ingress WS, command của ASR/LLM/TTS và outbound đều phải bounded, có capacity và hành vi khi đầy. Uplink frame khi đầy bị drop + telemetry; TTS producer bị backpressure; outbound đầy là lỗi turn có kiểm soát.
+- Ingress WS, command của VAD/ASR/LLM/TTS và outbound đều phải bounded, có capacity và hành vi khi đầy. VAD ingress đầy có thể drop frame + telemetry; ASR ingress đầy là controlled recognition failure, không drop ngẫu nhiên PCM rồi coi transcript hợp lệ; TTS producer bị backpressure; outbound đầy là lỗi turn có kiểm soát.
 
 ## 6. Dialogue invariants
 
 - `system` luôn ở đầu logical prompt.
-- Commit user utterance sau ASR final hợp lệ.
+- `DialogueHistory` thuộc Voice Session, bounded bởi `llm.max_history_messages` và RAM-only; actor chỉ gọi `commit_user`, còn eviction thuộc history. Commit user utterance sau ASR final non-empty hợp lệ, trước enqueue STT, kể cả khi outbound sau đó lỗi.
 - Chỉ commit assistant response vào history sau `SpeechOutputEvent::Drained`; generated response bị cancel/lỗi không phải response đã delivered.
 - Với LLM-visible Tool, buffer toàn bộ LLM round; prose của round có tool call không được gửi vào SpeechOutput.
 - Tool call/result phải theo đúng ordering của LLM API.

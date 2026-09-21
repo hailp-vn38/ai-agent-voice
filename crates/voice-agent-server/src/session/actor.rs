@@ -1,6 +1,9 @@
-use crate::session::{event::SessionEvent, turn::DialogueHistory, ActiveTurnLimiter, SessionPhase};
+use crate::session::{ActiveTurnLimiter, SessionPhase, event::SessionEvent, turn::DialogueHistory};
 use crate::{
-    audio::{CaptureOutcome, DecodeOutcome, ManualCapture, PcmF32Mono, UplinkOpusDecoder},
+    audio::{
+        CaptureOutcome, DecodeOutcome, ManualCapture, PcmF32Mono, UplinkOpusDecoder, VadBoundary,
+        VadSegmenter,
+    },
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::ProviderSet,
     workers::{
@@ -25,6 +28,7 @@ pub struct SessionActor {
     vad_session: Option<(VadWorkerLease, WorkerIdentity)>,
     listening_mode: Option<ListenMode>,
     auto_speech_active: bool,
+    vad_segmenter: VadSegmenter,
     auto_preroll: Vec<PcmF32Mono>,
     max_capture_frames: usize,
     active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
@@ -33,6 +37,13 @@ pub struct SessionActor {
     dialogue_history: DialogueHistory,
     control_tx: mpsc::Sender<OutboundMessage>,
     _audio_tx: mpsc::Sender<OutboundMessage>,
+}
+
+/// Application-owned runtimes shared by every voice session.
+pub struct SessionRuntimes {
+    pub asr: std::sync::Arc<AsrWorkerRuntime>,
+    pub vad: std::sync::Arc<VadWorkerRuntime>,
+    pub active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,9 +148,11 @@ impl SessionActor {
             audio_tx,
             max_capture_frames,
             max_history_messages,
-            asr_runtime,
-            vad_runtime,
-            std::sync::Arc::new(ActiveTurnLimiter::new(8)),
+            SessionRuntimes {
+                asr: asr_runtime,
+                vad: vad_runtime,
+                active_turn_limiter: std::sync::Arc::new(ActiveTurnLimiter::new(8)),
+            },
         )
     }
 
@@ -149,29 +162,28 @@ impl SessionActor {
         audio_tx: mpsc::Sender<OutboundMessage>,
         max_capture_frames: usize,
         max_history_messages: usize,
-        asr_runtime: std::sync::Arc<AsrWorkerRuntime>,
-        vad_runtime: std::sync::Arc<VadWorkerRuntime>,
-        active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
+        runtimes: SessionRuntimes,
     ) -> Result<Self, crate::audio::AudioError> {
-        let asr_events = asr_runtime.register_session(&session_id);
-        let vad_events = vad_runtime.register_session(&session_id);
+        let asr_events = runtimes.asr.register_session(&session_id);
+        let vad_events = runtimes.vad.register_session(&session_id);
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
             accepted_binary_frames: 0,
             uplink_decoder: UplinkOpusDecoder::new()?,
             manual_capture: ManualCapture::new(max_capture_frames)?,
-            asr_runtime,
+            asr_runtime: runtimes.asr,
             asr_events,
             asr_stream: None,
-            vad_runtime,
+            vad_runtime: runtimes.vad,
             vad_events,
             vad_session: None,
             listening_mode: None,
             auto_speech_active: false,
+            vad_segmenter: VadSegmenter::new(),
             auto_preroll: Vec::with_capacity(max_capture_frames),
             max_capture_frames,
-            active_turn_limiter,
+            active_turn_limiter: runtimes.active_turn_limiter,
             has_active_turn_permit: false,
             generation: 0,
             dialogue_history: DialogueHistory::new(max_history_messages),
@@ -255,10 +267,14 @@ impl SessionActor {
                         Ok(lease) => {
                             self.vad_session = Some((lease, identity));
                             self.auto_speech_active = false;
+                            self.vad_segmenter.reset();
                             self.auto_preroll.clear();
                             self.phase = SessionPhase::Listening;
                         }
-                        Err(_) => self.phase = SessionPhase::Ready,
+                        Err(_) => {
+                            self.phase = SessionPhase::Closed;
+                            let _ = self.control_tx.try_send(OutboundMessage::Close(1013));
+                        }
                     },
                     ListenMode::Realtime => self.phase = SessionPhase::Ready,
                 }
@@ -349,6 +365,7 @@ impl SessionActor {
     fn on_vad_event(&mut self, event: VadWorkerEvent) {
         let identity = match &event {
             VadWorkerEvent::Opened { identity }
+            | VadWorkerEvent::Probability { identity, .. }
             | VadWorkerEvent::SpeechStart { identity }
             | VadWorkerEvent::SpeechEnd { identity }
             | VadWorkerEvent::ResetDone { identity }
@@ -362,6 +379,19 @@ impl SessionActor {
             .as_ref()
             .is_some_and(|(_, active)| active == identity);
         match event {
+            VadWorkerEvent::Probability { probability, .. } if current => {
+                match self.vad_segmenter.observe(probability >= 0.5) {
+                    Some(VadBoundary::SpeechStart) => {
+                        self.on_vad_event(VadWorkerEvent::SpeechStart {
+                            identity: identity.clone(),
+                        })
+                    }
+                    Some(VadBoundary::SpeechEnd) => self.on_vad_event(VadWorkerEvent::SpeechEnd {
+                        identity: identity.clone(),
+                    }),
+                    None => {}
+                }
+            }
             VadWorkerEvent::SpeechStart { .. } if current && !self.auto_speech_active => {
                 self.auto_speech_active = true;
                 let identity =
@@ -393,6 +423,7 @@ impl SessionActor {
             }
             VadWorkerEvent::ResetDone { .. } if current => {
                 self.auto_preroll.clear();
+                self.vad_segmenter.reset();
                 self.phase = SessionPhase::Listening;
             }
             VadWorkerEvent::Closed { .. } if current => self.vad_session = None,
@@ -410,10 +441,10 @@ impl SessionActor {
     fn complete_recognition(&mut self) {
         self.release_active_turn();
         if self.listening_mode == Some(ListenMode::Auto) && self.vad_session.is_some() {
-            if let Some((lease, _)) = self.vad_session {
-                if self.vad_runtime.send(lease, VadCommand::Reset).is_err() {
-                    self.fail_closed();
-                }
+            if let Some((lease, _)) = self.vad_session
+                && self.vad_runtime.send(lease, VadCommand::Reset).is_err()
+            {
+                self.fail_closed();
             }
         } else {
             self.phase = SessionPhase::Ready;
@@ -496,7 +527,7 @@ impl SessionActor {
                         match self.vad_runtime.send(lease, VadCommand::Push(pcm.clone())) {
                             Ok(()) => {}
                             Err(crate::workers::VadWorkerError::QueueFull) => {
-                                tracing::debug!(event = "vad_input_dropped", session_id = %self.session_id, "VAD input queue is full");
+                                self.fail_closed();
                                 return false;
                             }
                             Err(_) => {

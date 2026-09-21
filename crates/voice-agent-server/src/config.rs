@@ -17,24 +17,102 @@ pub struct AppConfig {
     #[serde(default)]
     pub providers: ProvidersConfig,
     #[serde(default)]
+    pub workers: WorkersConfig,
+    #[serde(default)]
+    pub deployment: DeploymentConfig,
+    #[serde(default)]
+    pub runtime: RuntimeConfig,
+    #[serde(default)]
     pub llm: LlmConfig,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProvidersConfig {
     pub vad: VadProviderConfig,
     pub asr: AsrProviderConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VadProviderConfig {
     #[serde(default = "default_vad_adapter")]
     pub adapter: String,
     #[serde(default = "default_vad_model")]
-    pub model: std::path::PathBuf,
+    pub model: String,
+    #[serde(default)]
+    pub silero_onnx: Option<SileroOnnxConfig>,
+}
+
+impl Default for VadProviderConfig {
+    fn default() -> Self {
+        Self {
+            adapter: default_vad_adapter(),
+            model: default_vad_model(),
+            silero_onnx: Some(SileroOnnxConfig::default()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SileroOnnxConfig {
     #[serde(default = "default_provider_threads")]
     pub num_threads: i32,
-    #[serde(default = "default_worker_count")]
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsrProviderConfig {
+    #[serde(default = "default_asr_adapter")]
+    pub adapter: String,
+    #[serde(default = "default_asr_model")]
+    pub model: String,
+    #[serde(default)]
+    pub zipformer_sherpa: Option<ZipformerSherpaConfig>,
+}
+
+impl Default for AsrProviderConfig {
+    fn default() -> Self {
+        Self {
+            adapter: default_asr_adapter(),
+            model: default_asr_model(),
+            zipformer_sherpa: Some(ZipformerSherpaConfig::default()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZipformerSherpaConfig {
+    #[serde(default = "default_asr_threads")]
+    pub num_threads: i32,
+    #[serde(default = "default_decoding_method")]
+    pub decoding_method: String,
+}
+
+impl Default for ZipformerSherpaConfig {
+    fn default() -> Self {
+        Self {
+            num_threads: default_asr_threads(),
+            decoding_method: default_decoding_method(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkersConfig {
+    #[serde(default)]
+    pub vad: VadWorkerConfig,
+    #[serde(default)]
+    pub asr: AsrWorkerConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VadWorkerConfig {
+    #[serde(default = "default_vad_worker_count")]
     pub max_workers: usize,
     #[serde(default = "default_worker_queue_capacity")]
     pub command_queue_capacity: usize,
@@ -44,13 +122,10 @@ pub struct VadProviderConfig {
     pub cleanup_grace_ms: u64,
 }
 
-impl Default for VadProviderConfig {
+impl Default for VadWorkerConfig {
     fn default() -> Self {
         Self {
-            adapter: default_vad_adapter(),
-            model: default_vad_model(),
-            num_threads: default_provider_threads(),
-            max_workers: default_worker_count(),
+            max_workers: default_vad_worker_count(),
             command_queue_capacity: default_worker_queue_capacity(),
             reset_timeout_ms: default_vad_reset_timeout_ms(),
             cleanup_grace_ms: default_cleanup_grace_ms(),
@@ -59,14 +134,9 @@ impl Default for VadProviderConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct AsrProviderConfig {
-    #[serde(default = "default_asr_adapter")]
-    pub adapter: String,
-    #[serde(default = "default_asr_model_dir")]
-    pub model_dir: std::path::PathBuf,
-    #[serde(default = "default_provider_threads")]
-    pub num_threads: i32,
-    #[serde(default = "default_worker_count")]
+#[serde(deny_unknown_fields)]
+pub struct AsrWorkerConfig {
+    #[serde(default = "default_asr_worker_count")]
     pub max_workers: usize,
     #[serde(default = "default_worker_queue_capacity")]
     pub command_queue_capacity: usize,
@@ -76,18 +146,66 @@ pub struct AsrProviderConfig {
     pub cleanup_grace_ms: u64,
 }
 
-impl Default for AsrProviderConfig {
+impl Default for AsrWorkerConfig {
     fn default() -> Self {
         Self {
-            adapter: default_asr_adapter(),
-            model_dir: default_asr_model_dir(),
-            num_threads: default_provider_threads(),
-            max_workers: default_worker_count(),
+            max_workers: default_asr_worker_count(),
             command_queue_capacity: default_worker_queue_capacity(),
             final_timeout_ms: default_asr_final_timeout_ms(),
             cleanup_grace_ms: default_cleanup_grace_ms(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeploymentConfig {
+    #[serde(default = "default_manifest_path")]
+    pub model_manifest: std::path::PathBuf,
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub model_acknowledgements: Vec<ModelAcknowledgement>,
+}
+
+impl Default for DeploymentConfig {
+    fn default() -> Self {
+        Self {
+            model_manifest: default_manifest_path(),
+            profile: "development-noncommercial".into(),
+            model_acknowledgements: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeConfig {
+    #[serde(default)]
+    pub onnx: OnnxRuntimeConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OnnxRuntimeConfig {
+    #[serde(default = "default_onnx_runtime_library")]
+    pub library: std::path::PathBuf,
+}
+
+impl Default for OnnxRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            library: default_onnx_runtime_library(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelAcknowledgement {
+    pub model: String,
+    pub revision: String,
+    pub license: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -211,20 +329,35 @@ fn default_max_active_turns() -> usize {
 fn default_vad_adapter() -> String {
     "silero_onnx".into()
 }
-fn default_vad_model() -> std::path::PathBuf {
-    "models/vad/silero_vad.onnx".into()
+fn default_vad_model() -> String {
+    "silero_vad_v5".into()
 }
 fn default_asr_adapter() -> String {
     "zipformer_sherpa".into()
 }
-fn default_asr_model_dir() -> std::path::PathBuf {
-    "models/asr/zipformer-30m-vi".into()
+fn default_asr_model() -> String {
+    "zipformer_vi_streaming".into()
 }
 fn default_provider_threads() -> i32 {
     1
 }
-fn default_worker_count() -> usize {
-    8
+fn default_vad_worker_count() -> usize {
+    4
+}
+fn default_asr_worker_count() -> usize {
+    2
+}
+fn default_asr_threads() -> i32 {
+    2
+}
+fn default_decoding_method() -> String {
+    "greedy_search".into()
+}
+fn default_manifest_path() -> std::path::PathBuf {
+    "models/manifest.toml".into()
+}
+fn default_onnx_runtime_library() -> std::path::PathBuf {
+    "runtime/onnxruntime/libonnxruntime.dylib".into()
 }
 fn default_worker_queue_capacity() -> usize {
     32
@@ -309,17 +442,46 @@ impl AppConfig {
                 "llm.max_history_messages must be positive".into(),
             ));
         }
-        if self.providers.asr.max_workers == 0
-            || self.providers.asr.command_queue_capacity == 0
-            || self.providers.asr.final_timeout_ms == 0
-            || self.providers.asr.cleanup_grace_ms == 0
-            || self.providers.vad.max_workers == 0
-            || self.providers.vad.command_queue_capacity == 0
-            || self.providers.vad.reset_timeout_ms == 0
-            || self.providers.vad.cleanup_grace_ms == 0
+        if self.workers.asr.max_workers == 0
+            || self.workers.asr.command_queue_capacity == 0
+            || self.workers.asr.final_timeout_ms == 0
+            || self.workers.asr.cleanup_grace_ms == 0
+            || self.workers.vad.max_workers == 0
+            || self.workers.vad.command_queue_capacity == 0
+            || self.workers.vad.reset_timeout_ms == 0
+            || self.workers.vad.cleanup_grace_ms == 0
         {
             return Err(ConfigError::Validation(
                 "VAD/ASR worker capacities and timeouts must be positive".into(),
+            ));
+        }
+        if self.providers.vad.adapter != "silero_onnx" || self.providers.vad.silero_onnx.is_none() {
+            return Err(ConfigError::Validation(
+                "providers.vad must select silero_onnx with its typed configuration".into(),
+            ));
+        }
+        if self.providers.asr.adapter != "zipformer_sherpa"
+            || self.providers.asr.zipformer_sherpa.is_none()
+        {
+            return Err(ConfigError::Validation(
+                "providers.asr must select zipformer_sherpa with its typed configuration".into(),
+            ));
+        }
+        if self.providers.vad.model.is_empty() || self.providers.asr.model.is_empty() {
+            return Err(ConfigError::Validation(
+                "provider model identities must be non-empty".into(),
+            ));
+        }
+        if self.deployment.profile.is_empty()
+            || self.deployment.model_manifest.as_os_str().is_empty()
+        {
+            return Err(ConfigError::Validation(
+                "deployment profile and model manifest must be set".into(),
+            ));
+        }
+        if self.runtime.onnx.library.as_os_str().is_empty() {
+            return Err(ConfigError::Validation(
+                "runtime.onnx.library must be set".into(),
             ));
         }
         Ok(())

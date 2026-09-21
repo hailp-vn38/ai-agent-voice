@@ -4,18 +4,18 @@ use std::sync::Arc;
 use tokio::{
     net::TcpListener,
     task::JoinHandle,
-    time::{timeout, Duration},
+    time::{Duration, timeout},
 };
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{client::IntoClientRequest, Message},
+    tungstenite::{Message, client::IntoClientRequest},
 };
 use url::Url;
 use voice_agent_server::{
     app::router_with_providers,
     config::{
-        AppConfig, AudioConfig, AuthConfig, LimitsConfig, LlmConfig, ProvidersConfig, ServerConfig,
-        WebsocketConfig,
+        AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
+        ProvidersConfig, RuntimeConfig, ServerConfig, WebsocketConfig, WorkersConfig,
     },
     providers::ProviderSet,
 };
@@ -34,6 +34,9 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
         websocket: WebsocketConfig { max_frame_bytes },
         limits: LimitsConfig::default(),
         providers: ProvidersConfig::default(),
+        workers: WorkersConfig::default(),
+        deployment: DeploymentConfig::default(),
+        runtime: RuntimeConfig::default(),
         llm: LlmConfig::default(),
     };
     let app: Router = router_with_providers(config, Arc::new(ProviderSet::unavailable()));
@@ -101,7 +104,7 @@ async fn ota_advertises_ws_url_and_health_is_available() {
 async fn valid_hello_receives_canonical_server_hello() {
     let (base, task) = start(1_024).await;
     let (mut socket, _) = connect_async(request(&base)).await.unwrap();
-    socket.send(Message::Text(hello())).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
     let message = match next_message(&mut socket).await {
         Message::Text(text) => text,
         other => panic!("expected ServerHello, got {other:?}"),
@@ -116,7 +119,10 @@ async fn valid_hello_receives_canonical_server_hello() {
 async fn binary_before_hello_closes_with_protocol_error() {
     let (base, task) = start(1_024).await;
     let (mut socket, _) = connect_async(request(&base)).await.unwrap();
-    socket.send(Message::Binary(vec![1, 2, 3])).await.unwrap();
+    socket
+        .send(Message::Binary(vec![1, 2, 3].into()))
+        .await
+        .unwrap();
     match next_message(&mut socket).await {
         Message::Close(Some(frame)) => assert_eq!(u16::from(frame.code), 1002),
         other => panic!("expected protocol close, got {other:?}"),
@@ -128,9 +134,12 @@ async fn binary_before_hello_closes_with_protocol_error() {
 async fn oversized_post_handshake_frame_closes_with_1009() {
     let (base, task) = start(1_024).await;
     let (mut socket, _) = connect_async(request(&base)).await.unwrap();
-    socket.send(Message::Text(hello())).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
     let _ = next_message(&mut socket).await;
-    socket.send(Message::Binary(vec![0; 1_025])).await.unwrap();
+    socket
+        .send(Message::Binary(vec![0; 1_025].into()))
+        .await
+        .unwrap();
     match next_message(&mut socket).await {
         Message::Close(Some(frame)) => assert_eq!(u16::from(frame.code), 1009),
         other => panic!("expected too-large close, got {other:?}"),

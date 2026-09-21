@@ -84,11 +84,11 @@ V1 không hỗ trợ acoustic barge-in khi Speaking: raw microphone audio và VA
 
 WS writer dùng hai queue bounded cho control và audio; control hợp lệ ưu tiên audio. Audio luôn mang generation ID, `tts:start` phải đứng trước Opus đầu tiên của turn và không Opus nào của turn được tới WebSocket sau `tts:stop`.
 
-Sau `tts:stop`, manual mode vào `Ready` (giữ WS/session nhưng không nhận mic), còn auto mode vào `Listening`. Active Turn chỉ acquire sau utterance hoàn tất, ngay trước ASR; không có permit thì từ chối turn ngay. Tool-capable LLM round buffer toàn bộ và chỉ TTS final no-tool round.
+Sau `tts:stop`, manual mode vào `Ready` (giữ WS/session nhưng không nhận mic), còn auto mode vào `Listening`. `AsrStreamLease` được acquire khi recognition stream bắt đầu; Active Turn chỉ acquire tại utterance terminal boundary, trước ASR finalization. Không có permit thì cancel stream và bỏ turn ngay. Tool-capable LLM round buffer toàn bộ và chỉ TTS final no-tool round.
 
 Audio V1 dùng Canonical Audio Profile cố định: uplink raw Opus/16 kHz/mono/60 ms và downlink Opus/24 kHz/mono/60 ms; mismatch đóng WS 1002 trước Ready. Provider operation không automatic retry. Telemetry chỉ chứa metadata vận hành không nhạy cảm qua Trace Session ID ngẫu nhiên; dialogue chỉ tồn tại trong RAM của Voice Session.
 
-History giới hạn theo message count và prompt token budget, eviction theo Exchange Atom cũ nhất. V1 pin ba adapter OpenAI-compatible concrete: transcription WAV multipart, Chat Completions SSE/function tools và speech WAV; tool-level failure đã sanitize quay lại LLM, còn session/cancellation failure là terminal. Config immutable theo process; shutdown gửi cleanup control và close bounded trước khi force terminate.
+History giới hạn theo message count và prompt token budget, eviction theo Exchange Atom cũ nhất. Phase 3 pin Silero ONNX local cho VAD và Zipformer/sherpa-onnx local cho streaming ASR; LLM/TTS vẫn dùng các adapter OpenAI-compatible concrete. ASR partial chỉ nội bộ; final non-empty current-generation phát đúng một `type:"stt"` hiện có trước LLM. Tool-level failure đã sanitize quay lại LLM, còn session/cancellation failure là terminal. Config immutable theo process; shutdown gửi cleanup control và close bounded trước khi force terminate.
 
 Device tool batch chạy tuần tự theo LLM order. ASR text rỗng là `CompletedSilent`; final LLM text rỗng hoặc TTS không tạo audio hợp lệ là `Failed`. `tts:start` chỉ được gửi khi AudioPacket hợp lệ đầu tiên đã sẵn sàng, nên không cần `tts:stop` cho TTS không từng phát được audio.
 

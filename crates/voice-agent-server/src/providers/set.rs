@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    config::ProvidersConfig,
+    config::AppConfig,
     providers::{
-        asr::UnavailableAsr, registry, vad::UnavailableVad, AsrError, AsrProvider, AsrSession,
-        ProviderCapabilities, ProviderLoadError, VadProvider,
+        AsrError, AsrProvider, AsrSession, ProviderLoadError, VadProvider, asr::UnavailableAsr,
+        loader, vad::UnavailableVad,
     },
 };
 
@@ -33,16 +33,10 @@ impl ProviderSet {
     pub fn vad_adapter(&self) -> &'static str {
         self.vad.adapter()
     }
-    pub fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            vad_adapter: self.vad.adapter(),
-            asr_adapter: "zipformer_sherpa",
-        }
-    }
     pub fn unavailable() -> Self {
         Self::new(Arc::new(UnavailableAsr))
     }
-    pub fn load(config: &ProvidersConfig) -> Result<Self, ProviderLoadError> {
-        registry::load_local(config)
+    pub fn load(config: &AppConfig) -> Result<Self, ProviderLoadError> {
+        loader::load_local(config)
     }
 }

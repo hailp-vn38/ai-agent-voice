@@ -1,6 +1,6 @@
 use super::{
-    AudioError, DownlinkPcmFrame, Pcm16Mono, UplinkPcmFrame, DOWNLINK_FRAME_SAMPLES,
-    UPLINK_FRAME_SAMPLES,
+    AudioError, DOWNLINK_FRAME_SAMPLES, DownlinkPcmFrame, Pcm16Mono, UPLINK_FRAME_SAMPLES,
+    UplinkPcmFrame,
 };
 use opus2::{Application, Bitrate, Channels, Decoder, Encoder};
 

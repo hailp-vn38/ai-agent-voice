@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::Instant,
 };
@@ -8,7 +8,7 @@ use tokio::sync::mpsc as session_mpsc;
 
 use crate::{
     audio::PcmF32Mono,
-    providers::{VadEvent, VadProvider},
+    providers::{VadInput, VadProvider},
 };
 
 use super::{WorkerIdentity, WorkerRuntimeConfig};
@@ -23,16 +23,36 @@ pub enum VadCommand {
     Close,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VadWorkerEvent {
-    Opened { identity: WorkerIdentity },
-    SpeechStart { identity: WorkerIdentity },
-    SpeechEnd { identity: WorkerIdentity },
-    ResetDone { identity: WorkerIdentity },
-    Closed { identity: WorkerIdentity },
-    Failed { identity: WorkerIdentity },
-    ResetTimedOut { identity: WorkerIdentity },
-    CleanupTimedOut { identity: WorkerIdentity },
+    Opened {
+        identity: WorkerIdentity,
+    },
+    Probability {
+        identity: WorkerIdentity,
+        probability: f32,
+    },
+    SpeechStart {
+        identity: WorkerIdentity,
+    },
+    SpeechEnd {
+        identity: WorkerIdentity,
+    },
+    ResetDone {
+        identity: WorkerIdentity,
+    },
+    Closed {
+        identity: WorkerIdentity,
+    },
+    Failed {
+        identity: WorkerIdentity,
+    },
+    ResetTimedOut {
+        identity: WorkerIdentity,
+    },
+    CleanupTimedOut {
+        identity: WorkerIdentity,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +104,10 @@ impl VadWorkerRuntime {
             events_tx,
             routes: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn runtime_config(&self) -> WorkerRuntimeConfig {
+        self.config.clone()
     }
 
     /// Registers one actor mailbox for a complete Auto cycle. Worker events are routed by
@@ -142,7 +166,7 @@ impl VadWorkerRuntime {
                 }
             }
             VadCommand::Push(_) if !matches!(slot.state, SlotState::Active) => {
-                return Err(VadWorkerError::UnknownLease)
+                return Err(VadWorkerError::UnknownLease);
             }
             VadCommand::Push(_) => {}
         }
@@ -221,13 +245,13 @@ impl VadWorkerRuntime {
             .slots
             .iter()
             .find_map(|(lease, slot)| (slot.identity == *identity).then_some(*lease));
-        if let Some(lease) = lease {
-            if !matches!(
+        if let Some(lease) = lease
+            && !matches!(
                 state.slots.get(&lease).map(|slot| &slot.state),
                 Some(SlotState::Quarantined)
-            ) {
-                state.slots.remove(&lease);
-            }
+            )
+        {
+            state.slots.remove(&lease);
         }
     }
 
@@ -235,6 +259,7 @@ impl VadWorkerRuntime {
         self.observe(&event);
         let session = match &event {
             VadWorkerEvent::Opened { identity }
+            | VadWorkerEvent::Probability { identity, .. }
             | VadWorkerEvent::SpeechStart { identity }
             | VadWorkerEvent::SpeechEnd { identity }
             | VadWorkerEvent::ResetDone { identity }
@@ -273,31 +298,39 @@ fn run_worker(
     {
         return;
     }
+    let mut rechunker = VadRechunker::default();
     while let Ok(command) = commands.recv() {
         match command {
-            VadCommand::Push(pcm) => match session.push_pcm(&pcm) {
-                Ok(provider_events) => {
-                    for event in provider_events {
-                        let event = match event {
-                            VadEvent::SpeechStart => VadWorkerEvent::SpeechStart {
-                                identity: identity.clone(),
-                            },
-                            VadEvent::SpeechEnd => VadWorkerEvent::SpeechEnd {
-                                identity: identity.clone(),
-                            },
-                        };
-                        if events.send(event).is_err() {
+            VadCommand::Push(pcm) => {
+                let inputs = match rechunker.push(pcm) {
+                    Ok(inputs) => inputs,
+                    Err(()) => {
+                        let _ = events.send(VadWorkerEvent::Failed { identity });
+                        return;
+                    }
+                };
+                for input in inputs {
+                    let probability = match session.push(input) {
+                        Ok(probability) => probability,
+                        Err(_) => {
+                            let _ = events.send(VadWorkerEvent::Failed { identity });
                             return;
                         }
+                    };
+                    if events
+                        .send(VadWorkerEvent::Probability {
+                            identity: identity.clone(),
+                            probability: probability.probability,
+                        })
+                        .is_err()
+                    {
+                        return;
                     }
                 }
-                Err(_) => {
-                    let _ = events.send(VadWorkerEvent::Failed { identity });
-                    return;
-                }
-            },
+            }
             VadCommand::Reset => match session.reset() {
                 Ok(()) => {
+                    rechunker.reset();
                     let _ = events.send(VadWorkerEvent::ResetDone {
                         identity: identity.clone(),
                     });
@@ -318,5 +351,35 @@ fn run_worker(
                 }
             },
         }
+    }
+}
+
+/// Keeps the 960-sample transport timeline separate from Silero's 512-sample contract.
+#[derive(Default)]
+struct VadRechunker {
+    pending: Vec<f32>,
+    next_sample: u64,
+}
+
+impl VadRechunker {
+    fn push(&mut self, pcm: PcmF32Mono) -> Result<Vec<VadInput>, ()> {
+        if pcm.sample_rate_hz() != 16_000 || pcm.samples().len() != 960 {
+            return Err(());
+        }
+        self.pending.extend_from_slice(pcm.samples());
+        let mut frames = Vec::new();
+        while self.pending.len() >= 512 {
+            let samples = self.pending.drain(..512).collect();
+            frames.push(VadInput {
+                pcm: samples,
+                start_sample: self.next_sample,
+            });
+            self.next_sample += 512;
+        }
+        Ok(frames)
+    }
+    fn reset(&mut self) {
+        self.pending.clear();
+        self.next_sample = 0;
     }
 }

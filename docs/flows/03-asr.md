@@ -1,19 +1,10 @@
-# Flow 03 — ASR
+# Flow 03 — Streaming ASR
 
 ## 1. Boundary
 
-ASR chỉ nhận một `UplinkAudioUtterance` đã hoàn tất ở V1.
+ASR Phase 3 là streaming nội bộ: `AsrProvider::open()` tạo `AsrSession`; `push_pcm()` nhận PCM 16 kHz khi người dùng đang nói và có thể trả `AsrPartial`; `finish()` drain recognizer rồi trả đúng một `AsrFinal`. Default adapter là `zipformer_sherpa` local Rust. HTTP/offline adapter tương lai có thể buffer ở `push_pcm()` rồi infer tại `finish()`, nhưng không đổi contract.
 
-```rust
-pub struct AsrRequest {
-    pub generation: u64,
-    pub pcm: bytes::Bytes,
-    pub sample_rate: u32,
-    pub channels: u8,
-}
-```
-
-Adapter concrete V1 là `openai_transcription_v1`: `POST {base_url}/v1/audio/transcriptions`, multipart `file` chứa WAV PCM16/16 kHz/mono, `model`, `response_format=json` và optional `language`; response tối thiểu là `{ "text": "..." }`. Adapter chịu trách nhiệm WAV encode boundary, actor chỉ nhận `AsrResult`.
+`AsrStreamLease` được lấy trước khi mở stream (`SpeechStart` ở Auto, `listen:start` ở Manual) và release sau final, cancel hoặc lỗi. `Active Turn` permit chỉ được lấy tại `SpeechEnd`/`listen:stop`, trước `finish()`; nếu không có permit, server cancel stream, release lease và bỏ turn.
 
 ## 2. Flow
 
@@ -24,21 +15,32 @@ sequenceDiagram
     participant WS as WS Writer
     participant LLM as LLM Pipeline
 
-    A->>ASR: transcribe(utterance, generation)
+    A->>ASR: open + push_pcm*(generation)
+    ASR-->>A: AsrPartial(text, generation) internal only
+    A->>ASR: finish() after Active Turn permit
     ASR-->>A: AsrFinal(text, generation)
     alt generation still current and text.trim() non-empty
-      A->>WS: stt{text}
+      A->>A: commit user utterance
+      A->>WS: exactly one existing stt{session_id, text}
       A->>LLM: begin_turn(text)
     else generation still current and text.trim() empty
       A->>A: CompletedSilent; release permit; return by mode
-    else stale or empty
-      A->>A: drop result
+    else stale, failed, or cancelled
+      A->>A: release resources; no STT
     end
 ```
 
-## 3. Normalization
+## 3. Wire semantics và normalization
 
-Provider adapter chịu trách nhiệm chuyển response riêng của vendor về:
+`AsrPartial` chỉ là event nội bộ có thể coalesce: không WebSocket, không dialogue và không LLM. Chỉ `AsrFinal` current-generation, non-empty mới phát đúng một message hiện có:
+
+```json
+{"session_id":"...","type":"stt","text":"xin chào"}
+```
+
+V1 không thêm `stt_partial`, `asr_partial`, `asr_final`, `vad_start`, `vad_stop` hoặc field partial/final mới. Final rỗng, ASR failure/cancel hoặc event stale không gửi `stt`.
+
+Provider adapter chuẩn hóa model result về:
 
 ```rust
 pub struct AsrResult {
@@ -52,32 +54,25 @@ Core không parse JSON vendor.
 
 ## 4. Timeout và retry
 
-V1 không automatic retry một logical ASR operation, kể cả transient connection failure. Timeout/lỗi trả về actor theo terminal path; turn tiếp theo mới là lần thử mới.
+V1 không automatic retry một logical ASR operation, kể cả transient connection failure. `asr.timeout_ms` bắt đầu tại `SpeechEnd`/`listen:stop` và chỉ giới hạn `finish()` tới terminal result, không tính từ `open()`. Timeout/lỗi trả về actor theo terminal path; turn tiếp theo mới là lần thử mới.
 - `text.trim()` rỗng: `CompletedSilent`, không STT/LLM/TTS/dialogue, release permit; manual về Ready và auto về Listening.
 
-## 5. Streaming ASR sau V1
-
-Trait có thể được mở rộng bằng một trait riêng thay vì phá API batch:
-
-```text
-BatchAsrProvider
-StreamingAsrProvider
-```
-
-Không ép mọi provider phải streaming.
-
-## 6. Cancellation
+## 5. Cancellation
 
 Nếu generation bị cancel trong lúc ASR đang chạy:
 
-- cancel request nếu client hỗ trợ.
-- nếu response vẫn về, actor drop do generation mismatch.
+- actor bump generation trước cancel, nhưng chỉ release `AsrStreamLease` sau `Cancelled` acknowledgement của worker.
+- nếu response vẫn về, actor drop do generation mismatch; `Cancelled` cleanup event vẫn phải xử lý dù generation stale.
+- hết cleanup grace không acknowledgement: quarantine worker và fail closed affected Voice Session.
 
-## 7. Test contract
+## 6. Test contract
 
 Mock provider cases:
 
-- success Vietnamese text.
+- success Vietnamese final phát đúng một `stt` trước LLM.
+- partial thay đổi/coalesce nhưng không gửi WebSocket, không commit dialogue, không start LLM.
+- `finish()` drain recognizer trước final.
+- `SpeechStart`/`listen:start` acquire `AsrStreamLease`; endpoint không có Active Turn permit cancel stream/release lease, không `finish()`, STT hay LLM.
 - empty text.
 - whitespace-only text -> CompletedSilent, không tạo dialogue turn.
 - timeout.

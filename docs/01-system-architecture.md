@@ -22,10 +22,10 @@ flowchart LR
 flowchart TB
     R[WS Reader] -->|SessionEvent| A[SessionActor]
     A -->|control + audio| W[WS Writer]
-    A -->|PCM| V[VAD Worker]
-    V -->|VadEvent| A
-    A -->|Utterance| S[ASR Task]
-    S -->|AsrResult| A
+    A -->|PCM while Listening| V[VAD Worker]
+    V -->|SpeechStart/SpeechEnd| A
+    A -->|PCM stream + lifecycle| S[ASR Worker]
+    S -->|AsrPartial/AsrFinal| A
     A -->|ChatRequest| L[LLM Task]
     L -->|Delta/ToolCall| A
     A -->|SpeechOutputCommand| O[SpeechOutput]
@@ -73,7 +73,7 @@ session
    +--> tools abstractions
 
 provider implementations
-   +--> reqwest / external APIs
+   +--> local inference runtimes hoặc reqwest / external APIs
 
 protocol
    +--> serde only
@@ -105,7 +105,8 @@ State phục vụ logging/validation. Pipeline async vẫn sử dụng generatio
 ## 6. Reliability rules
 
 - Provider timeout riêng cho ASR/LLM/TTS/MCP.
-- Active Turn permit được acquire ngay trước ASR, không chờ queue vô hạn, và release ở mọi terminal path.
+- `AsrStreamLease` được acquire khi recognition stream bắt đầu và release sau ASR final, cancel hoặc lỗi; `Active Turn` permit được acquire ở utterance terminal boundary, trước ASR finalization, không chờ queue vô hạn, và release ở mọi terminal path.
+- VAD chỉ xử lý microphone khi `Listening`; V1 không acoustic barge-in khi `Speaking`. `abort` hoặc `listen:start` hợp lệ là cơ chế interrupt explicit.
 - Transport idle dựa trên WebSocket RX/TX hợp lệ hai chiều; conversation idle tắt trong V1.
 - Telemetry dùng Trace Session ID ngẫu nhiên; không log/persist nội dung audio, transcript, prompt/response, tool payload hay secret.
 - Mọi task con gắn với session cancellation root.

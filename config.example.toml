@@ -23,13 +23,47 @@ outbound_audio_queue = 32
 
 [providers.vad]
 adapter = "silero_onnx"
-model = "models/vad/silero_vad.onnx"
+model = "silero_vad_v5"
+
+[providers.vad.silero_onnx]
 num_threads = 1
 
 [providers.asr]
 adapter = "zipformer_sherpa"
-model_dir = "models/asr/zipformer-30m-vi"
+model = "zipformer_vi_streaming"
+
+[providers.asr.zipformer_sherpa]
 num_threads = 2
+decoding_method = "greedy_search"
+
+[workers.vad]
+max_workers = 4
+command_queue_capacity = 32
+reset_timeout_ms = 15000
+cleanup_grace_ms = 5000
+
+[workers.asr]
+max_workers = 2
+command_queue_capacity = 32
+final_timeout_ms = 15000
+cleanup_grace_ms = 5000
+
+[deployment]
+model_manifest = "models/manifest.toml"
+profile = "development-noncommercial"
+
+[runtime.onnx]
+library = "runtime/onnxruntime/libonnxruntime.dylib"
+
+[[deployment.model_acknowledgements]]
+model = "silero_vad_v5"
+revision = "v5"
+license = "MIT"
+
+[[deployment.model_acknowledgements]]
+model = "zipformer_vi_streaming"
+revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
+license = "CC-BY-NC-ND-4.0"
 
 [llm]
 max_history_messages = 20
