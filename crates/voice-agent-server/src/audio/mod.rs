@@ -3,11 +3,13 @@
 use thiserror::Error;
 
 mod opus;
+mod vad_segmenter;
 
 pub use opus::{
     AudioFrameDropReason, DecodeOutcome, DownlinkOpusEncoder, OpusPacket, UplinkOpusDecoder,
     DOWNLINK_ENCODE_BUFFER_BYTES, MAX_UPLINK_OPUS_PACKET_BYTES,
 };
+pub use vad_segmenter::{VadBoundary, VadSegmenter};
 
 pub const UPLINK_FRAME_SAMPLES: usize = 960;
 pub const DOWNLINK_FRAME_SAMPLES: usize = 1_440;

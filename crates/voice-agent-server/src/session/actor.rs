@@ -1,4 +1,4 @@
-use crate::session::SessionPhase;
+use crate::session::{event::SessionEvent, turn::DialogueHistory, ActiveTurnLimiter, SessionPhase};
 use crate::{
     audio::{CaptureOutcome, DecodeOutcome, ManualCapture, PcmF32Mono, UplinkOpusDecoder},
     protocol::{ClientMessage, ListenCommand, ListenMode},
@@ -8,36 +8,7 @@ use crate::{
         VadWorkerLease, VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig,
     },
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::mpsc;
-
-/// Application-scoped admission control for ASR finalization.
-pub struct ActiveTurnLimiter {
-    capacity: usize,
-    active: AtomicUsize,
-}
-
-impl ActiveTurnLimiter {
-    pub fn new(capacity: usize) -> Self {
-        assert!(capacity > 0);
-        Self {
-            capacity,
-            active: AtomicUsize::new(0),
-        }
-    }
-
-    fn try_acquire(&self) -> bool {
-        self.active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                (active < self.capacity).then_some(active + 1)
-            })
-            .is_ok()
-    }
-
-    fn release(&self) {
-        self.active.fetch_sub(1, Ordering::AcqRel);
-    }
-}
 
 /// The only mutable owner of an accepted Voice Session's phase.
 pub struct SessionActor {
@@ -78,35 +49,6 @@ impl OutboundMessage {
             Self::Binary(_) | Self::Close(_) => None,
         }
     }
-}
-
-#[derive(Debug)]
-struct DialogueHistory {
-    messages: Vec<String>,
-    max_messages: usize,
-}
-
-impl DialogueHistory {
-    fn new(max_messages: usize) -> Self {
-        Self {
-            messages: Vec::new(),
-            max_messages,
-        }
-    }
-
-    fn commit_user(&mut self, text: String) {
-        if self.messages.len() == self.max_messages {
-            self.messages.remove(0);
-        }
-        self.messages.push(text);
-    }
-}
-
-/// Reader tasks only enqueue these events; they never mutate Voice Session state.
-#[derive(Debug)]
-pub enum SessionEvent {
-    ClientMessage(ClientMessage),
-    ClientAudio(Vec<u8>),
 }
 
 impl SessionActor {
@@ -165,7 +107,7 @@ impl SessionActor {
     ) -> Result<Self, crate::audio::AudioError> {
         // Kept for the Manual-only public seam used by earlier phases.
         let vad_runtime = std::sync::Arc::new(VadWorkerRuntime::new(
-            std::sync::Arc::new(crate::providers::UnavailableVad),
+            std::sync::Arc::new(crate::providers::vad::UnavailableVad),
             WorkerRuntimeConfig::default(),
         ));
         Self::new_with_runtimes(
@@ -248,7 +190,7 @@ impl SessionActor {
         self.accepted_binary_frames
     }
     pub fn dialogue_history(&self) -> &[String] {
-        &self.dialogue_history.messages
+        self.dialogue_history.messages()
     }
 
     /// Deterministic test helper: advances the runtime router then drains this session mailbox.
