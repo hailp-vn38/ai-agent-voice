@@ -1,8 +1,14 @@
 //! Local inference boundary. Session code only depends on these domain contracts.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
-use crate::{audio::PcmF32Mono, config::ProvidersConfig};
+use crate::{
+    audio::PcmF32Mono,
+    config::{LimitsConfig, ProvidersConfig},
+};
 use sherpa_onnx::{
     OnlineRecognizer, OnlineRecognizerConfig, OnlineStream, SileroVadModelConfig, VadModelConfig,
     VoiceActivityDetector,
@@ -13,6 +19,18 @@ use thiserror::Error;
 pub enum AsrError {
     #[error("ASR provider failed: {0}")]
     Failed(String),
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum VadError {
+    #[error("VAD provider failed: {0}")]
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VadEvent {
+    SpeechStart,
+    SpeechEnd,
 }
 
 #[derive(Debug, Error)]
@@ -57,13 +75,89 @@ pub trait AsrProvider: Send + Sync {
 
 /// VAD runtime boundary; its per-cycle session API is added with Auto in ticket 02.
 pub trait VadProvider: Send + Sync {
+    fn open(&self) -> Result<Box<dyn VadSession>, VadError>;
     fn adapter(&self) -> &'static str;
+}
+
+/// A VAD session is pinned to one Auto listening cycle. Its events contain no audio or text.
+pub trait VadSession: Send {
+    fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<VadEvent>, VadError>;
+    fn reset(&mut self) -> Result<(), VadError>;
+    fn close(&mut self) -> Result<(), VadError>;
 }
 
 /// Application-owned providers injected into each Voice Session.
 pub struct ProviderSet {
     asr: Arc<dyn AsrProvider>,
     vad: Arc<dyn VadProvider>,
+    capacity: Arc<ProviderCapacity>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ProviderCapacityLimits {
+    pub max_asr_streams: usize,
+    pub max_vad_sessions: usize,
+}
+
+impl Default for ProviderCapacityLimits {
+    fn default() -> Self {
+        Self {
+            max_asr_streams: 8,
+            max_vad_sessions: 8,
+        }
+    }
+}
+
+struct ProviderCapacity {
+    limits: ProviderCapacityLimits,
+    in_use: Mutex<(usize, usize)>,
+}
+
+impl ProviderCapacity {
+    fn new(limits: ProviderCapacityLimits) -> Self {
+        Self {
+            limits,
+            in_use: Mutex::new((0, 0)),
+        }
+    }
+
+    fn acquire_asr(self: &Arc<Self>) -> Result<CapacityLease, AsrError> {
+        let mut in_use = self.in_use.lock().expect("capacity mutex poisoned");
+        if in_use.0 == self.limits.max_asr_streams {
+            return Err(AsrError::Failed("ASR stream capacity exhausted".into()));
+        }
+        in_use.0 += 1;
+        Ok(CapacityLease::Asr(Arc::clone(self)))
+    }
+
+    fn acquire_vad(self: &Arc<Self>) -> Result<CapacityLease, VadError> {
+        let mut in_use = self.in_use.lock().expect("capacity mutex poisoned");
+        if in_use.1 == self.limits.max_vad_sessions {
+            return Err(VadError::Failed("VAD session capacity exhausted".into()));
+        }
+        in_use.1 += 1;
+        Ok(CapacityLease::Vad(Arc::clone(self)))
+    }
+}
+
+enum CapacityLease {
+    Asr(Arc<ProviderCapacity>),
+    Vad(Arc<ProviderCapacity>),
+}
+
+impl Drop for CapacityLease {
+    fn drop(&mut self) {
+        let is_asr = matches!(self, Self::Asr(_));
+        let capacity = match self {
+            Self::Asr(capacity) | Self::Vad(capacity) => capacity,
+        };
+        let mut in_use = capacity.in_use.lock().expect("capacity mutex poisoned");
+        if is_asr {
+            in_use.0 -= 1;
+        } else {
+            in_use.1 -= 1;
+        }
+    }
 }
 
 impl ProviderSet {
@@ -72,11 +166,37 @@ impl ProviderSet {
     }
 
     pub fn with_vad(vad: Arc<dyn VadProvider>, asr: Arc<dyn AsrProvider>) -> Self {
-        Self { asr, vad }
+        Self::with_vad_capacity(vad, asr, ProviderCapacityLimits::default())
+    }
+
+    pub fn with_vad_capacity(
+        vad: Arc<dyn VadProvider>,
+        asr: Arc<dyn AsrProvider>,
+        capacity: ProviderCapacityLimits,
+    ) -> Self {
+        Self {
+            asr,
+            vad,
+            capacity: Arc::new(ProviderCapacity::new(capacity)),
+        }
     }
 
     pub fn open_asr(&self) -> Result<Box<dyn AsrSession>, AsrError> {
-        self.asr.open()
+        let lease = self.capacity.acquire_asr()?;
+        let session = self.asr.open()?;
+        Ok(Box::new(LeasedAsrSession {
+            session,
+            _lease: lease,
+        }))
+    }
+
+    pub fn open_vad(&self) -> Result<Box<dyn VadSession>, VadError> {
+        let lease = self.capacity.acquire_vad()?;
+        let session = self.vad.open()?;
+        Ok(Box::new(LeasedVadSession {
+            session,
+            _lease: lease,
+        }))
     }
 
     pub fn vad_adapter(&self) -> &'static str {
@@ -88,7 +208,10 @@ impl ProviderSet {
     }
 
     /// Loads and warms all required local runtimes before the application binds a socket.
-    pub fn load(config: &ProvidersConfig) -> Result<Self, ProviderLoadError> {
+    pub fn load(
+        config: &ProvidersConfig,
+        limits: &LimitsConfig,
+    ) -> Result<Self, ProviderLoadError> {
         if config.vad.adapter != "silero_onnx" {
             return Err(ProviderLoadError::UnsupportedAdapter {
                 kind: "VAD",
@@ -122,6 +245,7 @@ impl ProviderSet {
         };
         let vad = VoiceActivityDetector::create(&vad_config, 60.0)
             .ok_or(ProviderLoadError::Initialize("Silero VAD"))?;
+        drop(vad);
 
         let mut asr_config = OnlineRecognizerConfig::default();
         asr_config.model_config.transducer.encoder =
@@ -141,10 +265,52 @@ impl ProviderSet {
         );
         // Constructing a stream forces the recognizer's stream runtime to initialize before bind.
         drop(recognizer.create_stream());
-        Ok(Self {
-            asr: Arc::new(ZipformerAsrProvider { recognizer }),
-            vad: Arc::new(LoadedSileroVad { _detector: vad }),
-        })
+        Ok(Self::with_vad_capacity(
+            Arc::new(LoadedSileroVad { config: vad_config }),
+            Arc::new(ZipformerAsrProvider { recognizer }),
+            ProviderCapacityLimits {
+                max_asr_streams: limits.max_asr_streams,
+                max_vad_sessions: limits.max_vad_sessions,
+            },
+        ))
+    }
+}
+
+struct LeasedAsrSession {
+    session: Box<dyn AsrSession>,
+    _lease: CapacityLease,
+}
+
+impl AsrSession for LeasedAsrSession {
+    fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
+        self.session.push_pcm(pcm)
+    }
+
+    fn finish(&mut self) -> Result<AsrResult, AsrError> {
+        self.session.finish()
+    }
+
+    fn cancel(&mut self) {
+        self.session.cancel();
+    }
+}
+
+struct LeasedVadSession {
+    session: Box<dyn VadSession>,
+    _lease: CapacityLease,
+}
+
+impl VadSession for LeasedVadSession {
+    fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<VadEvent>, VadError> {
+        self.session.push_pcm(pcm)
+    }
+
+    fn reset(&mut self) -> Result<(), VadError> {
+        self.session.reset()
+    }
+
+    fn close(&mut self) -> Result<(), VadError> {
+        self.session.close()
     }
 }
 
@@ -167,18 +333,63 @@ struct UnavailableAsr;
 struct UnavailableVad;
 
 impl VadProvider for UnavailableVad {
+    fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
+        Err(VadError::Failed("VAD provider is not initialized".into()))
+    }
+
     fn adapter(&self) -> &'static str {
         "unavailable"
     }
 }
 
 struct LoadedSileroVad {
-    _detector: VoiceActivityDetector,
+    config: VadModelConfig,
 }
 
 impl VadProvider for LoadedSileroVad {
+    fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
+        let detector = VoiceActivityDetector::create(&self.config, 60.0)
+            .ok_or_else(|| VadError::Failed("cannot initialize Silero VAD session".into()))?;
+        Ok(Box::new(SileroVadSession {
+            detector,
+            detecting_speech: false,
+        }))
+    }
+
     fn adapter(&self) -> &'static str {
         "silero_onnx"
+    }
+}
+
+struct SileroVadSession {
+    detector: VoiceActivityDetector,
+    detecting_speech: bool,
+}
+
+impl VadSession for SileroVadSession {
+    fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<VadEvent>, VadError> {
+        if pcm.sample_rate_hz() != 16_000 {
+            return Err(VadError::Failed("VAD requires canonical 16 kHz PCM".into()));
+        }
+        self.detector.accept_waveform(pcm.samples());
+        let detected = self.detector.detected();
+        let event = match (self.detecting_speech, detected) {
+            (false, true) => Some(VadEvent::SpeechStart),
+            (true, false) => Some(VadEvent::SpeechEnd),
+            _ => None,
+        };
+        self.detecting_speech = detected;
+        Ok(event.into_iter().collect())
+    }
+
+    fn reset(&mut self) -> Result<(), VadError> {
+        self.detector.reset();
+        self.detecting_speech = false;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), VadError> {
+        Ok(())
     }
 }
 

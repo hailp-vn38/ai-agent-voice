@@ -136,6 +136,10 @@ impl Default for WebsocketConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct LimitsConfig {
+    #[serde(default = "default_provider_capacity")]
+    pub max_asr_streams: usize,
+    #[serde(default = "default_provider_capacity")]
+    pub max_vad_sessions: usize,
     #[serde(default = "default_queue_capacity")]
     pub session_event_queue: usize,
     #[serde(default = "default_queue_capacity")]
@@ -147,6 +151,8 @@ pub struct LimitsConfig {
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
+            max_asr_streams: default_provider_capacity(),
+            max_vad_sessions: default_provider_capacity(),
             session_event_queue: default_queue_capacity(),
             outbound_control_queue: default_queue_capacity(),
             outbound_audio_queue: default_queue_capacity(),
@@ -177,6 +183,9 @@ fn default_max_utterance_ms() -> u64 {
 }
 fn default_queue_capacity() -> usize {
     32
+}
+fn default_provider_capacity() -> usize {
+    8
 }
 fn default_vad_adapter() -> String {
     "silero_onnx".into()
@@ -248,6 +257,8 @@ impl AppConfig {
             ));
         }
         if [
+            self.limits.max_asr_streams,
+            self.limits.max_vad_sessions,
             self.limits.session_event_queue,
             self.limits.outbound_control_queue,
             self.limits.outbound_audio_queue,
