@@ -43,8 +43,8 @@ async fn raw_binary_is_only_accepted_while_listening() {
 }
 
 #[tokio::test]
-async fn unsupported_listen_mode_does_not_reset_manual_capture() {
-    let (control, _) = mpsc::channel(1);
+async fn auto_replaces_manual_capture_and_never_falls_back_when_vad_is_unavailable() {
+    let (control, mut messages) = mpsc::channel(1);
     let (audio, _) = mpsc::channel(1);
     let mut actor = SessionActor::new(
         "session".into(),
@@ -67,6 +67,17 @@ async fn unsupported_listen_mode_does_not_reset_manual_capture() {
         mode: ListenMode::Auto,
     }));
     assert_eq!(actor.phase(), SessionPhase::Listening);
-    assert!(actor.on_binary(packet.as_bytes().to_vec()));
-    assert_eq!(actor.accepted_binary_frames(), 2);
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Closed {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    assert_eq!(actor.phase(), SessionPhase::Closed);
+    assert!(matches!(
+        messages.try_recv(),
+        Ok(voice_agent_server::session::OutboundMessage::Close(1011))
+    ));
+    assert!(!actor.on_binary(packet.as_bytes().to_vec()));
 }

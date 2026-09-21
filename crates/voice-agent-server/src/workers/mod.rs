@@ -7,7 +7,7 @@ mod vad;
 
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
 pub use supervisor::WorkerSupervisor;
-pub use vad::{VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime};
+pub use vad::{VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime};
 
 use std::time::Duration;
 

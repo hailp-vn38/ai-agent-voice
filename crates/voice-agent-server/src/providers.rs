@@ -192,7 +192,7 @@ fn path(directory: &Path, file: &str) -> String {
 
 struct UnavailableAsr;
 
-struct UnavailableVad;
+pub(crate) struct UnavailableVad;
 
 impl VadProvider for UnavailableVad {
     fn open(&self) -> Result<Box<dyn VadSession>, VadError> {

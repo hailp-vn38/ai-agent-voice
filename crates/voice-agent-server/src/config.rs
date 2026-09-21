@@ -34,6 +34,14 @@ pub struct VadProviderConfig {
     pub model: std::path::PathBuf,
     #[serde(default = "default_provider_threads")]
     pub num_threads: i32,
+    #[serde(default = "default_worker_count")]
+    pub max_workers: usize,
+    #[serde(default = "default_worker_queue_capacity")]
+    pub command_queue_capacity: usize,
+    #[serde(default = "default_vad_reset_timeout_ms")]
+    pub reset_timeout_ms: u64,
+    #[serde(default = "default_cleanup_grace_ms")]
+    pub cleanup_grace_ms: u64,
 }
 
 impl Default for VadProviderConfig {
@@ -42,6 +50,10 @@ impl Default for VadProviderConfig {
             adapter: default_vad_adapter(),
             model: default_vad_model(),
             num_threads: default_provider_threads(),
+            max_workers: default_worker_count(),
+            command_queue_capacity: default_worker_queue_capacity(),
+            reset_timeout_ms: default_vad_reset_timeout_ms(),
+            cleanup_grace_ms: default_cleanup_grace_ms(),
         }
     }
 }
@@ -54,6 +66,14 @@ pub struct AsrProviderConfig {
     pub model_dir: std::path::PathBuf,
     #[serde(default = "default_provider_threads")]
     pub num_threads: i32,
+    #[serde(default = "default_worker_count")]
+    pub max_workers: usize,
+    #[serde(default = "default_worker_queue_capacity")]
+    pub command_queue_capacity: usize,
+    #[serde(default = "default_asr_final_timeout_ms")]
+    pub final_timeout_ms: u64,
+    #[serde(default = "default_cleanup_grace_ms")]
+    pub cleanup_grace_ms: u64,
 }
 
 impl Default for AsrProviderConfig {
@@ -62,6 +82,10 @@ impl Default for AsrProviderConfig {
             adapter: default_asr_adapter(),
             model_dir: default_asr_model_dir(),
             num_threads: default_provider_threads(),
+            max_workers: default_worker_count(),
+            command_queue_capacity: default_worker_queue_capacity(),
+            final_timeout_ms: default_asr_final_timeout_ms(),
+            cleanup_grace_ms: default_cleanup_grace_ms(),
         }
     }
 }
@@ -142,6 +166,8 @@ pub struct LimitsConfig {
     pub outbound_control_queue: usize,
     #[serde(default = "default_queue_capacity")]
     pub outbound_audio_queue: usize,
+    #[serde(default = "default_max_active_turns")]
+    pub max_active_turns: usize,
 }
 
 impl Default for LimitsConfig {
@@ -150,6 +176,7 @@ impl Default for LimitsConfig {
             session_event_queue: default_queue_capacity(),
             outbound_control_queue: default_queue_capacity(),
             outbound_audio_queue: default_queue_capacity(),
+            max_active_turns: default_max_active_turns(),
         }
     }
 }
@@ -178,6 +205,9 @@ fn default_max_utterance_ms() -> u64 {
 fn default_queue_capacity() -> usize {
     32
 }
+fn default_max_active_turns() -> usize {
+    8
+}
 fn default_vad_adapter() -> String {
     "silero_onnx".into()
 }
@@ -192,6 +222,21 @@ fn default_asr_model_dir() -> std::path::PathBuf {
 }
 fn default_provider_threads() -> i32 {
     1
+}
+fn default_worker_count() -> usize {
+    8
+}
+fn default_worker_queue_capacity() -> usize {
+    32
+}
+fn default_asr_final_timeout_ms() -> u64 {
+    15_000
+}
+fn default_vad_reset_timeout_ms() -> u64 {
+    15_000
+}
+fn default_cleanup_grace_ms() -> u64 {
+    5_000
 }
 fn default_max_history_messages() -> usize {
     20
@@ -251,6 +296,7 @@ impl AppConfig {
             self.limits.session_event_queue,
             self.limits.outbound_control_queue,
             self.limits.outbound_audio_queue,
+            self.limits.max_active_turns,
         ]
         .contains(&0)
         {
@@ -261,6 +307,19 @@ impl AppConfig {
         if self.llm.max_history_messages == 0 {
             return Err(ConfigError::Validation(
                 "llm.max_history_messages must be positive".into(),
+            ));
+        }
+        if self.providers.asr.max_workers == 0
+            || self.providers.asr.command_queue_capacity == 0
+            || self.providers.asr.final_timeout_ms == 0
+            || self.providers.asr.cleanup_grace_ms == 0
+            || self.providers.vad.max_workers == 0
+            || self.providers.vad.command_queue_capacity == 0
+            || self.providers.vad.reset_timeout_ms == 0
+            || self.providers.vad.cleanup_grace_ms == 0
+        {
+            return Err(ConfigError::Validation(
+                "VAD/ASR worker capacities and timeouts must be positive".into(),
             ));
         }
         Ok(())

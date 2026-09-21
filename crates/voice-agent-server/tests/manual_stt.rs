@@ -9,7 +9,8 @@ use voice_agent_server::{
     audio::{DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono},
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::{AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadProvider},
-    session::{SessionActor, SessionPhase},
+    session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionPhase},
+    workers::{AsrWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig},
 };
 
 struct FakeAsr {
@@ -75,6 +76,29 @@ impl AsrSession for FailingSession {
 
     fn finish(&mut self) -> Result<AsrResult, AsrError> {
         Err(AsrError::Failed("deterministic test failure".into()))
+    }
+
+    fn cancel(&mut self) {}
+}
+
+struct SlowAsr;
+
+impl AsrProvider for SlowAsr {
+    fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
+        Ok(Box::new(SlowSession))
+    }
+}
+
+struct SlowSession;
+
+impl AsrSession for SlowSession {
+    fn push_pcm(&mut self, _: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
+        Ok(Vec::new())
+    }
+
+    fn finish(&mut self) -> Result<AsrResult, AsrError> {
+        std::thread::sleep(Duration::from_millis(50));
+        Ok(AsrResult::new("late"))
     }
 
     fn cancel(&mut self) {}
@@ -251,4 +275,201 @@ fn manual_capture_overflow_stops_feeding_the_asr_stream() {
 
     assert_eq!(pushed_frames.load(Ordering::Relaxed), 1);
     assert!(actor.dialogue_history().is_empty());
+}
+
+struct BoundaryVad;
+
+impl VadProvider for BoundaryVad {
+    fn open(
+        &self,
+    ) -> Result<
+        Box<dyn voice_agent_server::providers::VadSession>,
+        voice_agent_server::providers::VadError,
+    > {
+        Ok(Box::new(BoundaryVadSession { frames: 0 }))
+    }
+
+    fn adapter(&self) -> &'static str {
+        "boundary"
+    }
+}
+
+struct BoundaryVadSession {
+    frames: usize,
+}
+
+impl voice_agent_server::providers::VadSession for BoundaryVadSession {
+    fn push_pcm(
+        &mut self,
+        _: &PcmF32Mono,
+    ) -> Result<Vec<voice_agent_server::providers::VadEvent>, voice_agent_server::providers::VadError>
+    {
+        self.frames += 1;
+        Ok(match self.frames {
+            1 => vec![voice_agent_server::providers::VadEvent::SpeechStart],
+            2 => vec![voice_agent_server::providers::VadEvent::SpeechEnd],
+            _ => Vec::new(),
+        })
+    }
+
+    fn reset(&mut self) -> Result<(), voice_agent_server::providers::VadError> {
+        Ok(())
+    }
+    fn close(&mut self) -> Result<(), voice_agent_server::providers::VadError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
+    let (control, mut messages) = mpsc::channel(2);
+    let (audio, _) = mpsc::channel(1);
+    let config = WorkerRuntimeConfig {
+        max_workers: 1,
+        command_capacity: 8,
+        final_timeout: Duration::from_secs(1),
+        cleanup_grace: Duration::from_secs(1),
+    };
+    let asr = Arc::new(AsrWorkerRuntime::new(
+        Arc::new(FakeAsr {
+            final_text: "auto final".into(),
+        }),
+        config.clone(),
+    ));
+    let vad = Arc::new(VadWorkerRuntime::new(Arc::new(BoundaryVad), config));
+    let mut actor =
+        SessionActor::new_with_runtimes("auto".into(), control, audio, 4, 20, asr, vad).unwrap();
+    let packet = uplink_packet();
+
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    for _ in 0..50 {
+        actor.pump_workers();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(actor.phase(), SessionPhase::Listening);
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    for _ in 0..50 {
+        actor.pump_workers();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Listening && !actor.dialogue_history().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(actor.phase(), SessionPhase::Listening);
+    assert_eq!(actor.dialogue_history(), &["auto final"]);
+    assert!(
+        matches!(messages.try_recv(), Ok(OutboundMessage::Text(text)) if text.contains("auto final"))
+    );
+}
+
+#[test]
+fn active_turn_capacity_denial_finishes_without_stt_or_history() {
+    let runtime = Arc::new(AsrWorkerRuntime::new(
+        Arc::new(SlowAsr),
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            command_capacity: 8,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_secs(1),
+        },
+    ));
+    let vad = Arc::new(VadWorkerRuntime::new(
+        Arc::new(FakeVad),
+        WorkerRuntimeConfig::default(),
+    ));
+    let limiter = Arc::new(ActiveTurnLimiter::new(1));
+    let (first_control, _) = mpsc::channel(1);
+    let (first_audio, _) = mpsc::channel(1);
+    let (second_control, mut second_messages) = mpsc::channel(1);
+    let (second_audio, _) = mpsc::channel(1);
+    let mut first = SessionActor::new_with_runtimes_and_limiter(
+        "first".into(),
+        first_control,
+        first_audio,
+        2,
+        20,
+        Arc::clone(&runtime),
+        Arc::clone(&vad),
+        Arc::clone(&limiter),
+    )
+    .unwrap();
+    let mut second = SessionActor::new_with_runtimes_and_limiter(
+        "second".into(),
+        second_control,
+        second_audio,
+        2,
+        20,
+        runtime,
+        vad,
+        limiter,
+    )
+    .unwrap();
+    let packet = uplink_packet();
+
+    for actor in [&mut first, &mut second] {
+        actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+            mode: ListenMode::Manual,
+        }));
+        assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    }
+    first.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    second.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    for _ in 0..100 {
+        first.pump_workers();
+        second.pump_workers();
+        if second.phase() == SessionPhase::Ready {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(second.phase(), SessionPhase::Ready);
+    assert!(second.dialogue_history().is_empty());
+    assert!(second_messages.try_recv().is_err());
+}
+
+#[test]
+fn replacement_invalidates_a_late_final_without_emitting_stale_stt() {
+    let runtime = Arc::new(AsrWorkerRuntime::new(
+        Arc::new(SlowAsr),
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            command_capacity: 8,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_secs(1),
+        },
+    ));
+    let vad = Arc::new(VadWorkerRuntime::new(
+        Arc::new(FakeVad),
+        WorkerRuntimeConfig::default(),
+    ));
+    let (control, mut messages) = mpsc::channel(2);
+    let (audio, _) = mpsc::channel(1);
+    let mut actor =
+        SessionActor::new_with_runtimes("replacement".into(), control, audio, 2, 20, runtime, vad)
+            .unwrap();
+    let packet = uplink_packet();
+
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    for _ in 0..100 {
+        actor.pump_workers();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    assert!(actor.dialogue_history().is_empty());
+    assert!(messages.try_recv().is_err());
 }

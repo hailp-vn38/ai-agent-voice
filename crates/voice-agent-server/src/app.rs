@@ -5,7 +5,7 @@ use crate::{
         ServerTime,
     },
     providers::ProviderSet,
-    session::{OutboundMessage, SessionActor, SessionEvent},
+    session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent},
     workers::{AsrWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig, WorkerSupervisor},
 };
 use axum::{
@@ -36,33 +36,53 @@ pub struct AppState {
     pub asr_runtime: Arc<AsrWorkerRuntime>,
     pub vad_runtime: Arc<VadWorkerRuntime>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
+    pub active_turn_limiter: Arc<ActiveTurnLimiter>,
 }
 
-/// Application seam for tests and other callers that have already initialized providers.
-pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
-    let asr_runtime = Arc::new(AsrWorkerRuntime::new(
-        providers.asr_provider(),
-        WorkerRuntimeConfig::default(),
-    ));
-    let vad_runtime = Arc::new(VadWorkerRuntime::new(
-        providers.vad_provider(),
-        WorkerRuntimeConfig::default(),
-    ));
-    let worker_supervisor = Arc::new(WorkerSupervisor::start(
-        Arc::clone(&asr_runtime),
-        Arc::clone(&vad_runtime),
-    ));
-    Router::new()
-        .route("/health", get(health))
-        .route("/voice/ota/", get(ota).post(ota))
-        .route("/voice/v1/", get(websocket))
-        .with_state(AppState {
+impl AppState {
+    /// Builds the application-owned inference runtimes from validated config.
+    pub fn new(config: AppConfig, providers: Arc<ProviderSet>) -> Self {
+        let asr_runtime = Arc::new(AsrWorkerRuntime::new(
+            providers.asr_provider(),
+            WorkerRuntimeConfig {
+                max_workers: config.providers.asr.max_workers,
+                command_capacity: config.providers.asr.command_queue_capacity,
+                final_timeout: Duration::from_millis(config.providers.asr.final_timeout_ms),
+                cleanup_grace: Duration::from_millis(config.providers.asr.cleanup_grace_ms),
+            },
+        ));
+        let vad_runtime = Arc::new(VadWorkerRuntime::new(
+            providers.vad_provider(),
+            WorkerRuntimeConfig {
+                max_workers: config.providers.vad.max_workers,
+                command_capacity: config.providers.vad.command_queue_capacity,
+                final_timeout: Duration::from_millis(config.providers.vad.reset_timeout_ms),
+                cleanup_grace: Duration::from_millis(config.providers.vad.cleanup_grace_ms),
+            },
+        ));
+        let worker_supervisor = Arc::new(WorkerSupervisor::start(
+            Arc::clone(&asr_runtime),
+            Arc::clone(&vad_runtime),
+        ));
+        let active_turn_limiter = Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns));
+        Self {
             config: Arc::new(config),
             providers,
             asr_runtime,
             vad_runtime,
             worker_supervisor,
-        })
+            active_turn_limiter,
+        }
+    }
+}
+
+/// Application seam for tests and other callers that have already initialized providers.
+pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/voice/ota/", get(ota).post(ota))
+        .route("/voice/v1/", get(websocket))
+        .with_state(AppState::new(config, providers))
         .layer(TraceLayer::new_for_http())
 }
 
@@ -104,6 +124,8 @@ async fn websocket(
 ) -> Response {
     let config = state.config;
     let asr_runtime = state.asr_runtime;
+    let vad_runtime = state.vad_runtime;
+    let active_turn_limiter = state.active_turn_limiter;
     if !header_is(&headers, "protocol-version", "1")
         || !headers.contains_key("device-id")
         || !headers.contains_key("client-id")
@@ -126,7 +148,15 @@ async fn websocket(
     let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
-        .on_upgrade(move |socket| handle_socket(socket, config, asr_runtime))
+        .on_upgrade(move |socket| {
+            handle_socket(
+                socket,
+                config,
+                asr_runtime,
+                vad_runtime,
+                active_turn_limiter,
+            )
+        })
         .into_response()
 }
 
@@ -138,6 +168,8 @@ async fn handle_socket(
     socket: WebSocket,
     config: Arc<AppConfig>,
     asr_runtime: Arc<AsrWorkerRuntime>,
+    vad_runtime: Arc<VadWorkerRuntime>,
+    active_turn_limiter: Arc<ActiveTurnLimiter>,
 ) {
     let (mut sender, mut receiver) = socket.split();
     let first = timeout(
@@ -170,13 +202,15 @@ async fn handle_socket(
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
-    let actor = match SessionActor::new_with_history_and_runtime(
+    let actor = match SessionActor::new_with_runtimes_and_limiter(
         Uuid::new_v4().to_string(),
         control_tx.clone(),
         audio_tx,
         config.max_capture_frames(),
         config.llm.max_history_messages,
         asr_runtime,
+        vad_runtime,
+        active_turn_limiter,
     ) {
         Ok(actor) => actor,
         Err(error) => {
