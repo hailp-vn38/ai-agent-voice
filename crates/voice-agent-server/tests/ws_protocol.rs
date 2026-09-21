@@ -12,7 +12,7 @@ use tokio_tungstenite::{
 use url::Url;
 use voice_agent_server::{
     app::router,
-    config::{AppConfig, AudioConfig, AuthConfig, LimitsConfig, ServerConfig},
+    config::{AppConfig, AudioConfig, AuthConfig, LimitsConfig, ServerConfig, WebsocketConfig},
 };
 
 async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
@@ -25,10 +25,8 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
             hello_timeout_ms: 500,
         },
         auth: AuthConfig::default(),
-        audio: AudioConfig {
-            max_ws_frame_bytes: max_frame_bytes,
-            ..AudioConfig::default()
-        },
+        audio: AudioConfig::default(),
+        websocket: WebsocketConfig { max_frame_bytes },
         limits: LimitsConfig::default(),
     };
     let app: Router = router(config);

@@ -1,5 +1,8 @@
-use crate::protocol::{ClientMessage, ListenState};
 use crate::session::SessionPhase;
+use crate::{
+    audio::{CaptureOutcome, DecodeOutcome, ManualCapture, UplinkOpusDecoder},
+    protocol::{ClientMessage, ListenCommand, ListenMode},
+};
 use tokio::sync::mpsc;
 
 /// The only mutable owner of an accepted Voice Session's phase.
@@ -7,8 +10,10 @@ pub struct SessionActor {
     session_id: String,
     phase: SessionPhase,
     accepted_binary_frames: u64,
-    control_tx: mpsc::Sender<OutboundMessage>,
-    audio_tx: mpsc::Sender<OutboundMessage>,
+    uplink_decoder: UplinkOpusDecoder,
+    manual_capture: ManualCapture,
+    _control_tx: mpsc::Sender<OutboundMessage>,
+    _audio_tx: mpsc::Sender<OutboundMessage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,14 +35,17 @@ impl SessionActor {
         session_id: String,
         control_tx: mpsc::Sender<OutboundMessage>,
         audio_tx: mpsc::Sender<OutboundMessage>,
-    ) -> Self {
-        Self {
+        max_capture_frames: usize,
+    ) -> Result<Self, crate::audio::AudioError> {
+        Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
             accepted_binary_frames: 0,
-            control_tx,
-            audio_tx,
-        }
+            uplink_decoder: UplinkOpusDecoder::new()?,
+            manual_capture: ManualCapture::new(max_capture_frames)?,
+            _control_tx: control_tx,
+            _audio_tx: audio_tx,
+        })
     }
 
     pub fn session_id(&self) -> &str {
@@ -50,11 +58,11 @@ impl SessionActor {
         self.accepted_binary_frames
     }
 
-    pub async fn send_control(&self, text: String) {
-        let _ = self.control_tx.send(OutboundMessage::Text(text)).await;
-    }
-    pub async fn close(&self, code: u16) {
-        let _ = self.control_tx.send(OutboundMessage::Close(code)).await;
+    pub fn send_control(
+        &self,
+        text: String,
+    ) -> Result<(), mpsc::error::TrySendError<OutboundMessage>> {
+        self._control_tx.try_send(OutboundMessage::Text(text))
     }
 
     pub async fn run(mut self, mut ingress: mpsc::Receiver<SessionEvent>) {
@@ -71,14 +79,32 @@ impl SessionActor {
 
     pub fn on_client_message(&mut self, message: ClientMessage) {
         match message {
-            ClientMessage::Listen(ListenState::Start) => self.phase = SessionPhase::Listening,
-            ClientMessage::Listen(ListenState::Stop) => {
+            ClientMessage::Listen(ListenCommand::Start {
+                mode: ListenMode::Manual,
+            }) => {
+                self.manual_capture.restart();
+                self.phase = SessionPhase::Listening;
+            }
+            ClientMessage::Listen(ListenCommand::Start { .. })
+            | ClientMessage::Listen(ListenCommand::Detect { .. }) => {}
+            ClientMessage::Listen(ListenCommand::Stop) => {
                 if self.phase == SessionPhase::Listening {
+                    let outcome = self.manual_capture.stop();
+                    if let CaptureOutcome::Utterance(utterance) = outcome {
+                        tracing::debug!(
+                            event = "manual_capture_completed",
+                            session_id = %self.session_id,
+                            frames = utterance.samples().len() / 960,
+                            "manual capture completed"
+                        );
+                        self.manual_capture.recycle(utterance);
+                    }
                     self.phase = SessionPhase::Ready;
                 }
             }
             ClientMessage::Abort => {
                 if self.phase == SessionPhase::Listening {
+                    self.manual_capture.abort();
                     self.phase = SessionPhase::Ready;
                 }
             }
@@ -86,18 +112,26 @@ impl SessionActor {
         }
     }
 
-    /// V1 forwards raw bytes; Opus decode starts in Phase 2.
-    pub fn on_binary(&mut self, _payload: Vec<u8>) -> bool {
+    pub fn on_binary(&mut self, payload: Vec<u8>) -> bool {
         if self.phase == SessionPhase::Listening {
-            self.accepted_binary_frames += 1;
-            true
+            match self.uplink_decoder.decode(&payload) {
+                DecodeOutcome::Frame(frame) => {
+                    self.manual_capture.push(frame);
+                    self.accepted_binary_frames += 1;
+                    true
+                }
+                DecodeOutcome::Dropped(reason) => {
+                    tracing::debug!(
+                        event = "audio_frame_dropped",
+                        session_id = %self.session_id,
+                        ?reason,
+                        "audio frame dropped"
+                    );
+                    false
+                }
+            }
         } else {
             false
         }
-    }
-
-    #[allow(dead_code)]
-    pub async fn send_audio(&self, payload: Vec<u8>) {
-        let _ = self.audio_tx.send(OutboundMessage::Binary(payload)).await;
     }
 }

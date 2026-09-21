@@ -2,7 +2,7 @@
 
 ## 1. Boundary
 
-ASR chỉ nhận một `AudioUtterance` đã hoàn tất ở V1.
+ASR chỉ nhận một `UplinkAudioUtterance` đã hoàn tất ở V1.
 
 ```rust
 pub struct AsrRequest {

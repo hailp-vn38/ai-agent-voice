@@ -37,15 +37,23 @@ impl ClientHello {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ListenState {
-    Start,
+pub enum ListenMode {
+    Manual,
+    Auto,
+    Realtime,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ListenCommand {
+    Start { mode: ListenMode },
     Stop,
+    Detect { text: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientMessage {
     Hello(ClientHello),
-    Listen(ListenState),
+    Listen(ListenCommand),
     Abort,
     Unknown,
 }
@@ -66,12 +74,34 @@ pub fn parse_client_message(text: &str) -> Result<ClientMessage, ProtocolError> 
         Some("hello") => serde_json::from_value(value)
             .map(ClientMessage::Hello)
             .map_err(|_| ProtocolError::InvalidHello),
-        Some("listen") => match value.get("state").and_then(Value::as_str) {
-            Some("start") => Ok(ClientMessage::Listen(ListenState::Start)),
-            Some("stop") => Ok(ClientMessage::Listen(ListenState::Stop)),
-            _ => Ok(ClientMessage::Unknown),
-        },
+        Some("listen") => parse_listen_command(&value),
         Some("abort") => Ok(ClientMessage::Abort),
         _ => Ok(ClientMessage::Unknown),
     }
+}
+
+fn parse_listen_command(value: &Value) -> Result<ClientMessage, ProtocolError> {
+    let command = match value.get("state").and_then(Value::as_str) {
+        Some("start") => match value.get("mode").and_then(Value::as_str) {
+            Some("manual") => ListenCommand::Start {
+                mode: ListenMode::Manual,
+            },
+            Some("auto") => ListenCommand::Start {
+                mode: ListenMode::Auto,
+            },
+            Some("realtime") => ListenCommand::Start {
+                mode: ListenMode::Realtime,
+            },
+            _ => return Ok(ClientMessage::Unknown),
+        },
+        Some("stop") => ListenCommand::Stop,
+        Some("detect") => match value.get("text").and_then(Value::as_str) {
+            Some(text) => ListenCommand::Detect {
+                text: text.to_owned(),
+            },
+            None => return Ok(ClientMessage::Unknown),
+        },
+        _ => return Ok(ClientMessage::Unknown),
+    };
+    Ok(ClientMessage::Listen(command))
 }

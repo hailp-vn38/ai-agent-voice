@@ -37,7 +37,7 @@ Deliverables:
 - manual listen buffer.
 - audio fixtures.
 
-Exit criteria: Opus round-trip test và manual utterance test pass.
+Exit criteria: automated Opus round-trip và manual utterance tests pass; trước khi Phase 2 hoàn tất phải commit một Reference Client compatibility fixture raw Opus 60 ms có provenance và test decode thành đúng 960 samples.
 
 ## Phase 3 — VAD + ASR
 

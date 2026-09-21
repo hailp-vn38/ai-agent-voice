@@ -32,6 +32,10 @@ _Avoid_: device session, persistent session
 Trạng thái Voice Session còn kết nối nhưng không nhận microphone audio.
 _Avoid_: Idle, Listening
 
+**Listening Mode**:
+Ý nghĩa capture do Voice Protocol Client khai báo trong `listen:start`; V1 có Manual, Auto và Realtime là các giá trị wire riêng, không được server suy đoán hoặc đổi thay thế.
+_Avoid_: capture option, implicit manual mode
+
 **Conversational Turn**:
 Một lượt xử lý giọng nói có thể hủy độc lập trong một Voice Session.
 _Avoid_: request, job
@@ -43,6 +47,30 @@ _Avoid_: listening turn, queued turn
 **Canonical Audio Profile**:
 Wire-audio profile cố định của Compatibility Profile: uplink Opus 16 kHz mono 60 ms và downlink Opus 24 kHz mono 60 ms.
 _Avoid_: negotiated audio params, supported audio formats
+
+**Uplink PCM Frame**:
+Một khung PCM16 mono 16 kHz, đúng 960 samples, đã được giải mã từ đúng một Opus uplink packet trước khi được đưa vào một bộ thu audio.
+_Avoid_: PCM Frame, audio bytes, sample chunk
+
+**Downlink PCM Frame**:
+Một khung PCM16 mono 24 kHz, đúng 1.440 samples, sẵn sàng để encode thành đúng một Opus downlink packet.
+_Avoid_: PCM Frame, output chunk
+
+**Uplink Audio Utterance**:
+PCM16 mono 16 kHz canonical hoàn chỉnh của một lượt thu âm, chỉ được tạo khi một bộ thu kết thúc thành công.
+_Avoid_: Audio Utterance, PCM buffer, partial capture
+
+**Manual Capture**:
+Bộ thu audio theo listen mode manual, sở hữu PCM và capacity của một lượt thu, rồi trả Uplink Audio Utterance hoặc outcome không có audio.
+_Avoid_: actor buffer, manual listen buffer
+
+**Uplink Audio Stream**:
+Chuỗi Opus microphone liên tục trong suốt một Voice Session; ranh giới Conversational Turn hoặc Manual Capture không tạo stream mới.
+_Avoid_: capture stream, turn stream
+
+**Capture Outcome**:
+Kết quả có kiểu của việc dừng một Manual Capture: Uplink Audio Utterance, empty hoặc overflowed.
+_Avoid_: optional audio, capture status flag
 
 **Trace Session ID**:
 UUID ngẫu nhiên chỉ dùng để tương quan telemetry của một Voice Session mà không ghi Device ID hay Client ID.

@@ -8,12 +8,18 @@
 - speech + end silence threshold -> emit đúng một `SpeechEnded`.
 - pre-roll được prepend khi speech bắt đầu.
 - max utterance limit được enforce.
+- packet Opus rỗng, vượt 4.000 bytes, decode lỗi hoặc khác 960 samples bị drop; capture và Voice Session vẫn tiếp tục với PCM hợp lệ trước/sau packet lỗi. Packet 4.000 bytes malformed có thể tới decoder; packet 4.001 bytes phải trả `PacketTooLarge` trước decoder.
+- binary 65.536 bytes được transport nhận rồi codec drop `PacketTooLarge`, session vẫn sống; binary 65.537 bytes bị transport close 1009 trước codec.
+- actor xử lý frame theo ingress order nhưng không expose PCM buffer; test xác nhận qua `CaptureOutcome`, không đọc storage nội bộ.
+- `listen:start`/`listen:stop`/`abort` reset Manual Capture nhưng không recreate/reset UplinkOpusDecoder; frame hợp lệ của capture kế tiếp vẫn decode được.
+- repeated `listen:start` và `abort` khi capture không rỗng discard toàn bộ PCM cũ, không tạo utterance/outcome xuống ASR và không phát wire payload mới.
 
 ## Manual mode
 
 - start -> collect.
 - stop -> flush.
 - stop với empty buffer -> không gọi ASR.
+- runtime Phase 2 finalize non-empty utterance chỉ trace duration/frame count rồi giải phóng nó và về Ready; không tạo Processing, Active Turn permit hay consumer/callback tạm.
 
 ## Barge-in
 

@@ -24,6 +24,9 @@ conversation_idle_timeout_ms = 0
 [auth]
 token = ""
 
+[websocket]
+max_frame_bytes = 65536
+
 [audio]
 input_sample_rate = 16000
 output_sample_rate = 24000
@@ -31,9 +34,9 @@ channels = 1
 frame_ms = 60
 uplink_protocol_version = 1
 unsupported_protocol_policy = "reject"
-max_ws_frame_bytes = 8192
 ingress_queue_capacity = 128
 prebuffer_frames = 3
+max_utterance_ms = 30000
 
 [limits]
 max_connections = 4
@@ -51,7 +54,6 @@ provider = "local"
 min_speech_ms = 180
 end_silence_ms = 600
 pre_roll_ms = 300
-max_utterance_ms = 30000
 
 [asr]
 adapter = "openai_transcription_v1"
@@ -99,7 +101,8 @@ Không commit API key vào repository.
 
 - V1 input sample rate phải là 16000, output sample rate phải là 24000, channels phải là 1 và frame_ms phải là 60 theo Canonical Audio Profile.
 - queue capacity > 0.
-- `max_ws_frame_bytes`, `max_utterance_ms`, hello/idle timeout đều > 0; frame text hoặc binary vượt `max_ws_frame_bytes` đóng 1009 trước parse/decode.
+- `websocket.max_frame_bytes` nằm trong 4.000 bytes–1 MiB và áp dụng chung cho JSON control/MCP lẫn binary audio; frame inbound vượt cap đóng 1009 trước parse/decode. Đây là transport boundary, không phải audio config hay encoder buffer.
+- `audio.max_utterance_ms` nằm trong 1.000–120.000 ms và chia hết cho `audio.frame_ms`. Đây là giới hạn chung của Manual Capture và VAD Capture, không phải tham số riêng của VAD; capacity được tính một lần từ integer frame count.
 - `unsupported_protocol_policy` V1 chỉ là `reject`; không advertise v2/v3 khi chưa có parser.
 - timeout > 0.
 - `shutdown_grace_ms > 0`; config chỉ có hiệu lực khi process khởi động lại.

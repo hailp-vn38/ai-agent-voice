@@ -4,7 +4,9 @@
 
 - segment text -> audio stream.
 - provider PCM rate khác target -> resample đúng.
-- PCM -> Opus frames đúng frame duration.
+- `DownlinkPcmFrame` 1.440 samples -> Opus frame đúng 60 ms.
+- encoder controls giữ explicit profile: VoIP, 32 kbps, VBR/constrained VBR bật, DTX/FEC tắt, packet-loss percent 0 và complexity 10.
+- encoder luôn dùng scratch 4.000 bytes; lỗi encode, packet rỗng và output vượt `websocket.max_frame_bytes` trả `AudioCodecError`, không panic hoặc đóng WebSocket.
 - decode Opus round-trip không lỗi.
 - pacer spacing đúng với paused Tokio clock.
 - prebuffer frames được gửi trước pacing loop.

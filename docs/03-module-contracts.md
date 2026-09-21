@@ -22,6 +22,8 @@ pub enum TurnEvent {
 }
 ```
 
+Parser biến listen thành semantic variants `ListenStart { mode: ListeningMode }`, `ListenStop` và `ListenDetect { text }`, không để actor diễn giải tổ hợp string/optional field. Chỉ Start yêu cầu mode. Ở Phase 2 chỉ `Manual` được hỗ trợ; `Auto` và `Realtime` vẫn parse được nhưng là unsupported application message, còn missing/invalid mode là invalid application message. Tất cả các trường hợp đó chỉ trace/ignore, không mutate phase, cancel turn hay reset capture. `ListenStop` chỉ finalize Manual Capture active; ở phase khác là valid wrong-state message nên trace/ignore.
+
 ### Invariant
 
 Actor phải bỏ mọi `SessionEvent::Turn` có `generation != current_generation`, trừ event cleanup/telemetry. Mọi output async thuộc một turn phải đi qua biến thể này.
@@ -94,7 +96,10 @@ Actor là producer duy nhất của outbound message. WS writer nhận control v
 
 - Uplink V1: raw Opus packet.
 - Uplink Canonical Audio Profile: raw Opus 16 kHz, mono, 60 ms; validate ở hello trước Ready.
-- PCM internal: `Pcm16Mono(Vec<i16>)`; không dùng đồng thời byte buffer và sample vector trong domain.
+- PCM internal chỉ có `Pcm16Mono(Vec<i16>)`; `UplinkPcmFrame`, `DownlinkPcmFrame` và `UplinkAudioUtterance` bọc type này để biểu thị boundary semantic, không lặp sample rate/channels và không để `Vec<i16>` lan trong domain. Constructors frame chỉ nhận đúng 960 samples uplink hoặc 1.440 samples downlink; `UplinkAudioUtterance` có độ dài biến thiên trong giới hạn capture.
+- Phase 2 giữ xử lý audio theo thứ tự trong `SessionActor`: actor sở hữu private `UplinkOpusDecoder` và `ManualCapture` nhưng không biết type `opus2`, PCM storage hay capacity calculation. Chỉ tách audio worker khi profiling cho thấy decode/VAD làm block actor đáng kể.
+- Decoder trả `DecodeOutcome::Frame(UplinkPcmFrame)` hoặc `DecodeOutcome::Dropped(AudioFrameDropReason)` cho packet rỗng, packet vượt `MAX_UPLINK_OPUS_PACKET_BYTES = 4.000`, decode lỗi và sample count sai. `AudioFrameDropReason` phân biệt `EmptyPacket`, `PacketTooLarge`, `DecodeError` và `InvalidSampleCount`; đây là local frame fault expected, actor chỉ ghi tracing metadata privacy-safe rồi tiếp tục. 4.000 bytes uplink là V1 implementation policy, không phải giới hạn format Opus. `DownlinkOpusEncoder` chỉ nhận `DownlinkPcmFrame`.
+- `DownlinkOpusEncoder` dùng profile implementation constant: VoIP, 32 kbps, VBR/constrained VBR bật, DTX/FEC tắt, packet-loss percent 0 và complexity 10. Không lấy các controls này từ config ở Phase 2. Encoder luôn dùng `DOWNLINK_ENCODE_BUFFER_BYTES = 4.000`, tách cả `MAX_UPLINK_OPUS_PACKET_BYTES` lẫn `websocket.max_frame_bytes`; `encode(DownlinkPcmFrame)` trả `Result<OpusPacket, AudioCodecError>`; encoder error, packet rỗng và packet lớn hơn transport cap là internal delivery failure, không phải local frame drop và không đóng WS 1009.
 - Downlink Canonical Audio Profile: Opus 24 kHz, mono, 60 ms. Provider PCM có thể normalize/resample nội bộ về profile này.
 - Pacer không được nhận unbounded queue.
 - Ingress WS, command của ASR/LLM/TTS và outbound đều phải bounded, có capacity và hành vi khi đầy. Uplink frame khi đầy bị drop + telemetry; TTS producer bị backpressure; outbound đầy là lỗi turn có kiểm soát.

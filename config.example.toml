@@ -11,7 +11,10 @@ input_sample_rate = 16000
 output_sample_rate = 24000
 channels = 1
 frame_ms = 60
-max_ws_frame_bytes = 8192
+max_utterance_ms = 30000
+
+[websocket]
+max_frame_bytes = 65536
 
 [limits]
 session_event_queue = 64

@@ -38,9 +38,10 @@ sequenceDiagram
     participant A as SessionActor
     CLIENT->>WS: text {type:"hello", ...}
     WS->>A: ClientMessage::Hello
+    A->>A: validate profile + initialize audio runtime
     A->>WS: ServerHello(session_id, audio_params)
     WS-->>CLIENT: text hello
-    A->>A: phase = Listening
+    A->>A: phase = Ready
 ```
 
 Server hello tối thiểu:
@@ -58,6 +59,8 @@ Server hello tối thiểu:
   }
 }
 ```
+
+Sau ClientHello hợp lệ, server khởi tạo `UplinkOpusDecoder` và `ManualCapture` trước khi tạo/register Voice Session và gửi ServerHello. Nếu init/allocation fallible lỗi, connection mới đóng 1011, không ServerHello hay payload custom và không ảnh hưởng Voice Session đang khỏe của cùng Device ID. Chỉ sau init thành công server mới atomically replace session cũ (nếu có).
 
 V1 validate, không negotiate, Canonical Audio Profile trước khi tạo Voice Session/đi vào Ready:
 
@@ -79,6 +82,8 @@ WS reader chỉ làm 3 việc:
 3. Disconnect/error -> `SessionEvent::Disconnected`.
 
 Không chạy ASR/LLM/TTS trực tiếp trong reader.
+
+Listen được parse thành `ListenStart { mode }`, `ListenStop` và `ListenDetect { text }`; chỉ Start yêu cầu `mode`. `listen:start` mang `mode` parsed thành enum `Manual`, `Auto` hoặc `Realtime`. Phase 2 chỉ áp dụng `Manual`; `Auto`, `Realtime`, mode thiếu hay invalid là application message unsupported/invalid sau handshake, nên chỉ trace/ignore và giữ nguyên phase/capture/turn. Không default mode thiếu thành manual. `listen:start` manual hợp lệ mới áp dụng state matrix và có thể restart capture hoặc cancel turn theo matrix. `listen:stop` chỉ finalize Manual Capture active; ở phase khác chỉ trace/ignore.
 
 ## 5. Protocol v1 binary
 
@@ -136,6 +141,8 @@ Luồng hoàn tất bình thường chỉ gửi `tts:stop` sau event `SpeechOutp
 | unknown valid JSON | log/ignore | log/ignore | log/ignore | log/ignore |
 
 Không warning từng binary frame bị drop để tránh log spam. `abort` phải idempotent. Sau handshake, malformed JSON, unknown/invalid application message và valid wrong-state message chỉ metric + ignore, không thay đổi state hay đóng session. WebSocket framing/UTF-8 fault do transport library xử lý.
+
+Ở Listening, `listen:start` lặp lại discard capture đang có và restart capture mới, không finalize utterance hay phát wire response. `abort` discard capture rồi về Ready, cũng không tạo Capture Outcome cho downstream, không ASR và không wire response mới.
 - WS ping có thể để transport/library xử lý; không trộn với conversation state.
 
 ## 10. Test contract

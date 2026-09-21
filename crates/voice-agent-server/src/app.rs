@@ -93,7 +93,7 @@ async fn websocket(
     {
         return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
     }
-    let max = config.audio.max_ws_frame_bytes;
+    let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
         .on_upgrade(move |socket| handle_socket(socket, config))
@@ -118,7 +118,7 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>) {
             return;
         }
     };
-    let text = match checked_text(hello, config.audio.max_ws_frame_bytes) {
+    let text = match checked_text(hello, config.websocket.max_frame_bytes) {
         Ok(text) => text,
         Err(code) => {
             close_direct(&mut sender, code).await;
@@ -136,6 +136,25 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>) {
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
+    let actor = match SessionActor::new(
+        Uuid::new_v4().to_string(),
+        control_tx.clone(),
+        audio_tx,
+        config.max_capture_frames(),
+    ) {
+        Ok(actor) => actor,
+        Err(error) => {
+            debug!(%error, "failed to initialize session audio runtime");
+            close_direct(&mut sender, 1011).await;
+            return;
+        }
+    };
+    let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
+        .expect("ServerHello is serializable");
+    if actor.send_control(server_hello).is_err() {
+        close_direct(&mut sender, 1011).await;
+        return;
+    }
     let writer = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -148,16 +167,12 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>) {
     });
 
     let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
-    let actor = SessionActor::new(Uuid::new_v4().to_string(), control_tx.clone(), audio_tx);
-    let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
-        .expect("ServerHello is serializable");
-    actor.send_control(server_hello).await;
     let session = tokio::spawn(actor.run(ingress_rx));
 
     while let Some(next) = receiver.next().await {
         match next {
             Ok(Message::Text(text)) => {
-                if text.len() > config.audio.max_ws_frame_bytes {
+                if text.len() > config.websocket.max_frame_bytes {
                     let _ = control_tx.send(OutboundMessage::Close(1009)).await;
                     break;
                 }
@@ -177,7 +192,7 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>) {
                 }
             }
             Ok(Message::Binary(payload)) => {
-                if payload.len() > config.audio.max_ws_frame_bytes {
+                if payload.len() > config.websocket.max_frame_bytes {
                     let _ = control_tx.send(OutboundMessage::Close(1009)).await;
                     break;
                 }

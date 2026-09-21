@@ -129,12 +129,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
 }
 
 fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         bail!("expected hex must contain an even number of characters");
     }
-    value
-        .as_bytes()
-        .chunks_exact(2)
+    let (pairs, _) = value.as_bytes().as_chunks::<2>();
+    pairs
+        .iter()
         .map(|pair| {
             let text = std::str::from_utf8(pair).expect("hex input is valid UTF-8");
             u8::from_str_radix(text, 16).with_context(|| format!("invalid hex byte {text:?}"))

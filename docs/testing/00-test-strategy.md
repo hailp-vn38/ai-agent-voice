@@ -79,6 +79,8 @@ tests/e2e_voice.rs
 
 Không commit audio lớn.
 
+Với codec Phase 2, fixture audio gồm PCM synthetic 960 samples và ít nhất một raw uplink Opus 60 ms capture từ Reference Client độc lập phù hợp Firmware Baseline, kèm metadata provenance (release, commit, protocol, sample rate, channels, duration). Round-trip chỉ assert encode không rỗng, decode thành đúng 960 samples và sanity audio; không so byte output Opus hay PCM lossy sample-for-sample. Synthetic tests là automated implementation gate; compatibility fixture và decode test của nó là gate bắt buộc trước khi Phase 2 được đánh dấu hoàn tất.
+
 ## 6. Determinism
 
 Test pacing/time không nên phụ thuộc sleep dài. Dùng Tokio paused time (`tokio::time::pause/advance`) khi có thể.

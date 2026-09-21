@@ -55,7 +55,9 @@ tts:stop
 
 Output sample rate là config riêng, ví dụ 24 kHz mono. Không dùng input microphone rate làm output rate một cách mặc định.
 
-Opus encoder đóng frame đúng `frame_ms` (khuyến nghị 60 ms tương thích firmware reference).
+Opus encoder đóng `DownlinkPcmFrame` đúng 60 ms (1.440 samples ở 24 kHz). Downlink V1 cố định VoIP, 32 kbps, VBR và constrained VBR bật, DTX/FEC tắt, packet-loss percent 0, complexity 10; đây là implementation constants, chưa phải config provider.
+
+`DownlinkOpusEncoder` luôn dùng private `DOWNLINK_ENCODE_BUFFER_BYTES = 4.000`; đó không phải WebSocket cap hay `MAX_UPLINK_OPUS_PACKET_BYTES` dù hiện cùng giá trị. `encode` lỗi, trả zero-byte packet hoặc tạo packet lớn hơn `websocket.max_frame_bytes` là internal delivery failure. Nó không được xử lý như uplink local frame fault và không được đóng WebSocket 1009; Phase 4 map lỗi thành `SpeechOutputEvent::Failed`, drop audio còn lại và chỉ gửi `tts:stop` nếu `tts:start` đã được gửi.
 
 ## 5. AudioPacer
 
