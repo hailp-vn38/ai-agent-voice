@@ -62,6 +62,18 @@ cargo run -p voice-reference-client -- \
 
 Ở Phase 1, server mới forward raw payload sang seam session và chưa decode Opus. Vì vậy file phải là fixture packet của conformance test; CLI không encode PCM thành Opus.
 
+### Gửi `docs/audio.wav`
+
+`send-wav` đọc WAV PCM16 mono. Input 16 kHz được dùng trực tiếp; PCM16 mono 24 kHz (như `docs/audio.wav`) được resample về uplink canonical 16 kHz. Client chia PCM thành frame 960 samples/60 ms, zero-pad frame cuối, encode raw Opus và gửi sau `listen:start` manual, trước `listen:stop`.
+
+```bash
+cargo run -p voice-reference-client -- \
+  --ota http://127.0.0.1:8000/voice/ota/ \
+  send-wav docs/audio.wav
+```
+
+Không dùng lệnh này để tạo fixture compatibility được gọi là capture độc lập: packet do Reference Client encode chỉ xác nhận end-to-end CLI/server local.
+
 ### Xác nhận raw binary downlink
 
 `receive-binary` hoàn tất hello rồi chờ packet binary kế tiếp. Lệnh chỉ pass nếu payload khớp chính xác fixture hex:

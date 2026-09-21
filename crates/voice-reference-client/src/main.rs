@@ -1,7 +1,9 @@
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
+use opus2::{Application, Channels, Encoder};
 use serde_json::json;
+use std::path::{Path, PathBuf};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, Message},
@@ -28,7 +30,12 @@ enum Command {
     Handshake,
     Listen,
     SendOpus {
-        file: std::path::PathBuf,
+        file: PathBuf,
+    },
+    /// Encode a PCM16 mono WAV as canonical 16 kHz/60 ms Opus and send it.
+    SendWav {
+        #[arg(default_value = "docs/audio.wav")]
+        file: PathBuf,
     },
     /// Complete hello, then require one raw binary packet matching this hex fixture.
     ReceiveBinary {
@@ -83,28 +90,14 @@ async fn run(args: Args) -> anyhow::Result<()> {
             print_next(&mut socket).await?;
             match command {
                 Command::Handshake => {}
-                Command::Listen => {
-                    socket
-                        .send(Message::Text(
-                            json!({"type":"listen","state":"start"}).to_string(),
-                        ))
-                        .await?;
-                    socket
-                        .send(Message::Text(
-                            json!({"type":"listen","state":"stop"}).to_string(),
-                        ))
-                        .await?;
-                }
+                Command::Listen => send_listen(&mut socket).await?,
                 Command::SendOpus { file } => {
-                    socket
-                        .send(Message::Text(
-                            json!({"type":"listen","state":"start"}).to_string(),
-                        ))
-                        .await?;
+                    send_listen_start(&mut socket).await?;
                     socket
                         .send(Message::Binary(tokio::fs::read(file).await?))
                         .await?;
                 }
+                Command::SendWav { file } => send_wav(&mut socket, &file).await?,
                 Command::ReceiveBinary { expected_hex } => {
                     let expected = decode_hex(&expected_hex)?;
                     match socket.next().await {
@@ -126,6 +119,112 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+async fn send_listen<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    send_listen_start(socket).await?;
+    socket
+        .send(Message::Text(
+            json!({"type":"listen","state":"stop"}).to_string(),
+        ))
+        .await?;
+    Ok(())
+}
+
+async fn send_listen_start<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    socket
+        .send(Message::Text(
+            json!({"type":"listen","state":"start","mode":"manual"}).to_string(),
+        ))
+        .await?;
+    Ok(())
+}
+
+async fn send_wav<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    path: &Path,
+) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let pcm = read_wav_as_uplink_pcm(path)?;
+    if pcm.is_empty() {
+        bail!("WAV input has no PCM samples");
+    }
+    let mut encoder = Encoder::new(16_000, Channels::Mono, Application::Voip)
+        .context("initialize uplink Opus encoder")?;
+    send_listen_start(socket).await?;
+    let mut packets = 0usize;
+    for frame in pcm.chunks(960) {
+        let mut canonical_frame = [0_i16; 960];
+        canonical_frame[..frame.len()].copy_from_slice(frame);
+        let mut packet = [0_u8; 4_000];
+        let encoded = encoder
+            .encode(&canonical_frame, &mut packet)
+            .context("encode canonical uplink Opus frame")?;
+        if encoded == 0 {
+            bail!("Opus encoder produced an empty uplink packet");
+        }
+        socket
+            .send(Message::Binary(packet[..encoded].to_vec()))
+            .await?;
+        packets += 1;
+    }
+    socket
+        .send(Message::Text(
+            json!({"type":"listen","state":"stop"}).to_string(),
+        ))
+        .await?;
+    println!(
+        "sent {packets} canonical 60 ms Opus packets from {}",
+        path.display()
+    );
+    Ok(())
+}
+
+fn read_wav_as_uplink_pcm(path: &Path) -> anyhow::Result<Vec<i16>> {
+    let mut reader = hound::WavReader::open(path)
+        .with_context(|| format!("open WAV input {}", path.display()))?;
+    let spec = reader.spec();
+    if spec.sample_format != hound::SampleFormat::Int
+        || spec.bits_per_sample != 16
+        || spec.channels != 1
+    {
+        bail!("WAV must be PCM16 mono");
+    }
+    let samples = reader
+        .samples::<i16>()
+        .collect::<Result<Vec<_>, _>>()
+        .context("read PCM16 WAV samples")?;
+    match spec.sample_rate {
+        16_000 => Ok(samples),
+        24_000 => Ok(resample_24khz_to_16khz(&samples)),
+        rate => bail!("WAV sample rate must be 16000 or 24000 Hz, got {rate}"),
+    }
+}
+
+fn resample_24khz_to_16khz(input: &[i16]) -> Vec<i16> {
+    let output_len = input.len().saturating_mul(2) / 3;
+    (0..output_len)
+        .map(|index| {
+            let position = index * 3;
+            let lower = position / 2;
+            let upper = (lower + 1).min(input.len().saturating_sub(1));
+            if position.is_multiple_of(2) {
+                input.get(lower).copied().unwrap_or_default()
+            } else {
+                ((i32::from(input[lower]) + i32::from(input[upper])) / 2) as i16
+            }
+        })
+        .collect()
 }
 
 fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
@@ -186,6 +285,21 @@ mod tests {
     #[test]
     fn receive_binary_decodes_a_raw_packet_fixture() {
         assert_eq!(decode_hex("00fF10").unwrap(), vec![0, 255, 16]);
+    }
+
+    #[test]
+    fn wav_resampler_produces_canonical_16khz_sample_count() {
+        assert_eq!(
+            resample_24khz_to_16khz(&[0, 10, 20, 30, 40, 50]),
+            vec![0, 15, 30, 45]
+        );
+    }
+
+    #[test]
+    fn docs_audio_wav_is_accepted_as_uplink_input() {
+        let pcm = read_wav_as_uplink_pcm(Path::new("../../docs/audio.wav")).unwrap();
+        assert!(!pcm.is_empty());
+        assert!(pcm.chunks(960).all(|frame| frame.len() <= 960));
     }
 
     async fn fixture_ws(upgrade: WebSocketUpgrade) -> impl IntoResponse {
