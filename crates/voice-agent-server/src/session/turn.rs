@@ -43,6 +43,12 @@ impl DialogueHistory {
         }
     }
     pub(crate) fn commit_user(&mut self, text: String) {
+        self.commit(text);
+    }
+    pub(crate) fn commit_assistant(&mut self, text: String) {
+        self.commit(text);
+    }
+    fn commit(&mut self, text: String) {
         if self.messages.len() == self.max_messages {
             self.messages.remove(0);
         }

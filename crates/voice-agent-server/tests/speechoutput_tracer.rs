@@ -68,6 +68,85 @@ impl LlmProvider for FakeLlm {
     }
 }
 
+struct StreamingLlm;
+#[async_trait::async_trait]
+impl LlmProvider for StreamingLlm {
+    fn adapter(&self) -> &'static str {
+        "streaming_llm"
+    }
+
+    async fn stream(
+        &self,
+        _: String,
+    ) -> Result<
+        voice_agent_server::providers::llm::LlmEventStream,
+        voice_agent_server::providers::LlmError,
+    > {
+        Ok(Box::pin(
+            futures_util::stream::iter([
+                Ok(voice_agent_server::providers::LlmEvent::TextDelta(
+                    "Cau dau tien.".into(),
+                )),
+                Ok(voice_agent_server::providers::LlmEvent::TextDelta(
+                    " Cau thu hai.".into(),
+                )),
+                Ok(voice_agent_server::providers::LlmEvent::Finished),
+            ])
+            .enumerate()
+            .then(|(index, event)| async move {
+                if index == 1 {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                }
+                event
+            }),
+        ))
+    }
+}
+
+struct BackpressuredLlm;
+#[async_trait::async_trait]
+impl LlmProvider for BackpressuredLlm {
+    fn adapter(&self) -> &'static str {
+        "backpressured_llm"
+    }
+
+    async fn stream(
+        &self,
+        _: String,
+    ) -> Result<
+        voice_agent_server::providers::llm::LlmEventStream,
+        voice_agent_server::providers::LlmError,
+    > {
+        let mut events = (0..10)
+            .map(|_| {
+                Ok(voice_agent_server::providers::LlmEvent::TextDelta(
+                    "Mot cau dai du de tach thanh speech segment ngay. ".into(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        events.push(Ok(voice_agent_server::providers::LlmEvent::Finished));
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
+struct FailingLlm;
+#[async_trait::async_trait]
+impl LlmProvider for FailingLlm {
+    fn adapter(&self) -> &'static str {
+        "failing_llm"
+    }
+
+    async fn stream(
+        &self,
+        _: String,
+    ) -> Result<
+        voice_agent_server::providers::llm::LlmEventStream,
+        voice_agent_server::providers::LlmError,
+    > {
+        Err(voice_agent_server::providers::LlmError::Failed)
+    }
+}
+
 struct FakeTts;
 impl TtsProvider for FakeTts {
     fn adapter(&self) -> &'static str {
@@ -193,13 +272,152 @@ async fn non_empty_asr_final_delivers_started_canonical_opus_then_one_stop() {
     assert_eq!(controls[2]["state"], "stop");
 
     let packet = match audio_rx.try_recv().unwrap() {
-        OutboundMessage::Binary(packet) => packet,
+        OutboundMessage::Binary { packet, .. } => packet,
         unexpected => panic!("expected downlink audio, got {unexpected:?}"),
     };
     assert!(audio_rx.try_recv().is_err());
     let mut decoder = Decoder::new(24_000, Channels::Mono).unwrap();
     let mut pcm = [0_i16; 1_440];
     assert_eq!(decoder.decode(&packet, &mut pcm, false).unwrap(), 1_440);
+}
+
+#[tokio::test]
+async fn streaming_llm_delivers_first_audio_before_eof_and_commits_only_after_drained() {
+    let (control_tx, mut control_rx) = mpsc::channel(16);
+    let (audio_tx, mut audio_rx) = mpsc::channel(16);
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(StreamingLlm),
+        Arc::new(FakeTts),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+
+    for _ in 0..80 {
+        actor.pump_workers();
+        if audio_rx.try_recv().is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert_eq!(
+        actor.phase(),
+        SessionPhase::Processing,
+        "first audio arrives while LLM still streams"
+    );
+    assert_eq!(
+        actor.dialogue_history(),
+        ["xin chao"],
+        "assistant is not delivered yet"
+    );
+    let controls = std::iter::from_fn(|| control_rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(controls.iter().any(|message| {
+        message
+            .as_text()
+            .is_some_and(|text| text.contains(r#""state":"start""#))
+    }));
+    assert!(!controls.iter().any(|message| {
+        message
+            .as_text()
+            .is_some_and(|text| text.contains(r#""state":"stop""#))
+    }));
+
+    for _ in 0..300 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Ready {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+    assert_eq!(
+        actor.dialogue_history(),
+        ["xin chao", "Cau dau tien. Cau thu hai."]
+    );
+}
+
+#[tokio::test]
+async fn full_segment_capacity_stops_started_playback_without_committing_assistant_history() {
+    let (control_tx, mut control_rx) = mpsc::channel(32);
+    let (audio_tx, _audio_rx) = mpsc::channel(32);
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(BackpressuredLlm),
+        Arc::new(FakeTts),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Ready {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+    assert_eq!(actor.dialogue_history(), ["xin chao"]);
+    let controls = std::iter::from_fn(|| control_rx.try_recv().ok())
+        .filter_map(|message| message.as_text().map(str::to_owned))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|text| text.contains(r#""state":"start""#))
+            .count(),
+        1
+    );
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|text| text.contains(r#""state":"stop""#))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn llm_failure_before_audio_emits_no_playback_controls_or_assistant_history() {
+    let (control_tx, mut control_rx) = mpsc::channel(16);
+    let (audio_tx, mut audio_rx) = mpsc::channel(16);
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(FailingLlm),
+        Arc::new(FakeTts),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Ready {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+    assert_eq!(actor.dialogue_history(), ["xin chao"]);
+    assert!(audio_rx.try_recv().is_err());
+    let controls = std::iter::from_fn(|| control_rx.try_recv().ok())
+        .filter_map(|message| message.as_text().map(str::to_owned))
+        .collect::<Vec<_>>();
+    assert!(!controls.iter().any(|text| text.contains(r#""type":"tts""#)));
 }
 
 #[tokio::test]

@@ -258,7 +258,8 @@ async fn handle_socket(
             return;
         }
     };
-    let actor = match actor.with_delivery_providers(&providers) {
+    let actor = match actor.with_delivery_providers_config(&providers, config.speech_output.clone())
+    {
         Ok(actor) => actor,
         Err(error) => {
             debug!(%error, "failed to initialize session speech output");
@@ -274,6 +275,7 @@ async fn handle_socket(
     }
     let writer = tokio::spawn(async move {
         let mut deferred_tts_stop = None;
+        let mut invalidated_generation = 0;
         loop {
             // A normal stop follows the final paced packet even though control is otherwise
             // preferred over audio by this writer.
@@ -291,13 +293,22 @@ async fn handle_socket(
             tokio::select! {
                 biased;
                 Some(message) = control_rx.recv() => {
-                    if is_normal_tts_stop(&message) && !audio_rx.is_empty() {
+                    if let OutboundMessage::InvalidateAudio(generation) = message {
+                        invalidated_generation = invalidated_generation.max(generation);
+                    } else if is_normal_tts_stop(&message) && !audio_rx.is_empty() {
                         deferred_tts_stop = Some(message);
                     } else if send_outbound(&mut sender, message).await {
                         break;
                     }
                 },
-                Some(message) = audio_rx.recv() => if send_outbound(&mut sender, message).await { break; },
+                Some(message) = audio_rx.recv() => {
+                    if let OutboundMessage::Binary { generation, .. } = &message
+                        && *generation <= invalidated_generation
+                    {
+                        continue;
+                    }
+                    if send_outbound(&mut sender, message).await { break; }
+                },
                 else => {
                     if let Some(message) = deferred_tts_stop.take()
                         && send_outbound(&mut sender, message).await
@@ -383,7 +394,8 @@ async fn send_outbound(
     let closes = matches!(message, OutboundMessage::Close(_));
     let result = match message {
         OutboundMessage::Text(text) => sender.send(Message::Text(text.into())).await,
-        OutboundMessage::Binary(bytes) => sender.send(Message::Binary(bytes.into())).await,
+        OutboundMessage::Binary { packet, .. } => sender.send(Message::Binary(packet.into())).await,
+        OutboundMessage::InvalidateAudio(_) => return false,
         OutboundMessage::Close(code) => {
             sender
                 .send(Message::Close(Some(CloseFrame {

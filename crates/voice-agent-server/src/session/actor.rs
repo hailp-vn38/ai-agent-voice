@@ -64,7 +64,8 @@ pub struct SessionRuntimes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboundMessage {
     Text(String),
-    Binary(Vec<u8>),
+    Binary { generation: u64, packet: Vec<u8> },
+    InvalidateAudio(u64),
     Close(u16),
 }
 
@@ -72,7 +73,7 @@ impl OutboundMessage {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(text) => Some(text),
-            Self::Binary(_) | Self::Close(_) => None,
+            Self::Binary { .. } | Self::InvalidateAudio(_) | Self::Close(_) => None,
         }
     }
 }
@@ -247,6 +248,15 @@ impl SessionActor {
         Ok(self)
     }
 
+    pub fn with_delivery_providers_config(
+        mut self,
+        providers: &ProviderSet,
+        config: crate::config::SpeechOutputConfig,
+    ) -> Result<Self, crate::audio::AudioError> {
+        self.speech_output = SpeechOutput::with_config(providers.tts_provider(), config)?;
+        Ok(self)
+    }
+
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
@@ -278,6 +288,7 @@ impl SessionActor {
         }
         while let Ok(event) = self.llm_events.try_recv() {
             self.on_llm_event(event);
+            self.drain_speech_output();
         }
     }
 
@@ -535,6 +546,7 @@ impl SessionActor {
         if self.phase == SessionPhase::Closed {
             return;
         }
+        self.cancel_speech_delivery();
         self.generation += 1;
         self.cancel_llm();
         self.cancel_asr();
@@ -588,30 +600,39 @@ impl SessionActor {
             return;
         }
         match event {
-            LlmRuntimeEvent::TextDelta { text, .. } => self.generated_response.push_str(&text),
+            LlmRuntimeEvent::TextDelta { text, .. } => {
+                self.generated_response.push_str(&text);
+                if self.speech_output.push_delta(&text).is_err() {
+                    self.fail_speech_delivery();
+                }
+            }
             LlmRuntimeEvent::Finished { .. } => {
                 self.llm_operation = None;
                 if self.generated_response.trim().is_empty()
-                    || self.speech_output.submit(&self.generated_response).is_err()
+                    || self.speech_output.finish_input().is_err()
                 {
-                    self.complete_recognition();
-                } else {
-                    self.speech_output.finish_input();
+                    self.fail_speech_delivery();
                 }
             }
             LlmRuntimeEvent::UnexpectedToolCall { .. }
             | LlmRuntimeEvent::Failed { .. }
             | LlmRuntimeEvent::Cancelled { .. } => {
                 self.llm_operation = None;
-                self.speech_output.cancel();
-                self.tts_started = false;
-                self.complete_recognition();
+                self.fail_speech_delivery();
             }
         }
     }
 
     fn drain_speech_output(&mut self) {
-        while let Some(event) = self.speech_output.poll() {
+        loop {
+            let event = match self.speech_output.poll() {
+                Ok(Some(event)) => event,
+                Ok(None) => break,
+                Err(_) => {
+                    self.fail_speech_delivery();
+                    break;
+                }
+            };
             match event {
                 SpeechOutputEvent::Started => {
                     self.tts_started = true;
@@ -625,7 +646,10 @@ impl SessionActor {
                     }
                 }
                 SpeechOutputEvent::AudioPacket(packet) => {
-                    let _ = self._audio_tx.try_send(OutboundMessage::Binary(packet));
+                    let _ = self._audio_tx.try_send(OutboundMessage::Binary {
+                        generation: self.generation,
+                        packet,
+                    });
                 }
                 SpeechOutputEvent::Drained => {
                     if self.tts_started {
@@ -638,11 +662,39 @@ impl SessionActor {
                             let _ = self.send_control(payload);
                         }
                     }
+                    // A Delivered Assistant Response exists only after all its audio drained.
+                    self.dialogue_history
+                        .commit_assistant(std::mem::take(&mut self.generated_response));
                     self.tts_started = false;
                     self.complete_recognition();
                 }
             }
         }
+    }
+
+    fn fail_speech_delivery(&mut self) {
+        self.cancel_llm();
+        self.cancel_speech_delivery();
+        self.complete_recognition();
+    }
+
+    fn cancel_speech_delivery(&mut self) {
+        // The writer receives this gate before a stop and drops queued packets for this turn.
+        let _ = self
+            .control_tx
+            .try_send(OutboundMessage::InvalidateAudio(self.generation));
+        self.speech_output.cancel();
+        if self.tts_started {
+            let payload = serde_json::json!({
+                "session_id": self.session_id,
+                "type": "tts",
+                "state": "stop",
+            });
+            if let Ok(payload) = serde_json::to_string(&payload) {
+                let _ = self.send_control(payload);
+            }
+        }
+        self.tts_started = false;
     }
 
     fn cancel_asr(&mut self) {
