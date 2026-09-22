@@ -10,10 +10,11 @@ use crate::{
         VadSegmenter, VadSegmenterConfig,
     },
     protocol::{ClientMessage, ListenCommand, ListenMode},
-    providers::{LlmProvider, ProviderSet, llm::UnavailableLlm, tts::UnavailableTts},
+    providers::{ProviderSet, llm::UnavailableLlm, tts::UnavailableTts},
     workers::{
-        AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, VadCommand, VadWorkerEvent,
-        VadWorkerLease, VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig,
+        AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, LlmRuntime, LlmRuntimeEvent,
+        VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime, WorkerIdentity,
+        WorkerRuntimeConfig,
     },
 };
 use tokio::sync::mpsc;
@@ -40,7 +41,10 @@ pub struct SessionActor {
     has_active_turn_permit: bool,
     generation: u64,
     dialogue_history: DialogueHistory,
-    llm: std::sync::Arc<dyn LlmProvider>,
+    llm_runtime: std::sync::Arc<LlmRuntime>,
+    llm_events: mpsc::Receiver<LlmRuntimeEvent>,
+    llm_operation: Option<WorkerIdentity>,
+    generated_response: String,
     speech_output: SpeechOutput,
     tts_started: bool,
     control_tx: mpsc::Sender<OutboundMessage>,
@@ -51,6 +55,7 @@ pub struct SessionActor {
 pub struct SessionRuntimes {
     pub asr: std::sync::Arc<AsrWorkerRuntime>,
     pub vad: std::sync::Arc<VadWorkerRuntime>,
+    pub llm: std::sync::Arc<LlmRuntime>,
     pub active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
     pub vad_segmenter_config: VadSegmenterConfig,
     pub pre_roll_samples: u64,
@@ -106,14 +111,25 @@ impl SessionActor {
             providers.vad_provider(),
             WorkerRuntimeConfig::default(),
         ));
-        Self::new_with_runtimes(
+        let llm_runtime = std::sync::Arc::new(LlmRuntime::new(
+            providers.llm_provider(),
+            1,
+            std::time::Duration::from_secs(60),
+        ));
+        Self::new_with_runtimes_and_limiter(
             session_id,
             control_tx,
             audio_tx,
             max_capture_frames,
             max_history_messages,
-            asr_runtime,
-            vad_runtime,
+            SessionRuntimes {
+                asr: asr_runtime,
+                vad: vad_runtime,
+                llm: llm_runtime,
+                active_turn_limiter: std::sync::Arc::new(ActiveTurnLimiter::new(8)),
+                vad_segmenter_config: VadSegmenterConfig::default(),
+                pre_roll_samples: 4_800,
+            },
         )
         .and_then(|actor| actor.with_delivery_providers(&providers))
     }
@@ -162,6 +178,11 @@ impl SessionActor {
             SessionRuntimes {
                 asr: asr_runtime,
                 vad: vad_runtime,
+                llm: std::sync::Arc::new(LlmRuntime::new(
+                    std::sync::Arc::new(UnavailableLlm),
+                    1,
+                    std::time::Duration::from_secs(60),
+                )),
                 active_turn_limiter: std::sync::Arc::new(ActiveTurnLimiter::new(8)),
                 vad_segmenter_config: VadSegmenterConfig::default(),
                 pre_roll_samples: 4_800,
@@ -184,6 +205,7 @@ impl SessionActor {
         );
         let asr_events = runtimes.asr.register_session(&session_id);
         let vad_events = runtimes.vad.register_session(&session_id);
+        let llm_events = runtimes.llm.register_session(&session_id, 64);
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
@@ -205,7 +227,10 @@ impl SessionActor {
             has_active_turn_permit: false,
             generation: 0,
             dialogue_history: DialogueHistory::new(max_history_messages),
-            llm: std::sync::Arc::new(UnavailableLlm),
+            llm_runtime: runtimes.llm,
+            llm_events,
+            llm_operation: None,
+            generated_response: String::new(),
             speech_output: SpeechOutput::new(std::sync::Arc::new(UnavailableTts))?,
             tts_started: false,
             control_tx,
@@ -218,7 +243,6 @@ impl SessionActor {
         mut self,
         providers: &ProviderSet,
     ) -> Result<Self, crate::audio::AudioError> {
-        self.llm = providers.llm_provider();
         self.speech_output = SpeechOutput::new(providers.tts_provider())?;
         Ok(self)
     }
@@ -252,6 +276,9 @@ impl SessionActor {
         while let Ok(event) = self.vad_events.try_recv() {
             self.on_vad_event(event);
         }
+        while let Ok(event) = self.llm_events.try_recv() {
+            self.on_llm_event(event);
+        }
     }
 
     pub fn send_control(
@@ -283,6 +310,7 @@ impl SessionActor {
         match message {
             ClientMessage::Listen(ListenCommand::Start { mode }) => {
                 self.generation += 1;
+                self.cancel_llm();
                 self.speech_output.cancel();
                 self.tts_started = false;
                 self.cancel_asr();
@@ -334,6 +362,7 @@ impl SessionActor {
             ClientMessage::Abort => {
                 if self.phase != SessionPhase::Closed {
                     self.generation += 1;
+                    self.cancel_llm();
                     self.speech_output.cancel();
                     self.tts_started = false;
                     self.manual_capture.abort();
@@ -507,6 +536,7 @@ impl SessionActor {
             return;
         }
         self.generation += 1;
+        self.cancel_llm();
         self.cancel_asr();
         self.release_active_turn();
         self.close_vad();
@@ -535,15 +565,49 @@ impl SessionActor {
     }
 
     fn begin_speech_delivery(&mut self, user_text: String) {
-        let Ok(response) = self.llm.complete(&user_text) else {
-            self.complete_recognition();
-            return;
-        };
-        if response.trim().is_empty() || self.speech_output.submit(&response).is_err() {
+        let identity =
+            WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
+        self.generated_response.clear();
+        if self.llm_runtime.start(identity.clone(), user_text).is_err() {
             self.complete_recognition();
             return;
         }
-        self.speech_output.finish_input();
+        self.llm_operation = Some(identity);
+    }
+
+    fn on_llm_event(&mut self, event: LlmRuntimeEvent) {
+        let identity = match &event {
+            LlmRuntimeEvent::TextDelta { identity, .. }
+            | LlmRuntimeEvent::UnexpectedToolCall { identity }
+            | LlmRuntimeEvent::Finished { identity }
+            | LlmRuntimeEvent::Failed { identity }
+            | LlmRuntimeEvent::Cancelled { identity } => identity,
+        };
+        if self.llm_operation.as_ref() != Some(identity) || identity.generation() != self.generation
+        {
+            return;
+        }
+        match event {
+            LlmRuntimeEvent::TextDelta { text, .. } => self.generated_response.push_str(&text),
+            LlmRuntimeEvent::Finished { .. } => {
+                self.llm_operation = None;
+                if self.generated_response.trim().is_empty()
+                    || self.speech_output.submit(&self.generated_response).is_err()
+                {
+                    self.complete_recognition();
+                } else {
+                    self.speech_output.finish_input();
+                }
+            }
+            LlmRuntimeEvent::UnexpectedToolCall { .. }
+            | LlmRuntimeEvent::Failed { .. }
+            | LlmRuntimeEvent::Cancelled { .. } => {
+                self.llm_operation = None;
+                self.speech_output.cancel();
+                self.tts_started = false;
+                self.complete_recognition();
+            }
+        }
     }
 
     fn drain_speech_output(&mut self) {
@@ -585,6 +649,13 @@ impl SessionActor {
         if let Some((lease, _)) = self.asr_stream {
             let _ = self.asr_runtime.send(lease, AsrCommand::Cancel);
         }
+    }
+
+    fn cancel_llm(&mut self) {
+        if let Some(identity) = self.llm_operation.take() {
+            self.llm_runtime.cancel(&identity);
+        }
+        self.generated_response.clear();
     }
 
     fn release_active_turn(&mut self) {
@@ -736,10 +807,12 @@ impl Drop for SessionActor {
         // The application-owned supervisor continues to observe the acknowledgement or timeout
         // after this actor and its WebSocket have gone away.
         self.cancel_asr();
+        self.cancel_llm();
         self.speech_output.cancel();
         self.release_active_turn();
         self.close_vad();
         self.asr_runtime.unregister_session(&self.session_id);
         self.vad_runtime.unregister_session(&self.session_id);
+        self.llm_runtime.unregister_session(&self.session_id);
     }
 }

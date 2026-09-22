@@ -8,9 +8,12 @@ use tokio::sync::mpsc;
 use voice_agent_server::{
     audio::{DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono, VadSegmenterConfig},
     protocol::{ClientMessage, ListenCommand, ListenMode},
-    providers::{AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadProvider},
+    providers::{
+        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadProvider,
+        llm::UnavailableLlm,
+    },
     session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionPhase, SessionRuntimes},
-    workers::{AsrWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig},
+    workers::{AsrWorkerRuntime, LlmRuntime, VadWorkerRuntime, WorkerRuntimeConfig},
 };
 
 struct FakeAsr {
@@ -348,6 +351,11 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
         SessionRuntimes {
             asr,
             vad,
+            llm: Arc::new(LlmRuntime::new(
+                Arc::new(UnavailableLlm),
+                1,
+                Duration::from_secs(60),
+            )),
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
             vad_segmenter_config: VadSegmenterConfig {
                 speech_threshold: 0.5,
@@ -419,6 +427,11 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
         SessionRuntimes {
             asr: Arc::clone(&runtime),
             vad: Arc::clone(&vad),
+            llm: Arc::new(LlmRuntime::new(
+                Arc::new(UnavailableLlm),
+                1,
+                Duration::from_secs(60),
+            )),
             active_turn_limiter: Arc::clone(&limiter),
             vad_segmenter_config: VadSegmenterConfig::default(),
             pre_roll_samples: 4_800,
@@ -434,6 +447,11 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
         SessionRuntimes {
             asr: runtime,
             vad,
+            llm: Arc::new(LlmRuntime::new(
+                Arc::new(UnavailableLlm),
+                1,
+                Duration::from_secs(60),
+            )),
             active_turn_limiter: limiter,
             vad_segmenter_config: VadSegmenterConfig::default(),
             pre_roll_samples: 4_800,

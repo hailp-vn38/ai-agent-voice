@@ -2,10 +2,12 @@
 //! identity-tagged commands and events.
 
 mod asr;
+mod llm;
 mod supervisor;
 mod vad;
 
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
+pub use llm::{LlmRuntime, LlmRuntimeEvent};
 pub use supervisor::WorkerSupervisor;
 pub use vad::{VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime};
 

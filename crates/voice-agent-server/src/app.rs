@@ -7,7 +7,9 @@ use crate::{
     },
     providers::ProviderSet,
     session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent, SessionRuntimes},
-    workers::{AsrWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig, WorkerSupervisor},
+    workers::{
+        AsrWorkerRuntime, LlmRuntime, VadWorkerRuntime, WorkerRuntimeConfig, WorkerSupervisor,
+    },
 };
 use axum::{
     Json, Router,
@@ -35,6 +37,7 @@ pub struct AppState {
     pub providers: Arc<ProviderSet>,
     pub asr_runtime: Arc<AsrWorkerRuntime>,
     pub vad_runtime: Arc<VadWorkerRuntime>,
+    pub llm_runtime: Arc<LlmRuntime>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
     pub active_turn_limiter: Arc<ActiveTurnLimiter>,
 }
@@ -64,12 +67,26 @@ impl AppState {
             Arc::clone(&asr_runtime),
             Arc::clone(&vad_runtime),
         ));
+        let llm_runtime = Arc::new(LlmRuntime::new(
+            providers.llm_provider(),
+            config.limits.llm_concurrency,
+            Duration::from_millis(
+                config
+                    .providers
+                    .llm
+                    .openai
+                    .as_ref()
+                    .expect("validated OpenAI config")
+                    .timeout_ms,
+            ),
+        ));
         let active_turn_limiter = Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns));
         Self {
             config: Arc::new(config),
             providers,
             asr_runtime,
             vad_runtime,
+            llm_runtime,
             worker_supervisor,
             active_turn_limiter,
         }
@@ -126,6 +143,7 @@ async fn websocket(
     let providers = state.providers;
     let asr_runtime = state.asr_runtime;
     let vad_runtime = state.vad_runtime;
+    let llm_runtime = state.llm_runtime;
     let active_turn_limiter = state.active_turn_limiter;
     if !header_is(&headers, "protocol-version", "1")
         || !headers.contains_key("device-id")
@@ -156,6 +174,7 @@ async fn websocket(
                 providers,
                 asr_runtime,
                 vad_runtime,
+                llm_runtime,
                 active_turn_limiter,
             )
         })
@@ -172,6 +191,7 @@ async fn handle_socket(
     providers: Arc<ProviderSet>,
     asr_runtime: Arc<AsrWorkerRuntime>,
     vad_runtime: Arc<VadWorkerRuntime>,
+    llm_runtime: Arc<LlmRuntime>,
     active_turn_limiter: Arc<ActiveTurnLimiter>,
 ) {
     let (mut sender, mut receiver) = socket.split();
@@ -220,6 +240,7 @@ async fn handle_socket(
         SessionRuntimes {
             asr: asr_runtime,
             vad: vad_runtime,
+            llm: llm_runtime,
             active_turn_limiter,
             vad_segmenter_config: VadSegmenterConfig {
                 speech_threshold: vad_config.speech_threshold,

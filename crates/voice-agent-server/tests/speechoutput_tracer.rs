@@ -150,8 +150,8 @@ async fn connect_router(
     socket
 }
 
-#[test]
-fn non_empty_asr_final_delivers_started_canonical_opus_then_one_stop() {
+#[tokio::test]
+async fn non_empty_asr_final_delivers_started_canonical_opus_then_one_stop() {
     let (control_tx, mut control_rx) = mpsc::channel(8);
     let (audio_tx, mut audio_rx) = mpsc::channel(8);
     let providers = Arc::new(ProviderSet::with_all(
@@ -174,7 +174,7 @@ fn non_empty_asr_final_delivers_started_canonical_opus_then_one_stop() {
         if actor.phase() == SessionPhase::Ready {
             break;
         }
-        std::thread::sleep(Duration::from_millis(1));
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
     assert_eq!(actor.phase(), SessionPhase::Ready);
 

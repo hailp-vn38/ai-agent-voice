@@ -84,6 +84,8 @@ pub struct OpenAiConfig {
     pub base_url: Url,
     #[serde(default = "default_openai_model")]
     pub model: String,
+    #[serde(default = "default_llm_timeout_ms")]
+    pub timeout_ms: u64,
 }
 
 impl Default for OpenAiConfig {
@@ -92,6 +94,7 @@ impl Default for OpenAiConfig {
             api_key: SecretString(String::new()),
             base_url: default_openai_base_url(),
             model: default_openai_model(),
+            timeout_ms: default_llm_timeout_ms(),
         }
     }
 }
@@ -543,6 +546,9 @@ fn default_max_active_turns() -> usize {
 fn default_llm_concurrency() -> usize {
     2
 }
+fn default_llm_timeout_ms() -> u64 {
+    60_000
+}
 fn default_tts_concurrency() -> usize {
     2
 }
@@ -805,6 +811,7 @@ impl AppConfig {
         if openai.base_url.scheme() != "https"
             || openai.base_url.host_str().is_none()
             || openai.model.trim().is_empty()
+            || openai.timeout_ms == 0
         {
             return Err(ConfigError::Validation(
                 "OpenAI base URL and model must be valid".into(),
