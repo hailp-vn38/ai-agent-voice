@@ -93,9 +93,9 @@ impl SpeechOutput {
     }
 
     fn enqueue(&mut self, text: String) -> Result<(), SpeechOutputError> {
-        // Encoded-but-not-paced audio remains delivery work, so it counts toward the same
-        // semantic bound rather than turning a fast LLM into an unbounded packet buffer.
-        if self.pending.len() + self.packets.len() >= self.max_pending {
+        // This is the semantic bound for text awaiting synthesis. Audio has its own bounded
+        // transport queue, so a long valid segment must not consume future segment capacity.
+        if self.pending.len() >= self.max_pending {
             return Err(SpeechOutputError::Backpressure);
         }
         self.pending.push_back(text);
@@ -159,9 +159,6 @@ impl SpeechOutput {
         // Only one segment is synthesized at a time; packet pacing may overlap the next poll.
         if self.packets.is_empty() && self.active_worker.is_none() && !self.pending.is_empty() {
             self.synthesize_next()?;
-            // Give a just-dispatched native worker one scheduling opportunity without running
-            // inference on the actor/Tokio thread.
-            std::thread::yield_now();
         }
         if let Some(lease) = self.active_worker {
             let event = self
