@@ -4,9 +4,28 @@ use std::sync::Arc;
 use url::Url;
 use voice_agent_server::config::{
     AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig, ProvidersConfig,
-    RuntimeConfig, ServerConfig, WebsocketConfig, WorkersConfig,
+    RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig, WebsocketConfig, WorkersConfig,
 };
-use voice_agent_server::{app::AppState, providers::ProviderSet};
+use voice_agent_server::{
+    app::AppState,
+    providers::{LlmProvider, ProviderSet, TtsProvider},
+};
+
+struct FakeLlm;
+
+impl LlmProvider for FakeLlm {
+    fn adapter(&self) -> &'static str {
+        "fake_llm"
+    }
+}
+
+struct FakeTts;
+
+impl TtsProvider for FakeTts {
+    fn adapter(&self) -> &'static str {
+        "fake_tts"
+    }
+}
 
 fn valid_config() -> AppConfig {
     AppConfig {
@@ -24,6 +43,8 @@ fn valid_config() -> AppConfig {
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
         llm: LlmConfig::default(),
+        tts: TtsConfig::default(),
+        speech_output: SpeechOutputConfig::default(),
     }
 }
 
@@ -77,6 +98,38 @@ fn worker_runtime_limits_and_timeouts_are_configured_and_validated() {
     config.workers.asr.final_timeout_ms = 1;
     config.workers.vad.max_workers = 0;
     assert!(config.validate().is_err());
+}
+
+#[test]
+fn phase_four_delivery_capacity_and_speech_bounds_fail_fast() {
+    let mut config = valid_config();
+    config.limits.llm_concurrency = 2;
+    config.limits.tts_concurrency = 2;
+    config.workers.tts.max_workers = 2;
+    config.workers.tts.command_queue_capacity = 4;
+    config.workers.tts.cleanup_grace_ms = 250;
+    config.tts.timeout_ms = 1_000;
+    config.speech_output.min_chars = 24;
+    config.speech_output.soft_break_min_chars = 48;
+    config.speech_output.max_chars = 160;
+    config.speech_output.pending_segments = 8;
+    assert!(config.validate().is_ok());
+
+    config.limits.tts_concurrency = 1;
+    assert!(config.validate().is_err());
+    config.limits.tts_concurrency = 2;
+    config.speech_output.soft_break_min_chars = 23;
+    assert!(config.validate().is_err());
+}
+
+#[test]
+fn application_state_preserves_injected_llm_and_tts_test_providers() {
+    let providers = ProviderSet::with_llm_tts(Arc::new(FakeLlm), Arc::new(FakeTts));
+
+    let state = AppState::new(valid_config(), Arc::new(providers));
+
+    assert_eq!(state.providers.llm_adapter(), "fake_llm");
+    assert_eq!(state.providers.tts_adapter(), "fake_tts");
 }
 
 #[test]

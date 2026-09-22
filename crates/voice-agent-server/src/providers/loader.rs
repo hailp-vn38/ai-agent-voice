@@ -12,6 +12,8 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<ProviderSet, ProviderLoad
     let registry = compiled_provider_registry();
     let vad_factory = registry.vad_factory(&config.providers.vad.adapter)?;
     let asr_factory = registry.asr_factory(&config.providers.asr.adapter)?;
+    let llm_factory = registry.llm_factory(&config.providers.llm.adapter)?;
+    let tts_factory = registry.tts_factory(&config.providers.tts.adapter)?;
     let vad_identity = vad_factory.model_identity(&config.providers.vad)?;
     let asr_identity = asr_factory.model_identity(&config.providers.asr)?;
     let vad_model = prepare(
@@ -32,5 +34,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<ProviderSet, ProviderLoad
     )?;
     let vad = vad_factory.build(&config.providers.vad, &config.runtime, &vad_model)?;
     let asr = asr_factory.build(&config.providers.asr, &asr_model)?;
-    Ok(ProviderSet::with_vad(vad, asr))
+    let llm = llm_factory.build(&config.providers.llm)?;
+    let tts = tts_factory.build(&config.providers.tts)?;
+    Ok(ProviderSet::with_all(vad, asr, llm, tts))
 }

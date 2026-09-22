@@ -15,7 +15,8 @@ use voice_agent_server::{
     app::router_with_providers,
     config::{
         AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, WebsocketConfig, WorkersConfig,
+        ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
+        WebsocketConfig, WorkersConfig,
     },
     providers::ProviderSet,
 };
@@ -38,6 +39,8 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
         llm: LlmConfig::default(),
+        tts: TtsConfig::default(),
+        speech_output: SpeechOutputConfig::default(),
     };
     let app: Router = router_with_providers(config, Arc::new(ProviderSet::unavailable()));
     let task = tokio::spawn(async move {

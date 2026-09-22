@@ -3,8 +3,9 @@ use std::sync::Arc;
 use crate::{
     config::AppConfig,
     providers::{
-        AsrError, AsrProvider, AsrSession, ProviderLoadError, VadProvider, asr::UnavailableAsr,
-        loader, vad::UnavailableVad,
+        AsrError, AsrProvider, AsrSession, LlmProvider, ProviderLoadError, TtsProvider,
+        VadProvider, asr::UnavailableAsr, llm::UnavailableLlm, loader, tts::UnavailableTts,
+        vad::UnavailableVad,
     },
 };
 
@@ -12,6 +13,8 @@ use crate::{
 pub struct ProviderSet {
     asr: Arc<dyn AsrProvider>,
     vad: Arc<dyn VadProvider>,
+    llm: Arc<dyn LlmProvider>,
+    tts: Arc<dyn TtsProvider>,
 }
 
 impl ProviderSet {
@@ -19,7 +22,18 @@ impl ProviderSet {
         Self::with_vad(Arc::new(UnavailableVad), asr)
     }
     pub fn with_vad(vad: Arc<dyn VadProvider>, asr: Arc<dyn AsrProvider>) -> Self {
-        Self { asr, vad }
+        Self::with_all(vad, asr, Arc::new(UnavailableLlm), Arc::new(UnavailableTts))
+    }
+    pub fn with_llm_tts(llm: Arc<dyn LlmProvider>, tts: Arc<dyn TtsProvider>) -> Self {
+        Self::with_all(Arc::new(UnavailableVad), Arc::new(UnavailableAsr), llm, tts)
+    }
+    pub fn with_all(
+        vad: Arc<dyn VadProvider>,
+        asr: Arc<dyn AsrProvider>,
+        llm: Arc<dyn LlmProvider>,
+        tts: Arc<dyn TtsProvider>,
+    ) -> Self {
+        Self { asr, vad, llm, tts }
     }
     pub fn open_asr(&self) -> Result<Box<dyn AsrSession>, AsrError> {
         self.asr.open()
@@ -32,6 +46,12 @@ impl ProviderSet {
     }
     pub fn vad_adapter(&self) -> &'static str {
         self.vad.adapter()
+    }
+    pub fn llm_adapter(&self) -> &'static str {
+        self.llm.adapter()
+    }
+    pub fn tts_adapter(&self) -> &'static str {
+        self.tts.adapter()
     }
     pub fn unavailable() -> Self {
         Self::new(Arc::new(UnavailableAsr))

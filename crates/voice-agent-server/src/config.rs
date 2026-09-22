@@ -24,6 +24,10 @@ pub struct AppConfig {
     pub runtime: RuntimeConfig,
     #[serde(default)]
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub tts: TtsConfig,
+    #[serde(default)]
+    pub speech_output: SpeechOutputConfig,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -31,6 +35,104 @@ pub struct AppConfig {
 pub struct ProvidersConfig {
     pub vad: VadProviderConfig,
     pub asr: AsrProviderConfig,
+    #[serde(default)]
+    pub llm: LlmProviderConfig,
+    #[serde(default)]
+    pub tts: TtsProviderConfig,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct SecretString(String);
+
+#[allow(dead_code)]
+impl SecretString {
+    pub(crate) fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LlmProviderConfig {
+    #[serde(rename = "type", default = "default_llm_adapter")]
+    pub adapter: String,
+    #[serde(default)]
+    pub openai: Option<OpenAiConfig>,
+}
+
+impl Default for LlmProviderConfig {
+    fn default() -> Self {
+        Self {
+            adapter: default_llm_adapter(),
+            openai: Some(OpenAiConfig::default()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenAiConfig {
+    #[serde(default)]
+    pub api_key: SecretString,
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: Url,
+    #[serde(default = "default_openai_model")]
+    pub model: String,
+}
+
+impl Default for OpenAiConfig {
+    fn default() -> Self {
+        Self {
+            api_key: SecretString(String::new()),
+            base_url: default_openai_base_url(),
+            model: default_openai_model(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsProviderConfig {
+    #[serde(default = "default_tts_adapter")]
+    pub adapter: String,
+    #[serde(default)]
+    pub zerotts_onnx: Option<ZeroTtsOnnxConfig>,
+}
+
+impl Default for TtsProviderConfig {
+    fn default() -> Self {
+        Self {
+            adapter: default_tts_adapter(),
+            zerotts_onnx: Some(ZeroTtsOnnxConfig::default()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZeroTtsOnnxConfig {
+    #[serde(default = "default_tts_model")]
+    pub model: String,
+    #[serde(default = "default_asr_threads")]
+    pub num_threads: i32,
+    #[serde(default = "default_tts_voice")]
+    pub voice: String,
+}
+
+impl Default for ZeroTtsOnnxConfig {
+    fn default() -> Self {
+        Self {
+            model: default_tts_model(),
+            num_threads: default_asr_threads(),
+            voice: default_tts_voice(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -130,6 +232,29 @@ pub struct WorkersConfig {
     pub vad: VadWorkerConfig,
     #[serde(default)]
     pub asr: AsrWorkerConfig,
+    #[serde(default)]
+    pub tts: TtsWorkerConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsWorkerConfig {
+    #[serde(default = "default_asr_worker_count")]
+    pub max_workers: usize,
+    #[serde(default = "default_worker_queue_capacity")]
+    pub command_queue_capacity: usize,
+    #[serde(default = "default_cleanup_grace_ms")]
+    pub cleanup_grace_ms: u64,
+}
+
+impl Default for TtsWorkerConfig {
+    fn default() -> Self {
+        Self {
+            max_workers: default_asr_worker_count(),
+            command_queue_capacity: default_worker_queue_capacity(),
+            cleanup_grace_ms: default_cleanup_grace_ms(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -258,6 +383,45 @@ pub struct LlmConfig {
     pub max_history_messages: usize,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsConfig {
+    #[serde(default = "default_tts_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for TtsConfig {
+    fn default() -> Self {
+        Self {
+            timeout_ms: default_tts_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeechOutputConfig {
+    #[serde(default = "default_speech_min_chars")]
+    pub min_chars: usize,
+    #[serde(default = "default_speech_soft_break_min_chars")]
+    pub soft_break_min_chars: usize,
+    #[serde(default = "default_speech_max_chars")]
+    pub max_chars: usize,
+    #[serde(default = "default_pending_segments")]
+    pub pending_segments: usize,
+}
+
+impl Default for SpeechOutputConfig {
+    fn default() -> Self {
+        Self {
+            min_chars: default_speech_min_chars(),
+            soft_break_min_chars: default_speech_soft_break_min_chars(),
+            max_chars: default_speech_max_chars(),
+            pending_segments: default_pending_segments(),
+        }
+    }
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
@@ -330,6 +494,10 @@ pub struct LimitsConfig {
     pub outbound_audio_queue: usize,
     #[serde(default = "default_max_active_turns")]
     pub max_active_turns: usize,
+    #[serde(default = "default_llm_concurrency")]
+    pub llm_concurrency: usize,
+    #[serde(default = "default_tts_concurrency")]
+    pub tts_concurrency: usize,
 }
 
 impl Default for LimitsConfig {
@@ -339,6 +507,8 @@ impl Default for LimitsConfig {
             outbound_control_queue: default_queue_capacity(),
             outbound_audio_queue: default_queue_capacity(),
             max_active_turns: default_max_active_turns(),
+            llm_concurrency: default_llm_concurrency(),
+            tts_concurrency: default_tts_concurrency(),
         }
     }
 }
@@ -370,6 +540,12 @@ fn default_queue_capacity() -> usize {
 fn default_max_active_turns() -> usize {
     8
 }
+fn default_llm_concurrency() -> usize {
+    2
+}
+fn default_tts_concurrency() -> usize {
+    2
+}
 fn default_vad_adapter() -> String {
     "silero_onnx".into()
 }
@@ -381,6 +557,24 @@ fn default_asr_adapter() -> String {
 }
 fn default_asr_model() -> String {
     "zipformer_vi_streaming".into()
+}
+fn default_llm_adapter() -> String {
+    "openai".into()
+}
+fn default_openai_base_url() -> Url {
+    Url::parse("https://api.openai.com/v1").expect("valid default OpenAI URL")
+}
+fn default_openai_model() -> String {
+    "model-name".into()
+}
+fn default_tts_adapter() -> String {
+    "zerotts_onnx".into()
+}
+fn default_tts_model() -> String {
+    "zerotts_default".into()
+}
+fn default_tts_voice() -> String {
+    "maichi".into()
 }
 fn default_provider_threads() -> i32 {
     1
@@ -435,6 +629,21 @@ fn default_cleanup_grace_ms() -> u64 {
 }
 fn default_max_history_messages() -> usize {
     20
+}
+fn default_tts_timeout_ms() -> u64 {
+    15_000
+}
+fn default_speech_min_chars() -> usize {
+    24
+}
+fn default_speech_soft_break_min_chars() -> usize {
+    48
+}
+fn default_speech_max_chars() -> usize {
+    160
+}
+fn default_pending_segments() -> usize {
+    8
 }
 
 #[derive(Debug, Error)]
@@ -492,11 +701,13 @@ impl AppConfig {
             self.limits.outbound_control_queue,
             self.limits.outbound_audio_queue,
             self.limits.max_active_turns,
+            self.limits.llm_concurrency,
+            self.limits.tts_concurrency,
         ]
         .contains(&0)
         {
             return Err(ConfigError::Validation(
-                "queue capacities must be positive".into(),
+                "queue and delivery capacities must be positive".into(),
             ));
         }
         if self.llm.max_history_messages == 0 {
@@ -512,9 +723,12 @@ impl AppConfig {
             || self.workers.vad.command_queue_capacity == 0
             || self.workers.vad.reset_timeout_ms == 0
             || self.workers.vad.cleanup_grace_ms == 0
+            || self.workers.tts.max_workers == 0
+            || self.workers.tts.command_queue_capacity == 0
+            || self.workers.tts.cleanup_grace_ms == 0
         {
             return Err(ConfigError::Validation(
-                "VAD/ASR worker capacities and timeouts must be positive".into(),
+                "VAD/ASR/TTS worker capacities and timeouts must be positive".into(),
             ));
         }
         crate::providers::compiled_provider_registry()
@@ -572,6 +786,63 @@ impl AppConfig {
         if vad.model.is_empty() || asr.model.is_empty() {
             return Err(ConfigError::Validation(
                 "provider model identities must be non-empty".into(),
+            ));
+        }
+        crate::providers::compiled_provider_registry()
+            .llm_factory(&self.providers.llm.adapter)
+            .map_err(|_| {
+                ConfigError::Validation(format!(
+                    "LLM adapter `{}` is not compiled into this binary",
+                    self.providers.llm.adapter
+                ))
+            })?;
+        let openai = self.providers.llm.openai.as_ref().ok_or_else(|| {
+            ConfigError::Validation(format!(
+                "providers.llm.{} options are required",
+                self.providers.llm.adapter
+            ))
+        })?;
+        if openai.base_url.scheme() != "https"
+            || openai.base_url.host_str().is_none()
+            || openai.model.trim().is_empty()
+        {
+            return Err(ConfigError::Validation(
+                "OpenAI base URL and model must be valid".into(),
+            ));
+        }
+        crate::providers::compiled_provider_registry()
+            .tts_factory(&self.providers.tts.adapter)
+            .map_err(|_| {
+                ConfigError::Validation(format!(
+                    "TTS adapter `{}` is not compiled into this binary",
+                    self.providers.tts.adapter
+                ))
+            })?;
+        let tts = self.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
+            ConfigError::Validation(format!(
+                "providers.tts.{} options are required",
+                self.providers.tts.adapter
+            ))
+        })?;
+        if tts.model.trim().is_empty() || tts.voice.trim().is_empty() || tts.num_threads <= 0 {
+            return Err(ConfigError::Validation(
+                "ZeroTTS model, voice, and thread count must be valid".into(),
+            ));
+        }
+        if self.limits.tts_concurrency != self.workers.tts.max_workers {
+            return Err(ConfigError::Validation(
+                "limits.tts_concurrency must equal workers.tts.max_workers".into(),
+            ));
+        }
+        if self.tts.timeout_ms == 0
+            || self.speech_output.min_chars == 0
+            || self.speech_output.min_chars > self.speech_output.soft_break_min_chars
+            || self.speech_output.soft_break_min_chars > self.speech_output.max_chars
+            || self.speech_output.pending_segments == 0
+            || self.speech_output.pending_segments > 64
+        {
+            return Err(ConfigError::Validation(
+                "SpeechOutput bounds and TTS timeout must be valid".into(),
             ));
         }
         if self.deployment.profile.is_empty()

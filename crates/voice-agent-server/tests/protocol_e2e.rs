@@ -13,7 +13,8 @@ use voice_agent_server::{
     app::router_with_providers,
     config::{
         AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, WebsocketConfig, WorkersConfig,
+        ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
+        WebsocketConfig, WorkersConfig,
     },
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadError, VadInput,
@@ -115,6 +116,8 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
         llm: LlmConfig::default(),
+        tts: TtsConfig::default(),
+        speech_output: SpeechOutputConfig::default(),
     };
     let providers = Arc::new(ProviderSet::with_vad(
         Arc::new(SpeechThenSilenceVad),

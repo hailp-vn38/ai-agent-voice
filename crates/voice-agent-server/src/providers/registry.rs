@@ -5,10 +5,13 @@ use std::sync::Arc;
 use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
 
 use crate::{
-    config::{AsrProviderConfig, RuntimeConfig, VadProviderConfig},
+    config::{
+        AsrProviderConfig, LlmProviderConfig, RuntimeConfig, TtsProviderConfig, VadProviderConfig,
+    },
     models::ResolvedModel,
     providers::{
-        AsrProvider, ProviderLoadError, VadProvider, asr::ZipformerAsrProvider,
+        AsrProvider, LlmProvider, ProviderLoadError, TtsProvider, VadProvider,
+        asr::ZipformerAsrProvider, llm::ConfiguredOpenAiLlm, tts::ConfiguredZeroTts,
         vad::LoadedSileroVad,
     },
 };
@@ -40,10 +43,22 @@ pub trait AsrFactory: Send + Sync {
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError>;
 }
 
+pub trait LlmFactory: Send + Sync {
+    fn adapter(&self) -> &'static str;
+    fn build(&self, config: &LlmProviderConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError>;
+}
+
+pub trait TtsFactory: Send + Sync {
+    fn adapter(&self) -> &'static str;
+    fn build(&self, config: &TtsProviderConfig) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
+}
+
 /// Factories are linked into the binary. There is no runtime code discovery or plugin loading.
 pub struct ProviderRegistry {
     vad: &'static [&'static dyn VadFactory],
     asr: &'static [&'static dyn AsrFactory],
+    llm: &'static [&'static dyn LlmFactory],
+    tts: &'static [&'static dyn TtsFactory],
 }
 
 impl ProviderRegistry {
@@ -65,6 +80,28 @@ impl ProviderRegistry {
             .find(|factory| factory.adapter() == adapter)
             .ok_or_else(|| ProviderLoadError::UnsupportedAdapter {
                 kind: "ASR",
+                adapter: adapter.into(),
+            })
+    }
+
+    pub fn llm_factory(&self, adapter: &str) -> Result<&'static dyn LlmFactory, ProviderLoadError> {
+        self.llm
+            .iter()
+            .copied()
+            .find(|factory| factory.adapter() == adapter)
+            .ok_or_else(|| ProviderLoadError::UnsupportedAdapter {
+                kind: "LLM",
+                adapter: adapter.into(),
+            })
+    }
+
+    pub fn tts_factory(&self, adapter: &str) -> Result<&'static dyn TtsFactory, ProviderLoadError> {
+        self.tts
+            .iter()
+            .copied()
+            .find(|factory| factory.adapter() == adapter)
+            .ok_or_else(|| ProviderLoadError::UnsupportedAdapter {
+                kind: "TTS",
                 adapter: adapter.into(),
             })
     }
@@ -113,6 +150,46 @@ impl VadFactory for SileroOnnxFactory {
 
 struct ZipformerSherpaFactory;
 
+struct OpenAiFactory;
+
+impl LlmFactory for OpenAiFactory {
+    fn adapter(&self) -> &'static str {
+        "openai"
+    }
+
+    fn build(&self, config: &LlmProviderConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError> {
+        let options = config.openai.as_ref().ok_or_else(|| {
+            ProviderLoadError::Configuration("openai options are required".into())
+        })?;
+        if options.model.trim().is_empty() {
+            return Err(ProviderLoadError::Configuration(
+                "OpenAI model is required".into(),
+            ));
+        }
+        Ok(Arc::new(ConfiguredOpenAiLlm))
+    }
+}
+
+struct ZeroTtsOnnxFactory;
+
+impl TtsFactory for ZeroTtsOnnxFactory {
+    fn adapter(&self) -> &'static str {
+        "zerotts_onnx"
+    }
+
+    fn build(&self, config: &TtsProviderConfig) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        let options = config.zerotts_onnx.as_ref().ok_or_else(|| {
+            ProviderLoadError::Configuration("zerotts_onnx options are required".into())
+        })?;
+        if options.model.trim().is_empty() || options.voice.trim().is_empty() {
+            return Err(ProviderLoadError::Configuration(
+                "ZeroTTS model and voice are required".into(),
+            ));
+        }
+        Ok(Arc::new(ConfiguredZeroTts))
+    }
+}
+
 impl AsrFactory for ZipformerSherpaFactory {
     fn adapter(&self) -> &'static str {
         "zipformer_sherpa"
@@ -160,11 +237,17 @@ impl AsrFactory for ZipformerSherpaFactory {
 
 static SILERO_ONNX_FACTORY: SileroOnnxFactory = SileroOnnxFactory;
 static ZIPFORMER_SHERPA_FACTORY: ZipformerSherpaFactory = ZipformerSherpaFactory;
+static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
+static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static VAD_FACTORIES: [&dyn VadFactory; 1] = [&SILERO_ONNX_FACTORY];
 static ASR_FACTORIES: [&dyn AsrFactory; 1] = [&ZIPFORMER_SHERPA_FACTORY];
+static LLM_FACTORIES: [&dyn LlmFactory; 1] = [&OPENAI_FACTORY];
+static TTS_FACTORIES: [&dyn TtsFactory; 1] = [&ZEROTTS_ONNX_FACTORY];
 static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
     vad: &VAD_FACTORIES,
     asr: &ASR_FACTORIES,
+    llm: &LLM_FACTORIES,
+    tts: &TTS_FACTORIES,
 };
 
 pub fn compiled_provider_registry() -> &'static ProviderRegistry {
