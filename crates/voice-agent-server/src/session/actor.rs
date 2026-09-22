@@ -677,12 +677,12 @@ impl SessionActor {
     }
 
     fn cancel_speech_delivery(&mut self) {
-        // The writer receives this gate before a stop and drops queued packets for this turn.
-        let _ = self
-            .control_tx
-            .try_send(OutboundMessage::InvalidateAudio(self.generation));
         self.speech_output.cancel();
         if self.tts_started {
+            // The writer receives this gate before a stop and drops queued packets for this turn.
+            let _ = self
+                .control_tx
+                .try_send(OutboundMessage::InvalidateAudio(self.generation));
             let payload = serde_json::json!({
                 "session_id": self.session_id,
                 "type": "tts",
