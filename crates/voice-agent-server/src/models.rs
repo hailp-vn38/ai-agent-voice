@@ -97,6 +97,22 @@ impl ResolvedModel {
     pub fn adapter(&self) -> &str {
         &self.adapter
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test<const N: usize>(
+        identity: &str,
+        adapter: &str,
+        artifacts: [(&str, PathBuf); N],
+    ) -> Self {
+        Self {
+            identity: identity.into(),
+            adapter: adapter.into(),
+            artifacts: artifacts
+                .into_iter()
+                .map(|(role, path)| (role.into(), path))
+                .collect(),
+        }
+    }
 }
 
 pub trait ModelAcquirer: Send + Sync {

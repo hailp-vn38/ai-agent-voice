@@ -14,10 +14,18 @@ pub enum VadError {
 
 #[derive(Debug, Error)]
 pub enum ProviderLoadError {
+    #[error("provider configuration is invalid: {0}")]
+    Configuration(String),
     #[error("model manifest validation failed: {0}")]
     Manifest(#[from] crate::models::ModelError),
     #[error("unsupported {kind} adapter `{adapter}`")]
     UnsupportedAdapter { kind: &'static str, adapter: String },
+    #[error("resolved model `{model}` belongs to adapter `{actual}`, not `{expected}")]
+    ModelAdapterMismatch {
+        model: String,
+        expected: &'static str,
+        actual: String,
+    },
     #[error("required model artifact is missing: {0}")]
     MissingArtifact(String),
     #[error("cannot initialize local {0} provider")]

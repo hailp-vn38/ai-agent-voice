@@ -517,20 +517,24 @@ impl AppConfig {
                 "VAD/ASR worker capacities and timeouts must be positive".into(),
             ));
         }
-        if self.providers.vad.adapter != "silero_onnx" || self.providers.vad.silero_onnx.is_none() {
-            return Err(ConfigError::Validation(
-                "providers.vad must select silero_onnx with its typed configuration".into(),
-            ));
-        }
-        let vad = self
-            .providers
-            .vad
-            .silero_onnx
-            .as_ref()
-            .expect("validated above");
+        crate::providers::compiled_provider_registry()
+            .vad_factory(&self.providers.vad.adapter)
+            .map_err(|_| {
+                ConfigError::Validation(format!(
+                    "VAD adapter `{}` is not compiled into this binary",
+                    self.providers.vad.adapter
+                ))
+            })?;
+        let vad = self.providers.vad.silero_onnx.as_ref().ok_or_else(|| {
+            ConfigError::Validation(format!(
+                "providers.vad.{} options are required",
+                self.providers.vad.adapter
+            ))
+        })?;
         if vad.min_speech_ms == 0
             || vad.end_silence_ms == 0
             || vad.pre_roll_ms > self.audio.max_utterance_ms
+            || vad.num_threads <= 0
             || !vad.speech_threshold.is_finite()
             || !vad.exit_threshold.is_finite()
             || !(0.0..=1.0).contains(&vad.exit_threshold)
@@ -541,11 +545,28 @@ impl AppConfig {
                 "VAD thresholds and segmentation durations must be valid".into(),
             ));
         }
-        if self.providers.asr.adapter != "zipformer_sherpa"
-            || self.providers.asr.zipformer_sherpa.is_none()
-        {
+        crate::providers::compiled_provider_registry()
+            .asr_factory(&self.providers.asr.adapter)
+            .map_err(|_| {
+                ConfigError::Validation(format!(
+                    "ASR adapter `{}` is not compiled into this binary",
+                    self.providers.asr.adapter
+                ))
+            })?;
+        let asr = self
+            .providers
+            .asr
+            .zipformer_sherpa
+            .as_ref()
+            .ok_or_else(|| {
+                ConfigError::Validation(format!(
+                    "providers.asr.{} options are required",
+                    self.providers.asr.adapter
+                ))
+            })?;
+        if asr.num_threads <= 0 || asr.decoding_method.is_empty() {
             return Err(ConfigError::Validation(
-                "providers.asr must select zipformer_sherpa with its typed configuration".into(),
+                "ASR runtime options must be valid".into(),
             ));
         }
         if self.providers.vad.model.is_empty() || self.providers.asr.model.is_empty() {

@@ -1,101 +1,34 @@
-use std::sync::Arc;
-
-use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
-
 use crate::{
     config::AppConfig,
-    models::{ResolvedModel, prepare},
-    providers::{ProviderLoadError, ProviderSet, asr::ZipformerAsrProvider, vad::LoadedSileroVad},
+    models::prepare,
+    providers::{ProviderLoadError, ProviderSet, compiled_provider_registry},
 };
 
-/// Startup-only concrete factory. Adding an adapter is one module and one match arm.
+/// Startup orchestrates typed selection, Model Preparation, and fixed factory build.
 pub(crate) fn load_local(config: &AppConfig) -> Result<ProviderSet, ProviderLoadError> {
-    let vad = load_vad(config)?;
-    let asr = load_asr(config)?;
+    config
+        .validate()
+        .map_err(|error| ProviderLoadError::Configuration(error.to_string()))?;
+    let registry = compiled_provider_registry();
+    let vad_factory = registry.vad_factory(&config.providers.vad.adapter)?;
+    let asr_factory = registry.asr_factory(&config.providers.asr.adapter)?;
+    let vad_model = prepare(
+        &config.deployment.model_manifest,
+        &config.deployment.models.root,
+        config.deployment.models.offline,
+        &config.providers.vad.model,
+        vad_factory.adapter(),
+        &config.deployment,
+    )?;
+    let asr_model = prepare(
+        &config.deployment.model_manifest,
+        &config.deployment.models.root,
+        config.deployment.models.offline,
+        &config.providers.asr.model,
+        asr_factory.adapter(),
+        &config.deployment,
+    )?;
+    let vad = vad_factory.build(&config.providers.vad, &config.runtime, &vad_model)?;
+    let asr = asr_factory.build(&config.providers.asr, &asr_model)?;
     Ok(ProviderSet::with_vad(vad, asr))
-}
-
-fn load_vad(
-    config: &AppConfig,
-) -> Result<Arc<dyn crate::providers::VadProvider>, ProviderLoadError> {
-    match config.providers.vad.adapter.as_str() {
-        "silero_onnx" => {
-            let model = prepare(
-                &config.deployment.model_manifest,
-                &config.deployment.models.root,
-                config.deployment.models.offline,
-                &config.providers.vad.model,
-                "silero_onnx",
-                &config.deployment,
-            )?;
-            let threads = config
-                .providers
-                .vad
-                .silero_onnx
-                .as_ref()
-                .expect("validated config")
-                .num_threads;
-            Ok(Arc::new(
-                LoadedSileroVad::load(
-                    required(&model, "vad")?,
-                    config.runtime.onnx.library.clone(),
-                    threads,
-                )
-                .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
-            ))
-        }
-        adapter => Err(ProviderLoadError::UnsupportedAdapter {
-            kind: "VAD",
-            adapter: adapter.into(),
-        }),
-    }
-}
-
-fn load_asr(
-    config: &AppConfig,
-) -> Result<Arc<dyn crate::providers::AsrProvider>, ProviderLoadError> {
-    match config.providers.asr.adapter.as_str() {
-        "zipformer_sherpa" => {
-            let model = prepare(
-                &config.deployment.model_manifest,
-                &config.deployment.models.root,
-                config.deployment.models.offline,
-                &config.providers.asr.model,
-                "zipformer_sherpa",
-                &config.deployment,
-            )?;
-            let adapter = config
-                .providers
-                .asr
-                .zipformer_sherpa
-                .as_ref()
-                .expect("validated config");
-            let mut recognizer_config = OnlineRecognizerConfig::default();
-            recognizer_config.model_config.transducer.encoder = Some(required(&model, "encoder")?);
-            recognizer_config.model_config.transducer.decoder = Some(required(&model, "decoder")?);
-            recognizer_config.model_config.transducer.joiner = Some(required(&model, "joiner")?);
-            recognizer_config.model_config.tokens = Some(required(&model, "tokens")?);
-            recognizer_config.model_config.num_threads = adapter.num_threads;
-            recognizer_config.model_config.provider = Some("cpu".into());
-            recognizer_config.decoding_method = Some(adapter.decoding_method.clone());
-            recognizer_config.enable_endpoint = false;
-            let recognizer = Arc::new(
-                OnlineRecognizer::create(&recognizer_config)
-                    .ok_or(ProviderLoadError::Initialize("Zipformer ASR"))?,
-            );
-            drop(recognizer.create_stream());
-            Ok(Arc::new(ZipformerAsrProvider { recognizer }))
-        }
-        adapter => Err(ProviderLoadError::UnsupportedAdapter {
-            kind: "ASR",
-            adapter: adapter.into(),
-        }),
-    }
-}
-
-fn required(model: &ResolvedModel, role: &str) -> Result<String, ProviderLoadError> {
-    model
-        .artifact(role)
-        .map(|path| path.display().to_string())
-        .ok_or_else(|| ProviderLoadError::MissingArtifact(role.into()))
 }
