@@ -113,7 +113,7 @@ fn build_session(model: &Path, num_threads: i32) -> Result<Session, VadError> {
         .map_err(ort_error)
 }
 
-fn initialize_ort(configured_library: &Path) -> Result<(), VadError> {
+pub(crate) fn initialize_ort(configured_library: &Path) -> Result<(), VadError> {
     static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
     ORT_INIT
         .get_or_init(|| {

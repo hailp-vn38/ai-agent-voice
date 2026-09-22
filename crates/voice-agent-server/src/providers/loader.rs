@@ -47,6 +47,6 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<ProviderSet, ProviderLoad
     let tts_config = config.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
         ProviderLoadError::Configuration("zerotts_onnx options are required".into())
     })?;
-    let tts = tts_factory.build(tts_config, &tts_model)?;
+    let tts = tts_factory.build(tts_config, &config.runtime, &tts_model)?;
     Ok(ProviderSet::with_all(vad, asr, llm, tts))
 }

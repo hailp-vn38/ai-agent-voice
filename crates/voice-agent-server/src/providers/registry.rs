@@ -12,7 +12,9 @@ use crate::{
     models::ResolvedModel,
     providers::{
         AsrProvider, LlmProvider, ProviderLoadError, TtsProvider, VadProvider,
-        asr::ZipformerAsrProvider, llm::ConfiguredOpenAiLlm, tts::ConfiguredZeroTts,
+        asr::ZipformerAsrProvider,
+        llm::ConfiguredOpenAiLlm,
+        tts::{ConfiguredZeroTts, ZeroTtsArtifacts},
         vad::LoadedSileroVad,
     },
 };
@@ -58,6 +60,7 @@ pub trait TtsFactory: Send + Sync {
     fn build(
         &self,
         config: &ZeroTtsOnnxConfig,
+        runtime: &RuntimeConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
 }
@@ -212,6 +215,7 @@ impl TtsFactory for ZeroTtsOnnxFactory {
     fn build(
         &self,
         config: &ZeroTtsOnnxConfig,
+        runtime: &RuntimeConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
         validate_model_adapter(model, self.adapter())?;
@@ -230,7 +234,23 @@ impl TtsFactory for ZeroTtsOnnxFactory {
         for role in ZEROTTS_REQUIRED_ARTIFACT_ROLES {
             required(model, role)?;
         }
-        Ok(Arc::new(ConfiguredZeroTts))
+        Ok(Arc::new(
+            ConfiguredZeroTts::load(
+                ZeroTtsArtifacts {
+                    config: model.artifact("config").expect("required above"),
+                    tokenizer: model.artifact("tokenizer").expect("required above"),
+                    voice: model.artifact("voice").expect("required above"),
+                    text_encoder: model.artifact("text_encoder").expect("required above"),
+                    prefix_step: model.artifact("prefix_step").expect("required above"),
+                    local_frame_decode: model
+                        .artifact("local_frame_decode")
+                        .expect("required above"),
+                },
+                &runtime.onnx.library,
+                config.num_threads,
+            )
+            .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
+        ))
     }
 }
 
