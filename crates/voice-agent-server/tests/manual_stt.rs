@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 use voice_agent_server::{
-    audio::{DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono},
+    audio::{DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono, VadSegmenterConfig},
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::{AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadProvider},
     session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionPhase, SessionRuntimes},
@@ -339,8 +339,26 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
         config.clone(),
     ));
     let vad = Arc::new(VadWorkerRuntime::new(Arc::new(BoundaryVad), config));
-    let mut actor =
-        SessionActor::new_with_runtimes("auto".into(), control, audio, 4, 20, asr, vad).unwrap();
+    let mut actor = SessionActor::new_with_runtimes_and_limiter(
+        "auto".into(),
+        control,
+        audio,
+        4,
+        20,
+        SessionRuntimes {
+            asr,
+            vad,
+            active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
+            vad_segmenter_config: VadSegmenterConfig {
+                speech_threshold: 0.5,
+                exit_threshold: 0.35,
+                min_speech_samples: 512,
+                end_silence_samples: 512,
+            },
+            pre_roll_samples: 0,
+        },
+    )
+    .unwrap();
     let packet = uplink_packet();
 
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
@@ -402,6 +420,8 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
             asr: Arc::clone(&runtime),
             vad: Arc::clone(&vad),
             active_turn_limiter: Arc::clone(&limiter),
+            vad_segmenter_config: VadSegmenterConfig::default(),
+            pre_roll_samples: 4_800,
         },
     )
     .unwrap();
@@ -415,6 +435,8 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
             asr: runtime,
             vad,
             active_turn_limiter: limiter,
+            vad_segmenter_config: VadSegmenterConfig::default(),
+            pre_roll_samples: 4_800,
         },
     )
     .unwrap();

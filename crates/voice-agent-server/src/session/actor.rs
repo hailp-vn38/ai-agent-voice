@@ -2,7 +2,7 @@ use crate::session::{ActiveTurnLimiter, SessionPhase, event::SessionEvent, turn:
 use crate::{
     audio::{
         CaptureOutcome, DecodeOutcome, ManualCapture, PcmF32Mono, UplinkOpusDecoder, VadBoundary,
-        VadSegmenter,
+        VadSegmenter, VadSegmenterConfig,
     },
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::ProviderSet,
@@ -29,8 +29,8 @@ pub struct SessionActor {
     listening_mode: Option<ListenMode>,
     auto_speech_active: bool,
     vad_segmenter: VadSegmenter,
-    auto_preroll: Vec<PcmF32Mono>,
-    max_capture_frames: usize,
+    auto_retention: AutoPcmRetention,
+    pre_roll_samples: u64,
     active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
     has_active_turn_permit: bool,
     generation: u64,
@@ -44,6 +44,8 @@ pub struct SessionRuntimes {
     pub asr: std::sync::Arc<AsrWorkerRuntime>,
     pub vad: std::sync::Arc<VadWorkerRuntime>,
     pub active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
+    pub vad_segmenter_config: VadSegmenterConfig,
+    pub pre_roll_samples: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +154,8 @@ impl SessionActor {
                 asr: asr_runtime,
                 vad: vad_runtime,
                 active_turn_limiter: std::sync::Arc::new(ActiveTurnLimiter::new(8)),
+                vad_segmenter_config: VadSegmenterConfig::default(),
+                pre_roll_samples: 4_800,
             },
         )
     }
@@ -164,6 +168,11 @@ impl SessionActor {
         max_history_messages: usize,
         runtimes: SessionRuntimes,
     ) -> Result<Self, crate::audio::AudioError> {
+        let retention_capacity = auto_retention_capacity(
+            runtimes.vad.runtime_config().command_capacity,
+            runtimes.vad_segmenter_config.min_speech_samples,
+            runtimes.pre_roll_samples,
+        );
         let asr_events = runtimes.asr.register_session(&session_id);
         let vad_events = runtimes.vad.register_session(&session_id);
         Ok(Self {
@@ -180,9 +189,9 @@ impl SessionActor {
             vad_session: None,
             listening_mode: None,
             auto_speech_active: false,
-            vad_segmenter: VadSegmenter::new(),
-            auto_preroll: Vec::with_capacity(max_capture_frames),
-            max_capture_frames,
+            vad_segmenter: VadSegmenter::new(runtimes.vad_segmenter_config),
+            auto_retention: AutoPcmRetention::new(retention_capacity),
+            pre_roll_samples: runtimes.pre_roll_samples,
             active_turn_limiter: runtimes.active_turn_limiter,
             has_active_turn_permit: false,
             generation: 0,
@@ -268,7 +277,7 @@ impl SessionActor {
                             self.vad_session = Some((lease, identity));
                             self.auto_speech_active = false;
                             self.vad_segmenter.reset();
-                            self.auto_preroll.clear();
+                            self.auto_retention.reset();
                             self.phase = SessionPhase::Listening;
                         }
                         Err(_) => {
@@ -302,7 +311,7 @@ impl SessionActor {
                     self.release_active_turn();
                     self.close_vad();
                     self.listening_mode = None;
-                    self.auto_preroll.clear();
+                    self.auto_retention.reset();
                     self.phase = SessionPhase::Ready;
                 }
             }
@@ -366,8 +375,8 @@ impl SessionActor {
         let identity = match &event {
             VadWorkerEvent::Opened { identity }
             | VadWorkerEvent::Probability { identity, .. }
-            | VadWorkerEvent::SpeechStart { identity }
-            | VadWorkerEvent::SpeechEnd { identity }
+            | VadWorkerEvent::SpeechStart { identity, .. }
+            | VadWorkerEvent::SpeechEnd { identity, .. }
             | VadWorkerEvent::ResetDone { identity }
             | VadWorkerEvent::Closed { identity }
             | VadWorkerEvent::Failed { identity }
@@ -380,38 +389,47 @@ impl SessionActor {
             .is_some_and(|(_, active)| active == identity);
         match event {
             VadWorkerEvent::Probability { probability, .. } if current => {
-                match self.vad_segmenter.observe(probability >= 0.5) {
-                    Some(VadBoundary::SpeechStart) => {
+                match self.vad_segmenter.observe(probability) {
+                    Ok(Some(VadBoundary::SpeechStart { start_sample })) => {
                         self.on_vad_event(VadWorkerEvent::SpeechStart {
                             identity: identity.clone(),
+                            start_sample,
                         })
                     }
-                    Some(VadBoundary::SpeechEnd) => self.on_vad_event(VadWorkerEvent::SpeechEnd {
-                        identity: identity.clone(),
-                    }),
-                    None => {}
+                    Ok(Some(VadBoundary::SpeechEnd { end_sample })) => {
+                        self.on_vad_event(VadWorkerEvent::SpeechEnd {
+                            identity: identity.clone(),
+                            end_sample,
+                        })
+                    }
+                    Ok(None) => {}
+                    Err(_) => self.fail_closed(),
                 }
             }
-            VadWorkerEvent::SpeechStart { .. } if current && !self.auto_speech_active => {
+            VadWorkerEvent::SpeechStart { start_sample, .. }
+                if current && !self.auto_speech_active =>
+            {
                 self.auto_speech_active = true;
                 let identity =
                     WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
                 match self.asr_runtime.open(identity.clone()) {
                     Ok(lease) => {
                         self.asr_stream = Some((lease, identity));
-                        let preroll = std::mem::take(&mut self.auto_preroll);
-                        for frame in preroll {
-                            if self.push_asr(frame).is_err() {
-                                break;
-                            }
+                        let feed_start = start_sample.saturating_sub(self.pre_roll_samples);
+                        let Some(retained) = self.auto_retention.range(feed_start) else {
+                            self.fail_closed();
+                            return;
+                        };
+                        if self.push_asr(retained).is_err() {
+                            self.cancel_asr();
+                            self.asr_stream = None;
                         }
                     }
-                    Err(_) => self.auto_preroll.clear(),
+                    Err(_) => self.auto_retention.reset(),
                 }
             }
             VadWorkerEvent::SpeechEnd { .. } if current && self.auto_speech_active => {
                 self.auto_speech_active = false;
-                self.auto_preroll.clear();
                 self.phase = SessionPhase::Processing;
                 if self.asr_stream.is_some() {
                     self.finish_manual();
@@ -422,7 +440,7 @@ impl SessionActor {
                 }
             }
             VadWorkerEvent::ResetDone { .. } if current => {
-                self.auto_preroll.clear();
+                self.auto_retention.reset();
                 self.vad_segmenter.reset();
                 self.phase = SessionPhase::Listening;
             }
@@ -519,11 +537,7 @@ impl SessionActor {
                         let Some((lease, _)) = self.vad_session else {
                             return false;
                         };
-                        if !self.auto_speech_active
-                            && self.auto_preroll.len() < self.max_capture_frames
-                        {
-                            self.auto_preroll.push(pcm.clone());
-                        }
+                        self.auto_retention.push(&pcm);
                         match self.vad_runtime.send(lease, VadCommand::Push(pcm.clone())) {
                             Ok(()) => {}
                             Err(crate::workers::VadWorkerError::QueueFull) => {
@@ -576,6 +590,64 @@ impl SessionActor {
             false
         }
     }
+}
+
+/// Actor-owned bounded PCM storage for onset-relative Auto pre-roll.
+struct AutoPcmRetention {
+    samples: Vec<f32>,
+    first_sample: u64,
+    cursor: u64,
+    capacity: usize,
+}
+
+impl AutoPcmRetention {
+    fn new(capacity: usize) -> Self {
+        Self {
+            samples: Vec::with_capacity(capacity),
+            first_sample: 0,
+            cursor: 0,
+            capacity,
+        }
+    }
+
+    fn push(&mut self, pcm: &PcmF32Mono) {
+        debug_assert_eq!(pcm.sample_rate_hz(), 16_000);
+        self.samples.extend_from_slice(pcm.samples());
+        self.cursor += pcm.samples().len() as u64;
+        let overflow = self.samples.len().saturating_sub(self.capacity);
+        if overflow > 0 {
+            self.samples.drain(..overflow);
+            self.first_sample += overflow as u64;
+        }
+    }
+
+    fn range(&self, start_sample: u64) -> Option<PcmF32Mono> {
+        if start_sample < self.first_sample || start_sample > self.cursor {
+            return None;
+        }
+        let offset = (start_sample - self.first_sample) as usize;
+        Some(PcmF32Mono::from_samples(self.samples[offset..].to_vec()))
+    }
+
+    fn reset(&mut self) {
+        self.samples.clear();
+        self.first_sample = 0;
+        self.cursor = 0;
+    }
+}
+
+fn auto_retention_capacity(
+    vad_command_capacity: usize,
+    confirmation_samples: u64,
+    pre_roll_samples: u64,
+) -> usize {
+    const FRAME_SAMPLES: usize = 960;
+    const RECHUNK_SLACK_SAMPLES: usize = 512;
+    pre_roll_samples as usize
+        + confirmation_samples as usize
+        + vad_command_capacity.saturating_mul(FRAME_SAMPLES)
+        + FRAME_SAMPLES
+        + RECHUNK_SLACK_SAMPLES
 }
 
 impl Drop for SessionActor {

@@ -9,7 +9,7 @@ pub use opus::{
     AudioFrameDropReason, DOWNLINK_ENCODE_BUFFER_BYTES, DecodeOutcome, DownlinkOpusEncoder,
     MAX_UPLINK_OPUS_PACKET_BYTES, OpusPacket, UplinkOpusDecoder,
 };
-pub use vad_segmenter::{VadBoundary, VadSegmenter};
+pub use vad_segmenter::{VadBoundary, VadSegmenter, VadSegmenterConfig, VadSegmenterError};
 
 pub const UPLINK_FRAME_SAMPLES: usize = 960;
 pub const DOWNLINK_FRAME_SAMPLES: usize = 1_440;
@@ -62,6 +62,10 @@ impl PcmF32Mono {
                 .collect(),
             sample_rate_hz: 16_000,
         }
+    }
+
+    pub fn from_samples(samples: Vec<f32>) -> Self {
+        Self::new(samples, 16_000)
     }
 
     pub fn samples(&self) -> &[f32] {

@@ -49,6 +49,7 @@ impl VadProvider for LoadedSileroVad {
         Ok(Box::new(SileroVadSession {
             session: build_session(&self.model, self.num_threads)?,
             state: vec![0.0; 2 * 128],
+            context: vec![0.0; 64],
         }))
     }
     fn adapter(&self) -> &'static str {
@@ -59,6 +60,7 @@ impl VadProvider for LoadedSileroVad {
 struct SileroVadSession {
     session: Session,
     state: Vec<f32>,
+    context: Vec<f32>,
 }
 
 impl VadSession for SileroVadSession {
@@ -68,8 +70,9 @@ impl VadSession for SileroVadSession {
                 "Silero requires exactly 512 samples".into(),
             ));
         }
+        let model_input = with_context(&self.context, &input.pcm);
         let outputs = self.session.run(ort::inputs! {
-            "input" => Tensor::<f32>::from_array(([1usize, 512], input.pcm)).map_err(ort_error)?,
+            "input" => Tensor::<f32>::from_array(([1usize, 576], model_input)).map_err(ort_error)?,
             "state" => Tensor::<f32>::from_array(([2usize, 1, 128], self.state.clone())).map_err(ort_error)?,
             "sr" => Tensor::<i64>::from_array(([1usize], vec![16_000i64])).map_err(ort_error)?,
         }).map_err(ort_error)?;
@@ -82,6 +85,7 @@ impl VadSession for SileroVadSession {
             .map_err(ort_error)?
             .1
             .to_vec();
+        self.context.copy_from_slice(&input.pcm[448..]);
         Ok(VadProbability {
             start_sample: input.start_sample,
             end_sample: input.start_sample + 512,
@@ -91,6 +95,7 @@ impl VadSession for SileroVadSession {
 
     fn reset(&mut self) -> Result<(), VadError> {
         self.state.fill(0.0);
+        self.context.fill(0.0);
         Ok(())
     }
 }
@@ -138,4 +143,29 @@ fn initialize_ort(configured_library: &Path) -> Result<(), VadError> {
 
 fn ort_error(error: impl std::fmt::Display) -> VadError {
     VadError::Failed(format!("Silero ONNX Runtime failure: {error}"))
+}
+
+fn with_context(context: &[f32], current: &[f32]) -> Vec<f32> {
+    debug_assert_eq!(context.len(), 64);
+    debug_assert_eq!(current.len(), 512);
+    let mut model_input = Vec::with_capacity(context.len() + current.len());
+    model_input.extend_from_slice(context);
+    model_input.extend_from_slice(current);
+    model_input
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_context;
+
+    #[test]
+    fn inference_input_prepends_the_previous_64_samples() {
+        let context = vec![1.0; 64];
+        let current = vec![2.0; 512];
+        let input = with_context(&context, &current);
+
+        assert_eq!(input.len(), 576);
+        assert_eq!(&input[..64], context.as_slice());
+        assert_eq!(&input[64..], current.as_slice());
+    }
 }

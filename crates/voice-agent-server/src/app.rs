@@ -1,4 +1,5 @@
 use crate::{
+    audio::VadSegmenterConfig,
     config::AppConfig,
     protocol::{
         ClientMessage, Firmware, OtaResponse, OtaWebsocket, ServerHello, ServerTime,
@@ -201,6 +202,12 @@ async fn handle_socket(
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
+    let vad_config = config
+        .providers
+        .vad
+        .silero_onnx
+        .as_ref()
+        .expect("validated VAD config");
     let actor = match SessionActor::new_with_runtimes_and_limiter(
         Uuid::new_v4().to_string(),
         control_tx.clone(),
@@ -211,6 +218,13 @@ async fn handle_socket(
             asr: asr_runtime,
             vad: vad_runtime,
             active_turn_limiter,
+            vad_segmenter_config: VadSegmenterConfig {
+                speech_threshold: vad_config.speech_threshold,
+                exit_threshold: vad_config.exit_threshold,
+                min_speech_samples: vad_config.min_speech_ms * 16,
+                end_silence_samples: vad_config.end_silence_ms * 16,
+            },
+            pre_roll_samples: vad_config.pre_roll_ms * 16,
         },
     ) {
         Ok(actor) => actor,

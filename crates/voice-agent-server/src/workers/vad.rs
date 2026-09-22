@@ -30,13 +30,15 @@ pub enum VadWorkerEvent {
     },
     Probability {
         identity: WorkerIdentity,
-        probability: f32,
+        probability: crate::providers::VadProbability,
     },
     SpeechStart {
         identity: WorkerIdentity,
+        start_sample: u64,
     },
     SpeechEnd {
         identity: WorkerIdentity,
+        end_sample: u64,
     },
     ResetDone {
         identity: WorkerIdentity,
@@ -260,8 +262,8 @@ impl VadWorkerRuntime {
         let session = match &event {
             VadWorkerEvent::Opened { identity }
             | VadWorkerEvent::Probability { identity, .. }
-            | VadWorkerEvent::SpeechStart { identity }
-            | VadWorkerEvent::SpeechEnd { identity }
+            | VadWorkerEvent::SpeechStart { identity, .. }
+            | VadWorkerEvent::SpeechEnd { identity, .. }
             | VadWorkerEvent::ResetDone { identity }
             | VadWorkerEvent::Closed { identity }
             | VadWorkerEvent::Failed { identity }
@@ -310,6 +312,7 @@ fn run_worker(
                     }
                 };
                 for input in inputs {
+                    let start_sample = input.start_sample;
                     let probability = match session.push(input) {
                         Ok(probability) => probability,
                         Err(_) => {
@@ -317,10 +320,16 @@ fn run_worker(
                             return;
                         }
                     };
+                    if probability.start_sample != start_sample
+                        || probability.end_sample != start_sample + 512
+                    {
+                        let _ = events.send(VadWorkerEvent::Failed { identity });
+                        return;
+                    }
                     if events
                         .send(VadWorkerEvent::Probability {
                             identity: identity.clone(),
-                            probability: probability.probability,
+                            probability,
                         })
                         .is_err()
                     {
@@ -381,5 +390,21 @@ impl VadRechunker {
     fn reset(&mut self) {
         self.pending.clear();
         self.next_sample = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VadRechunker;
+    use crate::audio::PcmF32Mono;
+
+    #[test]
+    fn reset_discards_rechunk_slack_and_restarts_the_sample_timeline() {
+        let mut rechunker = VadRechunker::default();
+        let frame = PcmF32Mono::new(vec![0.0; 960], 16_000);
+
+        assert_eq!(rechunker.push(frame.clone()).unwrap()[0].start_sample, 0);
+        rechunker.reset();
+        assert_eq!(rechunker.push(frame).unwrap()[0].start_sample, 0);
     }
 }

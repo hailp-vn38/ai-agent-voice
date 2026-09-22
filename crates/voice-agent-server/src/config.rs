@@ -54,11 +54,34 @@ impl Default for VadProviderConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SileroOnnxConfig {
     #[serde(default = "default_provider_threads")]
     pub num_threads: i32,
+    #[serde(default = "default_min_speech_ms")]
+    pub min_speech_ms: u64,
+    #[serde(default = "default_end_silence_ms")]
+    pub end_silence_ms: u64,
+    #[serde(default = "default_pre_roll_ms")]
+    pub pre_roll_ms: u64,
+    #[serde(default = "default_speech_threshold")]
+    pub speech_threshold: f32,
+    #[serde(default = "default_exit_threshold")]
+    pub exit_threshold: f32,
+}
+
+impl Default for SileroOnnxConfig {
+    fn default() -> Self {
+        Self {
+            num_threads: default_provider_threads(),
+            min_speech_ms: default_min_speech_ms(),
+            end_silence_ms: default_end_silence_ms(),
+            pre_roll_ms: default_pre_roll_ms(),
+            speech_threshold: default_speech_threshold(),
+            exit_threshold: default_exit_threshold(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -341,6 +364,21 @@ fn default_asr_model() -> String {
 fn default_provider_threads() -> i32 {
     1
 }
+fn default_min_speech_ms() -> u64 {
+    180
+}
+fn default_end_silence_ms() -> u64 {
+    600
+}
+fn default_pre_roll_ms() -> u64 {
+    300
+}
+fn default_speech_threshold() -> f32 {
+    0.50
+}
+fn default_exit_threshold() -> f32 {
+    0.35
+}
 fn default_vad_worker_count() -> usize {
     4
 }
@@ -458,6 +496,25 @@ impl AppConfig {
         if self.providers.vad.adapter != "silero_onnx" || self.providers.vad.silero_onnx.is_none() {
             return Err(ConfigError::Validation(
                 "providers.vad must select silero_onnx with its typed configuration".into(),
+            ));
+        }
+        let vad = self
+            .providers
+            .vad
+            .silero_onnx
+            .as_ref()
+            .expect("validated above");
+        if vad.min_speech_ms == 0
+            || vad.end_silence_ms == 0
+            || vad.pre_roll_ms > self.audio.max_utterance_ms
+            || !vad.speech_threshold.is_finite()
+            || !vad.exit_threshold.is_finite()
+            || !(0.0..=1.0).contains(&vad.exit_threshold)
+            || vad.exit_threshold >= vad.speech_threshold
+            || vad.speech_threshold > 1.0
+        {
+            return Err(ConfigError::Validation(
+                "VAD thresholds and segmentation durations must be valid".into(),
             ));
         }
         if self.providers.asr.adapter != "zipformer_sherpa"
