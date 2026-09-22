@@ -334,21 +334,27 @@ fn sentencepiece_tokens(input: &[u8]) -> Result<Vec<u8>, ModelError> {
     while offset < input.len() {
         let tag = read_varint(input, &mut offset)?;
         let length = read_varint(input, &mut offset)? as usize;
-        let end = offset.checked_add(length).filter(|end| *end <= input.len()).ok_or_else(|| {
-            ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into())
-        })?;
+        let end = offset
+            .checked_add(length)
+            .filter(|end| *end <= input.len())
+            .ok_or_else(|| ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into()))?;
         if tag == 0x0a {
-            let mut piece_offset = offset;
-            let piece_tag = read_varint(&input[offset..end], &mut piece_offset)?;
-            let piece_length = read_varint(&input[offset..end], &mut piece_offset)? as usize;
+            let nested = &input[offset..end];
+            let mut piece_offset = 0;
+            let piece_tag = read_varint(nested, &mut piece_offset)?;
+            let piece_length = read_varint(nested, &mut piece_offset)? as usize;
             let piece_end = piece_offset
                 .checked_add(piece_length)
-                .filter(|piece_end| *piece_end <= end - offset)
-                .ok_or_else(|| ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into()))?;
+                .filter(|piece_end| *piece_end <= nested.len())
+                .ok_or_else(|| {
+                    ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into())
+                })?;
             if piece_tag != 0x0a {
-                return Err(ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into()));
+                return Err(ModelError::UnsupportedTransform(
+                    "sentencepiece_tokens_v1".into(),
+                ));
             }
-            let piece = std::str::from_utf8(&input[offset + piece_offset..offset + piece_end])
+            let piece = std::str::from_utf8(&nested[piece_offset..piece_end])
                 .map_err(|_| ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into()))?;
             tokens.push(format!("{piece} {}\n", tokens.len()));
         }
@@ -362,14 +368,16 @@ fn sentencepiece_tokens(input: &[u8]) -> Result<Vec<u8>, ModelError> {
 fn read_varint(input: &[u8], offset: &mut usize) -> Result<u64, ModelError> {
     let mut value = 0_u64;
     for shift in (0..64).step_by(7) {
-        let byte = *input.get(*offset).ok_or_else(|| {
-            ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into())
-        })?;
+        let byte = *input
+            .get(*offset)
+            .ok_or_else(|| ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into()))?;
         *offset += 1;
         value |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
             return Ok(value);
         }
     }
-    Err(ModelError::UnsupportedTransform("sentencepiece_tokens_v1".into()))
+    Err(ModelError::UnsupportedTransform(
+        "sentencepiece_tokens_v1".into(),
+    ))
 }

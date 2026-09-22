@@ -172,6 +172,36 @@ fn verifies_transformed_output_before_atomic_install() {
 }
 
 #[test]
+fn transforms_a_sentencepiece_model_into_provider_tokens() {
+    let root = temp_dir("model-sentencepiece");
+    let source = b"\x0a\x03\x0a\x01A\x0a\x03\x0a\x01B";
+    let manifest = manifest(
+        &root,
+        "asr/tokens.txt",
+        source,
+        b"A 0\nB 1\n",
+        "sentencepiece_tokens_v1",
+    );
+
+    let prepared = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: manifest,
+            root: root.clone(),
+            offline: false,
+        },
+        FixtureAcquirer(source.to_vec()),
+    )
+    .prepare("test-vad", "silero_onnx")
+    .unwrap();
+
+    assert_eq!(
+        fs::read(prepared.artifact("vad").unwrap()).unwrap(),
+        b"A 0\nB 1\n"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn offline_missing_artifact_fails_without_invoking_acquisition() {
     let root = temp_dir("model-offline");
     let manifest = manifest(&root, "vad/model.onnx", b"source", b"source", "identity");
