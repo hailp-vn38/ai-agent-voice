@@ -808,7 +808,12 @@ impl AppConfig {
                 self.providers.llm.adapter
             ))
         })?;
-        if openai.base_url.scheme() != "https"
+        let local_http = openai.base_url.scheme() == "http"
+            && matches!(
+                openai.base_url.host_str(),
+                Some("localhost") | Some("127.0.0.1") | Some("::1")
+            );
+        if (openai.base_url.scheme() != "https" && !local_http)
             || openai.base_url.host_str().is_none()
             || openai.model.trim().is_empty()
             || openai.timeout_ms == 0

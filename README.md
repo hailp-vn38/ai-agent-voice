@@ -28,17 +28,19 @@ Không nằm trong V1: manager web/mobile, multi-user, database bắt buộc, MQ
 Khởi động server với cấu hình mẫu:
 
 ```bash
-VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server
+VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server --bin voice-agent-server
+VOICE_AGENT_CONFIG=config.toml cargo run -p voice-agent-server --bin voice-agent-server
 ```
 
-Sau đó xác nhận OTA → WebSocket → ClientHello bằng Voice Reference Client độc lập:
+Sau đó xác nhận một text turn OTA → WebSocket → TTS bằng Voice Reference Client độc lập:
 
 ```bash
 cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ handshake
+  --ota http://127.0.0.1:8000/voice/ota/ \
+  "Xin chao"
 ```
 
-CLI tự lấy WebSocket URL/token từ OTA response và thêm các header V1 cần thiết. Hướng dẫn cho `listen`, raw Opus uplink/downlink và protocol-fault cases ở [Voice Reference Client](docs/voice-reference-client.md).
+CLI tự lấy WebSocket URL/token từ OTA response, thêm các header V1 cần thiết và kiểm tra lifecycle TTS của một text turn. Xem [Voice Reference Client](docs/voice-reference-client.md).
 
 Chạy các gate tự động hiện có:
 

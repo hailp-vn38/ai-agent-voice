@@ -17,7 +17,12 @@ use crate::{
         WorkerIdentity, WorkerRuntimeConfig,
     },
 };
+use std::collections::HashSet;
+
 use tokio::sync::mpsc;
+use tracing::{info, warn};
+
+const MAX_DETECT_TEXT_SCALARS: usize = 4_096;
 
 /// The only mutable owner of an accepted Voice Session's phase.
 pub struct SessionActor {
@@ -29,11 +34,13 @@ pub struct SessionActor {
     asr_runtime: std::sync::Arc<AsrWorkerRuntime>,
     asr_events: mpsc::Receiver<AsrWorkerEvent>,
     asr_stream: Option<(AsrStreamLease, WorkerIdentity)>,
+    asr_cleanup_pending: HashSet<WorkerIdentity>,
     vad_runtime: std::sync::Arc<VadWorkerRuntime>,
     vad_events: mpsc::Receiver<VadWorkerEvent>,
     vad_session: Option<(VadWorkerLease, WorkerIdentity)>,
     listening_mode: Option<ListenMode>,
     auto_speech_active: bool,
+    auto_reset_pending: bool,
     vad_segmenter: VadSegmenter,
     auto_retention: AutoPcmRetention,
     pre_roll_samples: u64,
@@ -226,11 +233,13 @@ impl SessionActor {
             asr_runtime: runtimes.asr,
             asr_events,
             asr_stream: None,
+            asr_cleanup_pending: HashSet::new(),
             vad_runtime: runtimes.vad,
             vad_events,
             vad_session: None,
             listening_mode: None,
             auto_speech_active: false,
+            auto_reset_pending: false,
             vad_segmenter: VadSegmenter::new(runtimes.vad_segmenter_config),
             auto_retention: AutoPcmRetention::new(retention_capacity),
             pre_roll_samples: runtimes.pre_roll_samples,
@@ -341,13 +350,37 @@ impl SessionActor {
 
     pub fn on_client_message(&mut self, message: ClientMessage) {
         match message {
-            ClientMessage::Listen(ListenCommand::Start { mode }) => {
+            ClientMessage::Listen {
+                session_id,
+                command,
+            } => {
+                if self.inbound_session_matches(session_id.as_deref()) {
+                    self.on_listen_command(command);
+                }
+            }
+            ClientMessage::Abort { session_id } => {
+                if self.inbound_session_matches(session_id.as_deref()) {
+                    self.abort_current_turn();
+                }
+            }
+            ClientMessage::Hello(_) | ClientMessage::Unknown => {}
+        }
+    }
+
+    fn inbound_session_matches(&self, session_id: Option<&str>) -> bool {
+        matches!(session_id, None | Some("")) || session_id == Some(&self.session_id)
+    }
+
+    fn on_listen_command(&mut self, command: ListenCommand) {
+        match command {
+            ListenCommand::Start { mode } => {
                 self.cancel_speech_delivery();
                 self.generation += 1;
                 self.cancel_llm();
                 self.cancel_asr();
                 self.release_active_turn();
                 self.close_vad();
+                self.auto_reset_pending = false;
                 self.listening_mode = Some(mode.clone());
                 let identity =
                     WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
@@ -364,6 +397,7 @@ impl SessionActor {
                         Ok(lease) => {
                             self.vad_session = Some((lease, identity));
                             self.auto_speech_active = false;
+                            self.auto_reset_pending = false;
                             self.vad_segmenter.reset();
                             self.auto_retention.reset();
                             self.phase = SessionPhase::Listening;
@@ -376,8 +410,8 @@ impl SessionActor {
                     ListenMode::Realtime => self.phase = SessionPhase::Ready,
                 }
             }
-            ClientMessage::Listen(ListenCommand::Detect { .. }) => {}
-            ClientMessage::Listen(ListenCommand::Stop) => {
+            ListenCommand::Detect { text } => self.accept_detect(text),
+            ListenCommand::Stop => {
                 if self.listening_mode == Some(ListenMode::Manual)
                     && self.phase == SessionPhase::Listening
                 {
@@ -391,22 +425,81 @@ impl SessionActor {
                     }
                 }
             }
-            ClientMessage::Abort => {
-                if self.phase != SessionPhase::Closed {
-                    self.cancel_speech_delivery();
-                    self.generation += 1;
-                    self.cancel_llm();
-                    self.manual_capture.abort();
-                    self.cancel_asr();
-                    self.release_active_turn();
-                    self.close_vad();
-                    self.listening_mode = None;
-                    self.auto_retention.reset();
-                    self.phase = SessionPhase::Ready;
+        }
+    }
+
+    fn abort_current_turn(&mut self) {
+        if self.phase == SessionPhase::Closed {
+            return;
+        }
+        self.cancel_speech_delivery();
+        self.generation += 1;
+        self.cancel_llm();
+        self.manual_capture.abort();
+        self.cancel_asr();
+        self.release_active_turn();
+        self.close_vad();
+        self.listening_mode = None;
+        self.auto_reset_pending = false;
+        self.auto_retention.reset();
+        self.phase = SessionPhase::Ready;
+    }
+
+    fn accept_detect(&mut self, input: String) {
+        let auto_rearming = self.listening_mode == Some(ListenMode::Auto)
+            && self.auto_reset_pending
+            && self.phase == SessionPhase::Processing;
+        if self.phase != SessionPhase::Listening && !auto_rearming {
+            return;
+        }
+        let Some(text) = normalize_detect_text(input) else {
+            return;
+        };
+        info!(mode = ?self.listening_mode, "typed detect accepted");
+        self.manual_capture.abort();
+        match self.listening_mode {
+            Some(ListenMode::Manual) => {
+                if !self.detach_asr_for_detect() {
+                    return;
                 }
             }
-            ClientMessage::Hello(_) | ClientMessage::Unknown => {}
+            // `digital-human` starts an Auto cycle, then sends typed text through detect.
+            // Revoke ASR semantic ownership but retain the VAD lease. Drained will reset it
+            // and return this client to Listening for its next typed or voice turn.
+            Some(ListenMode::Auto) => {
+                self.auto_speech_active = false;
+                self.auto_retention.reset();
+                if self.asr_stream.is_some() && !self.detach_asr_for_detect() {
+                    return;
+                }
+            }
+            Some(ListenMode::Realtime) | None => return,
         }
+        if !self.active_turn_limiter.try_acquire() {
+            self.phase = SessionPhase::Ready;
+            return;
+        }
+        self.has_active_turn_permit = true;
+        self.phase = SessionPhase::Processing;
+        if let Some(text) = self.commit_user_text(text) {
+            self.begin_speech_delivery(text);
+        } else {
+            self.release_active_turn();
+            self.phase = SessionPhase::Ready;
+        }
+    }
+
+    fn detach_asr_for_detect(&mut self) -> bool {
+        let Some((lease, identity)) = self.asr_stream.take() else {
+            self.fail_closed();
+            return false;
+        };
+        if self.asr_runtime.send(lease, AsrCommand::Cancel).is_err() {
+            self.fail_closed();
+            return false;
+        }
+        self.asr_cleanup_pending.insert(identity);
+        true
     }
 
     fn finish_manual(&mut self) {
@@ -436,6 +529,20 @@ impl SessionActor {
             | AsrWorkerEvent::FinalTimedOut { identity }
             | AsrWorkerEvent::CleanupTimedOut { identity } => identity,
         };
+        if self.asr_cleanup_pending.contains(identity) {
+            match event {
+                AsrWorkerEvent::Final { .. }
+                | AsrWorkerEvent::Failed { .. }
+                | AsrWorkerEvent::Cancelled { .. } => {
+                    self.asr_cleanup_pending.remove(identity);
+                }
+                AsrWorkerEvent::FinalTimedOut { .. } | AsrWorkerEvent::CleanupTimedOut { .. } => {
+                    self.fail_closed();
+                }
+                AsrWorkerEvent::Opened { .. } => {}
+            }
+            return;
+        }
         let current = self
             .asr_stream
             .as_ref()
@@ -444,7 +551,7 @@ impl SessionActor {
         match event {
             AsrWorkerEvent::Final { text, .. } if current => {
                 self.asr_stream = None;
-                if let Some(final_text) = self.commit_final(text) {
+                if let Some(final_text) = self.commit_user_text(text) {
                     self.begin_speech_delivery(final_text);
                 } else {
                     self.complete_recognition();
@@ -496,7 +603,10 @@ impl SessionActor {
                         })
                     }
                     Ok(None) => {}
-                    Err(_) => self.fail_closed(),
+                    Err(_) => {
+                        warn!("VAD stream integrity failure");
+                        self.fail_closed();
+                    }
                 }
             }
             VadWorkerEvent::SpeechStart { start_sample, .. }
@@ -533,9 +643,12 @@ impl SessionActor {
                 }
             }
             VadWorkerEvent::ResetDone { .. } if current => {
+                self.auto_reset_pending = false;
                 self.auto_retention.reset();
                 self.vad_segmenter.reset();
-                self.phase = SessionPhase::Listening;
+                if self.llm_operation.is_none() && !self.tts_started {
+                    self.phase = SessionPhase::Listening;
+                }
             }
             VadWorkerEvent::Closed { .. } if current => self.vad_session = None,
             VadWorkerEvent::Failed { .. }
@@ -543,6 +656,7 @@ impl SessionActor {
             | VadWorkerEvent::CleanupTimedOut { .. }
                 if current =>
             {
+                warn!("VAD worker failed or cleanup timed out");
                 self.fail_closed()
             }
             _ => {}
@@ -552,10 +666,15 @@ impl SessionActor {
     fn complete_recognition(&mut self) {
         self.release_active_turn();
         if self.listening_mode == Some(ListenMode::Auto) && self.vad_session.is_some() {
-            if let Some((lease, _)) = self.vad_session
-                && self.vad_runtime.send(lease, VadCommand::Reset).is_err()
-            {
-                self.fail_closed();
+            if self.auto_reset_pending {
+                return;
+            }
+            if let Some((lease, _)) = self.vad_session {
+                if self.vad_runtime.send(lease, VadCommand::Reset).is_err() {
+                    self.fail_closed();
+                } else {
+                    self.auto_reset_pending = true;
+                }
             }
         } else {
             self.phase = SessionPhase::Ready;
@@ -566,18 +685,20 @@ impl SessionActor {
         if self.phase == SessionPhase::Closed {
             return;
         }
+        warn!(phase = ?self.phase, "voice session failed closed");
         self.cancel_speech_delivery();
         self.generation += 1;
         self.cancel_llm();
         self.cancel_asr();
         self.release_active_turn();
         self.close_vad();
+        self.auto_reset_pending = false;
         self.asr_stream = None;
         self.phase = SessionPhase::Closed;
         let _ = self.control_tx.try_send(OutboundMessage::Close(1011));
     }
 
-    fn commit_final(&mut self, final_text: String) -> Option<String> {
+    fn commit_user_text(&mut self, final_text: String) -> Option<String> {
         let text = final_text.trim();
         if text.is_empty() {
             return None;
@@ -601,9 +722,11 @@ impl SessionActor {
             WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
         self.generated_response.clear();
         if self.llm_runtime.start(identity.clone(), user_text).is_err() {
+            warn!("LLM operation could not start");
             self.complete_recognition();
             return;
         }
+        info!("LLM operation started");
         self.llm_operation = Some(identity);
     }
 
@@ -628,6 +751,7 @@ impl SessionActor {
             }
             LlmRuntimeEvent::Finished { .. } => {
                 self.llm_operation = None;
+                info!("LLM operation finished");
                 if self.generated_response.trim().is_empty()
                     || self.speech_output.finish_input().is_err()
                 {
@@ -638,6 +762,7 @@ impl SessionActor {
             | LlmRuntimeEvent::Failed { .. }
             | LlmRuntimeEvent::Cancelled { .. } => {
                 self.llm_operation = None;
+                warn!("LLM operation ended without a deliverable response");
                 self.fail_speech_delivery();
             }
         }
@@ -656,6 +781,7 @@ impl SessionActor {
             match event {
                 SpeechOutputEvent::Started => {
                     self.tts_started = true;
+                    info!("TTS delivery started");
                     let payload = serde_json::json!({
                         "session_id": self.session_id,
                         "type": "tts",
@@ -672,6 +798,7 @@ impl SessionActor {
                     });
                 }
                 SpeechOutputEvent::Drained => {
+                    info!("TTS delivery drained");
                     if self.tts_started {
                         let payload = serde_json::json!({
                             "session_id": self.session_id,
@@ -758,6 +885,9 @@ impl SessionActor {
                 DecodeOutcome::Frame(frame) => {
                     let pcm = PcmF32Mono::from_uplink(&frame);
                     if self.listening_mode == Some(ListenMode::Auto) {
+                        if self.auto_reset_pending {
+                            return false;
+                        }
                         let Some((lease, _)) = self.vad_session else {
                             return false;
                         };
@@ -803,7 +933,6 @@ impl SessionActor {
                 DecodeOutcome::Dropped(reason) => {
                     tracing::debug!(
                         event = "audio_frame_dropped",
-                        session_id = %self.session_id,
                         ?reason,
                         "audio frame dropped"
                     );
@@ -887,4 +1016,14 @@ impl Drop for SessionActor {
         self.vad_runtime.unregister_session(&self.session_id);
         self.llm_runtime.unregister_session(&self.session_id);
     }
+}
+
+fn normalize_detect_text(input: String) -> Option<String> {
+    let text = input.trim();
+    if text.is_empty()
+        || text.chars().take(MAX_DETECT_TEXT_SCALARS + 1).count() > MAX_DETECT_TEXT_SCALARS
+    {
+        return None;
+    }
+    Some(text.to_owned())
 }

@@ -14,9 +14,29 @@ pub struct AudioParams {
 pub struct ClientHello {
     #[serde(rename = "type")]
     pub message_type: String,
+    #[serde(default = "default_v1_version")]
     pub version: u8,
+    #[serde(default = "default_websocket_transport")]
     pub transport: String,
+    #[serde(default = "default_uplink_audio_params")]
     pub audio_params: AudioParams,
+}
+
+fn default_v1_version() -> u8 {
+    1
+}
+
+fn default_websocket_transport() -> String {
+    "websocket".to_owned()
+}
+
+fn default_uplink_audio_params() -> AudioParams {
+    AudioParams {
+        format: "opus".to_owned(),
+        sample_rate: 16_000,
+        channels: 1,
+        frame_duration: 60,
+    }
 }
 
 impl ClientHello {
@@ -53,9 +73,24 @@ pub enum ListenCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientMessage {
     Hello(ClientHello),
-    Listen(ListenCommand),
-    Abort,
+    Listen {
+        session_id: Option<String>,
+        command: ListenCommand,
+    },
+    Abort {
+        session_id: Option<String>,
+    },
     Unknown,
+}
+
+impl ClientMessage {
+    /// Builds an unscoped V1 command for actor-level tests and compatibility callers.
+    pub fn listen(command: ListenCommand) -> Self {
+        Self::Listen {
+            session_id: None,
+            command,
+        }
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -75,12 +110,18 @@ pub fn parse_client_message(text: &str) -> Result<ClientMessage, ProtocolError> 
             .map(ClientMessage::Hello)
             .map_err(|_| ProtocolError::InvalidHello),
         Some("listen") => parse_listen_command(&value),
-        Some("abort") => Ok(ClientMessage::Abort),
+        Some("abort") => parse_session_id(&value)
+            .map_or(Ok(ClientMessage::Unknown), |session_id| {
+                Ok(ClientMessage::Abort { session_id })
+            }),
         _ => Ok(ClientMessage::Unknown),
     }
 }
 
 fn parse_listen_command(value: &Value) -> Result<ClientMessage, ProtocolError> {
+    let Some(session_id) = parse_session_id(value) else {
+        return Ok(ClientMessage::Unknown);
+    };
     let command = match value.get("state").and_then(Value::as_str) {
         Some("start") => match value.get("mode").and_then(Value::as_str) {
             Some("manual") => ListenCommand::Start {
@@ -103,5 +144,16 @@ fn parse_listen_command(value: &Value) -> Result<ClientMessage, ProtocolError> {
         },
         _ => return Ok(ClientMessage::Unknown),
     };
-    Ok(ClientMessage::Listen(command))
+    Ok(ClientMessage::Listen {
+        session_id,
+        command,
+    })
+}
+
+fn parse_session_id(value: &Value) -> Option<Option<String>> {
+    match value.get("session_id") {
+        None => Some(None),
+        Some(Value::String(session_id)) => Some(Some(session_id.clone())),
+        Some(_) => None,
+    }
 }

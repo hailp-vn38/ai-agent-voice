@@ -21,7 +21,7 @@ async fn raw_binary_is_only_accepted_while_listening() {
     )
     .unwrap();
     assert!(!actor.on_binary(vec![1]));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert_eq!(actor.phase(), SessionPhase::Listening);
@@ -30,7 +30,7 @@ async fn raw_binary_is_only_accepted_while_listening() {
         .encode(DownlinkPcmFrame::try_new(Pcm16Mono::new(vec![0; 1_440])).unwrap())
         .unwrap();
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
     for _ in 0..100 {
         actor.pump_workers();
         if actor.phase() == SessionPhase::Ready {
@@ -54,7 +54,7 @@ async fn auto_replaces_manual_capture_and_never_falls_back_when_vad_is_unavailab
         Arc::new(ProviderSet::unavailable()),
     )
     .unwrap();
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     let packet = DownlinkOpusEncoder::new(65_536)
@@ -63,7 +63,7 @@ async fn auto_replaces_manual_capture_and_never_falls_back_when_vad_is_unavailab
         .unwrap();
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Auto,
     }));
     assert_eq!(actor.phase(), SessionPhase::Listening);

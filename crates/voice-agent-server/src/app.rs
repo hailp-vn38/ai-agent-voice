@@ -15,21 +15,23 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{
-        State,
+        Query, State,
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::mpsc, time::timeout};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+use url::Url;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -109,10 +111,15 @@ impl AppState {
 pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
     Router::new()
         .route("/health", get(health))
-        .route("/voice/ota/", get(ota).post(ota))
+        .route("/voice/ota/", get(ota).post(ota).options(ota_options))
         .route("/voice/v1/", get(websocket))
         .with_state(AppState::new(config, providers))
-        .layer(TraceLayer::new_for_http())
+        // Never include query parameters here: browser compatibility may carry an auth token.
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                tracing::info_span!("http_request", method = %request.method(), path = request.uri().path())
+            }),
+        )
 }
 
 /// Builds the public application only after local provider validation and warmup succeed.
@@ -125,12 +132,12 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn ota(State(state): State<AppState>) -> Json<OtaResponse> {
+async fn ota(State(state): State<AppState>, request_headers: HeaderMap) -> Response {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
-    Json(OtaResponse {
+    let mut response = Json(OtaResponse {
         server_time: ServerTime {
             timestamp,
             timezone_offset: 420,
@@ -144,11 +151,61 @@ async fn ota(State(state): State<AppState>) -> Json<OtaResponse> {
             token: state.config.auth.token.clone(),
         },
     })
+    .into_response();
+    apply_ota_cors(response.headers_mut(), &request_headers);
+    response
+}
+
+/// Answers browser and device preflight requests without creating a voice session.
+async fn ota_options(request_headers: HeaderMap) -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::ALLOW,
+        HeaderValue::from_static("GET, POST, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("POST, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Content-Type, Device-Id, Client-Id, Authorization"),
+    );
+    apply_ota_cors(headers, &request_headers);
+    response
+}
+
+/// Only local browser tooling may read OTA's optional bearer token cross-origin.
+fn apply_ota_cors(response_headers: &mut HeaderMap, request_headers: &HeaderMap) {
+    let Some(origin) = request_headers.get(header::ORIGIN) else {
+        return;
+    };
+    let Ok(origin_text) = origin.to_str() else {
+        return;
+    };
+    let Ok(origin_url) = Url::parse(origin_text) else {
+        return;
+    };
+    let Some(host) = origin_url.host_str() else {
+        return;
+    };
+    let is_loopback = host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+    if !is_loopback {
+        return;
+    }
+
+    response_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
+    response_headers.insert(header::VARY, HeaderValue::from_static("Origin"));
 }
 
 async fn websocket(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<WebsocketQuery>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config;
@@ -158,9 +215,13 @@ async fn websocket(
     let llm_runtime = state.llm_runtime;
     let tts_runtime = state.tts_runtime;
     let active_turn_limiter = state.active_turn_limiter;
-    if !header_is(&headers, "protocol-version", "1")
-        || !headers.contains_key("device-id")
-        || !headers.contains_key("client-id")
+    if !header_or_query_is_or_absent(
+        &headers,
+        "protocol-version",
+        query.protocol_version.as_deref(),
+        "1",
+    ) || !header_or_query_present(&headers, "device-id", query.device_id.as_deref())
+        || !header_or_query_present(&headers, "client-id", query.client_id.as_deref())
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -169,14 +230,16 @@ async fn websocket(
             .into_response();
     }
     if !config.auth.token.is_empty()
-        && !header_is(
+        && !header_or_query_is(
             &headers,
             header::AUTHORIZATION.as_str(),
+            query.authorization.as_deref(),
             &format!("Bearer {}", config.auth.token),
         )
     {
         return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
     }
+    info!("WebSocket upgrade accepted");
     let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
@@ -197,8 +260,56 @@ async fn websocket(
         .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct WebsocketQuery {
+    #[serde(rename = "protocol-version")]
+    protocol_version: Option<String>,
+    #[serde(rename = "device-id")]
+    device_id: Option<String>,
+    #[serde(rename = "client-id")]
+    client_id: Option<String>,
+    authorization: Option<String>,
+}
+
 fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
     headers.get(name).and_then(|value| value.to_str().ok()) == Some(expected)
+}
+
+/// Browser clients cannot set custom headers; legacy clients may omit the version entirely.
+fn header_or_query_is_or_absent(
+    headers: &HeaderMap,
+    header_name: &str,
+    query_value: Option<&str>,
+    expected: &str,
+) -> bool {
+    match headers.get(header_name) {
+        Some(_) => header_is(headers, header_name, expected),
+        None => query_value.is_none_or(|value| value == expected),
+    }
+}
+
+fn header_or_query_is(
+    headers: &HeaderMap,
+    header_name: &str,
+    query_value: Option<&str>,
+    expected: &str,
+) -> bool {
+    match headers.get(header_name) {
+        Some(_) => header_is(headers, header_name, expected),
+        None => query_value == Some(expected),
+    }
+}
+
+/// Browser WebSocket APIs cannot set custom headers, so accept identity query fallbacks.
+fn header_or_query_present(
+    headers: &HeaderMap,
+    header_name: &str,
+    query_value: Option<&str>,
+) -> bool {
+    match headers.get(header_name) {
+        Some(value) => value.to_str().is_ok_and(|value| !value.is_empty()),
+        None => query_value.is_some_and(|value| !value.is_empty()),
+    }
 }
 
 struct SocketRuntimes {
@@ -242,7 +353,7 @@ async fn handle_socket(
             return;
         }
     };
-    debug!(transport = %hello.transport, "accepted ClientHello");
+    info!(transport = %hello.transport, "ClientHello accepted");
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
@@ -295,6 +406,7 @@ async fn handle_socket(
         close_direct(&mut sender, 1011).await;
         return;
     }
+    info!("ServerHello sent; voice session connected");
     let writer = tokio::spawn(async move {
         let mut deferred_tts_stop = None;
         let mut invalidated_generation = 0;
@@ -388,6 +500,7 @@ async fn handle_socket(
     let _ = session.await;
     drop(control_tx);
     let _ = writer.await;
+    info!("voice session disconnected");
 }
 
 fn is_normal_tts_stop(message: &OutboundMessage) -> bool {

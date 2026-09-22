@@ -4,3 +4,4 @@ xiaozhi-esp32-server-reference/
 /models/**
 !/models/manifest.toml
 .DS_Store
+/output/

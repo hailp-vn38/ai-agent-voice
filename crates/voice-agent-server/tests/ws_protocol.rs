@@ -22,6 +22,10 @@ use voice_agent_server::{
 };
 
 async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
+    start_with_token(max_frame_bytes, String::new()).await
+}
+
+async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -30,7 +34,7 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),
             hello_timeout_ms: 500,
         },
-        auth: AuthConfig::default(),
+        auth: AuthConfig { token },
         audio: AudioConfig::default(),
         websocket: WebsocketConfig { max_frame_bytes },
         limits: LimitsConfig::default(),
@@ -104,6 +108,45 @@ async fn ota_advertises_ws_url_and_health_is_available() {
 }
 
 #[tokio::test]
+async fn ota_accepts_post_and_advertises_preflight_methods() {
+    let (base, task) = start(1_024).await;
+    let client = reqwest::Client::new();
+    let ota = client
+        .post(format!("{base}/voice/ota/"))
+        .header(reqwest::header::ORIGIN, "http://localhost:3000")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ota.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        ota.headers()[reqwest::header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "http://localhost:3000"
+    );
+
+    let preflight = client
+        .request(reqwest::Method::OPTIONS, format!("{base}/voice/ota/"))
+        .header(reqwest::header::ORIGIN, "http://localhost:3000")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preflight.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(
+        preflight.headers()[reqwest::header::ALLOW],
+        "GET, POST, OPTIONS"
+    );
+    assert_eq!(
+        preflight.headers()[reqwest::header::ACCESS_CONTROL_ALLOW_METHODS],
+        "POST, OPTIONS"
+    );
+    assert_eq!(
+        preflight.headers()[reqwest::header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "http://localhost:3000"
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn valid_hello_receives_canonical_server_hello() {
     let (base, task) = start(1_024).await;
     let (mut socket, _) = connect_async(request(&base)).await.unwrap();
@@ -115,6 +158,54 @@ async fn valid_hello_receives_canonical_server_hello() {
     let json: serde_json::Value = serde_json::from_str(&message).unwrap();
     assert_eq!(json["type"], "hello");
     assert_eq!(json["audio_params"]["sample_rate"], 24_000);
+    task.abort();
+}
+
+#[tokio::test]
+async fn websocket_accepts_browser_identity_query_when_headers_are_absent() {
+    let (base, task) = start(1_024).await;
+    let mut browser_request = request(&base);
+    browser_request.headers_mut().remove("Device-Id");
+    browser_request.headers_mut().remove("Client-Id");
+    browser_request.headers_mut().remove("Protocol-Version");
+    *browser_request.uri_mut() = format!(
+        "{}/voice/v1/?device-id=browser-client&client-id=browser-ui",
+        base.replace("http", "ws")
+    )
+    .parse()
+    .unwrap();
+    let (mut socket, _) = connect_async(browser_request).await.unwrap();
+    socket
+        .send(Message::Text(
+            r#"{"type":"hello","device_id":"browser-client","features":{"mcp":true}}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let message = next_message(&mut socket).await;
+    assert!(matches!(message, Message::Text(_)));
+    task.abort();
+}
+
+#[tokio::test]
+async fn websocket_accepts_browser_authorization_query() {
+    let token = "browser-test-token";
+    let (base, task) = start_with_token(1_024, token.to_owned()).await;
+    let mut browser_request = request(&base);
+    browser_request.headers_mut().remove("Device-Id");
+    browser_request.headers_mut().remove("Client-Id");
+    browser_request.headers_mut().remove("Protocol-Version");
+    *browser_request.uri_mut() = format!(
+        "{}/voice/v1/?device-id=browser-client&client-id=browser-ui&authorization=Bearer%20{token}",
+        base.replace("http", "ws")
+    )
+    .parse()
+    .unwrap();
+    let (mut socket, _) = connect_async(browser_request).await.unwrap();
+    socket
+        .send(Message::Text(r#"{"type":"hello"}"#.into()))
+        .await
+        .unwrap();
+    assert!(matches!(next_message(&mut socket).await, Message::Text(_)));
     task.abort();
 }
 

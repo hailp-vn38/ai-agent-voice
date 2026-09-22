@@ -3385,19 +3385,15 @@ name = "voice-reference-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
  "clap",
  "futures-util",
  "hound",
- "http",
  "opus2",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
- "sherpa-onnx",
  "tokio",
  "tokio-tungstenite 0.30.0",
- "url",
 ]
 
 [[package]]

@@ -155,7 +155,7 @@ fn actor(
 }
 
 fn start(actor: &mut SessionActor) {
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
 }
@@ -176,7 +176,7 @@ fn worker_event_is_routed_only_to_its_own_voice_session() {
     start(&mut first);
     start(&mut second);
     assert!(second.on_binary(packet()));
-    second.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    second.on_client_message(ClientMessage::listen(ListenCommand::Stop));
 
     for _ in 0..50 {
         first.pump_workers();
@@ -231,7 +231,7 @@ fn final_timeout_fail_closes_the_affected_voice_session() {
     let (mut actor, mut control_rx) = actor("timed-out", runtime);
     start(&mut actor);
     assert!(actor.on_binary(packet()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
 
     for _ in 0..50 {
         actor.pump_workers();

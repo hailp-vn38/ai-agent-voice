@@ -1,131 +1,36 @@
 # Voice Reference Client
 
-`voice-reference-client` là một **Voice Protocol Client** độc lập bằng Rust. Nó dùng OTA discovery để lấy WebSocket URL và token, tự đặt các header V1 bắt buộc, rồi chạy các bước conformance mà không cần ESP32.
+`voice-reference-client` la client V1 toi thieu de chay mot text turn voi server. Client dung OTA discovery de lay WebSocket URL va token, gui cac header V1 bat buoc, sau do thuc hien `ClientHello`, `listen:start`, `listen:detect` va kiem tra chuoi TTS downlink.
 
-Nó không giả lập AI, TTS hoặc firmware. Mục đích của CLI là xác nhận ranh giới OTA/WebSocket và raw binary của Compatibility Profile `voice-ws-v1-baseline`.
+No chi phuc vu ket noi server; khong chua local model smoke, replay WAV/Opus, protocol fixture, hay test noi bo.
 
-## Chuẩn bị
+## Chay voi server cuc bo
 
-Chạy server cục bộ với cấu hình mẫu trong một terminal:
+Khoi dong server o terminal khac:
 
 ```bash
 VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server
 ```
 
-Các lệnh dưới đây dùng OTA endpoint của server đó:
+Chay mot text turn:
 
 ```bash
---ota http://127.0.0.1:8000/voice/ota/
+cargo run -p voice-reference-client -- \
+  --ota http://127.0.0.1:8000/voice/ota/ \
+  "Xin chao"
 ```
 
-CLI lấy `websocket.url` và `websocket.token` từ OTA response. Khi token không rỗng, nó tự gửi `Authorization: Bearer <token>`; không ghi token, audio hoặc transcript ra output hoặc file.
-
-Mặc định `Device-Id` là `reference-client-01` và `Client-Id` là `reference-client`. Có thể thay đổi chúng khi cần kiểm thử session metadata:
+Mac dinh `Device-Id` la `reference-client-01` va `Client-Id` la `reference-client`. Co the thay doi chung khi can:
 
 ```bash
 cargo run -p voice-reference-client -- \
   --ota http://127.0.0.1:8000/voice/ota/ \
   --device-id reference-device-02 \
-  --client-id conformance-run-02 \
-  handshake
+  --client-id reference-client-02 \
+  "hãy đọc 'how are you'" \
+  --debug-audio-file outpu.wav
 ```
 
-## Lệnh conformance
+Client yeu cau ServerHello va downlink Opus 24 kHz mono, 60 ms hop le; chi pass sau `tts:start`, it nhat mot binary packet va `tts:stop`. Khong in token hoac noi dung text nhan tu server.
 
-### Handshake
-
-Gửi ClientHello V1 với uplink Canonical Audio Profile (Opus, 16 kHz, mono, 60 ms) và in ServerHello nhận được:
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ handshake
-```
-
-### Manual listen
-
-Sau hello, gửi `listen:start` rồi `listen:stop`:
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ listen
-```
-
-### Gửi raw Opus uplink
-
-`send-opus` đọc nguyên bytes của một file và gửi chúng trong WebSocket binary frame sau `listen:start`:
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ \
-  send-opus /absolute/path/to/opus-packet.bin
-```
-
-Ở Phase 1, server mới forward raw payload sang seam session và chưa decode Opus. Vì vậy file phải là fixture packet của conformance test; CLI không encode PCM thành Opus.
-
-### Gửi `docs/audio.wav`
-
-`send-wav` đọc WAV PCM16 mono. Input 16 kHz được dùng trực tiếp; PCM16 mono 24 kHz (như `docs/audio.wav`) được resample về uplink canonical 16 kHz. Client chia PCM thành frame 960 samples/60 ms, zero-pad frame cuối, encode raw Opus và gửi sau `listen:start`. Manual gửi `listen:stop`; Auto chỉ gửi silence canonical để server tự endpoint. Mỗi replay chỉ pass khi nhận đúng một STT V1 có text; client không in transcript.
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ \
-  send-wav docs/audio.wav
-
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ \
-  send-wav docs/audio.wav --mode auto
-```
-
-Không dùng lệnh này để tạo fixture compatibility được gọi là capture độc lập: packet do Reference Client encode chỉ xác nhận end-to-end CLI/server local.
-
-## Smoke local model cho Phase 3
-
-Hai lệnh `send-wav` phía trên là smoke real-model qua canonical Opus transport. Trước khi chạy, chuẩn bị manifest/model theo `config.example.toml`, khởi động `voice-agent-server`, rồi chạy cả Manual lẫn Auto với cùng `docs/audio.wav`. Đây là gate thủ công tách biệt với CI deterministic: mỗi scenario phải nhận đúng một `type:"stt"`; không suy ra kết quả này từ fake-provider test.
-
-Có thể kiểm tra riêng local runtime trước khi bind server:
-
-```bash
-cargo run -p voice-reference-client -- \
-  test-vad-asr-wav docs/audio.wav \
-  --vad-model models/vad/silero_vad.onnx \
-  --asr-model-dir models/asr/zipformer-30m-vi
-```
-
-Output của smoke chỉ nêu outcome; không bao giờ đưa audio hoặc transcript vào log/telemetry. Không chụp hoặc đính kèm network trace chứa payload audio khi ghi nhận gate này.
-
-### Xác nhận raw binary downlink
-
-`receive-binary` hoàn tất hello rồi chờ packet binary kế tiếp. Lệnh chỉ pass nếu payload khớp chính xác fixture hex:
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://conformance-peer/voice/ota/ \
-  receive-binary --expected-hex 00ff10
-```
-
-Lệnh này dùng với conformance peer có khả năng gửi downlink. Server Phase 1 cục bộ chưa có TTS/audio producer nên không tự phát packet downlink; đây không phải wire message test-only và không thay đổi protocol sản phẩm.
-
-### Protocol-fault cases
-
-Hai case hiện có kiểm tra fail-closed ở `AwaitHello`:
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ \
-  protocol-test --case binary-before-hello
-
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ \
-  protocol-test --case invalid-audio-profile
-```
-
-Cả hai cần nhận WebSocket close code `1002`. Danh sách case của CLI sẽ được mở rộng cùng protocol-conformance suite; xem [WebSocket testing](testing/01-ws.md) để biết toàn bộ contract bắt buộc.
-
-## Xác minh CLI
-
-```bash
-cargo run -p voice-reference-client -- --help
-cargo test -p voice-reference-client
-```
-
-Test peer tích hợp khởi tạo OTA + WebSocket peer độc lập, gửi ServerHello rồi raw binary `00 ff 10`, và xác nhận Reference Client nhận đúng từng byte.
+`--debug-steps` chi ghi ten buoc an toan ve rieng tu. `--debug-audio-file path.wav` la tuy chon chan doan, ghi audio TTS da decode ra WAV sau turn thanh cong.

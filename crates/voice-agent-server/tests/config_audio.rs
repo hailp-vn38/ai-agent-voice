@@ -123,6 +123,18 @@ fn phase_four_delivery_capacity_and_speech_bounds_fail_fast() {
 }
 
 #[test]
+fn local_http_llm_endpoint_is_allowed_but_remote_http_is_rejected() {
+    let mut config = valid_config();
+    config.providers.llm.openai.as_mut().unwrap().base_url =
+        Url::parse("http://localhost:20128/v1").unwrap();
+    assert!(config.validate().is_ok());
+
+    config.providers.llm.openai.as_mut().unwrap().base_url =
+        Url::parse("http://example.test/v1").unwrap();
+    assert!(config.validate().is_err());
+}
+
+#[test]
 fn application_state_preserves_injected_llm_and_tts_test_providers() {
     let providers = ProviderSet::with_llm_tts(Arc::new(FakeLlm), Arc::new(FakeTts));
 

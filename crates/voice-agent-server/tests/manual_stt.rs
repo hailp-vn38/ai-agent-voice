@@ -149,11 +149,11 @@ fn manual_final_commits_history_then_enqueues_one_stt_without_partial() {
     let mut actor = SessionActor::new("session".into(), control, audio, 2, providers).unwrap();
     let packet = uplink_packet();
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
     wait_for_worker(&mut actor);
 
     assert_eq!(actor.phase(), SessionPhase::Ready);
@@ -176,11 +176,11 @@ fn manual_empty_final_does_not_commit_or_enqueue_stt() {
     let mut actor = SessionActor::new("session".into(), control, audio, 2, providers).unwrap();
     let packet = uplink_packet();
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
     wait_for_worker(&mut actor);
 
     assert_eq!(actor.phase(), SessionPhase::Ready);
@@ -196,11 +196,11 @@ fn manual_failed_final_does_not_commit_or_enqueue_stt() {
     let mut actor = SessionActor::new("session".into(), control, audio, 2, providers).unwrap();
     let packet = uplink_packet();
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
     wait_for_worker(&mut actor);
 
     assert_eq!(actor.phase(), SessionPhase::Ready);
@@ -220,11 +220,11 @@ fn dialogue_history_evicts_the_oldest_manual_final_at_its_configured_limit() {
     let packet = uplink_packet();
 
     for _ in 0..2 {
-        actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
             mode: ListenMode::Manual,
         }));
         assert!(actor.on_binary(packet.as_bytes().to_vec()));
-        actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+        actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
         wait_for_worker(&mut actor);
     }
 
@@ -271,12 +271,12 @@ fn manual_capture_overflow_stops_feeding_the_asr_stream() {
     let mut actor = SessionActor::new("session".into(), control, audio, 1, providers).unwrap();
     let packet = uplink_packet();
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     assert!(!actor.on_binary(packet.as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
 
     for _ in 0..100 {
         if pushed_frames.load(Ordering::Relaxed) == 1 {
@@ -379,7 +379,7 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
     .unwrap();
     let packet = uplink_packet();
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Auto,
     }));
     for _ in 0..50 {
@@ -473,13 +473,13 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
     let packet = uplink_packet();
 
     for actor in [&mut first, &mut second] {
-        actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+        actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
             mode: ListenMode::Manual,
         }));
         assert!(actor.on_binary(packet.as_bytes().to_vec()));
     }
-    first.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
-    second.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    first.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+    second.on_client_message(ClientMessage::listen(ListenCommand::Stop));
     for _ in 0..100 {
         first.pump_workers();
         second.pump_workers();
@@ -515,12 +515,12 @@ fn replacement_invalidates_a_late_final_without_emitting_stale_stt() {
             .unwrap();
     let packet = uplink_packet();
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     for _ in 0..100 {

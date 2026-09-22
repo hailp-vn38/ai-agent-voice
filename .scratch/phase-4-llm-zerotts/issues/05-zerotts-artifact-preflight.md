@@ -13,5 +13,7 @@
 
 ## Comments
 
-- Hoàn tất 2026-09-22: pin `zerotts_default` tại revision `c2bfbd67dc648cac455077333f7cf5c18a2e3bb4` với 13 artifact roles và SHA-256; Model Preparation inject `ResolvedModel` vào `TtsFactory`, factory fail-closed với role/identity/voice sai, và preflight PCM có contract 48 kHz mono finite/non-empty. Ticket 06 vẫn sở hữu parse tokenizer/config/metadata, graph I/O/voice-dimension compatibility và native warmup thực.
+- Hoàn tất 2026-09-22: pin `zerotts_default` tại revision `c2bfbd67dc648cac455077333f7cf5c18a2e3bb4` với 13 artifact roles và SHA-256; Model Preparation inject `ResolvedModel` vào `TtsFactory`, factory fail-closed với role/identity/voice sai, và preflight PCM có contract 48 kHz mono finite/non-empty. Ticket 06 sở hữu tokenizer/config/metadata, graph I/O/voice-dimension compatibility và three-graph code parity; Ticket 07 sở hữu codec cùng native warmup thực.
 - Xác minh: `cargo fmt --check`, 4 test artifact-preflight, `cargo test --workspace`, `git diff --check` pass. `cargo clippy --workspace --all-targets -- -D warnings` bị chặn bởi hai lint pre-existing ngoài scope: `items_after_test_module` trong `session/speech_output.rs` và `result_unit_err` trong `workers/llm.rs`.
+
+- Audit 2026-09-22: Ticket 05 vẫn resolved. Hai Clippy findings trên nằm trong code Phase 4 của Ticket 04 và 03; Ticket 08 đã được cấp quyền sửa rõ ràng như một phần của Phase Completion Gate. Không ticket nào được dùng ignored real-model test thay cho gate này.

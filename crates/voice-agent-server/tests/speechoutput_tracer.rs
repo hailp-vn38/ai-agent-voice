@@ -37,12 +37,32 @@ impl VadProvider for FakeVad {
         Box<dyn voice_agent_server::providers::VadSession>,
         voice_agent_server::providers::VadError,
     > {
-        Err(voice_agent_server::providers::VadError::Failed(
-            "manual only".into(),
-        ))
+        Ok(Box::new(FakeVadSession))
     }
     fn adapter(&self) -> &'static str {
         "fake_vad"
+    }
+}
+
+struct FakeVadSession;
+
+impl voice_agent_server::providers::VadSession for FakeVadSession {
+    fn push(
+        &mut self,
+        input: voice_agent_server::providers::VadInput,
+    ) -> Result<
+        voice_agent_server::providers::VadProbability,
+        voice_agent_server::providers::VadError,
+    > {
+        Ok(voice_agent_server::providers::VadProbability {
+            start_sample: input.start_sample,
+            end_sample: input.start_sample + input.pcm.len() as u64,
+            probability: 0.0,
+        })
+    }
+
+    fn reset(&mut self) -> Result<(), voice_agent_server::providers::VadError> {
+        Ok(())
     }
 }
 
@@ -264,11 +284,11 @@ async fn non_empty_asr_final_delivers_started_canonical_opus_then_one_stop() {
     let mut actor =
         SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
 
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
 
     for _ in 0..200 {
         actor.pump_workers();
@@ -315,11 +335,11 @@ async fn streaming_llm_delivers_first_audio_before_eof_and_commits_only_after_dr
     ));
     let mut actor =
         SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
 
     for _ in 0..80 {
         actor.pump_workers();
@@ -380,11 +400,11 @@ async fn full_segment_capacity_stops_started_playback_without_committing_assista
     let mut actor =
         SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
     let mut controls_before_overflow = Vec::new();
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
     for _ in 0..100 {
         actor.pump_workers();
         while let Ok(message) = control_rx.try_recv() {
@@ -449,11 +469,11 @@ async fn llm_failure_before_audio_emits_no_playback_controls_or_assistant_histor
     ));
     let mut actor =
         SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
-    actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
     for _ in 0..100 {
         actor.pump_workers();
         if actor.phase() == SessionPhase::Ready {
@@ -524,4 +544,80 @@ async fn router_writes_tts_start_then_canonical_audio_then_one_stop() {
         let value: serde_json::Value = serde_json::from_str(text).unwrap();
         value["type"] == "tts" && value["state"] == "stop"
     }));
+}
+
+#[tokio::test]
+async fn auto_listening_accepts_digital_human_detect_as_a_text_turn() {
+    let (base, task) = start_router().await;
+    let mut socket = connect_router(&base).await;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "listen", "state": "start", "mode": "auto"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "listen", "state": "detect", "text": "browser text"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut saw_stt = false;
+    let mut saw_start = false;
+    let mut saw_audio = false;
+    loop {
+        let message = timeout(Duration::from_secs(1), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        match message {
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                match (value["type"].as_str(), value["state"].as_str()) {
+                    (Some("stt"), _) => saw_stt = true,
+                    (Some("tts"), Some("start")) => saw_start = true,
+                    (Some("tts"), Some("stop")) => break,
+                    _ => panic!("unexpected control: {value}"),
+                }
+            }
+            Message::Binary(_) => {
+                assert!(saw_start, "audio preceded tts:start");
+                saw_audio = true;
+            }
+            other => panic!("unexpected websocket frame: {other:?}"),
+        }
+    }
+    assert!(saw_stt);
+    assert!(saw_start);
+    assert!(saw_audio);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn reference_client_send_text_runs_a_complete_public_text_turn() {
+    let (base, task) = start_router().await;
+    let result = voice_reference_client::run_text_turn(voice_reference_client::TextTurnRequest {
+        ota_url: format!("{base}/voice/ota/"),
+        device_id: "text-turn-device".into(),
+        client_id: "reference-client".into(),
+        text: "  Xin chao  ".into(),
+        config: voice_reference_client::TextTurnConfig {
+            tts_start_timeout: Duration::from_secs(1),
+            turn_timeout: Duration::from_secs(5),
+            post_stop_quiet_period: Duration::from_millis(50),
+            debug_audio_file: None,
+            debug_steps: false,
+        },
+    })
+    .await;
+    task.abort();
+    assert!(result.is_ok(), "{result:?}");
+    assert!(result.unwrap().binary_packets > 0);
 }
