@@ -38,8 +38,6 @@ pub struct ProvidersConfig {
 pub struct VadProviderConfig {
     #[serde(default = "default_vad_adapter")]
     pub adapter: String,
-    #[serde(default = "default_vad_model")]
-    pub model: String,
     #[serde(default)]
     pub silero_onnx: Option<SileroOnnxConfig>,
 }
@@ -48,7 +46,6 @@ impl Default for VadProviderConfig {
     fn default() -> Self {
         Self {
             adapter: default_vad_adapter(),
-            model: default_vad_model(),
             silero_onnx: Some(SileroOnnxConfig::default()),
         }
     }
@@ -57,6 +54,8 @@ impl Default for VadProviderConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SileroOnnxConfig {
+    #[serde(default = "default_vad_model")]
+    pub model: String,
     #[serde(default = "default_provider_threads")]
     pub num_threads: i32,
     #[serde(default = "default_min_speech_ms")]
@@ -74,6 +73,7 @@ pub struct SileroOnnxConfig {
 impl Default for SileroOnnxConfig {
     fn default() -> Self {
         Self {
+            model: default_vad_model(),
             num_threads: default_provider_threads(),
             min_speech_ms: default_min_speech_ms(),
             end_silence_ms: default_end_silence_ms(),
@@ -89,8 +89,6 @@ impl Default for SileroOnnxConfig {
 pub struct AsrProviderConfig {
     #[serde(default = "default_asr_adapter")]
     pub adapter: String,
-    #[serde(default = "default_asr_model")]
-    pub model: String,
     #[serde(default)]
     pub zipformer_sherpa: Option<ZipformerSherpaConfig>,
 }
@@ -99,7 +97,6 @@ impl Default for AsrProviderConfig {
     fn default() -> Self {
         Self {
             adapter: default_asr_adapter(),
-            model: default_asr_model(),
             zipformer_sherpa: Some(ZipformerSherpaConfig::default()),
         }
     }
@@ -108,6 +105,8 @@ impl Default for AsrProviderConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ZipformerSherpaConfig {
+    #[serde(default = "default_asr_model")]
+    pub model: String,
     #[serde(default = "default_asr_threads")]
     pub num_threads: i32,
     #[serde(default = "default_decoding_method")]
@@ -117,6 +116,7 @@ pub struct ZipformerSherpaConfig {
 impl Default for ZipformerSherpaConfig {
     fn default() -> Self {
         Self {
+            model: default_asr_model(),
             num_threads: default_asr_threads(),
             decoding_method: default_decoding_method(),
         }
@@ -569,7 +569,7 @@ impl AppConfig {
                 "ASR runtime options must be valid".into(),
             ));
         }
-        if self.providers.vad.model.is_empty() || self.providers.asr.model.is_empty() {
+        if vad.model.is_empty() || asr.model.is_empty() {
             return Err(ConfigError::Validation(
                 "provider model identities must be non-empty".into(),
             ));

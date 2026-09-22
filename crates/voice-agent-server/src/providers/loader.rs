@@ -12,11 +12,13 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<ProviderSet, ProviderLoad
     let registry = compiled_provider_registry();
     let vad_factory = registry.vad_factory(&config.providers.vad.adapter)?;
     let asr_factory = registry.asr_factory(&config.providers.asr.adapter)?;
+    let vad_identity = vad_factory.model_identity(&config.providers.vad)?;
+    let asr_identity = asr_factory.model_identity(&config.providers.asr)?;
     let vad_model = prepare(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
         config.deployment.models.offline,
-        &config.providers.vad.model,
+        vad_identity,
         vad_factory.adapter(),
         &config.deployment,
     )?;
@@ -24,7 +26,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<ProviderSet, ProviderLoad
         &config.deployment.model_manifest,
         &config.deployment.models.root,
         config.deployment.models.offline,
-        &config.providers.asr.model,
+        asr_identity,
         asr_factory.adapter(),
         &config.deployment,
     )?;

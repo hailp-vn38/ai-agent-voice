@@ -15,6 +15,10 @@ use crate::{
 
 pub trait VadFactory: Send + Sync {
     fn adapter(&self) -> &'static str;
+    fn model_identity<'a>(
+        &self,
+        config: &'a VadProviderConfig,
+    ) -> Result<&'a str, ProviderLoadError>;
     fn build(
         &self,
         config: &VadProviderConfig,
@@ -25,6 +29,10 @@ pub trait VadFactory: Send + Sync {
 
 pub trait AsrFactory: Send + Sync {
     fn adapter(&self) -> &'static str;
+    fn model_identity<'a>(
+        &self,
+        config: &'a AsrProviderConfig,
+    ) -> Result<&'a str, ProviderLoadError>;
     fn build(
         &self,
         config: &AsrProviderConfig,
@@ -69,6 +77,19 @@ impl VadFactory for SileroOnnxFactory {
         "silero_onnx"
     }
 
+    fn model_identity<'a>(
+        &self,
+        config: &'a VadProviderConfig,
+    ) -> Result<&'a str, ProviderLoadError> {
+        Ok(&config
+            .silero_onnx
+            .as_ref()
+            .ok_or_else(|| {
+                ProviderLoadError::Configuration("silero_onnx options are required".into())
+            })?
+            .model)
+    }
+
     fn build(
         &self,
         config: &VadProviderConfig,
@@ -95,6 +116,19 @@ struct ZipformerSherpaFactory;
 impl AsrFactory for ZipformerSherpaFactory {
     fn adapter(&self) -> &'static str {
         "zipformer_sherpa"
+    }
+
+    fn model_identity<'a>(
+        &self,
+        config: &'a AsrProviderConfig,
+    ) -> Result<&'a str, ProviderLoadError> {
+        Ok(&config
+            .zipformer_sherpa
+            .as_ref()
+            .ok_or_else(|| {
+                ProviderLoadError::Configuration("zipformer_sherpa options are required".into())
+            })?
+            .model)
     }
 
     fn build(

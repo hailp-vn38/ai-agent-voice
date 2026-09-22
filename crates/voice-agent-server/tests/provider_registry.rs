@@ -64,9 +64,9 @@ public_ws_url = "ws://127.0.0.1:8000/voice/v1/"
 
 [providers.vad]
 adapter = "silero_onnx"
-model = "silero_vad_v5"
 
 [providers.vad.silero_onnx]
+model = "silero_vad_v5"
 num_threads = 3
 min_speech_ms = 240
 end_silence_ms = 720
@@ -76,9 +76,9 @@ exit_threshold = 0.4
 
 [providers.asr]
 adapter = "zipformer_sherpa"
-model = "zipformer_vi_streaming"
 
 [providers.asr.zipformer_sherpa]
+model = "zipformer_vi_streaming"
 num_threads = 4
 decoding_method = "modified_beam_search"
 "#,
@@ -86,8 +86,28 @@ decoding_method = "modified_beam_search"
     .unwrap();
 
     config.validate().unwrap();
-    assert_eq!(config.providers.vad.silero_onnx.unwrap().num_threads, 3);
+    let vad = config.providers.vad.silero_onnx.unwrap();
+    assert_eq!(vad.model, "silero_vad_v5");
+    assert_eq!(vad.num_threads, 3);
     let asr = config.providers.asr.zipformer_sherpa.unwrap();
+    assert_eq!(asr.model, "zipformer_vi_streaming");
     assert_eq!(asr.num_threads, 4);
     assert_eq!(asr.decoding_method, "modified_beam_search");
+}
+
+#[test]
+fn logical_model_identity_must_be_scoped_to_the_selected_adapter_table() {
+    let result: Result<AppConfig, _> = toml::from_str(
+        r#"
+[server]
+bind = "127.0.0.1:8000"
+public_ws_url = "ws://127.0.0.1:8000/voice/v1/"
+
+[providers.vad]
+adapter = "silero_onnx"
+model = "silero_vad_v5"
+"#,
+    );
+
+    assert!(result.is_err());
 }

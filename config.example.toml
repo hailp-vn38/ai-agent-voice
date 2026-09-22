@@ -23,9 +23,9 @@ outbound_audio_queue = 32
 
 [providers.vad]
 adapter = "silero_onnx"
-model = "silero_vad_v5"
 
 [providers.vad.silero_onnx]
+model = "silero_vad_v5"
 num_threads = 1
 min_speech_ms = 180
 end_silence_ms = 600
@@ -35,9 +35,9 @@ exit_threshold = 0.35
 
 [providers.asr]
 adapter = "zipformer_sherpa"
-model = "zipformer_vi_streaming"
 
 [providers.asr.zipformer_sherpa]
+model = "zipformer_vi_streaming"
 num_threads = 2
 decoding_method = "greedy_search"
 

@@ -39,9 +39,12 @@ fn phase_three_defaults_pin_local_silero_vad_and_zipformer_asr() {
     let providers = ProvidersConfig::default();
 
     assert_eq!(providers.vad.adapter, "silero_onnx");
-    assert_eq!(providers.vad.model, "silero_vad_v5");
+    assert_eq!(providers.vad.silero_onnx.unwrap().model, "silero_vad_v5");
     assert_eq!(providers.asr.adapter, "zipformer_sherpa");
-    assert_eq!(providers.asr.model, "zipformer_vi_streaming");
+    assert_eq!(
+        providers.asr.zipformer_sherpa.unwrap().model,
+        "zipformer_vi_streaming"
+    );
 }
 
 #[test]

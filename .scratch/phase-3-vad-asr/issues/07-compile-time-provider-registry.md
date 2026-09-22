@@ -15,4 +15,5 @@
 ## Comments
 
 - Implemented fixed `ProviderRegistry` with `VadFactory`/`AsrFactory`; startup validates typed config, prepares each selected Logical Model Identity, then injects `ResolvedModel` into the selected factory. `ProviderSet` remains the injected worker/SessionActor boundary.
+- Review correction: moved each Logical Model Identity from its provider root into the selected adapter table (`providers.vad.silero_onnx` / `providers.asr.zipformer_sherpa`); legacy root-level `model` is rejected by typed TOML parsing.
 - Verified: `cargo check --workspace`, `cargo test -p voice-agent-server --test provider_registry`, `cargo test -p voice-agent-server --test config_audio`, `cargo test --workspace`, and `git diff --check` all pass. The ignored real-model reference-client smoke remains a separate Phase Completion Gate because local model artifacts are unavailable.
