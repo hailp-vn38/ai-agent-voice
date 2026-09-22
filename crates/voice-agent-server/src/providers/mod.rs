@@ -12,10 +12,10 @@ pub mod vad;
 
 pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession};
 pub use error::{AsrError, ProviderLoadError, VadError};
-pub use llm::LlmProvider;
+pub use llm::{LlmError, LlmProvider};
 pub use registry::{
     AsrFactory, LlmFactory, ProviderRegistry, TtsFactory, VadFactory, compiled_provider_registry,
 };
 pub use set::ProviderSet;
-pub use tts::TtsProvider;
+pub use tts::{TtsError, TtsProvider};
 pub use vad::{VadInput, VadProbability, VadProvider, VadSession};

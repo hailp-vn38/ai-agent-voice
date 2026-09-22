@@ -44,6 +44,12 @@ impl ProviderSet {
     pub(crate) fn vad_provider(&self) -> Arc<dyn VadProvider> {
         Arc::clone(&self.vad)
     }
+    pub(crate) fn llm_provider(&self) -> Arc<dyn LlmProvider> {
+        Arc::clone(&self.llm)
+    }
+    pub(crate) fn tts_provider(&self) -> Arc<dyn TtsProvider> {
+        Arc::clone(&self.tts)
+    }
     pub fn vad_adapter(&self) -> &'static str {
         self.vad.adapter()
     }

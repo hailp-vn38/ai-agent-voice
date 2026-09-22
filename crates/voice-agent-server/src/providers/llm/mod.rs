@@ -1,7 +1,18 @@
-//! LLM provider boundary. Operations are added by the LLM runtime ticket.
+//! LLM provider boundary.
+
+use thiserror::Error;
 
 pub trait LlmProvider: Send + Sync {
     fn adapter(&self) -> &'static str;
+    fn complete(&self, _: &str) -> Result<String, LlmError> {
+        Err(LlmError::Failed)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum LlmError {
+    #[error("LLM completion failed")]
+    Failed,
 }
 
 pub struct UnavailableLlm;

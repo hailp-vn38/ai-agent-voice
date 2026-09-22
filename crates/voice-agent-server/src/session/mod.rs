@@ -1,5 +1,6 @@
 mod actor;
 mod event;
+mod speech_output;
 mod state;
 mod turn;
 

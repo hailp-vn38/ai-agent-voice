@@ -1,7 +1,19 @@
-//! TTS provider boundary. Synthesis is added by the SpeechOutput ticket.
+//! TTS provider boundary.
+
+use crate::audio::PcmF32Mono;
+use thiserror::Error;
 
 pub trait TtsProvider: Send + Sync {
     fn adapter(&self) -> &'static str;
+    fn synthesize(&self, _: &str) -> Result<PcmF32Mono, TtsError> {
+        Err(TtsError::Failed)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum TtsError {
+    #[error("TTS synthesis failed")]
+    Failed,
 }
 
 pub struct UnavailableTts;

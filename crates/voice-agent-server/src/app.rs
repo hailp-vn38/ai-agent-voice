@@ -123,6 +123,7 @@ async fn websocket(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config;
+    let providers = state.providers;
     let asr_runtime = state.asr_runtime;
     let vad_runtime = state.vad_runtime;
     let active_turn_limiter = state.active_turn_limiter;
@@ -152,6 +153,7 @@ async fn websocket(
             handle_socket(
                 socket,
                 config,
+                providers,
                 asr_runtime,
                 vad_runtime,
                 active_turn_limiter,
@@ -167,6 +169,7 @@ fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
 async fn handle_socket(
     socket: WebSocket,
     config: Arc<AppConfig>,
+    providers: Arc<ProviderSet>,
     asr_runtime: Arc<AsrWorkerRuntime>,
     vad_runtime: Arc<VadWorkerRuntime>,
     active_turn_limiter: Arc<ActiveTurnLimiter>,
@@ -234,6 +237,14 @@ async fn handle_socket(
             return;
         }
     };
+    let actor = match actor.with_delivery_providers(&providers) {
+        Ok(actor) => actor,
+        Err(error) => {
+            debug!(%error, "failed to initialize session speech output");
+            close_direct(&mut sender, 1011).await;
+            return;
+        }
+    };
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
         .expect("ServerHello is serializable");
     if actor.send_control(server_hello).is_err() {
@@ -241,12 +252,39 @@ async fn handle_socket(
         return;
     }
     let writer = tokio::spawn(async move {
+        let mut deferred_tts_stop = None;
         loop {
+            // A normal stop follows the final paced packet even though control is otherwise
+            // preferred over audio by this writer.
+            if deferred_tts_stop.is_some() && audio_rx.is_empty() {
+                if send_outbound(
+                    &mut sender,
+                    deferred_tts_stop.take().expect("checked above"),
+                )
+                .await
+                {
+                    break;
+                }
+                continue;
+            }
             tokio::select! {
                 biased;
-                Some(message) = control_rx.recv() => if send_outbound(&mut sender, message).await { break; },
+                Some(message) = control_rx.recv() => {
+                    if is_normal_tts_stop(&message) && !audio_rx.is_empty() {
+                        deferred_tts_stop = Some(message);
+                    } else if send_outbound(&mut sender, message).await {
+                        break;
+                    }
+                },
                 Some(message) = audio_rx.recv() => if send_outbound(&mut sender, message).await { break; },
-                else => break,
+                else => {
+                    if let Some(message) = deferred_tts_stop.take()
+                        && send_outbound(&mut sender, message).await
+                    {
+                        break;
+                    }
+                    break;
+                },
             }
         }
     });
@@ -296,6 +334,16 @@ async fn handle_socket(
     let _ = session.await;
     drop(control_tx);
     let _ = writer.await;
+}
+
+fn is_normal_tts_stop(message: &OutboundMessage) -> bool {
+    let Some(text) = message.as_text() else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(text) else {
+        return false;
+    };
+    payload["type"] == "tts" && payload["state"] == "stop"
 }
 
 fn checked_text(message: Message, max: usize) -> Result<String, u16> {

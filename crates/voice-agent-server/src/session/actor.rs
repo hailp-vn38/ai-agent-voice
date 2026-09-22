@@ -1,11 +1,16 @@
-use crate::session::{ActiveTurnLimiter, SessionPhase, event::SessionEvent, turn::DialogueHistory};
+use crate::session::{
+    ActiveTurnLimiter, SessionPhase,
+    event::SessionEvent,
+    speech_output::{SpeechOutput, SpeechOutputEvent},
+    turn::DialogueHistory,
+};
 use crate::{
     audio::{
         CaptureOutcome, DecodeOutcome, ManualCapture, PcmF32Mono, UplinkOpusDecoder, VadBoundary,
         VadSegmenter, VadSegmenterConfig,
     },
     protocol::{ClientMessage, ListenCommand, ListenMode},
-    providers::ProviderSet,
+    providers::{LlmProvider, ProviderSet, llm::UnavailableLlm, tts::UnavailableTts},
     workers::{
         AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, VadCommand, VadWorkerEvent,
         VadWorkerLease, VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig,
@@ -35,6 +40,9 @@ pub struct SessionActor {
     has_active_turn_permit: bool,
     generation: u64,
     dialogue_history: DialogueHistory,
+    llm: std::sync::Arc<dyn LlmProvider>,
+    speech_output: SpeechOutput,
+    tts_started: bool,
     control_tx: mpsc::Sender<OutboundMessage>,
     _audio_tx: mpsc::Sender<OutboundMessage>,
 }
@@ -107,6 +115,7 @@ impl SessionActor {
             asr_runtime,
             vad_runtime,
         )
+        .and_then(|actor| actor.with_delivery_providers(&providers))
     }
 
     /// Production passes an application-owned runtime so ASR worker capacity is global.
@@ -196,9 +205,22 @@ impl SessionActor {
             has_active_turn_permit: false,
             generation: 0,
             dialogue_history: DialogueHistory::new(max_history_messages),
+            llm: std::sync::Arc::new(UnavailableLlm),
+            speech_output: SpeechOutput::new(std::sync::Arc::new(UnavailableTts))?,
+            tts_started: false,
             control_tx,
             _audio_tx: audio_tx,
         })
+    }
+
+    /// Completes construction with the injected delivery providers at the application seam.
+    pub fn with_delivery_providers(
+        mut self,
+        providers: &ProviderSet,
+    ) -> Result<Self, crate::audio::AudioError> {
+        self.llm = providers.llm_provider();
+        self.speech_output = SpeechOutput::new(providers.tts_provider())?;
+        Ok(self)
     }
 
     pub fn session_id(&self) -> &str {
@@ -220,6 +242,7 @@ impl SessionActor {
         self.asr_runtime.supervise_pending();
         self.vad_runtime.supervise_pending();
         self.drain_worker_events();
+        self.drain_speech_output();
     }
 
     fn drain_worker_events(&mut self) {
@@ -242,7 +265,10 @@ impl SessionActor {
         let mut worker_tick = tokio::time::interval(std::time::Duration::from_millis(1));
         loop {
             tokio::select! {
-                _ = worker_tick.tick() => self.drain_worker_events(),
+                _ = worker_tick.tick() => {
+                    self.drain_worker_events();
+                    self.drain_speech_output();
+                }
                 event = ingress.recv() => match event {
                     Some(SessionEvent::ClientMessage(message)) => self.on_client_message(message),
                     Some(SessionEvent::ClientAudio(payload)) => { self.on_binary(payload); }
@@ -257,6 +283,8 @@ impl SessionActor {
         match message {
             ClientMessage::Listen(ListenCommand::Start { mode }) => {
                 self.generation += 1;
+                self.speech_output.cancel();
+                self.tts_started = false;
                 self.cancel_asr();
                 self.release_active_turn();
                 self.close_vad();
@@ -306,6 +334,8 @@ impl SessionActor {
             ClientMessage::Abort => {
                 if self.phase != SessionPhase::Closed {
                     self.generation += 1;
+                    self.speech_output.cancel();
+                    self.tts_started = false;
                     self.manual_capture.abort();
                     self.cancel_asr();
                     self.release_active_turn();
@@ -354,8 +384,11 @@ impl SessionActor {
         match event {
             AsrWorkerEvent::Final { text, .. } if current => {
                 self.asr_stream = None;
-                self.commit_final(text);
-                self.complete_recognition();
+                if let Some(final_text) = self.commit_final(text) {
+                    self.begin_speech_delivery(final_text);
+                } else {
+                    self.complete_recognition();
+                }
             }
             AsrWorkerEvent::Failed { .. } if current => {
                 self.asr_stream = None;
@@ -482,10 +515,10 @@ impl SessionActor {
         let _ = self.control_tx.try_send(OutboundMessage::Close(1011));
     }
 
-    fn commit_final(&mut self, final_text: String) {
+    fn commit_final(&mut self, final_text: String) -> Option<String> {
         let text = final_text.trim();
         if text.is_empty() {
-            return;
+            return None;
         }
         let text = text.to_owned();
         self.dialogue_history.commit_user(text.clone());
@@ -495,9 +528,57 @@ impl SessionActor {
             "text": text,
         });
         let Ok(payload) = serde_json::to_string(&payload) else {
-            return;
+            return None;
         };
         let _ = self.send_control(payload);
+        Some(text)
+    }
+
+    fn begin_speech_delivery(&mut self, user_text: String) {
+        let Ok(response) = self.llm.complete(&user_text) else {
+            self.complete_recognition();
+            return;
+        };
+        if response.trim().is_empty() || self.speech_output.submit(&response).is_err() {
+            self.complete_recognition();
+            return;
+        }
+        self.speech_output.finish_input();
+    }
+
+    fn drain_speech_output(&mut self) {
+        while let Some(event) = self.speech_output.poll() {
+            match event {
+                SpeechOutputEvent::Started => {
+                    self.tts_started = true;
+                    let payload = serde_json::json!({
+                        "session_id": self.session_id,
+                        "type": "tts",
+                        "state": "start",
+                    });
+                    if let Ok(payload) = serde_json::to_string(&payload) {
+                        let _ = self.send_control(payload);
+                    }
+                }
+                SpeechOutputEvent::AudioPacket(packet) => {
+                    let _ = self._audio_tx.try_send(OutboundMessage::Binary(packet));
+                }
+                SpeechOutputEvent::Drained => {
+                    if self.tts_started {
+                        let payload = serde_json::json!({
+                            "session_id": self.session_id,
+                            "type": "tts",
+                            "state": "stop",
+                        });
+                        if let Ok(payload) = serde_json::to_string(&payload) {
+                            let _ = self.send_control(payload);
+                        }
+                    }
+                    self.tts_started = false;
+                    self.complete_recognition();
+                }
+            }
+        }
     }
 
     fn cancel_asr(&mut self) {
@@ -655,6 +736,7 @@ impl Drop for SessionActor {
         // The application-owned supervisor continues to observe the acknowledgement or timeout
         // after this actor and its WebSocket have gone away.
         self.cancel_asr();
+        self.speech_output.cancel();
         self.release_active_turn();
         self.close_vad();
         self.asr_runtime.unregister_session(&self.session_id);
