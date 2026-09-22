@@ -18,7 +18,7 @@ Các lệnh dưới đây dùng OTA endpoint của server đó:
 --ota http://127.0.0.1:8000/voice/ota/
 ```
 
-CLI lấy `websocket.url` và `websocket.token` từ OTA response. Khi token không rỗng, nó tự gửi `Authorization: Bearer <token>`; không ghi token ra output hoặc file.
+CLI lấy `websocket.url` và `websocket.token` từ OTA response. Khi token không rỗng, nó tự gửi `Authorization: Bearer <token>`; không ghi token, audio hoặc transcript ra output hoặc file.
 
 Mặc định `Device-Id` là `reference-client-01` và `Client-Id` là `reference-client`. Có thể thay đổi chúng khi cần kiểm thử session metadata:
 
@@ -64,15 +64,34 @@ cargo run -p voice-reference-client -- \
 
 ### Gửi `docs/audio.wav`
 
-`send-wav` đọc WAV PCM16 mono. Input 16 kHz được dùng trực tiếp; PCM16 mono 24 kHz (như `docs/audio.wav`) được resample về uplink canonical 16 kHz. Client chia PCM thành frame 960 samples/60 ms, zero-pad frame cuối, encode raw Opus và gửi sau `listen:start` manual, trước `listen:stop`.
+`send-wav` đọc WAV PCM16 mono. Input 16 kHz được dùng trực tiếp; PCM16 mono 24 kHz (như `docs/audio.wav`) được resample về uplink canonical 16 kHz. Client chia PCM thành frame 960 samples/60 ms, zero-pad frame cuối, encode raw Opus và gửi sau `listen:start`. Manual gửi `listen:stop`; Auto chỉ gửi silence canonical để server tự endpoint. Mỗi replay chỉ pass khi nhận đúng một STT V1 có text; client không in transcript.
 
 ```bash
 cargo run -p voice-reference-client -- \
   --ota http://127.0.0.1:8000/voice/ota/ \
   send-wav docs/audio.wav
+
+cargo run -p voice-reference-client -- \
+  --ota http://127.0.0.1:8000/voice/ota/ \
+  send-wav docs/audio.wav --mode auto
 ```
 
 Không dùng lệnh này để tạo fixture compatibility được gọi là capture độc lập: packet do Reference Client encode chỉ xác nhận end-to-end CLI/server local.
+
+## Smoke local model cho Phase 3
+
+Hai lệnh `send-wav` phía trên là smoke real-model qua canonical Opus transport. Trước khi chạy, chuẩn bị manifest/model theo `config.example.toml`, khởi động `voice-agent-server`, rồi chạy cả Manual lẫn Auto với cùng `docs/audio.wav`. Đây là gate thủ công tách biệt với CI deterministic: mỗi scenario phải nhận đúng một `type:"stt"`; không suy ra kết quả này từ fake-provider test.
+
+Có thể kiểm tra riêng local runtime trước khi bind server:
+
+```bash
+cargo run -p voice-reference-client -- \
+  test-vad-asr-wav docs/audio.wav \
+  --vad-model models/vad/silero_vad.onnx \
+  --asr-model-dir models/asr/zipformer-30m-vi
+```
+
+Output của smoke chỉ nêu outcome; không bao giờ đưa audio hoặc transcript vào log/telemetry. Không chụp hoặc đính kèm network trace chứa payload audio khi ghi nhận gate này.
 
 ### Xác nhận raw binary downlink
 

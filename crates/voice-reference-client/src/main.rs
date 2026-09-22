@@ -212,7 +212,7 @@ fn test_vad_asr_wav(file: &Path, vad_model: &Path, asr_model_dir: &Path) -> anyh
             file.display()
         );
     }
-    println!("VAD speech detected; ASR final: {text}");
+    println!("VAD speech detected; ASR returned a non-empty final");
     Ok(())
 }
 
@@ -295,7 +295,7 @@ where
             tokio::time::sleep(std::time::Duration::from_millis(60)).await;
         }
     }
-    wait_for_stt(socket).await?;
+    wait_for_exactly_one_stt(socket).await?;
     println!(
         "sent {packets} canonical 60 ms Opus packets from {}",
         path.display()
@@ -324,26 +324,40 @@ where
     Ok(())
 }
 
-/// The reference client treats a final STT message as the observable Manual recognition result.
-async fn wait_for_stt<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> anyhow::Result<()>
+/// A single replay must yield one V1 STT final, never a duplicate transcript event.
+async fn wait_for_exactly_one_stt<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+) -> anyhow::Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
+    let mut stt_count = 0;
     loop {
-        let message = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
-            .await
-            .context("timed out waiting for STT")?
-            .context("WebSocket closed before STT")??;
+        let timeout_duration = if stt_count == 0 {
+            std::time::Duration::from_secs(10)
+        } else {
+            std::time::Duration::from_millis(200)
+        };
+        let message = match tokio::time::timeout(timeout_duration, socket.next()).await {
+            Ok(Some(Ok(message))) => message,
+            Ok(Some(Err(error))) => return Err(error.into()),
+            Ok(None) if stt_count == 1 => return Ok(()),
+            Ok(None) => bail!("WebSocket closed before STT"),
+            Err(_) if stt_count == 1 => return Ok(()),
+            Err(_) => bail!("timed out waiting for STT"),
+        };
         match message {
             Message::Text(text) => {
                 let value: serde_json::Value = serde_json::from_str(&text)?;
                 if value.get("type").and_then(|item| item.as_str()) == Some("stt") {
-                    let transcript = value
+                    let _transcript = value
                         .get("text")
                         .and_then(|item| item.as_str())
                         .context("STT message has no text")?;
-                    println!("STT: {transcript}");
-                    return Ok(());
+                    stt_count += 1;
+                    if stt_count > 1 {
+                        bail!("received more than one STT for one replay");
+                    }
                 }
             }
             Message::Close(frame) => bail!("WebSocket closed before STT: {frame:?}"),
@@ -503,6 +517,30 @@ mod tests {
         })
     }
 
+    async fn duplicate_stt_ws(upgrade: WebSocketUpgrade) -> impl IntoResponse {
+        upgrade.on_upgrade(|mut socket| async move {
+            let _ = socket.recv().await;
+            socket
+                .send(AxumMessage::Text(
+                    json!({"type": "hello", "session_id": "fixture"})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            for _ in 0..2 {
+                socket
+                    .send(AxumMessage::Text(
+                        json!({"type": "stt", "text": "private fixture transcript"})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        })
+    }
+
     #[tokio::test]
     async fn receive_binary_accepts_the_exact_packet_from_an_ota_peer() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -532,5 +570,26 @@ mod tests {
 
         task.abort();
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn wav_replay_rejects_a_duplicate_stt() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route("/voice/v1/", get(duplicate_stt_ws));
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (mut socket, _) = connect_async(format!("ws://{address}/voice/v1/"))
+            .await
+            .unwrap();
+        socket
+            .send(Message::Text(json!({"type": "hello"}).to_string().into()))
+            .await
+            .unwrap();
+        let _ = socket.next().await.unwrap().unwrap();
+
+        let result = wait_for_exactly_one_stt(&mut socket).await;
+
+        task.abort();
+        assert!(result.is_err(), "a duplicate STT must fail the replay");
     }
 }
