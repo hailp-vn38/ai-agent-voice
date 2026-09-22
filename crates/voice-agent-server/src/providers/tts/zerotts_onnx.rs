@@ -118,19 +118,35 @@ struct StreamingDecode {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TransformerOffset {
+    index: usize,
+    decoder_index: usize,
     input_name: String,
+    output_name: String,
     shape: Vec<usize>,
+    dtype: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AttentionCache {
+    index: usize,
+    decoder_index: usize,
+    layer_index: usize,
+    context: usize,
+    num_heads: usize,
+    head_dim: usize,
     offset_input_name: String,
+    offset_output_name: String,
     cached_keys_input_name: String,
+    cached_keys_output_name: String,
     cached_values_input_name: String,
+    cached_values_output_name: String,
     cached_positions_input_name: String,
+    cached_positions_output_name: String,
     offset_shape: Vec<usize>,
     cache_shape: Vec<usize>,
     positions_shape: Vec<usize>,
+    cache_dtype: String,
+    positions_dtype: String,
 }
 
 impl ZeroTtsContract {
@@ -815,6 +831,62 @@ fn load_codec_metadata(
         {
             return Err(TtsError::IncompatibleContract(
                 "codec shared external data does not match metadata".into(),
+            ));
+        }
+    }
+    for (index, offset) in metadata
+        .streaming_decode
+        .transformer_offsets
+        .iter()
+        .enumerate()
+    {
+        if offset.index != index
+            || offset.decoder_index != 1 + index * 2
+            || offset.input_name != format!("transformer_offset_{index}")
+            || offset.output_name != format!("transformer_offset_out_{index}")
+            || offset.shape != [1]
+            || offset.dtype != "int32"
+        {
+            return Err(TtsError::IncompatibleContract(
+                "codec transformer-offset metadata does not match the pinned graph".into(),
+            ));
+        }
+    }
+    for (index, cache) in metadata
+        .streaming_decode
+        .attention_caches
+        .iter()
+        .enumerate()
+    {
+        let (decoder_index, context) = match index {
+            0..=3 => (1, 500),
+            4..=5 => (3, 800),
+            6..=7 => (5, 1_200),
+            8..=11 => (7, 1_600),
+            _ => unreachable!("checked cache count"),
+        };
+        if cache.index != index
+            || cache.decoder_index != decoder_index
+            || cache.layer_index >= 4
+            || cache.context != context
+            || cache.num_heads != 4
+            || cache.head_dim != 64
+            || cache.offset_input_name != format!("attn_offset_{index}")
+            || cache.offset_output_name != format!("attn_offset_out_{index}")
+            || cache.cached_keys_input_name != format!("attn_cached_keys_{index}")
+            || cache.cached_keys_output_name != format!("attn_cached_keys_out_{index}")
+            || cache.cached_values_input_name != format!("attn_cached_values_{index}")
+            || cache.cached_values_output_name != format!("attn_cached_values_out_{index}")
+            || cache.cached_positions_input_name != format!("attn_cached_positions_{index}")
+            || cache.cached_positions_output_name != format!("attn_cached_positions_out_{index}")
+            || cache.offset_shape != [1]
+            || cache.cache_shape != [1, 4, context, 64]
+            || cache.positions_shape != [1, context]
+            || cache.cache_dtype != "float32"
+            || cache.positions_dtype != "int32"
+        {
+            return Err(TtsError::IncompatibleContract(
+                "codec attention-cache metadata does not match the pinned graph".into(),
             ));
         }
     }

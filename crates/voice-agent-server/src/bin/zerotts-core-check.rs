@@ -1,7 +1,10 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
 use serde::Deserialize;
-use voice_agent_server::providers::tts::zerotts_onnx::ZeroTtsContract;
+use voice_agent_server::{
+    audio::{DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono},
+    providers::tts::zerotts_onnx::ZeroTtsContract,
+};
 
 #[derive(Deserialize)]
 struct ParityFixture {
@@ -88,8 +91,34 @@ fn run() -> Result<(), String> {
     {
         return Err("ZeroTTS codec did not produce finite 48 kHz PCM".into());
     }
+    let downlink = pcm
+        .samples()
+        .chunks_exact(2)
+        .map(|pair| ((pair[0] + pair[1]) * 0.5 * i16::MAX as f32).round() as i16)
+        .collect::<Vec<_>>();
+    let mut frame = downlink
+        .get(..DOWNLINK_FRAME_SAMPLES)
+        .ok_or("ZeroTTS PCM is shorter than one canonical downlink frame")?
+        .to_vec();
+    frame.resize(DOWNLINK_FRAME_SAMPLES, 0);
+    let packet = DownlinkOpusEncoder::new(4_000)
+        .map_err(|error| error.to_string())?
+        .encode(
+            DownlinkPcmFrame::try_new(Pcm16Mono::new(frame)).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    let mut decoder =
+        opus2::Decoder::new(24_000, opus2::Channels::Mono).map_err(|error| error.to_string())?;
+    let mut decoded = [0_i16; DOWNLINK_FRAME_SAMPLES];
+    if decoder
+        .decode(packet.as_bytes(), &mut decoded, false)
+        .map_err(|error| error.to_string())?
+        != DOWNLINK_FRAME_SAMPLES
+    {
+        return Err("canonical Opus packet did not decode to one 60 ms frame".into());
+    }
     println!(
-        "ZeroTTS parity and codec accepted: {} frames, EOA frame {}, {} PCM samples",
+        "ZeroTTS parity, codec, and canonical Opus accepted: {} frames, EOA frame {}, {} PCM samples",
         result.frames.len(),
         fixture.eoa_frame_index,
         pcm.samples().len(),
