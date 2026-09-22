@@ -8,7 +8,8 @@ use crate::{
     providers::ProviderSet,
     session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent, SessionRuntimes},
     workers::{
-        AsrWorkerRuntime, LlmRuntime, VadWorkerRuntime, WorkerRuntimeConfig, WorkerSupervisor,
+        AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
+        WorkerSupervisor,
     },
 };
 use axum::{
@@ -38,6 +39,7 @@ pub struct AppState {
     pub asr_runtime: Arc<AsrWorkerRuntime>,
     pub vad_runtime: Arc<VadWorkerRuntime>,
     pub llm_runtime: Arc<LlmRuntime>,
+    pub tts_runtime: Arc<TtsWorkerRuntime>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
     pub active_turn_limiter: Arc<ActiveTurnLimiter>,
 }
@@ -80,6 +82,15 @@ impl AppState {
                     .timeout_ms,
             ),
         ));
+        let tts_runtime = Arc::new(TtsWorkerRuntime::new(
+            providers.tts_provider(),
+            WorkerRuntimeConfig {
+                max_workers: config.workers.tts.max_workers,
+                command_capacity: config.workers.tts.command_queue_capacity,
+                final_timeout: Duration::from_millis(config.tts.timeout_ms),
+                cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
+            },
+        ));
         let active_turn_limiter = Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns));
         Self {
             config: Arc::new(config),
@@ -87,6 +98,7 @@ impl AppState {
             asr_runtime,
             vad_runtime,
             llm_runtime,
+            tts_runtime,
             worker_supervisor,
             active_turn_limiter,
         }
@@ -144,6 +156,7 @@ async fn websocket(
     let asr_runtime = state.asr_runtime;
     let vad_runtime = state.vad_runtime;
     let llm_runtime = state.llm_runtime;
+    let tts_runtime = state.tts_runtime;
     let active_turn_limiter = state.active_turn_limiter;
     if !header_is(&headers, "protocol-version", "1")
         || !headers.contains_key("device-id")
@@ -172,10 +185,13 @@ async fn websocket(
                 socket,
                 config,
                 providers,
-                asr_runtime,
-                vad_runtime,
-                llm_runtime,
-                active_turn_limiter,
+                SocketRuntimes {
+                    asr: asr_runtime,
+                    vad: vad_runtime,
+                    llm: llm_runtime,
+                    tts: tts_runtime,
+                    active_turn_limiter,
+                },
             )
         })
         .into_response()
@@ -185,14 +201,19 @@ fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
     headers.get(name).and_then(|value| value.to_str().ok()) == Some(expected)
 }
 
+struct SocketRuntimes {
+    asr: Arc<AsrWorkerRuntime>,
+    vad: Arc<VadWorkerRuntime>,
+    llm: Arc<LlmRuntime>,
+    tts: Arc<TtsWorkerRuntime>,
+    active_turn_limiter: Arc<ActiveTurnLimiter>,
+}
+
 async fn handle_socket(
     socket: WebSocket,
     config: Arc<AppConfig>,
     providers: Arc<ProviderSet>,
-    asr_runtime: Arc<AsrWorkerRuntime>,
-    vad_runtime: Arc<VadWorkerRuntime>,
-    llm_runtime: Arc<LlmRuntime>,
-    active_turn_limiter: Arc<ActiveTurnLimiter>,
+    runtimes: SocketRuntimes,
 ) {
     let (mut sender, mut receiver) = socket.split();
     let first = timeout(
@@ -238,10 +259,11 @@ async fn handle_socket(
         config.max_capture_frames(),
         config.llm.max_history_messages,
         SessionRuntimes {
-            asr: asr_runtime,
-            vad: vad_runtime,
-            llm: llm_runtime,
-            active_turn_limiter,
+            asr: runtimes.asr,
+            vad: runtimes.vad,
+            llm: runtimes.llm,
+            tts: runtimes.tts,
+            active_turn_limiter: runtimes.active_turn_limiter,
             vad_segmenter_config: VadSegmenterConfig {
                 speech_threshold: vad_config.speech_threshold,
                 exit_threshold: vad_config.exit_threshold,

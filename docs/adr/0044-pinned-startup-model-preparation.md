@@ -8,3 +8,5 @@ Typed provider configuration chỉ chọn Logical Model Identity; Model Artifact
 ## Consequences
 
 Provider không nhận direct filesystem path từ config, không tự download và không đoán tên upstream. Manifest path tuyệt đối, traversal hoặc escape model root bị reject.
+
+Phase 4 giữ license model-level. `zerotts_default` dùng canonical composite declaration `MIT; bundled-codec=Apache-2.0`; deployment acknowledgement vẫn match chính xác identity, revision và license này, còn `codec_license` là required artifact. Artifact-level licensing chỉ được thêm khi deployment policy cần phân biệt component.

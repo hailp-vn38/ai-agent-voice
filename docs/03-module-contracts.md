@@ -87,7 +87,7 @@ pub enum SpeechOutputEvent {
 }
 ```
 
-`Started` chỉ phát khi AudioPacket hợp lệ đầu tiên đã sẵn sàng; actor chuyển nó thành `tts:start` rồi enqueue packet đó. `AudioPacket` là kết quả đã được pace, không phải một queue hay sender để caller điều khiển. `Drained` chỉ phát sau `FinishInput`, khi mọi segment đã hoàn tất và packet cuối đã qua pacer. Actor chỉ gửi `tts:stop` của luồng bình thường khi nhận event này. Non-empty TTS input có provider completion nhưng zero valid AudioPacket là `Failed(tts_empty_audio)`.
+`Started` chỉ phát khi AudioPacket hợp lệ đầu tiên đã sẵn sàng; actor chuyển nó thành `tts:start` rồi enqueue packet đó. `AudioPacket` là kết quả đã được pace, không phải một queue hay sender để caller điều khiển. `Drained` chỉ phát sau `FinishInput`, khi mọi segment đã hoàn tất và packet cuối đã qua pacer. Actor chỉ gửi `tts:stop` của luồng bình thường khi nhận event này. Non-empty TTS input có provider completion nhưng zero valid AudioPacket là `Failed(tts_empty_audio)`. TTS native mutable inference chạy trong `TtsWorkerRuntime` bounded; safe-point cancel không thay đổi yêu cầu GenerationGate drop output stale và cleanup acknowledgement trước khi release slot. Per generation chỉ có một active synthesis; pending ordinal liên tục/bounded, còn `Drained` cần `FinishInput`, pending rỗng, no active synthesis và final audio đã paced.
 
 ## 4. Outbound contract
 
@@ -109,13 +109,15 @@ pub enum OutboundPayload {
 
 Actor là producer duy nhất của outbound message. WS writer nhận control và audio qua hai queue bounded riêng, ưu tiên control hợp lệ, và giữ `GenerationGate` read-only để drop mọi `Turn` không còn là generation hiện tại. Actor cập nhật gate trước rồi enqueue `SessionControl(tts:stop)`; packet cũ đã xếp hàng bị drop trước stop. `tts:start` phải được writer gửi trước AudioPacket đầu tiên của generation.
 
+Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Started` không gửi control pair; failure sau `Started` invalidate generation, cancel pipeline, drop audio stale rồi enqueue chính xác một `tts:stop`. Sau stop, writer không được gửi binary audio của generation đó; failure path không commit Delivered Assistant Response.
+
 `AsrPartial` là internal-only: có thể coalesce nhưng không đi vào dialogue, không khởi động LLM và không tạo WebSocket message. Chỉ `AsrFinal` current-generation với `text.trim()` non-empty mới commit user utterance, enqueue đúng một message V1 hiện có `{"session_id":"...","type":"stt","text":"..."}`, rồi bắt đầu LLM. Final rỗng, lỗi, cancel hoặc stale không gửi `stt`; V1 không thêm `stt_partial`, `asr_partial`, `asr_final`, `vad_start`, `vad_stop` hay field wire mới.
 
 ## 5. Audio và queue invariants
 
 - Uplink V1: raw Opus packet.
 - Uplink Canonical Audio Profile: raw Opus 16 kHz, mono, 60 ms; validate ở hello trước Ready.
-- PCM canonical ở core là `Pcm16Mono`; `UplinkPcmFrame`, `DownlinkPcmFrame` và `UplinkAudioUtterance` bọc type này để biểu thị boundary semantic. Provider VAD/ASR nhận conversion `PcmF32Mono` có sample rate tường minh, không nhận `Vec<u8>`. Constructors frame chỉ nhận đúng 960 samples uplink hoặc 1.440 samples downlink; `UplinkAudioUtterance` có độ dài biến thiên trong giới hạn capture.
+- PCM canonical ở core là `Pcm16Mono`; `UplinkPcmFrame`, `DownlinkPcmFrame` và `UplinkAudioUtterance` bọc type này để biểu thị boundary semantic. Provider VAD/ASR nhận conversion `PcmF32Mono` có sample rate tường minh, không nhận `Vec<u8>`. `ZeroTtsProvider` cũng chỉ trả `PcmF32Mono`, nhưng V1 contract của nó là 48 kHz mono; `SpeechOutput` chuyển nó về `Pcm16Mono` 24 kHz. Constructors frame chỉ nhận đúng 960 samples uplink hoặc 1.440 samples downlink; `UplinkAudioUtterance` có độ dài biến thiên trong giới hạn capture.
 - Phase 3 đưa local inference qua worker boundary bounded để không block Tokio executor. `AsrStreamLease` được lấy lúc `SpeechStart` (Auto) hoặc `listen:start` (Manual); `Active Turn` permit chỉ được lấy ở `SpeechEnd` hoặc `listen:stop`, trước `AsrSession.finish()`. Không có permit thì cancel stream và release lease, không xếp chờ.
 - Decoder trả `DecodeOutcome::Frame(UplinkPcmFrame)` hoặc `DecodeOutcome::Dropped(AudioFrameDropReason)` cho packet rỗng, packet vượt `MAX_UPLINK_OPUS_PACKET_BYTES = 4.000`, decode lỗi và sample count sai. `AudioFrameDropReason` phân biệt `EmptyPacket`, `PacketTooLarge`, `DecodeError` và `InvalidSampleCount`; đây là local frame fault expected, actor chỉ ghi tracing metadata privacy-safe rồi tiếp tục. 4.000 bytes uplink là V1 implementation policy, không phải giới hạn format Opus. `DownlinkOpusEncoder` chỉ nhận `DownlinkPcmFrame`.
 - `DownlinkOpusEncoder` dùng profile implementation constant: VoIP, 32 kbps, VBR/constrained VBR bật, DTX/FEC tắt, packet-loss percent 0 và complexity 10. Không lấy các controls này từ config ở Phase 2. Encoder luôn dùng `DOWNLINK_ENCODE_BUFFER_BYTES = 4.000`, tách cả `MAX_UPLINK_OPUS_PACKET_BYTES` lẫn `websocket.max_frame_bytes`; `encode(DownlinkPcmFrame)` trả `Result<OpusPacket, AudioCodecError>`; encoder error, packet rỗng và packet lớn hơn transport cap là internal delivery failure, không phải local frame drop và không đóng WS 1009.
@@ -128,7 +130,8 @@ Actor là producer duy nhất của outbound message. WS writer nhận control v
 - `system` luôn ở đầu logical prompt.
 - `DialogueHistory` thuộc Voice Session, bounded bởi `llm.max_history_messages` và RAM-only; actor chỉ gọi `commit_user`, còn eviction thuộc history. Commit user utterance sau ASR final non-empty hợp lệ, trước enqueue STT, kể cả khi outbound sau đó lỗi.
 - Chỉ commit assistant response vào history sau `SpeechOutputEvent::Drained`; generated response bị cancel/lỗi không phải response đã delivered.
-- Với LLM-visible Tool, buffer toàn bộ LLM round; prose của round có tool call không được gửi vào SpeechOutput.
+- Phase 4 luôn gọi LLM với `tools = None`; bất kỳ tool call nào là `llm_unexpected_tool_call`, fail generation, cancel SpeechOutput và không chạy MCP/retry. Audio đã deliver không thể thu hồi, nhưng không audio queued/stale nào được gửi tiếp.
+- Từ Phase 6, với LLM-visible Tool, buffer toàn bộ LLM round; prose của round có tool call không được gửi vào SpeechOutput.
 - Tool call/result phải theo đúng ordering của LLM API.
 - History có đồng thời message limit và prompt token budget; eviction theo Exchange Atom cũ nhất, không tách tool call/result; system và current turn luôn giữ.
 - Tool result phải sanitize và cap trước LLM context, có đánh dấu truncation nếu bị cắt.

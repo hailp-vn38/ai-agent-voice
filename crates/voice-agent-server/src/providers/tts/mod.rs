@@ -71,6 +71,10 @@ pub(crate) struct ZeroTtsArtifacts<'a> {
     pub(crate) text_encoder: &'a std::path::Path,
     pub(crate) prefix_step: &'a std::path::Path,
     pub(crate) local_frame_decode: &'a std::path::Path,
+    pub(crate) codec_decode_full: &'a std::path::Path,
+    pub(crate) codec_decode_step: &'a std::path::Path,
+    pub(crate) codec_shared_data: &'a std::path::Path,
+    pub(crate) codec_metadata: &'a std::path::Path,
 }
 
 impl ConfiguredZeroTts {
@@ -79,23 +83,37 @@ impl ConfiguredZeroTts {
         runtime_library: &std::path::Path,
         num_threads: i32,
     ) -> Result<Self, TtsError> {
-        Ok(Self {
-            contract: zerotts_onnx::ZeroTtsContract::load_engine(
-                artifacts.config,
-                artifacts.tokenizer,
-                artifacts.voice,
-                artifacts.text_encoder,
-                artifacts.prefix_step,
-                artifacts.local_frame_decode,
-                runtime_library,
-                num_threads,
-            )?,
-        })
+        let contract = zerotts_onnx::ZeroTtsContract::load_engine(
+            artifacts.config,
+            artifacts.tokenizer,
+            artifacts.voice,
+            artifacts.text_encoder,
+            artifacts.prefix_step,
+            artifacts.local_frame_decode,
+            artifacts.codec_decode_full,
+            artifacts.codec_decode_step,
+            artifacts.codec_shared_data,
+            artifacts.codec_metadata,
+            runtime_library,
+            num_threads,
+        )?;
+        // This content is startup-only and never becomes a Voice Session or user lease.
+        let pcm = contract.synthesize_pcm("ZeroTTS startup readiness.", 256)?;
+        validate_warmup_pcm(WarmupPcm::new(
+            pcm.sample_rate_hz(),
+            1,
+            pcm.samples().to_vec(),
+        ))?;
+        Ok(Self { contract })
     }
 }
 
 impl TtsProvider for ConfiguredZeroTts {
     fn adapter(&self) -> &'static str {
         "zerotts_onnx"
+    }
+
+    fn synthesize(&self, text: &str) -> Result<PcmF32Mono, TtsError> {
+        self.contract.synthesize_pcm(text, 256)
     }
 }

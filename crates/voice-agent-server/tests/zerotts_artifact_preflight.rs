@@ -128,6 +128,7 @@ fn factory_rejects_a_prepared_zerotts_pack_missing_a_required_role() {
             num_threads: 2,
             voice: "maichi".into(),
         },
+        &voice_agent_server::config::RuntimeConfig::default(),
         &model,
     ) {
         Ok(_) => panic!("factory accepted a missing required ZeroTTS artifact"),

@@ -9,6 +9,7 @@ use crate::config::SpeechOutputConfig;
 use crate::{
     audio::{DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono},
     providers::TtsProvider,
+    workers::{TtsLease, TtsWorkerEvent, TtsWorkerRuntime},
 };
 
 const PROVIDER_SAMPLE_RATE_HZ: u32 = 48_000;
@@ -30,6 +31,8 @@ pub enum SpeechOutputError {
 /// Owns synthesis, canonical conversion, Opus encoding, and audio pacing for one turn.
 pub struct SpeechOutput {
     tts: Arc<dyn TtsProvider>,
+    tts_runtime: Option<Arc<TtsWorkerRuntime>>,
+    active_worker: Option<TtsLease>,
     encoder: DownlinkOpusEncoder,
     pending: VecDeque<String>,
     packets: VecDeque<Vec<u8>>,
@@ -42,10 +45,6 @@ pub struct SpeechOutput {
 }
 
 impl SpeechOutput {
-    pub fn new(tts: Arc<dyn TtsProvider>) -> Result<Self, crate::audio::AudioError> {
-        Self::with_config(tts, SpeechOutputConfig::default())
-    }
-
     pub fn with_config(
         tts: Arc<dyn TtsProvider>,
         config: SpeechOutputConfig,
@@ -53,6 +52,8 @@ impl SpeechOutput {
         let max_pending = config.pending_segments;
         Ok(Self {
             tts,
+            tts_runtime: None,
+            active_worker: None,
             encoder: DownlinkOpusEncoder::new(4_000)?,
             pending: VecDeque::new(),
             packets: VecDeque::new(),
@@ -63,6 +64,16 @@ impl SpeechOutput {
             segmenter: SentenceSegmenter::new(config),
             max_pending,
         })
+    }
+
+    pub fn with_worker(
+        tts: Arc<dyn TtsProvider>,
+        runtime: Arc<TtsWorkerRuntime>,
+        config: SpeechOutputConfig,
+    ) -> Result<Self, crate::audio::AudioError> {
+        let mut output = Self::with_config(tts, config)?;
+        output.tts_runtime = Some(runtime);
+        Ok(output)
     }
 
     /// Accepts LLM text incrementally. Every completed segment is admitted atomically.
@@ -95,10 +106,21 @@ impl SpeechOutput {
         let Some(text) = self.pending.pop_front() else {
             return Ok(());
         };
+        if let Some(runtime) = &self.tts_runtime {
+            let lease = runtime
+                .start(text)
+                .map_err(|_| SpeechOutputError::Synthesis)?;
+            self.active_worker = Some(lease);
+            return Ok(());
+        }
         let pcm = self
             .tts
             .synthesize(&text)
             .map_err(|_| SpeechOutputError::Synthesis)?;
+        self.enqueue_pcm(pcm)
+    }
+
+    fn enqueue_pcm(&mut self, pcm: PcmF32Mono) -> Result<(), SpeechOutputError> {
         let downlink = resample_to_downlink(pcm).ok_or(SpeechOutputError::Synthesis)?;
         for samples in downlink.chunks(DOWNLINK_FRAME_SAMPLES) {
             let mut frame = samples.to_vec();
@@ -119,6 +141,11 @@ impl SpeechOutput {
     }
 
     pub fn cancel(&mut self) {
+        if let Some(lease) = self.active_worker.take()
+            && let Some(runtime) = &self.tts_runtime
+        {
+            let _ = runtime.cancel_and_detach(lease);
+        }
         self.pending.clear();
         self.packets.clear();
         self.next_packet = 0;
@@ -130,12 +157,48 @@ impl SpeechOutput {
 
     pub fn poll(&mut self) -> Result<Option<SpeechOutputEvent>, SpeechOutputError> {
         // Only one segment is synthesized at a time; packet pacing may overlap the next poll.
-        if self.packets.is_empty() && !self.pending.is_empty() {
+        if self.packets.is_empty() && self.active_worker.is_none() && !self.pending.is_empty() {
             self.synthesize_next()?;
+            // Give a just-dispatched native worker one scheduling opportunity without running
+            // inference on the actor/Tokio thread.
+            std::thread::yield_now();
+        }
+        if let Some(lease) = self.active_worker {
+            let event = self
+                .tts_runtime
+                .as_ref()
+                .expect("active TTS worker requires a runtime")
+                .poll(lease)
+                .map_err(|_| SpeechOutputError::Synthesis)?;
+            match event {
+                None => {}
+                Some(TtsWorkerEvent::Pcm(pcm)) => self.enqueue_pcm(pcm)?,
+                Some(TtsWorkerEvent::Finished) => self.active_worker = None,
+                Some(
+                    TtsWorkerEvent::Cancelled
+                    | TtsWorkerEvent::Failed
+                    | TtsWorkerEvent::CleanupTimedOut,
+                ) => {
+                    self.active_worker = None;
+                    return Err(SpeechOutputError::Synthesis);
+                }
+                Some(TtsWorkerEvent::TimedOut) => {
+                    self.active_worker = None;
+                    // Actor failure stops polling this lease, so cleanup must continue at the
+                    // runtime boundary and quarantine the slot if native acknowledgement stalls.
+                    let _ = self
+                        .tts_runtime
+                        .as_ref()
+                        .expect("active TTS worker requires a runtime")
+                        .cancel_and_detach(lease);
+                    return Err(SpeechOutputError::Synthesis);
+                }
+            }
         }
         if self.next_packet == self.packets.len() {
             if self.finish_input
                 && self.pending.is_empty()
+                && self.active_worker.is_none()
                 && self.started
                 && self
                     .next_deadline
@@ -230,6 +293,7 @@ impl SentenceSegmenter {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::SentenceSegmenter;
     use crate::config::SpeechOutputConfig;

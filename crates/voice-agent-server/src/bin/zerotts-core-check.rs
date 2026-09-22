@@ -35,6 +35,10 @@ fn run() -> Result<(), String> {
         &required_path("ZEROTTS_TEXT_ENCODER")?,
         &required_path("ZEROTTS_PREFIX_STEP")?,
         &required_path("ZEROTTS_LOCAL_FRAME_DECODE")?,
+        &required_path("ZEROTTS_CODEC_DECODE_FULL")?,
+        &required_path("ZEROTTS_CODEC_DECODE_STEP")?,
+        &required_path("ZEROTTS_CODEC_SHARED_DATA")?,
+        &required_path("ZEROTTS_CODEC_METADATA")?,
         &required_path("VOICE_ONNX_RUNTIME_LIB")?,
         1,
     )
@@ -75,10 +79,20 @@ fn run() -> Result<(), String> {
     {
         return Err("a second operation inherited stale ZeroTTS state".into());
     }
+    let pcm = core
+        .synthesize_pcm(&fixture.text, fixture.max_frames)
+        .map_err(|error| error.to_string())?;
+    if pcm.sample_rate_hz() != 48_000
+        || pcm.samples().is_empty()
+        || pcm.samples().iter().any(|sample| !sample.is_finite())
+    {
+        return Err("ZeroTTS codec did not produce finite 48 kHz PCM".into());
+    }
     println!(
-        "ZeroTTS parity accepted: {} frames, EOA frame {}",
+        "ZeroTTS parity and codec accepted: {} frames, EOA frame {}, {} PCM samples",
         result.frames.len(),
-        fixture.eoa_frame_index
+        fixture.eoa_frame_index,
+        pcm.samples().len(),
     );
     Ok(())
 }

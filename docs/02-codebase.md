@@ -127,9 +127,10 @@ TTS provider -> WebSocket
 LLM provider -> MCP transport trực tiếp
 VAD -> Dialogue
 SpeechOutput -> WebSocket
+LlmRuntime -> persistent provider session
 ```
 
-Thay vào đó mọi output phải quay về actor qua event.
+Thay vào đó mọi output phải quay về actor qua event; LlmRuntime chỉ route operation bounded, còn SessionActor là outbound producer duy nhất.
 
 ## 4. Naming conventions
 

@@ -26,10 +26,12 @@ flowchart TB
     V -->|SpeechStart/SpeechEnd| A
     A -->|PCM stream + lifecycle| S[ASR Worker]
     S -->|AsrPartial/AsrFinal| A
-    A -->|ChatRequest| L[LLM Task]
-    L -->|Delta/ToolCall| A
+    A -->|Start generation| L[LlmRuntime]
+    L -->|bounded permit| LT[LLM stream task]
+    LT -->|Delta/ToolCall| A
     A -->|SpeechOutputCommand| O[SpeechOutput]
-    O -->|TTS/PCM/Opus/pacing nội bộ| T[TTS Provider]
+    O -->|bounded command/event| T[TtsWorkerRuntime]
+    T -->|native inference| P[TTS Provider]
     O -->|SpeechOutputEvent| A
     A -->|control + audio| W
     A -->|McpCommand| M[Device MCP Adapter]
@@ -54,6 +56,8 @@ flowchart TB
 Các task khác nhận bản sao dữ liệu bất biến hoặc message DTO. Không giữ mutable reference trực tiếp đến actor state.
 
 `SpeechOutput` là Module sâu, không phải một đường gửi WS thứ hai. Interface của nó chỉ nhận segment, tín hiệu input đã hết và cancel; implementation che giấu TTS stream, normalize/resample, Opus, queue và pacing. Nó trả event về actor; chỉ actor tạo `OutboundMessage`.
+
+`LlmRuntime` chỉ cấp global permit, tạo task streaming theo Voice Session/generation và route event bounded; nó không giữ provider session mutable. `TtsWorkerRuntime` mới sở hữu native mutable inference, cancellation acknowledgement và quarantine.
 
 ## 4. Dependency direction
 

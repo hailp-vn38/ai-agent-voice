@@ -20,6 +20,8 @@ max_frame_bytes = 65536
 session_event_queue = 64
 outbound_control_queue = 32
 outbound_audio_queue = 32
+llm_concurrency = 2
+tts_concurrency = 2
 
 [providers.vad]
 adapter = "silero_onnx"
@@ -41,6 +43,31 @@ model = "zipformer_vi_streaming"
 num_threads = 2
 decoding_method = "greedy_search"
 
+[providers.llm]
+type = "openai"
+
+[providers.llm.openai]
+api_key = ""
+base_url = "https://api.openai.com/v1"
+model = "model-name"
+
+[providers.tts]
+adapter = "zerotts_onnx"
+
+[providers.tts.zerotts_onnx]
+model = "zerotts_default"
+num_threads = 2
+voice = "maichi"
+
+[tts]
+timeout_ms = 15000
+
+[speech_output]
+min_chars = 24
+soft_break_min_chars = 48
+max_chars = 160
+pending_segments = 8
+
 [workers.vad]
 max_workers = 4
 command_queue_capacity = 32
@@ -51,6 +78,11 @@ cleanup_grace_ms = 5000
 max_workers = 2
 command_queue_capacity = 32
 final_timeout_ms = 15000
+cleanup_grace_ms = 5000
+
+[workers.tts]
+max_workers = 2
+command_queue_capacity = 32
 cleanup_grace_ms = 5000
 
 [deployment]
@@ -73,6 +105,11 @@ license = "MIT"
 model = "zipformer_vi_streaming"
 revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
 license = "CC-BY-NC-ND-4.0"
+
+[[deployment.model_acknowledgements]]
+model = "zerotts_default"
+revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
+license = "MIT; bundled-codec=Apache-2.0"
 
 [llm]
 max_history_messages = 20

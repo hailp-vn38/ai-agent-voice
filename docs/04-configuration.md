@@ -2,8 +2,8 @@
 
 ## 1. Nguyên tắc
 
-- `config.toml` cho non-secret config.
-- Environment variables override secret/config runtime.
+- `config.toml` chứa typed configuration, gồm cả `providers.llm.openai.api_key` theo quyết định Phase 4.
+- Environment variables có thể override config runtime khi deployment cần, nhưng không thay đổi source of truth Phase 4 là typed TOML.
 - Parse + validate toàn bộ config khi startup; fail fast nếu cấu hình bắt buộc thiếu.
 - Session giữ `Arc<AppConfig>` immutable, không đọc file config giữa turn.
 
@@ -81,22 +81,42 @@ provider = "cpu"
 decoding_method = "greedy_search"
 enable_internal_endpoint = false
 
-[llm]
-adapter = "openai_chat_completions_v1"
-base_url = "https://api.example.com/v1"
+[providers.llm]
+type = "openai"
+
+[providers.llm.openai]
+api_key = ""
+base_url = "https://api.openai.com/v1"
 model = "model-name"
 timeout_ms = 60000
+
+[llm]
 max_history_messages = 20
 prompt_budget_tokens = 12000
 max_tool_result_chars = 4096
 max_tool_depth = 4
 
+[providers.tts]
+adapter = "zerotts_onnx"
+
+[providers.tts.zerotts_onnx]
+model = "zerotts_default"
+num_threads = 2
+voice = "maichi"
+
 [tts]
-adapter = "openai_speech_v1"
-base_url = "http://127.0.0.1:9002"
-model = "gpt-4o-mini-tts"
-voice = "default"
 timeout_ms = 15000
+
+[speech_output]
+min_chars = 24
+soft_break_min_chars = 48
+max_chars = 160
+pending_segments = 8
+
+[workers.tts]
+max_workers = 2
+command_queue_capacity = 32
+cleanup_grace_ms = 5000
 
 [mcp]
 enabled = true
@@ -111,10 +131,9 @@ Khuyến nghị:
 ```text
 VOICE_AGENT_AUTH_TOKEN
 VOICE_AGENT_LLM_API_KEY
-VOICE_AGENT_TTS_API_KEY
 ```
 
-Không commit API key vào repository.
+`VOICE_AGENT_LLM_API_KEY` có thể override `providers.llm.openai.api_key` cho deployment. Dù API key được phép trong TOML, không commit key thật vào repository và không log/debug/telemetry hoặc gửi về client.
 
 ## 4. Validation cần có
 
@@ -131,6 +150,14 @@ Không commit API key vào repository.
 - `shutdown_grace_ms > 0`; config chỉ có hiệu lực khi process khởi động lại.
 - `prompt_budget_tokens > 0`, `max_tool_result_chars > 0`, `max_tool_depth > 0`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
+- `providers.llm.type = "openai"` chỉ chấp nhận bảng `[providers.llm.openai]`; `api_key`, `base_url` hợp lệ và `model` không rỗng trước bind. API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry.
+- `providers.tts.adapter = "zerotts_onnx"` chỉ chấp nhận bảng cùng tên, Logical Model Identity và `voice` cụ thể không rỗng; V1 default là `maichi`. Model Preparation inject `ResolvedModel`, không direct path. `[workers.tts]` có capacity, timeout/cleanup dương và không chứa model/runtime option của adapter.
+- `[speech_output]` chứa `min_chars`, `soft_break_min_chars`, `max_chars`, `pending_segments` với `1 <= min_chars <= soft_break_min_chars <= max_chars`, `1 <= pending_segments <= 64`; punctuation V1 là implementation policy cố định. `max_chars` là hard bound Unicode-safe; pending full fail `speech_output_backpressure`, cancel LLM operation và không accept thêm delta.
+- `tts.timeout_ms` bắt đầu khi TtsWorkerRuntime accept một segment và kết thúc tại `SegmentFinished`, `Failed` hoặc cancelled acknowledgement; PCM chunks không reset timer. Slot chỉ release sau cleanup acknowledgement, hoặc worker bị quarantine khi hết cleanup grace.
+- `llm_concurrency > 0`; LlmRuntime giữ permit từ khi accept request tới terminal event, timeout request không reset bởi text delta. Bounded event route không được drop terminal event; failure route phải cancel controlled operation.
+- Phase 4 bắt buộc `limits.tts_concurrency == workers.tts.max_workers`: admission chỉ dùng một semaphore tại SpeechOutput trước lease native worker; `max_workers` là structural bound, không limiter thứ hai.
+- OpenAI startup chỉ validate local typed config/build provider; không model list, completion, health probe hay network request trước bind. Lỗi remote thuộc LLM Operation hiện tại.
+- acknowledgement của `zerotts_default` match chính xác `license = "MIT; bundled-codec=Apache-2.0"`; Phase 4 giữ license model-level, nhưng `codec_license` vẫn là required artifact.
 - public WS URL hợp lệ nếu OTA được bật.
 - `auth.token = ""` tắt authentication; token không rỗng bắt buộc Bearer token. Device-Id và Client-Id không phải credential.
 - OTA trả static token khi auth bật và không phải security boundary; Internet không nằm trong supported V1 profile.

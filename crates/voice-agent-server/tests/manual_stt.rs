@@ -10,14 +10,23 @@ use voice_agent_server::{
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadProvider,
-        llm::UnavailableLlm,
+        llm::UnavailableLlm, tts::UnavailableTts,
     },
     session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionPhase, SessionRuntimes},
-    workers::{AsrWorkerRuntime, LlmRuntime, VadWorkerRuntime, WorkerRuntimeConfig},
+    workers::{
+        AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
+    },
 };
 
 struct FakeAsr {
     final_text: String,
+}
+
+fn unavailable_tts_runtime() -> Arc<TtsWorkerRuntime> {
+    Arc::new(TtsWorkerRuntime::new(
+        Arc::new(UnavailableTts),
+        WorkerRuntimeConfig::default(),
+    ))
 }
 
 struct FakeVad;
@@ -356,6 +365,7 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
                 1,
                 Duration::from_secs(60),
             )),
+            tts: unavailable_tts_runtime(),
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
             vad_segmenter_config: VadSegmenterConfig {
                 speech_threshold: 0.5,
@@ -432,6 +442,7 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
                 1,
                 Duration::from_secs(60),
             )),
+            tts: unavailable_tts_runtime(),
             active_turn_limiter: Arc::clone(&limiter),
             vad_segmenter_config: VadSegmenterConfig::default(),
             pre_roll_samples: 4_800,
@@ -452,6 +463,7 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
                 1,
                 Duration::from_secs(60),
             )),
+            tts: unavailable_tts_runtime(),
             active_turn_limiter: limiter,
             vad_segmenter_config: VadSegmenterConfig::default(),
             pre_roll_samples: 4_800,

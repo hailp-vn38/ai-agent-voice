@@ -68,14 +68,19 @@ Exit criteria: deterministic provider/worker/session tests pass; Silero chạy �
 
 Deliverables:
 
-- OpenAI-compatible LLM stream.
+- Compile-time `LlmFactory`/`TtsFactory` trong Provider Registry; startup loader validate/build VAD, ASR, OpenAI LLM và ZeroTTS trước bind socket.
+- `type = "openai"` LLM stream qua crate Rust `llm`; bridge typed stream của crate thành domain events, không tự implement OpenAI HTTP/SSE.
+- Pin `llm = "=1.3.8"` với `default-features = false`, `openai` và `rustls-tls`; Phase 4 gọi `chat_stream_with_tools(messages, None)`. Tool call bất thường fail generation, không MCP/retry và cancel phần speech còn lại.
 - sentence segmenter.
-- TTS trait + first provider.
+- TTS trait + `zerotts_onnx` native Rust/ONNX first provider qua Model Preparation/ResolvedModel; không Python, HTTP service hay HTTP fallback.
 - output resample/Opus.
 - AudioPacer.
 - `SpeechOutput` command/event lifecycle (`FinishInput` / `Drained`).
+- `TtsWorkerRuntime` bounded, application-owned: native mutable ZeroTTS/ORT không block Tokio; cancel/cleanup acknowledgement, timeout và quarantine giữ worker slot an toàn.
+- LlmRuntime dùng một global semaphore; không sticky provider session, timeout là toàn LLM Operation. `limits.tts_concurrency` bắt buộc bằng `workers.tts.max_workers`, chỉ một admission semaphore trước native worker lease.
+- `speech_output.pending_segments` bounded (default 8): overflow cancel LLM và fail controlled generation, không drop/skip text segment. ZeroTTS deterministic warmup chạy trước bind bằng fixture đã pin, không chứa user content và không qua SessionActor/SpeechOutput/WS.
 
-Exit criteria: TTS first audio xuất hiện trước khi LLM stream hoàn tất với câu đủ dài.
+Exit criteria bắt buộc: fake LLM streaming + real ZeroTTS model đi qua SpeechOutput, resample 24 kHz mono, real Opus/pacing và Reference Client; segment đầu tiên/audio packet đầu tiên xuất hiện trước fake LLM Finished; `tts:start` đứng trước audio đầu tiên; `FinishInput` chỉ dẫn tới `Drained` sau audio cuối và normal completion release Active Turn. Cancel hoặc unexpected tool call không phát audio stale/queued, không MCP/retry và không commit Delivered Assistant Response. Live OpenAI là smoke deployment riêng, không phải CI completion gate.
 
 ## Phase 5 — Explicit interruption correctness
 

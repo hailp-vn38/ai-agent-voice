@@ -245,6 +245,10 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                     local_frame_decode: model
                         .artifact("local_frame_decode")
                         .expect("required above"),
+                    codec_decode_full: model.artifact("codec_decode_full").expect("required above"),
+                    codec_decode_step: model.artifact("codec_decode_step").expect("required above"),
+                    codec_shared_data: model.artifact("codec_shared_data").expect("required above"),
+                    codec_metadata: model.artifact("codec_metadata").expect("required above"),
                 },
                 &runtime.onnx.library,
                 config.num_threads,

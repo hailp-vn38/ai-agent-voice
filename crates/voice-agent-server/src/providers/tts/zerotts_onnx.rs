@@ -61,6 +61,76 @@ struct GraphPaths {
     prefix_step: PathBuf,
     local_frame_decode: PathBuf,
     threads: usize,
+    codec: CodecPaths,
+}
+
+struct CodecPaths {
+    decode_full: PathBuf,
+    decode_step: PathBuf,
+    metadata: CodecMetadata,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodecMetadata {
+    format_version: u32,
+    checkpoint_path: String,
+    files: CodecFiles,
+    external_data_files: BTreeMap<String, Vec<String>>,
+    codec_config: CodecConfig,
+    onnx: CodecOnnx,
+    streaming_decode: StreamingDecode,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodecFiles {
+    decode_full: String,
+    decode_step: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodecConfig {
+    sample_rate: u32,
+    channels: usize,
+    downsample_rate: usize,
+    num_quantizers: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodecOnnx {
+    opset: u32,
+    decode_input_names: Vec<String>,
+    decode_output_names: Vec<String>,
+    decode_step_input_names: Vec<String>,
+    decode_step_output_names: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamingDecode {
+    batch_size: usize,
+    transformer_offsets: Vec<TransformerOffset>,
+    attention_caches: Vec<AttentionCache>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TransformerOffset {
+    input_name: String,
+    shape: Vec<usize>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttentionCache {
+    offset_input_name: String,
+    cached_keys_input_name: String,
+    cached_values_input_name: String,
+    cached_positions_input_name: String,
+    offset_shape: Vec<usize>,
+    cache_shape: Vec<usize>,
+    positions_shape: Vec<usize>,
 }
 
 impl ZeroTtsContract {
@@ -97,6 +167,10 @@ impl ZeroTtsContract {
         text_encoder_path: &Path,
         prefix_step_path: &Path,
         local_frame_decode_path: &Path,
+        codec_decode_full_path: &Path,
+        codec_decode_step_path: &Path,
+        codec_shared_data_path: &Path,
+        codec_metadata_path: &Path,
         runtime_library: &Path,
         num_threads: i32,
     ) -> Result<Self, TtsError> {
@@ -132,6 +206,25 @@ impl ZeroTtsContract {
             LOCAL_FRAME_INPUTS,
             LOCAL_FRAME_OUTPUTS,
         )?;
+        let metadata = load_codec_metadata(
+            codec_metadata_path,
+            codec_decode_full_path,
+            codec_decode_step_path,
+            codec_shared_data_path,
+            config.num_codebooks,
+        )?;
+        load_codec_graph(
+            codec_decode_full_path,
+            threads,
+            &metadata.onnx.decode_input_names,
+            &metadata.onnx.decode_output_names,
+        )?;
+        load_codec_graph(
+            codec_decode_step_path,
+            threads,
+            &metadata.onnx.decode_step_input_names,
+            &metadata.onnx.decode_step_output_names,
+        )?;
         Ok(Self {
             tokenizer,
             config,
@@ -141,6 +234,11 @@ impl ZeroTtsContract {
                 prefix_step: prefix_step_path.into(),
                 local_frame_decode: local_frame_decode_path.into(),
                 threads,
+                codec: CodecPaths {
+                    decode_full: codec_decode_full_path.into(),
+                    decode_step: codec_decode_step_path.into(),
+                    metadata,
+                },
             }),
         })
     }
@@ -168,6 +266,197 @@ impl ZeroTtsContract {
 
     pub fn synthesize_codes(&self, text: &str, max_frames: usize) -> Result<CodeFrames, TtsError> {
         ZeroTtsOperation::new(self)?.synthesize(text, max_frames)
+    }
+
+    /// Produces the provider boundary PCM. Codec layout and profile are validated at startup.
+    pub fn synthesize_pcm(
+        &self,
+        text: &str,
+        max_frames: usize,
+    ) -> Result<crate::audio::PcmF32Mono, TtsError> {
+        let codes = self.synthesize_codes(text, max_frames)?;
+        if codes.eoa.is_none() {
+            return Err(TtsError::IncompatibleContract(
+                "ZeroTTS synthesis reached its frame bound".into(),
+            ));
+        }
+        let mut codec = CodecOperation::new(self)?;
+        // The startup/user delivery contract pins both decode paths. The full graph validates
+        // the complete code sequence before the streaming graph produces the PCM boundary.
+        let _ = codec.decode_full(&codes.frames)?;
+        codec.decode_step(&codes.frames)
+    }
+}
+
+struct CodecOperation<'a> {
+    contract: &'a ZeroTtsContract,
+    decode_full: Session,
+    // The step graph is deliberately loaded per operation too: no native cache crosses a lease.
+    decode_step: Session,
+}
+
+impl<'a> CodecOperation<'a> {
+    fn new(contract: &'a ZeroTtsContract) -> Result<Self, TtsError> {
+        let graphs = contract
+            .graphs
+            .as_ref()
+            .ok_or_else(|| TtsError::IncompatibleContract("ZeroTTS engine is not loaded".into()))?;
+        Ok(Self {
+            contract,
+            decode_full: load_codec_graph(
+                &graphs.codec.decode_full,
+                graphs.threads,
+                &graphs.codec.metadata.onnx.decode_input_names,
+                &graphs.codec.metadata.onnx.decode_output_names,
+            )?,
+            decode_step: load_codec_graph(
+                &graphs.codec.decode_step,
+                graphs.threads,
+                &graphs.codec.metadata.onnx.decode_step_input_names,
+                &graphs.codec.metadata.onnx.decode_step_output_names,
+            )?,
+        })
+    }
+
+    fn decode_step(&mut self, frames: &[Vec<i32>]) -> Result<crate::audio::PcmF32Mono, TtsError> {
+        let metadata = &self
+            .contract
+            .graphs
+            .as_ref()
+            .expect("engine invariant")
+            .codec
+            .metadata;
+        let codes = frames.iter().flatten().copied().collect::<Vec<_>>();
+        let mut inputs = vec![
+            (
+                "audio_codes".to_owned(),
+                ort::session::SessionInputValue::from(tensor(
+                    vec![1, frames.len(), metadata.codec_config.num_quantizers],
+                    codes,
+                )?),
+            ),
+            (
+                "audio_code_lengths".to_owned(),
+                ort::session::SessionInputValue::from(tensor(vec![1], vec![frames.len() as i32])?),
+            ),
+        ];
+        for offset in &metadata.streaming_decode.transformer_offsets {
+            inputs.push((
+                offset.input_name.clone(),
+                tensor(
+                    offset.shape.clone(),
+                    vec![0_i32; offset.shape.iter().product()],
+                )?
+                .into(),
+            ));
+        }
+        for cache in &metadata.streaming_decode.attention_caches {
+            inputs.push((
+                cache.offset_input_name.clone(),
+                tensor(
+                    cache.offset_shape.clone(),
+                    vec![0_i32; cache.offset_shape.iter().product()],
+                )?
+                .into(),
+            ));
+            inputs.push((
+                cache.cached_keys_input_name.clone(),
+                tensor(
+                    cache.cache_shape.clone(),
+                    vec![0_f32; cache.cache_shape.iter().product()],
+                )?
+                .into(),
+            ));
+            inputs.push((
+                cache.cached_values_input_name.clone(),
+                tensor(
+                    cache.cache_shape.clone(),
+                    vec![0_f32; cache.cache_shape.iter().product()],
+                )?
+                .into(),
+            ));
+            // Position zero is valid; untouched streaming cache entries are explicitly -1.
+            inputs.push((
+                cache.cached_positions_input_name.clone(),
+                tensor(
+                    cache.positions_shape.clone(),
+                    vec![-1_i32; cache.positions_shape.iter().product()],
+                )?
+                .into(),
+            ));
+        }
+        if metadata.streaming_decode.batch_size != 1 {
+            return Err(TtsError::IncompatibleContract(
+                "codec streaming batch must be one".into(),
+            ));
+        }
+        let output = self.decode_step.run(inputs).map_err(contract_error)?;
+        Self::mono_pcm(metadata, &output)
+    }
+
+    fn decode_full(&mut self, frames: &[Vec<i32>]) -> Result<crate::audio::PcmF32Mono, TtsError> {
+        let metadata = &self
+            .contract
+            .graphs
+            .as_ref()
+            .expect("engine invariant")
+            .codec
+            .metadata;
+        if frames.is_empty()
+            || frames
+                .iter()
+                .any(|frame| frame.len() != metadata.codec_config.num_quantizers)
+        {
+            return Err(TtsError::IncompatibleContract(
+                "codec frames do not match pinned quantizer count".into(),
+            ));
+        }
+        // ZeroTTS emits K values per time frame. The codec accepts int32 (B, T, K).
+        let codes = frames.iter().flatten().copied().collect::<Vec<_>>();
+        let output = self.decode_full.run(ort::inputs! {
+            "audio_codes" => tensor(vec![1, frames.len(), metadata.codec_config.num_quantizers], codes)?,
+            "audio_code_lengths" => tensor(vec![1], vec![frames.len() as i32])?,
+        }).map_err(contract_error)?;
+        Self::mono_pcm(metadata, &output)
+    }
+
+    fn mono_pcm(
+        metadata: &CodecMetadata,
+        output: &ort::session::SessionOutputs<'_>,
+    ) -> Result<crate::audio::PcmF32Mono, TtsError> {
+        let audio = f32_tensor(&output["audio"])?;
+        let lengths = i32_tensor(&output["audio_lengths"])?;
+        let length = usize::try_from(*lengths.data.first().ok_or_else(|| {
+            TtsError::IncompatibleContract("codec returned no audio length".into())
+        })?)
+        .map_err(contract_error)?;
+        if audio.shape.len() != 3
+            || audio.shape[0] != 1
+            || audio.shape[1] != metadata.codec_config.channels
+            || length == 0
+            || length > audio.shape[2]
+        {
+            return Err(TtsError::IncompatibleContract(
+                "codec output shape does not match pinned stereo profile".into(),
+            ));
+        }
+        let mut mono = Vec::with_capacity(length);
+        for index in 0..length {
+            let sum = (0..metadata.codec_config.channels)
+                .map(|channel| audio.data[channel * audio.shape[2] + index])
+                .sum::<f32>();
+            let sample = sum / metadata.codec_config.channels as f32;
+            if !sample.is_finite() {
+                return Err(TtsError::IncompatibleContract(
+                    "codec produced non-finite PCM".into(),
+                ));
+            }
+            mono.push(sample.clamp(-1.0, 1.0));
+        }
+        Ok(crate::audio::PcmF32Mono::new(
+            mono,
+            metadata.codec_config.sample_rate,
+        ))
     }
 }
 
@@ -462,6 +751,113 @@ fn load_graph(
         .map_err(contract_error)?;
     validate_graph_io(session.inputs(), inputs)?;
     validate_graph_io(session.outputs(), outputs)?;
+    Ok(session)
+}
+
+fn load_codec_metadata(
+    path: &Path,
+    full: &Path,
+    step: &Path,
+    shared_data: &Path,
+    codebooks: usize,
+) -> Result<CodecMetadata, TtsError> {
+    let metadata: CodecMetadata =
+        serde_json::from_slice(&fs::read(path).map_err(contract_error)?).map_err(contract_error)?;
+    if metadata.format_version != 2
+        || metadata.checkpoint_path != "MOSS-Audio-Tokenizer-Nano"
+        || metadata.codec_config.sample_rate != 48_000
+        || metadata.codec_config.channels != 2
+        || metadata.codec_config.downsample_rate != 3_840
+        || metadata.codec_config.num_quantizers != codebooks
+        || metadata.onnx.opset != 17
+        || metadata.streaming_decode.transformer_offsets.len() != 4
+        || metadata.streaming_decode.attention_caches.len() != 12
+        || metadata.files.decode_full
+            != full
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+        || metadata.files.decode_step
+            != step
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+        || metadata.onnx.decode_input_names != ["audio_codes", "audio_code_lengths"]
+        || metadata.onnx.decode_output_names != ["audio", "audio_lengths"]
+        || !metadata
+            .onnx
+            .decode_step_input_names
+            .starts_with(&metadata.onnx.decode_input_names)
+        || !metadata
+            .onnx
+            .decode_step_output_names
+            .starts_with(&metadata.onnx.decode_output_names)
+    {
+        return Err(TtsError::IncompatibleContract(
+            "codec metadata does not match the pinned 48 kHz stereo contract".into(),
+        ));
+    }
+    for graph in [full, step] {
+        let name = graph
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let declared = metadata.external_data_files.get(name).ok_or_else(|| {
+            TtsError::IncompatibleContract("codec metadata omits graph external data".into())
+        })?;
+        if declared.len() != 1
+            || declared[0]
+                != shared_data
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+            || !shared_data.is_file()
+        {
+            return Err(TtsError::IncompatibleContract(
+                "codec shared external data does not match metadata".into(),
+            ));
+        }
+    }
+    Ok(metadata)
+}
+
+fn load_codec_graph(
+    path: &Path,
+    threads: usize,
+    expected_inputs: &[String],
+    expected_outputs: &[String],
+) -> Result<Session, TtsError> {
+    let session = Session::builder()
+        .map_err(contract_error)?
+        .with_intra_threads(threads)
+        .map_err(contract_error)?
+        .commit_from_file(path)
+        .map_err(contract_error)?;
+    let actual_inputs = session
+        .inputs()
+        .iter()
+        .map(ort::value::Outlet::name)
+        .collect::<Vec<_>>();
+    let actual_outputs = session
+        .outputs()
+        .iter()
+        .map(ort::value::Outlet::name)
+        .collect::<Vec<_>>();
+    if actual_inputs
+        != expected_inputs
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+        || actual_outputs
+            != expected_outputs
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+    {
+        return Err(TtsError::IncompatibleContract(
+            "codec graph I/O does not match pinned metadata".into(),
+        ));
+    }
     Ok(session)
 }
 

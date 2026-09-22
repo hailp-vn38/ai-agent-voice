@@ -1,6 +1,6 @@
 # Thiết kế Providers VAD / ASR / TTS cho `voice-agent-server` bằng Rust
 
-> **Phase 3 decision update (2026-09-22):** Các ví dụ Phase 3 trong tài liệu lịch sử này dùng direct model paths, generic `adapter_config`, hoặc mô tả VAD queue drop không còn authoritative. Theo ADR-0043 và ADR-0044, typed config chọn compiled adapter cùng Logical Model Identity; Model Preparation tạo `ResolvedModel` trước startup warmup. Theo `docs/flows/02-vad.md`, VAD dùng contiguous sample timeline, actor-owned bounded retention và không silently continue sau input gap. Xem `docs/04-configuration.md`, `docs/06-implementation-plan.md` và `.scratch/phase-3-vad-asr/spec.md` cho contract hiện hành.
+> **Decision update Phase 3/4 (2026-09-22):** Các ví dụ lịch sử trong tài liệu này dùng direct model paths hoặc generic `adapter_config` không còn authoritative. Theo ADR-0043/0044 và ADR-0027, typed config chọn compiled adapter cùng Logical Model Identity; Model Preparation tạo `ResolvedModel` trước startup warmup. Phase 4 dùng `providers.llm.type = "openai"` qua crate `llm`, `providers.tts.adapter = "zerotts_onnx"`, typed tables, `TtsWorkerRuntime` và `SpeechOutput`; xem `docs/04-configuration.md`, `docs/06-implementation-plan.md`, `docs/flows/04-llm.md`, `docs/flows/05-tts.md` và `.scratch/phase-3-vad-asr/spec.md` cho contract hiện hành.
 
 > **Repository:** `hailp-vn38/ai-agent-voice`  
 > **Mục tiêu:** thêm kiến trúc provider/module có thể thay VAD, ASR và TTS bằng config mà không thay đổi `SessionActor`, WebSocket protocol hay dialogue core.  
@@ -1383,10 +1383,14 @@ models/tts/zerotts/
     ├── prefix_step.onnx
     ├── local_frame_decode.onnx
     └── codec/
-        ├── decode_full.onnx
-        ├── decode_step.onnx
-        └── codec_browser_onnx_meta.json
+        ├── moss_audio_tokenizer_decode_full.onnx
+        ├── moss_audio_tokenizer_decode_step.onnx
+        ├── moss_audio_tokenizer_decode_shared.data
+        ├── codec_browser_onnx_meta.json
+        └── LICENSE-Apache-2.0.txt
 ```
+
+Manifest logical model `zerotts_default` pin roles `config`, `tokenizer`, `null_voice`, `voices_index`, `voice`, `text_encoder`, `prefix_step`, `local_frame_decode`, `codec_decode_full`, `codec_decode_step`, `codec_shared_data`, `codec_metadata` và `codec_license`. `codec_shared_data` là external ONNX data bắt buộc cho cả decode graphs; thiếu nó phải fail startup. Default voice là `maichi`, không phải tên mơ hồ `default`.
 
 Tên file thực tế phải validate khi startup.
 

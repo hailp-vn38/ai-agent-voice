@@ -4,11 +4,13 @@
 mod asr;
 mod llm;
 mod supervisor;
+mod tts;
 mod vad;
 
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
 pub use llm::{LlmRuntime, LlmRuntimeEvent};
 pub use supervisor::WorkerSupervisor;
+pub use tts::{TtsLease, TtsWorkerError, TtsWorkerEvent, TtsWorkerRuntime};
 pub use vad::{VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime};
 
 use std::time::Duration;

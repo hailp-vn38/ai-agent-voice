@@ -13,8 +13,8 @@ use crate::{
     providers::{ProviderSet, llm::UnavailableLlm, tts::UnavailableTts},
     workers::{
         AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, LlmRuntime, LlmRuntimeEvent,
-        VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime, WorkerIdentity,
-        WorkerRuntimeConfig,
+        TtsWorkerRuntime, VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime,
+        WorkerIdentity, WorkerRuntimeConfig,
     },
 };
 use tokio::sync::mpsc;
@@ -45,6 +45,7 @@ pub struct SessionActor {
     llm_events: mpsc::Receiver<LlmRuntimeEvent>,
     llm_operation: Option<WorkerIdentity>,
     generated_response: String,
+    tts_runtime: std::sync::Arc<TtsWorkerRuntime>,
     speech_output: SpeechOutput,
     tts_started: bool,
     control_tx: mpsc::Sender<OutboundMessage>,
@@ -56,6 +57,7 @@ pub struct SessionRuntimes {
     pub asr: std::sync::Arc<AsrWorkerRuntime>,
     pub vad: std::sync::Arc<VadWorkerRuntime>,
     pub llm: std::sync::Arc<LlmRuntime>,
+    pub tts: std::sync::Arc<TtsWorkerRuntime>,
     pub active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
     pub vad_segmenter_config: VadSegmenterConfig,
     pub pre_roll_samples: u64,
@@ -127,6 +129,10 @@ impl SessionActor {
                 asr: asr_runtime,
                 vad: vad_runtime,
                 llm: llm_runtime,
+                tts: std::sync::Arc::new(TtsWorkerRuntime::new(
+                    providers.tts_provider(),
+                    WorkerRuntimeConfig::default(),
+                )),
                 active_turn_limiter: std::sync::Arc::new(ActiveTurnLimiter::new(8)),
                 vad_segmenter_config: VadSegmenterConfig::default(),
                 pre_roll_samples: 4_800,
@@ -184,6 +190,10 @@ impl SessionActor {
                     1,
                     std::time::Duration::from_secs(60),
                 )),
+                tts: std::sync::Arc::new(TtsWorkerRuntime::new(
+                    std::sync::Arc::new(UnavailableTts),
+                    WorkerRuntimeConfig::default(),
+                )),
                 active_turn_limiter: std::sync::Arc::new(ActiveTurnLimiter::new(8)),
                 vad_segmenter_config: VadSegmenterConfig::default(),
                 pre_roll_samples: 4_800,
@@ -232,7 +242,12 @@ impl SessionActor {
             llm_events,
             llm_operation: None,
             generated_response: String::new(),
-            speech_output: SpeechOutput::new(std::sync::Arc::new(UnavailableTts))?,
+            tts_runtime: std::sync::Arc::clone(&runtimes.tts),
+            speech_output: SpeechOutput::with_worker(
+                std::sync::Arc::new(UnavailableTts),
+                runtimes.tts,
+                crate::config::SpeechOutputConfig::default(),
+            )?,
             tts_started: false,
             control_tx,
             _audio_tx: audio_tx,
@@ -244,7 +259,12 @@ impl SessionActor {
         mut self,
         providers: &ProviderSet,
     ) -> Result<Self, crate::audio::AudioError> {
-        self.speech_output = SpeechOutput::new(providers.tts_provider())?;
+        let tts_runtime = std::sync::Arc::clone(&self.tts_runtime);
+        self.speech_output = SpeechOutput::with_worker(
+            providers.tts_provider(),
+            tts_runtime,
+            crate::config::SpeechOutputConfig::default(),
+        )?;
         Ok(self)
     }
 
@@ -253,7 +273,9 @@ impl SessionActor {
         providers: &ProviderSet,
         config: crate::config::SpeechOutputConfig,
     ) -> Result<Self, crate::audio::AudioError> {
-        self.speech_output = SpeechOutput::with_config(providers.tts_provider(), config)?;
+        let tts_runtime = std::sync::Arc::clone(&self.tts_runtime);
+        self.speech_output =
+            SpeechOutput::with_worker(providers.tts_provider(), tts_runtime, config)?;
         Ok(self)
     }
 

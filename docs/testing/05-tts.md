@@ -15,6 +15,16 @@
 - cuối stream -> `tts:stop` sau frame cuối.
 - hai segment hoàn tất lệch thứ tự -> `Drained` chỉ xuất hiện sau `FinishInput` và packet cuối.
 - abort khi packet cũ đã vào outbound queue -> writer drop packet stale trước session-control `tts:stop`.
+- real ZeroTTS model + fake streaming LLM: audio packet đầu tiên xuất hiện trước `Finished` của LLM.
+- real ZeroTTS PCM đi qua resample 24 kHz, Opus và pacing; Reference Client decode được packet.
+- unexpected tool call sau audio đã deliver -> cancel audio còn lại, không MCP/retry và không stale packet sau generation invalidation.
+- no worker slot hoặc command queue full -> fail-fast generation, không drop/skip segment.
+- timeout tính từ worker accept segment, không reset bởi PCM chunk; cleanup acknowledgement release slot, cleanup timeout quarantine worker.
+- segment ordinal liên tục: chỉ một active synthesis, N+1 đợi `SegmentFinished(N)` nhưng có thể overlap pacer N; pending full fail generation.
+- failure trước `Started` không gửi start/stop; failure sau `Started` gửi đúng một stop và không audio packet cùng generation nào tới wire sau stop.
+- `pending_segments` full -> `speech_output_backpressure`, cancel LLM và không accept thêm delta; no dropped/overwritten segment.
+- config reject `limits.tts_concurrency != workers.tts.max_workers`.
+- deterministic non-user ZeroTTS warmup validates all pinned artifacts and returns finite, non-empty mono PCM at 48 kHz; mutable warmup state is not reused by a session.
 
 ## Command
 

@@ -3,7 +3,12 @@ use std::{sync::Arc, time::Duration};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use opus2::{Channels, Decoder};
-use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle, time::timeout};
+use tokio::{
+    net::TcpListener,
+    sync::{Notify, mpsc},
+    task::JoinHandle,
+    time::timeout,
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message, client::IntoClientRequest},
@@ -103,7 +108,9 @@ impl LlmProvider for StreamingLlm {
     }
 }
 
-struct BackpressuredLlm;
+struct BackpressuredLlm {
+    release_overflow: Arc<Notify>,
+}
 #[async_trait::async_trait]
 impl LlmProvider for BackpressuredLlm {
     fn adapter(&self) -> &'static str {
@@ -117,15 +124,30 @@ impl LlmProvider for BackpressuredLlm {
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
     > {
-        let mut events = (0..10)
+        let overflow = (0..10)
             .map(|_| {
                 Ok(voice_agent_server::providers::LlmEvent::TextDelta(
                     "Mot cau dai du de tach thanh speech segment ngay. ".into(),
                 ))
             })
-            .collect::<Vec<_>>();
-        events.push(Ok(voice_agent_server::providers::LlmEvent::Finished));
-        Ok(Box::pin(futures_util::stream::iter(events)))
+            .chain(std::iter::once(Ok(
+                voice_agent_server::providers::LlmEvent::Finished,
+            )));
+        let release_overflow = Arc::clone(&self.release_overflow);
+        Ok(Box::pin(
+            futures_util::stream::once(async {
+                Ok(voice_agent_server::providers::LlmEvent::TextDelta(
+                    "Mot cau dau tien du de tach thanh speech segment ngay. ".into(),
+                ))
+            })
+            .chain(futures_util::stream::once(async move {
+                release_overflow.notified().await;
+                Ok(voice_agent_server::providers::LlmEvent::TextDelta(
+                    "Mot cau thu hai du de tach thanh speech segment ngay. ".into(),
+                ))
+            }))
+            .chain(futures_util::stream::iter(overflow)),
+        ))
     }
 }
 
@@ -346,19 +368,45 @@ async fn streaming_llm_delivers_first_audio_before_eof_and_commits_only_after_dr
 async fn full_segment_capacity_stops_started_playback_without_committing_assistant_history() {
     let (control_tx, mut control_rx) = mpsc::channel(32);
     let (audio_tx, _audio_rx) = mpsc::channel(32);
+    let release_overflow = Arc::new(Notify::new());
     let providers = Arc::new(ProviderSet::with_all(
         Arc::new(FakeVad),
         Arc::new(FakeAsr),
-        Arc::new(BackpressuredLlm),
+        Arc::new(BackpressuredLlm {
+            release_overflow: Arc::clone(&release_overflow),
+        }),
         Arc::new(FakeTts),
     ));
     let mut actor =
         SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+    let mut controls_before_overflow = Vec::new();
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Start {
         mode: ListenMode::Manual,
     }));
     assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
     actor.on_client_message(ClientMessage::Listen(ListenCommand::Stop));
+    for _ in 0..100 {
+        actor.pump_workers();
+        while let Ok(message) = control_rx.try_recv() {
+            let started = message
+                .as_text()
+                .is_some_and(|text| text.contains(r#""state":"start""#));
+            controls_before_overflow.push(message);
+            if started {
+                release_overflow.notify_one();
+                break;
+            }
+        }
+        if !controls_before_overflow.iter().any(|message| {
+            message
+                .as_text()
+                .is_some_and(|text| text.contains(r#""state":"start""#))
+        }) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        } else {
+            break;
+        }
+    }
     for _ in 0..100 {
         actor.pump_workers();
         if actor.phase() == SessionPhase::Ready {
@@ -368,7 +416,9 @@ async fn full_segment_capacity_stops_started_playback_without_committing_assista
     }
     assert_eq!(actor.phase(), SessionPhase::Ready);
     assert_eq!(actor.dialogue_history(), ["xin chao"]);
-    let controls = std::iter::from_fn(|| control_rx.try_recv().ok())
+    let controls = controls_before_overflow
+        .into_iter()
+        .chain(std::iter::from_fn(|| control_rx.try_recv().ok()))
         .filter_map(|message| message.as_text().map(str::to_owned))
         .collect::<Vec<_>>();
     assert_eq!(
