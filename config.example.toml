@@ -57,12 +57,16 @@ cleanup_grace_ms = 5000
 model_manifest = "models/manifest.toml"
 profile = "development-noncommercial"
 
+[deployment.models]
+root = "models"
+offline = false
+
 [runtime.onnx]
 library = "runtime/onnxruntime/libonnxruntime.dylib"
 
 [[deployment.model_acknowledgements]]
 model = "silero_vad_v5"
-revision = "v5"
+revision = "60b7ffa243625ebdc1070275a29f18c87843786a"
 license = "MIT"
 
 [[deployment.model_acknowledgements]]

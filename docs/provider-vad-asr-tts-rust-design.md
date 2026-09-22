@@ -1,5 +1,7 @@
 # Thiết kế Providers VAD / ASR / TTS cho `voice-agent-server` bằng Rust
 
+> **Phase 3 decision update (2026-09-22):** Các ví dụ Phase 3 trong tài liệu lịch sử này dùng direct model paths, generic `adapter_config`, hoặc mô tả VAD queue drop không còn authoritative. Theo ADR-0043 và ADR-0044, typed config chọn compiled adapter cùng Logical Model Identity; Model Preparation tạo `ResolvedModel` trước startup warmup. Theo `docs/flows/02-vad.md`, VAD dùng contiguous sample timeline, actor-owned bounded retention và không silently continue sau input gap. Xem `docs/04-configuration.md`, `docs/06-implementation-plan.md` và `.scratch/phase-3-vad-asr/spec.md` cho contract hiện hành.
+
 > **Repository:** `hailp-vn38/ai-agent-voice`  
 > **Mục tiêu:** thêm kiến trúc provider/module có thể thay VAD, ASR và TTS bằng config mà không thay đổi `SessionActor`, WebSocket protocol hay dialogue core.  
 > **Default implementation:** Silero VAD + Zipformer Streaming ASR + ZeroTTS.  

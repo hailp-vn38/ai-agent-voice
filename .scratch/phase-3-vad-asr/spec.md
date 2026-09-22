@@ -8,7 +8,7 @@ Voice-agent server hiện chỉ thu Manual Capture rồi discard audio. Người
 
 ## Solution
 
-Triển khai Phase 3 với Silero VAD local và Zipformer streaming ASR local sau ProviderSet được load/warmup trước bind socket. SessionActor chỉ điều phối state domain qua bounded, pinned VAD/ASR worker pools; provider runtime không biết WebSocket hay actor state. Auto và Manual cùng tạo ASR final theo lifecycle riêng, commit user message vào Dialogue History RAM-only, rồi gửi tối đa một STT V1 hiện có trước khi terminal theo listen mode.
+Triển khai Phase 3 với Silero VAD local và Zipformer streaming ASR local sau compile-time Provider Registry/Factory và Model Preparation được resolve/warmup trước bind socket. SessionActor chỉ điều phối state domain qua bounded, pinned VAD/ASR worker pools; provider runtime không biết WebSocket hay actor state. Auto và Manual cùng tạo ASR final theo lifecycle riêng, commit user message vào Dialogue History RAM-only, rồi gửi tối đa một STT V1 hiện có trước khi terminal theo listen mode. Baseline tickets 01–03 không đóng phase: remediation 05–07 và ticket 04 E2E là Phase Completion Gate bắt buộc.
 
 ## User Stories
 
@@ -25,7 +25,7 @@ Triển khai Phase 3 với Silero VAD local và Zipformer streaming ASR local sa
 11. As an operator, I want ASR stream capacity bounded globally, so that a few sessions cannot oversubscribe local CPU.
 12. As an operator, I want VAD capacity bounded globally, so that each Auto cycle has isolated recurrent state without unbounded threads.
 13. As an operator, I want overloaded ASR to fail the recognition rather than omit audio, so that no incomplete transcript is presented as valid.
-14. As an operator, I want VAD queue pressure to be privacy-safe and observable, so that transient latency does not close healthy sessions.
+14. As an operator, I want VAD queue pressure never to create an unproven sample timeline, so that endpoint không dựa trên PCM bị mất im lặng.
 15. As an operator, I want unhealthy workers quarantined, so that a stuck native runtime is never silently reused.
 16. As an operator, I want one damaged worker to affect only its Voice Session, so that healthy sessions and server startup remain available.
 17. As a future Phase 4 implementer, I want user text committed to bounded Dialogue History before STT, so that LLM/TTS can extend the same turn boundary without rewriting ASR semantics.
@@ -35,11 +35,12 @@ Triển khai Phase 3 với Silero VAD local và Zipformer streaming ASR local sa
 
 ## Implementation Decisions
 
-- Production loads config, ProviderSet, model artifacts and warmup before creating the router or binding a socket. Router/session receive injected runtime dependencies; tests inject deterministic fake providers through the same public boundary.
+- Production loads typed config, compile-time Provider Registry, Model Artifact Manifest and Model Preparation before Provider Factory build/warmup, router creation hoặc socket bind. Router/session receive injected runtime dependencies; tests inject deterministic fake providers through the same public boundary.
+- Typed provider config chọn adapter, Logical Model Identity và runtime option; config không chứa provider-facing filesystem paths. Manifest authoritative source/revision/remote artifact/install-relative path/transform/checksum. Model Preparation reuse hoặc acquire/verify/transform/verify-output/atomic-install dưới model root, tạo Resolved Model theo artifact role để factory build provider. Offline cấm network; missing/corrupt/invalid transform fail trước bind. Provider không tự download hoặc đoán artifact.
 - Default providers are local `silero_onnx` VAD and `zipformer_sherpa` streaming ASR. Python sidecars and HTTP ASR are outside the Phase 3 baseline.
-- VAD returns model-level probability/frame data only. Core VadSegmenter owns hysteresis, pre-roll, minimum speech duration, trailing silence and max utterance semantics.
+- VAD returns `VadProbability { probability, start_sample, end_sample }`; range phải còn nguyên qua worker, contiguous/ordered trong Auto cycle. Silero session giữ recurrent state và 64-sample model context; rechunker vẫn tạo 512 current samples. Core VadSegmenter chỉ owns hysteresis, candidate onset, minimum speech duration, trailing silence và max utterance semantics theo sample timeline; actor owns PCM retention/pre-roll, không component nào trong hai component đó giữ PCM cả.
 - Auto acquires and pins a VadSession to a bounded VAD worker for its complete Auto Listening cycle. Manual never acquires a VAD worker.
-- VAD Reset is an acknowledgement barrier between Auto utterances. Re-arm occurs only after ResetDone; Close releases a VAD slot only after Closed acknowledgement.
+- VAD Reset là acknowledgement barrier tại utterance re-arm boundary trong Auto Listening cycle. Re-arm occurs only after ResetDone, clear Silero state/context, segmenter, retention và cursor bookkeeping; Close releases a VAD slot only after Closed acknowledgement.
 - SpeechStart in Auto, and listen:start in Manual, acquire an AsrStreamLease and open a streaming ASR session pinned to one bounded ASR worker until terminal cleanup.
 - ASR worker pool is not a generic job queue. Open, Push, Finish and Cancel for one stream remain on its pinned worker; worker events carry session identity, generation and stream identity.
 - ASR partial hypotheses remain inside provider/worker. Phase 3 does not read, store, log, emit or use them to reset a timeout.
@@ -49,7 +50,7 @@ Triển khai Phase 3 với Silero VAD local và Zipformer streaming ASR local sa
 - Generation advances before every replacement/cancellation boundary. Natural SpeechEnd and listen:stop retain the current generation so their final can be accepted.
 - Cancellation invalidates logical events immediately, but ASR/VAD worker slots release only after worker cleanup acknowledgement. Cleanup timeout quarantines the worker; ASR failure fail-closes the affected session when ownership is unsafe.
 - VAD inference, Reset or Close failure/timeout is a session-scoped fatal condition: invalidate generation, cancel dependent ASR, quarantine VAD worker and close affected WebSocket with 1011. Never silently fall back from Auto to Manual.
-- VAD queue full drops only the VAD input frame and records privacy-safe metadata while preserving input sample timeline. ASR queue full cancels recognition; Auto ignores ASR until the current SpeechEnd to avoid fragmenting one utterance.
+- VAD queue full không được silently drop canonical input rồi tiếp tục segmentation: nếu bounded backpressure không bảo toàn contiguous input timeline, đó là VAD Stream Integrity Failure và affected Auto Voice Session fail closed. ASR queue full cancels recognition; Auto ignores ASR until the current SpeechEnd to avoid fragmenting one utterance.
 - `asr.timeout_ms` starts at endpoint and bounds Finish until terminal result. Streaming Push is bounded by max utterance, queue capacity, cancellation and runtime errors rather than a lifetime timeout.
 - Dialogue History is RAM-only per Voice Session, bounded by `llm.max_history_messages` with default 20. Actor uses only commit_user; history owns eviction so Phase 4 can evolve to Exchange Atom eviction.
 
@@ -80,7 +81,7 @@ Trong Phase 3, chỉ materialize các module cần cho VAD/ASR: `audio::vad_segm
 - Prefer the application/router and SessionActor event boundary over worker internals. Tests observe phase, STT payload/order, terminal mode, resource-release outcome and close code rather than recognizer private state.
 - Contract tests run against fake VAD/ASR providers at the injected ProviderSet seam: open/push/finish/cancel, current-generation final exactly once, empty final, timeout, cancellation and bounded capacity.
 - Session tests cover Manual and Auto: Processing drops binary audio, Auto opens ASR only after SpeechStart, pre-roll feeds first audio, SpeechEnd finalizes the same generation, and terminal mode differs by listening mode.
-- Worker tests cover stream pinning, acknowledgement-driven slot release, ResetDone re-arm barrier, quarantine after cleanup timeout, VAD queue drop and ASR queue terminal failure.
+- Worker tests cover stream pinning, acknowledgement-driven slot release, ResetDone re-arm barrier, quarantine after cleanup timeout, VAD timeline-integrity queue failure and ASR queue terminal failure.
 - Dialogue tests cover bounded `commit_user`, oldest eviction through history API, non-empty-final ordering, and no commit for empty/failure/stale outcomes.
 - WebSocket integration tests use fake providers to assert exactly one existing STT message before terminal state and absence of partial/VAD wire messages.
 - Reference Client smoke tests encode `docs/audio.wav` to canonical 16 kHz Opus 60 ms and execute both Manual and Auto scenarios against a real-model configuration; live smoke is separate from deterministic CI.
@@ -97,6 +98,7 @@ Trong Phase 3, chỉ materialize các module cần cho VAD/ASR: `audio::vad_segm
 
 ## Further Notes
 
-- Follow ADR-0017, ADR-0022, ADR-0039, ADR-0040 and ADR-0041.
-- Zipformer model artifacts are local deployment inputs and must not be committed to normal Git history; its license remains a deployment gate.
+- Follow ADR-0017, ADR-0022, ADR-0039, ADR-0040, ADR-0041, ADR-0043 and ADR-0044.
+- Zipformer model artifacts are not committed to normal Git history; Model Preparation uses only pinned manifest inputs and its license remains a deployment gate.
+- Phase Completion Gate = deterministic provider/worker/session tests + correct Silero runtime contract + sample-timeline segmentation + bounded retention + startup Model Preparation + compile-time registry + real-model Reference Client E2E Manual/Auto, mỗi scenario exactly one STT.
 - `docs/audio.wav` local smoke confirms non-empty VAD/ASR behavior but is not a substitute for the real Voice Protocol Client interoperability gate.

@@ -189,6 +189,8 @@ pub struct DeploymentConfig {
     pub profile: String,
     #[serde(default)]
     pub model_acknowledgements: Vec<ModelAcknowledgement>,
+    #[serde(default)]
+    pub models: ModelStoreConfig,
 }
 
 impl Default for DeploymentConfig {
@@ -197,6 +199,25 @@ impl Default for DeploymentConfig {
             model_manifest: default_manifest_path(),
             profile: "development-noncommercial".into(),
             model_acknowledgements: Vec::new(),
+            models: ModelStoreConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStoreConfig {
+    #[serde(default = "default_models_root")]
+    pub root: std::path::PathBuf,
+    #[serde(default)]
+    pub offline: bool,
+}
+
+impl Default for ModelStoreConfig {
+    fn default() -> Self {
+        Self {
+            root: default_models_root(),
+            offline: false,
         }
     }
 }
@@ -394,6 +415,9 @@ fn default_decoding_method() -> String {
 fn default_manifest_path() -> std::path::PathBuf {
     "models/manifest.toml".into()
 }
+fn default_models_root() -> std::path::PathBuf {
+    "models".into()
+}
 fn default_onnx_runtime_library() -> std::path::PathBuf {
     "runtime/onnxruntime/libonnxruntime.dylib".into()
 }
@@ -531,6 +555,7 @@ impl AppConfig {
         }
         if self.deployment.profile.is_empty()
             || self.deployment.model_manifest.as_os_str().is_empty()
+            || self.deployment.models.root.as_os_str().is_empty()
         {
             return Err(ConfigError::Validation(
                 "deployment profile and model manifest must be set".into(),

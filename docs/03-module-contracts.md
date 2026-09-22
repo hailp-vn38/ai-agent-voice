@@ -62,7 +62,9 @@ pub trait TtsProvider: Send + Sync {
 }
 ```
 
-`VadProvider` trả probability/frame metadata; `VadSegmenter` ở core sở hữu `min_speech_ms`, `end_silence_ms`, pre-roll và endpoint semantics. `AsrProvider` canonical là streaming: adapter offline/HTTP tương lai có thể buffer trong `push_pcm()` rồi infer ở `finish()`, nhưng không đổi contract. Trait không nhận `SessionActor`, WebSocket sender hoặc config global mutable.
+`VadProvider` trả `VadProbability` model-level gồm probability và contiguous `[start_sample, end_sample)`; Silero session giữ recurrent state cùng 64-sample model context. `VadSegmenter` ở core chỉ sở hữu hysteresis, candidate onset, `min_speech_ms`, `end_silence_ms` và endpoint semantics theo sample timeline; actor/core audio capture sở hữu hard-bounded PCM retention và onset-relative pre-roll. `AsrProvider` canonical là streaming: adapter offline/HTTP tương lai có thể buffer trong `push_pcm()` rồi infer ở `finish()`, nhưng không đổi contract. Trait không nhận `SessionActor`, WebSocket sender hoặc config global mutable.
+
+Typed provider configuration chỉ chọn compiled adapter, Logical Model Identity và runtime option. Model Preparation resolve manifest trước bind rồi inject `ResolvedModel` theo artifact role vào Provider Factory; provider không nhận direct file path từ config và không được tự acquire artifact.
 
 Phase 3 default dùng `silero_onnx` local Rust cho VAD và `zipformer_sherpa` local Rust cho ASR; không có Python sidecar hoặc HTTP ASR trong baseline. Provider event chỉ quay về actor qua bounded worker boundary và phải mang Voice Session identity cùng generation khi thuộc turn.
 

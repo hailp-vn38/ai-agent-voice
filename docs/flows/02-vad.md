@@ -14,11 +14,13 @@ Output domain:
 
 ```rust
 pub enum VadEvent {
-    SpeechStarted,
+    SpeechStarted { start_sample: u64 },
     SpeechContinued,
-    SpeechEnded(UplinkAudioUtterance),
+    SpeechEnded { end_sample: u64 },
 }
 ```
+
+`VadProbability` giữ `probability` cùng `[start_sample, end_sample)` xuyên provider và worker boundary. Range phải liên tục, ordered và valid trong một Auto Listening cycle; gap, duplicate hoặc range sai là VAD Stream Integrity Failure, affected Auto Voice Session fail closed. `VadEvent` chỉ mang semantic sample boundary, không mang PCM. Đây là sample timeline của canonical PCM đã được đưa vào VAD, không phải callback count hoặc wall-clock worker latency.
 
 `UplinkPcmFrame` luôn là 960 samples / 16 kHz; `DownlinkPcmFrame` luôn là 1.440 samples / 24 kHz. Cả hai chỉ bọc `Pcm16Mono`, nhưng không thể thay thế cho nhau ở type boundary. `UplinkAudioUtterance` là PCM 16 kHz có độ dài biến thiên của một lượt thu; không dùng tên Audio Utterance chung chung khi đã có downlink PCM.
 
@@ -27,25 +29,29 @@ pub enum VadEvent {
 ```mermaid
 flowchart TB
     OPUS[Opus frame] --> DEC[Decode PCM]
-    DEC --> PR[Pre-roll ring buffer]
+    DEC --> PR[Actor PCM retention ring]
     DEC --> V[VadProvider probability]
     V --> SEG[Core VadSegmenter]
-    SEG -->|no voice| IDLE[Keep bounded pre-roll]
-    SEG -->|speech start| START[Acquire AsrStreamLease; open AsrSession; feed pre-roll]
+    SEG -->|no voice| IDLE[Retain only bounded PCM]
+    SEG -->|SpeechStart start_sample| START[Acquire AsrStreamLease; open AsrSession; feed onset-relative PCM]
     START --> ACC[Feed live PCM to ASR]
     SEG -->|voice/silence < threshold| ACC
     SEG -->|silence >= threshold| END[Acquire Active Turn permit; finish ASR]
 ```
 
-## 3. Pre-roll
+## 3. Segmentation và pre-roll
 
-Giữ khoảng 200–400 ms PCM trước khi VAD xác nhận speech start để tránh mất phụ âm đầu.
+Silero adapter giữ recurrent state và 64-sample context riêng theo VadSession. Rechunker vẫn đưa từng 512 current samples vào adapter; adapter ghép 64 context trước đó với 512 samples hiện thời cho ONNX inference, rồi update context. `reset()` clear recurrent state lẫn context.
 
-Pre-roll phải bounded ring buffer.
+`VadSegmenter` không giữ PCM. Nó dùng hysteresis: probability trên speech threshold tạo/giữ speech candidate, probability dưới exit threshold tạo/giữ silence candidate, và vùng giữa giữ decision trước. SpeechStart chỉ emit khi candidate đủ `min_speech_ms`; `start_sample` là candidate onset, không phải cursor lúc xác nhận. SpeechEnd chỉ emit sau silence liên tục đủ `end_silence_ms`.
 
-## 4. End-of-speech
+Actor giữ PCM retention ring bounded. Khi nhận `SpeechStarted { start_sample }`, actor mở ASR và feed range `[start_sample - pre_roll_samples, current_pcm_cursor)`, rồi feed live PCM. `pre_roll_ms` là audio trước onset; capacity ring phải đủ pre-roll, confirmation horizon, bounded VAD in-flight lag và frame/rechunk slack để worker chậm không làm mất onset. Không dùng `Vec` unbounded hoặc capacity capture 30 giây làm pre-roll.
 
-Không kết thúc ngay khi có một frame silence. Dùng `end_silence_ms` để tránh cắt giữa câu.
+VAD mailbox không được silently drop canonical input rồi tiếp tục segmentation. Queue full làm continuity không còn chứng minh được và phải fail closed affected Auto Voice Session, trừ khi bounded backpressure vẫn bảo toàn toàn bộ input timeline.
+
+## 4. End-of-speech và re-arm
+
+Không kết thúc ngay khi có một frame silence. Dùng hysteresis và `end_silence_ms` theo sample timeline để tránh cắt giữa câu.
 
 Ví dụ V1 default:
 
@@ -56,6 +62,8 @@ pre_roll_ms = 300
 ```
 
 Các con số là config, không hard-code business logic.
+
+Sau terminal mỗi utterance, reset/re-arm boundary clear Silero recurrent state/context, VadSegmenter candidate/state, actor PCM retention và VAD cursor bookkeeping. Auto Listening cycle vẫn sống qua nhiều utterance; đây không phải đóng `listen:start auto`.
 
 ## 5. Manual mode
 

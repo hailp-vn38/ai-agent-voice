@@ -43,24 +43,26 @@ Exit criteria: automated Opus round-trip và manual utterance tests pass; trư�
 
 Deliverables:
 
-- Provider foundation: registry, typed adapter config, capabilities, lifecycle/load errors và contract-test harness.
-- `VadProvider` trả probability; default `silero_onnx` local Rust (`ort`), rechunk PCM 16 kHz sang 512-sample model frame.
-- Core-owned `VadSegmenter`: hysteresis, pre-roll, `min_speech_ms`, `end_silence_ms` và `max_utterance_ms`; provider không sở hữu endpoint semantics.
+- Provider foundation: compile-time registry/factory, typed adapter config, lifecycle/load errors và contract-test harness; không dynamic plugin hoặc runtime code discovery.
+- Typed provider config chọn Logical Model Identity; Model Artifact Manifest authoritative source/revision/artifact/install path/transform/checksum. Model Preparation prepare/verify/atomic-install dưới configured root, warmup trước bind và fail-fast offline khi artifact không hợp lệ.
+- `VadProvider` trả `VadProbability` với `[start_sample, end_sample)`; default `silero_onnx` local Rust (`ort`) giữ recurrent state và 64-sample context, còn rechunker vẫn tạo 512-sample model input hiện thời.
+- Core-owned `VadSegmenter` chỉ giữ semantic cursor/state: hysteresis, candidate onset, `min_speech_ms`, `end_silence_ms` và `max_utterance_ms` tính theo contiguous sample timeline. Actor giữ PCM retention ring bounded cho pre-roll, confirmation horizon và bounded VAD in-flight lag; provider/segmenter không sở hữu PCM.
 - Streaming `AsrProvider`/`AsrSession`; default `zipformer_sherpa` local Rust với partial/final và `finish()` drain recognizer.
 - Bounded VAD/ASR worker boundary, `AsrStreamLease` và `max_asr_streams`; không block Tokio executor.
 - Recognition stream pin vào một ASR worker trong toàn lifetime; worker event mang session, generation và stream identity.
 - `CancelRequested` chỉ release ASR slot sau `Cancelled` acknowledgement; worker không acknowledge bị quarantine và session bị ảnh hưởng fail closed.
 - Ở `SpeechEnd`/`listen:stop`, lấy `Active Turn` permit trước ASR finalization; fail-fast cancel/release nếu hết permit.
 - Enter `Processing` tại utterance terminal boundary để drop audio và ngăn turn song song; Phase 3 terminal ngay sau STT, CompletedSilent hoặc failure (Manual → Ready, Auto → Listening).
-- Auto pin VAD worker/session xuyên Auto Listening cycle; sau terminal reset VAD recurrent state, segmenter và pre-roll trước khi re-arm.
+- Auto pin VAD worker/session xuyên Auto Listening cycle; sau mỗi utterance re-arm boundary reset recurrent state, 64-sample context, segmenter, PCM retention và VAD cursor bookkeeping trước khi re-arm.
 - VAD inference/Reset/Close failure hoặc cleanup timeout quarantine worker và fail closed affected Voice Session 1011; không silent fallback Auto → Manual hoặc làm chết server.
+- VAD ingress không được silently drop canonical input rồi tiếp tục segmentation: queue-full tạo VAD Stream Integrity Failure và fail closed affected Auto Voice Session, trừ khi bounded backpressure vẫn chứng minh contiguous timeline.
 - `asr.timeout_ms` bắt đầu tại endpoint và chỉ giới hạn `finish()` tới terminal result; streaming Push bị giới hạn bởi max utterance, queue, cancellation và runtime failure.
 - `DialogueHistory` RAM-only bounded bằng `llm.max_history_messages` (default 20); actor chỉ gọi `commit_user`, còn eviction là responsibility của history.
 - Generation-tagged worker events, stale partial/final filtering và `CompletedSilent` cho final rỗng.
 - `AsrPartial` internal-only; chỉ final current-generation, non-empty mới enqueue đúng một `type:"stt"` hiện có trước LLM. Không thêm wire message/field partial hoặc VAD mới.
 - Không có Python sidecar hoặc HTTP ASR trong Phase 3 baseline.
 
-Exit criteria: contract tests VAD/ASR pass; fixture speech tạo đúng `SpeechStart`/`SpeechEnd` và không mất pre-roll; Zipformer nhận PCM trong lúc người dùng nói, drain ra final gần endpoint; stale final không commit sau cancel; auto/manual giải phóng đúng cả `AsrStreamLease` và `Active Turn` permit. Chỉ khi có model artifact và Voice Protocol Client thật, xác nhận thêm real ASR end-to-end; đây là gate runtime riêng, không được suy ra từ fake/provider tests.
+Exit criteria: deterministic provider/worker/session tests pass; Silero chạy đúng 64-context runtime contract; fixture speech tạo `SpeechStart { start_sample }`/`SpeechEnd` theo contiguous sample timeline và không mất PCM từ `start_sample - pre_roll`; retention vẫn bounded khi VAD worker lag; startup Model Preparation, offline failure và compile-time registry/factory pass contract tests; Zipformer nhận PCM trong lúc người dùng nói, drain final gần endpoint; stale final không commit sau cancel; auto/manual giải phóng đúng cả `AsrStreamLease` và `Active Turn` permit. Gate cuối riêng bắt buộc real-model Reference Client E2E qua canonical Opus: Manual và Auto mỗi scenario phát exactly one STT. Không được suy ra gate này từ fake/provider tests.
 
 ## Phase 4 — LLM + TTS streaming
 

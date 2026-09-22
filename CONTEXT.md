@@ -77,8 +77,20 @@ Lịch sử message bounded, RAM-only thuộc một Voice Session; user message 
 _Avoid_: persistent memory, transcript log
 
 **Model Artifact Manifest**:
-Tài liệu versioned pin source, revision, license, tên upstream, tên cài đặt, checksum và derivation của từng model artifact; path directory không tự xác nhận model identity.
+Tài liệu versioned authoritative pin source, revision, license, upstream artifact, install-relative path, transform và checksum provider-facing của từng model artifact; path directory không tự xác nhận model identity.
 _Avoid_: model folder name, latest model
+
+**Model Preparation**:
+Lifecycle startup resolve Logical Model Identity, acquire artifact đã pin khi cần, verify, transform và atomic install dưới model root trước khi provider build/warmup và server bind.
+_Avoid_: provider download, lazy model load
+
+**Installed Model Artifact**:
+Artifact provider-facing đã qua declared transform, checksum verification và atomic install bên trong configured model root.
+_Avoid_: downloaded file, guessed model file
+
+**Offline Model Preparation**:
+Chế độ deployment cấm mọi network acquisition trong Model Preparation; artifact thiếu, corrupt hoặc transform sai làm startup fail trước bind.
+_Avoid_: best-effort offline, provider offline mode
 
 **Typed Provider Configuration**:
 Cấu hình selection adapter bằng `[providers.<kind>].adapter` và cấu hình concrete dưới bảng cùng tên adapter; startup chỉ chấp nhận bảng khớp adapter được compile vào binary.
@@ -91,6 +103,14 @@ _Avoid_: provider config, model option, adapter setting
 **Provider Adapter**:
 Implementation compile-time của một provider trait, được chọn một lần tại startup bằng typed provider configuration; adapter không biết Voice Session, WebSocket hoặc worker runtime.
 _Avoid_: dynamic plugin, provider platform, service locator
+
+**Provider Factory**:
+Factory compile-time build một Provider Adapter từ typed provider configuration và, khi cần, Resolved Model; không tự acquire model hoặc biết Voice Session.
+_Avoid_: provider downloader, runtime plugin factory
+
+**Provider Registry**:
+Tập Provider Factory được compile vào binary, lookup khi startup theo typed adapter selection và chỉ thay đổi khi build/restart; không discovery hay load code lúc runtime.
+_Avoid_: dynamic plugin registry, service locator
 
 **Logical Model Identity**:
 Khoá model do typed provider configuration chọn, dùng để lookup đúng entry authoritative trong Model Artifact Manifest; không phải filesystem path hoặc tên thư mục.

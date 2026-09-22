@@ -4,6 +4,8 @@
 
 Accepted
 
+> Supersession note: ADR-0043 thay thế riêng quyết định trong bullet `providers` rằng startup loader phải dùng large `match` và không có registry. Ownership của `workers` và `session` trong ADR này vẫn Accepted.
+
 ## Context
 
 Phase 3 cần pinned VAD/ASR streams, acknowledgement-driven cleanup, generation-safe event routing và timeout/quarantine. Provider interface đồng bộ trực tiếp từ `SessionActor` không biểu đạt được ownership hoặc acknowledgement của mutable native runtime, nên không thể chứng minh slot chỉ reusable sau cleanup.
@@ -12,7 +14,7 @@ Phase 3 cần pinned VAD/ASR streams, acknowledgement-driven cleanup, generation
 
 Tách local inference thành ba boundary:
 
-- `providers` chứa ba trait tối thiểu, error, `ProviderSet` (`vad` và `asr`) và adapter concrete theo loại; startup loader chỉ dùng `match` theo typed config. Không có registry, capability negotiation hoặc TTS placeholder ở Phase 3. Adapter không biết WebSocket, Voice Session, worker pool hoặc generation.
+- `providers` chứa ba trait tối thiểu, error, `ProviderSet` (`vad` và `asr`) và adapter concrete theo loại. Quyết định loader `match`/không-registry ban đầu đã được ADR-0043 supersede; adapter vẫn không biết WebSocket, Voice Session, worker pool hoặc generation.
 - `workers` là application-owned bounded runtime. Mỗi worker sở hữu provider session/stream mutable và nhận command, trả typed event có session, generation và opaque lease/stream identity. `WorkerSupervisor` là consumer duy nhất của worker event ingress, route event vào mailbox của đúng Voice Session và chạy timeout/quarantine độc lập lifetime socket. Cleanup acknowledgement là điều kiện release slot.
 - `session` chứa actor, event và turn state. Actor chỉ drain mailbox của chính Voice Session, owns generation và quyết định outbound V1; không trực tiếp gọi mutable provider session hoặc poll global worker receiver.
 

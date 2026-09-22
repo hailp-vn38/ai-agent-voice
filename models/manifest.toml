@@ -4,12 +4,16 @@
 identity = "silero_vad_v5"
 adapter = "silero_onnx"
 source = "https://github.com/snakers4/silero-vad"
-revision = "v5"
+revision = "60b7ffa243625ebdc1070275a29f18c87843786a"
 license = "MIT"
 
 [[model.artifacts]]
-path = "models/vad/silero_vad.onnx"
+role = "vad"
+remote = "https://raw.githubusercontent.com/snakers4/silero-vad/60b7ffa243625ebdc1070275a29f18c87843786a/src/silero_vad/data/silero_vad.onnx"
+install_path = "vad/silero_vad.onnx"
+source_sha256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
 sha256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+transform = "identity"
 
 [[model]]
 identity = "zipformer_vi_streaming"
@@ -19,17 +23,33 @@ revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
 license = "CC-BY-NC-ND-4.0"
 
 [[model.artifacts]]
-path = "models/asr/zipformer-30m-vi/encoder.onnx"
+role = "encoder"
+remote = "https://huggingface.co/hynt/Zipformer-30M-RNNT-Streaming-6000h/resolve/c122fdc21cea4894fd775e9d3fe66ebbc787e26b/encoder-epoch-31-avg-11-chunk-32-left-128.fp16.onnx"
+install_path = "asr/zipformer-30m-vi/encoder.onnx"
+source_sha256 = "49577079b22ace4ade7a994743279ce9128c92803dd04b5e7ead809a30107358"
 sha256 = "49577079b22ace4ade7a994743279ce9128c92803dd04b5e7ead809a30107358"
+transform = "identity"
 
 [[model.artifacts]]
-path = "models/asr/zipformer-30m-vi/decoder.onnx"
+role = "decoder"
+remote = "https://huggingface.co/hynt/Zipformer-30M-RNNT-Streaming-6000h/resolve/c122fdc21cea4894fd775e9d3fe66ebbc787e26b/decoder-epoch-31-avg-11-chunk-32-left-128.fp16.onnx"
+install_path = "asr/zipformer-30m-vi/decoder.onnx"
+source_sha256 = "12274189a3ef638905e0d966a4f1ab090c96447f165190c4aa6b8053ac49b014"
 sha256 = "12274189a3ef638905e0d966a4f1ab090c96447f165190c4aa6b8053ac49b014"
+transform = "identity"
 
 [[model.artifacts]]
-path = "models/asr/zipformer-30m-vi/joiner.onnx"
+role = "joiner"
+remote = "https://huggingface.co/hynt/Zipformer-30M-RNNT-Streaming-6000h/resolve/c122fdc21cea4894fd775e9d3fe66ebbc787e26b/joiner-epoch-31-avg-11-chunk-32-left-128.fp16.onnx"
+install_path = "asr/zipformer-30m-vi/joiner.onnx"
+source_sha256 = "54f469ec6841deca336e33808514640be9bc1cb222dedfda312cdb2155ae37df"
 sha256 = "54f469ec6841deca336e33808514640be9bc1cb222dedfda312cdb2155ae37df"
+transform = "identity"
 
 [[model.artifacts]]
-path = "models/asr/zipformer-30m-vi/tokens.txt"
+role = "tokens"
+remote = "https://huggingface.co/hynt/Zipformer-30M-RNNT-Streaming-6000h/resolve/c122fdc21cea4894fd775e9d3fe66ebbc787e26b/bpe.model"
+install_path = "asr/zipformer-30m-vi/tokens.txt"
+source_sha256 = "002894e7a82d80ffa5e25008ec8c5496159db804005e2103de96b01b4c13d445"
 sha256 = "ca8171f8bbd516c050b627582f2125c8f5f1f6ed967ab41b0fa9aae2cf61b492"
+transform = "sentencepiece_tokens_v1"

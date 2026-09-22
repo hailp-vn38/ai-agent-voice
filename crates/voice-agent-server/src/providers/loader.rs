@@ -4,7 +4,7 @@ use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
 
 use crate::{
     config::AppConfig,
-    models::{Model, load_and_verify},
+    models::{ResolvedModel, prepare},
     providers::{ProviderLoadError, ProviderSet, asr::ZipformerAsrProvider, vad::LoadedSileroVad},
 };
 
@@ -20,8 +20,10 @@ fn load_vad(
 ) -> Result<Arc<dyn crate::providers::VadProvider>, ProviderLoadError> {
     match config.providers.vad.adapter.as_str() {
         "silero_onnx" => {
-            let model = load_and_verify(
+            let model = prepare(
                 &config.deployment.model_manifest,
+                &config.deployment.models.root,
+                config.deployment.models.offline,
                 &config.providers.vad.model,
                 "silero_onnx",
                 &config.deployment,
@@ -35,7 +37,7 @@ fn load_vad(
                 .num_threads;
             Ok(Arc::new(
                 LoadedSileroVad::load(
-                    required(&model, "silero_vad.onnx")?,
+                    required(&model, "vad")?,
                     config.runtime.onnx.library.clone(),
                     threads,
                 )
@@ -54,8 +56,10 @@ fn load_asr(
 ) -> Result<Arc<dyn crate::providers::AsrProvider>, ProviderLoadError> {
     match config.providers.asr.adapter.as_str() {
         "zipformer_sherpa" => {
-            let model = load_and_verify(
+            let model = prepare(
                 &config.deployment.model_manifest,
+                &config.deployment.models.root,
+                config.deployment.models.offline,
                 &config.providers.asr.model,
                 "zipformer_sherpa",
                 &config.deployment,
@@ -67,13 +71,10 @@ fn load_asr(
                 .as_ref()
                 .expect("validated config");
             let mut recognizer_config = OnlineRecognizerConfig::default();
-            recognizer_config.model_config.transducer.encoder =
-                Some(required(&model, "encoder.onnx")?);
-            recognizer_config.model_config.transducer.decoder =
-                Some(required(&model, "decoder.onnx")?);
-            recognizer_config.model_config.transducer.joiner =
-                Some(required(&model, "joiner.onnx")?);
-            recognizer_config.model_config.tokens = Some(required(&model, "tokens.txt")?);
+            recognizer_config.model_config.transducer.encoder = Some(required(&model, "encoder")?);
+            recognizer_config.model_config.transducer.decoder = Some(required(&model, "decoder")?);
+            recognizer_config.model_config.transducer.joiner = Some(required(&model, "joiner")?);
+            recognizer_config.model_config.tokens = Some(required(&model, "tokens")?);
             recognizer_config.model_config.num_threads = adapter.num_threads;
             recognizer_config.model_config.provider = Some("cpu".into());
             recognizer_config.decoding_method = Some(adapter.decoding_method.clone());
@@ -92,9 +93,9 @@ fn load_asr(
     }
 }
 
-fn required(model: &Model, name: &str) -> Result<String, ProviderLoadError> {
+fn required(model: &ResolvedModel, role: &str) -> Result<String, ProviderLoadError> {
     model
-        .artifact(name)
-        .map(|artifact| artifact.path.display().to_string())
-        .ok_or_else(|| ProviderLoadError::MissingArtifact(name.into()))
+        .artifact(role)
+        .map(|path| path.display().to_string())
+        .ok_or_else(|| ProviderLoadError::MissingArtifact(role.into()))
 }
