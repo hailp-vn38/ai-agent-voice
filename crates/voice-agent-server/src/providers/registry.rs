@@ -7,6 +7,7 @@ use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
 use crate::{
     config::{
         AsrProviderConfig, LlmProviderConfig, RuntimeConfig, TtsProviderConfig, VadProviderConfig,
+        ZeroTtsOnnxConfig,
     },
     models::ResolvedModel,
     providers::{
@@ -50,7 +51,15 @@ pub trait LlmFactory: Send + Sync {
 
 pub trait TtsFactory: Send + Sync {
     fn adapter(&self) -> &'static str;
-    fn build(&self, config: &TtsProviderConfig) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
+    fn model_identity<'a>(
+        &self,
+        config: &'a TtsProviderConfig,
+    ) -> Result<&'a str, ProviderLoadError>;
+    fn build(
+        &self,
+        config: &ZeroTtsOnnxConfig,
+        model: &ResolvedModel,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
 }
 
 /// Factories are linked into the binary. There is no runtime code discovery or plugin loading.
@@ -187,18 +196,59 @@ impl TtsFactory for ZeroTtsOnnxFactory {
         "zerotts_onnx"
     }
 
-    fn build(&self, config: &TtsProviderConfig) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
-        let options = config.zerotts_onnx.as_ref().ok_or_else(|| {
-            ProviderLoadError::Configuration("zerotts_onnx options are required".into())
-        })?;
-        if options.model.trim().is_empty() || options.voice.trim().is_empty() {
+    fn model_identity<'a>(
+        &self,
+        config: &'a TtsProviderConfig,
+    ) -> Result<&'a str, ProviderLoadError> {
+        Ok(&config
+            .zerotts_onnx
+            .as_ref()
+            .ok_or_else(|| {
+                ProviderLoadError::Configuration("zerotts_onnx options are required".into())
+            })?
+            .model)
+    }
+
+    fn build(
+        &self,
+        config: &ZeroTtsOnnxConfig,
+        model: &ResolvedModel,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        validate_model_adapter(model, self.adapter())?;
+        if config.model != "zerotts_default" || config.voice != "maichi" || config.num_threads <= 0
+        {
             return Err(ProviderLoadError::Configuration(
-                "ZeroTTS model and voice are required".into(),
+                "ZeroTTS requires model `zerotts_default`, voice `maichi`, and positive thread count"
+                    .into(),
             ));
+        }
+        if model.identity() != config.model {
+            return Err(ProviderLoadError::Configuration(
+                "ZeroTTS resolved model does not match configured logical model".into(),
+            ));
+        }
+        for role in ZEROTTS_REQUIRED_ARTIFACT_ROLES {
+            required(model, role)?;
         }
         Ok(Arc::new(ConfiguredZeroTts))
     }
 }
+
+const ZEROTTS_REQUIRED_ARTIFACT_ROLES: &[&str] = &[
+    "config",
+    "tokenizer",
+    "null_voice",
+    "voices_index",
+    "voice",
+    "text_encoder",
+    "prefix_step",
+    "local_frame_decode",
+    "codec_decode_full",
+    "codec_decode_step",
+    "codec_shared_data",
+    "codec_metadata",
+    "codec_license",
+];
 
 impl AsrFactory for ZipformerSherpaFactory {
     fn adapter(&self) -> &'static str {

@@ -53,3 +53,101 @@ install_path = "asr/zipformer-30m-vi/tokens.txt"
 source_sha256 = "002894e7a82d80ffa5e25008ec8c5496159db804005e2103de96b01b4c13d445"
 sha256 = "ca8171f8bbd516c050b627582f2125c8f5f1f6ed967ab41b0fa9aae2cf61b492"
 transform = "sentencepiece_tokens_v1"
+
+[[model]]
+identity = "zerotts_default"
+adapter = "zerotts_onnx"
+source = "https://huggingface.co/zeroweight-ai/ZeroTTS"
+revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
+license = "MIT; bundled-codec=Apache-2.0"
+
+[[model.artifacts]]
+role = "config"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/config.json"
+install_path = "tts/zerotts/config.json"
+source_sha256 = "3676da6a9f4dba7a8f2d106d5c1fb02c491391dc19c91dae893133a7e219d666"
+sha256 = "3676da6a9f4dba7a8f2d106d5c1fb02c491391dc19c91dae893133a7e219d666"
+
+[[model.artifacts]]
+role = "tokenizer"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/tokenizer.json"
+install_path = "tts/zerotts/tokenizer.json"
+source_sha256 = "4fd646e8a1fd6694cb9c876c914a516ef8dd84b4f84db2605be1a7388885ae91"
+sha256 = "4fd646e8a1fd6694cb9c876c914a516ef8dd84b4f84db2605be1a7388885ae91"
+
+[[model.artifacts]]
+role = "null_voice"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/null_voice_emb.npy"
+install_path = "tts/zerotts/null_voice_emb.npy"
+source_sha256 = "ec014c14f79e8fc16f4ca6ea557f33fa2cbd7d448b5de5f467aace9ca0321e9f"
+sha256 = "ec014c14f79e8fc16f4ca6ea557f33fa2cbd7d448b5de5f467aace9ca0321e9f"
+
+[[model.artifacts]]
+role = "voices_index"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/index.json"
+install_path = "tts/zerotts/voices/index.json"
+source_sha256 = "13637f10cb361ee90d67ef0932126e8bf835b4b1ee6e038b9a769d62284456db"
+sha256 = "13637f10cb361ee90d67ef0932126e8bf835b4b1ee6e038b9a769d62284456db"
+
+[[model.artifacts]]
+role = "voice"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/maichi/voice.npz"
+install_path = "tts/zerotts/voices/maichi/voice.npz"
+source_sha256 = "d49e0a406d3a005e95f0a19476426973946c4a97e0087eefd638de222913ae3c"
+sha256 = "d49e0a406d3a005e95f0a19476426973946c4a97e0087eefd638de222913ae3c"
+
+[[model.artifacts]]
+role = "text_encoder"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/text_encoder.onnx"
+install_path = "tts/zerotts/onnx/text_encoder.onnx"
+source_sha256 = "d37557a4abe07953a02686a176664486e73838389a14ff4a3f36b47ac2bccd52"
+sha256 = "d37557a4abe07953a02686a176664486e73838389a14ff4a3f36b47ac2bccd52"
+
+[[model.artifacts]]
+role = "prefix_step"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/prefix_step.onnx"
+install_path = "tts/zerotts/onnx/prefix_step.onnx"
+source_sha256 = "b7544c9fdd3535b21fe8dea855407180ad2084f9da298f8a153893522496565b"
+sha256 = "b7544c9fdd3535b21fe8dea855407180ad2084f9da298f8a153893522496565b"
+
+[[model.artifacts]]
+role = "local_frame_decode"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/local_frame_decode.onnx"
+install_path = "tts/zerotts/onnx/local_frame_decode.onnx"
+source_sha256 = "3c4540ef4e69dcf604dc6f60f6f99f119189694ff5f31113def20406e274f025"
+sha256 = "3c4540ef4e69dcf604dc6f60f6f99f119189694ff5f31113def20406e274f025"
+
+[[model.artifacts]]
+role = "codec_decode_full"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/codec/moss_audio_tokenizer_decode_full.onnx"
+install_path = "tts/zerotts/onnx/codec/moss_audio_tokenizer_decode_full.onnx"
+source_sha256 = "0fbbafe3fd4afa2a019af5c5ced204af6e2d1db044fa40f021525d2aee95b4ac"
+sha256 = "0fbbafe3fd4afa2a019af5c5ced204af6e2d1db044fa40f021525d2aee95b4ac"
+
+[[model.artifacts]]
+role = "codec_decode_step"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/codec/moss_audio_tokenizer_decode_step.onnx"
+install_path = "tts/zerotts/onnx/codec/moss_audio_tokenizer_decode_step.onnx"
+source_sha256 = "9527c86a29e1837edec1f74db57d5eeaadb3a715af3382703566460afed25855"
+sha256 = "9527c86a29e1837edec1f74db57d5eeaadb3a715af3382703566460afed25855"
+
+[[model.artifacts]]
+role = "codec_shared_data"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/codec/moss_audio_tokenizer_decode_shared.data"
+install_path = "tts/zerotts/onnx/codec/moss_audio_tokenizer_decode_shared.data"
+source_sha256 = "e69d52e0f4e84ca27850557ee54face46632d3a5a16c89bd246c7c408466dcad"
+sha256 = "e69d52e0f4e84ca27850557ee54face46632d3a5a16c89bd246c7c408466dcad"
+
+[[model.artifacts]]
+role = "codec_metadata"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/codec/codec_browser_onnx_meta.json"
+install_path = "tts/zerotts/onnx/codec/codec_browser_onnx_meta.json"
+source_sha256 = "32009d6ac1cd2663bbbf5c06d6835b3a862c02f7de121663071938f2edac8e92"
+sha256 = "32009d6ac1cd2663bbbf5c06d6835b3a862c02f7de121663071938f2edac8e92"
+
+[[model.artifacts]]
+role = "codec_license"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/onnx/codec/LICENSE-Apache-2.0.txt"
+install_path = "tts/zerotts/onnx/codec/LICENSE-Apache-2.0.txt"
+source_sha256 = "38ab08051cc3a06dd39507b77d7e8b928b563c49288eb7263339712652d41c6d"
+sha256 = "38ab08051cc3a06dd39507b77d7e8b928b563c49288eb7263339712652d41c6d"
