@@ -144,12 +144,14 @@ fn deployment_requires_the_exact_zerotts_composite_license_acknowledgement() {
     let root = temp_dir("zerotts-license");
     let model = prepared_pack(&root, None);
     let manifest_path = root.join("manifest.toml");
-    let mut deployment = DeploymentConfig::default();
-    deployment.model_acknowledgements = vec![ModelAcknowledgement {
-        model: "zerotts_default".into(),
-        revision: "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4".into(),
-        license: "MIT".into(),
-    }];
+    let deployment = DeploymentConfig {
+        model_acknowledgements: vec![ModelAcknowledgement {
+            model: "zerotts_default".into(),
+            revision: "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4".into(),
+            license: "MIT".into(),
+        }],
+        ..DeploymentConfig::default()
+    };
 
     let error = prepare(
         &manifest_path,

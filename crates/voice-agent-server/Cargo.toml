@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+real-model-gate = []
+
 [[bin]]
 name = "voice-agent-server"
 path = "src/main.rs"
@@ -39,3 +42,9 @@ unicode-normalization.workspace = true
 [dev-dependencies]
 reqwest.workspace = true
 tokio-tungstenite.workspace = true
+voice-reference-client = { path = "../voice-reference-client" }
+
+[[test]]
+name = "phase4_reference_gate"
+path = "tests/phase4_reference_gate.rs"
+required-features = ["real-model-gate"]

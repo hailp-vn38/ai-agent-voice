@@ -3377,6 +3377,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "uuid",
+ "voice-reference-client",
 ]
 
 [[package]]

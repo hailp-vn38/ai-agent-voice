@@ -57,6 +57,10 @@ enum Command {
         #[arg(long)]
         expected_hex: String,
     },
+    /// Decode one canonical 24 kHz mono downlink Opus packet produced by a Voice Protocol Server.
+    DecodeDownlinkOpus {
+        file: PathBuf,
+    },
     ProtocolTest {
         #[arg(long)]
         case: String,
@@ -82,6 +86,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
     } = &args.command
     {
         return test_vad_asr_wav(file, vad_model, asr_model_dir);
+    }
+    if let Command::DecodeDownlinkOpus { file } = &args.command {
+        return decode_downlink_opus(file);
     }
     let ota: serde_json::Value = reqwest::Client::new()
         .post(&args.ota)
@@ -145,9 +152,18 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 }
                 Command::ProtocolTest { .. } => unreachable!(),
                 Command::TestVadAsrWav { .. } => unreachable!(),
+                Command::DecodeDownlinkOpus { .. } => unreachable!(),
             }
         }
     }
+    Ok(())
+}
+
+fn decode_downlink_opus(file: &Path) -> anyhow::Result<()> {
+    let packet = std::fs::read(file)
+        .with_context(|| format!("read canonical downlink packet from {}", file.display()))?;
+    let decoded = voice_reference_client::decode_canonical_downlink_opus_packet(&packet)?;
+    println!("decoded canonical 24 kHz mono Opus packet: {decoded} samples");
     Ok(())
 }
 

@@ -289,8 +289,24 @@ impl SentenceSegmenter {
     }
 }
 
+fn resample_to_downlink(pcm: PcmF32Mono) -> Option<Vec<i16>> {
+    if pcm.sample_rate_hz() != PROVIDER_SAMPLE_RATE_HZ || pcm.samples().is_empty() {
+        return None;
+    }
+    let samples = pcm.samples();
+    let mut output = Vec::with_capacity(samples.len() / 2);
+    let (pairs, _) = samples.as_chunks::<2>();
+    for pair in pairs {
+        let sample = (pair[0] + pair[1]) * 0.5;
+        if !sample.is_finite() {
+            return None;
+        }
+        output.push((sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16);
+    }
+    (!output.is_empty()).then_some(output)
+}
+
 #[cfg(test)]
-#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::SentenceSegmenter;
     use crate::config::SpeechOutputConfig;
@@ -307,21 +323,4 @@ mod tests {
         assert_eq!(segmenter.push(" tuc rat dai"), ["Tiep tuc"]);
         assert_eq!(segmenter.finish(), Some("rat dai".into()));
     }
-}
-
-fn resample_to_downlink(pcm: PcmF32Mono) -> Option<Vec<i16>> {
-    if pcm.sample_rate_hz() != PROVIDER_SAMPLE_RATE_HZ || pcm.samples().is_empty() {
-        return None;
-    }
-    let samples = pcm.samples();
-    let mut output = Vec::with_capacity(samples.len() / 2);
-    let (pairs, _) = samples.as_chunks::<2>();
-    for pair in pairs {
-        let sample = (pair[0] + pair[1]) * 0.5;
-        if !sample.is_finite() {
-            return None;
-        }
-        output.push((sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16);
-    }
-    (!output.is_empty()).then_some(output)
 }

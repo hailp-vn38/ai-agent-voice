@@ -91,9 +91,9 @@ fn run() -> Result<(), String> {
     {
         return Err("ZeroTTS codec did not produce finite 48 kHz PCM".into());
     }
-    let downlink = pcm
-        .samples()
-        .chunks_exact(2)
+    let (pairs, _) = pcm.samples().as_chunks::<2>();
+    let downlink = pairs
+        .iter()
         .map(|pair| ((pair[0] + pair[1]) * 0.5 * i16::MAX as f32).round() as i16)
         .collect::<Vec<_>>();
     let mut frame = downlink
@@ -116,6 +116,14 @@ fn run() -> Result<(), String> {
         != DOWNLINK_FRAME_SAMPLES
     {
         return Err("canonical Opus packet did not decode to one 60 ms frame".into());
+    }
+    if let Some(path) = env::var_os("ZEROTTS_DOWNLINK_OPUS_PATH") {
+        std::fs::write(&path, packet.as_bytes()).map_err(|error| {
+            format!(
+                "write canonical downlink Opus packet to {}: {error}",
+                PathBuf::from(path).display()
+            )
+        })?;
     }
     println!(
         "ZeroTTS parity, codec, and canonical Opus accepted: {} frames, EOA frame {}, {} PCM samples",

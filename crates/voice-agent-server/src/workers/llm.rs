@@ -13,6 +13,15 @@ use crate::{
     workers::WorkerIdentity,
 };
 
+/// Why an LLM operation could not be accepted without exposing provider details.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LlmStartError {
+    #[error("LLM operations require a Tokio runtime")]
+    NoTokioRuntime,
+    #[error("LLM operation capacity is exhausted")]
+    Capacity,
+}
+
 /// Identity-tagged LLM outcomes consumed only by the owning Voice Session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LlmRuntimeEvent {
@@ -75,11 +84,15 @@ impl LlmRuntime {
 
     /// Accepts an operation only while global capacity is available. A permit is held by the task
     /// until it reports a terminal outcome or cancellation has dropped the provider stream.
-    pub fn start(&self, identity: WorkerIdentity, prompt: String) -> Result<(), ()> {
+    pub fn start(&self, identity: WorkerIdentity, prompt: String) -> Result<(), LlmStartError> {
         if tokio::runtime::Handle::try_current().is_err() {
-            return Err(());
+            return Err(LlmStartError::NoTokioRuntime);
         }
-        let permit = self.permits.clone().try_acquire_owned().map_err(|_| ())?;
+        let permit = self
+            .permits
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| LlmStartError::Capacity)?;
         let cancellation = CancellationToken::new();
         self.cancellations
             .lock()
