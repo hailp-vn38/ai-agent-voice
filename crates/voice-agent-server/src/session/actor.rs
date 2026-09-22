@@ -320,10 +320,9 @@ impl SessionActor {
     pub fn on_client_message(&mut self, message: ClientMessage) {
         match message {
             ClientMessage::Listen(ListenCommand::Start { mode }) => {
+                self.cancel_speech_delivery();
                 self.generation += 1;
                 self.cancel_llm();
-                self.speech_output.cancel();
-                self.tts_started = false;
                 self.cancel_asr();
                 self.release_active_turn();
                 self.close_vad();
@@ -372,10 +371,9 @@ impl SessionActor {
             }
             ClientMessage::Abort => {
                 if self.phase != SessionPhase::Closed {
+                    self.cancel_speech_delivery();
                     self.generation += 1;
                     self.cancel_llm();
-                    self.speech_output.cancel();
-                    self.tts_started = false;
                     self.manual_capture.abort();
                     self.cancel_asr();
                     self.release_active_turn();
