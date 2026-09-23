@@ -281,6 +281,13 @@ async fn start_router() -> (String, JoinHandle<()>) {
 }
 
 async fn start_router_with(providers: Arc<ProviderSet>) -> (String, JoinHandle<()>) {
+    start_router_with_limits(providers, LimitsConfig::default()).await
+}
+
+async fn start_router_with_limits(
+    providers: Arc<ProviderSet>,
+    limits: LimitsConfig,
+) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -292,7 +299,7 @@ async fn start_router_with(providers: Arc<ProviderSet>) -> (String, JoinHandle<(
         auth: AuthConfig::default(),
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
-        limits: LimitsConfig::default(),
+        limits,
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
@@ -459,6 +466,182 @@ async fn full_outbound_audio_queue_retries_every_packet_without_a_gap() {
                 .is_some_and(|text| text.contains(r#""state":"stop""#))
         })
     );
+}
+
+#[tokio::test]
+async fn explicit_abort_admits_urgent_stop_and_invalidates_queued_turn_payload_under_pressure() {
+    let (control_tx, mut control_rx) = mpsc::channel(8);
+    let (urgent_tx, mut urgent_rx) = mpsc::channel(1);
+    let (audio_tx, mut audio_rx) = mpsc::channel(1);
+    let gate = Arc::new(voice_agent_server::session::GenerationGate::new());
+    let vad: Arc<dyn VadProvider> = Arc::new(FakeVad);
+    let asr: Arc<dyn AsrProvider> = Arc::new(FakeAsr);
+    let llm: Arc<dyn LlmProvider> = Arc::new(FakeLlm);
+    let tts: Arc<dyn TtsProvider> = Arc::new(LongTts);
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::clone(&vad),
+        Arc::clone(&asr),
+        Arc::clone(&llm),
+        Arc::clone(&tts),
+    ));
+    let runtimes = voice_agent_server::session::SessionRuntimes {
+        asr: Arc::new(voice_agent_server::workers::AsrWorkerRuntime::new(
+            asr,
+            voice_agent_server::workers::WorkerRuntimeConfig::default(),
+        )),
+        vad: Arc::new(voice_agent_server::workers::VadWorkerRuntime::new(
+            vad,
+            voice_agent_server::workers::WorkerRuntimeConfig::default(),
+        )),
+        llm: Arc::new(voice_agent_server::workers::LlmRuntime::new(
+            llm,
+            1,
+            Duration::from_secs(60),
+        )),
+        tts: Arc::new(voice_agent_server::workers::TtsWorkerRuntime::new(
+            tts,
+            voice_agent_server::workers::WorkerRuntimeConfig::default(),
+        )),
+        active_turn_limiter: Arc::new(voice_agent_server::session::ActiveTurnLimiter::new(1)),
+        vad_segmenter_config: voice_agent_server::audio::VadSegmenterConfig::default(),
+        pre_roll_samples: 4_800,
+    };
+    let mut actor = SessionActor::new_with_runtimes_and_limiter_and_outbound(
+        "session".into(),
+        control_tx.clone(),
+        urgent_tx,
+        audio_tx,
+        Arc::clone(&gate),
+        tokio::sync::watch::channel(false).0,
+        2,
+        20,
+        runtimes,
+    )
+    .unwrap()
+    .with_delivery_providers(&providers)
+    .unwrap();
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+    for _ in 0..200 {
+        actor.pump_workers();
+        if audio_rx.len() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(audio_rx.len(), 1, "the started turn must have queued audio");
+
+    while control_rx.try_recv().is_ok() {}
+    for index in 0..8 {
+        control_tx
+            .try_send(OutboundMessage::TurnText {
+                generation: 1,
+                text: format!(r#"{{"type":"llm","text":"queued-{index}"}}"#),
+            })
+            .unwrap();
+    }
+    actor.on_client_message(ClientMessage::Abort { session_id: None });
+
+    let stop = urgent_rx
+        .try_recv()
+        .expect("abort must bypass normal queue pressure");
+    assert!(
+        stop.as_text()
+            .is_some_and(|text| text.contains(r#""state":"stop""#))
+    );
+    assert!(
+        !gate.admits(1),
+        "the writer must reject queued JSON and audio from the aborted turn"
+    );
+    assert!(matches!(
+        audio_rx.try_recv(),
+        Ok(OutboundMessage::Binary { generation: 1, .. })
+    ));
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+}
+
+#[tokio::test]
+async fn public_abort_with_bounded_lanes_sends_one_stop_then_writer_stays_quiet() {
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(FakeLlm),
+        Arc::new(LongTts),
+    ));
+    let (base, task) = start_router_with_limits(
+        providers,
+        LimitsConfig {
+            outbound_control_queue: 1,
+            urgent_control_queue: 1,
+            outbound_audio_queue: 1,
+            ..LimitsConfig::default()
+        },
+    )
+    .await;
+    let mut socket = connect_router(&base).await;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type":"listen","state":"start","mode":"manual"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Binary(uplink_packet().as_bytes().to_vec().into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type":"listen","state":"stop"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut saw_start = false;
+    loop {
+        let message = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        saw_start |= matches!(&message, Message::Text(text) if serde_json::from_str::<serde_json::Value>(text).unwrap()["type"] == "tts" && serde_json::from_str::<serde_json::Value>(text).unwrap()["state"] == "start");
+        if matches!(message, Message::Binary(_)) {
+            break;
+        }
+    }
+    assert!(saw_start, "tts:start must precede the observed audio");
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type":"abort"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    loop {
+        let message = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if matches!(&message, Message::Text(text) if serde_json::from_str::<serde_json::Value>(text).unwrap()["type"] == "tts" && serde_json::from_str::<serde_json::Value>(text).unwrap()["state"] == "stop")
+        {
+            break;
+        }
+    }
+    assert!(
+        timeout(Duration::from_millis(200), socket.next())
+            .await
+            .is_err(),
+        "writer must not deliver stale JSON or Opus after interruption stop"
+    );
+    task.abort();
 }
 
 #[tokio::test]

@@ -29,6 +29,16 @@ impl SessionActor {
         self.control_tx.try_send(OutboundMessage::Text(text))
     }
 
+    pub(super) fn send_turn_control(
+        &self,
+        text: String,
+    ) -> Result<(), mpsc::error::TrySendError<OutboundMessage>> {
+        self.control_tx.try_send(OutboundMessage::TurnText {
+            generation: self.generation,
+            text,
+        })
+    }
+
     pub async fn run(mut self, mut ingress: mpsc::Receiver<SessionEvent>) {
         let mut worker_tick = tokio::time::interval(std::time::Duration::from_millis(1));
         loop {

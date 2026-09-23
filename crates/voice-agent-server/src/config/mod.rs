@@ -304,6 +304,8 @@ pub struct LimitsConfig {
     #[serde(default = "default_queue_capacity")]
     pub outbound_control_queue: usize,
     #[serde(default = "default_queue_capacity")]
+    pub urgent_control_queue: usize,
+    #[serde(default = "default_queue_capacity")]
     pub outbound_audio_queue: usize,
     #[serde(default = "default_max_active_turns")]
     pub max_active_turns: usize,
@@ -318,6 +320,7 @@ impl Default for LimitsConfig {
         Self {
             session_event_queue: default_queue_capacity(),
             outbound_control_queue: default_queue_capacity(),
+            urgent_control_queue: default_queue_capacity(),
             outbound_audio_queue: default_queue_capacity(),
             max_active_turns: default_max_active_turns(),
             llm_concurrency: default_llm_concurrency(),

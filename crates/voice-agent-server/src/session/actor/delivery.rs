@@ -16,7 +16,7 @@ impl SessionActor {
         let Ok(payload) = serde_json::to_string(&payload) else {
             return None;
         };
-        let _ = self.send_control(payload);
+        let _ = self.send_turn_control(payload);
         Some(text)
     }
 
@@ -93,7 +93,7 @@ impl SessionActor {
                     });
                     if serde_json::to_string(&payload)
                         .ok()
-                        .is_none_or(|payload| self.send_control(payload).is_err())
+                        .is_none_or(|payload| self.send_turn_control(payload).is_err())
                     {
                         self.fail_speech_delivery();
                         break;
@@ -109,7 +109,7 @@ impl SessionActor {
                     });
                     if serde_json::to_string(&payload)
                         .ok()
-                        .is_none_or(|payload| self.send_control(payload).is_err())
+                        .is_none_or(|payload| self.send_turn_control(payload).is_err())
                     {
                         self.fail_speech_delivery();
                         break;
@@ -140,7 +140,7 @@ impl SessionActor {
                             "state": "stop",
                         });
                         if let Ok(payload) = serde_json::to_string(&payload) {
-                            let _ = self.send_control(payload);
+                            let _ = self.send_turn_control(payload);
                         }
                     }
                     // A Delivered Assistant Response exists only after all its audio drained.
@@ -160,23 +160,31 @@ impl SessionActor {
     }
 
     pub(super) fn cancel_speech_delivery(&mut self) {
+        // This is the outbound linearization point for the current Conversational Turn.
+        // It must precede every producer cancellation, including cancellation before TTS starts:
+        // `llm` or `tts:start` may already be waiting at the writer.
+        self.generation_gate.invalidate(self.generation);
         self.speech_output.cancel();
         self.pending_audio = None;
         if self.tts_started {
-            // The writer receives this gate before a stop and drops queued packets for this turn.
-            let _ = self
-                .control_tx
-                .try_send(OutboundMessage::InvalidateAudio(self.generation));
+            self.tts_started = false;
             let payload = serde_json::json!({
                 "session_id": self.session_id,
                 "type": "tts",
                 "state": "stop",
             });
             if let Ok(payload) = serde_json::to_string(&payload) {
-                let _ = self.send_control(payload);
+                if self
+                    .urgent_tx
+                    .try_send(OutboundMessage::Text(payload))
+                    .is_err()
+                {
+                    // Continuing playback without an admitted stop leaves the client state
+                    // unknowable.  Tear the Voice Session down instead of silently retrying.
+                    self.fail_closed_after_urgent_stop_admission_failure();
+                }
             }
         }
-        self.tts_started = false;
     }
 
     /// Returns false while the writer is backpressured. Keeping exactly one pending packet

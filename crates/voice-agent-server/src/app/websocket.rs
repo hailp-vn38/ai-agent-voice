@@ -154,17 +154,23 @@ async fn handle_socket(
     info!(transport = %hello.transport, "ClientHello accepted");
 
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
+    let (urgent_tx, mut urgent_rx) = mpsc::channel(config.limits.urgent_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
+    let generation_gate = Arc::new(crate::session::GenerationGate::new());
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let vad_config = config
         .providers
         .vad
         .silero_onnx
         .as_ref()
         .expect("validated VAD config");
-    let actor = match SessionActor::new_with_runtimes_and_limiter(
+    let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
         Uuid::new_v4().to_string(),
         control_tx.clone(),
+        urgent_tx.clone(),
         audio_tx,
+        Arc::clone(&generation_gate),
+        shutdown_tx,
         config.max_capture_frames(),
         config.llm.max_history_messages,
         SessionRuntimes {
@@ -207,44 +213,44 @@ async fn handle_socket(
     info!("ServerHello sent; voice session connected");
     let writer = tokio::spawn(async move {
         let mut deferred_tts_stop = None;
-        let mut invalidated_generation = 0;
         let mut last_audio_sent: Option<(u64, u64, Instant)> = None;
         loop {
-            // A normal stop follows the final paced packet even though control is otherwise
-            // preferred over audio by this writer.
-            if deferred_tts_stop.is_some() && audio_rx.is_empty() {
-                if send_outbound(
-                    &mut sender,
-                    deferred_tts_stop.take().expect("checked above"),
-                )
-                .await
-                {
-                    break;
-                }
-                continue;
-            }
             tokio::select! {
                 biased;
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        break;
+                    }
+                },
+                Some(message) = urgent_rx.recv() => {
+                    if send_outbound(&mut sender, message, &generation_gate).await {
+                        break;
+                    }
+                },
+                // A normal stop follows the final paced packet, but only after the urgent
+                // lane has had its chance to preempt it.
+                _ = std::future::ready(()), if deferred_tts_stop.is_some() && audio_rx.is_empty() => {
+                    if send_outbound(
+                        &mut sender,
+                        deferred_tts_stop.take().expect("checked above"),
+                        &generation_gate,
+                    ).await {
+                        break;
+                    }
+                },
                 Some(message) = control_rx.recv() => {
-                    if let OutboundMessage::InvalidateAudio(generation) = message {
-                        invalidated_generation = invalidated_generation.max(generation);
-                    } else if is_normal_tts_stop(&message) && !audio_rx.is_empty() {
+                    if is_normal_tts_stop(&message) && !audio_rx.is_empty() {
                         deferred_tts_stop = Some(message);
-                    } else if send_outbound(&mut sender, message).await {
+                    } else if send_outbound(&mut sender, message, &generation_gate).await {
                         break;
                     }
                 },
                 Some(message) = audio_rx.recv() => {
-                    if let OutboundMessage::Binary { generation, .. } = &message
-                        && *generation <= invalidated_generation
-                    {
-                        continue;
-                    }
                     let generation = match &message {
                         OutboundMessage::Binary { generation, .. } => Some(*generation),
                         _ => None,
                     };
-                    if send_outbound(&mut sender, message).await { break; }
+                    if send_outbound(&mut sender, message, &generation_gate).await { break; }
                     if let Some(generation) = generation {
                         let now = Instant::now();
                         let (packet_seq, delta_ms) = match last_audio_sent {
@@ -258,7 +264,7 @@ async fn handle_socket(
                 },
                 else => {
                     if let Some(message) = deferred_tts_stop.take()
-                        && send_outbound(&mut sender, message).await
+                        && send_outbound(&mut sender, message, &generation_gate).await
                     {
                         break;
                     }
@@ -275,7 +281,7 @@ async fn handle_socket(
         match next {
             Ok(Message::Text(text)) => {
                 if text.len() > config.websocket.max_frame_bytes {
-                    let _ = control_tx.send(OutboundMessage::Close(1009)).await;
+                    let _ = urgent_tx.send(OutboundMessage::Close(1009)).await;
                     break;
                 }
                 match parse_client_message(&text) {
@@ -284,7 +290,7 @@ async fn handle_socket(
                             .try_send(SessionEvent::ClientMessage(message))
                             .is_err()
                         {
-                            let _ = control_tx.send(OutboundMessage::Close(1013)).await;
+                            let _ = urgent_tx.send(OutboundMessage::Close(1013)).await;
                             break;
                         }
                     }
@@ -295,7 +301,7 @@ async fn handle_socket(
             }
             Ok(Message::Binary(payload)) => {
                 if payload.len() > config.websocket.max_frame_bytes {
-                    let _ = control_tx.send(OutboundMessage::Close(1009)).await;
+                    let _ = urgent_tx.send(OutboundMessage::Close(1009)).await;
                     break;
                 }
                 if ingress_tx
@@ -319,6 +325,7 @@ async fn handle_socket(
     drop(ingress_tx);
     let _ = session.await;
     drop(control_tx);
+    drop(urgent_tx);
     let _ = writer.await;
     info!("voice session disconnected");
 }
@@ -345,10 +352,19 @@ fn checked_text(message: Message, max: usize) -> Result<String, u16> {
 async fn send_outbound(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     message: OutboundMessage,
+    generation_gate: &crate::session::GenerationGate,
 ) -> bool {
+    let generation = match &message {
+        OutboundMessage::TurnText { generation, .. }
+        | OutboundMessage::Binary { generation, .. } => Some(*generation),
+        OutboundMessage::Text(_) | OutboundMessage::Close(_) => None,
+    };
+    if generation.is_some_and(|generation| !generation_gate.admits(generation)) {
+        return false;
+    }
     let closes = matches!(message, OutboundMessage::Close(_));
     let result = match message {
-        OutboundMessage::Text(text) => {
+        OutboundMessage::Text(text) | OutboundMessage::TurnText { text, .. } => {
             let llm_message = serde_json::from_str::<serde_json::Value>(&text)
                 .ok()
                 .filter(|value| value["type"] == "llm");
@@ -368,7 +384,6 @@ async fn send_outbound(
             result
         }
         OutboundMessage::Binary { packet, .. } => sender.send(Message::Binary(packet.into())).await,
-        OutboundMessage::InvalidateAudio(_) => return false,
         OutboundMessage::Close(code) => {
             sender
                 .send(Message::Close(Some(CloseFrame {

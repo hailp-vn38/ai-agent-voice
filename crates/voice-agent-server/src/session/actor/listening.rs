@@ -69,7 +69,7 @@ impl SessionActor {
                 Err(error) => {
                     warn!(?error, phase = ?self.phase, generation = self.generation, "auto VAD worker open failed");
                     self.phase = SessionPhase::Closed;
-                    let _ = self.control_tx.try_send(OutboundMessage::Close(1013));
+                    let _ = self.urgent_tx.try_send(OutboundMessage::Close(1013));
                 }
             },
             ListenMode::Realtime => self.phase = SessionPhase::Ready,

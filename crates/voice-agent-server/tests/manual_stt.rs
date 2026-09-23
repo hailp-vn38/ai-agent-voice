@@ -12,7 +12,7 @@ use voice_agent_server::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, ProviderSet, VadProvider,
         llm::UnavailableLlm, tts::UnavailableTts,
     },
-    session::{ActiveTurnLimiter, OutboundMessage, SessionActor, SessionPhase, SessionRuntimes},
+    session::{ActiveTurnLimiter, SessionActor, SessionPhase, SessionRuntimes},
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
     },
@@ -575,9 +575,9 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
     }
     assert_eq!(actor.phase(), SessionPhase::Listening);
     assert_eq!(actor.dialogue_history(), &["auto final"]);
-    assert!(
-        matches!(messages.try_recv(), Ok(OutboundMessage::Text(text)) if text.contains("auto final"))
-    );
+    assert!(matches!(messages.try_recv(), Ok(message) if message
+        .as_text()
+        .is_some_and(|text| text.contains("auto final"))));
     // This is the next microphone frame after the turn has completed (the same re-arm
     // boundary used after a delivered TTS response). ResetDone must make the pinned VAD
     // lease usable again rather than closing the WebSocket on its first Push.

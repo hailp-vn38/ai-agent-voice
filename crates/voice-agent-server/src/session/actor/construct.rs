@@ -129,6 +129,32 @@ impl SessionActor {
         max_history_messages: usize,
         runtimes: SessionRuntimes,
     ) -> Result<Self, crate::audio::AudioError> {
+        Self::new_with_runtimes_and_limiter_and_outbound(
+            session_id,
+            control_tx.clone(),
+            control_tx,
+            audio_tx,
+            std::sync::Arc::new(GenerationGate::new()),
+            watch::channel(false).0,
+            max_capture_frames,
+            max_history_messages,
+            runtimes,
+        )
+    }
+
+    /// Production supplies independent normal, urgent and audio lanes.  The shorter
+    /// constructors intentionally retain one control receiver for older actor-only tests.
+    pub fn new_with_runtimes_and_limiter_and_outbound(
+        session_id: String,
+        control_tx: mpsc::Sender<OutboundMessage>,
+        urgent_tx: mpsc::Sender<OutboundMessage>,
+        audio_tx: mpsc::Sender<OutboundMessage>,
+        generation_gate: std::sync::Arc<GenerationGate>,
+        shutdown_tx: watch::Sender<bool>,
+        max_capture_frames: usize,
+        max_history_messages: usize,
+        runtimes: SessionRuntimes,
+    ) -> Result<Self, crate::audio::AudioError> {
         let retention_capacity = auto_retention_capacity(
             runtimes.vad.runtime_config().command_capacity,
             runtimes.vad_segmenter_config.min_speech_samples,
@@ -172,7 +198,10 @@ impl SessionActor {
             )?,
             tts_started: false,
             control_tx,
+            urgent_tx,
+            shutdown_tx,
             audio_tx,
+            generation_gate,
             pending_audio: None,
         })
     }

@@ -19,6 +19,7 @@ max_frame_bytes = 65536
 [limits]
 session_event_queue = 64
 outbound_control_queue = 32
+urgent_control_queue = 8
 outbound_audio_queue = 32
 llm_concurrency = 2
 tts_concurrency = 2

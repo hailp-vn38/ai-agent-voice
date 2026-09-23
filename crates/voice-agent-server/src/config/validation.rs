@@ -78,6 +78,7 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
     if [
         config.limits.session_event_queue,
         config.limits.outbound_control_queue,
+        config.limits.urgent_control_queue,
         config.limits.outbound_audio_queue,
         config.limits.max_active_turns,
         config.limits.llm_concurrency,

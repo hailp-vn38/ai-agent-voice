@@ -1,5 +1,5 @@
 use crate::session::{
-    ActiveTurnLimiter, SessionPhase,
+    ActiveTurnLimiter, GenerationGate, SessionPhase,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::DialogueHistory,
@@ -19,7 +19,7 @@ use crate::{
 };
 use std::collections::HashSet;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
 mod retention;
@@ -60,7 +60,10 @@ pub struct SessionActor {
     speech_output: SpeechOutput,
     tts_started: bool,
     control_tx: mpsc::Sender<OutboundMessage>,
+    urgent_tx: mpsc::Sender<OutboundMessage>,
+    shutdown_tx: watch::Sender<bool>,
     audio_tx: mpsc::Sender<OutboundMessage>,
+    generation_gate: std::sync::Arc<GenerationGate>,
     /// A packet removed from SpeechOutput but not yet admitted by the bounded writer queue.
     /// It must be retried before polling another packet: dropping it creates audible gaps.
     pending_audio: Option<OutboundMessage>,
@@ -80,16 +83,16 @@ pub struct SessionRuntimes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboundMessage {
     Text(String),
+    TurnText { generation: u64, text: String },
     Binary { generation: u64, packet: Vec<u8> },
-    InvalidateAudio(u64),
     Close(u16),
 }
 
 impl OutboundMessage {
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Self::Text(text) => Some(text),
-            Self::Binary { .. } | Self::InvalidateAudio(_) | Self::Close(_) => None,
+            Self::Text(text) | Self::TurnText { text, .. } => Some(text),
+            Self::Binary { .. } | Self::Close(_) => None,
         }
     }
 }
