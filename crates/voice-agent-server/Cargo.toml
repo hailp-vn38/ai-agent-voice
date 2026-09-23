@@ -50,3 +50,8 @@ voice-reference-client = { path = "../voice-reference-client" }
 name = "phase4_reference_gate"
 path = "tests/phase4_reference_gate.rs"
 required-features = ["real-model-gate"]
+
+[[test]]
+name = "phase5_reference_gate"
+path = "tests/phase5_reference_gate.rs"
+required-features = ["real-model-gate"]
