@@ -33,6 +33,8 @@ pub struct AppConfig {
     pub speech_output: SpeechOutputConfig,
     #[serde(default)]
     pub barge_in: BargeInConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 mod defaults;
@@ -204,6 +206,36 @@ pub struct ModelAcknowledgement {
 pub struct LlmConfig {
     #[serde(default = "default_max_history_messages")]
     pub max_history_messages: usize,
+    #[serde(default = "default_prompt_budget_tokens")]
+    pub prompt_budget_tokens: usize,
+    #[serde(default = "default_max_tool_result_chars")]
+    pub max_tool_result_chars: usize,
+    #[serde(default = "default_max_tool_depth")]
+    pub max_tool_depth: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpConfig {
+    #[serde(default = "default_mcp_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_mcp_call_timeout_ms")]
+    pub call_timeout_ms: u64,
+    #[serde(default = "default_mcp_discovery_timeout_ms")]
+    pub discovery_timeout_ms: u64,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_mcp_enabled(),
+            call_timeout_ms: default_mcp_call_timeout_ms(),
+            discovery_timeout_ms: default_mcp_discovery_timeout_ms(),
+            allowed_tools: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -249,6 +281,9 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             max_history_messages: default_max_history_messages(),
+            prompt_budget_tokens: default_prompt_budget_tokens(),
+            max_tool_result_chars: default_max_tool_result_chars(),
+            max_tool_depth: default_max_tool_depth(),
         }
     }
 }

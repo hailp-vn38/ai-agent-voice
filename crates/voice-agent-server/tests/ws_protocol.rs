@@ -46,6 +46,7 @@ async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, Joi
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
+        mcp: voice_agent_server::config::McpConfig::default(),
     };
     let app: Router = router_with_providers(config, Arc::new(ProviderSet::unavailable()));
     let task = tokio::spawn(async move {
@@ -159,6 +160,28 @@ async fn valid_hello_receives_canonical_server_hello() {
     let json: serde_json::Value = serde_json::from_str(&message).unwrap();
     assert_eq!(json["type"], "hello");
     assert_eq!(json["audio_params"]["sample_rate"], 24_000);
+    task.abort();
+}
+
+#[tokio::test]
+async fn mcp_initialize_follows_server_hello_when_client_advertises_capability() {
+    let (base, task) = start(1_024).await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket.send(Message::Text(r#"{"type":"hello","version":1,"transport":"websocket","features":{"mcp":true},"audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}"#.into())).await.unwrap();
+    let hello_text = match next_message(&mut socket).await {
+        Message::Text(text) => text,
+        other => panic!("expected ServerHello, got {other:?}"),
+    };
+    let hello: serde_json::Value = serde_json::from_str(&hello_text).unwrap();
+    assert_eq!(hello["type"], "hello");
+    let initialize_text = match next_message(&mut socket).await {
+        Message::Text(text) => text,
+        other => panic!("expected MCP initialize, got {other:?}"),
+    };
+    let initialize: serde_json::Value = serde_json::from_str(&initialize_text).unwrap();
+    assert_eq!(initialize["type"], "mcp");
+    assert_eq!(initialize["payload"]["id"], 1);
+    assert_eq!(initialize["payload"]["method"], "initialize");
     task.abort();
 }
 

@@ -11,6 +11,7 @@ impl SessionActor {
 
     pub(super) fn drain_worker_events(&mut self) {
         self.drain_writer_events();
+        self.expire_mcp_requests();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
         }
@@ -118,6 +119,14 @@ impl SessionActor {
                 if self.inbound_session_matches(session_id.as_deref()) {
                     info!(phase = ?self.phase, generation = self.generation, "Client abort accepted");
                     self.abort_active_interaction();
+                }
+            }
+            ClientMessage::Mcp {
+                session_id,
+                payload,
+            } => {
+                if self.inbound_session_matches(session_id.as_deref()) {
+                    self.on_mcp_message(payload);
                 }
             }
             ClientMessage::Hello(_) | ClientMessage::Unknown => {}

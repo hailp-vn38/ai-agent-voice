@@ -90,9 +90,43 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
             "queue and delivery capacities must be positive".into(),
         ));
     }
-    if config.llm.max_history_messages == 0 {
+    if config.llm.max_history_messages == 0
+        || config.llm.prompt_budget_tokens == 0
+        || config.llm.max_tool_result_chars == 0
+        || config.llm.max_tool_depth == 0
+    {
         return Err(ConfigError::Validation(
-            "llm.max_history_messages must be positive".into(),
+            "LLM history, prompt budget and tool limits must be positive".into(),
+        ));
+    }
+    if config.mcp.call_timeout_ms == 0
+        || config.mcp.discovery_timeout_ms == 0
+        || config
+            .mcp
+            .allowed_tools
+            .iter()
+            .any(|name| name.trim().is_empty())
+        || {
+            let mut names = std::collections::HashSet::new();
+            !config
+                .mcp
+                .allowed_tools
+                .iter()
+                .all(|name| names.insert(name))
+        }
+    {
+        return Err(ConfigError::Validation(
+            "MCP timeouts and allowlist must be valid".into(),
+        ));
+    }
+    if config
+        .mcp
+        .allowed_tools
+        .iter()
+        .any(|name| crate::tools::device_mcp::is_dangerous_tool(name))
+    {
+        return Err(ConfigError::Validation(
+            "MCP allowlist must not contain dangerous tools".into(),
         ));
     }
     Ok(())

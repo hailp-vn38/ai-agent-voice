@@ -1,4 +1,5 @@
 use super::*;
+use crate::providers::llm::ToolDefinition;
 
 impl SessionActor {
     pub(super) fn commit_user_text(&mut self, final_text: String) -> Option<String> {
@@ -21,21 +22,59 @@ impl SessionActor {
     }
 
     pub(super) fn begin_speech_delivery(&mut self, user_text: String) {
+        self.llm_messages = vec![ChatMessage::User { content: user_text }];
+        self.tool_depth = 0;
+        self.start_llm_round(true);
+    }
+
+    pub(super) fn begin_tool_continuation(&mut self) {
+        self.tool_depth += 1;
+        if self.tool_depth >= self.max_tool_depth {
+            self.llm_messages.push(ChatMessage::ToolResult {
+                tool_call_id: "tool_depth".into(),
+                content: serde_json::json!({"ok": false, "code": "tool_depth_exceeded"})
+                    .to_string(),
+            });
+        }
+        self.start_llm_round(self.tool_depth < self.max_tool_depth);
+    }
+
+    fn start_llm_round(&mut self, allow_tools: bool) {
         let Some(cancellation) = self.turn.as_ref().map(|turn| turn.cancellation.clone()) else {
             self.fail_closed();
             return;
         };
-        let Some(turn_id) = self.current_turn_id() else {
+        let Some(identity) = self.next_worker_identity() else {
             self.fail_closed();
             return;
         };
-        let identity = WorkerIdentity::new(self.session_id.clone(), self.generation, turn_id.get());
         self.generated_response.clear();
         self.pending_llm_delta = None;
         self.llm_finish_pending = false;
+        self.llm_round =
+            (allow_tools && !self.mcp.visible.is_empty()).then(LlmRoundBuffer::default);
         if self
             .llm_runtime
-            .start(identity.clone(), user_text, cancellation)
+            .start(
+                identity.clone(),
+                crate::providers::llm::LlmRequest {
+                    messages: self.llm_messages.clone(),
+                    tools: if allow_tools {
+                        self.mcp
+                            .visible
+                            .iter()
+                            .map(|tool| ToolDefinition {
+                                name: tool.llm_name.clone(),
+                                description: tool.description.clone(),
+                                parameters: tool.input_schema.clone(),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                },
+                cancellation,
+            )
             .is_err()
         {
             self.turn = None;
@@ -50,7 +89,7 @@ impl SessionActor {
     pub(super) fn on_llm_event(&mut self, event: LlmRuntimeEvent) {
         let identity = match &event {
             LlmRuntimeEvent::TextDelta { identity, .. }
-            | LlmRuntimeEvent::UnexpectedToolCall { identity }
+            | LlmRuntimeEvent::ToolCall { identity, .. }
             | LlmRuntimeEvent::Finished { identity }
             | LlmRuntimeEvent::Failed { identity }
             | LlmRuntimeEvent::Cancelled { identity } => identity,
@@ -64,19 +103,40 @@ impl SessionActor {
         }
         match event {
             LlmRuntimeEvent::TextDelta { text, .. } => {
+                if self.llm_round.is_some() {
+                    self.llm_round
+                        .as_mut()
+                        .expect("checked")
+                        .prose
+                        .push_str(&text);
+                    return;
+                }
                 self.generated_response.push_str(&text);
                 self.pending_llm_delta = Some((text, 0));
                 self.flush_pending_llm_text();
             }
             LlmRuntimeEvent::Finished { .. } => {
                 self.llm_operation = None;
+                if let Some(round) = self.llm_round.take() {
+                    if !round.calls.is_empty() {
+                        self.start_tool_batch(round.calls);
+                        return;
+                    }
+                    self.generated_response = round.prose.clone();
+                    self.pending_llm_delta = Some((round.prose, 0));
+                }
                 info!("LLM operation finished");
                 self.llm_finish_pending = true;
                 self.flush_pending_llm_text();
             }
-            LlmRuntimeEvent::UnexpectedToolCall { .. }
-            | LlmRuntimeEvent::Failed { .. }
-            | LlmRuntimeEvent::Cancelled { .. } => {
+            LlmRuntimeEvent::ToolCall { call, .. } => {
+                let Some(round) = self.llm_round.as_mut() else {
+                    self.fail_speech_delivery();
+                    return;
+                };
+                round.calls.push(call);
+            }
+            LlmRuntimeEvent::Failed { .. } | LlmRuntimeEvent::Cancelled { .. } => {
                 self.llm_operation = None;
                 warn!("LLM operation ended without a deliverable response");
                 self.fail_speech_delivery();

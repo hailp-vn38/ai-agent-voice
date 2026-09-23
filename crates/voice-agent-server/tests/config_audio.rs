@@ -47,6 +47,7 @@ fn valid_config() -> AppConfig {
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
+        mcp: voice_agent_server::config::McpConfig::default(),
     }
 }
 

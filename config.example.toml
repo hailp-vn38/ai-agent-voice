@@ -115,3 +115,13 @@ license = "MIT; bundled-codec=Apache-2.0"
 
 [llm]
 max_history_messages = 20
+prompt_budget_tokens = 12000
+max_tool_result_chars = 4096
+max_tool_depth = 4
+
+[mcp]
+enabled = true
+call_timeout_ms = 30000
+discovery_timeout_ms = 10000
+# Omit `allowed_tools` to expose the non-dangerous tools announced by the client.
+# Set it only to restrict a deployment to an explicit subset.

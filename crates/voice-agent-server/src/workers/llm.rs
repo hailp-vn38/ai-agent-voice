@@ -9,7 +9,10 @@ use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    providers::{LlmEvent, LlmProvider},
+    providers::{
+        LlmEvent, LlmProvider,
+        llm::{LlmRequest, ToolCall},
+    },
     workers::WorkerIdentity,
 };
 
@@ -23,14 +26,15 @@ pub enum LlmStartError {
 }
 
 /// Identity-tagged LLM outcomes consumed only by the owning Voice Session.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LlmRuntimeEvent {
     TextDelta {
         identity: WorkerIdentity,
         text: String,
     },
-    UnexpectedToolCall {
+    ToolCall {
         identity: WorkerIdentity,
+        call: ToolCall,
     },
     Finished {
         identity: WorkerIdentity,
@@ -87,7 +91,7 @@ impl LlmRuntime {
     pub fn start(
         &self,
         identity: WorkerIdentity,
-        prompt: String,
+        request: LlmRequest,
         cancellation: CancellationToken,
     ) -> Result<(), LlmStartError> {
         if tokio::runtime::Handle::try_current().is_err() {
@@ -112,13 +116,13 @@ impl LlmRuntime {
                 .expect("LLM routes lock")
                 .get(identity.session())
                 .cloned();
-            if let Some(route) = route {
-                let terminal = tokio::time::timeout(
+            let terminal = if let Some(route) = &route {
+                tokio::time::timeout(
                     timeout,
                     run_operation(
                         provider,
                         identity.clone(),
-                        prompt,
+                        request,
                         cancellation,
                         route.clone(),
                     ),
@@ -126,15 +130,22 @@ impl LlmRuntime {
                 .await
                 .unwrap_or(LlmRuntimeEvent::Failed {
                     identity: identity.clone(),
-                });
-                // Awaiting preserves a terminal event when the bounded route is temporarily full.
-                let _ = route.send(terminal).await;
-            }
+                })
+            } else {
+                LlmRuntimeEvent::Cancelled {
+                    identity: identity.clone(),
+                }
+            };
             cancellations
                 .lock()
                 .expect("LLM cancellations lock")
                 .remove(&identity);
             drop(permit);
+            if let Some(route) = route {
+                // The operation is terminal before the actor receives this event, so a
+                // tool-result continuation can acquire capacity immediately.
+                let _ = route.send(terminal).await;
+            }
         });
         Ok(())
     }
@@ -154,11 +165,11 @@ impl LlmRuntime {
 async fn run_operation(
     provider: Arc<dyn LlmProvider>,
     identity: WorkerIdentity,
-    prompt: String,
+    request: LlmRequest,
     cancellation: CancellationToken,
     route: mpsc::Sender<LlmRuntimeEvent>,
 ) -> LlmRuntimeEvent {
-    let Ok(mut stream) = provider.stream(prompt).await else {
+    let Ok(mut stream) = provider.stream(request).await else {
         return LlmRuntimeEvent::Failed { identity };
     };
     loop {
@@ -170,7 +181,11 @@ async fn run_operation(
                         return LlmRuntimeEvent::Cancelled { identity };
                     }
                 }
-                Some(Ok(LlmEvent::UnexpectedToolCall)) => return LlmRuntimeEvent::UnexpectedToolCall { identity },
+                Some(Ok(LlmEvent::ToolCall(call))) => {
+                    if route.send(LlmRuntimeEvent::ToolCall { identity: identity.clone(), call }).await.is_err() {
+                        return LlmRuntimeEvent::Cancelled { identity };
+                    }
+                }
                 Some(Ok(LlmEvent::Finished)) | None => return LlmRuntimeEvent::Finished { identity },
                 Some(Err(_)) => return LlmRuntimeEvent::Failed { identity },
             },

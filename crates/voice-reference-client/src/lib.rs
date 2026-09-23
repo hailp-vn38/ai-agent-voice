@@ -6,9 +6,12 @@ use opus2::{Channels, Decoder};
 use serde::Deserialize;
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
-use tokio::time::{Instant, timeout_at};
+use tokio::{
+    net::TcpStream,
+    time::{Instant, timeout_at},
+};
 use tokio_tungstenite::{
-    connect_async,
+    MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::{Message, client::IntoClientRequest},
 };
 
@@ -70,6 +73,348 @@ pub struct TextTurnRequest {
 pub struct TextTurnReport {
     pub binary_packets: usize,
     pub debug_audio_file: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+pub struct McpTextTurnOptions {
+    pub ota_url: String,
+    pub device_id: String,
+    pub client_id: String,
+    pub text: String,
+    pub initial_value: i32,
+    pub turn_timeout: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpToolCallRecord {
+    pub request_id: u64,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpToolResultRecord {
+    pub request_id: u64,
+    pub is_error: bool,
+    pub content: String,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpTextTurnReport {
+    pub initial_value: i32,
+    pub final_value: i32,
+    pub discovered_tools: Vec<String>,
+    pub received_calls: Vec<McpToolCallRecord>,
+    pub tool_results: Vec<McpToolResultRecord>,
+    pub final_assistant_text: Option<String>,
+    pub server_hello_received: bool,
+    pub initialize_received: bool,
+    pub tools_list_requests: usize,
+    pub tts_started: bool,
+    pub tts_finished: bool,
+}
+
+/// Connection-wide report for the deterministic Device MCP server.
+pub type McpSessionReport = McpTextTurnReport;
+
+#[derive(Clone, Debug)]
+pub struct McpSessionOptions {
+    pub ota_url: String,
+    pub device_id: String,
+    pub client_id: String,
+    pub initial_value: i32,
+    pub turn_timeout: Duration,
+}
+
+/// A stateful Voice Protocol Client which serves deterministic Device MCP on one WebSocket.
+pub struct ReferenceClient {
+    socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    session_id: Option<String>,
+    turn_timeout: Duration,
+    report: McpSessionReport,
+    discovery_complete: bool,
+}
+
+impl McpTextTurnOptions {
+    pub fn new(ota_url: String, text: String) -> Self {
+        Self {
+            ota_url,
+            device_id: "reference-client-mcp-01".into(),
+            client_id: "reference-client-mcp".into(),
+            text,
+            initial_value: 10,
+            turn_timeout: Duration::from_secs(60),
+        }
+    }
+}
+
+impl ReferenceClient {
+    pub async fn connect(options: McpSessionOptions) -> anyhow::Result<Self> {
+        ensure!(
+            (0..=100).contains(&options.initial_value),
+            "MCP initial value must be 0..=100"
+        );
+        let ota: serde_json::Value = reqwest::Client::new()
+            .post(&options.ota_url)
+            .json(&json!({}))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let websocket = ota
+            .get("websocket")
+            .context("OTA response lacks websocket")?;
+        let url = websocket
+            .get("url")
+            .and_then(|value| value.as_str())
+            .context("OTA response lacks websocket.url")?;
+        let token = websocket
+            .get("token")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let mut request = url.into_client_request()?;
+        request
+            .headers_mut()
+            .insert("Protocol-Version", "1".parse()?);
+        request
+            .headers_mut()
+            .insert("Device-Id", options.device_id.parse()?);
+        request
+            .headers_mut()
+            .insert("Client-Id", options.client_id.parse()?);
+        if !token.is_empty() {
+            request
+                .headers_mut()
+                .insert("Authorization", format!("Bearer {token}").parse()?);
+        }
+        let (mut socket, _) = connect_async(request).await?;
+        socket.send(Message::Text(json!({"type":"hello", "version":1, "transport":"websocket", "features":{"mcp":true}, "audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}).to_string().into())).await?;
+        let mut client = Self {
+            socket,
+            session_id: None,
+            turn_timeout: options.turn_timeout,
+            report: McpSessionReport {
+                initial_value: options.initial_value,
+                final_value: options.initial_value,
+                discovered_tools: Vec::new(),
+                received_calls: Vec::new(),
+                tool_results: Vec::new(),
+                final_assistant_text: None,
+                server_hello_received: false,
+                initialize_received: false,
+                tools_list_requests: 0,
+                tts_started: false,
+                tts_finished: false,
+            },
+            discovery_complete: false,
+        };
+        client.wait_for_discovery().await?;
+        Ok(client)
+    }
+
+    pub async fn run_text_turn(&mut self, text: &str) -> anyhow::Result<()> {
+        let text = normalize_text_input(text)?;
+        ensure!(self.discovery_complete, "MCP discovery is incomplete");
+        let session = self
+            .session_id
+            .as_deref()
+            .context("MCP before ServerHello")?;
+        self.socket
+            .send(Message::Text(
+                json!({"type":"listen", "session_id":session, "state":"start", "mode":"manual"})
+                    .to_string()
+                    .into(),
+            ))
+            .await?;
+        self.socket
+            .send(Message::Text(
+                json!({"type":"listen", "session_id":session, "state":"detect", "text":text})
+                    .to_string()
+                    .into(),
+            ))
+            .await?;
+        let deadline = Instant::now() + self.turn_timeout;
+        loop {
+            if self.process_next(deadline).await? {
+                break;
+            }
+        }
+        // The writer acknowledges the terminal TTS control asynchronously.  Give the
+        // server a bounded handoff before arming the next turn on this same session.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        Ok(())
+    }
+
+    pub fn finish(self) -> McpSessionReport {
+        self.report
+    }
+
+    async fn wait_for_discovery(&mut self) -> anyhow::Result<()> {
+        let deadline = Instant::now() + self.turn_timeout;
+        while !self.discovery_complete {
+            self.process_next(deadline).await?;
+        }
+        ensure!(
+            self.report.server_hello_received
+                && self.report.initialize_received
+                && self.report.tools_list_requests == 2,
+            "incomplete MCP discovery"
+        );
+        Ok(())
+    }
+
+    async fn process_next(&mut self, deadline: Instant) -> anyhow::Result<bool> {
+        let message = timeout_at(deadline, self.socket.next())
+            .await
+            .map_err(|_| anyhow::anyhow!("MCP session timed out"))?
+            .context("WebSocket closed during MCP session")??;
+        let Message::Text(text_frame) = message else {
+            if matches!(message, Message::Close(_)) {
+                bail!("WebSocket closed during MCP session");
+            }
+            return Ok(false);
+        };
+        let value: serde_json::Value = serde_json::from_str(&text_frame)?;
+        match value.get("type").and_then(serde_json::Value::as_str) {
+            Some("hello") => {
+                let hello: ServerHello = serde_json::from_value(value)?;
+                validate_server_hello(&hello)?;
+                self.session_id = Some(hello.session_id);
+                self.report.server_hello_received = true;
+            }
+            Some("mcp") => self.handle_mcp_request(value).await?,
+            Some("llm") => {
+                self.report.final_assistant_text = value["text"].as_str().map(str::to_owned)
+            }
+            Some("tts") if value["state"].as_str() == Some("start") => {
+                self.report.tts_started = true
+            }
+            Some("tts") if value["state"].as_str() == Some("stop") => {
+                self.report.tts_finished = true;
+                return Ok(true);
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_mcp_request(&mut self, value: serde_json::Value) -> anyhow::Result<()> {
+        let id = value["payload"]["id"]
+            .as_u64()
+            .context("MCP request lacks numeric id")?;
+        let method = value["payload"]["method"]
+            .as_str()
+            .context("MCP request lacks method")?;
+        let session = self
+            .session_id
+            .as_deref()
+            .context("MCP before ServerHello")?;
+        ensure!(
+            value["session_id"].as_str() == Some(session),
+            "MCP session_id does not match"
+        );
+        let response = match method {
+            "initialize" => {
+                self.report.initialize_received = true;
+                json!({"protocolVersion":"2024-11-05", "capabilities":{}, "serverInfo":{"name":"voice-reference-client","version":"0.1.0"}})
+            }
+            "tools/list" => {
+                self.report.tools_list_requests += 1;
+                let first_page = value["payload"]["params"]["cursor"].as_str().is_none();
+                let (tools, next) = if first_page {
+                    (vec![mcp_echo_tool(), mcp_get_value_tool()], Some("page-2"))
+                } else {
+                    self.discovery_complete = true;
+                    (vec![mcp_set_value_tool()], None)
+                };
+                self.report.discovered_tools.extend(
+                    tools
+                        .iter()
+                        .filter_map(|tool| tool["name"].as_str().map(str::to_owned)),
+                );
+                let mut result = json!({"tools": tools});
+                if let Some(next) = next {
+                    result["nextCursor"] = json!(next);
+                };
+                result
+            }
+            "tools/call" => {
+                let name = value["payload"]["params"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let arguments = value["payload"]["params"]["arguments"].clone();
+                self.report.received_calls.push(McpToolCallRecord {
+                    request_id: id,
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                });
+                let (content, is_error) =
+                    execute_mcp_test_tool(&name, &arguments, &mut self.report.final_value);
+                self.report.tool_results.push(McpToolResultRecord {
+                    request_id: id,
+                    is_error,
+                    content: content.clone(),
+                });
+                json!({"content":[{"type":"text", "text":content}], "isError":is_error})
+            }
+            _ => {
+                self.socket.send(Message::Text(json!({"type":"mcp","session_id":session,"payload":{"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"method not found"}}}).to_string().into())).await?;
+                return Ok(());
+            }
+        };
+        self.socket.send(Message::Text(json!({"type":"mcp","session_id":session,"payload":{"jsonrpc":"2.0","id":id,"result":response}}).to_string().into())).await?;
+        Ok(())
+    }
+}
+
+/// Executes one text turn while serving deterministic Device MCP over the same WebSocket.
+pub async fn run_mcp_text_turn(options: McpTextTurnOptions) -> anyhow::Result<McpTextTurnReport> {
+    let mut client = ReferenceClient::connect(McpSessionOptions {
+        ota_url: options.ota_url,
+        device_id: options.device_id,
+        client_id: options.client_id,
+        initial_value: options.initial_value,
+        turn_timeout: options.turn_timeout,
+    })
+    .await?;
+    client.run_text_turn(&options.text).await?;
+    Ok(client.finish())
+}
+
+fn mcp_echo_tool() -> serde_json::Value {
+    json!({"name":"test.echo", "description":"Echo deterministic test text.", "inputSchema":{"type":"object", "properties":{"text":{"type":"string"}}, "required":["text"], "additionalProperties":false}})
+}
+fn mcp_get_value_tool() -> serde_json::Value {
+    json!({"name":"test.get_value", "description":"Get the deterministic test value.", "inputSchema":{"type":"object", "properties":{}, "additionalProperties":false}})
+}
+fn mcp_set_value_tool() -> serde_json::Value {
+    json!({"name":"test.set_value", "description":"Set the deterministic test value.", "inputSchema":{"type":"object", "properties":{"value":{"type":"integer", "minimum":0, "maximum":100}}, "required":["value"], "additionalProperties":false}})
+}
+
+fn execute_mcp_test_tool(
+    name: &str,
+    arguments: &serde_json::Value,
+    value: &mut i32,
+) -> (String, bool) {
+    match name {
+        "test.echo" => arguments
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(|text| (json!({"text":text}).to_string(), false))
+            .unwrap_or_else(|| (json!({"error":"invalid_arguments"}).to_string(), true)),
+        "test.get_value" if arguments.as_object().is_some_and(|args| args.is_empty()) => {
+            (json!({"value":*value}).to_string(), false)
+        }
+        "test.set_value" => match arguments.get("value").and_then(serde_json::Value::as_i64) {
+            Some(next) if (0..=100).contains(&next) => {
+                *value = next as i32;
+                (json!({"value":*value}).to_string(), false)
+            }
+            Some(_) => (json!({"error":"value_out_of_range"}).to_string(), true),
+            None => (json!({"error":"invalid_arguments"}).to_string(), true),
+        },
+        _ => (json!({"error":"unknown_tool"}).to_string(), true),
+    }
 }
 
 /// Listening mode used by the strict acoustic barge-in qualification scenario.

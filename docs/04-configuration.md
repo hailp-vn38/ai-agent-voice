@@ -48,6 +48,7 @@ audio_in_queue = 64
 session_event_queue = 64
 outbound_control_queue = 32
 outbound_audio_queue = 32
+urgent_control_queue = 8
 
 [deployment.models]
 root = "models"
@@ -67,6 +68,10 @@ sample_rate_hz = 16000
 window_samples = 512
 num_threads = 1
 provider = "cpu"
+
+[barge_in]
+enabled = false
+trust_client_aec_feature = false
 
 [providers.asr]
 adapter = "zipformer_sherpa"
@@ -122,7 +127,8 @@ cleanup_grace_ms = 5000
 [mcp]
 enabled = true
 call_timeout_ms = 30000
-allowed_tools = ["self.get_device_status", "self.audio_speaker.set_volume"]
+# Optional: when omitted, use the non-dangerous catalog announced by the client.
+# allowed_tools = ["test.echo", "test.get_value", "test.set_value"]
 ```
 
 ## 3. Environment override
@@ -140,6 +146,7 @@ VOICE_AGENT_LLM_API_KEY
 
 - V1 input sample rate phải là 16000, output sample rate phải là 24000, channels phải là 1 và frame_ms phải là 60 theo Canonical Audio Profile.
 - queue capacity > 0.
+- `urgent_control_queue > 0`; urgent lane chỉ cho interrupt `tts:stop`, close và fatal/session control, ưu tiên normal control/audio. Nếu interrupt stop không admission được sau `tts:start`, Voice Session fail-closed; không retry vô hạn.
 - `websocket.max_frame_bytes` nằm trong 4.000 bytes–1 MiB và áp dụng chung cho JSON control/MCP lẫn binary audio; frame inbound vượt cap đóng 1009 trước parse/decode. Đây là transport boundary, không phải audio config hay encoder buffer.
 - `audio.max_utterance_ms` nằm trong 1.000–120.000 ms và chia hết cho `audio.frame_ms`. Đây là giới hạn chung của Manual Capture và VAD Capture, không phải tham số riêng của VAD; capacity được tính một lần từ integer frame count.
 - `unsupported_protocol_policy` V1 chỉ là `reject`; không advertise v2/v3 khi chưa có parser.
@@ -148,6 +155,7 @@ VOICE_AGENT_LLM_API_KEY
 - adapter phải được build vào binary. Typed provider config chọn adapter và Logical Model Identity, không được chứa direct provider-facing file path. Manifest resolve identity sang source/revision/artifact/transform/checksum; Model Preparation chỉ reuse hoặc acquire/verify/transform/atomic-install trước provider build/warmup và public bind.
 - adapter không được tự download model, đoán tên artifact hoặc scan model directory. Provider Factory chỉ nhận Resolved Model theo artifact role sau Model Preparation.
 - VAD validate `0.0 <= exit_threshold < speech_threshold <= 1.0`; `min_speech_ms > 0`, `end_silence_ms > 0`, `pre_roll_ms` bounded và retention capacity phải gồm pre-roll, confirmation horizon, bounded VAD in-flight lag cùng rechunk/frame slack.
+- `[barge_in]` có hai bool default false. `enabled=true` chỉ có tác dụng khi `trust_client_aec_feature=true`, client Hello có `features.aec=true`, và Listening Mode là Auto/Realtime; đây là client-side echo-suppression assertion, không thay cho server-side AEC.
 - `shutdown_grace_ms > 0`; config chỉ có hiệu lực khi process khởi động lại.
 - `prompt_budget_tokens > 0`, `max_tool_result_chars > 0`, `max_tool_depth > 0`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.

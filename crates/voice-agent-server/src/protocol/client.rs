@@ -1,3 +1,4 @@
+use crate::tools::device_mcp::{McpIncoming, parse_incoming};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -30,6 +31,8 @@ pub struct ClientHello {
 pub struct ClientFeatures {
     #[serde(default)]
     pub aec: bool,
+    #[serde(default)]
+    pub mcp: bool,
 }
 
 fn default_v1_version() -> u8 {
@@ -90,6 +93,10 @@ pub enum ClientMessage {
     Abort {
         session_id: Option<String>,
     },
+    Mcp {
+        session_id: Option<String>,
+        payload: McpIncoming,
+    },
     Unknown,
 }
 
@@ -124,8 +131,22 @@ pub fn parse_client_message(text: &str) -> Result<ClientMessage, ProtocolError> 
             .map_or(Ok(ClientMessage::Unknown), |session_id| {
                 Ok(ClientMessage::Abort { session_id })
             }),
+        Some("mcp") => parse_mcp_message(&value),
         _ => Ok(ClientMessage::Unknown),
     }
+}
+
+fn parse_mcp_message(value: &Value) -> Result<ClientMessage, ProtocolError> {
+    let Some(session_id) = parse_session_id(value) else {
+        return Ok(ClientMessage::Unknown);
+    };
+    let Some(payload) = value.get("payload").cloned().and_then(parse_incoming) else {
+        return Ok(ClientMessage::Unknown);
+    };
+    Ok(ClientMessage::Mcp {
+        session_id,
+        payload,
+    })
 }
 
 fn parse_listen_command(value: &Value) -> Result<ClientMessage, ProtocolError> {

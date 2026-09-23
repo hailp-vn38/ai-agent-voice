@@ -10,14 +10,23 @@ use crate::{
         VadSegmenter, VadSegmenterConfig,
     },
     protocol::{ClientMessage, ListenCommand, ListenMode},
-    providers::{ProviderSet, llm::UnavailableLlm, tts::UnavailableTts},
+    providers::{
+        ProviderSet,
+        llm::UnavailableLlm,
+        llm::{ChatMessage, ToolCall},
+        tts::UnavailableTts,
+    },
+    tools::device_mcp::{DiscoveredTool, LlmVisibleTool, McpRequestId},
     workers::{
         AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, LlmRuntime, LlmRuntimeEvent,
         TtsWorkerRuntime, VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerLease,
         VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig,
     },
 };
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -81,6 +90,11 @@ pub struct SessionActor {
     client_aec_asserted: bool,
     barge_in_enabled: bool,
     trust_client_aec_feature: bool,
+    mcp: DeviceMcpState,
+    llm_messages: Vec<ChatMessage>,
+    llm_round: Option<LlmRoundBuffer>,
+    tool_depth: usize,
+    max_tool_depth: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -112,6 +126,43 @@ struct TurnContext {
 struct PendingDelivery {
     turn_id: TurnId,
     assistant_text: String,
+}
+
+#[derive(Default)]
+struct DeviceMcpState {
+    enabled: bool,
+    ready: bool,
+    failed: bool,
+    next_request_id: u64,
+    allowed_tools: HashSet<String>,
+    call_timeout: std::time::Duration,
+    discovery_timeout: std::time::Duration,
+    discovered: Vec<DiscoveredTool>,
+    visible: Vec<LlmVisibleTool>,
+    pending: HashMap<McpRequestId, PendingMcpRequest>,
+    batch: Option<ToolBatchState>,
+}
+
+struct PendingMcpRequest {
+    generation: Option<u64>,
+    deadline: Instant,
+    kind: PendingMcpKind,
+}
+enum PendingMcpKind {
+    Initialize,
+    ToolsList,
+    ToolCall { call: ToolCall },
+}
+struct ToolBatchState {
+    generation: u64,
+    calls: Vec<ToolCall>,
+    next: usize,
+    results: Vec<ChatMessage>,
+}
+#[derive(Default)]
+struct LlmRoundBuffer {
+    prose: String,
+    calls: Vec<ToolCall>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,6 +243,7 @@ mod delivery;
 mod ingress;
 mod lifecycle;
 mod listening;
+mod mcp;
 fn normalize_detect_text(input: String) -> Option<String> {
     let text = input.trim();
     if text.is_empty()

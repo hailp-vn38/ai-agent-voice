@@ -26,11 +26,41 @@ struct Args {
     /// Print privacy-safe lifecycle step names and WebSocket frame categories to stderr.
     #[arg(long)]
     debug_steps: bool,
+    /// Serve deterministic Device MCP tools for this text turn.
+    #[arg(long)]
+    mcp: bool,
+    #[arg(long, default_value_t = 10)]
+    mcp_initial_value: i32,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if args.mcp {
+        let report =
+            voice_reference_client::run_mcp_text_turn(voice_reference_client::McpTextTurnOptions {
+                ota_url: args.ota,
+                device_id: args.device_id,
+                client_id: args.client_id,
+                text: args.text,
+                initial_value: args.mcp_initial_value,
+                turn_timeout: Duration::from_secs(args.turn_timeout_secs),
+            })
+            .await?;
+        println!("MCP discovery: PASS");
+        println!("tools: {}", report.discovered_tools.join(", "));
+        println!("tool calls: {}", report.received_calls.len());
+        println!("final value: {}", report.final_value);
+        println!(
+            "TTS lifecycle: {}",
+            if report.tts_started && report.tts_finished {
+                "complete"
+            } else {
+                "incomplete"
+            }
+        );
+        return Ok(());
+    }
     let report = voice_reference_client::run_text_turn(voice_reference_client::TextTurnRequest {
         ota_url: args.ota,
         device_id: args.device_id,

@@ -118,6 +118,24 @@ pub(super) fn default_cleanup_grace_ms() -> u64 {
 pub(super) fn default_max_history_messages() -> usize {
     20
 }
+pub(super) fn default_prompt_budget_tokens() -> usize {
+    12_000
+}
+pub(super) fn default_max_tool_result_chars() -> usize {
+    4_096
+}
+pub(super) fn default_max_tool_depth() -> usize {
+    4
+}
+pub(super) fn default_mcp_enabled() -> bool {
+    true
+}
+pub(super) fn default_mcp_call_timeout_ms() -> u64 {
+    30_000
+}
+pub(super) fn default_mcp_discovery_timeout_ms() -> u64 {
+    10_000
+}
 pub(super) fn default_tts_timeout_ms() -> u64 {
     15_000
 }

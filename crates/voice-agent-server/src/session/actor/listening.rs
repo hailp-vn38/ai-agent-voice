@@ -159,6 +159,7 @@ impl SessionActor {
             return;
         }
         self.interrupt_active_turn();
+        self.cancel_mcp_turn();
         if !self.advance_generation() {
             return;
         }

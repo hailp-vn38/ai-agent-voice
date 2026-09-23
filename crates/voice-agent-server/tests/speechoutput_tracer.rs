@@ -95,7 +95,10 @@ impl LlmProvider for FakeLlm {
     fn adapter(&self) -> &'static str {
         "fake_llm"
     }
-    fn complete(&self, _: &str) -> Result<String, voice_agent_server::providers::LlmError> {
+    fn complete(
+        &self,
+        _: &voice_agent_server::providers::llm::LlmRequest,
+    ) -> Result<String, voice_agent_server::providers::LlmError> {
         Ok("Xin chao ban.".into())
     }
 }
@@ -109,7 +112,7 @@ impl LlmProvider for StreamingLlm {
 
     async fn stream(
         &self,
-        _: String,
+        _: voice_agent_server::providers::llm::LlmRequest,
     ) -> Result<
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
@@ -147,7 +150,7 @@ impl LlmProvider for ControlledSentenceLlm {
 
     async fn stream(
         &self,
-        _: String,
+        _: voice_agent_server::providers::llm::LlmRequest,
     ) -> Result<
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
@@ -186,7 +189,7 @@ impl LlmProvider for GreetingThenRustLlm {
 
     async fn stream(
         &self,
-        _: String,
+        _: voice_agent_server::providers::llm::LlmRequest,
     ) -> Result<
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
@@ -214,7 +217,7 @@ impl LlmProvider for BackpressuredLlm {
 
     async fn stream(
         &self,
-        _: String,
+        _: voice_agent_server::providers::llm::LlmRequest,
     ) -> Result<
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
@@ -254,7 +257,7 @@ impl LlmProvider for FailingLlm {
 
     async fn stream(
         &self,
-        _: String,
+        _: voice_agent_server::providers::llm::LlmRequest,
     ) -> Result<
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
@@ -343,6 +346,7 @@ async fn start_router_with_limits(
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
+        mcp: voice_agent_server::config::McpConfig::default(),
     };
     let app: Router = router_with_providers(config, providers);
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

@@ -106,8 +106,20 @@ impl LlmProvider for DeterministicLlm {
         "deterministic-llm"
     }
 
-    fn complete(&self, prompt: &str) -> Result<String, LlmError> {
-        Ok(format!("answer for {prompt}"))
+    fn complete(
+        &self,
+        request: &voice_agent_server::providers::llm::LlmRequest,
+    ) -> Result<String, LlmError> {
+        let text = request
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                voice_agent_server::providers::llm::ChatMessage::User { content } => Some(content),
+                _ => None,
+            })
+            .map(String::as_str)
+            .unwrap_or_default();
+        Ok(format!("answer for {text}"))
     }
 }
 
@@ -187,6 +199,7 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
+        mcp: voice_agent_server::config::McpConfig::default(),
     };
     let providers = Arc::new(ProviderSet::with_vad(
         Arc::new(SpeechThenSilenceVad),
@@ -225,6 +238,7 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
             enabled: true,
             trust_client_aec_feature: true,
         },
+        mcp: voice_agent_server::config::McpConfig::default(),
     };
     let providers = Arc::new(ProviderSet::with_all(
         Arc::new(SpeechThenSilenceVad),

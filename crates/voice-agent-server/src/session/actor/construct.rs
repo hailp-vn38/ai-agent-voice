@@ -217,6 +217,11 @@ impl SessionActor {
             client_aec_asserted: false,
             barge_in_enabled: false,
             trust_client_aec_feature: false,
+            mcp: DeviceMcpState::default(),
+            llm_messages: Vec::new(),
+            llm_round: None,
+            tool_depth: 0,
+            max_tool_depth: 4,
         })
     }
 
@@ -229,6 +234,27 @@ impl SessionActor {
         self.barge_in_enabled = policy.enabled;
         self.trust_client_aec_feature = policy.trust_client_aec_feature;
         self
+    }
+
+    pub fn with_device_mcp(
+        mut self,
+        client_advertised: bool,
+        config: &crate::config::McpConfig,
+    ) -> Self {
+        self.mcp.enabled = client_advertised && config.enabled;
+        self.mcp.allowed_tools = config.allowed_tools.iter().cloned().collect();
+        self.mcp.call_timeout = std::time::Duration::from_millis(config.call_timeout_ms);
+        self.mcp.discovery_timeout = std::time::Duration::from_millis(config.discovery_timeout_ms);
+        self
+    }
+
+    pub fn with_llm_tool_depth(mut self, max_tool_depth: usize) -> Self {
+        self.max_tool_depth = max_tool_depth;
+        self
+    }
+
+    pub fn start_mcp_discovery(&mut self) {
+        self.begin_mcp_discovery();
     }
 
     pub fn with_writer_events(mut self, writer_events: mpsc::Receiver<WriterEvent>) -> Self {

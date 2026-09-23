@@ -210,7 +210,7 @@ async fn handle_socket(
             return;
         }
     };
-    let actor = actor
+    let mut actor = actor
         .with_client_capabilities(
             hello.features.aec,
             crate::session::BargeInPolicy {
@@ -218,6 +218,8 @@ async fn handle_socket(
                 trust_client_aec_feature: config.barge_in.trust_client_aec_feature,
             },
         )
+        .with_device_mcp(hello.features.mcp, &config.mcp)
+        .with_llm_tool_depth(config.llm.max_tool_depth)
         .with_writer_events(writer_event_rx);
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
         .expect("ServerHello is serializable");
@@ -225,6 +227,7 @@ async fn handle_socket(
         close_direct(&mut sender, 1011).await;
         return;
     }
+    actor.start_mcp_discovery();
     info!("ServerHello sent; voice session connected");
     let writer = tokio::spawn(async move {
         let mut active_turn: Option<PlaybackTurn> = None;
@@ -435,9 +438,7 @@ async fn send_outbound(
             {
                 info!(
                     message_type = "llm",
-                    session_id = message["session_id"].as_str().unwrap_or(""),
                     chars = llm_text.chars().count(),
-                    text = %llm_text,
                     "WebSocket text sent to client"
                 );
             }

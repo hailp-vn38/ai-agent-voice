@@ -4,7 +4,10 @@ use futures_util::stream;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use voice_agent_server::{
-    providers::{LlmError, LlmEvent, LlmProvider, llm::LlmEventStream},
+    providers::{
+        LlmError, LlmEvent, LlmProvider,
+        llm::{LlmEventStream, LlmRequest, ToolCall},
+    },
     workers::{LlmRuntime, LlmRuntimeEvent, WorkerIdentity},
 };
 
@@ -16,7 +19,7 @@ impl LlmProvider for EventProvider {
         "test"
     }
 
-    async fn stream(&self, _: String) -> Result<LlmEventStream, LlmError> {
+    async fn stream(&self, _: LlmRequest) -> Result<LlmEventStream, LlmError> {
         Ok(Box::pin(stream::iter(self.0.clone())))
     }
 }
@@ -29,7 +32,7 @@ impl LlmProvider for PendingProvider {
         "pending"
     }
 
-    async fn stream(&self, _: String) -> Result<LlmEventStream, LlmError> {
+    async fn stream(&self, _: LlmRequest) -> Result<LlmEventStream, LlmError> {
         Ok(Box::pin(futures_util::stream::pending()))
     }
 }
@@ -80,9 +83,13 @@ async fn runtime_routes_domain_events_and_releases_permit_after_terminal() {
 }
 
 #[tokio::test]
-async fn unexpected_tool_call_is_terminal_without_a_retry_or_mcp_event() {
+async fn runtime_routes_typed_tool_call_without_a_retry() {
     let runtime = LlmRuntime::new(
-        Arc::new(EventProvider(vec![Ok(LlmEvent::UnexpectedToolCall)])),
+        Arc::new(EventProvider(vec![Ok(LlmEvent::ToolCall(ToolCall {
+            id: "call-1".into(),
+            name: "test_echo".into(),
+            arguments: serde_json::json!({"text":"x"}),
+        }))])),
         1,
         Duration::from_secs(1),
     );
@@ -95,9 +102,19 @@ async fn unexpected_tool_call_is_terminal_without_a_retry_or_mcp_event() {
         timeout(Duration::from_secs(1), events.recv())
             .await
             .unwrap(),
-        Some(LlmRuntimeEvent::UnexpectedToolCall { identity })
+        Some(LlmRuntimeEvent::ToolCall {
+            identity,
+            call: ToolCall {
+                id: "call-1".into(),
+                name: "test_echo".into(),
+                arguments: serde_json::json!({"text":"x"})
+            }
+        })
     );
-    assert!(events.try_recv().is_err());
+    assert!(matches!(
+        events.recv().await,
+        Some(LlmRuntimeEvent::Finished { .. })
+    ));
 }
 
 #[tokio::test]
