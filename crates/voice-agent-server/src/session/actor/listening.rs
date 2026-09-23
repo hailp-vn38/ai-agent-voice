@@ -23,11 +23,11 @@ impl SessionActor {
     }
 
     pub(super) fn start_listening(&mut self, mode: ListenMode) {
-        if matches!(mode, ListenMode::Auto | ListenMode::Realtime)
-            && self.listening_mode.as_ref() == Some(&mode)
-            && self.vad_session.is_some()
-        {
-            self.restart_existing_vad_capture_cycle();
+        let same_vad_mode = matches!(mode, ListenMode::Auto | ListenMode::Realtime)
+            && self.listening_mode.as_ref() == Some(&mode);
+        if same_vad_mode && (self.auto_speech_active || self.asr_stream.is_some()) {
+            // A duplicate arm must not reset the VAD cycle or cancel the ASR stream
+            // while this utterance is being captured or finalized.
             return;
         }
         if self.turn.is_some()
@@ -41,6 +41,10 @@ impl SessionActor {
             // must never cancel an in-flight response merely by changing mode.
             self.listening_mode = Some(mode);
             self.listen_arm_pending = true;
+            return;
+        }
+        if same_vad_mode && self.vad_session.is_some() {
+            self.restart_existing_vad_capture_cycle();
             return;
         }
         self.replace_listening_mode(mode);
@@ -307,7 +311,7 @@ impl SessionActor {
         match event {
             AsrWorkerEvent::Final { text, .. } if current => {
                 self.asr_stream = None;
-                if let Some(final_text) = self.commit_user_text(text) {
+                if let Some(final_text) = self.commit_user_text(normalize_asr_final_text(text)) {
                     self.begin_speech_delivery(final_text);
                 } else {
                     self.complete_recognition();
@@ -475,9 +479,30 @@ impl SessionActor {
                 self.asr_stream = Some((lease, identity));
                 if self.push_asr(retained).is_err() {
                     self.cancel_asr();
+                    self.auto_speech_active = false;
                 }
             }
             Err(_) => self.auto_retention.reset(),
         }
     }
+}
+
+fn normalize_asr_final_text(text: String) -> String {
+    let has_uppercase = text.chars().any(char::is_uppercase);
+    if !has_uppercase || text.chars().any(char::is_lowercase) {
+        return text;
+    }
+
+    let lowercase = text.to_lowercase();
+    let mut sentence_case = String::with_capacity(lowercase.len());
+    let mut first_letter = true;
+    for character in lowercase.chars() {
+        if first_letter && character.is_alphabetic() {
+            sentence_case.extend(character.to_uppercase());
+            first_letter = false;
+        } else {
+            sentence_case.push(character);
+        }
+    }
+    sentence_case
 }

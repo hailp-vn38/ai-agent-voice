@@ -142,7 +142,7 @@ fn manual_final_commits_history_then_enqueues_one_stt_without_partial() {
     let providers = Arc::new(ProviderSet::with_vad(
         Arc::new(FakeVad),
         Arc::new(FakeAsr {
-            final_text: "xin chào".into(),
+            final_text: "BẠN LÀM ĐƯỢC GÌ".into(),
         }),
     ));
     assert_eq!(providers.vad_adapter(), "fake_vad");
@@ -157,12 +157,12 @@ fn manual_final_commits_history_then_enqueues_one_stt_without_partial() {
     wait_for_worker(&mut actor);
 
     assert_eq!(actor.phase(), SessionPhase::Ready);
-    assert_eq!(actor.dialogue_history(), &["xin chào"]);
+    assert_eq!(actor.dialogue_history(), &["Bạn làm được gì"]);
     let message = messages.try_recv().unwrap();
     let payload: serde_json::Value = serde_json::from_str(message.as_text().unwrap()).unwrap();
     assert_eq!(payload["session_id"], "session");
     assert_eq!(payload["type"], "stt");
-    assert_eq!(payload["text"], "xin chào");
+    assert_eq!(payload["text"], "Bạn làm được gì");
     assert!(messages.try_recv().is_err());
 }
 
@@ -506,6 +506,121 @@ fn auto_actor_with_counting_vad(vad: Arc<VadWorkerRuntime>) -> SessionActor {
         },
     )
     .unwrap()
+}
+
+fn auto_actor_for_duplicate_start(
+    asr: Arc<dyn AsrProvider>,
+    vad: Arc<dyn VadProvider>,
+) -> SessionActor {
+    let (control, _) = mpsc::channel(8);
+    let (audio, _) = mpsc::channel(1);
+    let config = WorkerRuntimeConfig {
+        max_workers: 1,
+        command_capacity: 8,
+        final_timeout: Duration::from_secs(1),
+        cleanup_grace: Duration::from_secs(1),
+    };
+    SessionActor::new_with_runtimes_and_limiter(
+        "duplicate-auto".into(),
+        control,
+        audio,
+        4,
+        20,
+        SessionRuntimes {
+            asr: Arc::new(AsrWorkerRuntime::new(asr, config.clone())),
+            vad: Arc::new(VadWorkerRuntime::new(vad, config)),
+            llm: Arc::new(LlmRuntime::new(
+                Arc::new(UnavailableLlm),
+                1,
+                Duration::from_secs(60),
+            )),
+            tts: unavailable_tts_runtime(),
+            active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
+            vad_segmenter_config: VadSegmenterConfig {
+                speech_threshold: 0.5,
+                exit_threshold: 0.35,
+                min_speech_samples: 512,
+                end_silence_samples: 512,
+            },
+            pre_roll_samples: 0,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn repeated_auto_start_during_speech_preserves_asr_pcm() {
+    let pushed_samples = Arc::new(AtomicUsize::new(0));
+    let mut actor = auto_actor_for_duplicate_start(
+        Arc::new(RecordingAsr {
+            pushed_samples: Arc::clone(&pushed_samples),
+        }),
+        Arc::new(DelayedOnsetVad),
+    );
+    let packet = uplink_packet();
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    for _ in 0..2 {
+        assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    }
+    for _ in 0..100 {
+        actor.pump_workers();
+        if pushed_samples.load(Ordering::Relaxed) > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let before = pushed_samples.load(Ordering::Relaxed);
+    assert!(before > 0, "SpeechStart must open and feed ASR");
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    for _ in 0..100 {
+        actor.pump_workers();
+        if pushed_samples.load(Ordering::Relaxed) > before {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        pushed_samples.load(Ordering::Relaxed) > before,
+        "PCM after duplicate listen:start must reach the same ASR stream"
+    );
+}
+
+#[test]
+fn repeated_auto_start_during_asr_finalization_preserves_final_text() {
+    let mut actor = auto_actor_for_duplicate_start(
+        Arc::new(FakeAsr {
+            final_text: "complete utterance".into(),
+        }),
+        Arc::new(BoundaryVad),
+    );
+    let packet = uplink_packet();
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    wait_for_phase(&mut actor, SessionPhase::Processing);
+
+    // Finish has been sent by SpeechEnd, but its Final has not been consumed yet.
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    for _ in 0..100 {
+        actor.pump_workers();
+        if !actor.dialogue_history().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(actor.dialogue_history(), &["complete utterance"]);
 }
 
 #[test]
