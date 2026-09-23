@@ -252,7 +252,7 @@ pub fn verify_installed(
         .iter()
         .map(|artifact| {
             validate_relative_path(&artifact.install_path)?;
-            let installed = safe_install_path(root, &artifact.install_path)?;
+            let installed = safe_existing_install_path(root, &artifact.install_path)?;
             verify_path(&installed, &artifact.sha256)?;
             Ok((artifact.role.clone(), installed))
         })
@@ -262,6 +262,19 @@ pub fn verify_installed(
         adapter: model.adapter,
         artifacts,
     })
+}
+
+/// Resolves an installed path without creating directories during verification.
+fn safe_existing_install_path(root: &Path, relative: &Path) -> Result<PathBuf, ModelError> {
+    if !root.is_dir() {
+        return Err(ModelError::MissingArtifact(root.display().to_string()));
+    }
+    let canonical_root = fs::canonicalize(root)?;
+    let installed = root.join(relative);
+    if installed.exists() && !fs::canonicalize(&installed)?.starts_with(&canonical_root) {
+        return Err(ModelError::UnsafePath(relative.display().to_string()));
+    }
+    Ok(installed)
 }
 
 fn load_manifest(manifest_path: &Path, identity: &str, adapter: &str) -> Result<Model, ModelError> {

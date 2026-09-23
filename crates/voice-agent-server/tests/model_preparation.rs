@@ -124,6 +124,31 @@ fn offline_preflight_reports_a_corrupt_artifact_without_acquisition() {
 }
 
 #[test]
+fn offline_preflight_does_not_create_a_missing_model_root() {
+    let root = temp_dir("offline-preflight-read-only");
+    let manifest = manifest(
+        &root,
+        "models/vad/model.onnx",
+        b"model",
+        b"model",
+        "identity",
+    );
+    let model_root = root.join("not-installed");
+
+    let result = verify_installed(
+        &manifest,
+        &model_root,
+        "test-vad",
+        "silero_onnx",
+        &acknowledged_deployment(),
+    );
+
+    assert!(matches!(result, Err(ModelError::MissingArtifact(_))));
+    assert!(!model_root.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn reuses_a_verified_installed_artifact_by_role_without_network() {
     let root = temp_dir("model-reuse");
     let installed = root.join("vad/silero_vad.onnx");
