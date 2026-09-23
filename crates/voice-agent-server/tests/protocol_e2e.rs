@@ -540,3 +540,50 @@ async fn trusted_aec_auto_barge_in_stops_a_once_and_delivers_b_on_the_same_socke
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn trusted_aec_realtime_barge_in_keeps_the_voice_session_connected() {
+    let (base, task) = start_barge_in().await;
+    let mut socket = connect_with_aec(&base).await;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "listen", "state": "start", "mode": "realtime"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        socket
+            .send(Message::Binary(canonical_opus_packet().into()))
+            .await
+            .unwrap();
+    }
+    loop {
+        let message = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if matches!(message, Message::Text(ref text) if serde_json::from_str::<serde_json::Value>(text).is_ok_and(|value| value["type"] == "tts" && value["state"] == "start"))
+        {
+            break;
+        }
+    }
+    for _ in 0..2 {
+        socket
+            .send(Message::Binary(canonical_opus_packet().into()))
+            .await
+            .unwrap();
+    }
+    let frames = collect_frames_until_quiet(&mut socket).await;
+    assert!(
+        frames.iter().any(|message| matches!(message, Message::Text(text) if serde_json::from_str::<serde_json::Value>(text).is_ok_and(|value| value["type"] == "tts" && value["state"] == "stop"))),
+        "A must be stopped: {frames:?}"
+    );
+    assert!(
+        frames.iter().any(|message| matches!(message, Message::Text(text) if serde_json::from_str::<serde_json::Value>(text).is_ok_and(|value| value["type"] == "stt" && value["text"] == "utterance B"))),
+        "B must be accepted on the same Realtime socket: {frames:?}"
+    );
+    task.abort();
+}
