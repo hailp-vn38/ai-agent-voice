@@ -642,6 +642,10 @@ mod additional_python_cases {
                 "Ngày 31/12/2025 lúc 15:30.",
                 "Ngày ba mươi mốt tháng mười hai năm hai nghìn không trăm hai mươi lăm lúc mười lăm giờ ba mươi phút.",
             ),
+            (
+                "Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC.",
+                "Hôm nay là Tuesday, hai mươi ba tháng chín năm hai nghìn không trăm hai mươi sáu mười hai giờ năm mươi tư phút năm mươi sáu giây UTC.",
+            ),
         ];
         for (input, expected) in cases {
             assert_eq!(normalize_vi_text(input), expected, "input: {input}");

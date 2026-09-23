@@ -53,6 +53,7 @@ pub struct SpeechOutput {
     started: bool,
     playback_origin: Option<Instant>,
     playback_end_deadline: Option<Instant>,
+    json_filter: JsonFilter,
     segmenter: SentenceSegmenter,
     max_pending: usize,
 }
@@ -85,6 +86,7 @@ impl SpeechOutput {
             started: false,
             playback_origin: None,
             playback_end_deadline: None,
+            json_filter: JsonFilter::default(),
             segmenter: SentenceSegmenter::new(config),
             max_pending,
         })
@@ -103,11 +105,13 @@ impl SpeechOutput {
 
     /// Accepts LLM text incrementally. Every completed segment is admitted atomically.
     pub fn push_delta(&mut self, text: &str) -> Result<(), SpeechOutputError> {
-        for segment in self.segmenter.push(text) {
+        let text = self.json_filter.push(text);
+        for segment in self.segmenter.push(&text) {
             self.enqueue(segment)?;
         }
         // Emergency bound for an unfinished sentence; never synthesize a partial sentence.
-        if self.segmenter.buffer.chars().count() > self.segmenter.config.max_chars.saturating_mul(2)
+        if self.segmenter.buffer.chars().count() + self.json_filter.candidate.chars().count()
+            > self.segmenter.config.max_chars.saturating_mul(2)
         {
             return Err(SpeechOutputError::Backpressure);
         }
@@ -115,6 +119,10 @@ impl SpeechOutput {
     }
 
     pub fn finish_input(&mut self) -> Result<(), SpeechOutputError> {
+        let remaining = self.json_filter.finish();
+        for segment in self.segmenter.push(&remaining) {
+            self.enqueue(segment)?;
+        }
         if let Some(segment) = self.segmenter.finish() {
             self.enqueue(segment)?;
         }
@@ -258,6 +266,7 @@ impl SpeechOutput {
         self.started = false;
         self.playback_origin = None;
         self.playback_end_deadline = None;
+        self.json_filter.reset();
         self.segmenter.reset();
         if let (Some(runtime), Some(stream)) = (&self.tts_runtime, self.tts_stream.take()) {
             runtime.close_stream(stream);
@@ -393,6 +402,81 @@ impl SpeechOutput {
     }
 }
 
+/// Removes complete JSON objects and arrays from streamed LLM text before sentence splitting.
+#[derive(Default)]
+struct JsonFilter {
+    candidate: String,
+    depth: usize,
+    in_string: bool,
+    escaped: bool,
+    last_emitted: Option<char>,
+    skip_next_space: bool,
+}
+
+impl JsonFilter {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn push(&mut self, delta: &str) -> String {
+        let mut output = String::new();
+        for ch in delta.chars() {
+            if self.depth == 0 {
+                if matches!(ch, '{' | '[') {
+                    self.depth = 1;
+                    self.candidate.push(ch);
+                } else {
+                    if self.skip_next_space && ch == ' ' {
+                        self.skip_next_space = false;
+                        continue;
+                    }
+                    self.skip_next_space = false;
+                    output.push(ch);
+                    self.last_emitted = Some(ch);
+                }
+                continue;
+            }
+
+            self.candidate.push(ch);
+            if self.escaped {
+                self.escaped = false;
+            } else if ch == '\\' && self.in_string {
+                self.escaped = true;
+            } else if ch == '"' {
+                self.in_string = !self.in_string;
+            } else if !self.in_string {
+                match ch {
+                    '{' | '[' => self.depth += 1,
+                    '}' | ']' => self.depth -= 1,
+                    _ => {}
+                }
+            }
+            if self.depth == 0 {
+                if serde_json::from_str::<serde_json::Value>(&self.candidate).is_ok() {
+                    if self.last_emitted.is_some_and(char::is_alphanumeric) {
+                        output.push(' ');
+                        self.last_emitted = Some(' ');
+                    }
+                    self.skip_next_space = self.last_emitted == Some(' ');
+                } else {
+                    output.push_str(&self.candidate);
+                    self.last_emitted = Some(ch);
+                    self.skip_next_space = false;
+                }
+                self.candidate.clear();
+            }
+        }
+        output
+    }
+
+    fn finish(&mut self) -> String {
+        self.depth = 0;
+        self.in_string = false;
+        self.escaped = false;
+        std::mem::take(&mut self.candidate)
+    }
+}
+
 /// Pure V1 sentence delivery policy. It never knows about synthesis or transport.
 struct SentenceSegmenter {
     config: SpeechOutputConfig,
@@ -451,11 +535,22 @@ fn sanitize_tts_text(input: &str) -> String {
     let normalized = input.nfc().collect::<String>();
     let mut output = String::with_capacity(normalized.len());
     let mut pending_space = false;
-    for ch in normalized.chars() {
+    for (index, ch) in normalized.char_indices() {
+        let between_digits = normalized[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|previous| previous.is_ascii_digit())
+            && normalized[index + ch.len_utf8()..]
+                .chars()
+                .next()
+                .is_some_and(|next| next.is_ascii_digit());
         if ch.is_alphanumeric() {
             if pending_space && !output.is_empty() {
                 output.push(' ');
             }
+            pending_space = false;
+            output.push(ch);
+        } else if matches!(ch, '/' | '-') && between_digits {
             pending_space = false;
             output.push(ch);
         } else if ch.is_whitespace() || matches!(ch, '_' | '-' | '–' | '—') {
@@ -1013,6 +1108,40 @@ mod tests {
     }
 
     #[test]
+    fn keeps_date_and_time_separators_for_zerotts_normalization() {
+        let text = sanitize_tts_text("Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC.");
+        assert_eq!(text, "Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC.");
+    }
+
+    #[test]
+    fn removes_json_command_across_deltas_before_sentence_delivery() {
+        let mut filter = super::JsonFilter::default();
+        let mut segmenter = SentenceSegmenter::new(SpeechOutputConfig::default());
+        let mut segments = Vec::new();
+        for delta in [
+            "{\"cmd\": \"date '+%A, %d/%m/",
+            "%Y %H:%M:%S %Z'\"}Hôm nay là Tuesday, ",
+            "23/09/2026 12:54:56 UTC.",
+        ] {
+            segments.extend(segmenter.push(&filter.push(delta)));
+        }
+        segments.extend(segmenter.push(&filter.finish()));
+        segments.extend(segmenter.finish());
+        assert_eq!(segments, ["Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC."]);
+    }
+
+    #[test]
+    fn json_filter_handles_escaped_braces_and_keeps_non_json_braces() {
+        let mut filter = super::JsonFilter::default();
+        assert_eq!(
+            filter.push("Xin {\"note\": \"brace } and \\\"quote\\\"\"}chào {bạn}."),
+            "Xin chào {bạn}."
+        );
+        assert_eq!(filter.push("Mời [1, {\"cmd\": \"skip\"}] bạn."), "Mời bạn.");
+        assert_eq!(filter.finish(), "");
+    }
+
+    #[test]
     fn segment_ready_keeps_display_text_while_tts_receives_sanitized_text() {
         use super::{SpeechOutput, SpeechOutputEvent};
         use crate::{
@@ -1048,6 +1177,26 @@ mod tests {
             Some(SpeechOutputEvent::Started)
         ));
         assert_eq!(*inputs.lock().unwrap(), ["Xin chào!"]);
+
+        output.cancel();
+        output.push_delta("{\"cmd\": \"date '+%A, %d/%m/").unwrap();
+        output
+            .push_delta("%Y %H:%M:%S %Z'\"}Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC.")
+            .unwrap();
+        output.finish_input().unwrap();
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::SegmentReady { text })
+                if text == "Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC."
+        ));
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::Started)
+        ));
+        assert_eq!(
+            *inputs.lock().unwrap(),
+            ["Xin chào!", "Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC."]
+        );
     }
 
     #[test]
