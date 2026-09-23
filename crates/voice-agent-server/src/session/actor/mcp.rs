@@ -67,7 +67,13 @@ impl SessionActor {
                 }
                 Err(_) => self.mcp_discovery_failed(),
             },
-            PendingMcpKind::ToolCall { call } => self.complete_tool_call(call, response),
+            PendingMcpKind::ToolCall { call } => {
+                tracing::info!(
+                    event = "mcp_tool_result_received",
+                    "Device MCP tool result received"
+                );
+                self.complete_tool_call(call, response)
+            }
         }
     }
 
@@ -192,6 +198,9 @@ impl SessionActor {
             self.send_control(text).is_ok()
         };
         if sent {
+            if matches!(&kind, PendingMcpKind::ToolCall { .. }) {
+                tracing::info!(event = "mcp_tool_call_sent", "Device MCP tool call sent");
+            }
             self.mcp.pending.insert(
                 id,
                 PendingMcpRequest {

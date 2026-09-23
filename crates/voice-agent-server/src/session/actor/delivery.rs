@@ -29,6 +29,11 @@ impl SessionActor {
 
     pub(super) fn begin_tool_continuation(&mut self) {
         self.tool_depth += 1;
+        tracing::info!(
+            event = "llm_tool_continuation_started",
+            tool_depth = self.tool_depth,
+            "LLM tool continuation started"
+        );
         if self.tool_depth >= self.max_tool_depth {
             self.llm_messages.push(ChatMessage::ToolResult {
                 tool_call_id: "tool_depth".into(),
@@ -122,6 +127,10 @@ impl SessionActor {
                         self.start_tool_batch(round.calls);
                         return;
                     }
+                    tracing::info!(
+                        event = "llm_final_round_finished",
+                        "LLM final no-tool round finished"
+                    );
                     self.generated_response = round.prose.clone();
                     self.pending_llm_delta = Some((round.prose, 0));
                 }
