@@ -401,8 +401,8 @@ fn splits_unicode_only_at_complete_sentence_boundary() {
         pending_segments: 2,
     });
     assert_eq!(segmenter.push("Xin chao。Tiep"), ["Xin chao。"]);
-    assert!(segmenter.push(" tuc rat dai").is_empty());
-    assert_eq!(segmenter.finish(), Some("Tiep tuc rat dai".into()));
+    assert_eq!(segmenter.push(" tuc rat dai"), ["Tiep tuc"]);
+    assert_eq!(segmenter.finish(), Some("rat dai".into()));
 }
 
 #[test]
@@ -451,21 +451,36 @@ fn emits_a_complete_sentence_before_the_llm_finishes() {
 }
 
 #[test]
-fn holds_a_long_sentence_until_eof() {
+fn bounded_split_prevents_an_unfinished_sentence_from_growing_unbounded() {
     let mut segmenter = SentenceSegmenter::new(SpeechOutputConfig {
         min_chars: 4,
         soft_break_min_chars: 8,
         max_chars: 10,
         pending_segments: 2,
     });
-    assert!(segmenter.push("abcdefghij").is_empty());
+    assert_eq!(segmenter.push("abcdefghij"), ["abcdefghij"]);
     assert!(segmenter.push("klm next").is_empty());
-    assert_eq!(segmenter.finish(), Some("abcdefghijklm next".into()));
+    assert_eq!(segmenter.finish(), Some("klm next".into()));
 }
 
 #[test]
-fn rejects_a_token_too_long_to_split_safely() {
-    use super::{SpeechOutput, SpeechOutputError};
+fn hard_splits_a_long_token_at_unicode_char_boundaries() {
+    let mut segmenter = SentenceSegmenter::new(SpeechOutputConfig {
+        min_chars: 4,
+        soft_break_min_chars: 8,
+        max_chars: 10,
+        pending_segments: 2,
+    });
+    assert_eq!(
+        segmenter.push("abcdefghijklmnopqrstu"),
+        ["abcdefghij", "klmnopqrst"]
+    );
+    assert_eq!(segmenter.finish(), Some("u".into()));
+}
+
+#[test]
+fn long_unpunctuated_delta_does_not_become_backpressure() {
+    use super::SpeechOutput;
     use crate::providers::tts::UnavailableTts;
     use std::sync::Arc;
 
@@ -475,14 +490,12 @@ fn rejects_a_token_too_long_to_split_safely() {
             min_chars: 4,
             soft_break_min_chars: 8,
             max_chars: 10,
-            pending_segments: 2,
+            pending_segments: 8,
         },
     )
     .unwrap();
-    assert_eq!(
-        output.push_delta("abcdefghijklmnopqrstu"),
-        Err(SpeechOutputError::Backpressure)
-    );
+
+    assert!(output.push_delta("abcdefghijklmnopqrstu").is_ok());
 }
 
 #[test]
@@ -504,22 +517,18 @@ fn short_hard_sentence_is_flushed_immediately() {
 }
 
 #[test]
-fn soft_punctuation_and_length_do_not_split_unfinished_sentence() {
+fn soft_punctuation_is_preferred_before_a_hard_length_split() {
     let mut segmenter = SentenceSegmenter::new(SpeechOutputConfig {
         min_chars: 4,
         soft_break_min_chars: 8,
         max_chars: 10,
         pending_segments: 2,
     });
-    assert!(
-        segmenter
-            .push("Nếu bạn muốn, mình có thể kiểm tra")
-            .is_empty()
-    );
     assert_eq!(
-        segmenter.push(" ngay bây giờ."),
-        ["Nếu bạn muốn, mình có thể kiểm tra ngay bây giờ."]
+        segmenter.push("one two, three four"),
+        ["one two,", "three fou"]
     );
+    assert_eq!(segmenter.finish(), Some("r".into()));
 }
 
 #[test]

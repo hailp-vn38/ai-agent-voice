@@ -320,8 +320,19 @@ impl SessionActor {
 
     pub(super) fn fail_speech_delivery(&mut self) {
         let writer_owns_terminal_outcome = self.tts_started;
-        self.cancel_llm();
+        let failed_generation = self.generation;
         self.cancel_speech_delivery();
+        self.cancel_llm();
+        self.cancel_mcp_turn();
+        if !self.advance_generation() {
+            return;
+        }
+        warn!(
+            event = "speech_delivery_failed",
+            failed_generation,
+            next_generation = self.generation,
+            "Speech delivery failed; generation advanced"
+        );
         if !writer_owns_terminal_outcome {
             self.complete_recognition();
         }

@@ -422,7 +422,12 @@ async fn send_outbound(
         | OutboundMessage::AbortTurn { .. }
         | OutboundMessage::Close(_) => None,
     };
-    if generation.is_some_and(|generation| !generation_gate.admits(generation)) {
+    if let Some(generation) = generation.filter(|generation| !generation_gate.admits(*generation)) {
+        tracing::debug!(
+            event = "outbound_generation_rejected",
+            generation,
+            "Dropped stale turn-scoped outbound message"
+        );
         return false;
     }
     let closes = matches!(message, OutboundMessage::Close(_));

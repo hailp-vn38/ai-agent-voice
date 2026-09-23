@@ -121,18 +121,6 @@ impl SpeechOutput {
         for segment in self.segmenter.push(&text) {
             self.enqueue(segment)?;
         }
-        // Emergency bound for an unfinished sentence; never synthesize a partial sentence.
-        if self.segmenter.buffer.chars().count() + self.json_filter.candidate.chars().count()
-            > self.segmenter.config.max_chars.saturating_mul(2)
-        {
-            tracing::warn!(
-                unfinished_chars = self.segmenter.buffer.chars().count()
-                    + self.json_filter.candidate.chars().count(),
-                max_chars = self.segmenter.config.max_chars,
-                "Unfinished LLM text exceeded speech buffer"
-            );
-            return Err(SpeechOutputError::Backpressure);
-        }
         Ok(())
     }
 

@@ -89,21 +89,9 @@ impl SentenceSegmenter {
         self.buffer.push_str(delta);
         let mut segments = Vec::new();
         loop {
-            let boundary = self.buffer.char_indices().find_map(|(index, ch)| {
-                let next = self.buffer[index + ch.len_utf8()..].chars().next();
-                let previous = self.buffer[..index].chars().next_back();
-                let sentence_dot = ch == '.'
-                    && match next {
-                        Some(next) => {
-                            next.is_whitespace()
-                                || matches!(next, '"' | '\'' | ')' | ']' | '”' | '’')
-                        }
-                        None => previous.is_some_and(|previous| !previous.is_ascii_digit()),
-                    };
-                (sentence_dot || matches!(ch, '!' | '?' | '\u{3002}' | '\u{ff01}' | '\u{ff1f}'))
-                    .then_some(index + ch.len_utf8())
-            });
-            let Some(split) = boundary else { break };
+            let Some(split) = self.next_split() else {
+                break;
+            };
             let segment = self.buffer[..split].trim().to_owned();
             self.buffer.drain(..split);
             if !segment.is_empty() {
@@ -112,11 +100,66 @@ impl SentenceSegmenter {
         }
         segments
     }
+
+    fn next_split(&self) -> Option<usize> {
+        let max_end = byte_end_at_chars(&self.buffer, self.config.max_chars);
+        let search_end = max_end.unwrap_or(self.buffer.len());
+        let sentence = self.buffer[..search_end]
+            .char_indices()
+            .find_map(|(index, ch)| {
+                self.is_sentence_boundary(index, ch)
+                    .then_some(index + ch.len_utf8())
+            });
+        if sentence.is_some() {
+            return sentence;
+        }
+        let max_end = max_end?;
+        let min_end =
+            byte_end_at_chars(&self.buffer, self.config.soft_break_min_chars).unwrap_or(0);
+        let mut newline = None;
+        let mut punctuation = None;
+        let mut whitespace = None;
+        for (index, ch) in self.buffer[..max_end].char_indices() {
+            let end = index + ch.len_utf8();
+            if end < min_end {
+                continue;
+            }
+            match ch {
+                '\n' | '\r' => newline = Some(end),
+                ',' | ';' | ':' => punctuation = Some(end),
+                ch if ch.is_whitespace() => whitespace = Some(end),
+                _ => {}
+            }
+        }
+        newline.or(punctuation).or(whitespace).or(Some(max_end))
+    }
+
+    fn is_sentence_boundary(&self, index: usize, ch: char) -> bool {
+        let next = self.buffer[index + ch.len_utf8()..].chars().next();
+        let previous = self.buffer[..index].chars().next_back();
+        let sentence_dot = ch == '.'
+            && match next {
+                Some(next) => {
+                    next.is_whitespace() || matches!(next, '"' | '\'' | ')' | ']' | '”' | '’')
+                }
+                None => previous.is_some_and(|previous| !previous.is_ascii_digit()),
+            };
+        sentence_dot || matches!(ch, '!' | '?' | '\u{3002}' | '\u{ff01}' | '\u{ff1f}')
+    }
     pub(super) fn finish(&mut self) -> Option<String> {
         let text = self.buffer.trim().to_owned();
         self.buffer.clear();
         (!text.is_empty()).then_some(text)
     }
+}
+
+fn byte_end_at_chars(text: &str, limit: usize) -> Option<usize> {
+    if limit == 0 {
+        return Some(0);
+    }
+    text.char_indices()
+        .nth(limit - 1)
+        .map(|(index, ch)| index + ch.len_utf8())
 }
 pub(super) fn sanitize_tts_text(input: &str) -> String {
     let normalized = input.nfc().collect::<String>();
