@@ -135,6 +135,8 @@ struct DeviceMcpState {
     failed: bool,
     next_request_id: u64,
     allowed_tools: HashSet<String>,
+    result_delivery: crate::config::McpResultDelivery,
+    tool_delivery: HashMap<String, crate::config::McpResultDelivery>,
     call_timeout: std::time::Duration,
     discovery_timeout: std::time::Duration,
     discovered: Vec<DiscoveredTool>,

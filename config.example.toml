@@ -125,3 +125,10 @@ call_timeout_ms = 30000
 discovery_timeout_ms = 10000
 # Omit `allowed_tools` to expose the non-dangerous tools announced by the client.
 # Set it only to restrict a deployment to an explicit subset.
+# Tool results normally return to the LLM before final TTS.
+result_delivery = "llm_then_tts"
+# Per-tool overrides use the original MCP wire name. `direct_tts` only speaks
+# successful plain-text results; structured JSON remains silent.
+# [[mcp.tool_policy]]
+# name = "self.audio_speaker.set_volume"
+# result_delivery = "direct_tts"

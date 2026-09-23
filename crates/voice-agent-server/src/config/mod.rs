@@ -225,6 +225,26 @@ pub struct McpConfig {
     pub discovery_timeout_ms: u64,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub result_delivery: McpResultDelivery,
+    #[serde(default)]
+    pub tool_policy: Vec<McpToolPolicy>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpResultDelivery {
+    #[default]
+    LlmThenTts,
+    DirectTts,
+    Silent,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpToolPolicy {
+    pub name: String,
+    pub result_delivery: McpResultDelivery,
 }
 
 impl Default for McpConfig {
@@ -234,6 +254,8 @@ impl Default for McpConfig {
             call_timeout_ms: default_mcp_call_timeout_ms(),
             discovery_timeout_ms: default_mcp_discovery_timeout_ms(),
             allowed_tools: Vec::new(),
+            result_delivery: McpResultDelivery::default(),
+            tool_policy: Vec::new(),
         }
     }
 }

@@ -129,6 +129,12 @@ enabled = true
 call_timeout_ms = 30000
 # Optional: when omitted, use the non-dangerous catalog announced by the client.
 # allowed_tools = ["test.echo", "test.get_value", "test.set_value"]
+result_delivery = "llm_then_tts"
+
+# Lookup uses the original MCP name. Direct TTS requires a successful plain-text result.
+[[mcp.tool_policy]]
+name = "self.audio_speaker.set_volume"
+result_delivery = "direct_tts"
 ```
 
 ## 3. Environment override

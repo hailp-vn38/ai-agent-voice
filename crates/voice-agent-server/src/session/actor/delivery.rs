@@ -44,6 +44,13 @@ impl SessionActor {
         self.start_llm_round(self.tool_depth < self.max_tool_depth);
     }
 
+    pub(super) fn begin_direct_tool_speech(&mut self, text: String) {
+        self.generated_response = text.clone();
+        self.pending_llm_delta = Some((text, 0));
+        self.llm_finish_pending = true;
+        self.flush_pending_llm_text();
+    }
+
     fn start_llm_round(&mut self, allow_tools: bool) {
         let Some(cancellation) = self.turn.as_ref().map(|turn| turn.cancellation.clone()) else {
             self.fail_closed();

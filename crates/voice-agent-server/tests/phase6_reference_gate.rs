@@ -145,6 +145,7 @@ async fn start() -> (String, JoinHandle<()>) {
                 "test.get_value".into(),
                 "test.set_value".into(),
             ],
+            ..McpConfig::default()
         },
     };
     let providers = Arc::new(ProviderSet::with_all(

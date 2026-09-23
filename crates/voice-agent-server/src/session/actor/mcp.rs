@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::McpResultDelivery;
 use crate::tools::device_mcp::{McpIncoming, McpOutgoing, parse_tools_page, visible_tools};
 
 impl SessionActor {
@@ -121,10 +122,18 @@ impl SessionActor {
         });
         let Some(call) = next else {
             if let Some(batch) = self.mcp.batch.take() {
-                self.llm_messages
-                    .push(ChatMessage::AssistantToolCalls { calls: batch.calls });
-                self.llm_messages.extend(batch.results);
-                self.begin_tool_continuation();
+                self.commit_tool_exchange(&batch);
+                match self.batch_result_delivery(&batch) {
+                    McpResultDelivery::LlmThenTts => self.begin_tool_continuation(),
+                    McpResultDelivery::DirectTts => {
+                        if let Some(text) = self.direct_tts_text(&batch) {
+                            self.begin_direct_tool_speech(text);
+                        } else {
+                            self.finish_tool_turn_without_speech();
+                        }
+                    }
+                    McpResultDelivery::Silent => self.finish_tool_turn_without_speech(),
+                }
             }
             return;
         };
@@ -251,6 +260,63 @@ impl SessionActor {
             .retain(|_, pending| pending.generation.is_none());
         self.mcp.batch = None;
         self.llm_round = None;
+    }
+
+    fn commit_tool_exchange(&mut self, batch: &ToolBatchState) {
+        self.llm_messages.push(ChatMessage::AssistantToolCalls {
+            calls: batch.calls.clone(),
+        });
+        self.llm_messages.extend(batch.results.clone());
+    }
+
+    fn batch_result_delivery(&self, batch: &ToolBatchState) -> McpResultDelivery {
+        batch
+            .calls
+            .iter()
+            .fold(McpResultDelivery::Silent, |selected, call| {
+                let delivery = self
+                    .mcp
+                    .visible
+                    .iter()
+                    .find(|tool| tool.llm_name == call.name)
+                    .and_then(|tool| self.mcp.tool_delivery.get(&tool.original_name))
+                    .copied()
+                    .unwrap_or(self.mcp.result_delivery);
+                match (selected, delivery) {
+                    (McpResultDelivery::LlmThenTts, _) | (_, McpResultDelivery::LlmThenTts) => {
+                        McpResultDelivery::LlmThenTts
+                    }
+                    (McpResultDelivery::DirectTts, _) | (_, McpResultDelivery::DirectTts) => {
+                        McpResultDelivery::DirectTts
+                    }
+                    _ => McpResultDelivery::Silent,
+                }
+            })
+    }
+
+    fn direct_tts_text(&self, batch: &ToolBatchState) -> Option<String> {
+        let text = batch
+            .results
+            .iter()
+            .filter_map(|result| match result {
+                ChatMessage::ToolResult { content, .. } => {
+                    serde_json::from_str::<serde_json::Value>(content)
+                        .ok()
+                        .filter(|result| result["ok"].as_bool() == Some(true))
+                        .and_then(|result| {
+                            result["content"].as_str().map(str::trim).map(str::to_owned)
+                        })
+                }
+                _ => None,
+            })
+            .filter(|text| !text.is_empty() && !text.starts_with('{') && !text.starts_with('['))
+            .collect::<Vec<_>>();
+        (!text.is_empty()).then(|| text.join("\n"))
+    }
+
+    fn finish_tool_turn_without_speech(&mut self) {
+        self.generated_response.clear();
+        self.complete_recognition();
     }
 }
 

@@ -243,6 +243,12 @@ impl SessionActor {
     ) -> Self {
         self.mcp.enabled = client_advertised && config.enabled;
         self.mcp.allowed_tools = config.allowed_tools.iter().cloned().collect();
+        self.mcp.result_delivery = config.result_delivery;
+        self.mcp.tool_delivery = config
+            .tool_policy
+            .iter()
+            .map(|policy| (policy.name.clone(), policy.result_delivery))
+            .collect();
         self.mcp.call_timeout = std::time::Duration::from_millis(config.call_timeout_ms);
         self.mcp.discovery_timeout = std::time::Duration::from_millis(config.discovery_timeout_ms);
         self

@@ -129,6 +129,16 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
             "MCP allowlist must not contain dangerous tools".into(),
         ));
     }
+    let mut policy_names = std::collections::HashSet::new();
+    if config.mcp.tool_policy.iter().any(|policy| {
+        policy.name.trim().is_empty()
+            || crate::tools::device_mcp::is_dangerous_tool(&policy.name)
+            || !policy_names.insert(&policy.name)
+    }) {
+        return Err(ConfigError::Validation(
+            "MCP tool policy names must be unique, non-empty, and non-dangerous".into(),
+        ));
+    }
     Ok(())
 }
 
