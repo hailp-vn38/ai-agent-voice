@@ -85,9 +85,8 @@ impl SessionActor {
     pub fn on_binary(&mut self, payload: Vec<u8>) -> bool {
         let armed_vad_capture = self.vad_session.is_some()
             && !self.auto_reset_pending
-            && (self.listening_mode == Some(ListenMode::Realtime)
-                || (self.listening_mode == Some(ListenMode::Auto)
-                    && self.phase == SessionPhase::Speaking));
+            && self.phase == SessionPhase::Speaking
+            && self.acoustic_barge_in_allowed();
         if self.phase == SessionPhase::Listening || armed_vad_capture {
             match self.uplink_decoder.decode(&payload) {
                 DecodeOutcome::Frame(frame) => {

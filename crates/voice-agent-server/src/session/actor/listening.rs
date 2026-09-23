@@ -369,29 +369,13 @@ impl SessionActor {
                 start_sample,
                 ..
             } if current_cycle(cycle) && !self.auto_speech_active => {
-                // Realtime remains VAD-armed while an existing turn is processing or
-                // speaking, but ticket 04 does not yet permit acoustic interruption.
                 if self.turn.is_some() {
+                    if self.phase == SessionPhase::Speaking && self.acoustic_barge_in_allowed() {
+                        self.begin_acoustic_barge_in(start_sample);
+                    }
                     return;
                 }
-                self.auto_speech_active = true;
-                let identity =
-                    WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
-                match self.asr_runtime.open(identity.clone()) {
-                    Ok(lease) => {
-                        self.asr_stream = Some((lease, identity));
-                        let feed_start = start_sample.saturating_sub(self.pre_roll_samples);
-                        let Some(retained) = self.auto_retention.range(feed_start) else {
-                            self.fail_closed();
-                            return;
-                        };
-                        if self.push_asr(retained).is_err() {
-                            self.cancel_asr();
-                            self.asr_stream = None;
-                        }
-                    }
-                    Err(_) => self.auto_retention.reset(),
-                }
+                self.open_asr_for_vad_speech(start_sample);
             }
             VadWorkerEvent::SpeechEnd { cycle, .. }
                 if current_cycle(cycle) && self.auto_speech_active =>
@@ -445,5 +429,43 @@ impl SessionActor {
         self.vad_cycle = None;
         self.pending_vad_cycle = Some(cycle);
         self.vad_runtime.send(lease, VadCommand::Reset { cycle })
+    }
+
+    /// Snapshots the triggering utterance before invalidating A, then begins B in the same
+    /// VAD capture cycle. The retained range is deliberately obtained before reset/cancellation:
+    /// the current PCM packet may contain the onset that caused the interruption.
+    fn begin_acoustic_barge_in(&mut self, start_sample: u64) {
+        let feed_start = start_sample.saturating_sub(self.pre_roll_samples);
+        let Some(retained) = self.auto_retention.range(feed_start) else {
+            self.fail_closed();
+            return;
+        };
+        self.interrupt_active_turn();
+        self.generation += 1;
+        self.open_asr_for_vad_speech_with_retention(retained);
+    }
+
+    fn open_asr_for_vad_speech(&mut self, start_sample: u64) {
+        let feed_start = start_sample.saturating_sub(self.pre_roll_samples);
+        let Some(retained) = self.auto_retention.range(feed_start) else {
+            self.fail_closed();
+            return;
+        };
+        self.open_asr_for_vad_speech_with_retention(retained);
+    }
+
+    fn open_asr_for_vad_speech_with_retention(&mut self, retained: PcmF32Mono) {
+        self.auto_speech_active = true;
+        let identity =
+            WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
+        match self.asr_runtime.open(identity.clone()) {
+            Ok(lease) => {
+                self.asr_stream = Some((lease, identity));
+                if self.push_asr(retained).is_err() {
+                    self.cancel_asr();
+                }
+            }
+            Err(_) => self.auto_retention.reset(),
+        }
     }
 }

@@ -230,8 +230,10 @@ impl SessionActor {
     }
 
     pub(super) fn cancel_asr(&mut self) {
-        if let Some((lease, _)) = self.asr_stream {
-            let _ = self.asr_runtime.send(lease, AsrCommand::Cancel);
+        if let Some((lease, identity)) = self.asr_stream.take() {
+            if self.asr_runtime.send(lease, AsrCommand::Cancel).is_ok() {
+                self.asr_cleanup_pending.insert(identity);
+            }
         }
     }
 
