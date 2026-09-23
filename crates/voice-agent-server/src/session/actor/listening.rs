@@ -51,10 +51,11 @@ impl SessionActor {
     pub(super) fn replace_listening_mode(&mut self, mode: ListenMode) {
         self.listen_arm_pending = false;
         self.cancel_speech_delivery();
-        self.generation += 1;
+        if !self.advance_generation() {
+            return;
+        }
         self.cancel_llm();
         self.cancel_asr();
-        self.release_active_turn();
         self.close_vad();
         self.auto_speech_active = false;
         self.auto_reset_pending = false;
@@ -63,8 +64,10 @@ impl SessionActor {
         self.auto_retention.reset();
         self.vad_segmenter.reset();
         self.listening_mode = Some(mode.clone());
-        let identity =
-            WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
+        let Some(identity) = self.next_worker_identity() else {
+            self.fail_closed();
+            return;
+        };
         match mode {
             ListenMode::Manual => match self.asr_runtime.open(identity.clone()) {
                 Ok(lease) => {
@@ -151,12 +154,14 @@ impl SessionActor {
         }
     }
 
-    pub(super) fn abort_current_turn(&mut self) {
+    pub(super) fn abort_active_interaction(&mut self) {
         if self.phase == SessionPhase::Closed {
             return;
         }
         self.interrupt_active_turn();
-        self.generation += 1;
+        if !self.advance_generation() {
+            return;
+        }
         self.manual_capture.abort();
         if matches!(
             self.listening_mode,
@@ -227,11 +232,10 @@ impl SessionActor {
             }
             Some(ListenMode::Realtime) | None => return,
         }
-        if !self.active_turn_limiter.try_acquire() {
+        if self.begin_active_turn().is_none() {
             self.phase = SessionPhase::Ready;
             return;
         }
-        self.has_active_turn_permit = true;
         self.phase = SessionPhase::Processing;
         if let Some(text) = self.commit_user_text(text) {
             self.begin_speech_delivery(text);
@@ -255,12 +259,11 @@ impl SessionActor {
     }
 
     pub(super) fn finish_manual(&mut self) {
-        if !self.active_turn_limiter.try_acquire() {
+        if self.begin_active_turn().is_none() {
             self.cancel_asr();
             self.complete_recognition();
             return;
         }
-        self.has_active_turn_permit = true;
         let Some((lease, _)) = self.asr_stream else {
             self.release_active_turn();
             return;
@@ -445,7 +448,9 @@ impl SessionActor {
             return;
         };
         self.interrupt_active_turn();
-        self.generation += 1;
+        if !self.advance_generation() {
+            return;
+        }
         self.open_asr_for_vad_speech_with_retention(retained);
     }
 
@@ -460,8 +465,10 @@ impl SessionActor {
 
     fn open_asr_for_vad_speech_with_retention(&mut self, retained: PcmF32Mono) {
         self.auto_speech_active = true;
-        let identity =
-            WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
+        let Some(identity) = self.next_worker_identity() else {
+            self.fail_closed();
+            return;
+        };
         match self.asr_runtime.open(identity.clone()) {
             Ok(lease) => {
                 self.asr_stream = Some((lease, identity));

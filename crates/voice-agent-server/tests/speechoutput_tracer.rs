@@ -33,7 +33,7 @@ use voice_agent_server::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmProvider, ProviderSet,
         TtsProvider, VadProvider,
     },
-    session::{OutboundMessage, SessionActor, SessionPhase},
+    session::{OutboundMessage, SessionActor, SessionPhase, TurnId},
 };
 
 struct FakeVad;
@@ -576,6 +576,7 @@ async fn explicit_abort_admits_urgent_stop_and_invalidates_queued_turn_payload_u
         control_tx
             .try_send(OutboundMessage::TurnText {
                 generation: 1,
+                turn_id: TurnId::new(1).unwrap(),
                 text: format!(r#"{{"type":"llm","text":"queued-{index}"}}"#),
             })
             .unwrap();

@@ -69,6 +69,11 @@ pub(super) struct WebsocketQuery {
     authorization: Option<String>,
 }
 
+struct PlaybackTurn {
+    id: crate::session::TurnId,
+    start_was_sent: bool,
+}
+
 fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
     headers.get(name).and_then(|value| value.to_str().ok()) == Some(expected)
 }
@@ -156,6 +161,7 @@ async fn handle_socket(
     let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
     let (urgent_tx, mut urgent_rx) = mpsc::channel(config.limits.urgent_control_queue);
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
+    let (writer_event_tx, writer_event_rx) = mpsc::channel(config.limits.session_event_queue);
     let generation_gate = Arc::new(crate::session::GenerationGate::new());
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let vad_config = config
@@ -204,13 +210,15 @@ async fn handle_socket(
             return;
         }
     };
-    let actor = actor.with_client_capabilities(
-        hello.features.aec,
-        crate::session::BargeInPolicy {
-            enabled: config.barge_in.enabled,
-            trust_client_aec_feature: config.barge_in.trust_client_aec_feature,
-        },
-    );
+    let actor = actor
+        .with_client_capabilities(
+            hello.features.aec,
+            crate::session::BargeInPolicy {
+                enabled: config.barge_in.enabled,
+                trust_client_aec_feature: config.barge_in.trust_client_aec_feature,
+            },
+        )
+        .with_writer_events(writer_event_rx);
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
         .expect("ServerHello is serializable");
     if actor.send_control(server_hello).is_err() {
@@ -219,8 +227,8 @@ async fn handle_socket(
     }
     info!("ServerHello sent; voice session connected");
     let writer = tokio::spawn(async move {
-        let mut deferred_tts_stop = None;
-        let mut last_audio_sent: Option<(u64, u64, Instant)> = None;
+        let mut active_turn: Option<PlaybackTurn> = None;
+        let mut deferred_finish: Option<OutboundMessage> = None;
         loop {
             tokio::select! {
                 biased;
@@ -230,49 +238,100 @@ async fn handle_socket(
                     }
                 },
                 Some(message) = urgent_rx.recv() => {
-                    if send_outbound(&mut sender, message, &generation_gate).await {
-                        break;
+                    match message {
+                        OutboundMessage::AbortTurn { turn_id, text } => {
+                            if active_turn.as_ref().is_some_and(|active| active.id == turn_id) {
+                                deferred_finish = None;
+                                let start_was_sent = active_turn.as_ref().is_some_and(|active| active.start_was_sent);
+                                let stop_was_sent = if start_was_sent {
+                                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                                        break;
+                                    }
+                                    true
+                                } else {
+                                    false
+                                };
+                                active_turn = None;
+                                let _ = writer_event_tx.send(WriterEvent::TurnClosed {
+                                    turn_id,
+                                    outcome: WriterTurnOutcome::Aborted { start_was_sent, stop_was_sent },
+                                }).await;
+                            } else {
+                                // Begin may still be queued behind this urgent command. The
+                                // actor needs a terminal outcome so it can release this turn's
+                                // permit; a later Begin for the same invalid generation is
+                                // rejected at the gate.
+                                let _ = writer_event_tx
+                                    .send(WriterEvent::TurnClosed {
+                                        turn_id,
+                                        outcome: WriterTurnOutcome::Aborted {
+                                            start_was_sent: false,
+                                            stop_was_sent: false,
+                                        },
+                                    })
+                                    .await;
+                            }
+                        }
+                        message => if send_outbound(&mut sender, message, &generation_gate).await {
+                            break;
+                        },
                     }
                 },
                 // A normal stop follows the final paced packet, but only after the urgent
                 // lane has had its chance to preempt it.
-                _ = std::future::ready(()), if deferred_tts_stop.is_some() && audio_rx.is_empty() => {
-                    if send_outbound(
-                        &mut sender,
-                        deferred_tts_stop.take().expect("checked above"),
-                        &generation_gate,
-                    ).await {
+                _ = std::future::ready(()), if deferred_finish.is_some() && audio_rx.is_empty() => {
+                    let OutboundMessage::FinishTurn { turn_id, text } = deferred_finish.take().expect("checked above") else { unreachable!() };
+                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                         break;
                     }
+                    active_turn = None;
+                    let _ = writer_event_tx.send(WriterEvent::TurnClosed { turn_id, outcome: WriterTurnOutcome::Normal }).await;
                 },
                 Some(message) = control_rx.recv() => {
-                    if is_normal_tts_stop(&message) && !audio_rx.is_empty() {
-                        deferred_tts_stop = Some(message);
-                    } else if send_outbound(&mut sender, message, &generation_gate).await {
-                        break;
+                    match message {
+                        OutboundMessage::BeginTurn { generation, turn_id, text } => {
+                            if active_turn.is_none() && generation_gate.admits(generation) {
+                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                                    let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                                    break;
+                                }
+                                active_turn = Some(PlaybackTurn { id: turn_id, start_was_sent: true });
+                            }
+                        }
+                        message @ OutboundMessage::FinishTurn { .. } => {
+                            if !audio_rx.is_empty() {
+                                deferred_finish = Some(message);
+                            } else if let OutboundMessage::FinishTurn { turn_id, text } = message
+                                && active_turn.as_ref().is_some_and(|active| active.id == turn_id)
+                            {
+                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                                    let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                                    break;
+                                }
+                                active_turn = None;
+                                let _ = writer_event_tx.send(WriterEvent::TurnClosed { turn_id, outcome: WriterTurnOutcome::Normal }).await;
+                            }
+                        }
+                        message => if send_outbound(&mut sender, message, &generation_gate).await {
+                            break;
+                        },
                     }
                 },
                 Some(message) = audio_rx.recv() => {
-                    let generation = match &message {
-                        OutboundMessage::Binary { generation, .. } => Some(*generation),
-                        _ => None,
-                    };
-                    if send_outbound(&mut sender, message, &generation_gate).await { break; }
-                    if let Some(generation) = generation {
-                        let now = Instant::now();
-                        let (packet_seq, delta_ms) = match last_audio_sent {
-                            Some((previous_generation, previous_seq, previous_at)) if previous_generation == generation =>
-                                (previous_seq + 1, Some(now.duration_since(previous_at).as_millis())),
-                            _ => (1, None),
-                        };
-                        debug!(generation, packet_seq, ?delta_ms, "WebSocket audio sent");
-                        last_audio_sent = Some((generation, packet_seq, now));
+                    if let OutboundMessage::Binary { turn_id, .. } = &message
+                        && active_turn.as_ref().is_some_and(|active| active.start_was_sent && active.id == *turn_id)
+                        && send_outbound(&mut sender, message, &generation_gate).await
+                    {
+                        break;
                     }
                 },
                 else => {
-                    if let Some(message) = deferred_tts_stop.take()
-                        && send_outbound(&mut sender, message, &generation_gate).await
+                    if let Some(OutboundMessage::FinishTurn { turn_id, text }) = deferred_finish.take()
+                        && send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await
                     {
+                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                         break;
                     }
                     break;
@@ -337,16 +396,6 @@ async fn handle_socket(
     info!("voice session disconnected");
 }
 
-fn is_normal_tts_stop(message: &OutboundMessage) -> bool {
-    let Some(text) = message.as_text() else {
-        return false;
-    };
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(text) else {
-        return false;
-    };
-    payload["type"] == "tts" && payload["state"] == "stop"
-}
-
 fn checked_text(message: Message, max: usize) -> Result<String, u16> {
     match message {
         Message::Text(text) if text.len() <= max => Ok(text.to_string()),
@@ -364,7 +413,11 @@ async fn send_outbound(
     let generation = match &message {
         OutboundMessage::TurnText { generation, .. }
         | OutboundMessage::Binary { generation, .. } => Some(*generation),
-        OutboundMessage::Text(_) | OutboundMessage::Close(_) => None,
+        OutboundMessage::Text(_)
+        | OutboundMessage::BeginTurn { .. }
+        | OutboundMessage::FinishTurn { .. }
+        | OutboundMessage::AbortTurn { .. }
+        | OutboundMessage::Close(_) => None,
     };
     if generation.is_some_and(|generation| !generation_gate.admits(generation)) {
         return false;
@@ -391,6 +444,10 @@ async fn send_outbound(
             result
         }
         OutboundMessage::Binary { packet, .. } => sender.send(Message::Binary(packet.into())).await,
+        // Semantic playback commands must be consumed by the writer state machine above.
+        OutboundMessage::BeginTurn { .. }
+        | OutboundMessage::FinishTurn { .. }
+        | OutboundMessage::AbortTurn { .. } => return false,
         OutboundMessage::Close(code) => {
             sender
                 .send(Message::Close(Some(CloseFrame {

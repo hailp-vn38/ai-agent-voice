@@ -10,6 +10,7 @@ impl SessionActor {
     }
 
     pub(super) fn drain_worker_events(&mut self) {
+        self.drain_writer_events();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
         }
@@ -38,10 +39,51 @@ impl SessionActor {
         &self,
         text: String,
     ) -> Result<(), mpsc::error::TrySendError<OutboundMessage>> {
+        let Some(turn_id) = self.current_turn_id() else {
+            return Err(mpsc::error::TrySendError::Closed(OutboundMessage::Text(
+                text,
+            )));
+        };
         self.control_tx.try_send(OutboundMessage::TurnText {
             generation: self.generation,
+            turn_id,
             text,
         })
+    }
+
+    pub(super) fn drain_writer_events(&mut self) {
+        loop {
+            let event = match self.writer_events.as_mut() {
+                Some(events) => events.try_recv().ok(),
+                None => None,
+            };
+            let Some(event) = event else { break };
+            self.on_writer_event(event);
+        }
+    }
+
+    pub(super) fn on_writer_event(&mut self, event: WriterEvent) {
+        match event {
+            WriterEvent::TurnClosed { turn_id, outcome } => {
+                if self.current_turn_id() != Some(turn_id) {
+                    return;
+                }
+                if let Some(delivery) = self.pending_delivery.take() {
+                    if delivery.turn_id != turn_id {
+                        self.pending_delivery = Some(delivery);
+                        return;
+                    }
+                    if matches!(outcome, WriterTurnOutcome::Normal) {
+                        self.dialogue_history
+                            .commit_assistant(delivery.assistant_text);
+                    }
+                }
+                self.tts_started = false;
+                self.release_active_turn();
+                self.complete_recognition();
+            }
+            WriterEvent::Failed { .. } => self.fail_closed(),
+        }
     }
 
     pub async fn run(mut self, mut ingress: mpsc::Receiver<SessionEvent>) {
@@ -75,7 +117,7 @@ impl SessionActor {
             ClientMessage::Abort { session_id } => {
                 if self.inbound_session_matches(session_id.as_deref()) {
                     info!(phase = ?self.phase, generation = self.generation, "Client abort accepted");
-                    self.abort_current_turn();
+                    self.abort_active_interaction();
                 }
             }
             ClientMessage::Hello(_) | ClientMessage::Unknown => {}

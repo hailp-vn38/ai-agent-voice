@@ -21,14 +21,15 @@ impl SessionActor {
     }
 
     pub(super) fn begin_speech_delivery(&mut self, user_text: String) {
-        let identity =
-            WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
-        let turn = TurnContext {
-            generation: self.generation,
-            cancellation: tokio_util::sync::CancellationToken::new(),
+        let Some(cancellation) = self.turn.as_ref().map(|turn| turn.cancellation.clone()) else {
+            self.fail_closed();
+            return;
         };
-        let cancellation = turn.cancellation.clone();
-        self.turn = Some(turn);
+        let Some(turn_id) = self.current_turn_id() else {
+            self.fail_closed();
+            return;
+        };
+        let identity = WorkerIdentity::new(self.session_id.clone(), self.generation, turn_id.get());
         self.generated_response.clear();
         self.pending_llm_delta = None;
         self.llm_finish_pending = false;
@@ -162,23 +163,37 @@ impl SessionActor {
                     self.tts_started = true;
                     self.phase = SessionPhase::Speaking;
                     info!("TTS delivery started");
+                    let Some(turn_id) = self.current_turn_id() else {
+                        self.fail_speech_delivery();
+                        break;
+                    };
                     let payload = serde_json::json!({
                         "session_id": self.session_id,
                         "type": "tts",
                         "state": "start",
                     });
-                    if serde_json::to_string(&payload)
-                        .ok()
-                        .is_none_or(|payload| self.send_turn_control(payload).is_err())
-                    {
+                    if serde_json::to_string(&payload).ok().is_none_or(|payload| {
+                        self.control_tx
+                            .try_send(OutboundMessage::BeginTurn {
+                                generation: self.generation,
+                                turn_id,
+                                text: payload,
+                            })
+                            .is_err()
+                    }) {
                         warn!("TTS start control could not enter outbound queue");
                         self.fail_speech_delivery();
                         break;
                     }
                 }
                 SpeechOutputEvent::AudioPacket(packet) => {
+                    let Some(turn_id) = self.current_turn_id() else {
+                        self.fail_speech_delivery();
+                        break;
+                    };
                     let message = OutboundMessage::Binary {
                         generation: self.generation,
+                        turn_id,
                         packet,
                     };
                     match self.audio_tx.try_send(message) {
@@ -194,31 +209,53 @@ impl SessionActor {
                 }
                 SpeechOutputEvent::Drained => {
                     info!("TTS delivery drained");
-                    if self.tts_started {
-                        let payload = serde_json::json!({
-                            "session_id": self.session_id,
-                            "type": "tts",
-                            "state": "stop",
-                        });
-                        if let Ok(payload) = serde_json::to_string(&payload) {
-                            let _ = self.send_turn_control(payload);
-                        }
+                    let Some(turn_id) = self.current_turn_id() else {
+                        self.fail_speech_delivery();
+                        break;
+                    };
+                    let payload = serde_json::json!({
+                        "session_id": self.session_id,
+                        "type": "tts",
+                        "state": "stop",
+                    });
+                    let Some(payload) = serde_json::to_string(&payload).ok() else {
+                        self.fail_speech_delivery();
+                        break;
+                    };
+                    if self
+                        .control_tx
+                        .try_send(OutboundMessage::FinishTurn {
+                            turn_id,
+                            text: payload,
+                        })
+                        .is_err()
+                    {
+                        self.fail_closed();
+                        break;
                     }
-                    // A Delivered Assistant Response exists only after all its audio drained.
-                    self.dialogue_history
-                        .commit_assistant(std::mem::take(&mut self.generated_response));
-                    self.tts_started = false;
-                    self.turn = None;
-                    self.complete_recognition();
+                    self.pending_delivery = Some(PendingDelivery {
+                        turn_id,
+                        assistant_text: std::mem::take(&mut self.generated_response),
+                    });
+                    if self.writer_events.is_none() {
+                        self.on_writer_event(WriterEvent::TurnClosed {
+                            turn_id,
+                            outcome: WriterTurnOutcome::Normal,
+                        });
+                    }
+                    break;
                 }
             }
         }
     }
 
     pub(super) fn fail_speech_delivery(&mut self) {
+        let writer_owns_terminal_outcome = self.tts_started;
         self.cancel_llm();
         self.cancel_speech_delivery();
-        self.complete_recognition();
+        if !writer_owns_terminal_outcome {
+            self.complete_recognition();
+        }
     }
 
     /// Cancels a Conversational Turn in its required order. The outbound gate is
@@ -228,7 +265,6 @@ impl SessionActor {
         self.cancel_speech_delivery();
         self.cancel_llm();
         self.cancel_asr();
-        self.release_active_turn();
     }
 
     pub(super) fn cancel_speech_delivery(&mut self) {
@@ -240,7 +276,10 @@ impl SessionActor {
         self.llm_finish_pending = false;
         self.speech_output.cancel();
         self.pending_audio = None;
-        if self.tts_started {
+        let playback_requested = self.tts_started;
+        if playback_requested && let Some(turn_id) = self.current_turn_id() {
+            // Writer owns whether start crossed the wire. This merely prevents a recursive
+            // urgent-admission failure from attempting the same abort command again.
             self.tts_started = false;
             let payload = serde_json::json!({
                 "session_id": self.session_id,
@@ -250,13 +289,19 @@ impl SessionActor {
             if let Ok(payload) = serde_json::to_string(&payload)
                 && self
                     .urgent_tx
-                    .try_send(OutboundMessage::Text(payload))
+                    .try_send(OutboundMessage::AbortTurn {
+                        turn_id,
+                        text: payload,
+                    })
                     .is_err()
             {
                 // Continuing playback without an admitted stop leaves the client state
                 // unknowable. Tear the Voice Session down instead of silently retrying.
                 self.fail_closed_after_urgent_stop_admission_failure();
             }
+        }
+        if !playback_requested {
+            self.release_active_turn();
         }
     }
 
@@ -292,13 +337,13 @@ impl SessionActor {
             self.llm_runtime.cancel(&identity);
         }
         self.generated_response.clear();
-        self.turn = None;
+        // Writer owns the terminal result.  Keep the turn and its permit until it reports
+        // TurnClosed, so global Active Turn capacity remains truthful while a stop is pending.
     }
 
     pub(super) fn release_active_turn(&mut self) {
-        if self.has_active_turn_permit {
-            self.active_turn_limiter.release();
-            self.has_active_turn_permit = false;
+        if let Some(turn) = self.turn.take() {
+            drop(turn.permit);
         }
     }
 

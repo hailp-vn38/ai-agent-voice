@@ -41,7 +41,7 @@ impl SessionActor {
         }
         warn!(phase = ?self.phase, "voice session failed closed");
         self.interrupt_active_turn();
-        self.generation += 1;
+        let _ = self.advance_generation();
         self.close_vad();
         self.auto_reset_pending = false;
         self.asr_stream = None;

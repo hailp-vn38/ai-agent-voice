@@ -1,8 +1,8 @@
 use crate::session::{
-    ActiveTurnLimiter, GenerationGate, SessionPhase,
+    ActiveTurnLimiter, GenerationGate, SessionPhase, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
-    turn::DialogueHistory,
+    turn::{ActiveTurnPermit, DialogueHistory},
 };
 use crate::{
     audio::{
@@ -54,8 +54,9 @@ pub struct SessionActor {
     auto_retention: AutoPcmRetention,
     pre_roll_samples: u64,
     active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
-    has_active_turn_permit: bool,
     generation: u64,
+    next_turn_id: u64,
+    next_operation_id: u64,
     turn: Option<TurnContext>,
     dialogue_history: DialogueHistory,
     llm_runtime: std::sync::Arc<LlmRuntime>,
@@ -67,11 +68,13 @@ pub struct SessionActor {
     tts_runtime: std::sync::Arc<TtsWorkerRuntime>,
     speech_output: SpeechOutput,
     tts_started: bool,
+    pending_delivery: Option<PendingDelivery>,
     control_tx: mpsc::Sender<OutboundMessage>,
     urgent_tx: mpsc::Sender<OutboundMessage>,
     shutdown_tx: watch::Sender<bool>,
     audio_tx: mpsc::Sender<OutboundMessage>,
     generation_gate: std::sync::Arc<GenerationGate>,
+    writer_events: Option<mpsc::Receiver<WriterEvent>>,
     /// A packet removed from SpeechOutput but not yet admitted by the bounded writer queue.
     /// It must be retried before polling another packet: dropping it creates audible gaps.
     pending_audio: Option<OutboundMessage>,
@@ -100,8 +103,35 @@ impl BargeInPolicy {
 /// The token is never reused: interrupting a turn cancels this instance, and the
 /// next accepted user utterance receives a fresh context.
 struct TurnContext {
+    turn_id: TurnId,
     generation: u64,
     cancellation: CancellationToken,
+    permit: ActiveTurnPermit,
+}
+
+struct PendingDelivery {
+    turn_id: TurnId,
+    assistant_text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriterTurnOutcome {
+    Normal,
+    Aborted {
+        start_was_sent: bool,
+        stop_was_sent: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriterEvent {
+    TurnClosed {
+        turn_id: TurnId,
+        outcome: WriterTurnOutcome,
+    },
+    Failed {
+        turn_id: Option<TurnId>,
+    },
 }
 
 /// Application-owned runtimes shared by every voice session.
@@ -118,15 +148,40 @@ pub struct SessionRuntimes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboundMessage {
     Text(String),
-    TurnText { generation: u64, text: String },
-    Binary { generation: u64, packet: Vec<u8> },
+    TurnText {
+        generation: u64,
+        turn_id: TurnId,
+        text: String,
+    },
+    BeginTurn {
+        generation: u64,
+        turn_id: TurnId,
+        text: String,
+    },
+    FinishTurn {
+        turn_id: TurnId,
+        text: String,
+    },
+    AbortTurn {
+        turn_id: TurnId,
+        text: String,
+    },
+    Binary {
+        generation: u64,
+        turn_id: TurnId,
+        packet: Vec<u8>,
+    },
     Close(u16),
 }
 
 impl OutboundMessage {
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Self::Text(text) | Self::TurnText { text, .. } => Some(text),
+            Self::Text(text)
+            | Self::TurnText { text, .. }
+            | Self::BeginTurn { text, .. }
+            | Self::FinishTurn { text, .. }
+            | Self::AbortTurn { text, .. } => Some(text),
             Self::Binary { .. } | Self::Close(_) => None,
         }
     }
@@ -145,4 +200,55 @@ fn normalize_detect_text(input: String) -> Option<String> {
         return None;
     }
     Some(text.to_owned())
+}
+
+impl SessionActor {
+    /// Allocates a semantic identity only after Active Turn admission succeeds.
+    pub(super) fn begin_active_turn(&mut self) -> Option<TurnId> {
+        let permit = ActiveTurnLimiter::try_acquire_permit(&self.active_turn_limiter)?;
+        let raw = self.next_turn_id;
+        let Some(next) = raw.checked_add(1) else {
+            drop(permit);
+            self.fail_closed();
+            return None;
+        };
+        let Some(turn_id) = TurnId::new(raw) else {
+            drop(permit);
+            self.fail_closed();
+            return None;
+        };
+        self.next_turn_id = next;
+        self.turn = Some(TurnContext {
+            turn_id,
+            generation: self.generation,
+            cancellation: CancellationToken::new(),
+            permit,
+        });
+        Some(turn_id)
+    }
+
+    pub(super) fn next_worker_identity(&mut self) -> Option<WorkerIdentity> {
+        let operation_id = self.next_operation_id;
+        self.next_operation_id = operation_id.checked_add(1)?;
+        Some(WorkerIdentity::new(
+            self.session_id.clone(),
+            self.generation,
+            operation_id,
+        ))
+    }
+
+    pub(super) fn current_turn_id(&self) -> Option<TurnId> {
+        self.turn.as_ref().map(|turn| turn.turn_id)
+    }
+
+    /// Generation is a cancellation epoch, never an identity reused after overflow.
+    pub(super) fn advance_generation(&mut self) -> bool {
+        let Some(next) = self.generation.checked_add(1) else {
+            self.phase = SessionPhase::Closed;
+            let _ = self.urgent_tx.try_send(OutboundMessage::Close(1011));
+            return false;
+        };
+        self.generation = next;
+        true
+    }
 }

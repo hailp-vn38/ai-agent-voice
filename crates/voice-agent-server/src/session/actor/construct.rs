@@ -188,8 +188,9 @@ impl SessionActor {
             auto_retention: AutoPcmRetention::new(retention_capacity),
             pre_roll_samples: runtimes.pre_roll_samples,
             active_turn_limiter: runtimes.active_turn_limiter,
-            has_active_turn_permit: false,
             generation: 0,
+            next_turn_id: 1,
+            next_operation_id: 1,
             turn: None,
             dialogue_history: DialogueHistory::new(max_history_messages),
             llm_runtime: runtimes.llm,
@@ -205,11 +206,13 @@ impl SessionActor {
                 crate::config::SpeechOutputConfig::default(),
             )?,
             tts_started: false,
+            pending_delivery: None,
             control_tx,
             urgent_tx,
             shutdown_tx,
             audio_tx,
             generation_gate,
+            writer_events: None,
             pending_audio: None,
             client_aec_asserted: false,
             barge_in_enabled: false,
@@ -225,6 +228,11 @@ impl SessionActor {
         self.client_aec_asserted = client_aec_asserted;
         self.barge_in_enabled = policy.enabled;
         self.trust_client_aec_feature = policy.trust_client_aec_feature;
+        self
+    }
+
+    pub fn with_writer_events(mut self, writer_events: mpsc::Receiver<WriterEvent>) -> Self {
+        self.writer_events = Some(writer_events);
         self
     }
 
