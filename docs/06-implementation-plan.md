@@ -82,29 +82,32 @@ Deliverables:
 
 Exit criteria bắt buộc: fake LLM streaming + real ZeroTTS model đi qua SpeechOutput, resample 24 kHz mono, real Opus/pacing và Reference Client; segment đầu tiên/audio packet đầu tiên xuất hiện trước fake LLM Finished; `tts:start` đứng trước audio đầu tiên; `FinishInput` chỉ dẫn tới `Drained` sau audio cuối và normal completion release Active Turn. Cancel hoặc unexpected tool call không phát audio stale/queued, không MCP/retry và không commit Delivered Assistant Response. Live OpenAI là smoke deployment riêng, không phải CI completion gate.
 
-## Phase 5 — Explicit interruption correctness
+## Phase 5 — Interruption và acoustic barge-in correctness
 
 Deliverables:
 
-- generation lifecycle.
-- CancellationToken.
-- stale result filtering.
-- `GenerationGate` ở writer.
-- `abort` và `listen:start` interrupt explicit.
-- regression bảo đảm VAD/microphone không acoustic interrupt khi `Speaking`.
+- `GenerationId`/per-turn `CancellationToken` và primitive interruption duy nhất.
+- shared `GenerationGate` actor/writer, gate mọi turn-scoped JSON/audio; bỏ invalidation phụ thuộc normal bounded queue.
+- urgent lane `urgent > normal control > audio`; không admission được `tts:stop` sau `tts:start` thì fail-closed.
+- `ClientHello.features.aec` optional, default false; Acoustic Barge-in chỉ khi `barge_in.enabled`, `barge_in.trust_client_aec_feature`, `features.aec` và mode `Auto`/`Realtime` đều đúng.
+- `listen:start` arm/reset VAD Capture Cycle, không interrupt; `abort` hoặc acoustic `SpeechStart` mới interrupt.
+- `VadCycleId` tách Worker Lease khỏi semantic cycle; `Realtime` chạy VAD/ASR và giữ capture armed xuyên Processing/Speaking.
+- generalize `AutoPcmRetention` cho Auto/Realtime/Barge-in với capacity theo pre-roll + confirmation horizon + bounded VAD lag + current frame + rechunk slack.
+- regression manual/no-AEC không acoustic interrupt và Auto chỉ watch khi cycle đã arm.
 
-Exit criteria: không có stale audio sau abort trong stress test.
+Exit criteria: deterministic stress/E2E chứng minh `TTS N -> AEC-safe SpeechStart -> gate N invalidate -> đúng một urgent tts:stop -> không JSON/audio N được admit sau boundary -> triggering PCM/pre-roll đến ASR N+1 -> ASR/LLM/TTS N+1` trên cùng Voice Session. Có Reference Client E2E + quiet period sau stop; fake test không thay thế real ZeroTTS/reference-client gate, và HIL playback là gate riêng.
 
 ## Phase 6 — Device MCP
 
 Deliverables:
 
-- initialize.
-- tools/list pagination.
-- tools/call + correlation.
-- LLM tool schema integration.
+- `features.mcp`, JSON-RPC 2.0 envelope, `initialize` và `tools/list` pagination.
+- Registry per Voice Session, default-deny allowlist theo original device name, sanitize deterministic và reject collision.
+- `tools/call` numeric correlation, timeout không retry, late/stale response không có semantic effect.
+- Typed `LlmRequest`, tool schema, round buffering, sequential batch, continuation và Exchange Atom history bounded.
+- Reference Client vừa là Voice Protocol Client vừa là deterministic Device MCP Server với `test.echo`, `test.get_value` và `test.set_value` stateful.
 
-Exit criteria: voice command gọi thành công một tool thật trên ESP32.
+Exit criteria: Reference Client MCP gate đi qua WebSocket protocol thật, SessionActor, LlmRuntime scripted, discovery pagination, `tools/call` stateful và final LLM/TTS lifecycle. ESP32/Xiaozhi là compatibility reference, không phải dependency completion.
 
 ## Phase 7 — Hardening
 

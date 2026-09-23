@@ -79,9 +79,11 @@ Manual mode rất quan trọng để bring-up pipeline trước khi tune VAD.
 
 Trong Phase 2, `SessionActor` gọi decoder rồi `ManualCapture` tuần tự theo ingress order; không có audio worker hoặc queue audio riêng. `ManualCapture` reset ở `listen:start`, `listen:stop` và `abort`; `UplinkOpusDecoder` sống theo Voice Session/Uplink Audio Stream, không reset ở các capture boundary. Decoder trả frame hợp lệ hoặc typed drop reason (`empty_packet`, `packet_too_large`, `decode_error`, `invalid_sample_count`); actor chỉ tracing reason/session metadata, không log packet hay PCM.
 
-## 6. Barge-in
+## 6. Acoustic barge-in
 
-V1 không chạy VAD khi phase là `Speaking`: server AEC đang ngoài phạm vi, nên microphone echo không được tự cắt TTS. Device-side wake word hoặc interruption phải gửi `abort`; acoustic barge-in chỉ được xem lại cùng server AEC và protocol có timestamp.
+Phase 5 không thêm server-side AEC vào raw WebSocket V1. Thay vào đó, client có thể assert uplink đã echo-suppressed bằng `features.aec=true`; assertion này chỉ được dùng khi `barge_in.enabled=true` và `barge_in.trust_client_aec_feature=true`. `Manual` không acoustic barge-in. `Auto` chỉ watch khi capture cycle đã arm; `Realtime` giữ VAD cycle armed xuyên `Processing`/`Speaking`.
+
+Khi `Speaking`, actor decode frame, push vào retention và VAD Barge-in Watch, nhưng không feed ASR turn cũ. `SpeechStarted { start_sample }` hợp lệ thực hiện đúng thứ tự: snapshot `retention.range(start_sample - pre_roll_samples)`; invalidate GenerationGate turn N; cancel producers; gửi urgent đúng một `tts:stop` nếu N đã `Started`; tạo generation/ASR N+1 và feed snapshot, rồi tiếp tục frame sau vào ASR N+1. Snapshot phải trước reset retention/VAD; gate invalidation là interruption linearization point. Packet writer đã admit trước point này không thể thu hồi, mọi turn payload N sau point phải bị drop.
 
 ## 7. Resource limits
 
@@ -99,6 +101,6 @@ Fixtures nên có PCM hoặc synthetic samples:
 - speech + short pause + speech -> một utterance.
 - speech + đủ silence -> `SpeechEnded` đúng một lần.
 - manual start/stop -> flush dù VAD không active.
-- speaking + confirmed speech -> không tạo interrupt event trong V1.
+- Speaking + one noisy frame -> không interrupt; Manual/no-AEC -> không Acoustic Barge-in. Auto/Realtime AEC-safe `SpeechStart` -> snapshot retention, interrupt đúng một lần, ASR turn mới nhận prefix và frame tiếp theo.
 - auto max utterance -> đúng một force endpoint và collector dừng.
 - manual max utterance -> không gọi ASR, audio tiếp theo bị ignore đến chu kỳ listen mới.

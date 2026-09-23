@@ -44,9 +44,17 @@ _Avoid_: capture option, implicit manual mode
 Một lượt xử lý giọng nói có thể hủy độc lập trong một Voice Session.
 _Avoid_: request, job
 
+**Turn ID**:
+Identity tăng đơn điệu, không tái sử dụng trong một Voice Session, được cấp khi utterance qua terminal boundary và được Active Turn admission chấp nhận; identity này theo lượt qua ASR finalization, LLM và speech delivery.
+_Avoid_: Generation ID, ASR stream identity, VAD Capture Cycle ID
+
 **Active Turn**:
 Conversational Turn đã qua utterance terminal boundary và đang giữ global capacity từ ASR finalization đến terminal state.
 _Avoid_: listening turn, queued turn
+
+**History-Barrier Turn**:
+Active Turn đã qua utterance terminal boundary và giữ capacity, nhưng accepted user text chưa được commit hoặc đưa vào LLM vì Conversational Turn trước chưa có terminal writer outcome.
+_Avoid_: queued turn, capacity-free pending turn
 
 **Active Turn Limiter**:
 Capacity domain toàn application giới hạn số Active Turn đồng thời, độc lập với capacity provider worker.
@@ -55,6 +63,10 @@ _Avoid_: ASR semaphore, provider limit
 **ASR Stream Lease**:
 Quyền capacity dành riêng cho một recognition stream đang mở, từ lúc bắt đầu thu cho tới khi ASR final, cancel hoặc lỗi.
 _Avoid_: Active Turn, ASR queue slot
+
+**ASR Stream Identity**:
+Identity của một recognition stream, có thể tồn tại trước Turn ID; ASR final sau utterance terminal boundary được liên kết với Turn ID của lượt đã nhận stream đó.
+_Avoid_: Turn ID, ASR Stream Lease
 
 **Semantic ASR Ownership**:
 Quyền duy nhất để ASR event tạo accepted user text; quyền này bị revoke ngay khi Detect được accept, độc lập với physical worker cleanup.
@@ -84,9 +96,37 @@ _Avoid_: dropped VAD frame, recoverable VAD delay
 Event xác nhận worker đã kết thúc hoặc reset mutable runtime của một lease, là điều kiện duy nhất để slot trở lại reusable; vẫn được xử lý khi generation logic đã stale.
 _Avoid_: cancel requested, Drop, logical cancellation
 
+**Acoustic Barge-in**:
+Interruption của một assistant turn đang `Speaking`, chỉ do `SpeechStart` từ VAD của microphone uplink đã được client AEC/echo-suppressed khai báo và server tin cậy cho phép. Nó snapshot PCM giữ lại trước, rồi invalidate turn cũ, gửi đúng một urgent `tts:stop` nếu playback đã bắt đầu, và mở ASR cho turn mới.
+_Avoid_: server-side AEC, any microphone packet, explicit abort
+
+**VAD Capture Cycle**:
+Chu kỳ semantic có identity riêng của VAD gồm timeline PCM, segmenter và retention; khác lifetime của VAD worker lease và khác Conversational Turn. Event semantic chỉ hợp lệ cho cycle hiện hành; cleanup acknowledgement vẫn xử lý khi cycle đã stale.
+_Avoid_: VAD worker identity, turn generation, reset requested
+
+**Generation ID**:
+Epoch dùng để vô hiệu hóa output khi một lượt bị hủy hoặc ngắt; nhiều Conversational Turn hoàn tất bình thường có thể cùng Generation ID.
+_Avoid_: Turn ID, operation identity
+
+**Echo-safe Client Assertion**:
+`features.aec=true` trong ClientHello là assertion client uplink đã echo-suppressed, không phải bằng chứng server-side AEC. Nó chỉ cho Acoustic Barge-in khi cả `barge_in.enabled` lẫn `barge_in.trust_client_aec_feature` được bật.
+_Avoid_: verified server AEC, capability unconditionally trusted
+
 **Dialogue History**:
-Lịch sử message bounded, RAM-only thuộc một Voice Session; user message được commit sau ASR final non-empty.
+Lịch sử Exchange Atom trong RAM thuộc một Voice Session; user message được commit sau ASR final non-empty. Số message là eviction target, còn request có hard byte bound riêng.
 _Avoid_: persistent memory, transcript log
+
+**Agent Persona**:
+Cấu hình deployment định hình tên, vai trò và phong cách của trợ lý trong Voice Session; không chứa credential hay trạng thái provider.
+_Avoid_: OpenAI prompt, provider prompt, model personality
+
+**Prompt Template**:
+Khuôn mẫu do deployment quản lý để kết hợp Agent Persona với quy tắc hội thoại giọng nói thành system message cho mỗi LLM Operation.
+_Avoid_: provider request template, Dialogue History
+
+**Prompt/LLM Base Snapshot**:
+Tập message bất biến của một Conversational Turn gồm system snapshot, các Exchange Atom đã commit trước turn và current User đã commit; tool continuation chỉ nối completed tool prefix vào tập này.
+_Avoid_: per-round history rebuild, mutable provider prompt
 
 **Model Artifact Manifest**:
 Tài liệu versioned authoritative pin source, revision, license, upstream artifact, install-relative path, transform và checksum provider-facing của từng model artifact; path directory không tự xác nhận model identity.
@@ -153,8 +193,8 @@ Khai báo deployment khớp chính xác logical model, revision và license tron
 _Avoid_: license bypass, generic agreement flag
 
 **Phase Completion Gate**:
-Gate bắt buộc để một phase được đánh dấu hoàn tất; với Phase 3 là real-model Voice Protocol E2E Manual và Auto qua canonical Opus tới exactly one STT, tách biệt implementation gate dùng fake provider.
-_Avoid_: ignored smoke test, compile success
+Gate bắt buộc để một phase được đánh dấu hoàn tất. Gate phải dùng boundary thực của phase; với Phase 3 là real-model Voice Protocol E2E Manual và Auto qua canonical Opus tới exactly one STT, còn Phase 6 là Reference Client MCP E2E qua WebSocket và SessionActor. Cả hai tách biệt implementation gate dùng fake provider.
+_Avoid_: ignored smoke test, compile success, hardware dependency không thuộc Compatibility Profile
 
 **Canonical Audio Profile**:
 Wire-audio profile cố định của Compatibility Profile: uplink Opus 16 kHz mono 60 ms và downlink Opus 24 kHz mono 60 ms.
@@ -196,14 +236,22 @@ _Avoid_: permitted tool
 Discovered Tool đã qua policy server và được phép đưa vào schema của mô hình ngôn ngữ.
 _Avoid_: discovered tool, authorized tool
 
+**Device MCP Server**:
+Capability MCP do một Voice Protocol Client sở hữu, công bố tool qua `initialize` và `tools/list`, rồi thực thi `tools/call` trong phạm vi state của chính client.
+_Avoid_: server-side MCP plugin, ESP32-only capability, global tool registry
+
+**Reference Client MCP Gate**:
+Phase Completion Gate của Device MCP: Reference Client vừa dùng WebSocket voice protocol thật vừa làm Device MCP Server deterministic, thực thi tối thiểu một tool stateful và chứng minh tool result đi qua LLM continuation tới final TTS lifecycle.
+_Avoid_: mocked actor response, ESP32 HIL requirement, fixed firmware tool catalog
+
 **Generated Assistant Response**:
 Nội dung assistant đã được LLM tạo cho Conversational Turn nhưng chưa chắc đã được người dùng nghe hết.
 _Avoid_: delivered response, dialogue assistant message
 
 **Delivered Assistant Response**:
-Generated Assistant Response chỉ trở thành một phần dialogue khi audio của nó đã drain hoàn toàn.
-_Avoid_: partial response, cancelled response
+Generated Assistant Response chỉ trở thành một phần dialogue khi WebSocket writer đã gửi thành công toàn bộ audio của lượt và normal `tts:stop` theo đúng thứ tự; không hàm ý client đã phát xong.
+_Avoid_: partial response, cancelled response, client playback complete
 
 **Exchange Atom**:
-Đơn vị history không thể tách khi dựng prompt: một user-only turn hoặc toàn bộ chuỗi user, assistant tool call, tool result và delivered assistant response.
+Đơn vị Dialogue History không thể tách khi dựng prompt hoặc eviction: một user turn với completed prefix của các cặp assistant tool call/tool result, và Delivered Assistant Response nếu writer đóng turn Normal. Tool call chưa có terminal result không thuộc atom; turn lỗi trước tool đầu tiên là user-only atom.
 _Avoid_: message, partial exchange

@@ -71,7 +71,8 @@ V1 là personal trusted-LAN deployment. `auth.token = ""` tắt auth; token khô
 | Streaming LLM | Có |
 | Incremental TTS | Có |
 | Audio pacing | Có |
-| Abort / barge-in | Có |
+| Explicit abort | Có |
+| Acoustic barge-in client-AEC | Phase 5, opt-in |
 | Short-term dialogue | Có |
 | Device MCP | Có |
 | WS protocol v2/v3 | Sau V1 |
@@ -80,9 +81,9 @@ V1 là personal trusted-LAN deployment. `auth.token = ""` tắt auth; token khô
 | Persistent memory | Sau V1 |
 | Server MCP | Sau V1 |
 
-V1 không hỗ trợ acoustic barge-in khi Speaking: raw microphone audio và VAD không được hủy TTS. Manual mode chỉ hủy qua `abort` hoặc `listen:start`; auto VAD chỉ endpoint speech khi Listening. Device MCP dùng server-side allowlist, default deny; LLM chỉ thấy tool đã qua policy filter.
+Phase 5 bổ sung Acoustic Barge-in opt-in, không phải server-side AEC: chỉ `Auto`/`Realtime`, khi client gửi `features.aec=true` và cả `barge_in.enabled` lẫn `barge_in.trust_client_aec_feature` đều bật. `Manual` không bao giờ tự interrupt; `listen:start` chỉ arm/reset capture/VAD cycle, còn `abort` là interrupt tức thì. `Realtime` giữ VAD armed xuyên `Processing`/`Speaking`; `Auto` chỉ watch khi cycle đã được arm. Không có các điều kiện đó, microphone khi `Speaking` bị drop và không đổi turn. Device MCP dùng server-side allowlist, default deny; LLM chỉ thấy tool đã qua policy filter.
 
-WS writer dùng hai queue bounded cho control và audio; control hợp lệ ưu tiên audio. Audio luôn mang generation ID, `tts:start` phải đứng trước Opus đầu tiên của turn và không Opus nào của turn được tới WebSocket sau `tts:stop`.
+WS writer dùng ba lane bounded `urgent > normal control > audio`. Mọi turn payload JSON/audio mang Generation ID và bị shared `GenerationGate` kiểm tra ngay trước admission/send; `tts:start` phải đứng trước Opus đầu tiên. Actor invalidate gate trước urgent `tts:stop`; nếu urgent stop không admission được sau `tts:start`, Voice Session fail-closed qua root cancellation/writer shutdown escape path.
 
 Sau `tts:stop`, manual mode vào `Ready` (giữ WS/session nhưng không nhận mic), còn auto mode vào `Listening`. `AsrStreamLease` được acquire khi recognition stream bắt đầu; Active Turn chỉ acquire tại utterance terminal boundary, trước ASR finalization. Không có permit thì cancel stream và bỏ turn ngay. Tool-capable LLM round buffer toàn bộ và chỉ TTS final no-tool round.
 

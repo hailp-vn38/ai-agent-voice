@@ -95,7 +95,8 @@ stateDiagram-v2
     Listening --> Processing: utterance end + Active Turn permit
     Processing --> Speaking: first TTS output
     Speaking --> Ready: TTS stop (manual)
-    Speaking --> Listening: TTS stop (auto)
+    Speaking --> Listening: TTS stop (auto/realtime)
+    Speaking --> Listening: AEC-safe SpeechStart (barge-in)
     Processing --> Ready: abort/failure (manual)
     Processing --> Listening: abort/failure (auto)
     Ready --> Closed: disconnect
@@ -110,13 +111,13 @@ State phục vụ logging/validation. Pipeline async vẫn sử dụng generatio
 
 - Provider timeout riêng cho ASR/LLM/TTS/MCP.
 - `AsrStreamLease` được acquire khi recognition stream bắt đầu và release sau ASR final, cancel hoặc lỗi; `Active Turn` permit được acquire ở utterance terminal boundary, trước ASR finalization, không chờ queue vô hạn, và release ở mọi terminal path.
-- VAD chỉ xử lý microphone khi `Listening`; V1 không acoustic barge-in khi `Speaking`. `abort` hoặc `listen:start` hợp lệ là cơ chế interrupt explicit.
+- `abort` là interruption explicit. `listen:start` chỉ arm/reset capture/VAD cycle và không tăng turn generation. Phase 5 chỉ route microphone khi `Speaking` vào VAD Barge-in Watch cho `Auto`/`Realtime` đã arm, client `features.aec=true` và cả hai config trust/enable đều bật; `Manual` không acoustic barge-in. `Realtime` giữ watch xuyên `Processing`/`Speaking`, còn Auto chỉ watch khi cycle đã arm.
 - Transport idle dựa trên WebSocket RX/TX hợp lệ hai chiều; conversation idle tắt trong V1.
 - Telemetry dùng Trace Session ID ngẫu nhiên; không log/persist nội dung audio, transcript, prompt/response, tool payload hay secret.
 - Mọi task con gắn với session cancellation root.
 - Turn cancellation không đóng WS; session cancellation mới đóng tất cả.
 - Mọi queue ingress, worker command, audio và outbound đều bounded; mỗi queue có capacity và overload policy được cấu hình.
-- WS writer nhận bản sao chỉ-đọc của `GenerationGate`; actor cập nhật gate trước khi enqueue control message abort để writer drop packet stale dù chúng đã nằm trong queue.
+- WS writer nhận bản sao chỉ-đọc của `GenerationGate`; actor cập nhật gate trước urgent `tts:stop` để writer drop mọi JSON/audio stale dù đã nằm trong queue. Urgent lane ưu tiên normal control và audio; không admission được interrupt stop sau `tts:start` là session-integrity failure, fail-closed không phụ thuộc retry queue.
 - `AwaitHello` fail closed: chỉ ClientHello canonical hợp lệ mới tạo Voice Session; lỗi application handshake đóng 1002.
 - Sau handshake, parser ignore unknown field/type và invalid application message không thay đổi state hay đóng session.
 - Frame vượt size cap đóng 1009 trước application parse; WebSocket framing/UTF-8 fault do transport library xử lý.

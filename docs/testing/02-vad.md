@@ -31,7 +31,10 @@
 ## Barge-in
 
 - phase Speaking + one noisy frame -> chưa cancel.
-- phase Speaking + confirmed SpeechStarted -> không cancel current generation trong V1; chỉ `abort` hoặc `listen:start` mới hủy output.
+- Manual hoặc `features.aec=false`, hay server không bật cả hai config Barge-in -> confirmed `SpeechStarted` không cancel current generation.
+- `Auto` đã arm hoặc `Realtime` giữ armed, `features.aec=true` và server trust -> confirmed `SpeechStarted` snapshot `[start_sample - pre_roll, cursor)` trước reset/invalidation, cancel đúng một generation và mở ASR generation mới.
+- retention capacity dùng công thức `pre_roll + confirmation + vad_command_capacity * 960 + 960 + 512`; với default hiện tại là 39.872 samples. Overflow overwrite oldest; range thiếu onset là fail-closed, không tạo transcript thiếu prefix.
+- late `SpeechStarted` của `VadCycleId` cũ bị drop semantic và không mở ASR; cleanup acknowledgement stale vẫn được consume.
 
 ## Command
 

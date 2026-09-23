@@ -23,11 +23,11 @@ pub enum TurnEvent {
 }
 ```
 
-Parser biến listen thành semantic variants `ListenStart { mode: ListeningMode }`, `ListenStop` và `ListenDetect { text }`, không để actor diễn giải tổ hợp string/optional field. Chỉ Start yêu cầu mode. Ở Phase 2 chỉ `Manual` được hỗ trợ; `Auto` và `Realtime` vẫn parse được nhưng là unsupported application message, còn missing/invalid mode là invalid application message. Tất cả các trường hợp đó chỉ trace/ignore, không mutate phase, cancel turn hay reset capture. `ListenStop` chỉ finalize Manual Capture active; ở phase khác là valid wrong-state message nên trace/ignore.
+Parser biến listen thành semantic variants `ListenStart { mode: ListeningMode }`, `ListenStop` và `ListenDetect { text }`, không để actor diễn giải tổ hợp string/optional field. Chỉ Start yêu cầu mode. Phase 5 hỗ trợ `Manual`, `Auto` và `Realtime`: `listen:start` chỉ arm/reset capture/VAD cycle, không cancel delivery hay tăng generation. `abort` là control interruption explicit; Acoustic Barge-in chỉ bắt đầu từ `SpeechStart` đủ điều kiện. Missing/invalid mode là invalid application message và `ListenStop` ngoài Manual `Listening` là valid wrong-state message: trace/ignore, không mutate turn.
 
 ### Invariant
 
-Actor phải bỏ mọi `SessionEvent::Turn` có `generation != current_generation`, trừ event cleanup/telemetry. Mọi output async thuộc một turn phải đi qua biến thể này.
+Actor phải bỏ mọi `SessionEvent::Turn` có `generation != current_generation`, trừ event cleanup/telemetry. VAD semantic event còn phải mang `VadCycleId` và chỉ được nhận khi cycle hiện hành; lease cleanup acknowledgement vẫn xử lý khi stale. Mọi output async thuộc một turn phải đi qua biến thể này.
 
 ## 2. Provider traits
 
@@ -107,7 +107,7 @@ pub enum OutboundPayload {
 }
 ```
 
-Actor là producer duy nhất của outbound message. WS writer nhận control và audio qua hai queue bounded riêng, ưu tiên control hợp lệ, và giữ `GenerationGate` read-only để drop mọi `Turn` không còn là generation hiện tại. Actor cập nhật gate trước rồi enqueue `SessionControl(tts:stop)`; packet cũ đã xếp hàng bị drop trước stop. `tts:start` phải được writer gửi trước AudioPacket đầu tiên của generation.
+Actor là producer duy nhất của outbound message. WS writer nhận ba lane bounded `urgent > normal control > audio` và giữ `GenerationGate` read-only để drop mọi `Turn` không còn là generation hiện tại, gồm cả JSON lẫn audio. Actor cập nhật gate trước rồi enqueue urgent `SessionControl(tts:stop)`; packet/control turn cũ đã xếp hàng bị drop trước stop. `tts:start` phải được writer gửi trước AudioPacket đầu tiên của generation. Nếu urgent stop không admission được sau `Started`, actor fail-closed Voice Session bằng root cancellation/writer shutdown escape path, không silent ignore hay retry vô hạn.
 
 Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Started` không gửi control pair; failure sau `Started` invalidate generation, cancel pipeline, drop audio stale rồi enqueue chính xác một `tts:stop`. Sau stop, writer không được gửi binary audio của generation đó; failure path không commit Delivered Assistant Response.
 
@@ -123,7 +123,7 @@ Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Start
 - `DownlinkOpusEncoder` dùng profile implementation constant: VoIP, 32 kbps, VBR/constrained VBR bật, DTX/FEC tắt, packet-loss percent 0 và complexity 10. Không lấy các controls này từ config ở Phase 2. Encoder luôn dùng `DOWNLINK_ENCODE_BUFFER_BYTES = 4.000`, tách cả `MAX_UPLINK_OPUS_PACKET_BYTES` lẫn `websocket.max_frame_bytes`; `encode(DownlinkPcmFrame)` trả `Result<OpusPacket, AudioCodecError>`; encoder error, packet rỗng và packet lớn hơn transport cap là internal delivery failure, không phải local frame drop và không đóng WS 1009.
 - Downlink Canonical Audio Profile: Opus 24 kHz, mono, 60 ms. Provider PCM có thể normalize/resample nội bộ về profile này.
 - Pacer không được nhận unbounded queue.
-- Ingress WS, command của VAD/ASR/LLM/TTS và outbound đều phải bounded, có capacity và hành vi khi đầy. VAD ingress đầy có thể drop frame + telemetry; ASR ingress đầy là controlled recognition failure, không drop ngẫu nhiên PCM rồi coi transcript hợp lệ; TTS producer bị backpressure; outbound đầy là lỗi turn có kiểm soát.
+- Ingress WS, command của VAD/ASR/LLM/TTS và outbound đều phải bounded, có capacity và hành vi khi đầy. VAD ingress đầy không được drop PCM rồi tiếp tục semantic timeline: affected Voice Session fail-closed; ASR ingress đầy là controlled recognition failure, không drop ngẫu nhiên PCM rồi coi transcript hợp lệ; TTS producer bị backpressure; outbound đầy là lỗi turn có kiểm soát. `AutoPcmRetention` dùng cho Auto/Realtime/Barge-in có overwrite-oldest và capacity = `pre_roll + confirmation + vad_command_capacity * 960 + 960 + rechunk_slack`; snapshot phải diễn ra trước reset cycle.
 
 ## 6. Dialogue invariants
 

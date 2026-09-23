@@ -1,6 +1,6 @@
 # Phase 3 — VAD + ASR local streaming
 
-Status: ready-for-agent
+Status: ready-for-human
 
 ## Problem Statement
 

@@ -2460,21 +2460,11 @@ Không biến `listen:detect` thành `listen:start` nếu protocol contract khô
 
 ---
 
-# 43. Acoustic barge-in là future work, không thuộc V1
+# 43. Acoustic barge-in client-AEC trong Phase 5
 
-V1 không chạy VAD/microphone để interrupt khi `Speaking`: speaker audio có thể quay lại microphone khi chưa có server-side AEC và tạo self-interruption loop. Matrix V1 giữ binary audio ở `Ready`, `Processing` và `Speaking` là drop; chỉ `Listening` mới decode/VAD/ASR.
+ADR-0045 cho phép `echo-suppressed microphone → VAD → actor policy → interrupt generation` mà không đưa server-side AEC vào raw WebSocket V1. `features.aec=true` chỉ là client assertion; predicate còn yêu cầu `barge_in.enabled`, `barge_in.trust_client_aec_feature` và mode `Auto`/`Realtime`. Manual không tự interrupt, Auto cần cycle đã arm, còn Realtime giữ VAD armed xuyên `Processing`/`Speaking`.
 
-Interruption khi `Speaking` chỉ qua protocol control explicit:
-
-```text
-abort hoặc listen:start hợp lệ
-  → actor tăng generation
-  → GenerationGate cập nhật
-  → cancel TTS/ASR cũ và drop audio stale
-  → enter Listening
-```
-
-Future AEC-capable mode mới có thể dùng `echo-cancelled microphone → VAD → actor policy → cancel generation`. Điều đó cần AEC contract, protocol capability negotiation, false-trigger tests và ADR state-machine mới. Provider không bao giờ tự tăng generation hoặc cancel turn.
+`SpeechStart` snapshot retention trước reset, rồi GenerationGate invalidate turn cũ trước urgent `tts:stop` và ASR mới nhận pre-roll/trigger PCM. Provider chỉ phát typed event mang worker/cycle identity; provider không tự tăng generation hoặc cancel turn. Server-side AEC thật vẫn future work vì cần timestamp/reference mapping, drift handling và protocol boundary riêng.
 
 ---
 
@@ -2682,7 +2672,7 @@ model manifest/license docs
 - `docs/03-module-contracts.md` dùng `VadProvider` probability-level và `AsrProvider` streaming thay cho batch `transcribe`; segmentation vẫn thuộc core.
 - `docs/06-implementation-plan.md` thay HTTP ASR baseline bằng Silero ONNX + Zipformer/sherpa-onnx local, bounded workers, `AsrStreamLease` và `ActiveTurnPermit` tại utterance terminal boundary.
 - ADR-0017 tách capacity recognition streaming khỏi global capacity của Conversational Turn.
-- V1 giữ ADR-0010: không acoustic barge-in khi `Speaking`; đây là future AEC work.
+- ADR-0045 supersede ADR-0010: Phase 5 có acoustic barge-in client-AEC opt-in; server-side AEC vẫn future work.
 
 ---
 

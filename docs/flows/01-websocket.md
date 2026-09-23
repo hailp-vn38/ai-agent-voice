@@ -83,7 +83,7 @@ WS reader chỉ làm 3 việc:
 
 Không chạy ASR/LLM/TTS trực tiếp trong reader.
 
-Listen được parse thành `ListenStart { mode }`, `ListenStop` và `ListenDetect { text }`; chỉ Start yêu cầu `mode`. `listen:start` mang `mode` parsed thành enum `Manual`, `Auto` hoặc `Realtime`. Phase 2 chỉ áp dụng `Manual`; `Auto`, `Realtime`, mode thiếu hay invalid là application message unsupported/invalid sau handshake, nên chỉ trace/ignore và giữ nguyên phase/capture/turn. Không default mode thiếu thành manual. `listen:start` manual hợp lệ mới áp dụng state matrix và có thể restart capture hoặc cancel turn theo matrix. `listen:stop` chỉ finalize Manual Capture active; ở phase khác chỉ trace/ignore.
+Listen được parse thành `ListenStart { mode }`, `ListenStop` và `ListenDetect { text }`; chỉ Start yêu cầu `mode`. `listen:start` mang `mode` parsed thành enum `Manual`, `Auto` hoặc `Realtime`; missing/invalid mode là application message invalid và không default sang Manual. Phase 5 arm/reset capture/VAD Cycle cho mode hợp lệ nhưng không cancel turn. `abort` là interruption explicit. `features.aec` trong ClientHello optional/default false; chỉ predicate Phase 5 đã trust mới route audio `Speaking` của Auto/Realtime vào VAD Barge-in Watch. `listen:stop` chỉ finalize Manual Capture active; ở phase khác chỉ trace/ignore.
 
 ## 5. Protocol v1 binary
 
@@ -99,14 +99,16 @@ Không parse v2/v3 trong MVP. Nếu `Protocol-Version != 1`, server log và reje
 
 ```mermaid
 flowchart LR
-  ACTOR[SessionActor] --> C[bounded control queue]
+  ACTOR[SessionActor] --> U[bounded urgent queue]
+  ACTOR --> C[bounded normal control queue]
   ACTOR --> A[bounded audio queue]
-  C --> WRITER[WS Writer]
+  U --> WRITER[WS Writer]
+  C --> WRITER
   A --> WRITER
   WRITER --> CLIENT[Voice Protocol Client]
 ```
 
-Actor là producer duy nhất của hai queue; writer là task duy nhất gọi WebSocket send. Writer ưu tiên control hợp lệ; audio luôn mang generation và bị gate kiểm tra trước enqueue lẫn trước send. `SpeechOutput` và MCP trả event về actor, không gửi thẳng vào queue.
+Actor là producer duy nhất của ba queue; writer là task duy nhất gọi WebSocket send. Writer ưu tiên `urgent > normal control > audio`; mọi turn JSON/audio mang generation và bị shared gate kiểm tra ngay trước admission/send. `SpeechOutput` và MCP trả event về actor, không gửi thẳng vào queue.
 
 ## 7. Ordering quan trọng
 
@@ -121,7 +123,7 @@ binary opus
 JSON tts:stop
 ```
 
-Luồng hoàn tất bình thường chỉ gửi `tts:stop` sau event `SpeechOutputEvent::Drained`. Khi abort, actor cập nhật `GenerationGate`, sau đó gửi `tts:stop` dạng session control; writer drop packet stale còn nằm trong queue trước khi gửi control này.
+Luồng hoàn tất bình thường chỉ gửi `tts:stop` sau event `SpeechOutputEvent::Drained`. Khi interrupt, actor snapshot PCM nếu là Barge-in, cập nhật `GenerationGate`, rồi gửi `tts:stop` qua urgent lane; writer drop JSON/audio stale còn nằm trong queue trước stop. Urgent admission fail sau `tts:start` là session-integrity failure và đóng session qua escape path.
 
 ## 8. Timeout
 
@@ -133,8 +135,8 @@ Luồng hoàn tất bình thường chỉ gửi `tts:stop` sau event `SpeechOutp
 
 | Incoming | Ready | Listening | Processing | Speaking |
 | --- | --- | --- | --- | --- |
-| binary audio | drop + counter | accept | drop + counter | drop + counter |
-| `listen:start` | → Listening | reset collector, remain Listening | cancel → Listening | cancel → Listening |
+| binary audio | drop + counter | accept | drop + counter | Barge-in Watch chỉ khi predicate AEC trusted, còn lại drop + counter |
+| `listen:start` | → Listening/arm | reset cycle, remain Listening | arm/reset cycle, giữ turn | arm/reset cycle, giữ turn |
 | `listen:stop` | ignore | finalize/stop | ignore | ignore |
 | `abort` | no-op | cancel capture | cancel turn | cancel turn |
 | MCP response | route nếu pending | route nếu pending | route nếu pending | route nếu pending |
@@ -142,7 +144,7 @@ Luồng hoàn tất bình thường chỉ gửi `tts:stop` sau event `SpeechOutp
 
 Không warning từng binary frame bị drop để tránh log spam. `abort` phải idempotent. Sau handshake, malformed JSON, unknown/invalid application message và valid wrong-state message chỉ metric + ignore, không thay đổi state hay đóng session. WebSocket framing/UTF-8 fault do transport library xử lý.
 
-Ở Listening, `listen:start` lặp lại discard capture đang có và restart capture mới, không finalize utterance hay phát wire response. Với Manual, `abort` discard capture rồi về Ready, cũng không tạo Capture Outcome cho downstream, không ASR và không wire response mới. Với Auto, `abort` hủy turn/capture rồi reset worker lease đang pin; sau `ResetDone` actor trở về Listening trong cùng Auto cycle.
+Ở Listening, `listen:start` lặp lại discard capture đang có và restart cycle mới, không finalize utterance hay phát wire response. Với Manual, `abort` discard capture rồi về Ready, cũng không tạo Capture Outcome cho downstream, không ASR và không wire response mới. Với Auto/Realtime, `abort` hủy turn/capture rồi reset worker lease đang pin; sau `ResetDone` actor re-arm theo policy cycle. Acoustic `SpeechStart` khi Speaking chỉ hợp lệ cho Auto đã arm hoặc Realtime, có client AEC assertion đã trust, và phải snapshot retention trước reset/invalidation.
 - WS ping có thể để transport/library xử lý; không trộn với conversation state.
 
 ## 10. Test contract
