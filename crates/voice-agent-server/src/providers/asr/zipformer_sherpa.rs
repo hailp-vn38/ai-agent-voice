@@ -7,6 +7,12 @@ use crate::{
     providers::{AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession},
 };
 
+// sherpa-onnx's streaming file examples append 0.66 s before InputFinished so the
+// encoder can consume its final right-context window. Without it, a Manual stop at
+// the exact end of speech can leave the last tokens undecoded.
+const FINAL_PADDING_SAMPLES: usize = 10_560;
+static FINAL_PADDING: [f32; FINAL_PADDING_SAMPLES] = [0.0; FINAL_PADDING_SAMPLES];
+
 pub(crate) struct UnavailableAsr;
 
 impl AsrProvider for UnavailableAsr {
@@ -64,6 +70,7 @@ impl AsrSession for ZipformerAsrSession {
     }
 
     fn finish(&mut self) -> Result<AsrResult, AsrError> {
+        self.stream.accept_waveform(16_000, &FINAL_PADDING);
         self.stream.input_finished();
         while self.recognizer.is_ready(&self.stream) {
             self.recognizer.decode(&self.stream);

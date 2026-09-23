@@ -47,3 +47,18 @@ cargo run -p voice-reference-client -- \
 Client yeu cau ServerHello va downlink Opus 24 kHz mono, 60 ms hop le; chi pass sau `tts:start`, it nhat mot binary packet va `tts:stop`. Khong in token hoac noi dung text nhan tu server.
 
 `--debug-steps` chi ghi ten buoc an toan ve rieng tu. `--debug-audio-file path.wav` la tuy chon chan doan, ghi audio TTS da decode ra WAV sau turn thanh cong.
+
+## Kiem tra WAV qua VAD/ASR that
+
+Binary `audio-turn` resample WAV PCM16 mono 16/24 kHz thanh 16 kHz, encode Opus 60 ms,
+phat theo cadence microphone va chi pass neu mot STT final co hau to mong doi:
+
+```bash
+cargo run -p voice-reference-client --bin audio-turn -- \
+  --ota http://127.0.0.1:8000/voice/ota/ \
+  --wav docs/audio.wav --mode auto \
+  --expected-stt-suffix "vẫn vô cùng ngột ngạt"
+```
+
+Dung `--mode manual` de kiem tra `listen:stop`. `--trailing-silence-frames` chi danh cho
+phep thu chan doan; gate Manual mac dinh gui zero silence de server tu so huu ASR finalization.

@@ -896,7 +896,7 @@ Zipformer:
 open()
 push_pcm() -> decode ready frames -> Partial
 push_pcm() -> decode ready frames -> Partial
-finish()   -> input_finished + drain -> Final
+finish()   -> adapter tail padding + input_finished + drain -> Final
 ```
 
 Caller không đổi.
@@ -1048,6 +1048,7 @@ fn push_pcm(
 
 ```rust
 fn finish(&mut self) -> Result<AsrResult, AsrError> {
+    self.stream.accept_waveform(16_000, &vec![0.0; 10_560]);
     self.stream.input_finished();
 
     while self.recognizer.is_ready(&self.stream) {

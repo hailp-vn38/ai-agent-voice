@@ -2,7 +2,7 @@
 
 use anyhow::{Context, bail, ensure};
 use futures_util::{SinkExt, StreamExt};
-use opus2::{Channels, Decoder};
+use opus2::{Application, Channels, Decoder, Encoder};
 use serde::Deserialize;
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
@@ -73,6 +73,39 @@ pub struct TextTurnRequest {
 pub struct TextTurnReport {
     pub binary_packets: usize,
     pub debug_audio_file: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AudioListenMode {
+    Manual,
+    Auto,
+}
+
+impl AudioListenMode {
+    fn wire_value(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AudioTurnRequest {
+    pub ota_url: String,
+    pub device_id: String,
+    pub client_id: String,
+    pub wav_file: PathBuf,
+    pub mode: AudioListenMode,
+    pub expected_stt_suffix: String,
+    pub trailing_silence_frames: usize,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioTurnReport {
+    pub uplink_packets: usize,
+    pub stt_text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -687,6 +720,195 @@ pub async fn run_text_turn(request: TextTurnRequest) -> anyhow::Result<TextTurnR
     })
 }
 
+/// Replays a PCM16 mono WAV at microphone cadence and requires one matching STT final.
+pub async fn run_audio_turn(request: AudioTurnRequest) -> anyhow::Result<AudioTurnReport> {
+    ensure!(
+        !request.timeout.is_zero(),
+        "audio turn timeout must be greater than zero"
+    );
+    let expected_suffix = request.expected_stt_suffix.trim();
+    ensure!(
+        !expected_suffix.is_empty(),
+        "expected STT suffix must not be empty"
+    );
+    let pcm = read_wav_as_uplink_pcm(&request.wav_file)?;
+    ensure!(!pcm.is_empty(), "WAV input has no PCM samples");
+
+    let ota: serde_json::Value = reqwest::Client::new()
+        .post(&request.ota_url)
+        .json(&json!({}))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let websocket = ota
+        .get("websocket")
+        .context("OTA response lacks websocket")?;
+    let url = websocket
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .context("OTA response lacks websocket.url")?;
+    let token = websocket
+        .get("token")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let mut connection = url.into_client_request()?;
+    let headers = connection.headers_mut();
+    headers.insert("Protocol-Version", "1".parse()?);
+    headers.insert("Device-Id", request.device_id.parse()?);
+    headers.insert("Client-Id", request.client_id.parse()?);
+    if !token.is_empty() {
+        headers.insert("Authorization", format!("Bearer {token}").parse()?);
+    }
+    let (mut socket, _) = connect_async(connection)
+        .await
+        .context("connect WebSocket")?;
+    socket.send(Message::Text(json!({"type":"hello","version":1,"transport":"websocket","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}).to_string().into())).await?;
+    let hello = match timeout_at(Instant::now() + request.timeout, socket.next()).await? {
+        Some(Ok(Message::Text(text))) => {
+            serde_json::from_str::<ServerHello>(&text).context("invalid ServerHello")?
+        }
+        Some(Ok(_)) => bail!("invalid ServerHello: expected text frame"),
+        Some(Err(error)) => return Err(error.into()),
+        None => bail!("WebSocket closed before ServerHello"),
+    };
+    validate_server_hello(&hello)?;
+    let session_id = hello.session_id;
+    socket
+        .send(Message::Text(
+            json!({"session_id":session_id,"type":"listen","state":"start","mode":request.mode.wire_value()})
+                .to_string()
+                .into(),
+        ))
+        .await?;
+
+    let mut encoder = Encoder::new(16_000, Channels::Mono, Application::Voip)
+        .context("initialize uplink Opus encoder")?;
+    let mut uplink_packets = 0;
+    for frame in pcm.chunks(960) {
+        let mut canonical = [0_i16; 960];
+        canonical[..frame.len()].copy_from_slice(frame);
+        send_uplink_frame(&mut socket, &mut encoder, &canonical).await?;
+        uplink_packets += 1;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
+    for _ in 0..request.trailing_silence_frames {
+        send_uplink_frame(&mut socket, &mut encoder, &[0_i16; 960]).await?;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
+    match request.mode {
+        AudioListenMode::Manual => {
+            socket
+                .send(Message::Text(
+                    json!({"session_id":session_id,"type":"listen","state":"stop"})
+                        .to_string()
+                        .into(),
+                ))
+                .await?;
+        }
+        AudioListenMode::Auto => {}
+    }
+
+    let deadline = Instant::now() + request.timeout;
+    loop {
+        let message = timeout_at(deadline, socket.next())
+            .await
+            .map_err(|_| anyhow::anyhow!("audio turn timed out waiting for STT"))?;
+        match message {
+            Some(Ok(Message::Text(text))) => {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    continue;
+                };
+                if value["type"] != "stt" {
+                    continue;
+                }
+                let stt_text = value["text"]
+                    .as_str()
+                    .context("STT message has no text")?
+                    .to_owned();
+                ensure!(
+                    transcript_has_suffix(&stt_text, expected_suffix),
+                    "STT final is missing the expected suffix"
+                );
+                return Ok(AudioTurnReport {
+                    uplink_packets,
+                    stt_text,
+                });
+            }
+            Some(Ok(Message::Close(_))) => bail!("WebSocket closed before STT"),
+            Some(Ok(_)) => {}
+            Some(Err(error)) => return Err(error.into()),
+            None => bail!("WebSocket closed before STT"),
+        }
+    }
+}
+
+async fn send_uplink_frame<S>(
+    socket: &mut WebSocketStream<S>,
+    encoder: &mut Encoder,
+    pcm: &[i16; 960],
+) -> anyhow::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mut packet = [0_u8; 4_000];
+    let encoded = encoder
+        .encode(pcm, &mut packet)
+        .context("encode canonical uplink Opus frame")?;
+    ensure!(encoded > 0, "Opus encoder produced an empty uplink packet");
+    socket
+        .send(Message::Binary(packet[..encoded].to_vec().into()))
+        .await?;
+    Ok(())
+}
+
+fn transcript_has_suffix(actual: &str, expected: &str) -> bool {
+    let normalize = |text: &str| {
+        text.trim()
+            .trim_end_matches(|character: char| character.is_ascii_punctuation())
+            .to_lowercase()
+    };
+    normalize(actual).ends_with(&normalize(expected))
+}
+
+fn read_wav_as_uplink_pcm(path: &std::path::Path) -> anyhow::Result<Vec<i16>> {
+    let mut reader = hound::WavReader::open(path)
+        .with_context(|| format!("open WAV input {}", path.display()))?;
+    let spec = reader.spec();
+    ensure!(
+        spec.sample_format == hound::SampleFormat::Int
+            && spec.bits_per_sample == 16
+            && spec.channels == 1,
+        "WAV must be PCM16 mono"
+    );
+    let samples = reader
+        .samples::<i16>()
+        .collect::<Result<Vec<_>, _>>()
+        .context("read PCM16 WAV samples")?;
+    match spec.sample_rate {
+        16_000 => Ok(samples),
+        24_000 => Ok(resample_24khz_to_16khz(&samples)),
+        rate => bail!("WAV sample rate must be 16000 or 24000 Hz, got {rate}"),
+    }
+}
+
+fn resample_24khz_to_16khz(input: &[i16]) -> Vec<i16> {
+    let output_len = input.len().saturating_mul(2) / 3;
+    (0..output_len)
+        .map(|index| {
+            let position = index * 3;
+            let lower = position / 2;
+            let upper = (lower + 1).min(input.len().saturating_sub(1));
+            if position.is_multiple_of(2) {
+                input.get(lower).copied().unwrap_or_default()
+            } else {
+                ((i32::from(input[lower]) + i32::from(input[upper])) / 2) as i16
+            }
+        })
+        .collect()
+}
+
 /// Runs the public Phase 5 acoustic barge-in contract over one WebSocket.
 ///
 /// The client asserts AEC, starts Auto or Realtime capture, waits until A has
@@ -999,7 +1221,9 @@ pub fn decode_canonical_uplink_opus_packet(packet: &[u8]) -> anyhow::Result<[i16
 
 #[cfg(test)]
 mod phase5_fixture_tests {
-    use super::decode_canonical_uplink_opus_packet;
+    use super::{
+        decode_canonical_uplink_opus_packet, resample_24khz_to_16khz, transcript_has_suffix,
+    };
 
     const FIXTURES: [&[u8]; 5] = [
         include_bytes!("../tests/fixtures/phase5-uplink-01-silence.opus"),
@@ -1028,5 +1252,25 @@ mod phase5_fixture_tests {
         );
         assert!(peak[3] > 1_000, "fixture must contain speech B");
         assert!(peak[4] < 100, "fixture must end with silence");
+    }
+
+    #[test]
+    fn audio_turn_suffix_match_is_case_insensitive_and_ignores_terminal_punctuation() {
+        assert!(transcript_has_suffix(
+            "Không gian vẫn vô cùng ngột ngạt.",
+            "VẪN VÔ CÙNG NGỘT NGẠT"
+        ));
+        assert!(!transcript_has_suffix(
+            "Không gian vẫn vô cùng",
+            "vẫn vô cùng ngột ngạt"
+        ));
+    }
+
+    #[test]
+    fn audio_turn_resamples_24khz_to_the_canonical_16khz_count() {
+        assert_eq!(
+            resample_24khz_to_16khz(&[0, 10, 20, 30, 40, 50]),
+            [0, 15, 30, 45]
+        );
     }
 }

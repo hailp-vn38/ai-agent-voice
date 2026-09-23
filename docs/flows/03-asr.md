@@ -2,7 +2,7 @@
 
 ## 1. Boundary
 
-ASR Phase 3 là streaming nội bộ: `AsrProvider::open()` tạo `AsrSession`; `push_pcm()` nhận PCM 16 kHz khi người dùng đang nói và có thể trả `AsrPartial`; `finish()` drain recognizer rồi trả đúng một `AsrFinal`. Default adapter là `zipformer_sherpa` local Rust. HTTP/offline adapter tương lai có thể buffer ở `push_pcm()` rồi infer tại `finish()`, nhưng không đổi contract.
+ASR Phase 3 là streaming nội bộ: `AsrProvider::open()` tạo `AsrSession`; `push_pcm()` nhận PCM 16 kHz khi người dùng đang nói và có thể trả `AsrPartial`; `finish()` drain recognizer rồi trả đúng một `AsrFinal`. Adapter `zipformer_sherpa` thêm 660 ms zero tail trước `input_finished()` để encoder streaming tiêu thụ đủ right context và không bỏ token cuối khi Manual dừng đúng cuối tiếng nói. Default adapter là `zipformer_sherpa` local Rust. HTTP/offline adapter tương lai có thể buffer ở `push_pcm()` rồi infer tại `finish()`, nhưng không đổi contract.
 
 `AsrStreamLease` được lấy trước khi mở stream (`SpeechStart` ở Auto, `listen:start` ở Manual) và release sau final, cancel hoặc lỗi. `Active Turn` permit chỉ được lấy tại `SpeechEnd`/`listen:stop`, trước `finish()`; nếu không có permit, server cancel stream, release lease và bỏ turn.
 
