@@ -26,7 +26,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::{
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::mpsc, time::timeout};
 use tower_http::trace::TraceLayer;
@@ -410,6 +410,7 @@ async fn handle_socket(
     let writer = tokio::spawn(async move {
         let mut deferred_tts_stop = None;
         let mut invalidated_generation = 0;
+        let mut last_audio_sent: Option<(u64, u64, Instant)> = None;
         loop {
             // A normal stop follows the final paced packet even though control is otherwise
             // preferred over audio by this writer.
@@ -441,7 +442,21 @@ async fn handle_socket(
                     {
                         continue;
                     }
+                    let generation = match &message {
+                        OutboundMessage::Binary { generation, .. } => Some(*generation),
+                        _ => None,
+                    };
                     if send_outbound(&mut sender, message).await { break; }
+                    if let Some(generation) = generation {
+                        let now = Instant::now();
+                        let (packet_seq, delta_ms) = match last_audio_sent {
+                            Some((previous_generation, previous_seq, previous_at)) if previous_generation == generation =>
+                                (previous_seq + 1, Some(now.duration_since(previous_at).as_millis())),
+                            _ => (1, None),
+                        };
+                        debug!(generation, packet_seq, ?delta_ms, "WebSocket audio sent");
+                        last_audio_sent = Some((generation, packet_seq, now));
+                    }
                 },
                 else => {
                     if let Some(message) = deferred_tts_stop.take()

@@ -184,15 +184,14 @@ impl LlmProvider for BackpressuredLlm {
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
     > {
-        let overflow = (0..10)
-            .map(|_| {
-                Ok(voice_agent_server::providers::LlmEvent::TextDelta(
-                    "Mot cau dai du de tach thanh speech segment ngay. ".into(),
-                ))
-            })
-            .chain(std::iter::once(Ok(
-                voice_agent_server::providers::LlmEvent::Finished,
-            )));
+        // One delta carries more complete sentences than pending capacity, so the
+        // backpressure result does not depend on how quickly synthesis runs ahead.
+        let overflow = std::iter::once(Ok(voice_agent_server::providers::LlmEvent::TextDelta(
+            "Mot cau dai du de tach thanh speech segment ngay. ".repeat(10),
+        )))
+        .chain(std::iter::once(Ok(
+            voice_agent_server::providers::LlmEvent::Finished,
+        )));
         let release_overflow = Arc::clone(&self.release_overflow);
         Ok(Box::pin(
             futures_util::stream::once(async {

@@ -19,6 +19,8 @@ use crate::{
 const PROVIDER_SAMPLE_RATE_HZ: u32 = 48_000;
 const FADE_IN_SAMPLES: usize = 48_000 * 8 / 1_000;
 const PACED_FRAME_DURATION: Duration = Duration::from_millis(60);
+const PREBUFFER_PACKETS: usize = 5;
+const MAX_BUFFERED_PACKETS: usize = 32;
 
 /// The actor observes these events; this module never owns a WebSocket sender.
 pub enum SpeechOutputEvent {
@@ -46,10 +48,11 @@ pub struct SpeechOutput {
     first_pcm_chunk: bool,
     downlink_tail: Vec<i16>,
     packets: VecDeque<Vec<u8>>,
-    next_packet: usize,
+    packets_sent: usize,
     finish_input: bool,
     started: bool,
-    next_deadline: Option<Instant>,
+    playback_origin: Option<Instant>,
+    playback_end_deadline: Option<Instant>,
     segmenter: SentenceSegmenter,
     max_pending: usize,
 }
@@ -77,10 +80,11 @@ impl SpeechOutput {
             pending: VecDeque::new(),
             downlink_tail: Vec::new(),
             packets: VecDeque::new(),
-            next_packet: 0,
+            packets_sent: 0,
             finish_input: false,
             started: false,
-            next_deadline: None,
+            playback_origin: None,
+            playback_end_deadline: None,
             segmenter: SentenceSegmenter::new(config),
             max_pending,
         })
@@ -210,6 +214,11 @@ impl SpeechOutput {
             }
             self.packets.push_back(packet.as_bytes().to_vec());
         }
+        tracing::debug!(
+            buffered_packets = self.packets.len(),
+            buffered_ms = self.packets.len() * PACED_FRAME_DURATION.as_millis() as usize,
+            "TTS Opus buffer"
+        );
         Ok(())
     }
 
@@ -244,10 +253,11 @@ impl SpeechOutput {
         self.downlink_resampler = DownlinkResampler::new_48k_to_24k();
         self.first_pcm_chunk = true;
         self.packets.clear();
-        self.next_packet = 0;
+        self.packets_sent = 0;
         self.finish_input = false;
         self.started = false;
-        self.next_deadline = None;
+        self.playback_origin = None;
+        self.playback_end_deadline = None;
         self.segmenter.reset();
         if let (Some(runtime), Some(stream)) = (&self.tts_runtime, self.tts_stream.take()) {
             runtime.close_stream(stream);
@@ -255,9 +265,26 @@ impl SpeechOutput {
         }
     }
 
+    fn packet_send_deadline(&self) -> Option<Instant> {
+        if self.packets_sent < PREBUFFER_PACKETS {
+            return None;
+        }
+        let origin = self
+            .playback_origin
+            .expect("sent packets require playback origin");
+        let paced_index = self.packets_sent + 1 - PREBUFFER_PACKETS;
+        Some(
+            origin
+                + PACED_FRAME_DURATION * u32::try_from(paced_index).expect("packet index fits u32"),
+        )
+    }
+
     pub fn poll(&mut self) -> Result<Option<SpeechOutputEvent>, SpeechOutputError> {
         // Only one segment is synthesized at a time; packet pacing may overlap the next poll.
-        if self.packets.is_empty() && self.active_worker.is_none() && !self.pending.is_empty() {
+        if self.packets.len() < MAX_BUFFERED_PACKETS
+            && self.active_worker.is_none()
+            && !self.pending.is_empty()
+        {
             let segment = self.pending.front_mut().expect("checked non-empty");
             if !segment.announced {
                 segment.announced = true;
@@ -268,7 +295,12 @@ impl SpeechOutput {
             }
             self.synthesize_next()?;
         }
-        if let Some(lease) = self.active_worker {
+        // Keep native PCM production behind the audio high-water mark. The runtime's
+        // event channel supplies backpressure while paced packets leave this queue.
+        if let Some(lease) = self
+            .active_worker
+            .filter(|_| self.packets.len() < MAX_BUFFERED_PACKETS)
+        {
             let event = self
                 .tts_runtime
                 .as_ref()
@@ -300,20 +332,20 @@ impl SpeechOutput {
                 }
             }
         }
-        if self.next_packet == self.packets.len()
+        if self.packets.is_empty()
             && self.finish_input
             && self.pending.is_empty()
             && self.active_worker.is_none()
         {
             self.flush_downlink_tail()?;
         }
-        if self.next_packet == self.packets.len() {
+        if self.packets.is_empty() {
             if self.finish_input
                 && self.pending.is_empty()
                 && self.active_worker.is_none()
                 && self.started
                 && self
-                    .next_deadline
+                    .playback_end_deadline
                     .is_some_and(|deadline| Instant::now() >= deadline)
             {
                 self.cancel();
@@ -321,19 +353,42 @@ impl SpeechOutput {
             }
             return Ok(None);
         }
+        if !self.started {
+            // A five-packet burst alone cannot cover the native decoder's next-chunk
+            // latency. Finish short initial segments before playback; a long segment
+            // starts at the bounded audio high-water mark so the worker can continue.
+            if self.packets.len() < MAX_BUFFERED_PACKETS
+                && (self.active_worker.is_some() || !self.pending.is_empty())
+            {
+                return Ok(None);
+            }
+            tracing::info!(
+                buffered_packets = self.packets.len(),
+                active_worker = self.active_worker.is_some(),
+                "TTS initial buffer ready"
+            );
+            self.started = true;
+            return Ok(Some(SpeechOutputEvent::Started));
+        }
         if self
-            .next_deadline
+            .packet_send_deadline()
             .is_some_and(|deadline| Instant::now() < deadline)
         {
             return Ok(None);
         }
-        if !self.started {
-            self.started = true;
-            return Ok(Some(SpeechOutputEvent::Started));
-        }
         let packet = self.packets.pop_front().expect("checked non-empty");
-        self.next_packet = 0;
-        self.next_deadline = Some(Instant::now() + PACED_FRAME_DURATION);
+        let now = Instant::now();
+        let origin = *self.playback_origin.get_or_insert(now);
+        self.packets_sent += 1;
+        let packet_count = u32::try_from(self.packets_sent).expect("packet count fits u32");
+        let expected_end = origin + PACED_FRAME_DURATION * packet_count;
+        self.playback_end_deadline = Some(expected_end.max(now + PACED_FRAME_DURATION));
+        tracing::debug!(
+            packet_seq = self.packets_sent,
+            opus_queue = self.packets.len(),
+            active_worker = self.active_worker.is_some(),
+            "Downlink Opus packet ready for WebSocket"
+        );
         Ok(Some(SpeechOutputEvent::AudioPacket(packet)))
     }
 }
@@ -421,6 +476,398 @@ fn float_to_i16(sample: f32) -> i16 {
 mod tests {
     use super::{SentenceSegmenter, sanitize_tts_text};
     use crate::config::SpeechOutputConfig;
+
+    #[test]
+    fn short_streaming_segment_waits_for_completion_before_starting_playback() {
+        use super::{SpeechOutput, SpeechOutputEvent};
+        use crate::{
+            audio::PcmF32Mono,
+            providers::{TtsError, TtsProvider, TtsWorker},
+            workers::{TtsWorkerRuntime, WorkerRuntimeConfig},
+        };
+        use std::{
+            sync::{Arc, Mutex, atomic::AtomicBool, mpsc},
+            time::Duration,
+        };
+
+        struct GatedProvider {
+            emitted: mpsc::Sender<usize>,
+            release: Arc<Mutex<mpsc::Receiver<()>>>,
+        }
+        struct GatedWorker {
+            emitted: mpsc::Sender<usize>,
+            release: Arc<Mutex<mpsc::Receiver<()>>>,
+        }
+        impl TtsProvider for GatedProvider {
+            fn adapter(&self) -> &'static str {
+                "gated"
+            }
+            fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
+                Ok(Box::new(GatedWorker {
+                    emitted: self.emitted.clone(),
+                    release: Arc::clone(&self.release),
+                }))
+            }
+        }
+        impl TtsWorker for GatedWorker {
+            fn synthesize(
+                &mut self,
+                _: &str,
+                _: &AtomicBool,
+                on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+            ) -> Result<(), TtsError> {
+                for frame in 1..=5 {
+                    on_pcm(PcmF32Mono::new(vec![0.1; 2_880], 48_000))?;
+                    self.emitted.send(frame).unwrap();
+                    self.release.lock().unwrap().recv().unwrap();
+                }
+                Ok(())
+            }
+            fn reset(&mut self) -> Result<(), TtsError> {
+                Ok(())
+            }
+        }
+
+        let (emitted_tx, emitted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let provider: Arc<dyn TtsProvider> = Arc::new(GatedProvider {
+            emitted: emitted_tx,
+            release: Arc::new(Mutex::new(release_rx)),
+        });
+        let runtime = Arc::new(TtsWorkerRuntime::new(
+            Arc::clone(&provider),
+            WorkerRuntimeConfig {
+                max_workers: 1,
+                command_capacity: 4,
+                final_timeout: Duration::from_secs(2),
+                cleanup_grace: Duration::from_secs(1),
+            },
+        ));
+        let mut output =
+            SpeechOutput::with_worker(provider, runtime, SpeechOutputConfig::default()).unwrap();
+        output
+            .push_delta("Một câu có âm thanh phát từng phần.")
+            .unwrap();
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::SegmentReady { .. })
+        ));
+        assert!(output.poll().unwrap().is_none());
+        for expected in 1..=5 {
+            if expected > 1 {
+                release_tx.send(()).unwrap();
+            }
+            assert_eq!(
+                emitted_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+                expected
+            );
+            for _ in 0..10_000 {
+                let event = output.poll().unwrap();
+                if output.packets.len() == expected {
+                    assert!(event.is_none(), "Started while worker still has more PCM");
+                    break;
+                }
+                assert!(
+                    event.is_none(),
+                    "Started before packet {expected} reached the queue"
+                );
+                std::thread::yield_now();
+            }
+            assert_eq!(output.packets.len(), expected);
+            assert!(
+                output.poll().unwrap().is_none(),
+                "Started with worker active at packet {expected}"
+            );
+        }
+        release_tx.send(()).unwrap();
+        let mut started = false;
+        for _ in 0..10_000 {
+            if matches!(output.poll().unwrap(), Some(SpeechOutputEvent::Started)) {
+                started = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            started,
+            "short segment did not start after worker completion"
+        );
+        for _ in 0..5 {
+            assert!(matches!(
+                output.poll().unwrap(),
+                Some(SpeechOutputEvent::AudioPacket(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn long_streaming_segment_starts_at_bounded_initial_buffer() {
+        use super::{MAX_BUFFERED_PACKETS, SpeechOutput, SpeechOutputEvent};
+        use crate::{
+            audio::PcmF32Mono,
+            providers::{TtsError, TtsProvider, TtsWorker},
+            workers::{TtsWorkerRuntime, WorkerRuntimeConfig},
+        };
+        use std::{
+            sync::{Arc, Mutex, atomic::AtomicBool, mpsc},
+            time::Duration,
+        };
+
+        struct LargeChunkProvider(Arc<Mutex<mpsc::Receiver<()>>>);
+        struct LargeChunkWorker(Arc<Mutex<mpsc::Receiver<()>>>);
+        impl TtsProvider for LargeChunkProvider {
+            fn adapter(&self) -> &'static str {
+                "large-chunk"
+            }
+            fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
+                Ok(Box::new(LargeChunkWorker(Arc::clone(&self.0))))
+            }
+        }
+        impl TtsWorker for LargeChunkWorker {
+            fn synthesize(
+                &mut self,
+                _: &str,
+                _: &AtomicBool,
+                on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+            ) -> Result<(), TtsError> {
+                on_pcm(PcmF32Mono::new(
+                    vec![0.1; 2_880 * MAX_BUFFERED_PACKETS],
+                    48_000,
+                ))?;
+                self.0.lock().unwrap().recv().unwrap();
+                Ok(())
+            }
+            fn reset(&mut self) -> Result<(), TtsError> {
+                Ok(())
+            }
+        }
+
+        let (release_tx, release_rx) = mpsc::channel();
+        let provider: Arc<dyn TtsProvider> =
+            Arc::new(LargeChunkProvider(Arc::new(Mutex::new(release_rx))));
+        let runtime = Arc::new(TtsWorkerRuntime::new(
+            Arc::clone(&provider),
+            WorkerRuntimeConfig {
+                max_workers: 1,
+                command_capacity: 4,
+                final_timeout: Duration::from_secs(2),
+                cleanup_grace: Duration::from_secs(1),
+            },
+        ));
+        let mut output =
+            SpeechOutput::with_worker(provider, runtime, SpeechOutputConfig::default()).unwrap();
+        output
+            .push_delta("Một câu đủ dài để kiểm tra bộ đệm đầu lượt.")
+            .unwrap();
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::SegmentReady { .. })
+        ));
+        let mut started = false;
+        for _ in 0..10_000 {
+            if matches!(output.poll().unwrap(), Some(SpeechOutputEvent::Started)) {
+                started = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            started,
+            "bounded long segment must start without waiting for worker completion"
+        );
+        assert!(output.active_worker.is_some());
+        assert!(output.packets.len() >= MAX_BUFFERED_PACKETS);
+        release_tx.send(()).unwrap();
+    }
+
+    #[test]
+    fn first_five_packets_are_sent_before_realtime_pacing() {
+        use super::{SpeechOutput, SpeechOutputEvent};
+        use crate::{
+            audio::PcmF32Mono,
+            providers::{TtsError, TtsProvider},
+        };
+        use std::sync::Arc;
+
+        struct TenFrames;
+        impl TtsProvider for TenFrames {
+            fn adapter(&self) -> &'static str {
+                "ten-frames"
+            }
+            fn synthesize(&self, _: &str) -> Result<PcmF32Mono, TtsError> {
+                Ok(PcmF32Mono::new(vec![0.1; 2_880 * 10], 48_000))
+            }
+        }
+        let mut output =
+            SpeechOutput::with_config(Arc::new(TenFrames), SpeechOutputConfig::default()).unwrap();
+        output.push_delta("Một câu đủ dài.").unwrap();
+        output.finish_input().unwrap();
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::SegmentReady { .. })
+        ));
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::Started)
+        ));
+        for packet in 1..=5 {
+            assert!(
+                matches!(
+                    output.poll().unwrap(),
+                    Some(SpeechOutputEvent::AudioPacket(_))
+                ),
+                "packet {packet} should prebuffer immediately"
+            );
+        }
+        assert!(
+            output.poll().unwrap().is_none(),
+            "sixth packet must wait for pacing"
+        );
+        let origin = std::time::Instant::now() - std::time::Duration::from_millis(61);
+        output.playback_origin = Some(origin);
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::AudioPacket(_))
+        ));
+        assert_eq!(
+            output.packet_send_deadline(),
+            Some(origin + std::time::Duration::from_millis(120)),
+            "late polls must retain the absolute cadence"
+        );
+    }
+
+    #[test]
+    fn paced_deadlines_are_anchored_to_first_packet_even_if_prebuffer_is_delayed() {
+        use super::SpeechOutput;
+        use crate::providers::tts::UnavailableTts;
+        use std::{
+            sync::Arc,
+            time::{Duration, Instant},
+        };
+
+        let mut output =
+            SpeechOutput::with_config(Arc::new(UnavailableTts), SpeechOutputConfig::default())
+                .unwrap();
+        let first_packet_at = Instant::now();
+        output.playback_origin = Some(first_packet_at);
+        output.packets_sent = 5;
+        assert_eq!(
+            output.packet_send_deadline(),
+            Some(first_packet_at + Duration::from_millis(60))
+        );
+        output.packets_sent = 6;
+        assert_eq!(
+            output.packet_send_deadline(),
+            Some(first_packet_at + Duration::from_millis(120))
+        );
+    }
+
+    #[test]
+    fn next_segment_starts_while_previous_audio_is_queued() {
+        use super::{SpeechOutput, SpeechOutputEvent};
+        use crate::{
+            audio::PcmF32Mono,
+            providers::{TtsError, TtsProvider},
+        };
+        use std::sync::{Arc, Mutex};
+
+        struct RecordingTts(Arc<Mutex<Vec<String>>>);
+        impl TtsProvider for RecordingTts {
+            fn adapter(&self) -> &'static str {
+                "recording"
+            }
+            fn synthesize(&self, text: &str) -> Result<PcmF32Mono, TtsError> {
+                self.0.lock().unwrap().push(text.into());
+                Ok(PcmF32Mono::new(vec![0.1; 2_880 * 10], 48_000))
+            }
+        }
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut output = SpeechOutput::with_config(
+            Arc::new(RecordingTts(Arc::clone(&calls))),
+            SpeechOutputConfig::default(),
+        )
+        .unwrap();
+        output.push_delta("Câu thứ nhất. Câu thứ hai.").unwrap();
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::SegmentReady { .. })
+        ));
+        assert!(output.poll().unwrap().is_none());
+        assert!(!output.packets.is_empty());
+        assert!(
+            matches!(
+                output.poll().unwrap(),
+                Some(SpeechOutputEvent::SegmentReady { .. })
+            ),
+            "next segment must be announced before first audio queue drains"
+        );
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::Started)
+        ));
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::AudioPacket(_))
+        ));
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            2,
+            "second synthesis must overlap first playback"
+        );
+    }
+
+    #[test]
+    fn prebuffered_audio_does_not_drain_before_nominal_playback_ends() {
+        use super::{SpeechOutput, SpeechOutputEvent};
+        use crate::{
+            audio::PcmF32Mono,
+            providers::{TtsError, TtsProvider},
+        };
+        use std::{
+            sync::Arc,
+            time::{Duration, Instant},
+        };
+
+        struct ShortTts;
+        impl TtsProvider for ShortTts {
+            fn adapter(&self) -> &'static str {
+                "short"
+            }
+            fn synthesize(&self, _: &str) -> Result<PcmF32Mono, TtsError> {
+                Ok(PcmF32Mono::new(vec![0.1; 2_880 * 2], 48_000))
+            }
+        }
+        let mut output =
+            SpeechOutput::with_config(Arc::new(ShortTts), SpeechOutputConfig::default()).unwrap();
+        output.push_delta("Một câu ngắn.").unwrap();
+        output.finish_input().unwrap();
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::SegmentReady { .. })
+        ));
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::Started)
+        ));
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::AudioPacket(_))
+        ));
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::AudioPacket(_))
+        ));
+        assert!(output.playback_end_deadline.unwrap() > Instant::now() + Duration::from_millis(60));
+        assert!(
+            output.poll().unwrap().is_none(),
+            "tts:stop must wait for buffered playback"
+        );
+        output.playback_end_deadline = Some(Instant::now() - Duration::from_millis(1));
+        assert!(matches!(
+            output.poll().unwrap(),
+            Some(SpeechOutputEvent::Drained)
+        ));
+    }
 
     #[test]
     fn splits_unicode_only_at_complete_sentence_boundary() {

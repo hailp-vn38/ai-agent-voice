@@ -19,7 +19,7 @@ Adapter concrete V1 là `zerotts_onnx`, native Rust + ONNX. Provider chỉ infer
 
 ZeroTTS V1 trả `PcmF32Mono` 48 kHz mono: codec stereo được adapter average/normalize trước boundary. `SpeechOutput` resample 48 kHz -> 24 kHz, convert f32 -> i16, rồi tạo đúng 1.440-sample `DownlinkPcmFrame`. Factory/warmup xác minh config và codec metadata đều 48 kHz, channel profile và voice dimensions khớp graph; thay đổi profile ở revision khác fail startup.
 
-ZeroTTS chuẩn hoá văn bản tiếng Việt trước tokenizer. `providers.tts.zerotts_onnx.delivery_mode = "file"` là mặc định: worker sinh đủ codec frames của từng Speech Segment, giải mã bằng `decode_full`, ghi WAV float mono 48 kHz vào file tạm, rồi đọc file theo khối. Chỉ sau khi WAV hoàn chỉnh mới đưa PCM vào `SpeechOutput` để đổi mẫu, Opus encode và pace qua WebSocket. File tạm được xoá khi hoàn tất, lỗi hoặc huỷ. Chế độ `"stream"` vẫn dùng `decode_step` và codec cache qua các segment trong một lượt thoại; cold start giải mã theo nhóm 4, 8, 16 frames.
+ZeroTTS chuẩn hoá văn bản tiếng Việt trước tokenizer. `providers.tts.zerotts_onnx.delivery_mode = "stream"` là mặc định: worker dùng `decode_step` và codec cache qua các segment trong một lượt thoại; cold start giải mã theo nhóm 4, 8, 16 frames. Chế độ `"file"` vẫn có thể chọn: worker sinh đủ codec frames của từng Speech Segment, giải mã bằng `decode_full`, ghi WAV float mono 48 kHz vào file tạm, rồi đọc file theo khối. Chỉ sau khi WAV hoàn chỉnh mới đưa PCM vào `SpeechOutput` để đổi mẫu, Opus encode và pace qua WebSocket. File tạm được xoá khi hoàn tất, lỗi hoặc huỷ.
 
 ## 2. Flow
 
@@ -39,7 +39,7 @@ flowchart LR
 
 ## 3. TTS state messages
 
-Chỉ khi AudioPacket hợp lệ đầu tiên đã sẵn sàng, actor tạo:
+Khi đã có đủ initial prebuffer, hoặc synthesis hoàn tất với câu ngắn dưới ngưỡng, actor tạo:
 
 ```text
 tts:start
@@ -67,14 +67,14 @@ Opus encoder đóng `DownlinkPcmFrame` đúng 60 ms (1.440 samples ở 24 kHz). 
 
 ## 5. AudioPacer
 
-Pacer đảm bảo packet xuống ESP32 gần tốc độ playback.
+Pacer giữ audio đầu turn cho đến khi các segment ngắn đã tổng hợp xong, hoặc hàng đợi của segment dài đạt ngưỡng 32 Opus packet. Sau `tts:start`, 5 packet đầu được gửi ngay; từ packet thứ 6, deadline tính từ thời điểm gói 1 được release: gói 6 ở mốc +60 ms, gói 7 ở +120 ms. Một tick trễ không cộng dồn vào các deadline sau. Ngưỡng ban đầu 32 packet giới hạn thời gian chờ trước phát cho segment dài và tránh kẹt worker khi hàng đợi đầy. `Drained` và `tts:stop` chờ hết thời lượng playback danh nghĩa của các gói đã gửi, kể cả những gói trong burst đầu. Nếu TTS vẫn tạo PCM chậm hơn playback sau ngưỡng này, client có thể thiếu audio; log `TTS Opus buffer` ghi độ sâu hàng đợi khi encode, `Downlink Opus packet ready for WebSocket` ghi trạng thái khi release, còn `WebSocket audio sent` ghi khoảng cách gửi thực tế khi bật mức log `debug`.
 
 ```text
 prebuffer N frames -> send nhanh
 sau đó -> ~frame_ms giữa các packet
 ```
 
-`prebuffer_frames` phải configurable và nhỏ.
+Giới hạn dispatch/poll PCM khi hàng đợi Opus đạt 32 packet. Segment N+1 có thể bắt đầu trước khi hàng đợi N cạn, miễn chỉ một worker synthesis đang active.
 
 ## 6. Segment lifecycle và backpressure
 

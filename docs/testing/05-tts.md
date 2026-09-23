@@ -9,7 +9,7 @@
 - encoder luôn dùng scratch 4.000 bytes; lỗi encode, packet rỗng và output vượt `websocket.max_frame_bytes` trả `AudioCodecError`, không panic hoặc đóng WebSocket.
 - decode Opus round-trip không lỗi.
 - pacer spacing đúng với paused Tokio clock.
-- prebuffer frames được gửi trước pacing loop.
+- chưa có `tts:start` khi worker stream còn đang tạo câu ngắn, kể cả đã có 5 Opus packet; worker hoàn tất thì `Started`, rồi tối đa 5 packet đầu được gửi liền trước pacing loop. Với segment dài, đủ 32 packet làm `Started` ngay cả khi worker còn active để hàng đợi không chặn inference.
 - queue full tạo backpressure.
 - cancel generation -> stale packets không send.
 - cuối stream -> `tts:stop` sau frame cuối.
