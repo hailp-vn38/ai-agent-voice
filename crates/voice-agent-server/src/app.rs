@@ -492,7 +492,14 @@ async fn handle_socket(
                     debug!("dropped binary because bounded ingress is full or session is closed");
                 }
             }
-            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(Message::Close(frame)) => {
+                info!(?frame, "websocket peer closed connection");
+                break;
+            }
+            Err(error) => {
+                warn!(%error, "websocket receive failed");
+                break;
+            }
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
         }
     }

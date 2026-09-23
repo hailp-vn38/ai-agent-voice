@@ -1,4 +1,4 @@
-xiaozhi-esp32-server-reference/
+reference/
 /target/
 /config.toml
 /models/**

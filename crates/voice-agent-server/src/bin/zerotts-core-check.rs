@@ -3,7 +3,7 @@ use std::{env, path::PathBuf, process::ExitCode};
 use serde::Deserialize;
 use voice_agent_server::{
     audio::{DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono},
-    providers::tts::zerotts_onnx::ZeroTtsContract,
+    providers::tts::zerotts_onnx::{ZeroTtsContract, ZeroTtsPcmStream},
 };
 
 #[derive(Deserialize)]
@@ -82,16 +82,45 @@ fn run() -> Result<(), String> {
     {
         return Err("a second operation inherited stale ZeroTTS state".into());
     }
-    let pcm = core
-        .synthesize_pcm(&fixture.text, fixture.max_frames)
+    let mut chunks = Vec::new();
+    let mut stream = ZeroTtsPcmStream::new(&core).map_err(|error| error.to_string())?;
+    stream
+        .synthesize(&fixture.text, fixture.max_frames, &mut |pcm| {
+            chunks.push(pcm);
+            Ok(())
+        })
         .map_err(|error| error.to_string())?;
-    if pcm.sample_rate_hz() != 48_000
-        || pcm.samples().is_empty()
-        || pcm.samples().iter().any(|sample| !sample.is_finite())
-    {
+    if chunks.len() < 2 {
+        return Err("ZeroTTS stream did not deliver more than one PCM chunk".into());
+    }
+    if chunks.iter().any(|pcm| {
+        pcm.sample_rate_hz() != 48_000
+            || pcm.samples().is_empty()
+            || pcm.samples().iter().any(|sample| !sample.is_finite())
+    }) {
         return Err("ZeroTTS codec did not produce finite 48 kHz PCM".into());
     }
-    let (pairs, _) = pcm.samples().as_chunks::<2>();
+    let mut next_chunks = Vec::new();
+    stream
+        .synthesize(&fixture.text, fixture.max_frames, &mut |pcm| {
+            next_chunks.push(pcm);
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
+    if next_chunks.is_empty()
+        || next_chunks.iter().any(|pcm| {
+            pcm.sample_rate_hz() != 48_000
+                || pcm.samples().is_empty()
+                || pcm.samples().iter().any(|sample| !sample.is_finite())
+        })
+    {
+        return Err("ZeroTTS continuous codec stream did not produce finite PCM".into());
+    }
+    let pcm = chunks
+        .into_iter()
+        .flat_map(|pcm| pcm.samples().to_vec())
+        .collect::<Vec<_>>();
+    let (pairs, _) = pcm.as_chunks::<2>();
     let downlink = pairs
         .iter()
         .map(|pair| ((pair[0] + pair[1]) * 0.5 * i16::MAX as f32).round() as i16)
@@ -129,7 +158,7 @@ fn run() -> Result<(), String> {
         "ZeroTTS parity, codec, and canonical Opus accepted: {} frames, EOA frame {}, {} PCM samples",
         result.frames.len(),
         fixture.eoa_frame_index,
-        pcm.samples().len(),
+        pcm.len(),
     );
     Ok(())
 }

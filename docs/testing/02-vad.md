@@ -18,6 +18,8 @@
 - `listen:start`/`listen:stop`/`abort` reset Manual Capture nhưng không recreate/reset UplinkOpusDecoder; frame hợp lệ của capture kế tiếp vẫn decode được.
 - repeated `listen:start` và `abort` khi capture không rỗng discard toàn bộ PCM cũ, không tạo utterance/outcome xuống ASR và không phát wire payload mới.
 - utterance re-arm trong một Auto Listening cycle clear Silero state/context, segmenter, retention ring và VAD cursor bookkeeping trước input utterance kế tiếp.
+- với `workers.vad.max_workers = 1`, `tts:stop` rồi `listen:start(auto)` phải reuse cùng VAD capacity trên cùng WebSocket và turn sau vẫn hoàn tất; không được close `1013`.
+- `listen:start(auto)` lặp lại khi Reset pending là idempotent; `abort` trong Auto reset/re-arm lease hiện hữu và không Close/reacquire nó.
 
 ## Manual mode
 

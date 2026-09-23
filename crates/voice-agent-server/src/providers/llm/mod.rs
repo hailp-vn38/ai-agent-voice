@@ -84,7 +84,10 @@ impl LlmProvider for ConfiguredOpenAiLlm {
             .await
             .map_err(|_| LlmError::Failed)?;
         Ok(Box::pin(stream.map(|chunk| match chunk {
-            Ok(llm::chat::StreamChunk::Text(text)) => Ok(LlmEvent::TextDelta(text)),
+            Ok(llm::chat::StreamChunk::Text(text)) => {
+                tracing::info!(response_delta = %text, "LLM response received");
+                Ok(LlmEvent::TextDelta(text))
+            }
             Ok(llm::chat::StreamChunk::Done { .. }) => Ok(LlmEvent::Finished),
             Ok(_) => Ok(LlmEvent::UnexpectedToolCall),
             Err(_) => Err(LlmError::Failed),

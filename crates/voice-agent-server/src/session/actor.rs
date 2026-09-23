@@ -56,7 +56,10 @@ pub struct SessionActor {
     speech_output: SpeechOutput,
     tts_started: bool,
     control_tx: mpsc::Sender<OutboundMessage>,
-    _audio_tx: mpsc::Sender<OutboundMessage>,
+    audio_tx: mpsc::Sender<OutboundMessage>,
+    /// A packet removed from SpeechOutput but not yet admitted by the bounded writer queue.
+    /// It must be retried before polling another packet: dropping it creates audible gaps.
+    pending_audio: Option<OutboundMessage>,
 }
 
 /// Application-owned runtimes shared by every voice session.
@@ -259,7 +262,8 @@ impl SessionActor {
             )?,
             tts_started: false,
             control_tx,
-            _audio_tx: audio_tx,
+            audio_tx,
+            pending_audio: None,
         })
     }
 
@@ -373,43 +377,7 @@ impl SessionActor {
 
     fn on_listen_command(&mut self, command: ListenCommand) {
         match command {
-            ListenCommand::Start { mode } => {
-                self.cancel_speech_delivery();
-                self.generation += 1;
-                self.cancel_llm();
-                self.cancel_asr();
-                self.release_active_turn();
-                self.close_vad();
-                self.auto_reset_pending = false;
-                self.listening_mode = Some(mode.clone());
-                let identity =
-                    WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
-                match mode {
-                    ListenMode::Manual => match self.asr_runtime.open(identity.clone()) {
-                        Ok(lease) => {
-                            self.manual_capture.restart();
-                            self.asr_stream = Some((lease, identity));
-                            self.phase = SessionPhase::Listening;
-                        }
-                        Err(_) => self.phase = SessionPhase::Ready,
-                    },
-                    ListenMode::Auto => match self.vad_runtime.open(identity.clone()) {
-                        Ok(lease) => {
-                            self.vad_session = Some((lease, identity));
-                            self.auto_speech_active = false;
-                            self.auto_reset_pending = false;
-                            self.vad_segmenter.reset();
-                            self.auto_retention.reset();
-                            self.phase = SessionPhase::Listening;
-                        }
-                        Err(_) => {
-                            self.phase = SessionPhase::Closed;
-                            let _ = self.control_tx.try_send(OutboundMessage::Close(1013));
-                        }
-                    },
-                    ListenMode::Realtime => self.phase = SessionPhase::Ready,
-                }
-            }
+            ListenCommand::Start { mode } => self.start_listening(mode),
             ListenCommand::Detect { text } => self.accept_detect(text),
             ListenCommand::Stop => {
                 if self.listening_mode == Some(ListenMode::Manual)
@@ -428,6 +396,94 @@ impl SessionActor {
         }
     }
 
+    fn start_listening(&mut self, mode: ListenMode) {
+        if mode == ListenMode::Auto
+            && self.listening_mode == Some(ListenMode::Auto)
+            && self.vad_session.is_some()
+        {
+            self.restart_existing_auto_cycle();
+            return;
+        }
+        self.replace_listening_mode(mode);
+    }
+
+    /// Enters a new listening mode. Leaving Auto is a real VAD lifecycle boundary; the
+    /// acknowledgement-driven Close path owns release of its worker capacity.
+    fn replace_listening_mode(&mut self, mode: ListenMode) {
+        self.cancel_speech_delivery();
+        self.generation += 1;
+        self.cancel_llm();
+        self.cancel_asr();
+        self.release_active_turn();
+        self.close_vad();
+        self.auto_speech_active = false;
+        self.auto_reset_pending = false;
+        self.auto_retention.reset();
+        self.vad_segmenter.reset();
+        self.listening_mode = Some(mode.clone());
+        let identity =
+            WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
+        match mode {
+            ListenMode::Manual => match self.asr_runtime.open(identity.clone()) {
+                Ok(lease) => {
+                    self.manual_capture.restart();
+                    self.asr_stream = Some((lease, identity));
+                    self.phase = SessionPhase::Listening;
+                }
+                Err(error) => {
+                    warn!(?error, "manual ASR start rejected");
+                    self.phase = SessionPhase::Ready;
+                }
+            },
+            ListenMode::Auto => match self.vad_runtime.open(identity.clone()) {
+                Ok(lease) => {
+                    self.vad_session = Some((lease, identity));
+                    self.phase = SessionPhase::Listening;
+                }
+                Err(error) => {
+                    warn!(?error, phase = ?self.phase, generation = self.generation, "auto VAD worker open failed");
+                    self.phase = SessionPhase::Closed;
+                    let _ = self.control_tx.try_send(OutboundMessage::Close(1013));
+                }
+            },
+            ListenMode::Realtime => self.phase = SessionPhase::Ready,
+        }
+    }
+
+    /// Restarts capture inside an Auto Listening cycle without replacing its pinned VAD worker.
+    fn restart_existing_auto_cycle(&mut self) {
+        let Some((lease, _)) = self.vad_session else {
+            return;
+        };
+        if self.auto_reset_pending {
+            info!(
+                generation = self.generation,
+                "duplicate auto listen:start accepted while VAD reset is pending"
+            );
+            return;
+        }
+
+        self.cancel_speech_delivery();
+        self.generation += 1;
+        self.cancel_llm();
+        self.cancel_asr();
+        self.release_active_turn();
+        self.auto_speech_active = false;
+        self.auto_retention.reset();
+        self.vad_segmenter.reset();
+        match self.vad_runtime.send(lease, VadCommand::Reset) {
+            Ok(()) => {
+                self.auto_reset_pending = true;
+                self.phase = SessionPhase::Processing;
+                info!(generation = self.generation, "reusing Auto VAD cycle");
+            }
+            Err(error) => {
+                warn!(?error, "failed to reset existing Auto VAD cycle");
+                self.fail_closed();
+            }
+        }
+    }
+
     fn abort_current_turn(&mut self) {
         if self.phase == SessionPhase::Closed {
             return;
@@ -438,11 +494,38 @@ impl SessionActor {
         self.manual_capture.abort();
         self.cancel_asr();
         self.release_active_turn();
+        if self.listening_mode == Some(ListenMode::Auto) && self.vad_session.is_some() {
+            self.abort_auto_turn();
+            return;
+        }
         self.close_vad();
         self.listening_mode = None;
         self.auto_reset_pending = false;
         self.auto_retention.reset();
         self.phase = SessionPhase::Ready;
+    }
+
+    fn abort_auto_turn(&mut self) {
+        self.auto_speech_active = false;
+        self.auto_retention.reset();
+        self.vad_segmenter.reset();
+        if self.auto_reset_pending {
+            return;
+        }
+        let Some((lease, _)) = self.vad_session else {
+            self.phase = SessionPhase::Ready;
+            return;
+        };
+        match self.vad_runtime.send(lease, VadCommand::Reset) {
+            Ok(()) => {
+                self.auto_reset_pending = true;
+                self.phase = SessionPhase::Processing;
+            }
+            Err(error) => {
+                warn!(?error, "Auto VAD reset failed after abort");
+                self.fail_closed();
+            }
+        }
     }
 
     fn accept_detect(&mut self, input: String) {
@@ -769,6 +852,9 @@ impl SessionActor {
     }
 
     fn drain_speech_output(&mut self) {
+        if !self.flush_pending_audio() {
+            return;
+        }
         loop {
             let event = match self.speech_output.poll() {
                 Ok(Some(event)) => event,
@@ -792,10 +878,20 @@ impl SessionActor {
                     }
                 }
                 SpeechOutputEvent::AudioPacket(packet) => {
-                    let _ = self._audio_tx.try_send(OutboundMessage::Binary {
+                    let message = OutboundMessage::Binary {
                         generation: self.generation,
                         packet,
-                    });
+                    };
+                    match self.audio_tx.try_send(message) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(message)) => {
+                            self.pending_audio = Some(message);
+                            break;
+                        }
+                        // A closed queue means the connection writer has already gone away;
+                        // session teardown owns the resulting close path.
+                        Err(mpsc::error::TrySendError::Closed(_)) => break,
+                    }
                 }
                 SpeechOutputEvent::Drained => {
                     info!("TTS delivery drained");
@@ -827,6 +923,7 @@ impl SessionActor {
 
     fn cancel_speech_delivery(&mut self) {
         self.speech_output.cancel();
+        self.pending_audio = None;
         if self.tts_started {
             // The writer receives this gate before a stop and drops queued packets for this turn.
             let _ = self
@@ -842,6 +939,22 @@ impl SessionActor {
             }
         }
         self.tts_started = false;
+    }
+
+    /// Returns false while the writer is backpressured. Keeping exactly one pending packet
+    /// bounds memory and, together with SpeechOutput's own queue, preserves packet order.
+    fn flush_pending_audio(&mut self) -> bool {
+        let Some(message) = self.pending_audio.take() else {
+            return true;
+        };
+        match self.audio_tx.try_send(message) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(message)) => {
+                self.pending_audio = Some(message);
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
     }
 
     fn cancel_asr(&mut self) {

@@ -3388,12 +3388,18 @@ dependencies = [
  "clap",
  "futures-util",
  "hound",
+ "ndarray",
+ "ndarray-npy",
  "opus2",
+ "ort",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
+ "tokenizers",
  "tokio",
  "tokio-tungstenite 0.30.0",
+ "unicode-normalization",
 ]
 
 [[package]]

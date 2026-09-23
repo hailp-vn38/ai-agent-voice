@@ -334,6 +334,178 @@ impl voice_agent_server::providers::VadSession for BoundaryVadSession {
     }
 }
 
+struct CountingVad {
+    opens: Arc<AtomicUsize>,
+    resets: Arc<AtomicUsize>,
+    closes: Arc<AtomicUsize>,
+}
+
+impl VadProvider for CountingVad {
+    fn open(
+        &self,
+    ) -> Result<
+        Box<dyn voice_agent_server::providers::VadSession>,
+        voice_agent_server::providers::VadError,
+    > {
+        self.opens.fetch_add(1, Ordering::Relaxed);
+        Ok(Box::new(CountingVadSession {
+            resets: Arc::clone(&self.resets),
+            closes: Arc::clone(&self.closes),
+        }))
+    }
+
+    fn adapter(&self) -> &'static str {
+        "counting_vad"
+    }
+}
+
+struct CountingVadSession {
+    resets: Arc<AtomicUsize>,
+    closes: Arc<AtomicUsize>,
+}
+
+impl voice_agent_server::providers::VadSession for CountingVadSession {
+    fn push(
+        &mut self,
+        input: voice_agent_server::providers::VadInput,
+    ) -> Result<
+        voice_agent_server::providers::VadProbability,
+        voice_agent_server::providers::VadError,
+    > {
+        Ok(voice_agent_server::providers::VadProbability {
+            start_sample: input.start_sample,
+            end_sample: input.start_sample + input.pcm.len() as u64,
+            probability: 0.0,
+        })
+    }
+
+    fn reset(&mut self) -> Result<(), voice_agent_server::providers::VadError> {
+        self.resets.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), voice_agent_server::providers::VadError> {
+        self.closes.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+fn wait_for_phase(actor: &mut SessionActor, phase: SessionPhase) {
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == phase {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("actor did not reach {phase:?}");
+}
+
+fn auto_actor_with_counting_vad(vad: Arc<VadWorkerRuntime>) -> SessionActor {
+    let (control, _) = mpsc::channel(8);
+    let (audio, _) = mpsc::channel(1);
+    SessionActor::new_with_runtimes_and_limiter(
+        "auto-counting".into(),
+        control,
+        audio,
+        4,
+        20,
+        SessionRuntimes {
+            asr: Arc::new(AsrWorkerRuntime::new(
+                Arc::new(FakeAsr {
+                    final_text: "unused".into(),
+                }),
+                WorkerRuntimeConfig::default(),
+            )),
+            vad,
+            llm: Arc::new(LlmRuntime::new(
+                Arc::new(UnavailableLlm),
+                1,
+                Duration::from_secs(60),
+            )),
+            tts: unavailable_tts_runtime(),
+            active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
+            vad_segmenter_config: VadSegmenterConfig::default(),
+            pre_roll_samples: 4_800,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn repeated_auto_start_rearms_the_pinned_vad_lease_with_one_worker_slot() {
+    let opens = Arc::new(AtomicUsize::new(0));
+    let resets = Arc::new(AtomicUsize::new(0));
+    let closes = Arc::new(AtomicUsize::new(0));
+    let vad = Arc::new(VadWorkerRuntime::new(
+        Arc::new(CountingVad {
+            opens: Arc::clone(&opens),
+            resets: Arc::clone(&resets),
+            closes: Arc::clone(&closes),
+        }),
+        WorkerRuntimeConfig {
+            max_workers: 1,
+            command_capacity: 8,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_secs(1),
+        },
+    ));
+    let mut actor = auto_actor_with_counting_vad(vad);
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    // A duplicate from the client while Reset is in flight must be idempotent.
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+
+    assert_eq!(opens.load(Ordering::Relaxed), 1);
+    assert_eq!(resets.load(Ordering::Relaxed), 1);
+    assert_eq!(closes.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn abort_in_auto_rearms_the_pinned_vad_lease_instead_of_closing_it() {
+    let opens = Arc::new(AtomicUsize::new(0));
+    let resets = Arc::new(AtomicUsize::new(0));
+    let closes = Arc::new(AtomicUsize::new(0));
+    let vad = Arc::new(VadWorkerRuntime::new(
+        Arc::new(CountingVad {
+            opens: Arc::clone(&opens),
+            resets: Arc::clone(&resets),
+            closes: Arc::clone(&closes),
+        }),
+        WorkerRuntimeConfig {
+            max_workers: 1,
+            command_capacity: 8,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_secs(1),
+        },
+    ));
+    let mut actor = auto_actor_with_counting_vad(vad);
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    actor.on_client_message(ClientMessage::Abort { session_id: None });
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+
+    assert_eq!(opens.load(Ordering::Relaxed), 1);
+    assert_eq!(resets.load(Ordering::Relaxed), 2);
+    assert_eq!(closes.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
     let (control, mut messages) = mpsc::channel(2);
@@ -406,6 +578,11 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
     assert!(
         matches!(messages.try_recv(), Ok(OutboundMessage::Text(text)) if text.contains("auto final"))
     );
+    // This is the next microphone frame after the turn has completed (the same re-arm
+    // boundary used after a delivered TTS response). ResetDone must make the pinned VAD
+    // lease usable again rather than closing the WebSocket on its first Push.
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    assert_eq!(actor.phase(), SessionPhase::Listening);
 }
 
 #[test]

@@ -156,28 +156,31 @@ impl VadWorkerRuntime {
             .slots
             .get_mut(&lease)
             .ok_or(VadWorkerError::UnknownLease)?;
-        match command {
-            VadCommand::Reset => {
-                slot.state = SlotState::Resetting {
-                    deadline: Instant::now() + self.config.final_timeout,
-                }
+        let next_state = match &command {
+            VadCommand::Reset if !matches!(slot.state, SlotState::Active) => {
+                return Err(VadWorkerError::UnknownLease);
             }
-            VadCommand::Close => {
-                slot.state = SlotState::Cleaning {
-                    deadline: Instant::now() + self.config.cleanup_grace,
-                }
-            }
+            VadCommand::Reset => Some(SlotState::Resetting {
+                deadline: Instant::now() + self.config.final_timeout,
+            }),
+            VadCommand::Close => Some(SlotState::Cleaning {
+                deadline: Instant::now() + self.config.cleanup_grace,
+            }),
             VadCommand::Push(_) if !matches!(slot.state, SlotState::Active) => {
                 return Err(VadWorkerError::UnknownLease);
             }
-            VadCommand::Push(_) => {}
-        }
+            VadCommand::Push(_) => None,
+        };
         slot.command_tx
             .try_send(command)
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => VadWorkerError::QueueFull,
                 mpsc::TrySendError::Disconnected(_) => VadWorkerError::UnknownLease,
-            })
+            })?;
+        if let Some(next_state) = next_state {
+            slot.state = next_state;
+        }
+        Ok(())
     }
     pub fn try_recv(&self) -> Option<VadWorkerEvent> {
         let event = self
@@ -238,22 +241,33 @@ impl VadWorkerRuntime {
         None
     }
     fn observe(&self, event: &VadWorkerEvent) {
-        let identity = match event {
-            VadWorkerEvent::Closed { identity } | VadWorkerEvent::Failed { identity } => identity,
-            _ => return,
-        };
         let mut state = self.state.lock().expect("VAD worker state poisoned");
-        let lease = state
-            .slots
-            .iter()
-            .find_map(|(lease, slot)| (slot.identity == *identity).then_some(*lease));
-        if let Some(lease) = lease
-            && !matches!(
-                state.slots.get(&lease).map(|slot| &slot.state),
-                Some(SlotState::Quarantined)
-            )
-        {
-            state.slots.remove(&lease);
+        match event {
+            VadWorkerEvent::ResetDone { identity } => {
+                if let Some(slot) = state
+                    .slots
+                    .values_mut()
+                    .find(|slot| slot.identity == *identity)
+                    && matches!(slot.state, SlotState::Resetting { .. })
+                {
+                    slot.state = SlotState::Active;
+                }
+            }
+            VadWorkerEvent::Closed { identity } | VadWorkerEvent::Failed { identity } => {
+                let lease = state
+                    .slots
+                    .iter()
+                    .find_map(|(lease, slot)| (slot.identity == *identity).then_some(*lease));
+                if let Some(lease) = lease
+                    && !matches!(
+                        state.slots.get(&lease).map(|slot| &slot.state),
+                        Some(SlotState::Quarantined)
+                    )
+                {
+                    state.slots.remove(&lease);
+                }
+            }
+            _ => {}
         }
     }
 

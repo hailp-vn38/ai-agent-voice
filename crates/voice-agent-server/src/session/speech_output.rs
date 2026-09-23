@@ -7,9 +7,12 @@ use std::{
 use crate::config::SpeechOutputConfig;
 
 use crate::{
-    audio::{DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono},
+    audio::{
+        DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, DownlinkResampler,
+        Pcm16Mono, PcmF32Mono,
+    },
     providers::TtsProvider,
-    workers::{TtsLease, TtsWorkerEvent, TtsWorkerRuntime},
+    workers::{TtsLease, TtsStreamId, TtsWorkerEvent, TtsWorkerRuntime},
 };
 
 const PROVIDER_SAMPLE_RATE_HZ: u32 = 48_000;
@@ -32,9 +35,12 @@ pub enum SpeechOutputError {
 pub struct SpeechOutput {
     tts: Arc<dyn TtsProvider>,
     tts_runtime: Option<Arc<TtsWorkerRuntime>>,
+    tts_stream: Option<TtsStreamId>,
     active_worker: Option<TtsLease>,
     encoder: DownlinkOpusEncoder,
     pending: VecDeque<String>,
+    downlink_resampler: DownlinkResampler,
+    downlink_tail: Vec<i16>,
     packets: VecDeque<Vec<u8>>,
     next_packet: usize,
     finish_input: bool,
@@ -53,9 +59,12 @@ impl SpeechOutput {
         Ok(Self {
             tts,
             tts_runtime: None,
+            tts_stream: None,
             active_worker: None,
             encoder: DownlinkOpusEncoder::new(4_000)?,
+            downlink_resampler: DownlinkResampler::new_48k_to_24k(),
             pending: VecDeque::new(),
+            downlink_tail: Vec::new(),
             packets: VecDeque::new(),
             next_packet: 0,
             finish_input: false,
@@ -72,6 +81,7 @@ impl SpeechOutput {
         config: SpeechOutputConfig,
     ) -> Result<Self, crate::audio::AudioError> {
         let mut output = Self::with_config(tts, config)?;
+        output.tts_stream = Some(runtime.begin_stream());
         output.tts_runtime = Some(runtime);
         Ok(output)
     }
@@ -107,8 +117,9 @@ impl SpeechOutput {
             return Ok(());
         };
         if let Some(runtime) = &self.tts_runtime {
+            let stream = self.tts_stream.expect("TTS worker requires a stream");
             let lease = runtime
-                .start(text)
+                .start_in_stream(stream, text)
                 .map_err(|_| SpeechOutputError::Synthesis)?;
             self.active_worker = Some(lease);
             return Ok(());
@@ -117,14 +128,26 @@ impl SpeechOutput {
             .tts
             .synthesize(&text)
             .map_err(|_| SpeechOutputError::Synthesis)?;
-        self.enqueue_pcm(pcm)
+        self.push_provider_pcm(pcm)
     }
 
-    fn enqueue_pcm(&mut self, pcm: PcmF32Mono) -> Result<(), SpeechOutputError> {
-        let downlink = resample_to_downlink(pcm).ok_or(SpeechOutputError::Synthesis)?;
-        for samples in downlink.chunks(DOWNLINK_FRAME_SAMPLES) {
-            let mut frame = samples.to_vec();
-            frame.resize(DOWNLINK_FRAME_SAMPLES, 0);
+    fn push_provider_pcm(&mut self, pcm: PcmF32Mono) -> Result<(), SpeechOutputError> {
+        if pcm.sample_rate_hz() != PROVIDER_SAMPLE_RATE_HZ || pcm.samples().is_empty() {
+            return Err(SpeechOutputError::Synthesis);
+        }
+        let downlink = self
+            .downlink_resampler
+            .process(pcm.samples())
+            .map_err(|_| SpeechOutputError::Synthesis)?
+            .into_iter()
+            .map(float_to_i16)
+            .collect::<Vec<_>>();
+        self.downlink_tail.extend(downlink);
+        while self.downlink_tail.len() >= DOWNLINK_FRAME_SAMPLES {
+            let frame = self
+                .downlink_tail
+                .drain(..DOWNLINK_FRAME_SAMPLES)
+                .collect::<Vec<_>>();
             let packet = self
                 .encoder
                 .encode(
@@ -134,9 +157,26 @@ impl SpeechOutput {
                 .map_err(|_| SpeechOutputError::Synthesis)?;
             self.packets.push_back(packet.as_bytes().to_vec());
         }
-        if self.packets.is_empty() {
-            return Err(SpeechOutputError::Synthesis);
+        Ok(())
+    }
+
+    fn flush_downlink_tail(&mut self) -> Result<(), SpeechOutputError> {
+        if self.downlink_tail.is_empty() {
+            return Ok(());
         }
+        for sample in self.downlink_resampler.flush() {
+            self.downlink_tail.push(float_to_i16(sample));
+        }
+        self.downlink_tail.resize(DOWNLINK_FRAME_SAMPLES, 0);
+        let frame = std::mem::take(&mut self.downlink_tail);
+        let packet = self
+            .encoder
+            .encode(
+                DownlinkPcmFrame::try_new(Pcm16Mono::new(frame))
+                    .map_err(|_| SpeechOutputError::Synthesis)?,
+            )
+            .map_err(|_| SpeechOutputError::Synthesis)?;
+        self.packets.push_back(packet.as_bytes().to_vec());
         Ok(())
     }
 
@@ -147,12 +187,18 @@ impl SpeechOutput {
             let _ = runtime.cancel_and_detach(lease);
         }
         self.pending.clear();
+        self.downlink_tail.clear();
+        self.downlink_resampler = DownlinkResampler::new_48k_to_24k();
         self.packets.clear();
         self.next_packet = 0;
         self.finish_input = false;
         self.started = false;
         self.next_deadline = None;
         self.segmenter.reset();
+        if let (Some(runtime), Some(stream)) = (&self.tts_runtime, self.tts_stream.take()) {
+            runtime.close_stream(stream);
+            self.tts_stream = Some(runtime.begin_stream());
+        }
     }
 
     pub fn poll(&mut self) -> Result<Option<SpeechOutputEvent>, SpeechOutputError> {
@@ -169,7 +215,7 @@ impl SpeechOutput {
                 .map_err(|_| SpeechOutputError::Synthesis)?;
             match event {
                 None => {}
-                Some(TtsWorkerEvent::Pcm(pcm)) => self.enqueue_pcm(pcm)?,
+                Some(TtsWorkerEvent::Pcm(pcm)) => self.push_provider_pcm(pcm)?,
                 Some(TtsWorkerEvent::Finished) => self.active_worker = None,
                 Some(
                     TtsWorkerEvent::Cancelled
@@ -191,6 +237,13 @@ impl SpeechOutput {
                     return Err(SpeechOutputError::Synthesis);
                 }
             }
+        }
+        if self.next_packet == self.packets.len()
+            && self.finish_input
+            && self.pending.is_empty()
+            && self.active_worker.is_none()
+        {
+            self.flush_downlink_tail()?;
         }
         if self.next_packet == self.packets.len() {
             if self.finish_input
@@ -289,21 +342,8 @@ impl SentenceSegmenter {
     }
 }
 
-fn resample_to_downlink(pcm: PcmF32Mono) -> Option<Vec<i16>> {
-    if pcm.sample_rate_hz() != PROVIDER_SAMPLE_RATE_HZ || pcm.samples().is_empty() {
-        return None;
-    }
-    let samples = pcm.samples();
-    let mut output = Vec::with_capacity(samples.len() / 2);
-    let (pairs, _) = samples.as_chunks::<2>();
-    for pair in pairs {
-        let sample = (pair[0] + pair[1]) * 0.5;
-        if !sample.is_finite() {
-            return None;
-        }
-        output.push((sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16);
-    }
-    (!output.is_empty()).then_some(output)
+fn float_to_i16(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }
 
 #[cfg(test)]

@@ -39,6 +39,47 @@ pub trait TtsProvider: Send + Sync {
     fn synthesize(&self, _: &str) -> Result<PcmF32Mono, TtsError> {
         Err(TtsError::Failed)
     }
+
+    /// Delivers provider-boundary PCM while synthesis is still in progress.  The default keeps
+    /// older adapters source-compatible, but production adapters should override it rather than
+    /// buffering a complete utterance before delivery.
+    fn synthesize_stream(
+        &self,
+        text: &str,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        on_pcm(self.synthesize(text)?)
+    }
+
+    /// Opens state that is private to one SpeechOutput delivery. Providers that have no
+    /// cross-segment state use the runtime's stateless compatibility stream instead.
+    fn open_stream(&self) -> Option<Box<dyn TtsStream>> {
+        None
+    }
+
+    /// Production providers override this to build native sessions once per runtime worker.
+    fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
+        Err(TtsError::Failed)
+    }
+}
+
+pub trait TtsStream: Send {
+    fn synthesize(
+        &mut self,
+        text: &str,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError>;
+}
+
+/// Mutable native state owned by one long-lived worker thread.
+pub trait TtsWorker: Send {
+    fn synthesize(
+        &mut self,
+        text: &str,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError>;
+    fn reset(&mut self) -> Result<(), TtsError>;
 }
 
 #[derive(Debug, Error)]
@@ -115,5 +156,66 @@ impl TtsProvider for ConfiguredZeroTts {
 
     fn synthesize(&self, text: &str) -> Result<PcmF32Mono, TtsError> {
         self.contract.synthesize_pcm(text, 256)
+    }
+
+    fn synthesize_stream(
+        &self,
+        text: &str,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        self.contract.synthesize_pcm_stream(text, 256, on_pcm)
+    }
+
+    fn open_stream(&self) -> Option<Box<dyn TtsStream>> {
+        zerotts_onnx::ZeroTtsPcmStream::new(&self.contract)
+            .ok()
+            .map(|stream| Box::new(ZeroTtsStream { stream }) as Box<dyn TtsStream>)
+    }
+
+    fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
+        Ok(Box::new(ZeroTtsNativeWorker {
+            stream: zerotts_onnx::ZeroTtsPcmStream::new(&self.contract)?,
+        }))
+    }
+}
+
+struct ZeroTtsStream {
+    stream: zerotts_onnx::ZeroTtsPcmStream,
+}
+
+impl TtsStream for ZeroTtsStream {
+    fn synthesize(
+        &mut self,
+        text: &str,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        self.stream.synthesize(text, 256, on_pcm)
+    }
+}
+
+struct ZeroTtsNativeWorker {
+    stream: zerotts_onnx::ZeroTtsPcmStream,
+}
+
+impl TtsWorker for ZeroTtsNativeWorker {
+    fn synthesize(
+        &mut self,
+        text: &str,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
+        self.stream.synthesize(text, 256, &mut |pcm| {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(TtsError::Failed);
+            }
+            on_pcm(pcm)
+        })
+    }
+
+    fn reset(&mut self) -> Result<(), TtsError> {
+        self.stream.reset()
     }
 }

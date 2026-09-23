@@ -3,12 +3,14 @@
 use thiserror::Error;
 
 mod opus;
+mod resampler;
 mod vad_segmenter;
 
 pub use opus::{
     AudioFrameDropReason, DOWNLINK_ENCODE_BUFFER_BYTES, DecodeOutcome, DownlinkOpusEncoder,
     MAX_UPLINK_OPUS_PACKET_BYTES, OpusPacket, UplinkOpusDecoder,
 };
+pub use resampler::DownlinkResampler;
 pub use vad_segmenter::{VadBoundary, VadSegmenter, VadSegmenterConfig, VadSegmenterError};
 
 pub const UPLINK_FRAME_SAMPLES: usize = 960;
@@ -238,4 +240,6 @@ pub enum AudioError {
     EmptyEncodedPacket,
     #[error("Opus packet is {actual} bytes, above WebSocket cap {max}")]
     EncodedPacketTooLarge { actual: usize, max: usize },
+    #[error("downlink PCM must be finite")]
+    InvalidDownlinkPcm,
 }

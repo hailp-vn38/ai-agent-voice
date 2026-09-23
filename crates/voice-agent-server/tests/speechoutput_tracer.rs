@@ -199,6 +199,17 @@ impl TtsProvider for FakeTts {
     }
 }
 
+struct LongTts;
+impl TtsProvider for LongTts {
+    fn adapter(&self) -> &'static str {
+        "long_tts"
+    }
+    fn synthesize(&self, _: &str) -> Result<PcmF32Mono, voice_agent_server::providers::TtsError> {
+        // 48 kHz -> 24 kHz produces three canonical 60 ms downlink frames.
+        Ok(PcmF32Mono::new(vec![0.1; 8_640], 48_000))
+    }
+}
+
 fn uplink_packet() -> voice_agent_server::audio::OpusPacket {
     DownlinkOpusEncoder::new(65_536)
         .unwrap()
@@ -321,6 +332,74 @@ async fn non_empty_asr_final_delivers_started_canonical_opus_then_one_stop() {
     let mut decoder = Decoder::new(24_000, Channels::Mono).unwrap();
     let mut pcm = [0_i16; 1_440];
     assert_eq!(decoder.decode(&packet, &mut pcm, false).unwrap(), 1_440);
+}
+
+#[tokio::test]
+async fn full_outbound_audio_queue_retries_every_packet_without_a_gap() {
+    let (control_tx, mut control_rx) = mpsc::channel(8);
+    let (audio_tx, mut audio_rx) = mpsc::channel(1);
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(FakeLlm),
+        Arc::new(LongTts),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+
+    for _ in 0..200 {
+        actor.pump_workers();
+        if audio_rx.len() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(audio_rx.len(), 1, "first packet must be queued");
+    assert_eq!(actor.phase(), SessionPhase::Processing);
+
+    let mut packets = Vec::new();
+    for _ in 0..3 {
+        packets.push(audio_rx.recv().await.expect("queued packet"));
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            actor.pump_workers();
+            if audio_rx.len() == 1 || actor.phase() == SessionPhase::Ready {
+                break;
+            }
+        }
+    }
+    assert!(
+        packets
+            .iter()
+            .all(|message| matches!(message, OutboundMessage::Binary { .. }))
+    );
+    assert_eq!(
+        packets.len(),
+        3,
+        "no canonical packet may be silently dropped"
+    );
+
+    for _ in 0..100 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Ready {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+    assert!(
+        std::iter::from_fn(|| control_rx.try_recv().ok()).any(|message| {
+            message
+                .as_text()
+                .is_some_and(|text| text.contains(r#""state":"stop""#))
+        })
+    );
 }
 
 #[tokio::test]

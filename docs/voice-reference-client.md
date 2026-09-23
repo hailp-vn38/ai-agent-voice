@@ -2,7 +2,20 @@
 
 `voice-reference-client` la client V1 toi thieu de chay mot text turn voi server. Client dung OTA discovery de lay WebSocket URL va token, gui cac header V1 bat buoc, sau do thuc hien `ClientHello`, `listen:start`, `listen:detect` va kiem tra chuoi TTS downlink.
 
-No chi phuc vu ket noi server; khong chua local model smoke, replay WAV/Opus, protocol fixture, hay test noi bo.
+Binary mac dinh chi phuc vu ket noi server. Binary `zerotts` rieng chay model cuc bo de do latency va nghe PCM truoc resample/Opus; no khong kiem tra giao thuc.
+
+## Do ZeroTTS cuc bo
+
+Can pack `models/zerotts` va `VOICE_ONNX_RUNTIME_LIB` tro den thu vien ONNX Runtime da cai. Chay tu root repo:
+
+```bash
+cargo run --release -p voice-reference-client --bin zerotts -- \
+  "Xin chào, đây là phép đo ZeroTTS." \
+  --model-dir models/zerotts --threads 2 --repeats 2 \
+  --out /tmp/zerotts-reference.wav
+```
+
+Lenh in `init_ms`, `first_pcm_ms`, `synthesis_ms`, `audio_ms`, RTF, so chunk va so sample cua tung lan. WAV la float32 mono 48 kHz tu codec, chua qua SpeechOutput, Opus, pacing hoac WebSocket. Loop nay theo `synthesize_stream` cua Python: mot lan text encoder/prefix, AR frame, `min_frames=4`, giu frame EOA, codec chunk 1/2/4/8/16 va reset cache codec moi lan tong hop. Dau vao duoc dua truc tiep vao tokenizer; CLI Python co buoc chuan hoa tieng Viet rieng. Random draw cua binary Rust la deterministic de lap lai phep do, nen khong doi waveform bit-exact voi Python mac dinh.
 
 ## Chay voi server cuc bo
 

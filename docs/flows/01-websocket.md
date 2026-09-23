@@ -142,7 +142,7 @@ Luồng hoàn tất bình thường chỉ gửi `tts:stop` sau event `SpeechOutp
 
 Không warning từng binary frame bị drop để tránh log spam. `abort` phải idempotent. Sau handshake, malformed JSON, unknown/invalid application message và valid wrong-state message chỉ metric + ignore, không thay đổi state hay đóng session. WebSocket framing/UTF-8 fault do transport library xử lý.
 
-Ở Listening, `listen:start` lặp lại discard capture đang có và restart capture mới, không finalize utterance hay phát wire response. `abort` discard capture rồi về Ready, cũng không tạo Capture Outcome cho downstream, không ASR và không wire response mới.
+Ở Listening, `listen:start` lặp lại discard capture đang có và restart capture mới, không finalize utterance hay phát wire response. Với Manual, `abort` discard capture rồi về Ready, cũng không tạo Capture Outcome cho downstream, không ASR và không wire response mới. Với Auto, `abort` hủy turn/capture rồi reset worker lease đang pin; sau `ResetDone` actor trở về Listening trong cùng Auto cycle.
 - WS ping có thể để transport/library xử lý; không trộn với conversation state.
 
 ## 10. Test contract

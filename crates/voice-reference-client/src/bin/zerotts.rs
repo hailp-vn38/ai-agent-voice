@@ -1,4 +1,5 @@
-//! ZeroTTS immutable model contract and per-operation synthesis inputs.
+//! Local ZeroTTS reference runner. It writes provider PCM before server resampling or Opus.
+//! The inference loop is kept here so experiments do not change the server's delivery path.
 
 use std::{
     collections::BTreeMap,
@@ -16,9 +17,58 @@ use serde::Deserialize;
 use tokenizers::Tokenizer;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::providers::vad::initialize_ort;
+use clap::Parser;
+use std::sync::OnceLock;
+use std::time::Instant;
+use thiserror::Error;
 
-use super::TtsError;
+#[derive(Debug, Error)]
+pub enum TtsError {
+    #[error("ZeroTTS contract is incompatible: {0}")]
+    IncompatibleContract(String),
+}
+
+pub struct PcmF32Mono {
+    samples: Vec<f32>,
+    sample_rate_hz: u32,
+}
+
+impl PcmF32Mono {
+    fn new(samples: Vec<f32>, sample_rate_hz: u32) -> Self {
+        Self {
+            samples,
+            sample_rate_hz,
+        }
+    }
+
+    fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    fn sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
+}
+
+fn initialize_ort(path: &Path) -> Result<(), TtsError> {
+    static INIT: OnceLock<Result<(), String>> = OnceLock::new();
+    INIT.get_or_init(|| {
+        if !path.is_file() {
+            return Err(format!(
+                "ONNX Runtime library is missing: {}",
+                path.display()
+            ));
+        }
+        ort::init_from(path)
+            .map_err(|error| error.to_string())?
+            .commit()
+            .then_some(())
+            .ok_or_else(|| "ONNX Runtime was initialized before this runner".to_owned())
+    })
+    .as_ref()
+    .map_err(|error| TtsError::IncompatibleContract(error.clone()))
+    .copied()
+}
 
 const SPECIAL_TOKENS: [(&str, u32); 8] = [
     ("<pad>", 0),
@@ -288,11 +338,7 @@ impl ZeroTtsContract {
     }
 
     /// Produces the provider boundary PCM. Codec layout and profile are validated at startup.
-    pub fn synthesize_pcm(
-        &self,
-        text: &str,
-        max_frames: usize,
-    ) -> Result<crate::audio::PcmF32Mono, TtsError> {
+    pub fn synthesize_pcm(&self, text: &str, max_frames: usize) -> Result<PcmF32Mono, TtsError> {
         let codes = self.synthesize_codes(text, max_frames)?;
         if codes.eoa.is_none() {
             return Err(TtsError::IncompatibleContract(
@@ -312,7 +358,7 @@ impl ZeroTtsContract {
         &self,
         text: &str,
         max_frames: usize,
-        on_pcm: &mut dyn FnMut(crate::audio::PcmF32Mono) -> Result<(), TtsError>,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
         let mut stream = ZeroTtsPcmStream::new(self)?;
         stream.synthesize(text, max_frames, on_pcm)
@@ -340,7 +386,7 @@ impl ZeroTtsPcmStream {
         &mut self,
         text: &str,
         max_frames: usize,
-        on_pcm: &mut dyn FnMut(crate::audio::PcmF32Mono) -> Result<(), TtsError>,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
         let mut frames = Vec::new();
         let mut target = if self.first_segment { 1 } else { 16 };
@@ -472,7 +518,7 @@ impl CodecOperation {
         Ok(())
     }
 
-    fn decode_step(&mut self, frames: &[Vec<i32>]) -> Result<crate::audio::PcmF32Mono, TtsError> {
+    fn decode_step(&mut self, frames: &[Vec<i32>]) -> Result<PcmF32Mono, TtsError> {
         let metadata = &self
             .contract
             .graphs
@@ -573,7 +619,7 @@ impl CodecOperation {
         Ok(state)
     }
 
-    fn decode_full(&mut self, frames: &[Vec<i32>]) -> Result<crate::audio::PcmF32Mono, TtsError> {
+    fn decode_full(&mut self, frames: &[Vec<i32>]) -> Result<PcmF32Mono, TtsError> {
         let metadata = &self
             .contract
             .graphs
@@ -602,7 +648,7 @@ impl CodecOperation {
     fn mono_pcm(
         metadata: &CodecMetadata,
         output: &ort::session::SessionOutputs<'_>,
-    ) -> Result<crate::audio::PcmF32Mono, TtsError> {
+    ) -> Result<PcmF32Mono, TtsError> {
         let audio = f32_tensor(&output["audio"])?;
         let lengths = i32_tensor(&output["audio_lengths"])?;
         let length = usize::try_from(*lengths.data.first().ok_or_else(|| {
@@ -632,10 +678,7 @@ impl CodecOperation {
             }
             mono.push(sample.clamp(-1.0, 1.0));
         }
-        Ok(crate::audio::PcmF32Mono::new(
-            mono,
-            metadata.codec_config.sample_rate,
-        ))
+        Ok(PcmF32Mono::new(mono, metadata.codec_config.sample_rate))
     }
 }
 
@@ -731,7 +774,7 @@ impl ZeroTtsOperation {
         for frame_index in 0..max_frames {
             let decoded = self.local_frame_decode.run(ort::inputs! {
                 "global_hidden" => tensor(vec![1, self.contract.config.d_model], hidden)?,
-                "forbid_eoa" => tensor(vec![1], vec![frame_index == 0])?, "text_temperature" => tensor(vec![1], vec![1.0_f32])?, "text_topk" => tensor(vec![1], vec![50_i64])?,
+                "forbid_eoa" => tensor(vec![1], vec![frame_index < 4])?, "text_temperature" => tensor(vec![1], vec![1.0_f32])?, "text_topk" => tensor(vec![1], vec![50_i64])?,
                 "audio_temperature" => tensor(vec![1], vec![0.8_f32])?, "audio_topk" => tensor(vec![1], vec![25_i64])?, "audio_topp" => tensor(vec![1], vec![0.95_f32])?, "audio_repetition_penalty" => tensor(vec![1], vec![1.2_f32])?,
                 "seen_mask" => tensor(vec![1, self.contract.config.num_codebooks, self.contract.config.codebook_size], seen.clone())?,
                 "ctrl_random_u" => tensor(vec![1], vec![draw(frame_index, 0)])?, "audio_random_u" => tensor(vec![1, self.contract.config.num_codebooks], (0..self.contract.config.num_codebooks).map(|n| draw(frame_index, n + 1)).collect::<Vec<_>>())?, "cfg_scale" => tensor(vec![1], vec![1.0_f32])?,
@@ -1201,4 +1244,115 @@ fn validate_config(config: &Config) -> Result<(), TtsError> {
 
 fn contract_error(error: impl std::fmt::Display) -> TtsError {
     TtsError::IncompatibleContract(error.to_string())
+}
+
+#[derive(Parser)]
+#[command(
+    name = "zerotts",
+    about = "Local 48 kHz ZeroTTS streaming reference runner"
+)]
+struct Args {
+    /// Text passed directly to the ZeroTTS tokenizer, as in Python synthesize_stream.
+    text: String,
+    #[arg(long, default_value = "models/zerotts")]
+    model_dir: PathBuf,
+    #[arg(long)]
+    ort_library: Option<PathBuf>,
+    #[arg(long, default_value_t = 2)]
+    threads: i32,
+    #[arg(long, default_value_t = 1500)]
+    max_frames: usize,
+    #[arg(long, default_value_t = 2)]
+    repeats: usize,
+    #[arg(long)]
+    no_warmup: bool,
+    /// Write the final run as mono float32 PCM WAV at 48 kHz.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    anyhow::ensure!(!args.text.trim().is_empty(), "text must not be empty");
+    anyhow::ensure!(
+        args.repeats > 0 && args.max_frames > 0,
+        "repeats and max-frames must be positive"
+    );
+    let library = args
+        .ort_library
+        .or_else(|| std::env::var_os("VOICE_ONNX_RUNTIME_LIB").map(PathBuf::from))
+        .ok_or_else(|| anyhow::anyhow!("pass --ort-library or set VOICE_ONNX_RUNTIME_LIB"))?;
+    let model = &args.model_dir;
+    let codec = model.join("onnx/codec");
+    let started = Instant::now();
+    let contract = ZeroTtsContract::load_engine(
+        &model.join("config.json"),
+        &model.join("tokenizer.json"),
+        &model.join("voices/maichi/voice.npz"),
+        &model.join("onnx/text_encoder.onnx"),
+        &model.join("onnx/prefix_step.onnx"),
+        &model.join("onnx/local_frame_decode.onnx"),
+        &codec.join("moss_audio_tokenizer_decode_full.onnx"),
+        &codec.join("moss_audio_tokenizer_decode_step.onnx"),
+        &codec.join("moss_audio_tokenizer_decode_shared.data"),
+        &codec.join("codec_browser_onnx_meta.json"),
+        &library,
+        args.threads,
+    )?;
+    let mut stream = ZeroTtsPcmStream::new(&contract)?;
+    if !args.no_warmup {
+        stream.synthesize("ZeroTTS startup readiness.", 256, &mut |_| Ok(()))?;
+        stream.reset()?;
+    }
+    eprintln!("init_ms={:.1}", started.elapsed().as_secs_f64() * 1000.0);
+
+    let mut final_pcm = Vec::new();
+    for run in 0..args.repeats {
+        let started = Instant::now();
+        let mut first_ms = None;
+        let mut chunks = 0;
+        let mut pcm = Vec::new();
+        stream.synthesize(&args.text, args.max_frames, &mut |chunk| {
+            if chunk.sample_rate_hz() != 48_000 {
+                return Err(TtsError::IncompatibleContract(
+                    "codec did not return 48 kHz PCM".into(),
+                ));
+            }
+            if first_ms.is_none() {
+                first_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+            }
+            chunks += 1;
+            pcm.extend_from_slice(chunk.samples());
+            Ok(())
+        })?;
+        let elapsed = started.elapsed().as_secs_f64();
+        let duration = pcm.len() as f64 / 48_000.0;
+        println!(
+            "run={} first_pcm_ms={:.1} synthesis_ms={:.1} audio_ms={:.1} rtf={:.3} chunks={} samples={}",
+            run + 1,
+            first_ms.unwrap_or(f64::NAN),
+            elapsed * 1000.0,
+            duration * 1000.0,
+            elapsed / duration,
+            chunks,
+            pcm.len()
+        );
+        final_pcm = pcm;
+        stream.reset()?;
+    }
+    let mut writer = hound::WavWriter::create(
+        &args.out,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        },
+    )?;
+    for sample in final_pcm {
+        writer.write_sample(sample)?;
+    }
+    writer.finalize()?;
+    println!("wav={}", args.out.display());
+    Ok(())
 }

@@ -65,6 +65,8 @@ Các con số là config, không hard-code business logic.
 
 Sau terminal mỗi utterance, reset/re-arm boundary clear Silero recurrent state/context, VadSegmenter candidate/state, actor PCM retention và VAD cursor bookkeeping. Auto Listening cycle vẫn sống qua nhiều utterance; đây không phải đóng `listen:start auto`.
 
+`listen:start(auto)` lặp lại trong một Auto Listening cycle không được `Close` rồi acquire worker mới. Nếu Reset đã pending, command là idempotent; nếu chưa, actor reset/re-arm chính `VadWorkerLease` đang pin và chỉ nhận microphone lại sau `ResetDone`. `abort` một turn Auto cũng hủy turn rồi reset lease đó, không kết thúc cycle. `VadCommand::Close` chỉ dành cho rời Auto mode, teardown Voice Session hoặc xử lý VAD fatal.
+
 ## 5. Manual mode
 
 Trong `listen mode=manual`:
