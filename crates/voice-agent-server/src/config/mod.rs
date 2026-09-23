@@ -1,5 +1,8 @@
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 use url::Url;
 
 mod validation;
@@ -35,6 +38,202 @@ pub struct AppConfig {
     pub barge_in: BargeInConfig,
     #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub agent: Option<AgentConfig>,
+    #[serde(skip)]
+    pub effective_agent: EffectiveAgentConfig,
+}
+
+pub const DEFAULT_AGENT_NAME: &str = "Mây";
+pub const DEFAULT_AGENT_LANGUAGE: &str = "vi-VN";
+pub const DEFAULT_AGENT_PERSONA: &str = "\
+Bạn là Mây, một trợ lý giọng nói tiếng Việt.
+Bạn trả lời tự nhiên, thân thiện và súc tích.
+Ưu tiên nội dung dễ nghe qua loa.";
+pub const DEFAULT_PROMPT_TEMPLATE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../prompts/voice-assistant.txt"
+));
+const MAX_PERSONA_BYTES: usize = 16 * 1024;
+const MAX_PROMPT_TEMPLATE_BYTES: usize = 64 * 1024;
+const MAX_RENDERED_SYSTEM_PROMPT_BYTES: usize = 96 * 1024;
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfig {
+    pub name: Option<String>,
+    pub language: Option<String>,
+    pub prompt_template: Option<PathBuf>,
+    pub persona: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EffectiveAgentConfig {
+    pub name: String,
+    pub language: String,
+    pub persona: String,
+    pub prompt_template: String,
+}
+
+impl Default for EffectiveAgentConfig {
+    fn default() -> Self {
+        Self {
+            name: DEFAULT_AGENT_NAME.into(),
+            language: DEFAULT_AGENT_LANGUAGE.into(),
+            persona: DEFAULT_AGENT_PERSONA.into(),
+            prompt_template: DEFAULT_PROMPT_TEMPLATE.into(),
+        }
+    }
+}
+
+impl AppConfig {
+    pub fn effective_agent(&self) -> &EffectiveAgentConfig {
+        &self.effective_agent
+    }
+
+    pub(crate) fn resolve_agent(&mut self, config_path: &Path) -> Result<(), ConfigError> {
+        let mut effective = EffectiveAgentConfig::default();
+        let Some(overrides) = &mut self.agent else {
+            self.effective_agent = effective;
+            return Ok(());
+        };
+        if let Some(name) = &overrides.name {
+            if name.trim().is_empty() {
+                return Err(ConfigError::Validation(
+                    "agent.name must not be empty when declared".into(),
+                ));
+            }
+            effective.name = name.clone();
+        }
+        if let Some(language) = &overrides.language {
+            if language.trim().is_empty() {
+                return Err(ConfigError::Validation(
+                    "agent.language must not be empty when declared".into(),
+                ));
+            }
+            effective.language = language.clone();
+        }
+        if let Some(persona) = &overrides.persona {
+            if persona.trim().is_empty() {
+                return Err(ConfigError::Validation(
+                    "agent.persona must not be empty when declared".into(),
+                ));
+            }
+            effective.persona = persona.clone();
+        }
+        if effective.persona.len() > MAX_PERSONA_BYTES {
+            return Err(ConfigError::Validation(
+                "agent.persona exceeds 16 KiB".into(),
+            ));
+        }
+        if let Some(path) = &mut overrides.prompt_template {
+            if path.as_os_str().is_empty() {
+                return Err(ConfigError::Validation(
+                    "agent.prompt_template must not be empty when declared".into(),
+                ));
+            }
+            if path.is_relative() {
+                *path = config_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(&*path);
+            }
+            if !std::fs::metadata(&*path)
+                .map_err(ConfigError::Read)?
+                .is_file()
+            {
+                return Err(ConfigError::Validation(
+                    "agent.prompt_template must be a regular file".into(),
+                ));
+            }
+            effective.prompt_template =
+                std::fs::read_to_string(&*path).map_err(ConfigError::Read)?;
+        }
+        if effective.prompt_template.len() > MAX_PROMPT_TEMPLATE_BYTES {
+            return Err(ConfigError::Validation(
+                "agent.prompt_template exceeds 64 KiB".into(),
+            ));
+        }
+        validate_prompt_template(&effective.prompt_template)?;
+        let rendered_len = effective
+            .prompt_template
+            .replace("{{agent_name}}", &effective.name)
+            .replace("{{persona}}", &effective.persona)
+            .replace("{{language}}", &effective.language)
+            .len();
+        if rendered_len > MAX_RENDERED_SYSTEM_PROMPT_BYTES {
+            return Err(ConfigError::Validation(
+                "rendered agent system prompt exceeds 96 KiB".into(),
+            ));
+        }
+        self.effective_agent = effective;
+        Ok(())
+    }
+}
+
+fn validate_prompt_template(template: &str) -> Result<(), ConfigError> {
+    if template.contains("{%") {
+        return Err(ConfigError::Validation(
+            "agent.prompt_template has invalid placeholder grammar".into(),
+        ));
+    }
+    let mut cursor = 0;
+    let mut persona_seen = false;
+    while let Some(relative) = template[cursor..].find("{{") {
+        let start = cursor + relative;
+        if template[cursor..start].contains("}}") {
+            return Err(ConfigError::Validation(
+                "agent.prompt_template has invalid placeholder grammar".into(),
+            ));
+        }
+        let token_start = start + 2;
+        let Some(end_relative) = template[token_start..].find("}}") else {
+            return Err(ConfigError::Validation(
+                "agent.prompt_template has invalid placeholder grammar".into(),
+            ));
+        };
+        let end = token_start + end_relative;
+        match &template[token_start..end] {
+            "agent_name" | "language" => {}
+            "persona" => persona_seen = true,
+            _ => {
+                return Err(ConfigError::Validation(
+                    "agent.prompt_template has invalid placeholder grammar".into(),
+                ));
+            }
+        }
+        cursor = end + 2;
+    }
+    if template[cursor..].contains("}}") {
+        return Err(ConfigError::Validation(
+            "agent.prompt_template has invalid placeholder grammar".into(),
+        ));
+    }
+    if !persona_seen {
+        return Err(ConfigError::Validation(
+            "agent.prompt_template must contain {{persona}}".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod agent_template_tests {
+    use super::validate_prompt_template;
+
+    #[test]
+    fn accepts_only_the_three_literal_placeholders() {
+        assert!(validate_prompt_template("{{persona}} {{agent_name}} {{language}}").is_ok());
+        for invalid in [
+            "{{persona}} {{ persona }}",
+            "{{persona}} {{foo}}",
+            "{{persona}} {{persona.name}}",
+            "{{{persona}}}",
+            "{{persona}} {% x %}",
+        ] {
+            assert!(validate_prompt_template(invalid).is_err(), "{invalid}");
+        }
+    }
 }
 
 mod defaults;

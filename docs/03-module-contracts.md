@@ -128,13 +128,13 @@ Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Start
 ## 6. Dialogue invariants
 
 - `system` luôn ở đầu logical prompt.
-- `DialogueHistory` thuộc Voice Session, bounded bởi `llm.max_history_messages` và RAM-only; actor chỉ gọi `commit_user`, còn eviction thuộc history. Commit user utterance sau ASR final non-empty hợp lệ, trước enqueue STT, kể cả khi outbound sau đó lỗi.
-- Chỉ commit assistant response vào history sau `SpeechOutputEvent::Drained`; generated response bị cancel/lỗi không phải response đã delivered.
-- Phase 4 luôn gọi LLM với `tools = None`; bất kỳ tool call nào là `llm_unexpected_tool_call`, fail generation, cancel SpeechOutput và không chạy MCP/retry. Audio đã deliver không thể thu hồi, nhưng không audio queued/stale nào được gửi tiếp.
+- `DialogueHistory` thuộc Voice Session, RAM-only, lưu Exchange Atom typed và evict nguyên atom cũ nhất tới `llm.max_history_messages` target. User được commit sau ASR final non-empty hợp lệ, trước enqueue STT. Current atom không bị cắt chỉ để ép target.
+- `SpeechOutputEvent::Drained` chỉ xác nhận speech pipeline đã drain vào outbound path. Chỉ `WriterEvent::TurnClosed { outcome: Normal }` đúng `TurnId` mới commit assistant response; đây là server writer delivery, không chứng minh client phát xong audio.
+- Device MCP đưa typed tool rounds vào LLM request khi tool visible. `AssistantToolCalls` và terminal `ToolResult` giữ ordering provider-valid; call chưa có terminal result không vào history.
 - Từ Phase 6, với LLM-visible Tool, buffer toàn bộ LLM round; prose của round có tool call không được gửi vào SpeechOutput.
 - Tool call/result phải theo đúng ordering của LLM API.
-- History có đồng thời message limit và prompt token budget; eviction theo Exchange Atom cũ nhất, không tách tool call/result; system và current turn luôn giữ.
-- Tool result phải sanitize và cap trước LLM context, có đánh dấu truncation nếu bị cắt.
+- `prompt_budget_tokens` chỉ declared-and-validated, chưa có runtime token semantics. Hard bound request 256 KiB kiểm trước mỗi provider round; overflow terminalize Conversational Turn với `llm_request_too_large`.
+- Tool result chỉ đi vào LLM/history sau normalize, sanitize và cap theo Rust `char`; raw device result không được lưu.
 - `TurnOutcome` là `Completed`, `CompletedSilent`, `Cancelled` hoặc `Failed`; ASR success nhưng `trim()` rỗng là `CompletedSilent`, không tạo dialogue message.
 
 ## 7. Error policy

@@ -253,5 +253,5 @@ Generated Assistant Response chỉ trở thành một phần dialogue khi WebSoc
 _Avoid_: partial response, cancelled response, client playback complete
 
 **Exchange Atom**:
-Đơn vị Dialogue History không thể tách khi dựng prompt hoặc eviction: một user turn với completed prefix của các cặp assistant tool call/tool result, và Delivered Assistant Response nếu writer đóng turn Normal. Tool call chưa có terminal result không thuộc atom; turn lỗi trước tool đầu tiên là user-only atom.
+Đơn vị Dialogue History không thể tách khi dựng prompt hoặc eviction: một user turn với các Completed Tool Round theo thứ tự, mỗi round gồm các cặp assistant tool call/tool result đã terminal, và Delivered Assistant Response nếu writer đóng turn Normal. Tool call chưa có terminal result không thuộc atom; turn lỗi trước tool đầu tiên là user-only atom.
 _Avoid_: message, partial exchange

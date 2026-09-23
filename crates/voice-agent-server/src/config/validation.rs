@@ -14,7 +14,9 @@ pub enum ConfigError {
 
 impl AppConfig {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let config: Self = toml::from_str(&fs::read_to_string(path)?)?;
+        let path = path.as_ref();
+        let mut config: Self = toml::from_str(&fs::read_to_string(path)?)?;
+        config.resolve_agent(path)?;
         config.validate()?;
         Ok(config)
     }

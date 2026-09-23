@@ -64,14 +64,18 @@ impl LlmProvider for ScriptedLlm {
         "scripted"
     }
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
-        let has_result = request
+        let has_result = matches!(
+            request.messages.last(),
+            Some(ChatMessage::ToolResult { .. })
+        );
+        let user_text = request
             .messages
             .iter()
-            .any(|message| matches!(message, ChatMessage::ToolResult { .. }));
-        let user_text = request.messages.iter().find_map(|message| match message {
-            ChatMessage::User { content } => Some(content.as_str()),
-            _ => None,
-        });
+            .rev()
+            .find_map(|message| match message {
+                ChatMessage::User { content } => Some(content.as_str()),
+                _ => None,
+            });
         let events = if has_result && user_text == Some("Giá trị hiện tại là bao nhiêu?") {
             vec![
                 Ok(LlmEvent::TextDelta("Giá trị hiện tại là 50.".into())),
@@ -147,6 +151,8 @@ async fn start() -> (String, JoinHandle<()>) {
             ],
             ..McpConfig::default()
         },
+        agent: None,
+        effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
     let providers = Arc::new(ProviderSet::with_all(
         Arc::new(FakeVad),

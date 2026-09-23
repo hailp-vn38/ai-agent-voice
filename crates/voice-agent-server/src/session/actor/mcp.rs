@@ -22,7 +22,7 @@ impl SessionActor {
     pub(super) fn on_mcp_message(&mut self, incoming: McpIncoming) {
         let (id, response) = match incoming {
             McpIncoming::Result { id, result } => (id, Ok(result)),
-            McpIncoming::Error { id, .. } => (id, Err("device_error")),
+            McpIncoming::Error { id, .. } => (id, Err("device_tool_error")),
             McpIncoming::Notification { .. } => return,
         };
         let Some(pending) = self.mcp.pending.remove(&id) else {
@@ -108,6 +108,7 @@ impl SessionActor {
         self.mcp.batch = Some(ToolBatchState {
             generation: self.generation,
             calls,
+            completed_calls: Vec::new(),
             next: 0,
             results: Vec::new(),
         });
@@ -137,6 +138,11 @@ impl SessionActor {
             }
             return;
         };
+        // This call is now terminally owned by this batch. Advance before any
+        // validation failure so an error ToolResult cannot redispatch it forever.
+        if let Some(batch) = self.mcp.batch.as_mut() {
+            batch.next += 1;
+        }
         let Some(tool) = self
             .mcp
             .visible
@@ -155,9 +161,6 @@ impl SessionActor {
             self.complete_tool_call(call, Err("request_id_exhausted"));
             return;
         };
-        if let Some(batch) = self.mcp.batch.as_mut() {
-            batch.next += 1;
-        }
         self.send_mcp(
             McpOutgoing::ToolsCall {
                 id,
@@ -172,10 +175,17 @@ impl SessionActor {
 
     fn complete_tool_call(&mut self, call: ToolCall, result: Result<serde_json::Value, &str>) {
         let content = match result {
-            Ok(value) => normalize_tool_result(value),
-            Err(code) => serde_json::json!({"ok": false, "code": code}).to_string(),
+            Ok(value) => normalize_tool_result(value, self.max_tool_result_chars),
+            Err(code) => serde_json::json!({
+                "ok": false,
+                "code": code,
+                "content": "",
+                "truncated": false,
+            })
+            .to_string(),
         };
         if let Some(batch) = self.mcp.batch.as_mut() {
+            batch.completed_calls.push(call.clone());
             batch.results.push(ChatMessage::ToolResult {
                 tool_call_id: call.id,
                 content,
@@ -258,15 +268,30 @@ impl SessionActor {
         self.mcp
             .pending
             .retain(|_, pending| pending.generation.is_none());
-        self.mcp.batch = None;
+        if let Some(batch) = self.mcp.batch.take() {
+            self.commit_tool_exchange(&batch);
+        }
         self.llm_round = None;
     }
 
     fn commit_tool_exchange(&mut self, batch: &ToolBatchState) {
-        self.llm_messages.push(ChatMessage::AssistantToolCalls {
-            calls: batch.calls.clone(),
-        });
-        self.llm_messages.extend(batch.results.clone());
+        if batch.completed_calls.is_empty() {
+            return;
+        }
+        let Some(turn_id) = self.current_turn_id() else {
+            return;
+        };
+        if self.dialogue_history.append_completed_round(
+            turn_id,
+            batch.completed_calls.clone(),
+            batch.results.clone(),
+        ) {
+            crate::session::prompt::append_completed_round(
+                &mut self.llm_messages,
+                batch.completed_calls.clone(),
+                batch.results.clone(),
+            );
+        }
     }
 
     fn batch_result_delivery(&self, batch: &ToolBatchState) -> McpResultDelivery {
@@ -320,26 +345,68 @@ impl SessionActor {
     }
 }
 
-fn normalize_tool_result(result: serde_json::Value) -> String {
+fn normalize_tool_result(result: serde_json::Value, max_chars: usize) -> String {
     let is_error = result
         .get("isError")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    use unicode_normalization::UnicodeNormalization;
     let content = result
         .get("content")
         .and_then(serde_json::Value::as_array)
-        .and_then(|content| {
+        .map(|content| {
             content
                 .iter()
-                .find_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+                .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
         })
         .unwrap_or_default();
-    let content: String = content.chars().take(4096).collect();
+    let sanitized: String = content
+        .nfc()
+        .filter(|character| {
+            matches!(character, '\n' | '\t')
+                || (!character.is_control()
+                    && !matches!(*character, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'))
+        })
+        .collect();
+    let mut chars = sanitized.chars();
+    let content: String = chars.by_ref().take(max_chars).collect();
+    let truncated = chars.next().is_some();
     serde_json::json!({
         "ok": !is_error,
         "code": is_error.then_some("device_tool_error"),
         "content": content,
-        "truncated": content.chars().count() == 4096,
+        "truncated": truncated,
     })
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_tool_result;
+
+    #[test]
+    fn normalizer_joins_nfc_sanitizes_and_caps_after_sanitization() {
+        let result = serde_json::json!({
+            "content": [
+                {"text": "e\u{301}\u{0000}\u{202e}x"},
+                {"text": "\tcd\n"},
+                {"image": "ignored"}
+            ]
+        });
+        let normalized: serde_json::Value =
+            serde_json::from_str(&normalize_tool_result(result, 4)).unwrap();
+        assert_eq!(normalized["content"], "éx\n\t");
+        assert_eq!(normalized["truncated"], true);
+    }
+
+    #[test]
+    fn normalizer_does_not_mark_exact_cap_as_truncated() {
+        let result = serde_json::json!({"content": [{"text": "abcd"}]});
+        let normalized: serde_json::Value =
+            serde_json::from_str(&normalize_tool_result(result, 4)).unwrap();
+        assert_eq!(normalized["content"], "abcd");
+        assert_eq!(normalized["truncated"], false);
+    }
 }

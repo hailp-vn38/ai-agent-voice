@@ -76,7 +76,7 @@ impl SessionActor {
                     }
                     if matches!(outcome, WriterTurnOutcome::Normal) {
                         self.dialogue_history
-                            .commit_assistant(delivery.assistant_text);
+                            .commit_assistant(turn_id, delivery.assistant_text);
                     }
                 }
                 self.tts_started = false;

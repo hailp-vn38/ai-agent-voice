@@ -222,6 +222,11 @@ impl SessionActor {
             llm_round: None,
             tool_depth: 0,
             max_tool_depth: 4,
+            max_tool_result_chars: 4_096,
+            system_prompt: crate::session::prompt::render_system(
+                &crate::config::EffectiveAgentConfig::default(),
+            )
+            .expect("built-in prompt template is valid"),
         })
     }
 
@@ -257,6 +262,16 @@ impl SessionActor {
     pub fn with_llm_tool_depth(mut self, max_tool_depth: usize) -> Self {
         self.max_tool_depth = max_tool_depth;
         self
+    }
+
+    pub fn with_prompt_config(
+        mut self,
+        agent: &crate::config::EffectiveAgentConfig,
+        max_tool_result_chars: usize,
+    ) -> Result<Self, crate::session::prompt::PromptError> {
+        self.system_prompt = crate::session::prompt::render_system(agent)?;
+        self.max_tool_result_chars = max_tool_result_chars;
+        Ok(self)
     }
 
     pub fn start_mcp_discovery(&mut self) {

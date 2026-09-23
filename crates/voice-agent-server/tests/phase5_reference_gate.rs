@@ -213,6 +213,8 @@ async fn start(tts: Arc<dyn TtsProvider>) -> (String, JoinHandle<()>) {
             trust_client_aec_feature: true,
         },
         mcp: voice_agent_server::config::McpConfig::default(),
+        agent: None,
+        effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
     let providers = Arc::new(ProviderSet::with_all(
         Arc::new(SpeechThenSilenceVad),

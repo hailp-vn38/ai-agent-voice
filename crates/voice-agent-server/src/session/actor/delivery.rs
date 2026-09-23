@@ -8,7 +8,8 @@ impl SessionActor {
             return None;
         }
         let text = text.to_owned();
-        self.dialogue_history.commit_user(text.clone());
+        let turn_id = self.current_turn_id()?;
+        self.dialogue_history.commit_user(turn_id, text.clone());
         let payload = serde_json::json!({
             "session_id": self.session_id,
             "type": "stt",
@@ -22,26 +23,38 @@ impl SessionActor {
     }
 
     pub(super) fn begin_speech_delivery(&mut self, user_text: String) {
-        self.llm_messages = vec![ChatMessage::User { content: user_text }];
+        let Some(turn_id) = self.current_turn_id() else {
+            self.fail_closed();
+            return;
+        };
+        let Some(history) = self.dialogue_history.messages_for_prompt(turn_id) else {
+            self.terminalize_llm_failure();
+            return;
+        };
+        debug_assert!(
+            matches!(history.last(), Some(ChatMessage::User { content }) if content == &user_text)
+        );
+        self.llm_messages = Vec::with_capacity(history.len() + 1);
+        self.llm_messages.push(ChatMessage::System {
+            content: self.system_prompt.clone(),
+        });
+        self.llm_messages.extend(history);
         self.tool_depth = 0;
         self.start_llm_round(true);
     }
 
     pub(super) fn begin_tool_continuation(&mut self) {
+        if self.tool_depth >= self.max_tool_depth {
+            self.terminalize_turn_failure(TurnFailure::ToolDepthExceeded);
+            return;
+        }
         self.tool_depth += 1;
         tracing::info!(
             event = "llm_tool_continuation_started",
             tool_depth = self.tool_depth,
             "LLM tool continuation started"
         );
-        if self.tool_depth >= self.max_tool_depth {
-            self.llm_messages.push(ChatMessage::ToolResult {
-                tool_call_id: "tool_depth".into(),
-                content: serde_json::json!({"ok": false, "code": "tool_depth_exceeded"})
-                    .to_string(),
-            });
-        }
-        self.start_llm_round(self.tool_depth < self.max_tool_depth);
+        self.start_llm_round(true);
     }
 
     pub(super) fn begin_direct_tool_speech(&mut self, text: String) {
@@ -65,28 +78,29 @@ impl SessionActor {
         self.llm_finish_pending = false;
         self.llm_round =
             (allow_tools && !self.mcp.visible.is_empty()).then(LlmRoundBuffer::default);
+        let request = crate::providers::llm::LlmRequest {
+            messages: self.llm_messages.clone(),
+            tools: if allow_tools {
+                self.mcp
+                    .visible
+                    .iter()
+                    .map(|tool| ToolDefinition {
+                        name: tool.llm_name.clone(),
+                        description: tool.description.clone(),
+                        parameters: tool.input_schema.clone(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        };
+        if crate::session::prompt::llm_request_size_bytes(&request).is_err() {
+            self.terminalize_turn_failure(TurnFailure::LlmRequestTooLarge);
+            return;
+        }
         if self
             .llm_runtime
-            .start(
-                identity.clone(),
-                crate::providers::llm::LlmRequest {
-                    messages: self.llm_messages.clone(),
-                    tools: if allow_tools {
-                        self.mcp
-                            .visible
-                            .iter()
-                            .map(|tool| ToolDefinition {
-                                name: tool.llm_name.clone(),
-                                description: tool.description.clone(),
-                                parameters: tool.input_schema.clone(),
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    },
-                },
-                cancellation,
-            )
+            .start(identity.clone(), request, cancellation)
             .is_err()
         {
             self.turn = None;
@@ -96,6 +110,19 @@ impl SessionActor {
         }
         info!("LLM operation started");
         self.llm_operation = Some(identity);
+    }
+
+    fn terminalize_llm_failure(&mut self) {
+        self.llm_operation = None;
+        self.pending_llm_delta = None;
+        self.llm_finish_pending = false;
+        self.generated_response.clear();
+        self.complete_recognition();
+    }
+
+    fn terminalize_turn_failure(&mut self, failure: TurnFailure) {
+        warn!(code = failure.code(), "conversational turn terminalized");
+        self.terminalize_llm_failure();
     }
 
     pub(super) fn on_llm_event(&mut self, event: LlmRuntimeEvent) {

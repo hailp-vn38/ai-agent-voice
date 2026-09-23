@@ -119,6 +119,17 @@ prompt_budget_tokens = 12000
 max_tool_result_chars = 4096
 max_tool_depth = 4
 
+# Optional: omit [agent] to use the built-in Mây / vi-VN persona and template.
+[agent]
+name = "Mây"
+language = "vi-VN"
+persona = """
+Bạn là Mây, một trợ lý giọng nói tiếng Việt.
+Bạn trả lời tự nhiên, thân thiện và súc tích.
+Ưu tiên nội dung dễ nghe qua loa.
+"""
+# prompt_template = "prompts/custom-voice-assistant.txt"
+
 [mcp]
 enabled = true
 call_timeout_ms = 30000

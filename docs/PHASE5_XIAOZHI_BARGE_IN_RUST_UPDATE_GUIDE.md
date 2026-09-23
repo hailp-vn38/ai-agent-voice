@@ -1235,7 +1235,7 @@ Rule hiện tại của Rust là tốt:
 
 ```text
 User transcript -> commit khi ASR Final được chấp nhận
-Assistant reply -> chỉ commit khi SpeechOutput Drained
+Assistant reply -> chỉ commit khi WriterEvent::TurnClosed(Normal) đúng TurnId
 ```
 
 Giữ nguyên.

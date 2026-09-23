@@ -3,9 +3,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use url::Url;
 use voice_agent_server::config::{
-    AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-    ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig, WebsocketConfig,
-    WorkersConfig,
+    AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, EffectiveAgentConfig,
+    LimitsConfig, LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig,
+    TtsConfig, WebsocketConfig, WorkersConfig,
 };
 use voice_agent_server::{
     app::AppState,
@@ -48,6 +48,8 @@ fn valid_config() -> AppConfig {
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        agent: None,
+        effective_agent: EffectiveAgentConfig::default(),
     }
 }
 

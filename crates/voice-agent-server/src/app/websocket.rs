@@ -210,6 +210,16 @@ async fn handle_socket(
             return;
         }
     };
+    let actor = match actor
+        .with_prompt_config(config.effective_agent(), config.llm.max_tool_result_chars)
+    {
+        Ok(actor) => actor,
+        Err(error) => {
+            debug!(%error, "failed to initialize session prompt");
+            close_direct(&mut sender, 1011).await;
+            return;
+        }
+    };
     let mut actor = actor
         .with_client_capabilities(
             hello.features.aec,

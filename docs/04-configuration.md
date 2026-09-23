@@ -101,6 +101,13 @@ prompt_budget_tokens = 12000
 max_tool_result_chars = 4096
 max_tool_depth = 4
 
+# Optional. Omit the whole table to use Mây / vi-VN / built-in template.
+[agent]
+# name = "Mây"
+# language = "vi-VN"
+# persona = "Bạn là Mây..."
+# prompt_template = "prompts/custom.txt" # relative to this config file
+
 [providers.tts]
 adapter = "zerotts_onnx"
 
@@ -164,6 +171,7 @@ VOICE_AGENT_LLM_API_KEY
 - `[barge_in]` có hai bool default false. `enabled=true` chỉ có tác dụng khi `trust_client_aec_feature=true`, client Hello có `features.aec=true`, và Listening Mode là Auto/Realtime; đây là client-side echo-suppression assertion, không thay cho server-side AEC.
 - `shutdown_grace_ms > 0`; config chỉ có hiệu lực khi process khởi động lại.
 - `prompt_budget_tokens > 0`, `max_tool_result_chars > 0`, `max_tool_depth > 0`.
+- `[agent]` là optional. Field bị omit dùng built-in default; field đã khai báo nhưng rỗng/whitespace fail startup. Built-in template compile vào binary; custom `agent.prompt_template` được resolve một lần theo thư mục config và phải chứa exact `{{persona}}`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
 - `providers.llm.type = "openai"` chỉ chấp nhận bảng `[providers.llm.openai]`; `api_key`, `base_url` hợp lệ và `model` không rỗng trước bind. API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry.
 - `providers.tts.adapter = "zerotts_onnx"` chỉ chấp nhận bảng cùng tên, Logical Model Identity và `voice` cụ thể không rỗng; V1 default là `maichi`. Model Preparation inject `ResolvedModel`, không direct path. `[workers.tts]` có capacity, timeout/cleanup dương và không chứa model/runtime option của adapter.

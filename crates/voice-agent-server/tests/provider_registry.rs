@@ -30,6 +30,8 @@ fn valid_config() -> AppConfig {
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        agent: None,
+        effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     }
 }
 

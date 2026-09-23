@@ -347,6 +347,8 @@ async fn start_router_with_limits(
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        agent: None,
+        effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
     let app: Router = router_with_providers(config, providers);
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

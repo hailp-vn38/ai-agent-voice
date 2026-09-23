@@ -95,6 +95,8 @@ pub struct SessionActor {
     llm_round: Option<LlmRoundBuffer>,
     tool_depth: usize,
     max_tool_depth: usize,
+    max_tool_result_chars: usize,
+    system_prompt: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -128,6 +130,21 @@ struct PendingDelivery {
     assistant_text: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum TurnFailure {
+    LlmRequestTooLarge,
+    ToolDepthExceeded,
+}
+
+impl TurnFailure {
+    fn code(self) -> &'static str {
+        match self {
+            Self::LlmRequestTooLarge => "llm_request_too_large",
+            Self::ToolDepthExceeded => "tool_depth_exceeded",
+        }
+    }
+}
+
 #[derive(Default)]
 struct DeviceMcpState {
     enabled: bool,
@@ -158,6 +175,7 @@ enum PendingMcpKind {
 struct ToolBatchState {
     generation: u64,
     calls: Vec<ToolCall>,
+    completed_calls: Vec<ToolCall>,
     next: usize,
     results: Vec<ChatMessage>,
 }

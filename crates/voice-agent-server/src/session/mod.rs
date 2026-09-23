@@ -1,6 +1,7 @@
 mod actor;
 mod event;
 mod generation_gate;
+mod prompt;
 mod speech_output;
 mod state;
 mod turn;

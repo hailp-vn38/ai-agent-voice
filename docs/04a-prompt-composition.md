@@ -341,7 +341,7 @@ pub(crate) struct DialogueHistory {
 }
 ```
 
-`commit_user` mở atom với `ChatMessage::User`. Mỗi tool chỉ vào completed prefix khi có terminal result; success, `ok:false`, timeout hoặc tool/device error đã normalize đều là terminal. Atom lưu `completed_calls + completed_results` tuần tự. Khi materialize sang `ChatMessage`, tạo đúng một `AssistantToolCalls { calls: completed_calls }` rồi các `ToolResult` tương ứng. Không ghi call dang dở. `commit_assistant` chỉ thêm `AssistantText` khi đúng writer terminal outcome Normal. Nếu turn lỗi trước tool đầu tiên, atom là user-only. Nếu tool đã hoàn tất rồi turn lỗi, atom giữ completed prefix nhưng không có final assistant.
+`commit_user(turn_id, text)` mở atom cho đúng `TurnId`. Mỗi tool chỉ vào completed prefix khi có terminal result; success, `ok:false`, timeout hoặc tool/device error đã normalize đều là terminal. Atom lưu từng `CompletedToolRound`, bảo toàn ranh giới LLM tool round. Khi materialize sang `ChatMessage`, mỗi round tạo một `AssistantToolCalls { calls }` rồi các `ToolResult` tương ứng. Không ghi call dang dở. `commit_assistant` chỉ thêm `AssistantText` khi đúng writer terminal outcome Normal. Nếu turn lỗi trước tool đầu tiên, atom là user-only. Nếu tool đã hoàn tất rồi turn lỗi, atom giữ completed prefix nhưng không có final assistant.
 
 ### 7.3. Không trim giữa Exchange Atom
 
@@ -351,11 +351,21 @@ pub(crate) struct DialogueHistory {
 
 ```rust
 pub(crate) struct DialogueExchange {
-    messages: Vec<ChatMessage>,
+    turn_id: TurnId,
+    user: ChatMessage,
+    completed_rounds: Vec<CompletedToolRound>,
+    assistant: Option<String>,
+}
+
+pub(crate) struct CompletedToolRound {
+    calls: Vec<ToolCall>,
+    results: Vec<ChatMessage>, // chỉ ChatMessage::ToolResult
 }
 ```
 
-`llm.max_history_messages` là eviction target. Khi vượt target, xóa **toàn bộ Exchange Atom cũ nhất** cho tới khi đạt target hoặc chỉ còn atom hiện tại; không cắt atom hiện tại. Một atom hiện tại lớn có thể vượt target, nhưng hard byte bound riêng của request/prompt phải fail có kiểm soát trước khi gọi provider.
+`calls.len() == results.len()` là invariant. Mỗi cặp `(ToolCall, ToolResult terminal)` được append atomically vào round đang mở; vì vậy round `[A, B]` mà A hoàn tất còn B bị cancel materialize thành `AssistantToolCalls([A]) → ToolResult(A)`, không có B dangling. Khi A và B đều hoàn tất, cùng round materialize thành `AssistantToolCalls([A, B]) → ToolResult(A) → ToolResult(B)`. Round tiếp theo luôn tạo `AssistantToolCalls` mới.
+
+`llm.max_history_messages` là eviction target theo logical `ChatMessage` sau materialization: `User = 1`, `AssistantText = 1`, `AssistantToolCalls` non-empty = `1`, mỗi `ToolResult = 1`. Các `ToolCall` bên trong cùng `AssistantToolCalls` không đếm riêng. Khi vượt target, xóa **toàn bộ Exchange Atom cũ nhất** cho tới khi đạt target hoặc chỉ còn atom hiện tại; không cắt atom hiện tại. Một atom hiện tại lớn có thể vượt target, nhưng hard byte bound riêng của request/prompt phải fail có kiểm soát trước khi gọi provider.
 
 Exchange thường là:
 
@@ -364,7 +374,7 @@ User
 Assistant delivered
 ```
 
-hoặc `User → AssistantToolCalls → ToolResult → Assistant delivered`, có thể lặp nhiều tool round,
+hoặc `User → AssistantToolCalls([A, B]) → ToolResult(A) → ToolResult(B) → AssistantToolCalls([C]) → ToolResult(C) → Assistant delivered`,
 
 hoặc `User → completed tool call/result prefix` khi turn lỗi sau khi tool đã chạy,
 
@@ -393,10 +403,12 @@ User bị lặp hai lần
 Đúng:
 
 ```text
-commit_user("xin chào")
--> compose(history_snapshot)
+commit_user(turn_id, "xin chào")
+-> compose(turn_id, history_snapshot)
 -> System + ... + User("xin chào")
 ```
+
+Composer nhận requested `TurnId` và yêu cầu atom current tồn tại, có đúng `turn_id`, bắt đầu bằng User và User đó xuất hiện đúng một lần trong Base Snapshot. Vi phạm trả `MissingCurrentUser` hoặc invariant error; không fallback sang User gần nhất trong history.
 
 ---
 
@@ -436,9 +448,15 @@ pub struct AgentConfig {
 ```rust
 const DEFAULT_AGENT_NAME: &str = "Mây";
 const DEFAULT_AGENT_LANGUAGE: &str = "vi-VN";
-const DEFAULT_AGENT_PERSONA: &str = "...";
+const DEFAULT_AGENT_PERSONA: &str = "\
+Bạn là Mây, một trợ lý giọng nói tiếng Việt.
+Bạn trả lời tự nhiên, thân thiện và súc tích.
+Ưu tiên nội dung dễ nghe qua loa.";
 const DEFAULT_PROMPT_TEMPLATE: &str =
-    include_str!("../../../prompts/voice-assistant.txt");
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../prompts/voice-assistant.txt"
+    ));
 ```
 
 Built-in persona là đoạn tiếng Việt ngắn, tách riêng template; template render `{{persona}}`. Deployment không có database hoặc `[agent]` vẫn dùng đầy đủ defaults, còn operator được override từng field độc lập.
@@ -519,6 +537,8 @@ Chỉ `{{persona}}` bắt buộc. `{{agent_name}}` và `{{language}}` hợp lệ
 
 Phase A chỉ cho phép ba placeholder deployment-trusted trên. Context placeholders tương lai cần trust contract và phase riêng; nếu xuất hiện trong Phase A, chúng là unknown placeholder và làm startup fail.
 
+Grammar chỉ chấp nhận literal exact `{{agent_name}}`, `{{persona}}`, `{{language}}`. Whitespace (`{{ persona }}`), nesting, escape, property access, filters, expressions hoặc token khác đều là startup error. Rendering single-pass literal substitution; value được chèn không bao giờ được parse lại.
+
 ### 9.2. Không cho template thực thi code
 
 Không hỗ trợ:
@@ -596,7 +616,7 @@ pub struct SessionPromptState {
 }
 ```
 
-V1 khởi tạo từ `AgentConfig` khi SessionActor được tạo.
+V1 khởi tạo từ `EffectiveAgentConfig` khi SessionActor được tạo, với `persona_revision = 1` bất kể persona đến từ built-in hay config override. Revision không biểu diễn source của persona.
 
 Dù V1 chưa expose command đổi persona runtime, giữ `persona_revision` để sau này hỗ trợ:
 
@@ -604,6 +624,8 @@ Dù V1 chưa expose command đổi persona runtime, giữ `persona_revision` đ�
 - per-device agent profile;
 - per-user assistant;
 - manager/API update có explicit session policy.
+
+Mỗi update persona runtime được accept tăng revision đúng một lần: `1 → 2 → 3`.
 
 Không reload `config.toml` ngầm giữa turn.
 
@@ -640,6 +662,8 @@ pub enum PromptError {
     TooLarge,
     #[error("LLM request has no user message")]
     MissingUserMessage,
+    #[error("LLM request has no current user message")]
+    MissingCurrentUser,
     #[error("LLM request exceeds hard bound")]
     RequestTooLarge,
 }
@@ -668,6 +692,7 @@ Không đọc file prompt trong mỗi turn.
 
 ```rust
 pub struct PromptBuildInput<'a> {
+    pub turn_id: TurnId,
     pub session: &'a SessionPromptState,
     pub history: &'a DialogueHistory,
     pub tools: &'a [ToolDefinition],
@@ -695,11 +720,9 @@ impl PromptComposer {
             1 + input.history.message_count()
         );
         messages.push(ChatMessage::System { content: system });
-        messages.extend(input.history.messages_for_prompt());
+        messages.extend(input.history.messages_for_prompt(input.turn_id)?);
 
-        if !messages.iter().any(|message| matches!(message, ChatMessage::User { .. })) {
-            return Err(PromptError::MissingUserMessage);
-        }
+        input.history.verify_current_user_once(input.turn_id, &messages)?;
 
         let request = LlmRequest {
             messages,
@@ -871,6 +894,12 @@ User(current)
 Nếu turn lỗi sau khi tool đã chạy, giữ completed prefix `AssistantToolCalls`/`ToolResult` trong atom đó, không ghi call thiếu terminal result và không tạo final assistant giả. Với một batch nhiều call, prefix giữ đúng thứ tự call đã hoàn tất.
 
 Với `McpResultDelivery::Silent`, atom kết thúc sau completed tool prefix và không có assistant text. Với `DirectTts`, text direct là candidate assistant delivery; chỉ thêm `AssistantText` khi writer trả `TurnClosed(Normal)` đúng `TurnId`. Writer abort/fail giữ completed prefix nhưng không thêm assistant text. `SpeechOutput::Drained` không phải commit boundary trong cả hai mode.
+
+Raw MCP result chỉ tồn tại ở MCP boundary đủ để parse/normalize. Boundary lấy mọi text content item theo thứ tự, nối bằng `\n`, bỏ non-text item, rồi chạy đúng một pipeline: Unicode NFC, bỏ mọi `char::is_control()` trừ `\n` (U+000A) và `\t` (U+0009), bỏ bidi formatting controls U+202A..U+202E và U+2066..U+2069, rồi cap một lần trước `ChatMessage::ToolResult`. Không trim whitespace hoặc collapse newline. `llm.max_tool_result_chars` đếm Unicode scalar values (`Rust char`) **sau sanitize**: lấy tối đa N scalar và `truncated=true` chỉ khi còn scalar N+1; ký tự đã bị sanitize không làm `truncated=true`. Nếu không có text item, `content = ""`; `ok`, `code` và `truncated=false` vẫn được giữ, kể cả `isError=true`. Chỉ representation `{ ok, code, content, truncated }` được đưa vào `llm_messages`, completed Exchange Atom và mọi round sau; raw device result không vào history hoặc normal logs. Hard request bound sau normalization tính UTF-8 bytes.
+
+`code` của ToolResult là allowlist hữu hạn: `timeout`, `invalid_arguments`, `unknown_tool`, `request_id_exhausted`, `device_tool_error`. `request_id_exhausted` hiện là terminal ToolResult vì runtime có nhánh tạo result này. Mọi JSON-RPC/device/provider error khác map thành `device_tool_error`; không đưa raw code/message vào history hoặc LLM. `ok:false` với code allowlisted vẫn là terminal ToolResult.
+
+Khi đạt `max_tool_depth`, turn kết thúc bằng controlled terminal failure nội bộ `tool_depth_exceeded`. Không gọi continuation, không tạo synthetic ToolResult hoặc sentinel `tool_call_id`; các CompletedToolRound đã hoàn tất vẫn được giữ trong Exchange Atom.
 
 ### 16.3. Bounded retention
 
@@ -1106,9 +1135,13 @@ crates/voice-agent-server/tests/prompt_composition.rs
 ```text
 CONTEXT.md
 config.example.toml
+docs/03-module-contracts.md
 docs/04-configuration.md
 docs/flows/README.md
 docs/flows/04-llm.md
+docs/adr/0014-dialogue-delivery-commit.md
+docs/PHASE5_XIAOZHI_BARGE_IN_RUST_UPDATE_GUIDE.md
+docs/PHASE6_DEVICE_MCP_IMPLEMENTATION_GUIDE.md
 
 crates/voice-agent-server/src/lib.rs
 crates/voice-agent-server/src/config/mod.rs
@@ -1150,6 +1183,8 @@ phải pass trước khi làm prompt composition.
 - thay `Vec<String>`;
 - preserve user/assistant/tool roles và toàn bộ Exchange Atom;
 - giữ commit semantics ADR 0014/0046;
+- normalize/cap tool result một lần trước `ChatMessage::ToolResult`;
+- lưu completed tool prefix theo `CompletedToolRound`; depth limit terminalize turn không chèn sentinel;
 - update tests public accessor nếu cần.
 
 Gate:
@@ -1224,7 +1259,8 @@ Bắt buộc:
 5. thiếu `{{persona}}` fail;
 6. template vượt size limit fail;
 7. render vượt size limit fail;
-8. placeholder value không được render lần hai.
+8. placeholder value không được render lần hai;
+9. whitespace, nesting, escape, property access, filters và expression đều fail startup.
 
 Case 8 quan trọng:
 
@@ -1254,24 +1290,34 @@ Thêm cases:
 - completed tool prefix của turn lỗi giữ đúng call/result và không có final assistant;
 - base snapshot không đổi qua tool continuation;
 - continuation vượt 256 KiB fail trước provider, không evict history lại;
-- no user -> `MissingUserMessage`;
+- missing current atom/user hoặc User không đúng một lần -> `MissingCurrentUser`;
 - current user không duplicate;
 - generation giữ trong `WorkerIdentity`, không lặp trong request;
+- Base Snapshot được build bằng requested `TurnId`, không fallback sang User cũ;
 - tools giữ đúng round, kể cả khi Device MCP visible;
 - compose không mutate history.
 
 ### 24.3. Dialogue History tests
 
 - `commit_user` tạo User;
+- `commit_user(turn_id, text)` tạo atom mang đúng TurnId;
 - `commit_assistant` tạo Assistant;
 - overflow evict oldest exchange;
 - chỉ còn atom hiện tại thì giữ nguyên dù vượt `max_history_messages`;
 - hard request byte bound fail trước provider;
 - `llm_request_size_bytes` tính content, compact JSON và structural overhead xác định;
 - accounting dùng đúng 32/32/64/48/48 bytes và overflow `checked_add` fail `llm_request_too_large`;
+- `max_history_messages` đếm logical ChatMessage sau materialization, không đếm ToolCall bên trong AssistantToolCalls;
 - user-only failed exchange được giữ đúng;
-- batch nhiều tool materialize một `AssistantToolCalls` cho completed calls và result tương ứng; error/timeout normalized cũng là terminal;
+- batch nhiều tool append atomic từng call/result terminal; B bị cancel sau A chỉ materialize `[A]`; error/timeout normalized cũng là terminal;
+- nhiều LLM tool round giữ ranh giới AssistantToolCalls/ToolResult riêng;
 - không ghi call chưa có terminal result;
+- raw MCP result không vào history/log; mọi text item được nối theo thứ tự trước sanitize/cap;
+- normalizer dùng NFC, giữ `\\n`/`\\t`, bỏ control khác và bidi U+202A..U+202E/U+2066..U+2069, không trim/collapse whitespace;
+- `max_tool_result_chars` đếm Rust char sau sanitize; `truncated` chỉ true khi có scalar N+1 sau sanitize;
+- no text item giữ `content = ""`, `truncated = false` và metadata `ok`/`code` normalized;
+- ToolResult `ok:false` chỉ dùng code allowlist, gồm `request_id_exhausted`;
+- `tool_depth_exceeded` là internal terminal failure, không phải ToolResult;
 - không trim giữa Exchange Atom có tool messages;
 
 ### 24.4. LlmRuntime tests
@@ -1325,6 +1371,7 @@ Tool delivery scenarios:
 completed tool result + Silent    -> atom giữ tool prefix, không AssistantText
 completed tool result + DirectTts -> AssistantText chỉ sau TurnClosed(Normal) đúng TurnId
 writer abort/fail                 -> atom giữ tool prefix, không AssistantText
+max_tool_depth                    -> fail controlled, không continuation/sentinel; giữ completed rounds
 ```
 
 Oversized request scenarios:
@@ -1365,6 +1412,8 @@ tool call cancel trước terminal result
 - missing prompt file fail startup;
 - built-in template không đọc filesystem/CWD;
 - built-in defaults là Mây / vi-VN / persona tiếng Việt;
+- `DEFAULT_AGENT_PERSONA` khớp nguyên văn product contract Phase A;
+- SessionPromptState khởi tạo `persona_revision = 1` cho built-in và override;
 - template relative được resolve theo parent của file config, không theo CWD;
 - unknown config field fail do `deny_unknown_fields`;
 - `prompt_budget_tokens > 0` vẫn parse/validate nhưng không đổi runtime prompt;
@@ -1386,7 +1435,8 @@ E2E gate tối thiểu:
 6. sau `WriterEvent::TurnClosed { outcome: Normal }` đúng TurnId, history có delivered assistant;
 7. turn thứ hai chứng minh history được gửi đúng role;
 8. abort turn có partial response chứng minh partial assistant không xuất hiện trong request tiếp theo;
-9. oversized request fail `llm_request_too_large` trước provider và Voice Session nhận turn sau bình thường.
+9. oversized request fail `llm_request_too_large` trước provider và Voice Session nhận turn sau bình thường;
+10. raw MCP result vượt cap chứng minh chỉ normalized/truncated representation vào history và LLM continuation.
 
 Nếu dùng LLM remote thật, test không nên assert exact natural-language response. Gate cần assert request structure và lifecycle semantics; persona behavioral smoke chỉ là bổ sung.
 
@@ -1458,6 +1508,7 @@ Feature chỉ hoàn tất khi tất cả điều kiện sau đúng:
 - [ ] `prompt_budget_tokens` được ghi rõ chưa enforce;
 - [ ] user ASR final được commit đúng một lần trước compose;
 - [ ] current user không bị duplicate trong request;
+- [ ] Base Snapshot nhận requested TurnId và fail `MissingCurrentUser` nếu atom current không hợp lệ;
 - [ ] assistant chỉ commit sau `WriterEvent::TurnClosed { outcome: Normal }` đúng `TurnId`;
 - [ ] silent/direct-TTS tool delivery giữ completed prefix; direct TTS chỉ commit assistant sau writer Normal;
 - [ ] cancelled/failed partial assistant không vào prompt turn sau;
@@ -1468,16 +1519,25 @@ Feature chỉ hoàn tất khi tất cả điều kiện sau đúng:
 - [ ] chỉ `{{persona}}` bắt buộc; name/language optional;
 - [ ] PromptComposer không gọi network và không mutate history;
 - [ ] deployment cũ thiếu `[agent]` dùng built-in persona/template bằng `include_str!`; explicit empty override fail startup;
+- [ ] built-in persona là exact Phase A product contract; SessionPromptState bắt đầu revision 1;
 - [ ] `llm_request_too_large` chỉ terminalize Conversational Turn, không thêm protocol envelope hoặc fail Voice Session;
 - [ ] oversized request trước `tts:start` release turn trực tiếp, không tạo writer turn hoặc gửi `tts:stop`;
 - [ ] late tool result sau cancel không đổi history hoặc restart LLM;
+- [ ] raw MCP result được normalize/cap một lần trước `ChatMessage::ToolResult`; `truncated` phản ánh overflow thật;
+- [ ] ToolResult code chỉ thuộc allowlist, `request_id_exhausted` giữ là terminal ToolResult;
+- [ ] depth limit là controlled turn failure, không tạo synthetic ToolResult; Phase 6 guide đã đồng bộ;
+- [ ] normalizer nối toàn bộ text item theo thứ tự, cap theo Rust char và bỏ non-text item;
+- [ ] strict placeholder grammar chỉ nhận ba token exact, single-pass;
+- [ ] `max_history_messages` đếm logical ChatMessage sau materialization;
+- [ ] Exchange Atom giữ CompletedToolRound và materialize đúng ranh giới nhiều LLM tool round;
 - [ ] default voice prompt chứa persona + ASR-aware + TTS-aware rules;
 - [ ] full prompt/history không bị log mặc định;
 - [ ] existing LLM/TTS/cancellation tests vẫn pass;
 - [ ] prompt-specific unit/integration tests pass;
 - [ ] Reference Client two-turn gate chứng minh history role semantics;
 - [ ] abort/cancel gate chứng minh partial assistant không leak vào history;
-- [ ] `CONTEXT.md`, configuration docs và LLM flow docs được cập nhật cùng implementation.
+- [ ] `CONTEXT.md`, configuration docs, module contracts, ADR-0014, Phase 5 update guide và LLM flow docs được cập nhật cùng implementation.
+- [ ] search toàn bộ `docs/` và `CONTEXT.md` không còn mô tả `Drained` là assistant commit boundary hoặc `prompt_budget_tokens` là runtime-enforced.
 
 ---
 

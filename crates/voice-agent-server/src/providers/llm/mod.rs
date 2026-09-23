@@ -17,6 +17,9 @@ pub enum LlmEvent {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChatMessage {
+    System {
+        content: String,
+    },
     User {
         content: String,
     },
@@ -104,7 +107,10 @@ impl LlmProvider for UnavailableLlm {
 }
 
 pub(crate) struct ConfiguredOpenAiLlm {
-    client: std::sync::Arc<dyn llm::LLMProvider>,
+    api_key: String,
+    base_url: String,
+    model: String,
+    timeout_seconds: u64,
 }
 
 impl ConfiguredOpenAiLlm {
@@ -114,16 +120,11 @@ impl ConfiguredOpenAiLlm {
         model: &str,
         timeout_seconds: u64,
     ) -> Result<Self, LlmError> {
-        let client = llm::builder::LLMBuilder::new()
-            .backend(llm::builder::LLMBackend::OpenAI)
-            .api_key(api_key)
-            .base_url(base_url)
-            .model(model)
-            .timeout_seconds(timeout_seconds)
-            .build()
-            .map_err(|_| LlmError::Failed)?;
         Ok(Self {
-            client: std::sync::Arc::from(client),
+            api_key: api_key.into(),
+            base_url: base_url.into(),
+            model: model.into(),
+            timeout_seconds,
         })
     }
 }
@@ -136,9 +137,14 @@ impl LlmProvider for ConfiguredOpenAiLlm {
 
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
         use futures_util::StreamExt;
+        let system = request.messages.iter().find_map(|message| match message {
+            ChatMessage::System { content } => Some(content.as_str()),
+            _ => None,
+        });
         let messages = request
             .messages
             .iter()
+            .filter(|message| !matches!(message, ChatMessage::System { .. }))
             .map(to_llm_message)
             .collect::<Vec<_>>();
         let tools = request
@@ -154,8 +160,17 @@ impl LlmProvider for ConfiguredOpenAiLlm {
                 cache_control: None,
             })
             .collect::<Vec<_>>();
-        let stream = self
-            .client
+        let mut builder = llm::builder::LLMBuilder::new()
+            .backend(llm::builder::LLMBackend::OpenAI)
+            .api_key(&self.api_key)
+            .base_url(&self.base_url)
+            .model(&self.model)
+            .timeout_seconds(self.timeout_seconds);
+        if let Some(system) = system {
+            builder = builder.system(system);
+        }
+        let client = builder.build().map_err(|_| LlmError::Failed)?;
+        let stream = client
             .chat_stream_with_tools(&messages, (!tools.is_empty()).then_some(tools.as_slice()))
             .await
             .map_err(|_| LlmError::Failed)?;
@@ -205,6 +220,10 @@ fn adapt_stream_chunk(
 
 fn to_llm_message(message: &ChatMessage) -> llm::chat::ChatMessage {
     match message {
+        // The upstream `llm` crate has no system-role ChatMessage. The configured
+        // OpenAI client carries the system instruction separately; this arm is
+        // unreachable after `ConfiguredOpenAiLlm::stream` removes it.
+        ChatMessage::System { .. } => unreachable!("system prompt is configured separately"),
         ChatMessage::User { content } => llm::chat::ChatMessage::user().content(content).build(),
         ChatMessage::AssistantText { content } => {
             llm::chat::ChatMessage::assistant().content(content).build()

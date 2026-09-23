@@ -1254,20 +1254,9 @@ LLM round #3 -> final prose
 
 tool depth = 2.
 
-Nếu vượt limit:
+Nếu vượt limit, terminalize controlled Conversational Turn với domain code nội bộ `tool_depth_exceeded`. Không inject `ToolResult` synthetic hay sentinel `tool_call_id`, và không gọi LLM continuation. Các completed tool round trước đó vẫn thuộc Exchange Atom. Nếu turn chưa phát `tts:start`, release turn theo đường terminalization hiện có, không tạo writer turn giả.
 
-```text
-inject sanitized tool result:
-tool_depth_exceeded
-```
-
-sau đó cho phép đúng một final LLM round với:
-
-```text
-tools = []
-```
-
-Nếu final no-tool round vẫn không có text:
+Nếu một final no-tool round hợp lệ đã được gọi nhưng vẫn không có text:
 
 ```text
 llm_empty_final_response
@@ -2010,7 +1999,7 @@ other  -> device_rpc_error
 
 # 50. Prompt token budget
 
-Phase 6 nên implement `prompt_budget_tokens`.
+`prompt_budget_tokens` là configuration declared-but-not-enforced trong Phase A. Token accounting/enforcement cần ticket riêng với tokenizer hoặc chiến lược đếm đáng tin cậy.
 
 Prompt assembly giữ:
 
@@ -2494,7 +2483,7 @@ fn on_llm_finished(&mut self) {
     }
 
     if self.tool_depth >= self.config.max_tool_depth {
-        self.start_final_no_tools_round_with_depth_error();
+        self.terminalize_turn_failure(TurnFailure::ToolDepthExceeded);
         return;
     }
 
@@ -2549,7 +2538,7 @@ fn on_mcp_tool_result(
 | JSON-RPC error | healthy | yes |
 | result.isError | healthy | yes |
 | tool result too large | healthy | yes, truncated |
-| max tool depth | healthy | one final no-tools round |
+| max tool depth | healthy | controlled turn failure, no continuation |
 | user abort | current turn cancelled | no |
 | generation replacement | current turn cancelled | no |
 | WebSocket disconnect | session terminal | no |
