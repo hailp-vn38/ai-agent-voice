@@ -141,6 +141,11 @@ pub(crate) fn initialize_ort(configured_library: &Path) -> Result<(), VadError> 
         .copied()
 }
 
+/// Loads the deployment-selected ONNX Runtime before an offline qualification gate proceeds.
+pub fn verify_onnx_runtime(configured_library: &Path) -> Result<(), VadError> {
+    initialize_ort(configured_library)
+}
+
 fn ort_error(error: impl std::fmt::Display) -> VadError {
     VadError::Failed(format!("Silero ONNX Runtime failure: {error}"))
 }

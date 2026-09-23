@@ -340,3 +340,57 @@ pub fn decode_canonical_downlink_opus_packet(packet: &[u8]) -> anyhow::Result<us
     }
     Ok(decoded)
 }
+
+/// Decodes exactly one canonical uplink Opus packet and returns its PCM samples.
+pub fn decode_canonical_uplink_opus_packet(packet: &[u8]) -> anyhow::Result<[i16; 960]> {
+    if packet.is_empty() {
+        bail!("canonical uplink packet is empty");
+    }
+    let mut decoder =
+        Decoder::new(16_000, Channels::Mono).context("create canonical uplink Opus decoder")?;
+    let mut pcm = [0_i16; 960];
+    let decoded = decoder
+        .decode(packet, &mut pcm, false)
+        .context("decode canonical uplink Opus packet")?;
+    if decoded != pcm.len() {
+        bail!(
+            "uplink packet decoded to {decoded} samples; expected one 60 ms 16 kHz frame ({})",
+            pcm.len()
+        );
+    }
+    Ok(pcm)
+}
+
+#[cfg(test)]
+mod phase5_fixture_tests {
+    use super::decode_canonical_uplink_opus_packet;
+
+    const FIXTURES: [&[u8]; 5] = [
+        include_bytes!("../tests/fixtures/phase5-uplink-01-silence.opus"),
+        include_bytes!("../tests/fixtures/phase5-uplink-02-speech-a.opus"),
+        include_bytes!("../tests/fixtures/phase5-uplink-03-silence.opus"),
+        include_bytes!("../tests/fixtures/phase5-uplink-04-speech-b.opus"),
+        include_bytes!("../tests/fixtures/phase5-uplink-05-silence.opus"),
+    ];
+
+    #[test]
+    fn phase5_uplink_fixture_has_two_synthetic_speech_onsets() {
+        let peak = FIXTURES.map(|packet| {
+            decode_canonical_uplink_opus_packet(packet)
+                .unwrap()
+                .into_iter()
+                .map(i16::unsigned_abs)
+                .max()
+                .unwrap()
+        });
+
+        assert!(peak[0] < 100, "fixture must start with silence");
+        assert!(peak[1] > 1_000, "fixture must contain speech A");
+        assert!(
+            peak[2] < 100,
+            "fixture must retain an intervening silence frame"
+        );
+        assert!(peak[3] > 1_000, "fixture must contain speech B");
+        assert!(peak[4] < 100, "fixture must end with silence");
+    }
+}

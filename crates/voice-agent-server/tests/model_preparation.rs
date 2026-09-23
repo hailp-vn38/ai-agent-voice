@@ -5,8 +5,9 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
+use voice_agent_server::config::{DeploymentConfig, ModelAcknowledgement};
 use voice_agent_server::models::{
-    ModelAcquirer, ModelError, ModelPreparation, ModelPreparationConfig,
+    ModelAcquirer, ModelError, ModelPreparation, ModelPreparationConfig, verify_installed,
 };
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -68,6 +69,58 @@ transform = "{transform}"
     )
     .unwrap();
     path
+}
+
+fn acknowledged_deployment() -> DeploymentConfig {
+    DeploymentConfig {
+        model_acknowledgements: vec![ModelAcknowledgement {
+            model: "test-vad".into(),
+            revision: "v1".into(),
+            license: "MIT".into(),
+        }],
+        ..DeploymentConfig::default()
+    }
+}
+
+#[test]
+fn offline_preflight_accepts_an_acknowledged_verified_artifact_without_acquisition() {
+    let root = temp_dir("offline-preflight-pass");
+    let manifest = manifest(&root, "vad/model.onnx", b"model", b"model", "identity");
+    let installed = root.join("vad/model.onnx");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    fs::write(&installed, b"model").unwrap();
+
+    let verified = verify_installed(
+        &manifest,
+        &root,
+        "test-vad",
+        "silero_onnx",
+        &acknowledged_deployment(),
+    )
+    .unwrap();
+
+    assert_eq!(verified.artifact("vad"), Some(installed.as_path()));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn offline_preflight_reports_a_corrupt_artifact_without_acquisition() {
+    let root = temp_dir("offline-preflight-corrupt");
+    let manifest = manifest(&root, "vad/model.onnx", b"model", b"model", "identity");
+    let installed = root.join("vad/model.onnx");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    fs::write(&installed, b"corrupt").unwrap();
+
+    let result = verify_installed(
+        &manifest,
+        &root,
+        "test-vad",
+        "silero_onnx",
+        &acknowledged_deployment(),
+    );
+
+    assert!(matches!(result, Err(ModelError::HashMismatch { .. })));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

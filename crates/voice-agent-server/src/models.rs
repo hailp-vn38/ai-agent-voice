@@ -231,6 +231,39 @@ pub fn prepare(
     .prepare(identity, adapter)
 }
 
+/// Verifies installed artifacts without acquisition for an offline qualification gate.
+pub fn verify_installed(
+    manifest_path: &Path,
+    root: &Path,
+    identity: &str,
+    adapter: &str,
+    deployment: &DeploymentConfig,
+) -> Result<ResolvedModel, ModelError> {
+    let model = load_manifest(manifest_path, identity, adapter)?;
+    if deployment.profile == "commercial" && model.license.contains("NC") {
+        return Err(ModelError::LicenseDenied {
+            model: model.identity,
+            profile: deployment.profile.clone(),
+        });
+    }
+    require_acknowledgement(&model, &deployment.model_acknowledgements)?;
+    let artifacts = model
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            validate_relative_path(&artifact.install_path)?;
+            let installed = safe_install_path(root, &artifact.install_path)?;
+            verify_path(&installed, &artifact.sha256)?;
+            Ok((artifact.role.clone(), installed))
+        })
+        .collect::<Result<Vec<_>, ModelError>>()?;
+    Ok(ResolvedModel {
+        identity: model.identity,
+        adapter: model.adapter,
+        artifacts,
+    })
+}
+
 fn load_manifest(manifest_path: &Path, identity: &str, adapter: &str) -> Result<Model, ModelError> {
     let manifest: Manifest = toml::from_str(&fs::read_to_string(manifest_path)?)?;
     let model = manifest
