@@ -30,6 +30,8 @@ impl SessionActor {
         let cancellation = turn.cancellation.clone();
         self.turn = Some(turn);
         self.generated_response.clear();
+        self.pending_llm_delta = None;
+        self.llm_finish_pending = false;
         if self
             .llm_runtime
             .start(identity.clone(), user_text, cancellation)
@@ -62,24 +64,65 @@ impl SessionActor {
         match event {
             LlmRuntimeEvent::TextDelta { text, .. } => {
                 self.generated_response.push_str(&text);
-                if self.speech_output.push_delta(&text).is_err() {
-                    self.fail_speech_delivery();
-                }
+                self.pending_llm_delta = Some((text, 0));
+                self.flush_pending_llm_text();
             }
             LlmRuntimeEvent::Finished { .. } => {
                 self.llm_operation = None;
                 info!("LLM operation finished");
-                if self.generated_response.trim().is_empty()
-                    || self.speech_output.finish_input().is_err()
-                {
-                    self.fail_speech_delivery();
-                }
+                self.llm_finish_pending = true;
+                self.flush_pending_llm_text();
             }
             LlmRuntimeEvent::UnexpectedToolCall { .. }
             | LlmRuntimeEvent::Failed { .. }
             | LlmRuntimeEvent::Cancelled { .. } => {
                 self.llm_operation = None;
                 warn!("LLM operation ended without a deliverable response");
+                self.fail_speech_delivery();
+            }
+        }
+    }
+
+    /// Keep at most one LLM delta outside SpeechOutput. Pausing mailbox reads propagates
+    /// pressure through the bounded LLM route instead of cancelling a healthy spoken turn.
+    pub(super) fn flush_pending_llm_text(&mut self) {
+        while self.speech_output.has_pending_capacity() {
+            let Some((text, offset)) = self.pending_llm_delta.as_mut() else {
+                break;
+            };
+            if *offset == text.len() {
+                self.pending_llm_delta = None;
+                break;
+            }
+            let next = text[*offset..]
+                .chars()
+                .next()
+                .expect("offset is a character boundary");
+            let end = *offset + next.len_utf8();
+            if let Err(error) = self.speech_output.push_delta(&text[*offset..end]) {
+                warn!(?error, "LLM text could not enter speech output");
+                self.fail_speech_delivery();
+                return;
+            }
+            *offset = end;
+        }
+        if self
+            .pending_llm_delta
+            .as_ref()
+            .is_some_and(|(text, offset)| *offset == text.len())
+        {
+            self.pending_llm_delta = None;
+        }
+        if self.llm_finish_pending
+            && self.pending_llm_delta.is_none()
+            && self.speech_output.has_pending_capacity()
+        {
+            self.llm_finish_pending = false;
+            if self.generated_response.trim().is_empty() {
+                warn!("LLM response has no deliverable text");
+                self.fail_speech_delivery();
+            } else if let Err(error) = self.speech_output.finish_input() {
+                warn!(?error, "LLM response could not finish speech input");
                 self.fail_speech_delivery();
             }
         }
@@ -93,7 +136,8 @@ impl SessionActor {
             let event = match self.speech_output.poll() {
                 Ok(Some(event)) => event,
                 Ok(None) => break,
-                Err(_) => {
+                Err(error) => {
+                    warn!(?error, "TTS delivery failed");
                     self.fail_speech_delivery();
                     break;
                 }
@@ -109,6 +153,7 @@ impl SessionActor {
                         .ok()
                         .is_none_or(|payload| self.send_turn_control(payload).is_err())
                     {
+                        warn!("LLM segment control could not enter outbound queue");
                         self.fail_speech_delivery();
                         break;
                     }
@@ -126,6 +171,7 @@ impl SessionActor {
                         .ok()
                         .is_none_or(|payload| self.send_turn_control(payload).is_err())
                     {
+                        warn!("TTS start control could not enter outbound queue");
                         self.fail_speech_delivery();
                         break;
                     }
@@ -190,6 +236,8 @@ impl SessionActor {
         // It must precede every producer cancellation, including cancellation before TTS starts:
         // `llm` or `tts:start` may already be waiting at the writer.
         self.generation_gate.invalidate(self.generation);
+        self.pending_llm_delta = None;
+        self.llm_finish_pending = false;
         self.speech_output.cancel();
         self.pending_audio = None;
         if self.tts_started {
@@ -199,16 +247,15 @@ impl SessionActor {
                 "type": "tts",
                 "state": "stop",
             });
-            if let Ok(payload) = serde_json::to_string(&payload) {
-                if self
+            if let Ok(payload) = serde_json::to_string(&payload)
+                && self
                     .urgent_tx
                     .try_send(OutboundMessage::Text(payload))
                     .is_err()
-                {
-                    // Continuing playback without an admitted stop leaves the client state
-                    // unknowable.  Tear the Voice Session down instead of silently retrying.
-                    self.fail_closed_after_urgent_stop_admission_failure();
-                }
+            {
+                // Continuing playback without an admitted stop leaves the client state
+                // unknowable. Tear the Voice Session down instead of silently retrying.
+                self.fail_closed_after_urgent_stop_admission_failure();
             }
         }
     }
@@ -230,10 +277,10 @@ impl SessionActor {
     }
 
     pub(super) fn cancel_asr(&mut self) {
-        if let Some((lease, identity)) = self.asr_stream.take() {
-            if self.asr_runtime.send(lease, AsrCommand::Cancel).is_ok() {
-                self.asr_cleanup_pending.insert(identity);
-            }
+        if let Some((lease, identity)) = self.asr_stream.take()
+            && self.asr_runtime.send(lease, AsrCommand::Cancel).is_ok()
+        {
+            self.asr_cleanup_pending.insert(identity);
         }
     }
 

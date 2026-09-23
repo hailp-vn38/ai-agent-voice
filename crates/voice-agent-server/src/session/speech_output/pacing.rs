@@ -80,6 +80,7 @@ impl SpeechOutput {
                     return Err(SpeechOutputError::Synthesis);
                 }
                 Some(TtsWorkerEvent::TimedOut) => {
+                    tracing::warn!(?lease, "TTS synthesis timed out");
                     self.active_worker = None;
                     // Actor failure stops polling this lease, so cleanup must continue at the
                     // runtime boundary and quarantine the slot if native acknowledgement stalls.

@@ -84,7 +84,7 @@ TTS producer bị chặn khi bounded queue đầy. Không tạo unbounded audio 
 
 Không lấy được worker slot hoặc command queue đầy làm fail-fast current generation; không chờ vô hạn, drop hay skip segment. `tts.timeout_ms` bắt đầu khi worker accept segment và chỉ kết thúc khi `SegmentFinished`, `Failed` hoặc cancelled acknowledgement, không reset theo PCM chunk. Timeout fail generation, request cleanup; hết cleanup grace thì quarantine worker. Không retry logical TTS operation.
 
-`speech_output.pending_segments` (default 8) là hard bound riêng cho text segment chờ synthesis. Full queue fail `speech_output_backpressure`, cancel LLM stream và ngừng nhận delta sau overflow; không drop hoặc overwrite text. `limits.tts_concurrency` phải bằng `workers.tts.max_workers`; only application admission semaphore cấp permit trước lease native worker.
+`speech_output.pending_segments` (default 8) là hard bound riêng cho text segment chờ synthesis. Khi queue đầy, actor tạm dừng nhận thêm LLM delta cho tới khi TTS lấy bớt segment; nó giữ tối đa một delta đang xử lý dở và không drop hoặc overwrite text. Buffer câu chưa kết thúc vượt ngưỡng khẩn cấp vẫn fail `speech_output_backpressure`. `limits.tts_concurrency` phải bằng `workers.tts.max_workers`; only application admission semaphore cấp permit trước lease native worker.
 
 Trước bind, ZeroTtsFactory chạy deterministic warmup dùng pinned non-user text/voice `maichi`, kiểm tra tokenizer, latent, graph, codec/external data và PCM mono 48 kHz finite/non-empty. Warmup không đi qua SessionActor, SpeechOutput, Opus hay WebSocket, và mutable operation state bị drop/reset trước traffic.
 

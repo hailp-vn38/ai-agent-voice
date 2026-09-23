@@ -61,6 +61,8 @@ pub struct SessionActor {
     llm_runtime: std::sync::Arc<LlmRuntime>,
     llm_events: mpsc::Receiver<LlmRuntimeEvent>,
     llm_operation: Option<WorkerIdentity>,
+    pending_llm_delta: Option<(String, usize)>,
+    llm_finish_pending: bool,
     generated_response: String,
     tts_runtime: std::sync::Arc<TtsWorkerRuntime>,
     speech_output: SpeechOutput,

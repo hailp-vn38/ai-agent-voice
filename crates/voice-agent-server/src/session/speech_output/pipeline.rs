@@ -10,6 +10,11 @@ impl SpeechOutput {
         // This is the semantic bound for text awaiting synthesis. Audio has its own bounded
         // transport queue, so a long valid segment must not consume future segment capacity.
         if self.pending.len() >= self.max_pending {
+            tracing::warn!(
+                pending_segments = self.pending.len(),
+                max_pending = self.max_pending,
+                "Speech segment queue reached capacity"
+            );
             return Err(SpeechOutputError::Backpressure);
         }
         self.pending.push_back(SpeechSegment {

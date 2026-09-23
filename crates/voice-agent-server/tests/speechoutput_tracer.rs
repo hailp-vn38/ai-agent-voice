@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -171,6 +174,37 @@ impl LlmProvider for ControlledSentenceLlm {
 
 struct BackpressuredLlm {
     release_overflow: Arc<Notify>,
+}
+
+struct GreetingThenRustLlm(Arc<AtomicUsize>);
+
+#[async_trait::async_trait]
+impl LlmProvider for GreetingThenRustLlm {
+    fn adapter(&self) -> &'static str {
+        "greeting_then_rust"
+    }
+
+    async fn stream(
+        &self,
+        _: String,
+    ) -> Result<
+        voice_agent_server::providers::llm::LlmEventStream,
+        voice_agent_server::providers::LlmError,
+    > {
+        use voice_agent_server::providers::LlmEvent;
+        let text = if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            "Xin chào! Mình có thể giúp gì cho bạn hôm nay?".to_owned()
+        } else {
+            format!(
+                "Rust là một ngôn ngữ lập trình hệ thống, nổi bật vì kết hợp hiệu năng cao như C/C++ với cơ chế an toàn bộ nhớ rất mạnh. {}",
+                "Rust còn hỗ trợ lập trình đồng thời an toàn. ".repeat(10)
+            )
+        };
+        Ok(Box::pin(futures_util::stream::iter([
+            Ok(LlmEvent::TextDelta(text)),
+            Ok(LlmEvent::Finished),
+        ])))
+    }
 }
 #[async_trait::async_trait]
 impl LlmProvider for BackpressuredLlm {
@@ -864,7 +898,7 @@ async fn complete_vietnamese_sentences_announce_once_before_their_audio() {
 }
 
 #[tokio::test]
-async fn full_segment_capacity_stops_started_playback_without_committing_assistant_history() {
+async fn full_segment_capacity_pauses_llm_until_all_segments_are_spoken() {
     let (control_tx, mut control_rx) = mpsc::channel(32);
     let (audio_tx, _audio_rx) = mpsc::channel(32);
     let release_overflow = Arc::new(Notify::new());
@@ -906,7 +940,7 @@ async fn full_segment_capacity_stops_started_playback_without_committing_assista
             break;
         }
     }
-    for _ in 0..100 {
+    for _ in 0..2_000 {
         actor.pump_workers();
         if actor.phase() == SessionPhase::Ready {
             break;
@@ -914,7 +948,18 @@ async fn full_segment_capacity_stops_started_playback_without_committing_assista
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
     assert_eq!(actor.phase(), SessionPhase::Ready);
-    assert_eq!(actor.dialogue_history(), ["xin chao"]);
+    assert_eq!(
+        actor.dialogue_history(),
+        [
+            "xin chao".to_owned(),
+            format!(
+                "{}{}{}",
+                "Mot cau dau tien du de tach thanh speech segment ngay. ",
+                "Mot cau thu hai du de tach thanh speech segment ngay. ",
+                "Mot cau dai du de tach thanh speech segment ngay. ".repeat(10)
+            )
+        ]
+    );
     let controls = controls_before_overflow
         .into_iter()
         .chain(std::iter::from_fn(|| control_rx.try_recv().ok()))
@@ -933,6 +978,78 @@ async fn full_segment_capacity_stops_started_playback_without_committing_assista
             .filter(|text| text.contains(r#""state":"stop""#))
             .count(),
         1
+    );
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|text| text.contains(r#""type":"llm""#))
+            .count(),
+        12
+    );
+}
+
+#[tokio::test]
+async fn auto_greeting_then_rust_response_drains_on_the_same_session() {
+    let (control_tx, mut control_rx) = mpsc::channel(64);
+    let (audio_tx, _audio_rx) = mpsc::channel(64);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(GreetingThenRustLlm(Arc::clone(&calls))),
+        Arc::new(FakeTts),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+
+    let mut controls = Vec::new();
+    for (prompt, expected_turns) in [("xin chào", 1), ("rust là gì", 2)] {
+        actor.on_client_message(ClientMessage::listen(ListenCommand::Detect {
+            text: prompt.to_owned(),
+        }));
+        for _ in 0..2_000 {
+            actor.pump_workers();
+            controls.extend(std::iter::from_fn(|| control_rx.try_recv().ok()));
+            if actor.phase() == SessionPhase::Listening
+                && controls
+                    .iter()
+                    .filter(|message| {
+                        message
+                            .as_text()
+                            .is_some_and(|text| text.contains(r#""state":"stop""#))
+                    })
+                    .count()
+                    == expected_turns
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        assert_eq!(actor.phase(), SessionPhase::Listening);
+        assert_eq!(
+            controls
+                .iter()
+                .filter(|message| message
+                    .as_text()
+                    .is_some_and(|text| text.contains(r#""state":"stop""#)))
+                .count(),
+            expected_turns,
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(actor.dialogue_history().len(), 4);
+    assert!(actor.dialogue_history()[3].contains("Rust còn hỗ trợ lập trình đồng thời an toàn."));
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|message| message
+                .as_text()
+                .is_some_and(|text| text.contains(r#""type":"llm""#)))
+            .count(),
+        13,
     );
 }
 

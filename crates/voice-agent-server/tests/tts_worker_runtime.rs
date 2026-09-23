@@ -329,3 +329,32 @@ fn timeout_starts_cleanup_from_worker_acceptance_and_quarantines_without_later_p
     );
     release_tx.send(()).unwrap();
 }
+
+#[test]
+fn completed_synthesis_is_not_timed_out_while_pcm_waits_for_pacing() {
+    let runtime = TtsWorkerRuntime::new(
+        Arc::new(StreamingTts),
+        WorkerRuntimeConfig {
+            max_workers: 1,
+            command_capacity: 4,
+            final_timeout: Duration::from_millis(10),
+            cleanup_grace: Duration::from_millis(10),
+        },
+    );
+    let lease = runtime.start("a sentence with queued PCM".into()).unwrap();
+    std::thread::sleep(Duration::from_millis(30));
+
+    assert!(matches!(
+        runtime.poll(lease).unwrap(),
+        Some(TtsWorkerEvent::Pcm(_))
+    ));
+    assert!(matches!(
+        runtime.poll(lease).unwrap(),
+        Some(TtsWorkerEvent::Pcm(_))
+    ));
+    assert!(matches!(
+        runtime.poll(lease).unwrap(),
+        Some(TtsWorkerEvent::Finished)
+    ));
+    assert_eq!(runtime.active_leases(), 0);
+}

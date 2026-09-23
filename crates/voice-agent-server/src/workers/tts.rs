@@ -227,11 +227,6 @@ impl TtsWorkerRuntime {
             state.workers[worker].quarantined = true;
             return Ok(Some(TtsWorkerEvent::CleanupTimedOut));
         }
-        if Instant::now() >= slot.deadline && slot.cleanup_deadline.is_none() {
-            slot.cancelled.store(true, Ordering::Release);
-            slot.cleanup_deadline = Some(Instant::now() + self.config.cleanup_grace);
-            return Ok(Some(TtsWorkerEvent::TimedOut));
-        }
         let event = match slot
             .events
             .lock()
@@ -239,7 +234,14 @@ impl TtsWorkerRuntime {
             .try_recv()
         {
             Ok(event) => event,
-            Err(mpsc::TryRecvError::Empty) => return Ok(None),
+            Err(mpsc::TryRecvError::Empty) => {
+                if Instant::now() >= slot.deadline && slot.cleanup_deadline.is_none() {
+                    slot.cancelled.store(true, Ordering::Release);
+                    slot.cleanup_deadline = Some(Instant::now() + self.config.cleanup_grace);
+                    return Ok(Some(TtsWorkerEvent::TimedOut));
+                }
+                return Ok(None);
+            }
             Err(mpsc::TryRecvError::Disconnected) => TtsWorkerEvent::Failed,
         };
         if event.is_terminal() {
@@ -350,6 +352,7 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                     delivery = "worker",
                     "TTS synthesis input"
                 );
+                let started = Instant::now();
                 let result = worker.synthesize(&text, &cancelled, &mut |pcm| {
                     if cancelled.load(Ordering::Acquire) {
                         return Err(TtsError::Failed);
@@ -363,6 +366,11 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                 } else {
                     TtsWorkerEvent::Failed
                 };
+                tracing::info!(
+                    outcome = ?event,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "TTS synthesis ended"
+                );
                 let _ = events.send(event);
             }
         }

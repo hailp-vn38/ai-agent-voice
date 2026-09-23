@@ -14,6 +14,8 @@ Adapter concrete V1 là `openai`, build qua crate Rust `llm`: factory map typed 
 
 `LlmRuntime` application-owned giữ provider shared, global semaphore và bounded route. Mỗi request là Tokio task theo Voice Session/generation, giữ permit từ runtime accept tới terminal event; timeout không reset bởi text delta. CancellationToken dừng polling/drop stream; terminal event không route được phải biến thành controlled failure, không silently drop.
 
+Khi hàng đợi Speech Segment đầy, SessionActor giữ tối đa một delta LLM đang xử lý dở và tạm ngừng đọc bounded route. Sau khi TTS lấy bớt segment, actor tiếp tục đúng vị trí ký tự còn lại; không hủy lượt hoặc bỏ câu chỉ vì TTS chậm hơn LLM. Route bounded truyền áp lực ngược tới LLM operation.
+
 Startup chỉ validate typed OpenAI config và build provider locally; không thực hiện network probe. DNS/TLS/auth/quota/model/5xx hay stream failure là `LlmEvent::Failed` của operation hiện tại, không làm server unavailable toàn cục.
 
 ## 2. Flow không tool call

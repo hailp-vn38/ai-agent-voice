@@ -435,6 +435,10 @@ impl SessionActor {
     /// VAD capture cycle. The retained range is deliberately obtained before reset/cancellation:
     /// the current PCM packet may contain the onset that caused the interruption.
     fn begin_acoustic_barge_in(&mut self, start_sample: u64) {
+        info!(
+            generation = self.generation,
+            start_sample, "Acoustic barge-in accepted"
+        );
         let feed_start = start_sample.saturating_sub(self.pre_roll_samples);
         let Some(retained) = self.auto_retention.range(feed_start) else {
             self.fail_closed();

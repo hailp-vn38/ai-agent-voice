@@ -73,6 +73,10 @@ mod pipeline;
 mod tests;
 
 impl SpeechOutput {
+    pub(crate) fn has_pending_capacity(&self) -> bool {
+        self.pending.len() < self.max_pending
+    }
+
     pub fn with_config(
         tts: Arc<dyn TtsProvider>,
         config: SpeechOutputConfig,
@@ -121,6 +125,12 @@ impl SpeechOutput {
         if self.segmenter.buffer.chars().count() + self.json_filter.candidate.chars().count()
             > self.segmenter.config.max_chars.saturating_mul(2)
         {
+            tracing::warn!(
+                unfinished_chars = self.segmenter.buffer.chars().count()
+                    + self.json_filter.candidate.chars().count(),
+                max_chars = self.segmenter.config.max_chars,
+                "Unfinished LLM text exceeded speech buffer"
+            );
             return Err(SpeechOutputError::Backpressure);
         }
         Ok(())

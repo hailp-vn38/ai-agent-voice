@@ -144,6 +144,7 @@ impl SessionActor {
 
     /// Production supplies independent normal, urgent and audio lanes.  The shorter
     /// constructors intentionally retain one control receiver for older actor-only tests.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_runtimes_and_limiter_and_outbound(
         session_id: String,
         control_tx: mpsc::Sender<OutboundMessage>,
@@ -194,6 +195,8 @@ impl SessionActor {
             llm_runtime: runtimes.llm,
             llm_events,
             llm_operation: None,
+            pending_llm_delta: None,
+            llm_finish_pending: false,
             generated_response: String::new(),
             tts_runtime: std::sync::Arc::clone(&runtimes.tts),
             speech_output: SpeechOutput::with_worker(

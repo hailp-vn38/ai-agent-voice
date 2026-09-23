@@ -16,9 +16,14 @@ impl SessionActor {
         while let Ok(event) = self.vad_events.try_recv() {
             self.on_vad_event(event);
         }
-        while let Ok(event) = self.llm_events.try_recv() {
+        self.flush_pending_llm_text();
+        while self.pending_llm_delta.is_none() && !self.llm_finish_pending {
+            let Ok(event) = self.llm_events.try_recv() else {
+                break;
+            };
             self.on_llm_event(event);
             self.drain_speech_output();
+            self.flush_pending_llm_text();
         }
     }
 
@@ -69,6 +74,7 @@ impl SessionActor {
             }
             ClientMessage::Abort { session_id } => {
                 if self.inbound_session_matches(session_id.as_deref()) {
+                    info!(phase = ?self.phase, generation = self.generation, "Client abort accepted");
                     self.abort_current_turn();
                 }
             }

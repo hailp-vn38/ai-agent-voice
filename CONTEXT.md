@@ -125,7 +125,7 @@ Một streaming request theo đúng Voice Session và generation, giữ một gl
 _Avoid_: LLM worker session, global chat, provider connection
 
 **Speech Output Backpressure**:
-Terminal failure của generation khi hard-bounded pending Speech Segment queue không còn capacity; không được bỏ hoặc overwrite segment.
+Trạng thái tạm dừng đọc LLM delta khi hard-bounded pending Speech Segment queue hết capacity; actor giữ tối đa một delta đang xử lý dở và tiếp tục sau khi TTS lấy bớt segment. Buffer câu chưa kết thúc vượt ngưỡng khẩn cấp vẫn là terminal failure; không được bỏ hoặc overwrite segment.
 _Avoid_: skipped sentence, best-effort speech queue
 
 **Provider Adapter**:

@@ -60,6 +60,9 @@ impl SessionActor {
 
 impl Drop for SessionActor {
     fn drop(&mut self) {
+        if self.turn.is_some() || self.tts_started {
+            info!(phase = ?self.phase, generation = self.generation, "Voice session ended during active turn");
+        }
         // The application-owned supervisor continues to observe the acknowledgement or timeout
         // after this actor and its WebSocket have gone away.
         self.cancel_asr();
