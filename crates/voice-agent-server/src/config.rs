@@ -126,6 +126,16 @@ pub struct ZeroTtsOnnxConfig {
     pub num_threads: i32,
     #[serde(default = "default_tts_voice")]
     pub voice: String,
+    #[serde(default)]
+    pub delivery_mode: ZeroTtsDeliveryMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ZeroTtsDeliveryMode {
+    #[default]
+    File,
+    Stream,
 }
 
 impl Default for ZeroTtsOnnxConfig {
@@ -134,7 +144,21 @@ impl Default for ZeroTtsOnnxConfig {
             model: default_tts_model(),
             num_threads: default_asr_threads(),
             voice: default_tts_voice(),
+            delivery_mode: ZeroTtsDeliveryMode::File,
         }
+    }
+}
+
+#[cfg(test)]
+mod zerotts_delivery_tests {
+    use super::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig};
+
+    #[test]
+    fn file_delivery_is_default_and_stream_remains_selectable() {
+        let default: ZeroTtsOnnxConfig = toml::from_str("").unwrap();
+        assert_eq!(default.delivery_mode, ZeroTtsDeliveryMode::File);
+        let selected: ZeroTtsOnnxConfig = toml::from_str("delivery_mode = 'stream'").unwrap();
+        assert_eq!(selected.delivery_mode, ZeroTtsDeliveryMode::Stream);
     }
 }
 

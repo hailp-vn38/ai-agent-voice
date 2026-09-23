@@ -40,3 +40,6 @@ Với model/ONNX Runtime đã cài, chạy `scripts/test-phase4-reference-gate.s
 `C-opus-decoded-24k.wav` (Opus giải mã lại), mỗi file chứa 60 ms đầu.
 Nghe cả ba file trước khi quy nguồn tạp âm; gate tự động chỉ xác nhận tính hợp lệ
 của tín hiệu, không xác nhận chất lượng nghe trên thiết bị vật lý.
+Capture mặc định dùng đường `file`/`decode_full`; đặt
+`ZEROTTS_DIAGNOSTIC_MODE=stream` để lấy bản so sánh từ `decode_step`.
+Đặt `ZEROTTS_DIAGNOSTIC_FULL_WAV` nếu cần lưu toàn bộ câu 48 kHz để nghe.

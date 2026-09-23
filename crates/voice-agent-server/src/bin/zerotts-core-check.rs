@@ -1,11 +1,11 @@
-use std::{env, path::PathBuf, process::ExitCode};
+use std::{env, path::PathBuf, process::ExitCode, sync::atomic::AtomicBool};
 
 use serde::Deserialize;
 use voice_agent_server::{
     audio::{
         DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, DownlinkResampler, Pcm16Mono,
     },
-    providers::tts::zerotts_onnx::{ZeroTtsContract, ZeroTtsPcmStream},
+    providers::tts::zerotts_onnx::{ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream},
 };
 
 #[derive(Deserialize)]
@@ -148,23 +148,51 @@ fn run() -> Result<(), String> {
     {
         return Err("ZeroTTS continuous codec stream did not produce finite PCM".into());
     }
+    let mut full = ZeroTtsFullPcm::new(&core).map_err(|error| error.to_string())?;
+    for _ in 0..2 {
+        let pcm = full
+            .synthesize(&fixture.text, fixture.max_frames, &AtomicBool::new(false))
+            .map_err(|error| error.to_string())?;
+        if pcm.sample_rate_hz() != 48_000
+            || pcm.samples().is_empty()
+            || pcm.samples().iter().any(|sample| !sample.is_finite())
+        {
+            return Err("ZeroTTS full decode did not produce finite 48 kHz PCM".into());
+        }
+    }
     let pcm = chunks
         .into_iter()
         .flat_map(|pcm| pcm.samples().to_vec())
         .collect::<Vec<_>>();
     let capture_pcm = if let Some(text) = env::var_os("ZEROTTS_DIAGNOSTIC_TEXT") {
-        let mut diagnostic = ZeroTtsPcmStream::new(&core).map_err(|error| error.to_string())?;
-        let mut samples = Vec::new();
-        diagnostic
-            .synthesize(&text.to_string_lossy(), 256, &mut |chunk| {
-                samples.extend_from_slice(chunk.samples());
-                Ok(())
-            })
-            .map_err(|error| error.to_string())?;
-        samples
+        if env::var("ZEROTTS_DIAGNOSTIC_MODE").as_deref() == Ok("stream") {
+            let mut diagnostic = ZeroTtsPcmStream::new(&core).map_err(|error| error.to_string())?;
+            let mut samples = Vec::new();
+            diagnostic
+                .synthesize(&text.to_string_lossy(), 256, &mut |chunk| {
+                    samples.extend_from_slice(chunk.samples());
+                    Ok(())
+                })
+                .map_err(|error| error.to_string())?;
+            samples
+        } else {
+            let mut diagnostic = ZeroTtsFullPcm::new(&core).map_err(|error| error.to_string())?;
+            diagnostic
+                .synthesize(&text.to_string_lossy(), 256, &AtomicBool::new(false))
+                .map_err(|error| error.to_string())?
+                .samples()
+                .to_vec()
+        }
     } else {
         pcm.clone()
     };
+    if let Some(path) = env::var_os("ZEROTTS_DIAGNOSTIC_FULL_WAV") {
+        write_wav(
+            &PathBuf::from(path),
+            48_000,
+            &capture_pcm.iter().copied().map(pcm16).collect::<Vec<_>>(),
+        )?;
+    }
     let raw_first = capture_pcm
         .get(..DOWNLINK_FRAME_SAMPLES * 2)
         .ok_or("ZeroTTS PCM is shorter than one canonical downlink frame")?;

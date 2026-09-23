@@ -103,6 +103,7 @@ adapter = "zerotts_onnx"
 model = "zerotts_default"
 num_threads = 2
 voice = "maichi"
+delivery_mode = "file" # file (default) hoặc stream
 
 [tts]
 timeout_ms = 15000

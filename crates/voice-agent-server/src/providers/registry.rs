@@ -253,6 +253,7 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                 },
                 &runtime.onnx.library,
                 config.num_threads,
+                config.delivery_mode,
             )
             .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
         ))

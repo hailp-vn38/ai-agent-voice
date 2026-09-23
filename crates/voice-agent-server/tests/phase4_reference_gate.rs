@@ -165,6 +165,7 @@ fn deployment_placeholder_tts_config() -> &'static voice_agent_server::config::Z
         model: "zerotts_default".into(),
         num_threads: 1,
         voice: "maichi".into(),
+        delivery_mode: Default::default(),
     })
 }
 

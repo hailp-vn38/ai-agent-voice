@@ -27,7 +27,7 @@ use codec::*;
 pub use contract::ZeroTtsContract;
 use contract::*;
 use synthesis::*;
-pub use synthesis::{CodeFrames, ZeroTtsPcmStream};
+pub use synthesis::{CodeFrames, ZeroTtsFullPcm, ZeroTtsPcmStream};
 
 pub use text::normalize_text;
 

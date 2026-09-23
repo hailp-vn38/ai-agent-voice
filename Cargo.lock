@@ -3354,6 +3354,7 @@ dependencies = [
  "async-trait",
  "axum",
  "futures-util",
+ "hound",
  "http",
  "llm",
  "ndarray",

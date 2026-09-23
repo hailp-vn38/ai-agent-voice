@@ -301,39 +301,56 @@ impl CodecOperation {
     }
 }
 
-/// Startup-only check of the pinned full decoder. User audio uses decode_step exclusively.
+/// The full decoder owns one native session per TTS worker in file delivery mode.
+pub(super) struct FullCodecOperation {
+    session: Session,
+    metadata: CodecMetadata,
+}
+
+impl FullCodecOperation {
+    pub(super) fn new(contract: &ZeroTtsContract) -> Result<Self, TtsError> {
+        let graphs = contract
+            .graphs
+            .as_ref()
+            .ok_or_else(|| TtsError::IncompatibleContract("ZeroTTS engine is not loaded".into()))?;
+        Ok(Self {
+            session: load_codec_graph(
+                &graphs.codec.decode_full,
+                graphs.threads,
+                &graphs.codec.metadata.onnx.decode_input_names,
+                &graphs.codec.metadata.onnx.decode_output_names,
+            )?,
+            metadata: graphs.codec.metadata.clone(),
+        })
+    }
+
+    pub(super) fn decode(&mut self, frames: &[Vec<i32>]) -> Result<PcmF32Mono, TtsError> {
+        if frames.is_empty()
+            || frames
+                .iter()
+                .any(|frame| frame.len() != self.metadata.codec_config.num_quantizers)
+        {
+            return Err(TtsError::IncompatibleContract(
+                "codec frames do not match pinned quantizer count".into(),
+            ));
+        }
+        let codes = frames.iter().flatten().copied().collect::<Vec<_>>();
+        let output = self
+            .session
+            .run(ort::inputs! {
+                "audio_codes" => tensor(vec![1, frames.len(), self.metadata.codec_config.num_quantizers], codes)?,
+                "audio_code_lengths" => tensor(vec![1], vec![frames.len() as i32])?,
+            })
+            .map_err(contract_error)?;
+        CodecOperation::mono_pcm(&self.metadata, &output)
+    }
+}
+
 pub(super) fn validate_full_decode(
     contract: &ZeroTtsContract,
     frames: &[Vec<i32>],
 ) -> Result<PcmF32Mono, TtsError> {
-    let graphs = contract
-        .graphs
-        .as_ref()
-        .ok_or_else(|| TtsError::IncompatibleContract("ZeroTTS engine is not loaded".into()))?;
-    let metadata = &graphs.codec.metadata;
-    if frames.is_empty()
-        || frames
-            .iter()
-            .any(|frame| frame.len() != metadata.codec_config.num_quantizers)
-    {
-        return Err(TtsError::IncompatibleContract(
-            "codec frames do not match pinned quantizer count".into(),
-        ));
-    }
-    let mut session = load_codec_graph(
-        &graphs.codec.decode_full,
-        graphs.threads,
-        &metadata.onnx.decode_input_names,
-        &metadata.onnx.decode_output_names,
-    )?;
-    let codes = frames.iter().flatten().copied().collect::<Vec<_>>();
-    let output = session
-        .run(ort::inputs! {
-            "audio_codes" => tensor(vec![1, frames.len(), metadata.codec_config.num_quantizers], codes)?,
-            "audio_code_lengths" => tensor(vec![1], vec![frames.len() as i32])?,
-        })
-        .map_err(contract_error)?;
-    CodecOperation::mono_pcm(metadata, &output)
+    FullCodecOperation::new(contract)?.decode(frames)
 }
 
 pub(super) fn load_codec_metadata(

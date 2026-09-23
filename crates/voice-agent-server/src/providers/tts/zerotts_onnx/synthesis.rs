@@ -1,10 +1,82 @@
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const FIRST_CHUNK_FRAMES: usize = 4;
 const MAX_CHUNK_FRAMES: usize = 16;
 const MIN_FRAMES: usize = 4;
 const EOA_EXTRA_FRAMES: usize = 1;
 const INTER_SEGMENT_SILENCE_FRAMES: usize = 4;
+
+/// Complete per-segment inference for file delivery. This path never calls decode_step.
+pub struct ZeroTtsFullPcm {
+    operation: ZeroTtsOperation,
+    codec: FullCodecOperation,
+    first_segment: bool,
+}
+
+impl ZeroTtsFullPcm {
+    pub fn new(contract: &ZeroTtsContract) -> Result<Self, TtsError> {
+        Ok(Self {
+            operation: ZeroTtsOperation::new(contract)?,
+            codec: FullCodecOperation::new(contract)?,
+            first_segment: true,
+        })
+    }
+
+    pub fn synthesize(
+        &mut self,
+        text: &str,
+        max_frames: usize,
+        cancelled: &AtomicBool,
+    ) -> Result<PcmF32Mono, TtsError> {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
+        tracing::info!(
+            first_segment = self.first_segment,
+            "ZeroTTS full inference started"
+        );
+        let spoken_text = text::normalize_vi_text(text);
+        let mut frames = CodeFrames::default();
+        let eoa = self.operation.synthesize_with_frame_sink(
+            &spoken_text,
+            max_frames,
+            Some(&mut frames),
+            |_, _, _| {
+                if cancelled.load(Ordering::Acquire) {
+                    Err(TtsError::Failed)
+                } else {
+                    Ok(())
+                }
+            },
+        )?;
+        if eoa.is_none() {
+            return Err(TtsError::IncompatibleContract(
+                "ZeroTTS synthesis reached its frame bound".into(),
+            ));
+        }
+        if !self.first_segment {
+            let silence = &self.operation.contract.silence_frame;
+            frames.frames.splice(
+                ..0,
+                std::iter::repeat_n(silence.clone(), INTER_SEGMENT_SILENCE_FRAMES),
+            );
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
+        let pcm = self.codec.decode(&frames.frames)?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
+        self.first_segment = false;
+        Ok(pcm)
+    }
+
+    pub fn reset(&mut self) {
+        self.first_segment = true;
+    }
+}
 
 pub struct ZeroTtsPcmStream {
     operation: ZeroTtsOperation,

@@ -97,6 +97,63 @@ impl TtsWorker for CountedWorker {
     }
 }
 
+struct BurstingWorkerProvider(mpsc::Sender<()>);
+impl TtsProvider for BurstingWorkerProvider {
+    fn adapter(&self) -> &'static str {
+        "bursting-worker"
+    }
+
+    fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
+        Ok(Box::new(BurstingWorker(self.0.clone())))
+    }
+}
+
+struct BurstingWorker(mpsc::Sender<()>);
+impl TtsWorker for BurstingWorker {
+    fn synthesize(
+        &mut self,
+        _: &str,
+        _: &std::sync::atomic::AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        on_pcm(PcmF32Mono::new(vec![0.1; 2_880], 48_000))?;
+        self.0.send(()).unwrap();
+        on_pcm(PcmF32Mono::new(vec![0.2; 2_880], 48_000))
+    }
+
+    fn reset(&mut self) -> Result<(), TtsError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn detached_cancel_drains_queued_pcm_and_releases_full_event_channel() {
+    let (first_sent, first_received) = mpsc::channel();
+    let runtime = TtsWorkerRuntime::new(
+        Arc::new(BurstingWorkerProvider(first_sent)),
+        WorkerRuntimeConfig {
+            max_workers: 1,
+            command_capacity: 1,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_secs(1),
+        },
+    );
+    let lease = runtime.start("file replay".into()).unwrap();
+    first_received.recv_timeout(Duration::from_secs(1)).unwrap();
+    runtime.cancel_and_detach(lease).unwrap();
+    for _ in 0..100 {
+        if runtime.active_leases() == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(runtime.active_leases(), 0);
+    let next = runtime
+        .start("slot reused after acknowledgement".into())
+        .unwrap();
+    runtime.cancel_and_detach(next).unwrap();
+}
+
 #[test]
 fn native_workers_are_created_once_per_pool_slot_not_per_synthesis() {
     let created = Arc::new(AtomicUsize::new(0));

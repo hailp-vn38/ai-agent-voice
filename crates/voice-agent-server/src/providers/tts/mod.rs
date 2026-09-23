@@ -1,8 +1,9 @@
 //! TTS provider boundary.
 
-use crate::audio::PcmF32Mono;
+use crate::{audio::PcmF32Mono, config::ZeroTtsDeliveryMode};
 use thiserror::Error;
 
+mod file_delivery;
 pub mod zerotts_onnx;
 
 /// Terminal output produced by startup-only ZeroTTS warmup.
@@ -90,6 +91,8 @@ pub enum TtsError {
     InvalidWarmupPcm,
     #[error("ZeroTTS contract is incompatible: {0}")]
     IncompatibleContract(String),
+    #[error("TTS temporary audio file failed: {0}")]
+    TemporaryAudio(String),
 }
 
 pub struct UnavailableTts;
@@ -103,6 +106,7 @@ impl TtsProvider for UnavailableTts {
 pub(crate) struct ConfiguredZeroTts {
     #[allow(dead_code)]
     contract: zerotts_onnx::ZeroTtsContract,
+    delivery_mode: ZeroTtsDeliveryMode,
 }
 
 pub(crate) struct ZeroTtsArtifacts<'a> {
@@ -124,6 +128,7 @@ impl ConfiguredZeroTts {
         artifacts: ZeroTtsArtifacts<'_>,
         runtime_library: &std::path::Path,
         num_threads: i32,
+        delivery_mode: ZeroTtsDeliveryMode,
     ) -> Result<Self, TtsError> {
         let contract = zerotts_onnx::ZeroTtsContract::load_engine(
             artifacts.config,
@@ -152,7 +157,10 @@ impl ConfiguredZeroTts {
             return Err(TtsError::InvalidWarmupPcm);
         }
         contract.validate_full_decode(&codes.frames)?;
-        Ok(Self { contract })
+        Ok(Self {
+            contract,
+            delivery_mode,
+        })
     }
 }
 
@@ -162,7 +170,12 @@ impl TtsProvider for ConfiguredZeroTts {
     }
 
     fn synthesize(&self, text: &str) -> Result<PcmF32Mono, TtsError> {
-        self.contract.synthesize_pcm(text, 256)
+        let mut samples = Vec::new();
+        self.synthesize_stream(text, &mut |pcm| {
+            samples.extend_from_slice(pcm.samples());
+            Ok(())
+        })?;
+        Ok(PcmF32Mono::new(samples, 48_000))
     }
 
     fn synthesize_stream(
@@ -170,19 +183,36 @@ impl TtsProvider for ConfiguredZeroTts {
         text: &str,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
-        self.contract.synthesize_pcm_stream(text, 256, on_pcm)
+        match self.delivery_mode {
+            ZeroTtsDeliveryMode::Stream => self.contract.synthesize_pcm_stream(text, 256, on_pcm),
+            ZeroTtsDeliveryMode::File => {
+                let cancelled = std::sync::atomic::AtomicBool::new(false);
+                let pcm = zerotts_onnx::ZeroTtsFullPcm::new(&self.contract)?
+                    .synthesize(text, 256, &cancelled)?;
+                file_delivery::deliver_via_temporary_wav(pcm, &cancelled, on_pcm)
+            }
+        }
     }
 
     fn open_stream(&self) -> Option<Box<dyn TtsStream>> {
+        if self.delivery_mode == ZeroTtsDeliveryMode::File {
+            return None;
+        }
         zerotts_onnx::ZeroTtsPcmStream::new(&self.contract)
             .ok()
             .map(|stream| Box::new(ZeroTtsStream { stream }) as Box<dyn TtsStream>)
     }
 
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
-        Ok(Box::new(ZeroTtsNativeWorker {
-            stream: zerotts_onnx::ZeroTtsPcmStream::new(&self.contract)?,
-        }))
+        let delivery = match self.delivery_mode {
+            ZeroTtsDeliveryMode::Stream => ZeroTtsNativeDelivery::Stream(Box::new(
+                zerotts_onnx::ZeroTtsPcmStream::new(&self.contract)?,
+            )),
+            ZeroTtsDeliveryMode::File => ZeroTtsNativeDelivery::File(Box::new(
+                zerotts_onnx::ZeroTtsFullPcm::new(&self.contract)?,
+            )),
+        };
+        Ok(Box::new(ZeroTtsNativeWorker { delivery }))
     }
 }
 
@@ -201,7 +231,12 @@ impl TtsStream for ZeroTtsStream {
 }
 
 struct ZeroTtsNativeWorker {
-    stream: zerotts_onnx::ZeroTtsPcmStream,
+    delivery: ZeroTtsNativeDelivery,
+}
+
+enum ZeroTtsNativeDelivery {
+    Stream(Box<zerotts_onnx::ZeroTtsPcmStream>),
+    File(Box<zerotts_onnx::ZeroTtsFullPcm>),
 }
 
 impl TtsWorker for ZeroTtsNativeWorker {
@@ -214,15 +249,27 @@ impl TtsWorker for ZeroTtsNativeWorker {
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             return Err(TtsError::Failed);
         }
-        self.stream.synthesize(text, 256, &mut |pcm| {
-            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
-                return Err(TtsError::Failed);
+        match &mut self.delivery {
+            ZeroTtsNativeDelivery::Stream(stream) => stream.synthesize(text, 256, &mut |pcm| {
+                if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(TtsError::Failed);
+                }
+                on_pcm(pcm)
+            }),
+            ZeroTtsNativeDelivery::File(full) => {
+                let pcm = full.synthesize(text, 256, cancelled)?;
+                file_delivery::deliver_via_temporary_wav(pcm, cancelled, on_pcm)
             }
-            on_pcm(pcm)
-        })
+        }
     }
 
     fn reset(&mut self) -> Result<(), TtsError> {
-        self.stream.reset()
+        match &mut self.delivery {
+            ZeroTtsNativeDelivery::Stream(stream) => stream.reset(),
+            ZeroTtsNativeDelivery::File(full) => {
+                full.reset();
+                Ok(())
+            }
+        }
     }
 }

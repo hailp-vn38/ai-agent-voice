@@ -19,7 +19,7 @@ Adapter concrete V1 là `zerotts_onnx`, native Rust + ONNX. Provider chỉ infer
 
 ZeroTTS V1 trả `PcmF32Mono` 48 kHz mono: codec stereo được adapter average/normalize trước boundary. `SpeechOutput` resample 48 kHz -> 24 kHz, convert f32 -> i16, rồi tạo đúng 1.440-sample `DownlinkPcmFrame`. Factory/warmup xác minh config và codec metadata đều 48 kHz, channel profile và voice dimensions khớp graph; thay đổi profile ở revision khác fail startup.
 
-Provider ZeroTTS dùng cùng lõi AR và codec streaming với Reference Client: chuẩn hoá văn bản tiếng Việt trước tokenizer, sinh frame rồi giải mã `decode_step` theo nhóm tăng 1, 2, 4, 8, 16 frame. Worker giữ ONNX sessions và codec cache trong một lượt thoại, reset cache khi trả slot. `decode_full` chỉ được chạy ở warmup để kiểm tra artifact, không nằm trên đường phát âm thanh của người dùng.
+ZeroTTS chuẩn hoá văn bản tiếng Việt trước tokenizer. `providers.tts.zerotts_onnx.delivery_mode = "file"` là mặc định: worker sinh đủ codec frames của từng Speech Segment, giải mã bằng `decode_full`, ghi WAV float mono 48 kHz vào file tạm, rồi đọc file theo khối. Chỉ sau khi WAV hoàn chỉnh mới đưa PCM vào `SpeechOutput` để đổi mẫu, Opus encode và pace qua WebSocket. File tạm được xoá khi hoàn tất, lỗi hoặc huỷ. Chế độ `"stream"` vẫn dùng `decode_step` và codec cache qua các segment trong một lượt thoại; cold start giải mã theo nhóm 4, 8, 16 frames.
 
 ## 2. Flow
 
@@ -27,7 +27,7 @@ Provider ZeroTTS dùng cùng lõi AR và codec streaming với Reference Client:
 flowchart LR
     SEG[Text segment] --> SO[SpeechOutput]
     SO --> TTS[TTS Provider]
-    TTS --> PCM[PCM/Audio stream]
+    TTS --> PCM[PCM từ file tạm hoặc codec stream]
     PCM --> RS[Normalize/Resample]
     RS --> ENC[Opus encoder 60 ms]
     ENC --> Q[bounded audio queue]

@@ -267,11 +267,22 @@ impl TtsWorkerRuntime {
                 .ok()
                 .and_then(|state| state.slots.get(&lease).map(|slot| Arc::clone(&slot.events)));
             let Some(events) = events else { return };
-            let terminal = events
-                .lock()
-                .expect("TTS worker event receiver poisoned")
-                .recv_timeout(grace)
-                .is_ok_and(|event| event.is_terminal());
+            let deadline = Instant::now() + grace;
+            let terminal = loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break false;
+                }
+                match events
+                    .lock()
+                    .expect("TTS worker event receiver poisoned")
+                    .recv_timeout(remaining)
+                {
+                    Ok(event) if event.is_terminal() => break true,
+                    Ok(TtsWorkerEvent::Pcm(_)) => continue,
+                    _ => break false,
+                }
+            };
             let mut state = state.lock().expect("TTS worker state poisoned");
             if terminal {
                 release_terminal(&mut state, lease);
@@ -343,9 +354,7 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                     if cancelled.load(Ordering::Acquire) {
                         return Err(TtsError::Failed);
                     }
-                    events
-                        .send(TtsWorkerEvent::Pcm(pcm))
-                        .map_err(|_| TtsError::Failed)
+                    send_pcm_until_cancelled(&events, &cancelled, pcm)
                 });
                 let event = if cancelled.load(Ordering::Acquire) {
                     TtsWorkerEvent::Cancelled
@@ -356,6 +365,27 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                 };
                 let _ = events.send(event);
             }
+        }
+    }
+}
+
+fn send_pcm_until_cancelled(
+    events: &mpsc::SyncSender<TtsWorkerEvent>,
+    cancelled: &AtomicBool,
+    pcm: PcmF32Mono,
+) -> Result<(), TtsError> {
+    let mut pending = TtsWorkerEvent::Pcm(pcm);
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
+        match events.try_send(pending) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::TrySendError::Full(event)) => {
+                pending = event;
+                thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return Err(TtsError::Failed),
         }
     }
 }
