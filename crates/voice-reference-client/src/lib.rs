@@ -72,6 +72,81 @@ pub struct TextTurnReport {
     pub debug_audio_file: Option<PathBuf>,
 }
 
+/// Listening mode used by the strict acoustic barge-in qualification scenario.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BargeInMode {
+    Auto,
+    Realtime,
+}
+
+impl BargeInMode {
+    fn wire_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Realtime => "realtime",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BargeInConfig {
+    pub tts_start_timeout: Duration,
+    pub turn_timeout: Duration,
+    pub post_stop_quiet_period: Duration,
+}
+
+impl Default for BargeInConfig {
+    fn default() -> Self {
+        Self {
+            tts_start_timeout: Duration::from_secs(60),
+            turn_timeout: Duration::from_secs(120),
+            post_stop_quiet_period: Duration::from_millis(250),
+        }
+    }
+}
+
+impl BargeInConfig {
+    fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            !self.tts_start_timeout.is_zero(),
+            "tts start timeout must be greater than zero"
+        );
+        ensure!(
+            !self.turn_timeout.is_zero(),
+            "turn timeout must be greater than zero"
+        );
+        ensure!(
+            self.turn_timeout >= self.tts_start_timeout,
+            "turn timeout must not be shorter than tts start timeout"
+        );
+        ensure!(
+            !self.post_stop_quiet_period.is_zero(),
+            "post-stop quiet period must be greater than zero"
+        );
+        Ok(())
+    }
+}
+
+/// Canonical Opus inputs and connection data for one same-socket barge-in flow.
+#[derive(Clone, Debug)]
+pub struct BargeInRequest {
+    pub websocket_url: String,
+    pub device_id: String,
+    pub client_id: String,
+    pub mode: BargeInMode,
+    pub uplink_a: Vec<Vec<u8>>,
+    pub uplink_b: Vec<Vec<u8>>,
+    pub config: BargeInConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BargeInReport {
+    pub session_id: String,
+    pub interruption_stops: usize,
+    pub b_binary_packets: usize,
+    pub b_stt_messages: usize,
+}
+
 #[derive(Deserialize)]
 struct ServerHello {
     #[serde(rename = "type")]
@@ -261,6 +336,189 @@ pub async fn run_text_turn(request: TextTurnRequest) -> anyhow::Result<TextTurnR
     Ok(TextTurnReport {
         binary_packets: packets,
         debug_audio_file,
+    })
+}
+
+/// Runs the public Phase 5 acoustic barge-in contract over one WebSocket.
+///
+/// The client asserts AEC, starts Auto or Realtime capture, waits until A has
+/// protocol-visible TTS, then sends B. It proves the interruption stop and the
+/// next TTS lifecycle are correlated to the same Voice Session, and rejects
+/// stale audio after the stop boundary.
+pub async fn run_barge_in(request: BargeInRequest) -> anyhow::Result<BargeInReport> {
+    request.config.validate()?;
+    ensure!(!request.uplink_a.is_empty(), "uplink A must not be empty");
+    ensure!(!request.uplink_b.is_empty(), "uplink B must not be empty");
+    for packet in request.uplink_a.iter().chain(&request.uplink_b) {
+        decode_canonical_uplink_opus_packet(packet)?;
+    }
+
+    let mut connection = request.websocket_url.into_client_request()?;
+    let headers = connection.headers_mut();
+    headers.insert("Protocol-Version", "1".parse()?);
+    headers.insert("Device-Id", request.device_id.parse()?);
+    headers.insert("Client-Id", request.client_id.parse()?);
+    let (mut socket, _) = connect_async(connection)
+        .await
+        .context("connect WebSocket")?;
+    socket
+        .send(Message::Text(
+            json!({
+                "type": "hello",
+                "version": 1,
+                "transport": "websocket",
+                "audio_params": {
+                    "format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60
+                },
+                "features": {"aec": true}
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+    let hello = match timeout_at(
+        Instant::now() + request.config.tts_start_timeout,
+        socket.next(),
+    )
+    .await?
+    {
+        Some(Ok(Message::Text(text))) => {
+            serde_json::from_str::<ServerHello>(&text).context("invalid ServerHello")?
+        }
+        Some(Ok(_)) => bail!("invalid ServerHello: expected text frame"),
+        Some(Err(error)) => return Err(error.into()),
+        None => bail!("WebSocket closed before ServerHello"),
+    };
+    validate_server_hello(&hello)?;
+    let session_id = hello.session_id;
+    socket
+        .send(Message::Text(
+            json!({"session_id": session_id, "type": "listen", "state": "start", "mode": request.mode.wire_value()})
+                .to_string()
+                .into(),
+        ))
+        .await?;
+    for packet in &request.uplink_a {
+        socket.send(Message::Binary(packet.clone().into())).await?;
+    }
+
+    let started = Instant::now();
+    let start_deadline = started + request.config.tts_start_timeout;
+    loop {
+        let message = timeout_at(start_deadline, socket.next())
+            .await
+            .map_err(|_| anyhow::anyhow!("barge-in timed out waiting for A tts:start"))?;
+        match message {
+            Some(Ok(Message::Text(text))) => {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    continue;
+                };
+                if value["type"] == "tts" {
+                    validate_tts_session(&value, &session_id)?;
+                    if value["state"] == "start" {
+                        break;
+                    }
+                }
+            }
+            Some(Ok(Message::Binary(_))) => bail!("audio_before_a_tts_start"),
+            Some(Ok(Message::Close(_))) => bail!("WebSocket closed before A tts:start"),
+            Some(Ok(_)) => {}
+            Some(Err(error)) => return Err(error.into()),
+            None => bail!("WebSocket closed before A tts:start"),
+        }
+    }
+    for packet in &request.uplink_b {
+        socket.send(Message::Binary(packet.clone().into())).await?;
+    }
+
+    let turn_deadline = started + request.config.turn_timeout;
+    let mut interruption_stops = 0;
+    let mut b_started = false;
+    let mut b_stt_messages = 0;
+    let mut b_binary_packets = 0;
+    loop {
+        let message = timeout_at(turn_deadline, socket.next())
+            .await
+            .map_err(|_| anyhow::anyhow!("barge-in timed out before B tts:stop"))?;
+        let message = match message {
+            Some(Ok(message)) => message,
+            Some(Err(error)) => return Err(error.into()),
+            None => bail!("WebSocket closed during barge-in"),
+        };
+        match message {
+            Message::Binary(packet) => {
+                if interruption_stops > 0 && !b_started {
+                    bail!("stale_audio_after_interruption_stop");
+                }
+                if b_started {
+                    decode_canonical_downlink_opus_packet(&packet)?;
+                    b_binary_packets += 1;
+                }
+            }
+            Message::Text(text) => {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    continue;
+                };
+                if value["type"] == "tts" {
+                    validate_tts_session(&value, &session_id)?;
+                    match value["state"].as_str() {
+                        Some("stop") if !b_started => {
+                            interruption_stops += 1;
+                            if interruption_stops > 1 {
+                                bail!("duplicate_interruption_tts_stop");
+                            }
+                        }
+                        Some("start") if !b_started => {
+                            if interruption_stops != 1 {
+                                bail!("B tts:start arrived without an interruption tts:stop");
+                            }
+                            b_started = true;
+                        }
+                        Some("stop") => {
+                            if b_binary_packets == 0 {
+                                bail!("B tts:stop received without audio");
+                            }
+                            break;
+                        }
+                        Some("start") => bail!("duplicate_b_tts_start"),
+                        _ => {}
+                    }
+                } else if value["type"] == "stt" && interruption_stops == 1 && !b_started {
+                    b_stt_messages += 1;
+                }
+            }
+            Message::Close(_) => bail!("WebSocket closed during barge-in"),
+            _ => {}
+        }
+    }
+    ensure!(b_started, "B never reached tts:start");
+    ensure!(b_stt_messages > 0, "B never reached STT");
+
+    let quiet_deadline = Instant::now() + request.config.post_stop_quiet_period;
+    loop {
+        match timeout_at(quiet_deadline, socket.next()).await {
+            Err(_) => break,
+            Ok(None) => bail!("WebSocket closed during post-stop quiet period"),
+            Ok(Some(Err(error))) => return Err(error.into()),
+            Ok(Some(Ok(Message::Binary(_)))) => bail!("audio_after_b_tts_stop"),
+            Ok(Some(Ok(Message::Close(_)))) => {
+                bail!("WebSocket closed during post-stop quiet period")
+            }
+            Ok(Some(Ok(Message::Text(text)))) => {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+                    && value["type"] == "tts"
+                {
+                    bail!("lifecycle_after_b_tts_stop");
+                }
+            }
+            Ok(Some(Ok(_))) => {}
+        }
+    }
+    Ok(BargeInReport {
+        session_id,
+        interruption_stops,
+        b_binary_packets,
+        b_stt_messages,
     })
 }
 
