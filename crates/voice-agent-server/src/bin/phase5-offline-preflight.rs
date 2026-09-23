@@ -5,7 +5,7 @@ use opus2::{Channels, Decoder};
 use voice_agent_server::{
     config::AppConfig,
     models::{ModelError, verify_installed},
-    providers::vad::verify_onnx_runtime,
+    providers::{compiled_provider_registry, vad::verify_onnx_runtime},
 };
 
 const FIXTURES: [(&str, &[u8], bool); 5] = [
@@ -68,7 +68,7 @@ fn run() -> Result<()> {
     config.deployment.models.offline = true;
     verify_onnx_runtime(&config.runtime.onnx.library)
         .context("load deployment-selected ONNX Runtime")?;
-    verify_installed(
+    let vad_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
         &config
@@ -81,7 +81,7 @@ fn run() -> Result<()> {
         "silero_onnx",
         &config.deployment,
     )?;
-    verify_installed(
+    let asr_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
         &config
@@ -94,7 +94,7 @@ fn run() -> Result<()> {
         "zipformer_sherpa",
         &config.deployment,
     )?;
-    verify_installed(
+    let tts_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
         &config
@@ -106,6 +106,25 @@ fn run() -> Result<()> {
             .model,
         "zerotts_onnx",
         &config.deployment,
+    )?;
+    let registry = compiled_provider_registry();
+    registry.vad_factory(&config.providers.vad.adapter)?.build(
+        &config.providers.vad,
+        &config.runtime,
+        &vad_model,
+    )?;
+    registry
+        .asr_factory(&config.providers.asr.adapter)?
+        .build(&config.providers.asr, &asr_model)?;
+    registry.tts_factory(&config.providers.tts.adapter)?.build(
+        config
+            .providers
+            .tts
+            .zerotts_onnx
+            .as_ref()
+            .context("zerotts_onnx options are required")?,
+        &config.runtime,
+        &tts_model,
     )?;
     verify_fixture()?;
     Ok(())
