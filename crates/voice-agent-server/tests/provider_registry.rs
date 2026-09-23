@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use url::Url;
 use voice_agent_server::{
     config::{
-        AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
+        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
+        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
         WebsocketConfig, WorkersConfig,
     },
     providers::compiled_provider_registry,
@@ -28,6 +28,7 @@ fn valid_config() -> AppConfig {
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
+        barge_in: BargeInConfig::default(),
     }
 }
 

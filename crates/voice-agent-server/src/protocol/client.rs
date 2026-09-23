@@ -20,6 +20,16 @@ pub struct ClientHello {
     pub transport: String,
     #[serde(default = "default_uplink_audio_params")]
     pub audio_params: AudioParams,
+    #[serde(default)]
+    pub features: ClientFeatures,
+}
+
+/// Optional client capability assertions. Unknown feature keys remain compatible
+/// because this type intentionally does not deny unknown fields.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ClientFeatures {
+    #[serde(default)]
+    pub aec: bool,
 }
 
 fn default_v1_version() -> u8 {

@@ -14,8 +14,8 @@ use url::Url;
 use voice_agent_server::{
     app::router_with_providers,
     config::{
-        AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
+        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
+        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
         WebsocketConfig, WorkersConfig,
     },
     providers::ProviderSet,
@@ -45,6 +45,7 @@ async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, Joi
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
+        barge_in: BargeInConfig::default(),
     };
     let app: Router = router_with_providers(config, Arc::new(ProviderSet::unavailable()));
     let task = tokio::spawn(async move {

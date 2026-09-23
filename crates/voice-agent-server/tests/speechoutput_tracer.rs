@@ -18,8 +18,9 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use voice_agent_server::config::{
-    AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig, ProvidersConfig,
-    RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig, WebsocketConfig, WorkersConfig,
+    AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig, LlmConfig,
+    ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig, WebsocketConfig,
+    WorkersConfig,
 };
 use voice_agent_server::{
     app::router_with_providers,
@@ -307,6 +308,7 @@ async fn start_router_with_limits(
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
+        barge_in: BargeInConfig::default(),
     };
     let app: Router = router_with_providers(config, providers);
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -427,7 +429,7 @@ async fn full_outbound_audio_queue_retries_every_packet_without_a_gap() {
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
     assert_eq!(audio_rx.len(), 1, "first packet must be queued");
-    assert_eq!(actor.phase(), SessionPhase::Processing);
+    assert_eq!(actor.phase(), SessionPhase::Speaking);
 
     let mut packets = Vec::new();
     for _ in 0..3 {
@@ -745,8 +747,8 @@ async fn streaming_llm_delivers_first_audio_before_eof_and_commits_only_after_dr
     }
     assert_eq!(
         actor.phase(),
-        SessionPhase::Processing,
-        "first audio arrives while LLM still streams"
+        SessionPhase::Speaking,
+        "first playable audio enters Speaking while LLM still streams"
     );
     assert_eq!(
         actor.dialogue_history(),
@@ -812,7 +814,7 @@ async fn complete_vietnamese_sentences_announce_once_before_their_audio() {
         !audio_rx.is_empty(),
         "first sentence must produce audio before LLM EOF"
     );
-    assert_eq!(actor.phase(), SessionPhase::Processing);
+    assert_eq!(actor.phase(), SessionPhase::Speaking);
     let first_controls = std::iter::from_fn(|| control_rx.try_recv().ok())
         .map(|message| {
             serde_json::from_str::<serde_json::Value>(message.as_text().unwrap()).unwrap()

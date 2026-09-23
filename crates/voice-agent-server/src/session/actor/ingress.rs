@@ -83,11 +83,19 @@ impl SessionActor {
 
 impl SessionActor {
     pub fn on_binary(&mut self, payload: Vec<u8>) -> bool {
-        if self.phase == SessionPhase::Listening {
+        let armed_vad_capture = self.vad_session.is_some()
+            && !self.auto_reset_pending
+            && (self.listening_mode == Some(ListenMode::Realtime)
+                || (self.listening_mode == Some(ListenMode::Auto)
+                    && self.phase == SessionPhase::Speaking));
+        if self.phase == SessionPhase::Listening || armed_vad_capture {
             match self.uplink_decoder.decode(&payload) {
                 DecodeOutcome::Frame(frame) => {
                     let pcm = PcmF32Mono::from_uplink(&frame);
-                    if self.listening_mode == Some(ListenMode::Auto) {
+                    if matches!(
+                        self.listening_mode,
+                        Some(ListenMode::Auto | ListenMode::Realtime)
+                    ) {
                         if self.auto_reset_pending {
                             return false;
                         }

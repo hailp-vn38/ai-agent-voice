@@ -31,6 +31,8 @@ pub struct AppConfig {
     pub tts: TtsConfig,
     #[serde(default)]
     pub speech_output: SpeechOutputConfig,
+    #[serde(default)]
+    pub barge_in: BargeInConfig,
 }
 
 mod defaults;
@@ -38,6 +40,23 @@ mod providers;
 
 use defaults::*;
 pub use providers::*;
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct BargeInConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub trust_client_aec_feature: bool,
+}
+
+impl Default for BargeInConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            trust_client_aec_feature: false,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct WorkersConfig {

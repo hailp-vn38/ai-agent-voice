@@ -70,6 +70,24 @@ pub struct SessionActor {
     /// A packet removed from SpeechOutput but not yet admitted by the bounded writer queue.
     /// It must be retried before polling another packet: dropping it creates audible gaps.
     pending_audio: Option<OutboundMessage>,
+    client_aec_asserted: bool,
+    barge_in_enabled: bool,
+    trust_client_aec_feature: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BargeInPolicy {
+    pub enabled: bool,
+    pub trust_client_aec_feature: bool,
+}
+
+impl BargeInPolicy {
+    pub fn allows(&self, client_aec_asserted: bool, mode: Option<ListenMode>) -> bool {
+        self.enabled
+            && self.trust_client_aec_feature
+            && client_aec_asserted
+            && matches!(mode, Some(ListenMode::Auto | ListenMode::Realtime))
+    }
 }
 
 /// Cancellation ownership for one Conversational Turn.

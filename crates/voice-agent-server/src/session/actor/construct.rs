@@ -205,7 +205,32 @@ impl SessionActor {
             audio_tx,
             generation_gate,
             pending_audio: None,
+            client_aec_asserted: false,
+            barge_in_enabled: false,
+            trust_client_aec_feature: false,
         })
+    }
+
+    pub fn with_client_capabilities(
+        mut self,
+        client_aec_asserted: bool,
+        policy: super::BargeInPolicy,
+    ) -> Self {
+        self.client_aec_asserted = client_aec_asserted;
+        self.barge_in_enabled = policy.enabled;
+        self.trust_client_aec_feature = policy.trust_client_aec_feature;
+        self
+    }
+
+    /// Reports whether the current client/deployment/mode combination is eligible
+    /// for the future acoustic barge-in path. Ticket 04 only establishes this
+    /// policy; it deliberately does not interrupt an active turn yet.
+    pub fn acoustic_barge_in_allowed(&self) -> bool {
+        BargeInPolicy {
+            enabled: self.barge_in_enabled,
+            trust_client_aec_feature: self.trust_client_aec_feature,
+        }
+        .allows(self.client_aec_asserted, self.listening_mode.clone())
     }
 
     /// Completes construction with the injected delivery providers at the application seam.

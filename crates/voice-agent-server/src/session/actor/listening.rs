@@ -23,7 +23,12 @@ impl SessionActor {
     }
 
     pub(super) fn start_listening(&mut self, mode: ListenMode) {
-        if self.turn.is_some() || self.phase == SessionPhase::Processing {
+        if self.turn.is_some()
+            || matches!(
+                self.phase,
+                SessionPhase::Processing | SessionPhase::Speaking
+            )
+        {
             // Capture arm is intentionally separate from interruption. Phase 5's
             // AEC/VAD work decides when this arm may consume microphone PCM; it
             // must never cancel an in-flight response merely by changing mode.
@@ -81,7 +86,19 @@ impl SessionActor {
                     let _ = self.urgent_tx.try_send(OutboundMessage::Close(1013));
                 }
             },
-            ListenMode::Realtime => self.phase = SessionPhase::Ready,
+            ListenMode::Realtime => match self.vad_runtime.open(identity.clone()) {
+                Ok(lease) => {
+                    self.vad_session = Some((lease, identity));
+                    // Realtime keeps its VAD capture cycle armed across processing
+                    // and playback. It is not an interruption path in this ticket.
+                    self.phase = SessionPhase::Listening;
+                }
+                Err(error) => {
+                    warn!(?error, "realtime VAD worker open failed");
+                    self.phase = SessionPhase::Closed;
+                    let _ = self.urgent_tx.try_send(OutboundMessage::Close(1013));
+                }
+            },
         }
     }
 
@@ -126,7 +143,11 @@ impl SessionActor {
         self.interrupt_active_turn();
         self.generation += 1;
         self.manual_capture.abort();
-        if self.listening_mode == Some(ListenMode::Auto) && self.vad_session.is_some() {
+        if matches!(
+            self.listening_mode,
+            Some(ListenMode::Auto | ListenMode::Realtime)
+        ) && self.vad_session.is_some()
+        {
             self.abort_auto_turn();
             return;
         }
@@ -328,6 +349,11 @@ impl SessionActor {
             VadWorkerEvent::SpeechStart { start_sample, .. }
                 if current && !self.auto_speech_active =>
             {
+                // Realtime remains VAD-armed while an existing turn is processing or
+                // speaking, but ticket 04 does not yet permit acoustic interruption.
+                if self.turn.is_some() {
+                    return;
+                }
                 self.auto_speech_active = true;
                 let identity =
                     WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);

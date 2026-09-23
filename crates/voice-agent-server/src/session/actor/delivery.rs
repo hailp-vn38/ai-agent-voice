@@ -115,6 +115,7 @@ impl SessionActor {
                 }
                 SpeechOutputEvent::Started => {
                     self.tts_started = true;
+                    self.phase = SessionPhase::Speaking;
                     info!("TTS delivery started");
                     let payload = serde_json::json!({
                         "session_id": self.session_id,

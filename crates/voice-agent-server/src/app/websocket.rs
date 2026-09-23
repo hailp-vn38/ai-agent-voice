@@ -204,6 +204,13 @@ async fn handle_socket(
             return;
         }
     };
+    let actor = actor.with_client_capabilities(
+        hello.features.aec,
+        crate::session::BargeInPolicy {
+            enabled: config.barge_in.enabled,
+            trust_client_aec_feature: config.barge_in.trust_client_aec_feature,
+        },
+    );
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
         .expect("ServerHello is serializable");
     if actor.send_control(server_hello).is_err() {

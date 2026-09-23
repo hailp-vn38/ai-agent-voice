@@ -12,8 +12,8 @@ use url::Url;
 use voice_agent_server::{
     app::router_with_providers,
     config::{
-        AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
+        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
+        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
         WebsocketConfig, WorkersConfig,
     },
     providers::{
@@ -118,6 +118,7 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
+        barge_in: BargeInConfig::default(),
     };
     let providers = Arc::new(ProviderSet::with_vad(
         Arc::new(SpeechThenSilenceVad),
@@ -201,7 +202,7 @@ fn assert_one_v1_final_without_internal_events(messages: &[serde_json::Value]) {
 
 #[tokio::test]
 async fn manual_and_auto_canonical_opus_emit_one_existing_stt_without_internal_events() {
-    for mode in ["manual", "auto"] {
+    for mode in ["manual", "auto", "realtime"] {
         let (base, task) = start(AsrOutcome::Final).await;
         let mut socket = connect(&base).await;
         socket

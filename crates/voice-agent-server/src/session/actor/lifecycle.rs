@@ -3,7 +3,11 @@ use super::*;
 impl SessionActor {
     pub(super) fn complete_recognition(&mut self) {
         self.release_active_turn();
-        if self.listening_mode == Some(ListenMode::Auto) && self.vad_session.is_some() {
+        if matches!(
+            self.listening_mode,
+            Some(ListenMode::Auto | ListenMode::Realtime)
+        ) && self.vad_session.is_some()
+        {
             if self.auto_reset_pending {
                 return;
             }
