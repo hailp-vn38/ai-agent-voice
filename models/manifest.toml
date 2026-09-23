@@ -83,6 +83,13 @@ source_sha256 = "ec014c14f79e8fc16f4ca6ea557f33fa2cbd7d448b5de5f467aace9ca0321e9
 sha256 = "ec014c14f79e8fc16f4ca6ea557f33fa2cbd7d448b5de5f467aace9ca0321e9f"
 
 [[model.artifacts]]
+role = "silence_frame"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/silence_frame.npy"
+install_path = "tts/zerotts/silence_frame.npy"
+source_sha256 = "bb2628efa99ae02819b04ff7509ef43ddb3213a9fb0916e4e88b8d1a7c3a1810"
+sha256 = "bb2628efa99ae02819b04ff7509ef43ddb3213a9fb0916e4e88b8d1a7c3a1810"
+
+[[model.artifacts]]
 role = "voices_index"
 remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/index.json"
 install_path = "tts/zerotts/voices/index.json"

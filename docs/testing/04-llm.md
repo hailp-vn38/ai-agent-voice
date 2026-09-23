@@ -17,8 +17,9 @@ Assert segmenter không phụ thuộc token boundary.
 
 - text stream bình thường.
 - punctuation segmentation.
-- hard max chars flush.
-- hard/soft punctuation respect `min_chars`/`soft_break_min_chars`; hard max split Unicode-safe, ưu tiên whitespace.
+- dấu kết câu ngắn flush ngay; dấu phẩy và `max_chars` không cắt câu chưa hoàn tất.
+- số thập phân/phiên bản không bị tách tại dấu chấm; buffer quá giới hạn khẩn cấp fail backpressure.
+- mỗi Speech Segment phát đúng một `llm` control trước audio của câu đó; TTS nhận bản text đã loại markdown/emoji.
 - stream error giữa câu.
 - cancellation giữa stream.
 - factory pin exact `llm` 1.3.8 với default features tắt, OpenAI + rustls TLS features.

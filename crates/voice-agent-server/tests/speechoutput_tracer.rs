@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
@@ -128,6 +131,43 @@ impl LlmProvider for StreamingLlm {
     }
 }
 
+struct ControlledSentenceLlm {
+    release_second: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for ControlledSentenceLlm {
+    fn adapter(&self) -> &'static str {
+        "controlled_sentence_llm"
+    }
+
+    async fn stream(
+        &self,
+        _: String,
+    ) -> Result<
+        voice_agent_server::providers::llm::LlmEventStream,
+        voice_agent_server::providers::LlmError,
+    > {
+        use voice_agent_server::providers::LlmEvent;
+        let release = Arc::clone(&self.release_second);
+        Ok(Box::pin(
+            futures_util::stream::iter([
+                Ok(LlmEvent::TextDelta("Xin".into())),
+                Ok(LlmEvent::TextDelta(" ch".into())),
+                Ok(LlmEvent::TextDelta("ào".into())),
+                Ok(LlmEvent::TextDelta("!".into())),
+            ])
+            .chain(futures_util::stream::once(async move {
+                release.notified().await;
+                Ok(LlmEvent::TextDelta(
+                    " Mình có thể giúp gì cho bạn hôm nay?".into(),
+                ))
+            }))
+            .chain(futures_util::stream::once(async { Ok(LlmEvent::Finished) })),
+        ))
+    }
+}
+
 struct BackpressuredLlm {
     release_overflow: Arc<Notify>,
 }
@@ -199,6 +239,20 @@ impl TtsProvider for FakeTts {
     }
 }
 
+struct RecordingTts(Arc<Mutex<Vec<String>>>);
+impl TtsProvider for RecordingTts {
+    fn adapter(&self) -> &'static str {
+        "recording_tts"
+    }
+    fn synthesize(
+        &self,
+        text: &str,
+    ) -> Result<PcmF32Mono, voice_agent_server::providers::TtsError> {
+        self.0.lock().unwrap().push(text.to_owned());
+        Ok(PcmF32Mono::new(vec![0.1; 2_880], 48_000))
+    }
+}
+
 struct LongTts;
 impl TtsProvider for LongTts {
     fn adapter(&self) -> &'static str {
@@ -218,6 +272,16 @@ fn uplink_packet() -> voice_agent_server::audio::OpusPacket {
 }
 
 async fn start_router() -> (String, JoinHandle<()>) {
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(FakeLlm),
+        Arc::new(FakeTts),
+    ));
+    start_router_with(providers).await
+}
+
+async fn start_router_with(providers: Arc<ProviderSet>) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -238,12 +302,6 @@ async fn start_router() -> (String, JoinHandle<()>) {
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
     };
-    let providers = Arc::new(ProviderSet::with_all(
-        Arc::new(FakeVad),
-        Arc::new(FakeAsr),
-        Arc::new(FakeLlm),
-        Arc::new(FakeTts),
-    ));
     let app: Router = router_with_providers(config, providers);
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://{address}"), task)
@@ -313,16 +371,18 @@ async fn non_empty_asr_final_delivers_started_canonical_opus_then_one_stop() {
     let controls = std::iter::from_fn(|| control_rx.try_recv().ok())
         .map(|message| message.as_text().unwrap().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(controls.len(), 3);
+    assert_eq!(controls.len(), 4);
     let controls = controls
         .iter()
         .map(|control| serde_json::from_str::<serde_json::Value>(control).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(controls[0]["type"], "stt");
-    assert_eq!(controls[1]["type"], "tts");
-    assert_eq!(controls[1]["state"], "start");
+    assert_eq!(controls[1]["type"], "llm");
+    assert_eq!(controls[1]["text"], "Xin chao ban.");
     assert_eq!(controls[2]["type"], "tts");
-    assert_eq!(controls[2]["state"], "stop");
+    assert_eq!(controls[2]["state"], "start");
+    assert_eq!(controls[3]["type"], "tts");
+    assert_eq!(controls[3]["state"], "stop");
 
     let packet = match audio_rx.try_recv().unwrap() {
         OutboundMessage::Binary { packet, .. } => packet,
@@ -464,6 +524,88 @@ async fn streaming_llm_delivers_first_audio_before_eof_and_commits_only_after_dr
 }
 
 #[tokio::test]
+async fn complete_vietnamese_sentences_announce_once_before_their_audio() {
+    let (control_tx, mut control_rx) = mpsc::channel(16);
+    let (audio_tx, mut audio_rx) = mpsc::channel(16);
+    let release_second = Arc::new(Notify::new());
+    let tts_inputs = Arc::new(Mutex::new(Vec::new()));
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(ControlledSentenceLlm {
+            release_second: Arc::clone(&release_second),
+        }),
+        Arc::new(RecordingTts(Arc::clone(&tts_inputs))),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+
+    for _ in 0..200 {
+        actor.pump_workers();
+        if !audio_rx.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(
+        !audio_rx.is_empty(),
+        "first sentence must produce audio before LLM EOF"
+    );
+    assert_eq!(actor.phase(), SessionPhase::Processing);
+    let first_controls = std::iter::from_fn(|| control_rx.try_recv().ok())
+        .map(|message| {
+            serde_json::from_str::<serde_json::Value>(message.as_text().unwrap()).unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(first_controls.len(), 3);
+    assert_eq!(first_controls[0]["type"], "stt");
+    assert_eq!(first_controls[1]["type"], "llm");
+    assert_eq!(first_controls[1]["text"], "Xin chào!");
+    assert_eq!(first_controls[2]["state"], "start");
+    assert_eq!(*tts_inputs.lock().unwrap(), ["Xin chào!"]);
+    assert!(matches!(
+        audio_rx.try_recv(),
+        Ok(OutboundMessage::Binary { .. })
+    ));
+
+    release_second.notify_one();
+    for _ in 0..300 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Ready {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+    let later_controls = std::iter::from_fn(|| control_rx.try_recv().ok())
+        .map(|message| {
+            serde_json::from_str::<serde_json::Value>(message.as_text().unwrap()).unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(later_controls.len(), 2);
+    assert_eq!(later_controls[0]["type"], "llm");
+    assert_eq!(
+        later_controls[0]["text"],
+        "Mình có thể giúp gì cho bạn hôm nay?"
+    );
+    assert_eq!(later_controls[1]["state"], "stop");
+    assert_eq!(
+        *tts_inputs.lock().unwrap(),
+        ["Xin chào!", "Mình có thể giúp gì cho bạn hôm nay?"]
+    );
+    assert!(matches!(
+        audio_rx.try_recv(),
+        Ok(OutboundMessage::Binary { .. })
+    ));
+    assert!(audio_rx.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn full_segment_capacity_stops_started_playback_without_committing_assistant_history() {
     let (control_tx, mut control_rx) = mpsc::channel(32);
     let (audio_tx, _audio_rx) = mpsc::channel(32);
@@ -595,7 +737,7 @@ async fn router_writes_tts_start_then_canonical_audio_then_one_stop() {
         .unwrap();
 
     let mut observed = Vec::new();
-    while observed.len() < 4 {
+    while observed.len() < 5 {
         observed.push(
             timeout(Duration::from_secs(1), socket.next())
                 .await
@@ -611,18 +753,111 @@ async fn router_writes_tts_start_then_canonical_audio_then_one_stop() {
     );
     assert!(matches!(&observed[1], Message::Text(text) if {
         let value: serde_json::Value = serde_json::from_str(text).unwrap();
+        value["type"] == "llm" && value["text"] == "Xin chao ban."
+    }));
+    assert!(matches!(&observed[2], Message::Text(text) if {
+        let value: serde_json::Value = serde_json::from_str(text).unwrap();
         value["type"] == "tts" && value["state"] == "start"
     }));
-    let Message::Binary(packet) = &observed[2] else {
+    let Message::Binary(packet) = &observed[3] else {
         panic!("expected paced audio")
     };
     let mut decoder = Decoder::new(24_000, Channels::Mono).unwrap();
     let mut pcm = [0_i16; 1_440];
     assert_eq!(decoder.decode(packet, &mut pcm, false).unwrap(), 1_440);
-    assert!(matches!(&observed[3], Message::Text(text) if {
+    assert!(matches!(&observed[4], Message::Text(text) if {
         let value: serde_json::Value = serde_json::from_str(text).unwrap();
         value["type"] == "tts" && value["state"] == "stop"
     }));
+}
+
+#[tokio::test]
+async fn public_websocket_sends_each_complete_llm_sentence_once() {
+    let release_second = Arc::new(Notify::new());
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(ControlledSentenceLlm {
+            release_second: Arc::clone(&release_second),
+        }),
+        Arc::new(FakeTts),
+    ));
+    let (base, task) = start_router_with(providers).await;
+    let mut socket = connect_router(&base).await;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "listen", "state": "start", "mode": "manual"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Binary(uplink_packet().as_bytes().to_vec().into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "listen", "state": "stop"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut llm_texts = Vec::new();
+    let mut saw_start = false;
+    loop {
+        let frame = timeout(Duration::from_secs(1), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        match frame {
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if value["type"] == "llm" {
+                    llm_texts.push(value["text"].as_str().unwrap().to_owned());
+                } else if value["type"] == "tts" && value["state"] == "start" {
+                    assert_eq!(llm_texts, ["Xin chào!"]);
+                    saw_start = true;
+                }
+            }
+            Message::Binary(_) => {
+                assert!(saw_start);
+                assert_eq!(llm_texts, ["Xin chào!"]);
+                break;
+            }
+            other => panic!("unexpected websocket frame: {other:?}"),
+        }
+    }
+
+    release_second.notify_one();
+    loop {
+        let frame = timeout(Duration::from_secs(1), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Message::Text(text) = frame {
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if value["type"] == "llm" {
+                llm_texts.push(value["text"].as_str().unwrap().to_owned());
+            } else if value["type"] == "tts" && value["state"] == "stop" {
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        llm_texts,
+        ["Xin chào!", "Mình có thể giúp gì cho bạn hôm nay?"]
+    );
+    assert!(
+        timeout(Duration::from_millis(50), socket.next())
+            .await
+            .is_err()
+    );
+    task.abort();
 }
 
 #[tokio::test]
@@ -660,6 +895,7 @@ async fn auto_listening_accepts_digital_human_detect_as_a_text_turn() {
                 let value: serde_json::Value = serde_json::from_str(&text).unwrap();
                 match (value["type"].as_str(), value["state"].as_str()) {
                     (Some("stt"), _) => saw_stt = true,
+                    (Some("llm"), _) => assert_eq!(value["text"], "Xin chao ban."),
                     (Some("tts"), Some("start")) => saw_start = true,
                     (Some("tts"), Some("stop")) => break,
                     _ => panic!("unexpected control: {value}"),

@@ -2,7 +2,9 @@ use std::{env, path::PathBuf, process::ExitCode};
 
 use serde::Deserialize;
 use voice_agent_server::{
-    audio::{DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono},
+    audio::{
+        DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, DownlinkResampler, Pcm16Mono,
+    },
     providers::tts::zerotts_onnx::{ZeroTtsContract, ZeroTtsPcmStream},
 };
 
@@ -26,6 +28,31 @@ fn required_path(name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("{name} must name a verified installed ZeroTTS artifact"))
 }
 
+fn write_wav(path: &std::path::Path, sample_rate: u32, samples: &[i16]) -> Result<(), String> {
+    let data_bytes = u32::try_from(samples.len() * 2).map_err(|error| error.to_string())?;
+    let mut wav = Vec::with_capacity(44 + data_bytes as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16_u32.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    wav.extend_from_slice(&2_u16.to_le_bytes());
+    wav.extend_from_slice(&16_u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_bytes.to_le_bytes());
+    for sample in samples {
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+    std::fs::write(path, wav).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn pcm16(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
+}
+
 fn run() -> Result<(), String> {
     let fixture: ParityFixture = serde_json::from_str(include_str!(
         "../../tests/fixtures/zerotts_core_parity.json"
@@ -42,6 +69,7 @@ fn run() -> Result<(), String> {
         &required_path("ZEROTTS_CODEC_DECODE_STEP")?,
         &required_path("ZEROTTS_CODEC_SHARED_DATA")?,
         &required_path("ZEROTTS_CODEC_METADATA")?,
+        &required_path("ZEROTTS_SILENCE_FRAME")?,
         &required_path("VOICE_ONNX_RUNTIME_LIB")?,
         1,
     )
@@ -57,7 +85,10 @@ fn run() -> Result<(), String> {
     }
     if (result.text_state_checksum - fixture.text_state_checksum).abs() > fixture.checksum_tolerance
     {
-        return Err("text-state checksum differs from the checked-in parity fixture".into());
+        return Err(format!(
+            "text-state checksum differs from the checked-in parity fixture: actual={}, expected={}",
+            result.text_state_checksum, fixture.text_state_checksum
+        ));
     }
     let count = fixture.first_frames.len();
     if result.frames.get(..count) != Some(fixture.first_frames.as_slice())
@@ -71,8 +102,9 @@ fn run() -> Result<(), String> {
     }
     if result.eoa != Some(fixture.eoa_frame_index)
         || result.frames.get(fixture.eoa_frame_index) != Some(&fixture.eoa_frame)
+        || result.frames.len() != fixture.eoa_frame_index + 2
     {
-        return Err("EOA frame was not retained at the checked-in parity checkpoint".into());
+        return Err("EOA frame and one trailing audio frame were not retained".into());
     }
     if result.token_ids != next_result.token_ids
         || result.frames != next_result.frames
@@ -90,8 +122,8 @@ fn run() -> Result<(), String> {
             Ok(())
         })
         .map_err(|error| error.to_string())?;
-    if chunks.len() < 2 {
-        return Err("ZeroTTS stream did not deliver more than one PCM chunk".into());
+    if chunks.len() != 4 {
+        return Err("ZeroTTS cold codec did not use 4, 8, 16, then final frames".into());
     }
     if chunks.iter().any(|pcm| {
         pcm.sample_rate_hz() != 48_000
@@ -107,7 +139,7 @@ fn run() -> Result<(), String> {
             Ok(())
         })
         .map_err(|error| error.to_string())?;
-    if next_chunks.is_empty()
+    if next_chunks.len() != 3
         || next_chunks.iter().any(|pcm| {
             pcm.sample_rate_hz() != 48_000
                 || pcm.samples().is_empty()
@@ -120,10 +152,31 @@ fn run() -> Result<(), String> {
         .into_iter()
         .flat_map(|pcm| pcm.samples().to_vec())
         .collect::<Vec<_>>();
-    let (pairs, _) = pcm.as_chunks::<2>();
-    let downlink = pairs
-        .iter()
-        .map(|pair| ((pair[0] + pair[1]) * 0.5 * i16::MAX as f32).round() as i16)
+    let capture_pcm = if let Some(text) = env::var_os("ZEROTTS_DIAGNOSTIC_TEXT") {
+        let mut diagnostic = ZeroTtsPcmStream::new(&core).map_err(|error| error.to_string())?;
+        let mut samples = Vec::new();
+        diagnostic
+            .synthesize(&text.to_string_lossy(), 256, &mut |chunk| {
+                samples.extend_from_slice(chunk.samples());
+                Ok(())
+            })
+            .map_err(|error| error.to_string())?;
+        samples
+    } else {
+        pcm.clone()
+    };
+    let raw_first = capture_pcm
+        .get(..DOWNLINK_FRAME_SAMPLES * 2)
+        .ok_or("ZeroTTS PCM is shorter than one canonical downlink frame")?;
+    let mut faded_first = raw_first.to_vec();
+    for (index, sample) in faded_first[..384].iter_mut().enumerate() {
+        *sample *= index as f32 / 384.0;
+    }
+    let downlink = DownlinkResampler::new_48k_to_24k()
+        .process(&faded_first)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(pcm16)
         .collect::<Vec<_>>();
     let mut frame = downlink
         .get(..DOWNLINK_FRAME_SAMPLES)
@@ -133,7 +186,8 @@ fn run() -> Result<(), String> {
     let packet = DownlinkOpusEncoder::new(4_000)
         .map_err(|error| error.to_string())?
         .encode(
-            DownlinkPcmFrame::try_new(Pcm16Mono::new(frame)).map_err(|error| error.to_string())?,
+            DownlinkPcmFrame::try_new(Pcm16Mono::new(frame.clone()))
+                .map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
     let mut decoder =
@@ -145,6 +199,17 @@ fn run() -> Result<(), String> {
         != DOWNLINK_FRAME_SAMPLES
     {
         return Err("canonical Opus packet did not decode to one 60 ms frame".into());
+    }
+    if let Some(directory) = env::var_os("ZEROTTS_FIRST_PACKET_CAPTURE_DIR") {
+        let directory = PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        write_wav(
+            &directory.join("A-provider-48k.wav"),
+            48_000,
+            &raw_first.iter().copied().map(pcm16).collect::<Vec<_>>(),
+        )?;
+        write_wav(&directory.join("B-resampled-24k.wav"), 24_000, &frame)?;
+        write_wav(&directory.join("C-opus-decoded-24k.wav"), 24_000, &decoded)?;
     }
     if let Some(path) = env::var_os("ZEROTTS_DOWNLINK_OPUS_PATH") {
         std::fs::write(&path, packet.as_bytes()).map_err(|error| {

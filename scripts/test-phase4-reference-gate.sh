@@ -10,6 +10,7 @@ for gate_file in \
   "$gate_root/config.json" \
   "$gate_root/tokenizer.json" \
   "$gate_root/voices/maichi/voice.npz" \
+  "$gate_root/silence_frame.npy" \
   "$gate_root/onnx/text_encoder.onnx" \
   "$gate_root/onnx/prefix_step.onnx" \
   "$gate_root/onnx/local_frame_decode.onnx" \
@@ -27,6 +28,7 @@ done
 ZEROTTS_CONFIG="$gate_root/config.json" \
 ZEROTTS_TOKENIZER="$gate_root/tokenizer.json" \
 ZEROTTS_MAICHI_VOICE="$gate_root/voices/maichi/voice.npz" \
+ZEROTTS_SILENCE_FRAME="$gate_root/silence_frame.npy" \
 ZEROTTS_TEXT_ENCODER="$gate_root/onnx/text_encoder.onnx" \
 ZEROTTS_PREFIX_STEP="$gate_root/onnx/prefix_step.onnx" \
 ZEROTTS_LOCAL_FRAME_DECODE="$gate_root/onnx/local_frame_decode.onnx" \
@@ -38,7 +40,7 @@ VOICE_ONNX_RUNTIME_LIB="$gate_runtime" \
 ZEROTTS_DOWNLINK_OPUS_PATH="$gate_packet" \
 cargo run -q -p voice-agent-server --bin zerotts-core-check
 
-cargo run -q -p voice-reference-client -- --ota http://127.0.0.1/unused decode-downlink-opus "$gate_packet"
+cargo run -q -p voice-reference-client --bin decode-downlink-opus -- "$gate_packet"
 
 VOICE_ONNX_RUNTIME_LIB="$gate_runtime" \
 cargo test -q -p voice-agent-server --features real-model-gate --test phase4_reference_gate -- --nocapture

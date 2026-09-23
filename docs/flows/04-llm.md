@@ -43,13 +43,9 @@ sequenceDiagram
 
 Không gửi từng token vào TTS.
 
-Segmenter nên ưu tiên:
+Segmenter phát một Speech Segment ngay khi thấy dấu kết câu `. ! ? 。！？` mà không chờ độ dài tối thiểu. Dấu phẩy, chấm phẩy và hai chấm chỉ nằm trong câu; EOF phát phần text cuối còn lại. Dấu chấm có thể thuộc số thập phân hoặc phiên bản nên không tách các trường hợp đó. `max_chars` chỉ giới hạn khẩn cấp cho buffer chưa có dấu kết câu (hiện fail backpressure khi vượt `2 * max_chars`), không tự cắt một câu để đọc. Hai trường cấu hình `min_chars` và `soft_break_min_chars` được giữ để đọc cấu hình cũ nhưng không còn chi phối segmentation.
 
-1. dấu kết câu `. ! ? 。！？`;
-2. dấu ngắt `, ; : ，；：` sau khi vượt minimum chars;
-3. hard max chars để tránh đợi quá lâu.
-
-Policy thuộc `[speech_output]`: `min_chars`, `soft_break_min_chars`, `max_chars`, với `1 <= min_chars <= soft_break_min_chars <= max_chars`. Punctuation V1 cố định: hard `. ! ? 。！？`, soft `, ; : ，；：`. Hard punctuation chỉ flush khi buffer đạt `min_chars`; soft punctuation chỉ flush khi đạt `soft_break_min_chars`. Tới `max_chars`, split Unicode-safe, ưu tiên whitespace gần ngưỡng rồi mới split tại character boundary. Pure function/state machine này phải có unit test riêng.
+SpeechOutput giữ nguyên text hiển thị cho sự kiện WebSocket `llm` theo từng câu; text đưa vào TTS được NFC và loại markdown, emoji, control/symbol không đọc được, trong khi giữ dấu câu hữu ích. Actor phát `llm` trước khi bắt đầu tổng hợp audio của câu tương ứng.
 
 ## 4. Tool call
 

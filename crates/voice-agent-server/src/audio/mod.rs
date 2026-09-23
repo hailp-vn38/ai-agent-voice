@@ -74,6 +74,10 @@ impl PcmF32Mono {
         &self.samples
     }
 
+    pub(crate) fn samples_mut(&mut self) -> &mut [f32] {
+        &mut self.samples
+    }
+
     pub fn sample_rate_hz(&self) -> u32 {
         self.sample_rate_hz
     }

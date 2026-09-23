@@ -333,6 +333,12 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                 cancelled,
                 events,
             } => {
+                tracing::info!(
+                    tts_input = %text,
+                    chars = text.chars().count(),
+                    delivery = "worker",
+                    "TTS synthesis input"
+                );
                 let result = worker.synthesize(&text, &cancelled, &mut |pcm| {
                     if cancelled.load(Ordering::Acquire) {
                         return Err(TtsError::Failed);

@@ -535,7 +535,25 @@ async fn send_outbound(
 ) -> bool {
     let closes = matches!(message, OutboundMessage::Close(_));
     let result = match message {
-        OutboundMessage::Text(text) => sender.send(Message::Text(text.into())).await,
+        OutboundMessage::Text(text) => {
+            let llm_message = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .filter(|value| value["type"] == "llm");
+            let result = sender.send(Message::Text(text.into())).await;
+            if result.is_ok()
+                && let Some(message) = llm_message
+                && let Some(llm_text) = message["text"].as_str()
+            {
+                info!(
+                    message_type = "llm",
+                    session_id = message["session_id"].as_str().unwrap_or(""),
+                    chars = llm_text.chars().count(),
+                    text = %llm_text,
+                    "WebSocket text sent to client"
+                );
+            }
+            result
+        }
         OutboundMessage::Binary { packet, .. } => sender.send(Message::Binary(packet.into())).await,
         OutboundMessage::InvalidateAudio(_) => return false,
         OutboundMessage::Close(code) => {

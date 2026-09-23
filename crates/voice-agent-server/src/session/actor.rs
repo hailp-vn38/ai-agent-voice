@@ -865,6 +865,20 @@ impl SessionActor {
                 }
             };
             match event {
+                SpeechOutputEvent::SegmentReady { text } => {
+                    let payload = serde_json::json!({
+                        "session_id": self.session_id,
+                        "type": "llm",
+                        "text": &text,
+                    });
+                    if serde_json::to_string(&payload)
+                        .ok()
+                        .is_none_or(|payload| self.send_control(payload).is_err())
+                    {
+                        self.fail_speech_delivery();
+                        break;
+                    }
+                }
                 SpeechOutputEvent::Started => {
                     self.tts_started = true;
                     info!("TTS delivery started");
@@ -873,8 +887,12 @@ impl SessionActor {
                         "type": "tts",
                         "state": "start",
                     });
-                    if let Ok(payload) = serde_json::to_string(&payload) {
-                        let _ = self.send_control(payload);
+                    if serde_json::to_string(&payload)
+                        .ok()
+                        .is_none_or(|payload| self.send_control(payload).is_err())
+                    {
+                        self.fail_speech_delivery();
+                        break;
                     }
                 }
                 SpeechOutputEvent::AudioPacket(packet) => {

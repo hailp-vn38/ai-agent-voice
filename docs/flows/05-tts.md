@@ -19,6 +19,8 @@ Adapter concrete V1 là `zerotts_onnx`, native Rust + ONNX. Provider chỉ infer
 
 ZeroTTS V1 trả `PcmF32Mono` 48 kHz mono: codec stereo được adapter average/normalize trước boundary. `SpeechOutput` resample 48 kHz -> 24 kHz, convert f32 -> i16, rồi tạo đúng 1.440-sample `DownlinkPcmFrame`. Factory/warmup xác minh config và codec metadata đều 48 kHz, channel profile và voice dimensions khớp graph; thay đổi profile ở revision khác fail startup.
 
+Provider ZeroTTS dùng cùng lõi AR và codec streaming với Reference Client: chuẩn hoá văn bản tiếng Việt trước tokenizer, sinh frame rồi giải mã `decode_step` theo nhóm tăng 1, 2, 4, 8, 16 frame. Worker giữ ONNX sessions và codec cache trong một lượt thoại, reset cache khi trả slot. `decode_full` chỉ được chạy ở warmup để kiểm tra artifact, không nằm trên đường phát âm thanh của người dùng.
+
 ## 2. Flow
 
 ```mermaid

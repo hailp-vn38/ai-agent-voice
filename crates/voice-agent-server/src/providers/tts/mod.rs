@@ -116,6 +116,7 @@ pub(crate) struct ZeroTtsArtifacts<'a> {
     pub(crate) codec_decode_step: &'a std::path::Path,
     pub(crate) codec_shared_data: &'a std::path::Path,
     pub(crate) codec_metadata: &'a std::path::Path,
+    pub(crate) silence_frame: &'a std::path::Path,
 }
 
 impl ConfiguredZeroTts {
@@ -135,6 +136,7 @@ impl ConfiguredZeroTts {
             artifacts.codec_decode_step,
             artifacts.codec_shared_data,
             artifacts.codec_metadata,
+            artifacts.silence_frame,
             runtime_library,
             num_threads,
         )?;
@@ -145,6 +147,11 @@ impl ConfiguredZeroTts {
             1,
             pcm.samples().to_vec(),
         ))?;
+        let codes = contract.synthesize_codes("ZeroTTS startup readiness.", 256)?;
+        if codes.eoa.is_none() {
+            return Err(TtsError::InvalidWarmupPcm);
+        }
+        contract.validate_full_decode(&codes.frames)?;
         Ok(Self { contract })
     }
 }

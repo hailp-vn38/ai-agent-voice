@@ -15,3 +15,4 @@
 
 - Hoàn tất 2026-09-22: `SpeechOutput` nhận incremental LLM delta qua sentence segmenter bounded; SessionActor chỉ commit assistant response sau `Drained`. Writer nhận invalidation gate theo generation để loại audio queued/stale trước playback stop.
 - Xác minh: `cargo check -p voice-agent-server`, `cargo test -p voice-agent-server --lib`, `cargo test -p voice-agent-server --test speechoutput_tracer`, `git diff --check` pass. `cargo test --workspace` bị chặn bởi test untracked của ticket 05 (`zerotts_artifact_preflight.rs`) tham chiếu API ticket 05 chưa tồn tại.
+- Cập nhật 2026-09-23: policy threshold/hard split của ticket gốc đã được thay bằng dấu kết câu flush ngay, dấu mềm không flush và `max_chars` chỉ là bound khẩn cấp; xem `.scratch/phase-4-llm-zerotts/spec.md` và hồi quy `Xin chào!` trong `speech_output.rs`.

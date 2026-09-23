@@ -15,7 +15,7 @@ cargo run --release -p voice-reference-client --bin zerotts -- \
   --out /tmp/zerotts-reference.wav
 ```
 
-Lenh in `init_ms`, `first_pcm_ms`, `synthesis_ms`, `audio_ms`, RTF, so chunk va so sample cua tung lan. WAV la float32 mono 48 kHz tu codec, chua qua SpeechOutput, Opus, pacing hoac WebSocket. Loop nay theo `synthesize_stream` cua Python: mot lan text encoder/prefix, AR frame, `min_frames=4`, giu frame EOA, codec chunk 1/2/4/8/16 va reset cache codec moi lan tong hop. Dau vao duoc dua truc tiep vao tokenizer; CLI Python co buoc chuan hoa tieng Viet rieng. Random draw cua binary Rust la deterministic de lap lai phep do, nen khong doi waveform bit-exact voi Python mac dinh.
+Lenh in `init_ms`, `first_pcm_ms`, `synthesis_ms`, `audio_ms`, RTF, so chunk va so sample cua tung lan. WAV la float32 mono 48 kHz tu codec, chua qua SpeechOutput, Opus, pacing hoac WebSocket. Loop nay theo `synthesize_stream` cua Python: mot lan text encoder/prefix, AR frame, `min_frames=4`, giu frame EOA, codec chunk 1/2/4/8/16 va reset cache codec moi lan tong hop. Mac dinh text duoc chuan hoa cach doc tieng Viet truoc tokenizer (so, ngay/gio, phan tram, phien ban, viet tat); `--no-text-norm` dua van ban goc truc tiep vao model de so sanh. Random draw cua binary Rust la deterministic de lap lai phep do, nen khong doi waveform bit-exact voi Python mac dinh. Bo chuan hoa Rust duoc doi chieu bang fixture Python, nhung chua duoc chung minh tuong duong cho moi dau vao.
 
 ## Chay voi server cuc bo
 

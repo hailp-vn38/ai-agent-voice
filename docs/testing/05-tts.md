@@ -31,3 +31,12 @@
 ```bash
 ./scripts/test-module.sh tts
 ```
+
+Với model/ONNX Runtime đã cài, chạy `scripts/test-phase4-reference-gate.sh` với
+`VOICE_ONNX_RUNTIME_LIB`. Để đối chiếu tiếng nhiễu ở packet đầu, đặt thêm
+`ZEROTTS_DIAGNOSTIC_TEXT` bằng đúng câu gặp lỗi và
+`ZEROTTS_FIRST_PACKET_CAPTURE_DIR` tới thư mục đầu ra. Gate sẽ ghi
+`A-provider-48k.wav` (PCM thô), `B-resampled-24k.wav` (sau fade/FIR) và
+`C-opus-decoded-24k.wav` (Opus giải mã lại), mỗi file chứa 60 ms đầu.
+Nghe cả ba file trước khi quy nguồn tạp âm; gate tự động chỉ xác nhận tính hợp lệ
+của tín hiệu, không xác nhận chất lượng nghe trên thiết bị vật lý.

@@ -10,7 +10,7 @@ Streaming TTS cần synthesize, resample, Opus encode, queue và pacing. Nếu p
 
 ## Decision
 
-Tạo Module `SpeechOutput` với Interface `Submit`, `FinishInput`, `Cancel` và event `Started`, `SentenceStarted`, `AudioPacket`, `SegmentFinished`, `Drained`, `Failed`. Module che giấu TTS provider stream và toàn bộ audio pipeline; nó không có WS sender.
+Tạo Module `SpeechOutput` với Interface `push_delta`, `finish_input`, `cancel`, `poll` và event `SegmentReady`, `Started`, `AudioPacket`, `Drained`. `SegmentReady` mang text hiển thị nguyên bản của câu; module làm sạch bản text riêng trước khi đưa vào TTS. Module che giấu TTS provider stream và toàn bộ audio pipeline; nó không có WS sender.
 
 `SessionActor` là producer duy nhất của outbound queue. WS writer là caller duy nhất của WebSocket send và dùng `GenerationGate` read-only để drop mọi payload turn stale. Actor cập nhật gate trước khi enqueue session-control `tts:stop` khi abort.
 

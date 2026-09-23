@@ -249,6 +249,7 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                     codec_decode_step: model.artifact("codec_decode_step").expect("required above"),
                     codec_shared_data: model.artifact("codec_shared_data").expect("required above"),
                     codec_metadata: model.artifact("codec_metadata").expect("required above"),
+                    silence_frame: model.artifact("silence_frame").expect("required above"),
                 },
                 &runtime.onnx.library,
                 config.num_threads,
@@ -272,6 +273,7 @@ const ZEROTTS_REQUIRED_ARTIFACT_ROLES: &[&str] = &[
     "codec_shared_data",
     "codec_metadata",
     "codec_license",
+    "silence_frame",
 ];
 
 impl AsrFactory for ZipformerSherpaFactory {
