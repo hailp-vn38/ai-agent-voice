@@ -697,9 +697,7 @@ fn replacement_invalidates_a_late_final_without_emitting_stale_stt() {
     }));
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
-    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
-        mode: ListenMode::Manual,
-    }));
+    actor.on_client_message(ClientMessage::Abort { session_id: None });
     for _ in 0..100 {
         actor.pump_workers();
         std::thread::sleep(Duration::from_millis(1));

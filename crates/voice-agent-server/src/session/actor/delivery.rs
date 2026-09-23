@@ -23,8 +23,19 @@ impl SessionActor {
     pub(super) fn begin_speech_delivery(&mut self, user_text: String) {
         let identity =
             WorkerIdentity::new(self.session_id.clone(), self.generation, self.generation);
+        let turn = TurnContext {
+            generation: self.generation,
+            cancellation: tokio_util::sync::CancellationToken::new(),
+        };
+        let cancellation = turn.cancellation.clone();
+        self.turn = Some(turn);
         self.generated_response.clear();
-        if self.llm_runtime.start(identity.clone(), user_text).is_err() {
+        if self
+            .llm_runtime
+            .start(identity.clone(), user_text, cancellation)
+            .is_err()
+        {
+            self.turn = None;
             warn!("LLM operation could not start");
             self.complete_recognition();
             return;
@@ -41,7 +52,10 @@ impl SessionActor {
             | LlmRuntimeEvent::Failed { identity }
             | LlmRuntimeEvent::Cancelled { identity } => identity,
         };
-        if self.llm_operation.as_ref() != Some(identity) || identity.generation() != self.generation
+        if self.llm_operation.as_ref() != Some(identity)
+            || self.turn.as_ref().is_none_or(|turn| {
+                turn.generation != identity.generation() || turn.generation != self.generation
+            })
         {
             return;
         }
@@ -147,6 +161,7 @@ impl SessionActor {
                     self.dialogue_history
                         .commit_assistant(std::mem::take(&mut self.generated_response));
                     self.tts_started = false;
+                    self.turn = None;
                     self.complete_recognition();
                 }
             }
@@ -157,6 +172,16 @@ impl SessionActor {
         self.cancel_llm();
         self.cancel_speech_delivery();
         self.complete_recognition();
+    }
+
+    /// Cancels a Conversational Turn in its required order. The outbound gate is
+    /// invalidated before producer cancellation, and releasing the Active Turn is
+    /// idempotent through its permit ownership flag.
+    pub(super) fn interrupt_active_turn(&mut self) {
+        self.cancel_speech_delivery();
+        self.cancel_llm();
+        self.cancel_asr();
+        self.release_active_turn();
     }
 
     pub(super) fn cancel_speech_delivery(&mut self) {
@@ -210,10 +235,14 @@ impl SessionActor {
     }
 
     pub(super) fn cancel_llm(&mut self) {
+        if let Some(turn) = &self.turn {
+            turn.cancellation.cancel();
+        }
         if let Some(identity) = self.llm_operation.take() {
             self.llm_runtime.cancel(&identity);
         }
         self.generated_response.clear();
+        self.turn = None;
     }
 
     pub(super) fn release_active_turn(&mut self) {

@@ -84,7 +84,12 @@ impl LlmRuntime {
 
     /// Accepts an operation only while global capacity is available. A permit is held by the task
     /// until it reports a terminal outcome or cancellation has dropped the provider stream.
-    pub fn start(&self, identity: WorkerIdentity, prompt: String) -> Result<(), LlmStartError> {
+    pub fn start(
+        &self,
+        identity: WorkerIdentity,
+        prompt: String,
+        cancellation: CancellationToken,
+    ) -> Result<(), LlmStartError> {
         if tokio::runtime::Handle::try_current().is_err() {
             return Err(LlmStartError::NoTokioRuntime);
         }
@@ -93,7 +98,6 @@ impl LlmRuntime {
             .clone()
             .try_acquire_owned()
             .map_err(|_| LlmStartError::Capacity)?;
-        let cancellation = CancellationToken::new();
         self.cancellations
             .lock()
             .expect("LLM cancellations lock")

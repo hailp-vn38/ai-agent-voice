@@ -23,6 +23,14 @@ impl SessionActor {
     }
 
     pub(super) fn start_listening(&mut self, mode: ListenMode) {
+        if self.turn.is_some() || self.phase == SessionPhase::Processing {
+            // Capture arm is intentionally separate from interruption. Phase 5's
+            // AEC/VAD work decides when this arm may consume microphone PCM; it
+            // must never cancel an in-flight response merely by changing mode.
+            self.listening_mode = Some(mode);
+            self.listen_arm_pending = true;
+            return;
+        }
         if mode == ListenMode::Auto
             && self.listening_mode == Some(ListenMode::Auto)
             && self.vad_session.is_some()
@@ -36,6 +44,7 @@ impl SessionActor {
     /// Enters a new listening mode. Leaving Auto is a real VAD lifecycle boundary; the
     /// acknowledgement-driven Close path owns release of its worker capacity.
     pub(super) fn replace_listening_mode(&mut self, mode: ListenMode) {
+        self.listen_arm_pending = false;
         self.cancel_speech_delivery();
         self.generation += 1;
         self.cancel_llm();
@@ -114,18 +123,16 @@ impl SessionActor {
         if self.phase == SessionPhase::Closed {
             return;
         }
-        self.cancel_speech_delivery();
+        self.interrupt_active_turn();
         self.generation += 1;
-        self.cancel_llm();
         self.manual_capture.abort();
-        self.cancel_asr();
-        self.release_active_turn();
         if self.listening_mode == Some(ListenMode::Auto) && self.vad_session.is_some() {
             self.abort_auto_turn();
             return;
         }
         self.close_vad();
         self.listening_mode = None;
+        self.listen_arm_pending = false;
         self.auto_reset_pending = false;
         self.auto_retention.reset();
         self.phase = SessionPhase::Ready;

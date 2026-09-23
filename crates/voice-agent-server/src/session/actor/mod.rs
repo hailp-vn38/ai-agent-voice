@@ -20,6 +20,7 @@ use crate::{
 use std::collections::HashSet;
 
 use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod retention;
@@ -43,6 +44,7 @@ pub struct SessionActor {
     vad_events: mpsc::Receiver<VadWorkerEvent>,
     vad_session: Option<(VadWorkerLease, WorkerIdentity)>,
     listening_mode: Option<ListenMode>,
+    listen_arm_pending: bool,
     auto_speech_active: bool,
     auto_reset_pending: bool,
     vad_segmenter: VadSegmenter,
@@ -51,6 +53,7 @@ pub struct SessionActor {
     active_turn_limiter: std::sync::Arc<ActiveTurnLimiter>,
     has_active_turn_permit: bool,
     generation: u64,
+    turn: Option<TurnContext>,
     dialogue_history: DialogueHistory,
     llm_runtime: std::sync::Arc<LlmRuntime>,
     llm_events: mpsc::Receiver<LlmRuntimeEvent>,
@@ -67,6 +70,15 @@ pub struct SessionActor {
     /// A packet removed from SpeechOutput but not yet admitted by the bounded writer queue.
     /// It must be retried before polling another packet: dropping it creates audible gaps.
     pending_audio: Option<OutboundMessage>,
+}
+
+/// Cancellation ownership for one Conversational Turn.
+///
+/// The token is never reused: interrupting a turn cancels this instance, and the
+/// next accepted user utterance receives a fresh context.
+struct TurnContext {
+    generation: u64,
+    cancellation: CancellationToken,
 }
 
 /// Application-owned runtimes shared by every voice session.

@@ -453,7 +453,7 @@ async fn full_outbound_audio_queue_retries_every_packet_without_a_gap() {
 
     for _ in 0..100 {
         actor.pump_workers();
-        if actor.phase() == SessionPhase::Ready {
+        if actor.phase() == SessionPhase::Listening {
             break;
         }
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -545,6 +545,7 @@ async fn explicit_abort_admits_urgent_stop_and_invalidates_queued_turn_payload_u
             .unwrap();
     }
     actor.on_client_message(ClientMessage::Abort { session_id: None });
+    actor.on_client_message(ClientMessage::Abort { session_id: None });
 
     let stop = urgent_rx
         .try_recv()
@@ -561,6 +562,7 @@ async fn explicit_abort_admits_urgent_stop_and_invalidates_queued_turn_payload_u
         audio_rx.try_recv(),
         Ok(OutboundMessage::Binary { generation: 1, .. })
     ));
+    assert!(urgent_rx.try_recv().is_err(), "double abort emits one stop");
     assert_eq!(actor.phase(), SessionPhase::Ready);
 }
 
@@ -642,6 +644,78 @@ async fn public_abort_with_bounded_lanes_sends_one_stop_then_writer_stays_quiet(
         "writer must not deliver stale JSON or Opus after interruption stop"
     );
     task.abort();
+}
+
+#[tokio::test]
+async fn listen_arm_during_delivery_does_not_interrupt_the_active_turn() {
+    let (control_tx, mut control_rx) = mpsc::channel(32);
+    let (audio_tx, _audio_rx) = mpsc::channel(32);
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(FakeLlm),
+        Arc::new(FakeTts),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    assert!(actor.on_binary(uplink_packet().as_bytes().to_vec()));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+    // The first arm arrives while ASR finalization is still Processing; the
+    // duplicate is a normal client retry. Neither may cancel that turn.
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+
+    let mut controls = Vec::new();
+    for _ in 0..100 {
+        actor.pump_workers();
+        controls.extend(std::iter::from_fn(|| control_rx.try_recv().ok()));
+        if controls.iter().any(|message| {
+            message
+                .as_text()
+                .is_some_and(|text| text.contains(r#""state":"start""#))
+        }) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert!(controls.iter().any(|message| {
+        message
+            .as_text()
+            .is_some_and(|text| text.contains(r#""state":"start""#))
+    }));
+
+    for _ in 0..100 {
+        actor.pump_workers();
+        controls.extend(std::iter::from_fn(|| control_rx.try_recv().ok()));
+        if actor.phase() == SessionPhase::Listening {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    controls.extend(std::iter::from_fn(|| control_rx.try_recv().ok()));
+
+    assert_eq!(actor.phase(), SessionPhase::Listening);
+    assert_eq!(actor.dialogue_history(), ["xin chao", "Xin chao ban."]);
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|message| message
+                .as_text()
+                .is_some_and(|text| text.contains(r#""state":"stop""#)))
+            .count(),
+        1,
+        "listen:start must leave the active turn to its normal terminal stop"
+    );
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+    assert_eq!(actor.phase(), SessionPhase::Ready);
 }
 
 #[tokio::test]

@@ -15,6 +15,18 @@ impl SessionActor {
                 }
             }
         } else {
+            self.activate_pending_listen_arm();
+        }
+    }
+
+    fn activate_pending_listen_arm(&mut self) {
+        if self.listen_arm_pending {
+            let mode = self
+                .listening_mode
+                .clone()
+                .expect("pending listen arm has a listening mode");
+            self.replace_listening_mode(mode);
+        } else {
             self.phase = SessionPhase::Ready;
         }
     }
@@ -24,11 +36,8 @@ impl SessionActor {
             return;
         }
         warn!(phase = ?self.phase, "voice session failed closed");
-        self.cancel_speech_delivery();
+        self.interrupt_active_turn();
         self.generation += 1;
-        self.cancel_llm();
-        self.cancel_asr();
-        self.release_active_turn();
         self.close_vad();
         self.auto_reset_pending = false;
         self.asr_stream = None;
