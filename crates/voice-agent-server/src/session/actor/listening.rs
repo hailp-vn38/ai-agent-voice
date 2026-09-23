@@ -23,6 +23,13 @@ impl SessionActor {
     }
 
     pub(super) fn start_listening(&mut self, mode: ListenMode) {
+        if matches!(mode, ListenMode::Auto | ListenMode::Realtime)
+            && self.listening_mode.as_ref() == Some(&mode)
+            && self.vad_session.is_some()
+        {
+            self.restart_existing_vad_capture_cycle();
+            return;
+        }
         if self.turn.is_some()
             || matches!(
                 self.phase,
@@ -34,13 +41,6 @@ impl SessionActor {
             // must never cancel an in-flight response merely by changing mode.
             self.listening_mode = Some(mode);
             self.listen_arm_pending = true;
-            return;
-        }
-        if mode == ListenMode::Auto
-            && self.listening_mode == Some(ListenMode::Auto)
-            && self.vad_session.is_some()
-        {
-            self.restart_existing_auto_cycle();
             return;
         }
         self.replace_listening_mode(mode);
@@ -58,6 +58,8 @@ impl SessionActor {
         self.close_vad();
         self.auto_speech_active = false;
         self.auto_reset_pending = false;
+        self.vad_cycle = None;
+        self.pending_vad_cycle = None;
         self.auto_retention.reset();
         self.vad_segmenter.reset();
         self.listening_mode = Some(mode.clone());
@@ -78,6 +80,7 @@ impl SessionActor {
             ListenMode::Auto => match self.vad_runtime.open(identity.clone()) {
                 Ok(lease) => {
                     self.vad_session = Some((lease, identity));
+                    self.vad_cycle = Some(self.allocate_vad_cycle());
                     self.phase = SessionPhase::Listening;
                 }
                 Err(error) => {
@@ -89,6 +92,7 @@ impl SessionActor {
             ListenMode::Realtime => match self.vad_runtime.open(identity.clone()) {
                 Ok(lease) => {
                     self.vad_session = Some((lease, identity));
+                    self.vad_cycle = Some(self.allocate_vad_cycle());
                     // Realtime keeps its VAD capture cycle armed across processing
                     // and playback. It is not an interruption path in this ticket.
                     self.phase = SessionPhase::Listening;
@@ -102,11 +106,13 @@ impl SessionActor {
         }
     }
 
-    /// Restarts capture inside an Auto Listening cycle without replacing its pinned VAD worker.
-    pub(super) fn restart_existing_auto_cycle(&mut self) {
+    /// Restarts capture inside an Auto or Realtime cycle without replacing its pinned VAD worker
+    /// or interrupting a Conversational Turn that may be speaking.
+    pub(super) fn restart_existing_vad_capture_cycle(&mut self) {
         let Some((lease, _)) = self.vad_session else {
             return;
         };
+        let was_speaking = self.phase == SessionPhase::Speaking;
         if self.auto_reset_pending {
             info!(
                 generation = self.generation,
@@ -115,19 +121,28 @@ impl SessionActor {
             return;
         }
 
-        self.cancel_speech_delivery();
-        self.generation += 1;
-        self.cancel_llm();
-        self.cancel_asr();
-        self.release_active_turn();
+        if let Some((asr_lease, asr_identity)) = self.asr_stream.take() {
+            if self
+                .asr_runtime
+                .send(asr_lease, AsrCommand::Cancel)
+                .is_err()
+            {
+                self.fail_closed();
+                return;
+            }
+            self.asr_cleanup_pending.insert(asr_identity);
+            self.release_active_turn();
+        }
         self.auto_speech_active = false;
         self.auto_retention.reset();
         self.vad_segmenter.reset();
-        match self.vad_runtime.send(lease, VadCommand::Reset) {
+        match self.reset_vad_capture_cycle(lease) {
             Ok(()) => {
                 self.auto_reset_pending = true;
-                self.phase = SessionPhase::Processing;
-                info!(generation = self.generation, "reusing Auto VAD cycle");
+                if !was_speaking {
+                    self.phase = SessionPhase::Processing;
+                }
+                info!(generation = self.generation, "reusing VAD capture cycle");
             }
             Err(error) => {
                 warn!(?error, "failed to reset existing Auto VAD cycle");
@@ -170,7 +185,7 @@ impl SessionActor {
             self.phase = SessionPhase::Ready;
             return;
         };
-        match self.vad_runtime.send(lease, VadCommand::Reset) {
+        match self.reset_vad_capture_cycle(lease) {
             Ok(()) => {
                 self.auto_reset_pending = true;
                 self.phase = SessionPhase::Processing;
@@ -314,41 +329,46 @@ impl SessionActor {
             | VadWorkerEvent::Probability { identity, .. }
             | VadWorkerEvent::SpeechStart { identity, .. }
             | VadWorkerEvent::SpeechEnd { identity, .. }
-            | VadWorkerEvent::ResetDone { identity }
+            | VadWorkerEvent::ResetDone { identity, .. }
             | VadWorkerEvent::Closed { identity }
             | VadWorkerEvent::Failed { identity }
             | VadWorkerEvent::ResetTimedOut { identity }
             | VadWorkerEvent::CleanupTimedOut { identity } => identity,
         };
-        let current = self
+        let current_worker = self
             .vad_session
             .as_ref()
             .is_some_and(|(_, active)| active == identity);
+        let current_cycle = |cycle| current_worker && self.vad_cycle == Some(cycle);
         match event {
-            VadWorkerEvent::Probability { probability, .. } if current => {
-                match self.vad_segmenter.observe(probability) {
-                    Ok(Some(VadBoundary::SpeechStart { start_sample })) => {
-                        self.on_vad_event(VadWorkerEvent::SpeechStart {
-                            identity: identity.clone(),
-                            start_sample,
-                        })
-                    }
-                    Ok(Some(VadBoundary::SpeechEnd { end_sample })) => {
-                        self.on_vad_event(VadWorkerEvent::SpeechEnd {
-                            identity: identity.clone(),
-                            end_sample,
-                        })
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        warn!("VAD stream integrity failure");
-                        self.fail_closed();
-                    }
+            VadWorkerEvent::Probability {
+                cycle, probability, ..
+            } if current_cycle(cycle) => match self.vad_segmenter.observe(probability) {
+                Ok(Some(VadBoundary::SpeechStart { start_sample })) => {
+                    self.on_vad_event(VadWorkerEvent::SpeechStart {
+                        identity: identity.clone(),
+                        cycle,
+                        start_sample,
+                    })
                 }
-            }
-            VadWorkerEvent::SpeechStart { start_sample, .. }
-                if current && !self.auto_speech_active =>
-            {
+                Ok(Some(VadBoundary::SpeechEnd { end_sample })) => {
+                    self.on_vad_event(VadWorkerEvent::SpeechEnd {
+                        identity: identity.clone(),
+                        cycle,
+                        end_sample,
+                    })
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    warn!("VAD stream integrity failure");
+                    self.fail_closed();
+                }
+            },
+            VadWorkerEvent::SpeechStart {
+                cycle,
+                start_sample,
+                ..
+            } if current_cycle(cycle) && !self.auto_speech_active => {
                 // Realtime remains VAD-armed while an existing turn is processing or
                 // speaking, but ticket 04 does not yet permit acoustic interruption.
                 if self.turn.is_some() {
@@ -373,7 +393,9 @@ impl SessionActor {
                     Err(_) => self.auto_retention.reset(),
                 }
             }
-            VadWorkerEvent::SpeechEnd { .. } if current && self.auto_speech_active => {
+            VadWorkerEvent::SpeechEnd { cycle, .. }
+                if current_cycle(cycle) && self.auto_speech_active =>
+            {
                 self.auto_speech_active = false;
                 self.phase = SessionPhase::Processing;
                 if self.asr_stream.is_some() {
@@ -384,24 +406,44 @@ impl SessionActor {
                     self.complete_recognition();
                 }
             }
-            VadWorkerEvent::ResetDone { .. } if current => {
+            VadWorkerEvent::ResetDone { cycle, .. }
+                if current_worker && self.pending_vad_cycle == Some(cycle) =>
+            {
                 self.auto_reset_pending = false;
+                self.vad_cycle = Some(cycle);
+                self.pending_vad_cycle = None;
                 self.auto_retention.reset();
                 self.vad_segmenter.reset();
                 if self.llm_operation.is_none() && !self.tts_started {
                     self.phase = SessionPhase::Listening;
                 }
             }
-            VadWorkerEvent::Closed { .. } if current => self.vad_session = None,
+            VadWorkerEvent::Closed { .. } if current_worker => self.vad_session = None,
             VadWorkerEvent::Failed { .. }
             | VadWorkerEvent::ResetTimedOut { .. }
             | VadWorkerEvent::CleanupTimedOut { .. }
-                if current =>
+                if current_worker =>
             {
                 warn!("VAD worker failed or cleanup timed out");
                 self.fail_closed()
             }
             _ => {}
         }
+    }
+
+    pub(super) fn allocate_vad_cycle(&mut self) -> VadCaptureCycleId {
+        let cycle = VadCaptureCycleId::new(self.next_vad_cycle);
+        self.next_vad_cycle = self.next_vad_cycle.saturating_add(1);
+        cycle
+    }
+
+    pub(super) fn reset_vad_capture_cycle(
+        &mut self,
+        lease: VadWorkerLease,
+    ) -> Result<(), crate::workers::VadWorkerError> {
+        let cycle = self.allocate_vad_cycle();
+        self.vad_cycle = None;
+        self.pending_vad_cycle = Some(cycle);
+        self.vad_runtime.send(lease, VadCommand::Reset { cycle })
     }
 }

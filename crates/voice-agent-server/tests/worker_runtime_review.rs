@@ -10,8 +10,8 @@ use voice_agent_server::{
     },
     session::{OutboundMessage, SessionActor, SessionPhase},
     workers::{
-        AsrWorkerRuntime, VadCommand, VadWorkerEvent, VadWorkerRuntime, WorkerIdentity,
-        WorkerRuntimeConfig,
+        AsrWorkerRuntime, VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerRuntime,
+        WorkerIdentity, WorkerRuntimeConfig,
     },
 };
 
@@ -323,7 +323,14 @@ fn vad_reset_timeout_quarantines_the_worker_and_routes_the_fatal_event() {
     let lease = runtime
         .open(WorkerIdentity::new("timed-out", 1, 1))
         .unwrap();
-    runtime.send(lease, VadCommand::Reset).unwrap();
+    runtime
+        .send(
+            lease,
+            VadCommand::Reset {
+                cycle: VadCaptureCycleId::new(1),
+            },
+        )
+        .unwrap();
 
     for _ in 0..50 {
         runtime.supervise_pending();

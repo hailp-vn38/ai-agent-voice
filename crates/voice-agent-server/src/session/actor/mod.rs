@@ -13,8 +13,8 @@ use crate::{
     providers::{ProviderSet, llm::UnavailableLlm, tts::UnavailableTts},
     workers::{
         AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, LlmRuntime, LlmRuntimeEvent,
-        TtsWorkerRuntime, VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime,
-        WorkerIdentity, WorkerRuntimeConfig,
+        TtsWorkerRuntime, VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerLease,
+        VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig,
     },
 };
 use std::collections::HashSet;
@@ -43,6 +43,9 @@ pub struct SessionActor {
     vad_runtime: std::sync::Arc<VadWorkerRuntime>,
     vad_events: mpsc::Receiver<VadWorkerEvent>,
     vad_session: Option<(VadWorkerLease, WorkerIdentity)>,
+    vad_cycle: Option<VadCaptureCycleId>,
+    pending_vad_cycle: Option<VadCaptureCycleId>,
+    next_vad_cycle: u64,
     listening_mode: Option<ListenMode>,
     listen_arm_pending: bool,
     auto_speech_active: bool,

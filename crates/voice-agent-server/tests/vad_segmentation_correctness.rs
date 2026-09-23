@@ -3,7 +3,10 @@ use std::{sync::Arc, time::Duration};
 use voice_agent_server::{
     audio::{PcmF32Mono, VadBoundary, VadSegmenter, VadSegmenterConfig},
     providers::{VadError, VadInput, VadProbability, VadProvider, VadSession},
-    workers::{VadCommand, VadWorkerEvent, VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig},
+    workers::{
+        VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerRuntime, WorkerIdentity,
+        WorkerRuntimeConfig,
+    },
 };
 
 fn probability(value: f32, start_sample: u64) -> VadProbability {
@@ -108,7 +111,10 @@ fn worker_fails_when_provider_mutates_the_canonical_sample_range() {
     runtime
         .send(
             lease,
-            VadCommand::Push(PcmF32Mono::new(vec![0.0; 960], 16_000)),
+            VadCommand::Push {
+                cycle: VadCaptureCycleId::new(1),
+                pcm: PcmF32Mono::new(vec![0.0; 960], 16_000),
+            },
         )
         .unwrap();
 

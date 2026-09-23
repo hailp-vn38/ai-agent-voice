@@ -52,3 +52,13 @@ pub(super) fn auto_retention_capacity(
         + FRAME_SAMPLES
         + RECHUNK_SLACK_SAMPLES
 }
+
+#[cfg(test)]
+mod tests {
+    use super::auto_retention_capacity;
+
+    #[test]
+    fn capacity_covers_pre_roll_confirmation_command_lag_frame_and_rechunk_slack() {
+        assert_eq!(auto_retention_capacity(8, 3_200, 4_800), 17_152);
+    }
+}

@@ -16,10 +16,25 @@ use super::{WorkerIdentity, WorkerRuntimeConfig};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VadWorkerLease(u64);
 
+/// Identity of one semantic VAD capture cycle, independent of its pinned worker lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VadCaptureCycleId(u64);
+
+impl VadCaptureCycleId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Debug)]
 pub enum VadCommand {
-    Push(PcmF32Mono),
-    Reset,
+    Push {
+        cycle: VadCaptureCycleId,
+        pcm: PcmF32Mono,
+    },
+    Reset {
+        cycle: VadCaptureCycleId,
+    },
     Close,
 }
 
@@ -30,18 +45,22 @@ pub enum VadWorkerEvent {
     },
     Probability {
         identity: WorkerIdentity,
+        cycle: VadCaptureCycleId,
         probability: crate::providers::VadProbability,
     },
     SpeechStart {
         identity: WorkerIdentity,
+        cycle: VadCaptureCycleId,
         start_sample: u64,
     },
     SpeechEnd {
         identity: WorkerIdentity,
+        cycle: VadCaptureCycleId,
         end_sample: u64,
     },
     ResetDone {
         identity: WorkerIdentity,
+        cycle: VadCaptureCycleId,
     },
     Closed {
         identity: WorkerIdentity,
@@ -157,19 +176,19 @@ impl VadWorkerRuntime {
             .get_mut(&lease)
             .ok_or(VadWorkerError::UnknownLease)?;
         let next_state = match &command {
-            VadCommand::Reset if !matches!(slot.state, SlotState::Active) => {
+            VadCommand::Reset { .. } if !matches!(slot.state, SlotState::Active) => {
                 return Err(VadWorkerError::UnknownLease);
             }
-            VadCommand::Reset => Some(SlotState::Resetting {
+            VadCommand::Reset { .. } => Some(SlotState::Resetting {
                 deadline: Instant::now() + self.config.final_timeout,
             }),
             VadCommand::Close => Some(SlotState::Cleaning {
                 deadline: Instant::now() + self.config.cleanup_grace,
             }),
-            VadCommand::Push(_) if !matches!(slot.state, SlotState::Active) => {
+            VadCommand::Push { .. } if !matches!(slot.state, SlotState::Active) => {
                 return Err(VadWorkerError::UnknownLease);
             }
-            VadCommand::Push(_) => None,
+            VadCommand::Push { .. } => None,
         };
         slot.command_tx
             .try_send(command)
@@ -243,7 +262,7 @@ impl VadWorkerRuntime {
     fn observe(&self, event: &VadWorkerEvent) {
         let mut state = self.state.lock().expect("VAD worker state poisoned");
         match event {
-            VadWorkerEvent::ResetDone { identity } => {
+            VadWorkerEvent::ResetDone { identity, .. } => {
                 if let Some(slot) = state
                     .slots
                     .values_mut()
@@ -278,7 +297,7 @@ impl VadWorkerRuntime {
             | VadWorkerEvent::Probability { identity, .. }
             | VadWorkerEvent::SpeechStart { identity, .. }
             | VadWorkerEvent::SpeechEnd { identity, .. }
-            | VadWorkerEvent::ResetDone { identity }
+            | VadWorkerEvent::ResetDone { identity, .. }
             | VadWorkerEvent::Closed { identity }
             | VadWorkerEvent::Failed { identity }
             | VadWorkerEvent::ResetTimedOut { identity }
@@ -317,7 +336,7 @@ fn run_worker(
     let mut rechunker = VadRechunker::default();
     while let Ok(command) = commands.recv() {
         match command {
-            VadCommand::Push(pcm) => {
+            VadCommand::Push { cycle, pcm } => {
                 let inputs = match rechunker.push(pcm) {
                     Ok(inputs) => inputs,
                     Err(()) => {
@@ -343,6 +362,7 @@ fn run_worker(
                     if events
                         .send(VadWorkerEvent::Probability {
                             identity: identity.clone(),
+                            cycle,
                             probability,
                         })
                         .is_err()
@@ -351,11 +371,12 @@ fn run_worker(
                     }
                 }
             }
-            VadCommand::Reset => match session.reset() {
+            VadCommand::Reset { cycle } => match session.reset() {
                 Ok(()) => {
                     rechunker.reset();
                     let _ = events.send(VadWorkerEvent::ResetDone {
                         identity: identity.clone(),
+                        cycle,
                     });
                 }
                 Err(_) => {

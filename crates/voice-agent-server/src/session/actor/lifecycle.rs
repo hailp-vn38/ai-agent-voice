@@ -12,7 +12,7 @@ impl SessionActor {
                 return;
             }
             if let Some((lease, _)) = self.vad_session {
-                if self.vad_runtime.send(lease, VadCommand::Reset).is_err() {
+                if self.reset_vad_capture_cycle(lease).is_err() {
                     self.fail_closed();
                 } else {
                     self.auto_reset_pending = true;

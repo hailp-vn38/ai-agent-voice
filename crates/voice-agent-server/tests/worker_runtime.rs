@@ -7,8 +7,8 @@ use voice_agent_server::{
         VadProvider, VadSession,
     },
     workers::{
-        AsrCommand, AsrWorkerEvent, AsrWorkerRuntime, VadCommand, VadWorkerEvent, VadWorkerRuntime,
-        WorkerIdentity, WorkerRuntimeConfig,
+        AsrCommand, AsrWorkerEvent, AsrWorkerRuntime, VadCaptureCycleId, VadCommand,
+        VadWorkerEvent, VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig,
     },
 };
 
@@ -120,7 +120,14 @@ fn vad_reset_and_close_are_acknowledgement_barriers_before_a_slot_is_reused() {
         runtime.recv_timeout(Duration::from_secs(1)),
         Some(VadWorkerEvent::Opened { .. })
     ));
-    runtime.send(lease, VadCommand::Reset).unwrap();
+    runtime
+        .send(
+            lease,
+            VadCommand::Reset {
+                cycle: VadCaptureCycleId::new(1),
+            },
+        )
+        .unwrap();
     assert!(matches!(
         runtime.recv_timeout(Duration::from_secs(1)),
         Some(VadWorkerEvent::ResetDone { .. })
@@ -129,5 +136,33 @@ fn vad_reset_and_close_are_acknowledgement_barriers_before_a_slot_is_reused() {
     assert!(matches!(
         runtime.recv_timeout(Duration::from_secs(1)),
         Some(VadWorkerEvent::Closed { .. })
+    ));
+}
+
+#[test]
+fn vad_probability_and_reset_acknowledgement_keep_the_capture_cycle_identity() {
+    let runtime = VadWorkerRuntime::new(Arc::new(FakeVad), WorkerRuntimeConfig::default());
+    let lease = runtime.open(identity(6)).unwrap();
+    let _ = runtime.recv_timeout(Duration::from_secs(1));
+    let cycle = VadCaptureCycleId::new(42);
+
+    runtime
+        .send(
+            lease,
+            VadCommand::Push {
+                cycle,
+                pcm: PcmF32Mono::new(vec![0.0; 960], 16_000),
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        runtime.recv_timeout(Duration::from_secs(1)),
+        Some(VadWorkerEvent::Probability { cycle: event_cycle, .. }) if event_cycle == cycle
+    ));
+
+    runtime.send(lease, VadCommand::Reset { cycle }).unwrap();
+    assert!(matches!(
+        runtime.recv_timeout(Duration::from_secs(1)),
+        Some(VadWorkerEvent::ResetDone { cycle: event_cycle, .. }) if event_cycle == cycle
     ));
 }

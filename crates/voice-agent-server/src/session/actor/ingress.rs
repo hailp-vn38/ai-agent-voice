@@ -102,8 +102,17 @@ impl SessionActor {
                         let Some((lease, _)) = self.vad_session else {
                             return false;
                         };
+                        let Some(cycle) = self.vad_cycle else {
+                            return false;
+                        };
                         self.auto_retention.push(&pcm);
-                        match self.vad_runtime.send(lease, VadCommand::Push(pcm.clone())) {
+                        match self.vad_runtime.send(
+                            lease,
+                            VadCommand::Push {
+                                cycle,
+                                pcm: pcm.clone(),
+                            },
+                        ) {
                             Ok(()) => {}
                             Err(crate::workers::VadWorkerError::QueueFull) => {
                                 self.fail_closed();

@@ -310,6 +310,82 @@ struct BoundaryVadSession {
     frames: usize,
 }
 
+struct DelayedOnsetVad;
+
+impl VadProvider for DelayedOnsetVad {
+    fn open(
+        &self,
+    ) -> Result<
+        Box<dyn voice_agent_server::providers::VadSession>,
+        voice_agent_server::providers::VadError,
+    > {
+        Ok(Box::new(DelayedOnsetVadSession { frames: 0 }))
+    }
+
+    fn adapter(&self) -> &'static str {
+        "delayed-onset"
+    }
+}
+
+struct DelayedOnsetVadSession {
+    frames: usize,
+}
+
+impl voice_agent_server::providers::VadSession for DelayedOnsetVadSession {
+    fn push(
+        &mut self,
+        input: voice_agent_server::providers::VadInput,
+    ) -> Result<
+        voice_agent_server::providers::VadProbability,
+        voice_agent_server::providers::VadError,
+    > {
+        self.frames += 1;
+        Ok(voice_agent_server::providers::VadProbability {
+            start_sample: input.start_sample,
+            end_sample: input.start_sample + 512,
+            probability: (self.frames >= 2) as u8 as f32,
+        })
+    }
+
+    fn reset(&mut self) -> Result<(), voice_agent_server::providers::VadError> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), voice_agent_server::providers::VadError> {
+        Ok(())
+    }
+}
+
+struct RecordingAsr {
+    pushed_samples: Arc<AtomicUsize>,
+}
+
+impl AsrProvider for RecordingAsr {
+    fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
+        Ok(Box::new(RecordingAsrSession {
+            pushed_samples: Arc::clone(&self.pushed_samples),
+        }))
+    }
+}
+
+struct RecordingAsrSession {
+    pushed_samples: Arc<AtomicUsize>,
+}
+
+impl AsrSession for RecordingAsrSession {
+    fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
+        self.pushed_samples
+            .fetch_add(pcm.samples().len(), Ordering::Relaxed);
+        Ok(Vec::new())
+    }
+
+    fn finish(&mut self) -> Result<AsrResult, AsrError> {
+        Ok(AsrResult::new("unused"))
+    }
+
+    fn cancel(&mut self) {}
+}
+
 impl voice_agent_server::providers::VadSession for BoundaryVadSession {
     fn push(
         &mut self,
@@ -471,6 +547,40 @@ fn repeated_auto_start_rearms_the_pinned_vad_lease_with_one_worker_slot() {
 }
 
 #[test]
+fn repeated_realtime_start_rearms_the_pinned_vad_lease_with_one_worker_slot() {
+    let opens = Arc::new(AtomicUsize::new(0));
+    let resets = Arc::new(AtomicUsize::new(0));
+    let closes = Arc::new(AtomicUsize::new(0));
+    let vad = Arc::new(VadWorkerRuntime::new(
+        Arc::new(CountingVad {
+            opens: Arc::clone(&opens),
+            resets: Arc::clone(&resets),
+            closes: Arc::clone(&closes),
+        }),
+        WorkerRuntimeConfig {
+            max_workers: 1,
+            command_capacity: 8,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_secs(1),
+        },
+    ));
+    let mut actor = auto_actor_with_counting_vad(vad);
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Realtime,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Realtime,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+
+    assert_eq!(opens.load(Ordering::Relaxed), 1);
+    assert_eq!(resets.load(Ordering::Relaxed), 1);
+    assert_eq!(closes.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn abort_in_auto_rearms_the_pinned_vad_lease_instead_of_closing_it() {
     let opens = Arc::new(AtomicUsize::new(0));
     let resets = Arc::new(AtomicUsize::new(0));
@@ -583,6 +693,132 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
     // lease usable again rather than closing the WebSocket on its first Push.
     assert!(actor.on_binary(packet.as_bytes().to_vec()));
     assert_eq!(actor.phase(), SessionPhase::Listening);
+}
+
+#[test]
+fn auto_retains_pre_roll_and_all_pcm_arrived_while_vad_events_lag() {
+    let (control, _) = mpsc::channel(2);
+    let (audio, _) = mpsc::channel(1);
+    let config = WorkerRuntimeConfig {
+        max_workers: 1,
+        command_capacity: 8,
+        final_timeout: Duration::from_secs(1),
+        cleanup_grace: Duration::from_secs(1),
+    };
+    let pushed_samples = Arc::new(AtomicUsize::new(0));
+    let mut actor = SessionActor::new_with_runtimes_and_limiter(
+        "retention".into(),
+        control,
+        audio,
+        4,
+        20,
+        SessionRuntimes {
+            asr: Arc::new(AsrWorkerRuntime::new(
+                Arc::new(RecordingAsr {
+                    pushed_samples: Arc::clone(&pushed_samples),
+                }),
+                config.clone(),
+            )),
+            vad: Arc::new(VadWorkerRuntime::new(Arc::new(DelayedOnsetVad), config)),
+            llm: Arc::new(LlmRuntime::new(
+                Arc::new(UnavailableLlm),
+                1,
+                Duration::from_secs(60),
+            )),
+            tts: unavailable_tts_runtime(),
+            active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
+            vad_segmenter_config: VadSegmenterConfig {
+                speech_threshold: 0.5,
+                exit_threshold: 0.35,
+                min_speech_samples: 512,
+                end_silence_samples: 9_600,
+            },
+            pre_roll_samples: 480,
+        },
+    )
+    .unwrap();
+    let packet = uplink_packet();
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    for _ in 0..5 {
+        assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    }
+    for _ in 0..100 {
+        actor.pump_workers();
+        if pushed_samples.load(Ordering::Relaxed) != 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // The second 512-sample VAD window confirms onset at 512; pre-roll begins at 32.
+    // All five 960-sample frames arrived before the delayed semantic event, so ASR receives
+    // the complete retained range [32, 4_800).
+    assert_eq!(pushed_samples.load(Ordering::Relaxed), 4_768);
+}
+
+#[test]
+fn stale_vad_probability_before_reset_does_not_open_asr_for_the_new_cycle() {
+    let (control, _) = mpsc::channel(2);
+    let (audio, _) = mpsc::channel(1);
+    let config = WorkerRuntimeConfig {
+        max_workers: 1,
+        command_capacity: 8,
+        final_timeout: Duration::from_secs(1),
+        cleanup_grace: Duration::from_secs(1),
+    };
+    let pushed_samples = Arc::new(AtomicUsize::new(0));
+    let mut actor = SessionActor::new_with_runtimes_and_limiter(
+        "stale-cycle".into(),
+        control,
+        audio,
+        4,
+        20,
+        SessionRuntimes {
+            asr: Arc::new(AsrWorkerRuntime::new(
+                Arc::new(RecordingAsr {
+                    pushed_samples: Arc::clone(&pushed_samples),
+                }),
+                config.clone(),
+            )),
+            vad: Arc::new(VadWorkerRuntime::new(Arc::new(DelayedOnsetVad), config)),
+            llm: Arc::new(LlmRuntime::new(
+                Arc::new(UnavailableLlm),
+                1,
+                Duration::from_secs(60),
+            )),
+            tts: unavailable_tts_runtime(),
+            active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
+            vad_segmenter_config: VadSegmenterConfig {
+                speech_threshold: 0.5,
+                exit_threshold: 0.35,
+                min_speech_samples: 512,
+                end_silence_samples: 9_600,
+            },
+            pre_roll_samples: 480,
+        },
+    )
+    .unwrap();
+    let packet = uplink_packet();
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    assert!(actor.on_binary(packet.as_bytes().to_vec()));
+    // Do not pump between the audio and reset: the old cycle's probability is now delayed
+    // in the actor mailbox, behind the semantic reset boundary.
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    wait_for_phase(&mut actor, SessionPhase::Listening);
+
+    assert_eq!(pushed_samples.load(Ordering::Relaxed), 0);
+    assert!(actor.dialogue_history().is_empty());
 }
 
 #[test]
