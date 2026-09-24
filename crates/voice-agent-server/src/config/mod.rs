@@ -7,7 +7,7 @@ use url::Url;
 
 mod validation;
 
-pub use validation::ConfigError;
+pub use validation::{BenchmarkTarget, ConfigError};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AppConfig {

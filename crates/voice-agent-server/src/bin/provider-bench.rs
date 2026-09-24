@@ -2,7 +2,7 @@ use std::{env, fs, io::Write, path::PathBuf, process::ExitCode, time::Instant};
 
 use voice_agent_server::{
     benchmark::{BenchmarkErrorCategory, TtsBenchmarkMode, TtsBenchmarkResult, run_tts_benchmark},
-    config::AppConfig,
+    config::{AppConfig, BenchmarkTarget},
     models::{prepare, verify_installed},
     providers::compiled_provider_registry,
 };
@@ -89,9 +89,11 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("config.toml"))
     });
-    let config = AppConfig::load(&config_path).map_err(|_| BenchmarkErrorCategory::Config)?;
-    config
-        .validate()
+    let target = match args.mode {
+        TtsBenchmarkMode::Provider => BenchmarkTarget::TtsProvider,
+        TtsBenchmarkMode::Delivery => BenchmarkTarget::TtsDelivery,
+    };
+    let config = AppConfig::load_for_benchmark(&config_path, target)
         .map_err(|_| BenchmarkErrorCategory::Config)?;
     let registry = compiled_provider_registry();
     let factory = registry

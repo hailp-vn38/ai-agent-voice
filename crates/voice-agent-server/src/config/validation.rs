@@ -12,13 +12,42 @@ pub enum ConfigError {
     Validation(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BenchmarkTarget {
+    TtsProvider,
+    TtsDelivery,
+}
+
 impl AppConfig {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        let config = Self::parse_and_resolve(path)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn parse_and_resolve(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         let mut config: Self = toml::from_str(&fs::read_to_string(path)?)?;
         config.resolve_agent(path)?;
-        config.validate()?;
         Ok(config)
+    }
+
+    pub fn load_for_benchmark(
+        path: impl AsRef<Path>,
+        target: BenchmarkTarget,
+    ) -> Result<Self, ConfigError> {
+        let config = Self::parse_and_resolve(path)?;
+        config.validate_for_benchmark(target)?;
+        Ok(config)
+    }
+
+    pub fn validate_for_benchmark(&self, target: BenchmarkTarget) -> Result<(), ConfigError> {
+        validate_deployment(self)?;
+        validate_tts_provider(self)?;
+        if target == BenchmarkTarget::TtsDelivery {
+            validate_audio(self)?;
+        }
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -252,6 +281,11 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             "OpenAI base URL and model must be valid".into(),
         ));
     }
+    validate_tts_provider(config)
+}
+
+fn validate_tts_provider(config: &AppConfig) -> Result<(), ConfigError> {
+    let registry = crate::providers::compiled_provider_registry();
     registry
         .tts_factory(&config.providers.tts.adapter)
         .map_err(|_| {
