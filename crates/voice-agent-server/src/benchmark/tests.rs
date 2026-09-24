@@ -1,7 +1,10 @@
-use super::{TtsBenchmarkMode, run_tts_benchmark};
+use super::{AsrFeedMode, TtsBenchmarkMode, run_asr_provider, run_tts_benchmark, run_vad_provider};
 use crate::{
     audio::PcmF32Mono,
-    providers::{TtsError, TtsWorker},
+    providers::{
+        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, TtsError, TtsWorker, VadError,
+        VadInput, VadProbability, VadProvider, VadSession,
+    },
 };
 use std::sync::atomic::AtomicBool;
 
@@ -62,4 +65,89 @@ fn invalid_pcm_is_rejected() {
     }
     let mut worker = Invalid;
     assert!(run_tts_benchmark(&mut worker, TtsBenchmarkMode::Provider, 0, 1).is_err());
+}
+
+struct Asr;
+struct AsrSessionFake;
+impl AsrProvider for Asr {
+    fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
+        Ok(Box::new(AsrSessionFake))
+    }
+}
+impl AsrSession for AsrSessionFake {
+    fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
+        assert_eq!(pcm.samples().len(), 960);
+        Ok(vec![AsrEvent::Partial("partial".into())])
+    }
+    fn finish(&mut self) -> Result<AsrResult, AsrError> {
+        Ok(AsrResult::new("final"))
+    }
+    fn cancel(&mut self) {}
+}
+
+#[test]
+fn asr_runner_uses_canonical_frames_and_rejects_a_partial_frame() {
+    let report = run_asr_provider(&Asr, &vec![0.0; 1_920], AsrFeedMode::Burst).unwrap();
+    assert_eq!(report.partial_count, 2);
+    assert_eq!(report.final_text_chars, 5);
+    assert!(run_asr_provider(&Asr, &vec![0.0; 961], AsrFeedMode::Burst).is_err());
+}
+
+struct Vad;
+struct VadSessionFake;
+impl VadProvider for Vad {
+    fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
+        Ok(Box::new(VadSessionFake))
+    }
+    fn adapter(&self) -> &'static str {
+        "fake"
+    }
+}
+impl VadSession for VadSessionFake {
+    fn push(&mut self, input: VadInput) -> Result<VadProbability, VadError> {
+        assert_eq!(input.pcm.len(), 512);
+        Ok(VadProbability {
+            start_sample: input.start_sample,
+            end_sample: input.start_sample + 512,
+            probability: 0.5,
+        })
+    }
+    fn reset(&mut self) -> Result<(), VadError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn vad_runner_reports_every_canonical_frame_and_rejects_a_partial_frame() {
+    let report = run_vad_provider(&Vad, &vec![0.0; 1_024]).unwrap();
+    assert_eq!(report.frame_latencies_us.len(), 2);
+    assert!(report.frames_per_second > 0.0);
+    assert!(run_vad_provider(&Vad, &vec![0.0; 513]).is_err());
+}
+
+#[test]
+fn vad_runner_rejects_a_provider_that_mutates_the_input_timeline() {
+    struct InvalidTimeline;
+    struct InvalidTimelineSession;
+    impl VadProvider for InvalidTimeline {
+        fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
+            Ok(Box::new(InvalidTimelineSession))
+        }
+        fn adapter(&self) -> &'static str {
+            "invalid-timeline"
+        }
+    }
+    impl VadSession for InvalidTimelineSession {
+        fn push(&mut self, _: VadInput) -> Result<VadProbability, VadError> {
+            Ok(VadProbability {
+                start_sample: 1,
+                end_sample: 513,
+                probability: 0.5,
+            })
+        }
+        fn reset(&mut self) -> Result<(), VadError> {
+            Ok(())
+        }
+    }
+    assert!(run_vad_provider(&InvalidTimeline, &vec![0.0; 512]).is_err());
 }

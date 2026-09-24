@@ -14,8 +14,10 @@ pub enum ConfigError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchmarkTarget {
+    AsrProvider,
     TtsProvider,
     TtsDelivery,
+    VadProvider,
 }
 
 impl AppConfig {
@@ -43,11 +45,15 @@ impl AppConfig {
 
     pub fn validate_for_benchmark(&self, target: BenchmarkTarget) -> Result<(), ConfigError> {
         validate_deployment(self)?;
-        validate_tts_provider(self)?;
-        if target == BenchmarkTarget::TtsDelivery {
-            validate_audio(self)?;
+        match target {
+            BenchmarkTarget::AsrProvider => validate_asr_provider(self),
+            BenchmarkTarget::TtsProvider => validate_tts_provider(self),
+            BenchmarkTarget::TtsDelivery => {
+                validate_tts_provider(self)?;
+                validate_audio(self)
+            }
+            BenchmarkTarget::VadProvider => validate_vad_provider(self),
         }
-        Ok(())
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -195,64 +201,9 @@ fn validate_workers(config: &AppConfig) -> Result<(), ConfigError> {
 }
 
 fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
+    validate_vad_provider(config)?;
+    validate_asr_provider(config)?;
     let registry = crate::providers::compiled_provider_registry();
-    registry
-        .vad_factory(&config.providers.vad.adapter)
-        .map_err(|_| {
-            ConfigError::Validation(format!(
-                "VAD adapter `{}` is not compiled into this binary",
-                config.providers.vad.adapter
-            ))
-        })?;
-    let vad = config.providers.vad.silero_onnx.as_ref().ok_or_else(|| {
-        ConfigError::Validation(format!(
-            "providers.vad.{} options are required",
-            config.providers.vad.adapter
-        ))
-    })?;
-    if vad.min_speech_ms == 0
-        || vad.end_silence_ms == 0
-        || vad.pre_roll_ms > config.audio.max_utterance_ms
-        || vad.num_threads <= 0
-        || !vad.speech_threshold.is_finite()
-        || !vad.exit_threshold.is_finite()
-        || !(0.0..=1.0).contains(&vad.exit_threshold)
-        || vad.exit_threshold >= vad.speech_threshold
-        || vad.speech_threshold > 1.0
-    {
-        return Err(ConfigError::Validation(
-            "VAD thresholds and segmentation durations must be valid".into(),
-        ));
-    }
-    registry
-        .asr_factory(&config.providers.asr.adapter)
-        .map_err(|_| {
-            ConfigError::Validation(format!(
-                "ASR adapter `{}` is not compiled into this binary",
-                config.providers.asr.adapter
-            ))
-        })?;
-    let asr = config
-        .providers
-        .asr
-        .zipformer_sherpa
-        .as_ref()
-        .ok_or_else(|| {
-            ConfigError::Validation(format!(
-                "providers.asr.{} options are required",
-                config.providers.asr.adapter
-            ))
-        })?;
-    if asr.num_threads <= 0 || asr.decoding_method.is_empty() {
-        return Err(ConfigError::Validation(
-            "ASR runtime options must be valid".into(),
-        ));
-    }
-    if vad.model.is_empty() || asr.model.is_empty() {
-        return Err(ConfigError::Validation(
-            "provider model identities must be non-empty".into(),
-        ));
-    }
     registry
         .llm_factory(&config.providers.llm.adapter)
         .map_err(|_| {
@@ -282,6 +233,78 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     validate_tts_provider(config)
+}
+
+fn validate_vad_provider(config: &AppConfig) -> Result<(), ConfigError> {
+    let registry = crate::providers::compiled_provider_registry();
+    registry
+        .vad_factory(&config.providers.vad.adapter)
+        .map_err(|_| {
+            ConfigError::Validation(format!(
+                "VAD adapter `{}` is not compiled into this binary",
+                config.providers.vad.adapter
+            ))
+        })?;
+    let vad = config.providers.vad.silero_onnx.as_ref().ok_or_else(|| {
+        ConfigError::Validation(format!(
+            "providers.vad.{} options are required",
+            config.providers.vad.adapter
+        ))
+    })?;
+    if vad.min_speech_ms == 0
+        || vad.end_silence_ms == 0
+        || vad.pre_roll_ms > config.audio.max_utterance_ms
+        || vad.num_threads <= 0
+        || !vad.speech_threshold.is_finite()
+        || !vad.exit_threshold.is_finite()
+        || !(0.0..=1.0).contains(&vad.exit_threshold)
+        || vad.exit_threshold >= vad.speech_threshold
+        || vad.speech_threshold > 1.0
+    {
+        return Err(ConfigError::Validation(
+            "VAD thresholds and segmentation durations must be valid".into(),
+        ));
+    }
+    if vad.model.is_empty() {
+        return Err(ConfigError::Validation(
+            "VAD provider model identity must be non-empty".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_asr_provider(config: &AppConfig) -> Result<(), ConfigError> {
+    let registry = crate::providers::compiled_provider_registry();
+    registry
+        .asr_factory(&config.providers.asr.adapter)
+        .map_err(|_| {
+            ConfigError::Validation(format!(
+                "ASR adapter `{}` is not compiled into this binary",
+                config.providers.asr.adapter
+            ))
+        })?;
+    let asr = config
+        .providers
+        .asr
+        .zipformer_sherpa
+        .as_ref()
+        .ok_or_else(|| {
+            ConfigError::Validation(format!(
+                "providers.asr.{} options are required",
+                config.providers.asr.adapter
+            ))
+        })?;
+    if asr.num_threads <= 0 || asr.decoding_method.is_empty() {
+        return Err(ConfigError::Validation(
+            "ASR runtime options must be valid".into(),
+        ));
+    }
+    if asr.model.is_empty() {
+        return Err(ConfigError::Validation(
+            "ASR provider model identity must be non-empty".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_tts_provider(config: &AppConfig) -> Result<(), ConfigError> {

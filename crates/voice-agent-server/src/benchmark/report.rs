@@ -64,3 +64,35 @@ pub struct TtsBenchmarkResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overall_elapsed_ms: Option<f64>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AsrBenchmarkResult {
+    pub schema_version: u8,
+    pub status: &'static str,
+    pub workload_version: String,
+    pub feed: super::AsrFeedMode,
+    pub warmup_runs: usize,
+    pub iterations: usize,
+    pub samples: Vec<super::AsrRunMetrics>,
+    pub session_open_ms: MetricSummary,
+    pub first_partial_compute_ms: Option<MetricSummary>,
+    pub first_partial_wall_ms: Option<MetricSummary>,
+    pub finish_ms: MetricSummary,
+    pub compute_total_ms: MetricSummary,
+    pub wall_total_ms: MetricSummary,
+    pub compute_rtf: MetricSummary,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VadBenchmarkResult {
+    pub schema_version: u8,
+    pub status: &'static str,
+    pub workload_version: String,
+    pub warmup_runs: usize,
+    pub iterations: usize,
+    pub samples: Vec<super::VadRunMetrics>,
+    pub session_open_ms: MetricSummary,
+    pub frame_latency_us: MetricSummary,
+    pub frames_per_second: MetricSummary,
+    pub compute_rtf: MetricSummary,
+}
