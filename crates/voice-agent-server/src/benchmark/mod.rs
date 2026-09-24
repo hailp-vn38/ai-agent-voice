@@ -79,7 +79,10 @@ pub struct TtsRunMetrics {
     pub provider_audio_duration_ms: f64,
     pub ttfa_ms: Option<f64>,
     pub first_packet_ms: Option<f64>,
+    pub synthesis_with_delivery_ms: Option<f64>,
+    pub delivery_total_ms: Option<f64>,
     pub packet_count: Option<u64>,
+    pub opus_bytes: Option<u64>,
     pub delivery_audio_duration_ms: Option<u64>,
     pub rtf: f64,
 }
@@ -108,6 +111,10 @@ pub struct TtsBenchmarkResult {
     pub ttfa_ms: Option<MetricSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_packet_ms: Option<MetricSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synthesis_with_delivery_ms: Option<MetricSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_total_ms: Option<MetricSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -154,6 +161,15 @@ pub fn run_tts_benchmark(
         .then(|| summarize(samples.iter().filter_map(|sample| sample.ttfa_ms)));
     let first_packet_ms = (mode == TtsBenchmarkMode::Delivery)
         .then(|| summarize(samples.iter().filter_map(|sample| sample.first_packet_ms)));
+    let synthesis_with_delivery_ms = (mode == TtsBenchmarkMode::Delivery).then(|| {
+        summarize(
+            samples
+                .iter()
+                .filter_map(|sample| sample.synthesis_with_delivery_ms),
+        )
+    });
+    let delivery_total_ms = (mode == TtsBenchmarkMode::Delivery)
+        .then(|| summarize(samples.iter().filter_map(|sample| sample.delivery_total_ms)));
     Ok(TtsBenchmarkResult {
         schema_version: 1,
         status: "passed",
@@ -166,6 +182,8 @@ pub fn run_tts_benchmark(
         rtf,
         ttfa_ms,
         first_packet_ms,
+        synthesis_with_delivery_ms,
+        delivery_total_ms,
         adapter: None,
         model_identity: None,
         model_preparation_ms: None,
@@ -186,6 +204,7 @@ fn run_once(
     let mut first_pcm_ms = None;
     let mut first_packet_ms = None;
     let mut packets = 0_u64;
+    let mut opus_bytes = 0_u64;
     let mut callback_error = None;
     let mut pipeline = (mode == TtsBenchmarkMode::Delivery)
         .then(|| CanonicalDownlinkPipeline::new(MAX_DOWNLINK_OPUS_PACKET_BYTES))
@@ -212,11 +231,16 @@ fn run_once(
                 if !ready.is_empty() {
                     first_packet_ms.get_or_insert_with(|| elapsed_ms(started));
                     packets += ready.len() as u64;
+                    opus_bytes += ready
+                        .iter()
+                        .map(|packet| packet.as_bytes().len() as u64)
+                        .sum::<u64>();
                 }
             }
             Ok(())
         })
         .map_err(|_| callback_error.unwrap_or(BenchmarkErrorCategory::Synthesis))?;
+    let synthesis_with_delivery_ms = elapsed_ms(started);
     if pcm_chunks == 0 || provider_samples == 0 {
         return Err(BenchmarkErrorCategory::InvalidPcm);
     }
@@ -225,6 +249,10 @@ fn run_once(
         if !ready.is_empty() {
             first_packet_ms.get_or_insert_with(|| elapsed_ms(started));
             packets += ready.len() as u64;
+            opus_bytes += ready
+                .iter()
+                .map(|packet| packet.as_bytes().len() as u64)
+                .sum::<u64>();
         }
         if packets == 0 {
             return Err(BenchmarkErrorCategory::OpusEncode);
@@ -241,7 +269,11 @@ fn run_once(
             .then(|| first_pcm_ms.expect("non-empty PCM sets first PCM time")),
         first_packet_ms: (mode == TtsBenchmarkMode::Delivery)
             .then(|| first_packet_ms.expect("delivery with packets sets first packet time")),
+        synthesis_with_delivery_ms: (mode == TtsBenchmarkMode::Delivery)
+            .then_some(synthesis_with_delivery_ms),
+        delivery_total_ms: (mode == TtsBenchmarkMode::Delivery).then_some(processing_ms),
         packet_count: (mode == TtsBenchmarkMode::Delivery).then_some(packets),
+        opus_bytes: (mode == TtsBenchmarkMode::Delivery).then_some(opus_bytes),
         delivery_audio_duration_ms: (mode == TtsBenchmarkMode::Delivery).then_some(packets * 60),
         rtf: processing_ms / provider_audio_duration_ms,
     })
@@ -336,6 +368,14 @@ mod tests {
                 .all(|sample| sample.packet_count == Some(1))
         );
         assert!(result.first_packet_ms.is_some());
+        assert!(result.delivery_total_ms.is_some());
+        assert!(result.synthesis_with_delivery_ms.is_some());
+        assert!(
+            result
+                .samples
+                .iter()
+                .all(|sample| sample.opus_bytes.is_some_and(|bytes| bytes > 0))
+        );
     }
 
     #[test]
