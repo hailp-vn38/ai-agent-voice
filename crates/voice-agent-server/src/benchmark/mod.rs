@@ -1,12 +1,12 @@
 //! Privacy-safe TTS provider benchmark primitives.
 
-use std::time::Instant;
+use std::{sync::atomic::AtomicBool, time::Instant};
 
 use serde::{Serialize, Serializer};
 
 use crate::{
     audio::{CanonicalDownlinkPipeline, MAX_DOWNLINK_OPUS_PACKET_BYTES, PcmF32Mono},
-    providers::{TtsError, TtsProvider},
+    providers::{TtsError, TtsWorker},
 };
 
 pub const TTS_WORKLOAD_VERSION: &str = "tts-vi-v1";
@@ -43,6 +43,7 @@ pub enum BenchmarkErrorCategory {
     Resample,
     OpusInit,
     OpusEncode,
+    WorkerReset,
     OutputIo,
 }
 
@@ -64,6 +65,7 @@ impl BenchmarkErrorCategory {
             Self::Resample => "resample",
             Self::OpusInit => "opus_init",
             Self::OpusEncode => "opus_encode",
+            Self::WorkerReset => "worker_reset",
             Self::OutputIo => "output_io",
         }
     }
@@ -115,26 +117,37 @@ pub struct TtsBenchmarkResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_build_and_readiness_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_open_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison_qualified: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overall_elapsed_ms: Option<f64>,
 }
 
 pub fn run_tts_benchmark(
-    provider: &dyn TtsProvider,
+    worker: &mut dyn TtsWorker,
     mode: TtsBenchmarkMode,
     warmup_runs: usize,
     runs: usize,
 ) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
     for _ in 0..warmup_runs {
-        run_once(provider, mode).map_err(|_| BenchmarkErrorCategory::Warmup)?;
+        let result = run_once(worker, mode);
+        worker
+            .reset()
+            .map_err(|_| BenchmarkErrorCategory::WorkerReset)?;
+        result.map_err(|_| BenchmarkErrorCategory::Warmup)?;
     }
     if runs == 0 {
         return Err(BenchmarkErrorCategory::Config);
     }
-    let samples = (0..runs)
-        .map(|_| run_once(provider, mode))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut samples = Vec::with_capacity(runs);
+    for _ in 0..runs {
+        let result = run_once(worker, mode);
+        worker
+            .reset()
+            .map_err(|_| BenchmarkErrorCategory::WorkerReset)?;
+        samples.push(result?);
+    }
     let processing_ms = summarize(samples.iter().map(|sample| sample.processing_ms));
     let rtf = summarize(samples.iter().map(|sample| sample.rtf));
     let ttfa_ms = (mode == TtsBenchmarkMode::Provider)
@@ -157,13 +170,14 @@ pub fn run_tts_benchmark(
         model_identity: None,
         model_preparation_ms: None,
         provider_build_and_readiness_ms: None,
+        worker_open_ms: None,
         comparison_qualified: None,
         overall_elapsed_ms: None,
     })
 }
 
 fn run_once(
-    provider: &dyn TtsProvider,
+    worker: &mut dyn TtsWorker,
     mode: TtsBenchmarkMode,
 ) -> Result<TtsRunMetrics, BenchmarkErrorCategory> {
     let started = Instant::now();
@@ -177,8 +191,9 @@ fn run_once(
         .then(|| CanonicalDownlinkPipeline::new(MAX_DOWNLINK_OPUS_PACKET_BYTES))
         .transpose()
         .map_err(|_| BenchmarkErrorCategory::OpusInit)?;
-    provider
-        .synthesize_stream(TTS_WORKLOAD, &mut |pcm| {
+    let cancelled = AtomicBool::new(false);
+    worker
+        .synthesize(TTS_WORKLOAD, &cancelled, &mut |pcm| {
             if validate_pcm(&pcm).is_err() {
                 callback_error = Some(BenchmarkErrorCategory::InvalidPcm);
                 return Err(TtsError::Failed);
@@ -274,36 +289,45 @@ fn summarize(values: impl Iterator<Item = f64>) -> MetricSummary {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicBool;
 
     use sha2::{Digest, Sha256};
 
     use super::{TTS_WORKLOAD, TTS_WORKLOAD_SHA256, TtsBenchmarkMode, run_tts_benchmark};
     use crate::{
         audio::PcmF32Mono,
-        providers::{TtsError, TtsProvider},
+        providers::{TtsError, TtsWorker},
     };
 
-    struct CountingProvider(AtomicUsize);
-    impl TtsProvider for CountingProvider {
-        fn adapter(&self) -> &'static str {
-            "fake"
-        }
-        fn synthesize_stream(
-            &self,
+    struct CountingWorker {
+        syntheses: usize,
+        resets: usize,
+    }
+    impl TtsWorker for CountingWorker {
+        fn synthesize(
+            &mut self,
             _: &str,
+            _: &AtomicBool,
             on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
         ) -> Result<(), TtsError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.syntheses += 1;
             on_pcm(PcmF32Mono::new(vec![0.25; 2_880], 48_000))
+        }
+        fn reset(&mut self) -> Result<(), TtsError> {
+            self.resets += 1;
+            Ok(())
         }
     }
 
     #[test]
     fn warmup_is_excluded_and_delivery_finalizes_the_tail() {
-        let provider = CountingProvider(AtomicUsize::new(0));
-        let result = run_tts_benchmark(&provider, TtsBenchmarkMode::Delivery, 1, 2).unwrap();
-        assert_eq!(provider.0.load(Ordering::SeqCst), 3);
+        let mut worker = CountingWorker {
+            syntheses: 0,
+            resets: 0,
+        };
+        let result = run_tts_benchmark(&mut worker, TtsBenchmarkMode::Delivery, 1, 2).unwrap();
+        assert_eq!(worker.syntheses, 3);
+        assert_eq!(worker.resets, 3);
         assert_eq!(result.samples.len(), 2);
         assert!(
             result
@@ -327,30 +351,35 @@ mod tests {
 
     #[test]
     fn invalid_provider_pcm_fails_the_current_mode_without_a_sample() {
-        struct InvalidPcmProvider;
-        impl TtsProvider for InvalidPcmProvider {
-            fn adapter(&self) -> &'static str {
-                "invalid-pcm"
-            }
-            fn synthesize_stream(
-                &self,
+        struct InvalidPcmWorker;
+        impl TtsWorker for InvalidPcmWorker {
+            fn synthesize(
+                &mut self,
                 _: &str,
+                _: &AtomicBool,
                 on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
             ) -> Result<(), TtsError> {
                 on_pcm(PcmF32Mono::new(vec![f32::NAN], 48_000))
             }
+            fn reset(&mut self) -> Result<(), TtsError> {
+                Ok(())
+            }
         }
 
+        let mut worker = InvalidPcmWorker;
         assert!(matches!(
-            run_tts_benchmark(&InvalidPcmProvider, TtsBenchmarkMode::Provider, 0, 1),
+            run_tts_benchmark(&mut worker, TtsBenchmarkMode::Provider, 0, 1),
             Err(super::BenchmarkErrorCategory::InvalidPcm)
         ));
     }
 
     #[test]
     fn report_omits_the_fixed_workload_text_and_p95_for_five_samples() {
-        let provider = CountingProvider(AtomicUsize::new(0));
-        let result = run_tts_benchmark(&provider, TtsBenchmarkMode::Provider, 0, 5).unwrap();
+        let mut worker = CountingWorker {
+            syntheses: 0,
+            resets: 0,
+        };
+        let result = run_tts_benchmark(&mut worker, TtsBenchmarkMode::Provider, 0, 5).unwrap();
         assert_eq!(result.processing_ms.p95, None);
         assert!(
             !serde_json::to_string(&result)

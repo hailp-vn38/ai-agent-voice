@@ -5,7 +5,8 @@ use crate::audio::{
 
 const PROVIDER_SAMPLE_RATE_HZ: u32 = 48_000;
 const FADE_IN_SAMPLES: usize = 48_000 * 8 / 1_000;
-const FADE_OUT_SAMPLES: usize = 48_000 * 10 / 1_000;
+/// The production terminal fade is applied after resampling, so this is 20 ms at 24 kHz.
+const FADE_OUT_SAMPLES: usize = 480;
 
 /// Deterministic provider-PCM to canonical downlink-Opus conversion shared by delivery paths.
 pub struct CanonicalDownlinkPipeline {

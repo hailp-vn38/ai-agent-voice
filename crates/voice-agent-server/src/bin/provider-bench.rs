@@ -132,11 +132,17 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
         .build(options, &config.runtime, &model)
         .map_err(|_| BenchmarkErrorCategory::ProviderBuild)?;
     let provider_build_and_readiness_ms = elapsed_ms(build_started);
-    let mut report = run_tts_benchmark(provider.as_ref(), args.mode, args.warmup_runs, args.runs)?;
+    let worker_open_started = Instant::now();
+    let mut worker = provider
+        .open_worker()
+        .map_err(|_| BenchmarkErrorCategory::ProviderBuild)?;
+    let worker_open_ms = elapsed_ms(worker_open_started);
+    let mut report = run_tts_benchmark(worker.as_mut(), args.mode, args.warmup_runs, args.runs)?;
     report.adapter = Some(factory.adapter().into());
     report.model_identity = Some(model_identity.into());
     report.model_preparation_ms = Some(model_preparation_ms);
     report.provider_build_and_readiness_ms = Some(provider_build_and_readiness_ms);
+    report.worker_open_ms = Some(worker_open_ms);
     report.comparison_qualified = Some(comparison_qualified(
         config.deployment.models.offline,
         args.require_local_models,
@@ -181,6 +187,9 @@ fn write_json_value(
         return Err(BenchmarkErrorCategory::OutputIo);
     }
     let parent = path.parent().ok_or(BenchmarkErrorCategory::OutputIo)?;
+    if !parent.as_os_str().is_empty() {
+        fs::create_dir_all(parent).map_err(|_| BenchmarkErrorCategory::OutputIo)?;
+    }
     let name = path.file_name().ok_or(BenchmarkErrorCategory::OutputIo)?;
     let temporary = parent.join(format!(
         ".{}.{}.tmp",
@@ -270,6 +279,17 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "{\n  \"version\": 1\n}");
         write_json_value(&path, true, &serde_json::json!({"version": 2})).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "{\n  \"version\": 2\n}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn output_creates_a_missing_parent_directory() {
+        let directory = temporary_directory();
+        let path = directory.join("nested").join("report.json");
+
+        write_json_value(&path, false, &serde_json::json!({"version": 1})).unwrap();
+
+        assert_eq!(fs::read_to_string(path).unwrap(), "{\n  \"version\": 1\n}");
         fs::remove_dir_all(directory).unwrap();
     }
 
