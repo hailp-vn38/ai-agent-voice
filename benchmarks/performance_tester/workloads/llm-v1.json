@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "workload_version": "llm-v1",
+  "items": [
+    {
+      "id": "vi-short",
+      "messages": [
+        { "role": "system", "content": "Trả lời bằng tiếng Việt, ngắn gọn." },
+        { "role": "user", "content": "Rust là gì?" }
+      ]
+    }
+  ]
+}

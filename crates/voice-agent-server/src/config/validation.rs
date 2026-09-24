@@ -15,6 +15,7 @@ pub enum ConfigError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchmarkTarget {
     AsrProvider,
+    LlmProvider,
     TtsProvider,
     TtsDelivery,
     VadProvider,
@@ -47,6 +48,7 @@ impl AppConfig {
         validate_deployment(self)?;
         match target {
             BenchmarkTarget::AsrProvider => validate_asr_provider(self),
+            BenchmarkTarget::LlmProvider => validate_llm_provider(self),
             BenchmarkTarget::TtsProvider => validate_tts_provider(self),
             BenchmarkTarget::TtsDelivery => {
                 validate_tts_provider(self)?;
@@ -203,6 +205,11 @@ fn validate_workers(config: &AppConfig) -> Result<(), ConfigError> {
 fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
     validate_vad_provider(config)?;
     validate_asr_provider(config)?;
+    validate_llm_provider(config)?;
+    validate_tts_provider(config)
+}
+
+fn validate_llm_provider(config: &AppConfig) -> Result<(), ConfigError> {
     let registry = crate::providers::compiled_provider_registry();
     registry
         .llm_factory(&config.providers.llm.adapter)
@@ -232,7 +239,7 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             "OpenAI base URL and model must be valid".into(),
         ));
     }
-    validate_tts_provider(config)
+    Ok(())
 }
 
 fn validate_vad_provider(config: &AppConfig) -> Result<(), ConfigError> {

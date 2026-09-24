@@ -6,12 +6,15 @@ use std::{
 use serde::Deserialize;
 use voice_agent_server::{
     benchmark::{
-        AsrBenchmarkResult, AsrFeedMode, MetricSummary, VadBenchmarkResult, run_asr_provider,
-        run_vad_provider, summarize,
+        AsrBenchmarkResult, AsrFeedMode, LlmBenchmarkResult, MetricSummary, VadBenchmarkResult,
+        run_asr_provider, run_llm_provider, run_vad_provider, summarize,
     },
     config::{AppConfig, BenchmarkTarget},
     models::prepare,
-    providers::compiled_provider_registry,
+    providers::{
+        compiled_provider_registry,
+        llm::{ChatMessage, LlmRequest},
+    },
 };
 
 #[derive(Deserialize)]
@@ -35,16 +38,125 @@ struct Args {
     output: Option<PathBuf>,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = parse_args()?;
-    let workload = load_workload(&args.workload)?;
-    let audio = load_audio(&args.workload, &workload)?;
     let registry = compiled_provider_registry();
     match args.target.as_str() {
-        "asr" => run_asr(args, workload, audio, registry),
-        "vad" => run_vad(args, workload, audio, registry),
-        _ => anyhow::bail!("target must be asr or vad"),
+        "asr" => {
+            let workload = load_workload(&args.workload)?;
+            let audio = load_audio(&args.workload, &workload)?;
+            run_asr(args, workload, audio, registry)
+        }
+        "vad" => {
+            let workload = load_workload(&args.workload)?;
+            let audio = load_audio(&args.workload, &workload)?;
+            run_vad(args, workload, audio, registry)
+        }
+        "llm" => run_llm(args, registry).await,
+        _ => anyhow::bail!("target must be asr, vad, or llm"),
     }
+}
+
+#[derive(Deserialize)]
+struct LlmWorkload {
+    schema_version: u8,
+    workload_version: String,
+    items: Vec<LlmWorkloadItem>,
+}
+#[derive(Deserialize)]
+struct LlmWorkloadItem {
+    id: String,
+    messages: Vec<LlmWorkloadMessage>,
+}
+#[derive(Deserialize)]
+struct LlmWorkloadMessage {
+    role: String,
+    content: String,
+}
+
+async fn run_llm(
+    args: Args,
+    registry: &voice_agent_server::providers::ProviderRegistry,
+) -> anyhow::Result<()> {
+    let workload: LlmWorkload = serde_json::from_slice(&fs::read(&args.workload)?)?;
+    if workload.schema_version != 1
+        || workload.workload_version.trim().is_empty()
+        || workload.items.is_empty()
+    {
+        anyhow::bail!("LLM workload must have schema_version=1, a version, and at least one item")
+    }
+    if workload
+        .items
+        .iter()
+        .any(|item| item.id.trim().is_empty() || item.messages.is_empty())
+    {
+        anyhow::bail!("LLM workload item id and messages must not be empty")
+    }
+    let config = AppConfig::load_for_benchmark(&args.config, BenchmarkTarget::LlmProvider)?;
+    let factory = registry.llm_factory(&config.providers.llm.adapter)?;
+    let provider = factory.build(&config.providers.llm)?;
+    for item in &workload.items {
+        for _ in 0..args.warmup {
+            let sample = run_llm_provider(provider.as_ref(), request_from_item(item)?).await?;
+            qualify_llm(&sample)?;
+        }
+    }
+    let mut samples = Vec::new();
+    for _ in 0..args.iterations {
+        for item in &workload.items {
+            let sample = run_llm_provider(provider.as_ref(), request_from_item(item)?).await?;
+            qualify_llm(&sample)?;
+            samples.push(sample);
+        }
+    }
+    let result = LlmBenchmarkResult {
+        schema_version: 1,
+        status: "passed",
+        workload_version: workload.workload_version,
+        warmup_runs: args.warmup,
+        iterations: args.iterations,
+        ttft_ms: optional_summary(samples.iter().filter_map(|sample| sample.ttft_ms)),
+        total_ms: summary(samples.iter().map(|sample| sample.total_ms)),
+        text_delta_count: summary(samples.iter().map(|sample| sample.text_delta_count as f64)),
+        output_chars: summary(samples.iter().map(|sample| sample.output_chars as f64)),
+        tool_call_count: summary(samples.iter().map(|sample| sample.tool_call_count as f64)),
+        samples,
+    };
+    publish(&result, args.output.as_deref())
+}
+
+fn request_from_item(item: &LlmWorkloadItem) -> anyhow::Result<LlmRequest> {
+    let messages = item
+        .messages
+        .iter()
+        .map(|message| match message.role.as_str() {
+            "system" => Ok(ChatMessage::System {
+                content: message.content.clone(),
+            }),
+            "user" => Ok(ChatMessage::User {
+                content: message.content.clone(),
+            }),
+            "assistant" => Ok(ChatMessage::AssistantText {
+                content: message.content.clone(),
+            }),
+            _ => anyhow::bail!("LLM workload role must be system, user, or assistant"),
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if messages.iter().any(|message| matches!(message, ChatMessage::System { content } | ChatMessage::User { content } | ChatMessage::AssistantText { content } if content.trim().is_empty())) {
+        anyhow::bail!("LLM workload message content must not be empty")
+    }
+    Ok(LlmRequest {
+        messages,
+        tools: Vec::new(),
+    })
+}
+
+fn qualify_llm(sample: &voice_agent_server::benchmark::LlmRunMetrics) -> anyhow::Result<()> {
+    if sample.ttft_ms.is_none() {
+        anyhow::bail!("LLM qualification failed: no non-empty text delta")
+    }
+    Ok(())
 }
 
 fn run_asr(
@@ -191,7 +303,7 @@ fn parse_args() -> anyhow::Result<Args> {
 
 fn usage() -> anyhow::Error {
     anyhow::anyhow!(
-        "usage: provider-bench-av <asr|vad> --workload <json> [--config <toml>] [--feed <burst|realtime>] [--warmup N] --iterations N [--output <json>]"
+        "usage: provider-bench-av <asr|vad|llm> --workload <json> [--config <toml>] [--feed <burst|realtime>] [--warmup N] --iterations N [--output <json>]"
     )
 }
 

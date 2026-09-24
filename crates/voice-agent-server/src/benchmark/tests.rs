@@ -1,9 +1,13 @@
-use super::{AsrFeedMode, TtsBenchmarkMode, run_asr_provider, run_tts_benchmark, run_vad_provider};
+use super::{
+    AsrFeedMode, TtsBenchmarkMode, run_asr_provider, run_llm_provider, run_tts_benchmark,
+    run_vad_provider,
+};
 use crate::{
     audio::PcmF32Mono,
+    providers::llm::{LlmEventStream, LlmRequest, ToolCall},
     providers::{
-        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, TtsError, TtsWorker, VadError,
-        VadInput, VadProbability, VadProvider, VadSession,
+        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmEvent, LlmProvider, TtsError,
+        TtsWorker, VadError, VadInput, VadProbability, VadProvider, VadSession,
     },
 };
 use std::sync::atomic::AtomicBool;
@@ -150,4 +154,35 @@ fn vad_runner_rejects_a_provider_that_mutates_the_input_timeline() {
         }
     }
     assert!(run_vad_provider(&InvalidTimeline, &vec![0.0; 512]).is_err());
+}
+
+struct Llm;
+#[async_trait::async_trait]
+impl LlmProvider for Llm {
+    fn adapter(&self) -> &'static str {
+        "fake"
+    }
+    async fn stream(&self, _: LlmRequest) -> Result<LlmEventStream, crate::providers::LlmError> {
+        Ok(Box::pin(futures_util::stream::iter([
+            Ok(LlmEvent::TextDelta("   ".into())),
+            Ok(LlmEvent::ToolCall(ToolCall {
+                id: "call-1".into(),
+                name: "noop".into(),
+                arguments: serde_json::json!({}),
+            })),
+            Ok(LlmEvent::TextDelta("xin chào".into())),
+            Ok(LlmEvent::Finished),
+        ])))
+    }
+}
+
+#[tokio::test]
+async fn llm_runner_uses_first_non_empty_text_delta_for_ttft() {
+    let report = run_llm_provider(&Llm, LlmRequest::from("hello"))
+        .await
+        .unwrap();
+    assert!(report.ttft_ms.is_some());
+    assert_eq!(report.text_delta_count, 2);
+    assert_eq!(report.output_chars, 11);
+    assert_eq!(report.tool_call_count, 1);
 }

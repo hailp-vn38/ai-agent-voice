@@ -48,6 +48,33 @@ Chạy các gate tự động hiện có:
 ./scripts/test-all.sh
 ```
 
+## Provider benchmarks
+
+`provider-bench-av` đo trực tiếp boundary provider; warmup không đi vào số liệu đo. Workload
+được version control trong `benchmarks/performance_tester/workloads/`. Report JSON bao gồm raw
+samples và summary min/mean/p50/p95/p99; không ghi API key.
+
+LLM provider benchmark đo TTFT tại `TextDelta` không rỗng đầu tiên (không tính empty delta hay
+tool call), cùng total latency, số text chunk, số ký tự và tool-call count:
+
+```bash
+cargo run --release -p voice-agent-server --bin provider-bench-av -- \
+  llm --workload benchmarks/performance_tester/workloads/llm-v1.json \
+  --warmup 1 --iterations 5 --output target/benchmarks/llm.json
+```
+
+ASR và VAD dùng cùng binary với workload fixture canonical:
+
+```bash
+cargo run --release -p voice-agent-server --bin provider-bench-av -- \
+  asr --workload benchmarks/performance_tester/workloads/asr-v1.json \
+  --feed burst --warmup 1 --iterations 5
+
+cargo run --release -p voice-agent-server --bin provider-bench-av -- \
+  vad --workload benchmarks/performance_tester/workloads/vad-v1.json \
+  --warmup 1 --iterations 5
+```
+
 ## Thứ tự đọc
 
 1. [`docs/00-overview.md`](docs/00-overview.md)

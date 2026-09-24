@@ -96,3 +96,18 @@ pub struct VadBenchmarkResult {
     pub frames_per_second: MetricSummary,
     pub compute_rtf: MetricSummary,
 }
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LlmBenchmarkResult {
+    pub schema_version: u8,
+    pub status: &'static str,
+    pub workload_version: String,
+    pub warmup_runs: usize,
+    pub iterations: usize,
+    pub samples: Vec<super::LlmRunMetrics>,
+    pub ttft_ms: Option<MetricSummary>,
+    pub total_ms: MetricSummary,
+    pub text_delta_count: MetricSummary,
+    pub output_chars: MetricSummary,
+    pub tool_call_count: MetricSummary,
+}
