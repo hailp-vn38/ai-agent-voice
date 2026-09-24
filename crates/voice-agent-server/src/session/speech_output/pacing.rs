@@ -16,6 +16,7 @@ impl SpeechOutput {
         self.finish_input = false;
         self.started = false;
         self.playback_origin = None;
+        self.audio_starved_at = None;
         self.playback_end_deadline = None;
         self.json_filter.reset();
         self.segmenter.reset();
@@ -139,11 +140,30 @@ impl SpeechOutput {
         }
         let packet = self.packets.pop_front().expect("checked non-empty");
         let now = Instant::now();
+        if let Some(starved_at) = self.audio_starved_at.take()
+            && now.duration_since(starved_at) >= PACED_FRAME_DURATION
+            && self.packets_sent + 1 >= PREBUFFER_PACKETS
+        {
+            let paced_index = self.packets_sent + 1 - PREBUFFER_PACKETS;
+            self.playback_origin = now.checked_sub(
+                PACED_FRAME_DURATION * u32::try_from(paced_index).expect("packet index fits u32"),
+            );
+            tracing::debug!(
+                starved_ms = now.duration_since(starved_at).as_millis(),
+                packet_seq = self.packets_sent + 1,
+                "Downlink Opus pacing re-anchored after starvation"
+            );
+        }
         let origin = *self.playback_origin.get_or_insert(now);
         self.packets_sent += 1;
         let packet_count = u32::try_from(self.packets_sent).expect("packet count fits u32");
         let expected_end = origin + PACED_FRAME_DURATION * packet_count;
         self.playback_end_deadline = Some(expected_end.max(now + PACED_FRAME_DURATION));
+        if self.packets.is_empty()
+            && (self.active_worker.is_some() || !self.pending.is_empty() || !self.finish_input)
+        {
+            self.audio_starved_at = Some(now);
+        }
         tracing::debug!(
             packet_seq = self.packets_sent,
             opus_queue = self.packets.len(),

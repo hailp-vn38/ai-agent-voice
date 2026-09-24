@@ -286,6 +286,74 @@ fn paced_deadlines_are_anchored_to_first_packet_even_if_prebuffer_is_delayed() {
 }
 
 #[test]
+fn pacing_reanchors_after_audio_starvation_instead_of_catching_up() {
+    use super::{SpeechOutput, SpeechOutputEvent};
+    use crate::providers::tts::UnavailableTts;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    let mut output =
+        SpeechOutput::with_config(Arc::new(UnavailableTts), SpeechOutputConfig::default()).unwrap();
+    output.started = true;
+    output.packets_sent = 6;
+    output.playback_origin = Some(Instant::now() - Duration::from_millis(500));
+    output.audio_starved_at = Some(Instant::now() - Duration::from_millis(61));
+    output.packets.push_back(vec![1]);
+    output.packets.push_back(vec![2]);
+
+    assert!(matches!(
+        output.poll().unwrap(),
+        Some(SpeechOutputEvent::AudioPacket(_))
+    ));
+    let reanchored_origin = output.playback_origin.expect("packet re-anchors playback");
+    assert_eq!(
+        output.packet_send_deadline(),
+        Some(reanchored_origin + Duration::from_millis(180)),
+        "the packet after resume must wait one frame instead of catching up"
+    );
+    assert!(
+        output.poll().unwrap().is_none(),
+        "the next packet must not be released in the same catch-up burst"
+    );
+}
+
+#[test]
+fn starvation_before_prebuffer_does_not_underflow_pacing_index() {
+    use super::{SpeechOutput, SpeechOutputEvent};
+    use crate::providers::tts::UnavailableTts;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    let mut output =
+        SpeechOutput::with_config(Arc::new(UnavailableTts), SpeechOutputConfig::default()).unwrap();
+    output.started = true;
+    output.packets_sent = 1;
+    output.playback_origin = Some(Instant::now() - Duration::from_millis(120));
+    output.audio_starved_at = Some(Instant::now() - Duration::from_millis(61));
+    output.packets.push_back(vec![1]);
+
+    assert!(matches!(
+        output.poll().unwrap(),
+        Some(SpeechOutputEvent::AudioPacket(_))
+    ));
+}
+
+#[test]
+fn terminal_partial_frame_fades_to_zero_before_padding() {
+    use super::pipeline::fade_out_tail;
+
+    let mut samples = vec![12_000_i16; 400];
+    fade_out_tail(&mut samples);
+    assert_eq!(samples.last(), Some(&0));
+    assert!(samples[399] <= samples[398]);
+    assert!(samples[399] < 12_000);
+}
+
+#[test]
 fn next_segment_starts_while_previous_audio_is_queued() {
     use super::{SpeechOutput, SpeechOutputEvent};
     use crate::{

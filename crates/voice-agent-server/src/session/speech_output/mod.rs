@@ -17,6 +17,7 @@ use crate::{
 
 const PROVIDER_SAMPLE_RATE_HZ: u32 = 48_000;
 const FADE_IN_SAMPLES: usize = 48_000 * 8 / 1_000;
+const FADE_OUT_SAMPLES: usize = 48_000 * 10 / 1_000;
 const PACED_FRAME_DURATION: Duration = Duration::from_millis(60);
 const PREBUFFER_PACKETS: usize = 5;
 const MAX_BUFFERED_PACKETS: usize = 32;
@@ -55,6 +56,7 @@ pub struct SpeechOutput {
     finish_input: bool,
     started: bool,
     playback_origin: Option<Instant>,
+    audio_starved_at: Option<Instant>,
     playback_end_deadline: Option<Instant>,
     json_filter: JsonFilter,
     segmenter: SentenceSegmenter,
@@ -97,6 +99,7 @@ impl SpeechOutput {
             finish_input: false,
             started: false,
             playback_origin: None,
+            audio_starved_at: None,
             playback_end_deadline: None,
             json_filter: JsonFilter::default(),
             segmenter: SentenceSegmenter::new(config),

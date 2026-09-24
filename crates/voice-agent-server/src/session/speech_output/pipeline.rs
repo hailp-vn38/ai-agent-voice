@@ -109,6 +109,10 @@ impl SpeechOutput {
         for sample in self.downlink_resampler.flush() {
             self.downlink_tail.push(float_to_i16(sample));
         }
+        fade_out_tail(&mut self.downlink_tail);
+        if self.downlink_tail.is_empty() {
+            return Ok(());
+        }
         self.downlink_tail.resize(DOWNLINK_FRAME_SAMPLES, 0);
         let frame = std::mem::take(&mut self.downlink_tail);
         let packet = self
@@ -120,5 +124,17 @@ impl SpeechOutput {
             .map_err(|_| SpeechOutputError::Synthesis)?;
         self.packets.push_back(packet.as_bytes().to_vec());
         Ok(())
+    }
+}
+
+pub(super) fn fade_out_tail(samples: &mut [i16]) {
+    let fade_samples = FADE_OUT_SAMPLES.min(samples.len());
+    if fade_samples <= 1 {
+        return;
+    }
+    let fade_start = samples.len() - fade_samples;
+    for (index, sample) in samples[fade_start..].iter_mut().enumerate() {
+        *sample =
+            (f32::from(*sample) * (1.0 - index as f32 / (fade_samples - 1) as f32)).round() as i16;
     }
 }
