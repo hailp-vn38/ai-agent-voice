@@ -11,6 +11,10 @@ real-model-gate = []
 name = "voice-agent-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "provider-bench"
+path = "src/bin/provider-bench.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

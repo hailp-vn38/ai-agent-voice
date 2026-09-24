@@ -5,7 +5,8 @@ use super::{
 use opus2::{Application, Bitrate, Channels, Decoder, Encoder};
 
 pub const MAX_UPLINK_OPUS_PACKET_BYTES: usize = 4_000;
-pub const DOWNLINK_ENCODE_BUFFER_BYTES: usize = 4_000;
+pub const MAX_DOWNLINK_OPUS_PACKET_BYTES: usize = 4_000;
+pub const DOWNLINK_ENCODE_BUFFER_BYTES: usize = MAX_DOWNLINK_OPUS_PACKET_BYTES;
 const UPLINK_MAX_DECODE_SAMPLES: usize = 1_920;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

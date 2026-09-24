@@ -173,7 +173,7 @@ Implementation compile-time của một provider trait, được chọn một l�
 _Avoid_: dynamic plugin, provider platform, service locator
 
 **Provider Benchmark**:
-Developer CLI chạy một workload provider độc lập để đo initialization và steady-state processing trên hardware hiện tại, không sở hữu Voice Session, WebSocket hoặc pacing. Với TTS, mode `provider` kết thúc ở PCM provider-facing, còn mode `delivery` kết thúc ở canonical Opus packets sẵn sàng gửi.
+Developer CLI chạy cùng fixed, versioned TTS workload, selected Typed Provider Configuration và run policy ở hai mode để đo initialization và steady-state processing trên hardware hiện tại. Nó tách Model Preparation và provider build/startup readiness (cold) khỏi workload warmup và measured run (steady); warmup không thuộc samples. Không sở hữu Voice Session, WebSocket hoặc pacing. Mode `provider` kết thúc ở PCM provider-facing; mode `delivery` dùng cùng PCM stream và cùng deterministic canonical downlink conversion với production, gồm fade, resample, framing, Opus encode và tail finalization, kết thúc ở canonical Opus packet cuối cùng sẵn sàng gửi. Mặc định chỉ in stdout; artifact JSON là opt-in, không chứa benchmark text, audio, filesystem path, secret hoặc deployment endpoint. Comparison chỉ qualified khi Offline Model Preparation hoặc explicit local-model verification được yêu cầu.
 _Avoid_: correctness test, end-to-end latency benchmark, playback benchmark
 
 **Provider Factory**:

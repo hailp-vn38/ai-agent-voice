@@ -192,6 +192,3 @@ pub(super) fn sanitize_tts_text(input: &str) -> String {
     }
     output.trim().to_owned()
 }
-pub(super) fn float_to_i16(sample: f32) -> i16 {
-    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
-}
