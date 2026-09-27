@@ -319,6 +319,16 @@ impl SessionActor {
         Ok(self)
     }
 
+    pub fn with_delivery_runtime_config(
+        mut self,
+        config: crate::config::SpeechOutputConfig,
+    ) -> Result<Self, crate::audio::AudioError> {
+        let tts_runtime = std::sync::Arc::clone(&self.tts_runtime);
+        self.speech_output =
+            SpeechOutput::with_worker(tts_runtime.provider(), tts_runtime, config)?;
+        Ok(self)
+    }
+
     pub fn session_id(&self) -> &str {
         &self.session_id
     }

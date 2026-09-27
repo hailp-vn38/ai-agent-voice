@@ -17,12 +17,20 @@ pub struct WorkerSupervisor {
 
 impl WorkerSupervisor {
     pub fn start(asr: Arc<AsrWorkerRuntime>, vad: Arc<VadWorkerRuntime>) -> Self {
+        Self::start_many(vec![asr], vec![vad])
+    }
+
+    pub fn start_many(asr: Vec<Arc<AsrWorkerRuntime>>, vad: Vec<Arc<VadWorkerRuntime>>) -> Self {
         let stopping = Arc::new(AtomicBool::new(false));
         let thread_stopping = Arc::clone(&stopping);
         thread::spawn(move || {
             while !thread_stopping.load(Ordering::Acquire) {
-                asr.supervise_pending();
-                vad.supervise_pending();
+                for runtime in &asr {
+                    runtime.supervise_pending();
+                }
+                for runtime in &vad {
+                    runtime.supervise_pending();
+                }
                 thread::sleep(Duration::from_millis(1));
             }
         });

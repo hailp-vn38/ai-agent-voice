@@ -46,15 +46,13 @@ impl AppConfig {
 
     pub fn validate_for_benchmark(&self, target: BenchmarkTarget) -> Result<(), ConfigError> {
         validate_deployment(self)?;
+        validate_providers(self)?;
         match target {
-            BenchmarkTarget::AsrProvider => validate_asr_provider(self),
-            BenchmarkTarget::LlmProvider => validate_llm_provider(self),
-            BenchmarkTarget::TtsProvider => validate_tts_provider(self),
-            BenchmarkTarget::TtsDelivery => {
-                validate_tts_provider(self)?;
-                validate_audio(self)
-            }
-            BenchmarkTarget::VadProvider => validate_vad_provider(self),
+            BenchmarkTarget::AsrProvider
+            | BenchmarkTarget::LlmProvider
+            | BenchmarkTarget::TtsProvider => Ok(()),
+            BenchmarkTarget::TtsDelivery => validate_audio(self),
+            BenchmarkTarget::VadProvider => Ok(()),
         }
     }
 
@@ -203,166 +201,144 @@ fn validate_workers(config: &AppConfig) -> Result<(), ConfigError> {
 }
 
 fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
-    validate_vad_provider(config)?;
-    validate_asr_provider(config)?;
-    validate_llm_provider(config)?;
-    validate_tts_provider(config)
-}
-
-fn validate_llm_provider(config: &AppConfig) -> Result<(), ConfigError> {
+    use crate::config::TtsInstanceConfig;
     let registry = crate::providers::compiled_provider_registry();
-    registry
-        .llm_factory(&config.providers.llm.adapter)
-        .map_err(|_| {
+    for (id, instance) in &config.providers.vad.instances {
+        validate_instance_id(id)?;
+        registry.vad_factory(instance.adapter()).map_err(|_| {
             ConfigError::Validation(format!(
-                "LLM adapter `{}` is not compiled into this binary",
-                config.providers.llm.adapter
+                "VAD instance `{id}` uses adapter `{}` which is not compiled into this binary",
+                instance.adapter()
             ))
         })?;
-    let openai = config.providers.llm.openai.as_ref().ok_or_else(|| {
-        ConfigError::Validation(format!(
-            "providers.llm.{} options are required",
-            config.providers.llm.adapter
-        ))
-    })?;
-    let local_http = openai.base_url.scheme() == "http"
-        && matches!(
-            openai.base_url.host_str(),
-            Some("localhost") | Some("127.0.0.1") | Some("::1")
-        );
-    if (openai.base_url.scheme() != "https" && !local_http)
-        || openai.base_url.host_str().is_none()
-        || openai.model.trim().is_empty()
-        || openai.timeout_ms == 0
-    {
-        return Err(ConfigError::Validation(
-            "OpenAI base URL and model must be valid".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_vad_provider(config: &AppConfig) -> Result<(), ConfigError> {
-    let registry = crate::providers::compiled_provider_registry();
-    registry
-        .vad_factory(&config.providers.vad.adapter)
-        .map_err(|_| {
-            ConfigError::Validation(format!(
-                "VAD adapter `{}` is not compiled into this binary",
-                config.providers.vad.adapter
-            ))
-        })?;
-    let vad = config.providers.vad.silero_onnx.as_ref().ok_or_else(|| {
-        ConfigError::Validation(format!(
-            "providers.vad.{} options are required",
-            config.providers.vad.adapter
-        ))
-    })?;
-    if vad.min_speech_ms == 0
-        || vad.end_silence_ms == 0
-        || vad.pre_roll_ms > config.audio.max_utterance_ms
-        || vad.num_threads <= 0
-        || !vad.speech_threshold.is_finite()
-        || !vad.exit_threshold.is_finite()
-        || !(0.0..=1.0).contains(&vad.exit_threshold)
-        || vad.exit_threshold >= vad.speech_threshold
-        || vad.speech_threshold > 1.0
-    {
-        return Err(ConfigError::Validation(
-            "VAD thresholds and segmentation durations must be valid".into(),
-        ));
-    }
-    if vad.model.is_empty() {
-        return Err(ConfigError::Validation(
-            "VAD provider model identity must be non-empty".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_asr_provider(config: &AppConfig) -> Result<(), ConfigError> {
-    let registry = crate::providers::compiled_provider_registry();
-    registry
-        .asr_factory(&config.providers.asr.adapter)
-        .map_err(|_| {
-            ConfigError::Validation(format!(
-                "ASR adapter `{}` is not compiled into this binary",
-                config.providers.asr.adapter
-            ))
-        })?;
-    let asr = config
-        .providers
-        .asr
-        .zipformer_sherpa
-        .as_ref()
-        .ok_or_else(|| {
-            ConfigError::Validation(format!(
-                "providers.asr.{} options are required",
-                config.providers.asr.adapter
-            ))
-        })?;
-    if asr.num_threads <= 0 || asr.decoding_method.is_empty() {
-        return Err(ConfigError::Validation(
-            "ASR runtime options must be valid".into(),
-        ));
-    }
-    if asr.model.is_empty() {
-        return Err(ConfigError::Validation(
-            "ASR provider model identity must be non-empty".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_tts_provider(config: &AppConfig) -> Result<(), ConfigError> {
-    let registry = crate::providers::compiled_provider_registry();
-    registry
-        .tts_factory(&config.providers.tts.adapter)
-        .map_err(|_| {
-            ConfigError::Validation(format!(
-                "TTS adapter `{}` is not compiled into this binary",
-                config.providers.tts.adapter
-            ))
-        })?;
-    match config.providers.tts.adapter.as_str() {
-        "zerotts_onnx" => {
-            let tts = config.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
-                ConfigError::Validation("providers.tts.zerotts_onnx options are required".into())
-            })?;
-            if tts.model.trim().is_empty() || tts.voice.trim().is_empty() || tts.num_threads <= 0 {
-                return Err(ConfigError::Validation(
-                    "ZeroTTS model, voice, and thread count must be valid".into(),
-                ));
-            }
+        let vad = instance.silero_onnx();
+        if vad.min_speech_ms == 0
+            || vad.end_silence_ms == 0
+            || vad.pre_roll_ms > config.audio.max_utterance_ms
+            || vad.num_threads <= 0
+            || !vad.speech_threshold.is_finite()
+            || !vad.exit_threshold.is_finite()
+            || !(0.0..=1.0).contains(&vad.exit_threshold)
+            || vad.exit_threshold >= vad.speech_threshold
+            || vad.speech_threshold > 1.0
+            || vad.model.trim().is_empty()
+        {
+            return Err(ConfigError::Validation(format!(
+                "VAD instance `{id}` has invalid thresholds, durations, or model identity"
+            )));
         }
-        "chillaudio_ws" => {
-            let tts = config.providers.tts.chillaudio_ws.as_ref().ok_or_else(|| {
-                ConfigError::Validation("providers.tts.chillaudio_ws options are required".into())
-            })?;
-            if tts.ws_url.scheme() != "wss"
-                || tts.ws_url.host_str().is_none()
-                || tts.app_key.expose().trim().is_empty()
-                || tts.token.expose().trim().is_empty()
-                || tts.voice.trim().is_empty()
-                || tts.timeout_ms == 0
+    }
+    for (id, instance) in &config.providers.asr.instances {
+        validate_instance_id(id)?;
+        registry.asr_factory(instance.adapter()).map_err(|_| {
+            ConfigError::Validation(format!(
+                "ASR instance `{id}` uses adapter `{}` which is not compiled into this binary",
+                instance.adapter()
+            ))
+        })?;
+        let asr = instance.zipformer_sherpa();
+        if asr.num_threads <= 0
+            || asr.decoding_method.trim().is_empty()
+            || asr.model.trim().is_empty()
+        {
+            return Err(ConfigError::Validation(format!(
+                "ASR instance `{id}` has invalid runtime options or model identity"
+            )));
+        }
+    }
+    for (id, instance) in &config.providers.llm.instances {
+        validate_instance_id(id)?;
+        registry.llm_factory(instance.adapter()).map_err(|_| {
+            ConfigError::Validation(format!(
+                "LLM instance `{id}` uses adapter `{}` which is not compiled into this binary",
+                instance.adapter()
+            ))
+        })?;
+        let openai = instance.openai();
+        let local_http = openai.base_url.scheme() == "http"
+            && matches!(
+                openai.base_url.host_str(),
+                Some("localhost") | Some("127.0.0.1") | Some("::1")
+            );
+        if (openai.base_url.scheme() != "https" && !local_http)
+            || openai.base_url.host_str().is_none()
+            || openai.model.trim().is_empty()
+            || openai.timeout_ms == 0
+        {
+            return Err(ConfigError::Validation(format!(
+                "LLM instance `{id}` has invalid OpenAI URL, model, or timeout"
+            )));
+        }
+    }
+    for (id, instance) in &config.providers.tts.instances {
+        validate_instance_id(id)?;
+        registry.tts_factory(instance.adapter()).map_err(|_| {
+            ConfigError::Validation(format!(
+                "TTS instance `{id}` uses adapter `{}` which is not compiled into this binary",
+                instance.adapter()
+            ))
+        })?;
+        match instance {
+            TtsInstanceConfig::ZeroTtsOnnx(tts)
+                if tts.model.trim().is_empty()
+                    || tts.voice.trim().is_empty()
+                    || tts.num_threads <= 0 =>
             {
-                return Err(ConfigError::Validation(
-                    "ChillAudio WebSocket URL, credential, voice, and timeout must be valid".into(),
-                ));
+                return Err(ConfigError::Validation(format!(
+                    "ZeroTTS instance `{id}` has invalid model, voice, or thread count"
+                )));
             }
+            TtsInstanceConfig::ChillAudioWs(tts)
+                if tts.ws_url.scheme() != "wss"
+                    || tts.ws_url.host_str().is_none()
+                    || tts.app_key.expose().trim().is_empty()
+                    || tts.token.expose().trim().is_empty()
+                    || tts.voice.trim().is_empty()
+                    || tts.timeout_ms == 0 =>
+            {
+                return Err(ConfigError::Validation(format!(
+                    "ChillAudio instance `{id}` has invalid URL, credential, voice, or timeout"
+                )));
+            }
+            _ => {}
         }
-        _ => {}
+    }
+    let bindings = &config.effective_agent.providers;
+    require_instance("VAD", &bindings.vad, &config.providers.vad.instances)?;
+    require_instance("ASR", &bindings.asr, &config.providers.asr.instances)?;
+    require_instance("LLM", &bindings.llm, &config.providers.llm.instances)?;
+    require_instance("TTS", &bindings.tts, &config.providers.tts.instances)
+}
+
+fn validate_instance_id(id: &str) -> Result<(), ConfigError> {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+    {
+        return Err(ConfigError::Validation(format!(
+            "provider instance id `{id}` is invalid"
+        )));
     }
     Ok(())
+}
+
+fn require_instance<T>(
+    kind: &str,
+    id: &str,
+    instances: &std::collections::BTreeMap<String, T>,
+) -> Result<(), ConfigError> {
+    if instances.contains_key(id) {
+        Ok(())
+    } else {
+        Err(ConfigError::Validation(format!(
+            "agent {kind} provider `{id}` does not exist"
+        )))
+    }
 }
 
 fn validate_speech_output(config: &AppConfig) -> Result<(), ConfigError> {
     let output = &config.speech_output;
-    if config.limits.tts_concurrency != config.workers.tts.max_workers {
-        return Err(ConfigError::Validation(
-            "limits.tts_concurrency must equal workers.tts.max_workers".into(),
-        ));
-    }
     if config.tts.timeout_ms == 0
         || output.min_chars == 0
         || output.min_chars > output.soft_break_min_chars

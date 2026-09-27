@@ -20,8 +20,8 @@ use voice_agent_server::{
     audio::PcmF32Mono,
     config::{
         AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
-        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
-        WebsocketConfig, WorkersConfig,
+        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SileroOnnxConfig,
+        SpeechOutputConfig, TtsConfig, VadInstanceConfig, WebsocketConfig, WorkersConfig,
     },
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmProvider, ProviderSet,
@@ -179,7 +179,12 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut providers_config = ProvidersConfig::default();
-    let vad = providers_config.vad.silero_onnx.as_mut().unwrap();
+    let vad = providers_config
+        .vad
+        .instances
+        .entry("test".into())
+        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
+    let VadInstanceConfig::SileroOnnx(vad) = vad;
     vad.min_speech_ms = 32;
     vad.end_silence_ms = 32;
     let config = AppConfig {
@@ -192,6 +197,12 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+        },
         providers: providers_config,
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
@@ -217,7 +228,12 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut providers_config = ProvidersConfig::default();
-    let vad = providers_config.vad.silero_onnx.as_mut().unwrap();
+    let vad = providers_config
+        .vad
+        .instances
+        .entry("test".into())
+        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
+    let VadInstanceConfig::SileroOnnx(vad) = vad;
     vad.min_speech_ms = 32;
     vad.end_silence_ms = 32;
     let config = AppConfig {
@@ -230,6 +246,12 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+        },
         providers: providers_config,
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),

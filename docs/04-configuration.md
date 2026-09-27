@@ -2,7 +2,7 @@
 
 ## 1. Nguyên tắc
 
-- `config.toml` chứa typed configuration, gồm cả `providers.llm.openai.api_key` theo quyết định Phase 4.
+- `config.toml` chứa catalog typed provider instances; `adapter` là implementation compile-time, còn instance ID là binding của agent.
 - Environment variables có thể override config runtime khi deployment cần, nhưng không thay đổi source of truth Phase 4 là typed TOML.
 - Parse + validate toàn bộ config khi startup; fail fast nếu cấu hình bắt buộc thiếu.
 - Session giữ `Arc<AppConfig>` immutable, không đọc file config giữa turn.
@@ -54,10 +54,14 @@ urgent_control_queue = 8
 root = "models"
 offline = false
 
-[providers.vad]
-adapter = "silero_onnx"
+[provider_defaults]
+vad = "silero_default"
+asr = "zipformer_vi"
+llm = "openai_primary"
+tts = "zerotts_maichi"
 
-[providers.vad.silero_onnx]
+[providers.vad.instances.silero_default]
+adapter = "silero_onnx"
 model = "silero_v5_16khz"
 min_speech_ms = 180
 end_silence_ms = 600
@@ -73,10 +77,8 @@ provider = "cpu"
 enabled = false
 trust_client_aec_feature = false
 
-[providers.asr]
+[providers.asr.instances.zipformer_vi]
 adapter = "zipformer_sherpa"
-
-[providers.asr.zipformer_sherpa]
 model = "zipformer_vi_streaming_chunk32"
 timeout_ms = 15000
 partial_emit_interval_ms = 200
@@ -86,10 +88,8 @@ provider = "cpu"
 decoding_method = "greedy_search"
 enable_internal_endpoint = false
 
-[providers.llm]
-type = "openai"
-
-[providers.llm.openai]
+[providers.llm.instances.openai_primary]
+adapter = "openai"
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
@@ -108,14 +108,23 @@ max_tool_depth = 4
 # persona = "Bạn là Mây..."
 # prompt_template = "prompts/custom.txt" # relative to this config file
 
-[providers.tts]
-adapter = "zerotts_onnx"
+[agent.providers]
+# Omit each field to use [provider_defaults].
+tts = "chillaudio_default"
 
-[providers.tts.zerotts_onnx]
+[providers.tts.instances.zerotts_maichi]
+adapter = "zerotts_onnx"
 model = "zerotts_default"
 num_threads = 2
 voice = "maichi"
 delivery_mode = "stream" # stream (default) hoặc file
+preload = true
+
+[providers.tts.instances.chillaudio_default]
+adapter = "chillaudio_ws"
+token = "set-deployment-token-here"
+voice = "BV421_vivn_streaming"
+preload = false
 
 [tts]
 timeout_ms = 15000
@@ -153,7 +162,7 @@ VOICE_AGENT_AUTH_TOKEN
 VOICE_AGENT_LLM_API_KEY
 ```
 
-`VOICE_AGENT_LLM_API_KEY` có thể override `providers.llm.openai.api_key` cho deployment. Dù API key được phép trong TOML, không commit key thật vào repository và không log/debug/telemetry hoặc gửi về client.
+`VOICE_AGENT_LLM_API_KEY` có thể override API key của instance LLM deployment chọn. Dù API key được phép trong TOML, không commit key thật vào repository và không log/debug/telemetry hoặc gửi về client.
 
 ## 4. Validation cần có
 
@@ -165,7 +174,8 @@ VOICE_AGENT_LLM_API_KEY
 - `unsupported_protocol_policy` V1 chỉ là `reject`; không advertise v2/v3 khi chưa có parser.
 - timeout > 0.
 - `deployment.models.root` là relative deployment root; Model Artifact Manifest chỉ được dùng install-relative path, reject absolute path, `..` traversal hoặc path escape root. `deployment.models.offline = true` cấm mọi network acquisition.
-- adapter phải được build vào binary. Typed provider config chọn adapter và Logical Model Identity, không được chứa direct provider-facing file path. Manifest resolve identity sang source/revision/artifact/transform/checksum; Model Preparation chỉ reuse hoặc acquire/verify/transform/atomic-install trước provider build/warmup và public bind.
+- mọi instance ID chỉ dùng `[a-zA-Z0-9_-]+`; mỗi instance phải dùng adapter đã build vào binary. `[provider_defaults]` và mọi override trong `[agent.providers]` phải trỏ tới instance đang tồn tại; `AppConfig::load()` materialize effective binding hoàn chỉnh trước startup.
+- Typed provider instance chọn adapter và Logical Model Identity, không được chứa direct provider-facing file path. Manifest resolve identity sang source/revision/artifact/transform/checksum; Model Preparation chỉ reuse hoặc acquire/verify/transform/atomic-install trước provider build/warmup và public bind.
 - adapter không được tự download model, đoán tên artifact hoặc scan model directory. Provider Factory chỉ nhận Resolved Model theo artifact role sau Model Preparation.
 - VAD validate `0.0 <= exit_threshold < speech_threshold <= 1.0`; `min_speech_ms > 0`, `end_silence_ms > 0`, `pre_roll_ms` bounded và retention capacity phải gồm pre-roll, confirmation horizon, bounded VAD in-flight lag cùng rechunk/frame slack.
 - `[barge_in]` có hai bool default false. `enabled=true` chỉ có tác dụng khi `trust_client_aec_feature=true`, client Hello có `features.aec=true`, và Listening Mode là Auto/Realtime; đây là client-side echo-suppression assertion, không thay cho server-side AEC.
@@ -173,12 +183,12 @@ VOICE_AGENT_LLM_API_KEY
 - `prompt_budget_tokens > 0`, `max_tool_result_chars > 0`, `max_tool_depth > 0`.
 - `[agent]` là optional. Field bị omit dùng built-in default; field đã khai báo nhưng rỗng/whitespace fail startup. Built-in template compile vào binary; custom `agent.prompt_template` được resolve một lần theo thư mục config và phải chứa exact `{{persona}}`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
-- `providers.llm.type = "openai"` chỉ chấp nhận bảng `[providers.llm.openai]`; `api_key`, `base_url` hợp lệ và `model` không rỗng trước bind. API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry.
-- `providers.tts.adapter = "zerotts_onnx"` chỉ chấp nhận bảng cùng tên, Logical Model Identity và `voice` cụ thể không rỗng; V1 default là `maichi`. Model Preparation inject `ResolvedModel`, không direct path. `[workers.tts]` có capacity, timeout/cleanup dương và không chứa model/runtime option của adapter.
+- mỗi instance OpenAI phải có `base_url`, `model`, timeout hợp lệ; API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry. Nhiều instance có thể cùng adapter `openai` với endpoint/model khác nhau.
+- mỗi instance ZeroTTS phải có Logical Model Identity, `voice` và thread count hợp lệ; Model Preparation inject `ResolvedModel`, không direct path. Remote ChillAudio không có fake model identity. `[workers.tts]` là template capacity/timeout/cleanup cho từng runtime được load.
 - `[speech_output]` chứa `min_chars`, `soft_break_min_chars`, `max_chars`, `pending_segments` với `1 <= min_chars <= soft_break_min_chars <= max_chars`, `1 <= pending_segments <= 64`. Hai ngưỡng tối thiểu chỉ được giữ để tương thích cấu hình cũ; dấu kết câu flush ngay, dấu mềm không flush. `max_chars` chỉ là ngưỡng khẩn cấp: buffer câu chưa hoàn tất vượt `2 * max_chars` sẽ fail backpressure, không bị cắt giữa câu. Pending full cũng fail `speech_output_backpressure`, cancel LLM operation và không accept thêm delta.
 - `tts.timeout_ms` bắt đầu khi TtsWorkerRuntime accept một segment và kết thúc tại `SegmentFinished`, `Failed` hoặc cancelled acknowledgement; PCM chunks không reset timer. Slot chỉ release sau cleanup acknowledgement, hoặc worker bị quarantine khi hết cleanup grace.
 - `llm_concurrency > 0`; LlmRuntime giữ permit từ khi accept request tới terminal event, timeout request không reset bởi text delta. Bounded event route không được drop terminal event; failure route phải cancel controlled operation.
-- Phase 4 bắt buộc `limits.tts_concurrency == workers.tts.max_workers`: admission chỉ dùng một semaphore tại SpeechOutput trước lease native worker; `max_workers` là structural bound, không limiter thứ hai.
+- `limits.tts_concurrency` là global admission budget; `workers.tts.max_workers` là structural capacity của từng loaded TTS runtime, nên hai giá trị không còn bắt buộc bằng nhau.
 - OpenAI startup chỉ validate local typed config/build provider; không model list, completion, health probe hay network request trước bind. Lỗi remote thuộc LLM Operation hiện tại.
 - acknowledgement của `zerotts_default` match chính xác `license = "MIT; bundled-codec=Apache-2.0"`; Phase 4 giữ license model-level, nhưng `codec_license` vẫn là required artifact.
 - public WS URL hợp lệ nếu OTA được bật.

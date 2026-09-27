@@ -68,56 +68,46 @@ fn run() -> Result<()> {
     config.deployment.models.offline = true;
     verify_onnx_runtime(&config.runtime.onnx.library)
         .context("load deployment-selected ONNX Runtime")?;
+    let vad_instance = &config.providers.vad.instances[&config.effective_agent().providers.vad];
+    let asr_instance = &config.providers.asr.instances[&config.effective_agent().providers.asr];
+    let tts_instance = &config.providers.tts.instances[&config.effective_agent().providers.tts];
     let vad_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &config
-            .providers
-            .vad
-            .silero_onnx
-            .as_ref()
-            .context("silero_onnx options are required")?
-            .model,
+        &vad_instance.silero_onnx().model,
         "silero_onnx",
         &config.deployment,
     )?;
     let asr_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &config
-            .providers
-            .asr
-            .zipformer_sherpa
-            .as_ref()
-            .context("zipformer_sherpa options are required")?
-            .model,
+        &asr_instance.zipformer_sherpa().model,
         "zipformer_sherpa",
         &config.deployment,
     )?;
     let tts_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &config
-            .providers
-            .tts
-            .zerotts_onnx
-            .as_ref()
-            .context("zerotts_onnx options are required")?
-            .model,
+        match tts_instance {
+            voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(options) => &options.model,
+            _ => {
+                anyhow::bail!("Phase 5 offline preflight requires a ZeroTTS effective TTS instance")
+            }
+        },
         "zerotts_onnx",
         &config.deployment,
     )?;
     let registry = compiled_provider_registry();
-    registry.vad_factory(&config.providers.vad.adapter)?.build(
-        &config.providers.vad,
+    registry.vad_factory(vad_instance.adapter())?.build(
+        vad_instance,
         &config.runtime,
         &vad_model,
     )?;
     registry
-        .asr_factory(&config.providers.asr.adapter)?
-        .build(&config.providers.asr, &asr_model)?;
-    registry.tts_factory(&config.providers.tts.adapter)?.build(
-        &config.providers.tts,
+        .asr_factory(asr_instance.adapter())?
+        .build(asr_instance, &asr_model)?;
+    registry.tts_factory(tts_instance.adapter())?.build(
+        tts_instance,
         &config.runtime,
         Some(&tts_model),
     )?;

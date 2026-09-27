@@ -24,10 +24,14 @@ outbound_audio_queue = 32
 llm_concurrency = 2
 tts_concurrency = 2
 
-[providers.vad]
-adapter = "silero_onnx"
+[provider_defaults]
+vad = "silero_default"
+asr = "zipformer_vi"
+llm = "openai_primary"
+tts = "zerotts_maichi"
 
-[providers.vad.silero_onnx]
+[providers.vad.instances.silero_default]
+adapter = "silero_onnx"
 model = "silero_vad_v5"
 num_threads = 1
 min_speech_ms = 180
@@ -36,37 +40,30 @@ pre_roll_ms = 300
 speech_threshold = 0.50
 exit_threshold = 0.35
 
-[providers.asr]
+[providers.asr.instances.zipformer_vi]
 adapter = "zipformer_sherpa"
-
-[providers.asr.zipformer_sherpa]
 model = "zipformer_vi_streaming"
 num_threads = 2
 decoding_method = "greedy_search"
 
-[providers.llm]
-type = "openai"
-
-[providers.llm.openai]
+[providers.llm.instances.openai_primary]
+adapter = "openai"
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
 
-[providers.tts]
+[providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"
-
-[providers.tts.zerotts_onnx]
 model = "zerotts_default"
 num_threads = 2
 voice = "maichi"
 delivery_mode = "stream"
 
-# Remote ChillAudio alternative. Select this adapter instead of `zerotts_onnx`;
-# it does not participate in local Model Preparation.
-# [providers.tts]
-# adapter = "chillaudio_ws"
-# [providers.tts.chillaudio_ws]
-# token = "set-deployment-token-here"
+# Remote ChillAudio is a separate configured instance. Agent binding selects it
+# without changing another provider block; it does not use Model Preparation.
+[providers.tts.instances.chillaudio_default]
+adapter = "chillaudio_ws"
+token = "set-deployment-token-here"
 # voice = "BV421_vivn_streaming"
 # timeout_ms = 12000
 
@@ -138,6 +135,10 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 Ưu tiên nội dung dễ nghe qua loa.
 """
 # prompt_template = "prompts/custom-voice-assistant.txt"
+
+# Optional agent-specific bindings override [provider_defaults].
+# [agent.providers]
+# tts = "chillaudio_default"
 
 [mcp]
 enabled = true

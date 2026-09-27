@@ -338,6 +338,12 @@ async fn start_router_with_limits(
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits,
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+        },
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),

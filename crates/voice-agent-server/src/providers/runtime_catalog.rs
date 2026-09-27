@@ -1,0 +1,131 @@
+use std::{collections::HashMap, sync::Arc};
+
+use crate::{
+    config::EffectiveProviderBindings,
+    workers::{AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime},
+};
+
+#[derive(Debug, thiserror::Error)]
+pub enum RuntimeResolveError {
+    #[error("unknown {kind} runtime for provider instance `{id}`")]
+    Unknown { kind: &'static str, id: String },
+}
+
+#[derive(Clone)]
+pub struct ResolvedAgentRuntimes {
+    pub vad: Arc<VadWorkerRuntime>,
+    pub asr: Arc<AsrWorkerRuntime>,
+    pub llm: Arc<LlmRuntime>,
+    pub tts: Arc<TtsWorkerRuntime>,
+}
+
+/// Read-only runtime catalog. Provider IDs are resolved once at the session boundary.
+pub struct RuntimeCatalog {
+    pub(crate) vad: HashMap<String, Arc<VadWorkerRuntime>>,
+    pub(crate) asr: HashMap<String, Arc<AsrWorkerRuntime>>,
+    pub(crate) llm: HashMap<String, Arc<LlmRuntime>>,
+    pub(crate) tts: HashMap<String, Arc<TtsWorkerRuntime>>,
+}
+
+impl RuntimeCatalog {
+    pub fn tts(&self, id: &str) -> Result<Arc<TtsWorkerRuntime>, RuntimeResolveError> {
+        self.tts
+            .get(id)
+            .cloned()
+            .ok_or_else(|| RuntimeResolveError::Unknown {
+                kind: "TTS",
+                id: id.into(),
+            })
+    }
+    pub fn resolve(
+        &self,
+        bindings: &EffectiveProviderBindings,
+    ) -> Result<ResolvedAgentRuntimes, RuntimeResolveError> {
+        Ok(ResolvedAgentRuntimes {
+            vad: self.vad.get(&bindings.vad).cloned().ok_or_else(|| {
+                RuntimeResolveError::Unknown {
+                    kind: "VAD",
+                    id: bindings.vad.clone(),
+                }
+            })?,
+            asr: self.asr.get(&bindings.asr).cloned().ok_or_else(|| {
+                RuntimeResolveError::Unknown {
+                    kind: "ASR",
+                    id: bindings.asr.clone(),
+                }
+            })?,
+            llm: self.llm.get(&bindings.llm).cloned().ok_or_else(|| {
+                RuntimeResolveError::Unknown {
+                    kind: "LLM",
+                    id: bindings.llm.clone(),
+                }
+            })?,
+            tts: self.tts.get(&bindings.tts).cloned().ok_or_else(|| {
+                RuntimeResolveError::Unknown {
+                    kind: "TTS",
+                    id: bindings.tts.clone(),
+                }
+            })?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::EffectiveProviderBindings,
+        providers::{
+            asr::UnavailableAsr, llm::UnavailableLlm, tts::UnavailableTts, vad::UnavailableVad,
+        },
+        workers::WorkerRuntimeConfig,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn resolve_returns_the_runtime_snapshot_named_by_effective_bindings() {
+        let worker = WorkerRuntimeConfig {
+            max_workers: 1,
+            command_capacity: 1,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_secs(1),
+        };
+        let catalog = RuntimeCatalog {
+            vad: HashMap::from([(
+                "vad_a".into(),
+                Arc::new(VadWorkerRuntime::new(
+                    Arc::new(UnavailableVad),
+                    worker.clone(),
+                )),
+            )]),
+            asr: HashMap::from([(
+                "asr_a".into(),
+                Arc::new(AsrWorkerRuntime::new(
+                    Arc::new(UnavailableAsr),
+                    worker.clone(),
+                )),
+            )]),
+            llm: HashMap::from([(
+                "llm_a".into(),
+                Arc::new(LlmRuntime::new(
+                    Arc::new(UnavailableLlm),
+                    1,
+                    Duration::from_secs(1),
+                )),
+            )]),
+            tts: HashMap::from([(
+                "tts_b".into(),
+                Arc::new(TtsWorkerRuntime::new(Arc::new(UnavailableTts), worker)),
+            )]),
+        };
+        let resolved = catalog
+            .resolve(&EffectiveProviderBindings {
+                vad: "vad_a".into(),
+                asr: "asr_a".into(),
+                llm: "llm_a".into(),
+                tts: "tts_b".into(),
+            })
+            .unwrap();
+        assert_eq!(resolved.tts.provider().adapter(), "unavailable");
+    }
+}

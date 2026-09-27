@@ -201,6 +201,12 @@ async fn start(tts: Arc<dyn TtsProvider>) -> (String, JoinHandle<()>) {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+        },
         providers: providers_config,
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),

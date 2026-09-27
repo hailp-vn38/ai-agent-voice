@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub websocket: WebsocketConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
+    pub provider_defaults: ProviderDefaultsConfig,
     #[serde(default)]
     pub providers: ProvidersConfig,
     #[serde(default)]
@@ -65,6 +66,34 @@ pub struct AgentConfig {
     pub language: Option<String>,
     pub prompt_template: Option<PathBuf>,
     pub persona: Option<String>,
+    #[serde(default)]
+    pub providers: AgentProviderBindings,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderDefaultsConfig {
+    pub vad: String,
+    pub asr: String,
+    pub llm: String,
+    pub tts: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentProviderBindings {
+    pub vad: Option<String>,
+    pub asr: Option<String>,
+    pub llm: Option<String>,
+    pub tts: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveProviderBindings {
+    pub vad: String,
+    pub asr: String,
+    pub llm: String,
+    pub tts: String,
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +102,24 @@ pub struct EffectiveAgentConfig {
     pub language: String,
     pub persona: String,
     pub prompt_template: String,
+    pub providers: EffectiveProviderBindings,
+}
+
+impl EffectiveAgentConfig {
+    fn with_provider_defaults(provider_defaults: &ProviderDefaultsConfig) -> Self {
+        Self {
+            name: DEFAULT_AGENT_NAME.into(),
+            language: DEFAULT_AGENT_LANGUAGE.into(),
+            persona: DEFAULT_AGENT_PERSONA.into(),
+            prompt_template: DEFAULT_PROMPT_TEMPLATE.into(),
+            providers: EffectiveProviderBindings {
+                vad: provider_defaults.vad.clone(),
+                asr: provider_defaults.asr.clone(),
+                llm: provider_defaults.llm.clone(),
+                tts: provider_defaults.tts.clone(),
+            },
+        }
+    }
 }
 
 impl Default for EffectiveAgentConfig {
@@ -82,6 +129,12 @@ impl Default for EffectiveAgentConfig {
             language: DEFAULT_AGENT_LANGUAGE.into(),
             persona: DEFAULT_AGENT_PERSONA.into(),
             prompt_template: DEFAULT_PROMPT_TEMPLATE.into(),
+            providers: EffectiveProviderBindings {
+                vad: String::new(),
+                asr: String::new(),
+                llm: String::new(),
+                tts: String::new(),
+            },
         }
     }
 }
@@ -92,10 +145,32 @@ impl AppConfig {
     }
 
     pub(crate) fn resolve_agent(&mut self, config_path: &Path) -> Result<(), ConfigError> {
-        let mut effective = EffectiveAgentConfig::default();
+        let mut effective = EffectiveAgentConfig::with_provider_defaults(&self.provider_defaults);
         let Some(overrides) = &mut self.agent else {
             self.effective_agent = effective;
             return Ok(());
+        };
+        effective.providers = EffectiveProviderBindings {
+            vad: overrides
+                .providers
+                .vad
+                .clone()
+                .unwrap_or(effective.providers.vad),
+            asr: overrides
+                .providers
+                .asr
+                .clone()
+                .unwrap_or(effective.providers.asr),
+            llm: overrides
+                .providers
+                .llm
+                .clone()
+                .unwrap_or(effective.providers.llm),
+            tts: overrides
+                .providers
+                .tts
+                .clone()
+                .unwrap_or(effective.providers.tts),
         };
         if let Some(name) = &overrides.name {
             if name.trim().is_empty() {

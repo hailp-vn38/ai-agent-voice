@@ -6,7 +6,7 @@ use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
 
 use crate::{
     config::{
-        AsrProviderConfig, LlmProviderConfig, RuntimeConfig, TtsProviderConfig, VadProviderConfig,
+        AsrInstanceConfig, LlmInstanceConfig, RuntimeConfig, TtsInstanceConfig, VadInstanceConfig,
     },
     models::ResolvedModel,
     providers::{
@@ -22,11 +22,11 @@ pub trait VadFactory: Send + Sync {
     fn adapter(&self) -> &'static str;
     fn model_identity<'a>(
         &self,
-        config: &'a VadProviderConfig,
+        config: &'a VadInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError>;
     fn build(
         &self,
-        config: &VadProviderConfig,
+        config: &VadInstanceConfig,
         runtime: &RuntimeConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn VadProvider>, ProviderLoadError>;
@@ -36,29 +36,29 @@ pub trait AsrFactory: Send + Sync {
     fn adapter(&self) -> &'static str;
     fn model_identity<'a>(
         &self,
-        config: &'a AsrProviderConfig,
+        config: &'a AsrInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError>;
     fn build(
         &self,
-        config: &AsrProviderConfig,
+        config: &AsrInstanceConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError>;
 }
 
 pub trait LlmFactory: Send + Sync {
     fn adapter(&self) -> &'static str;
-    fn build(&self, config: &LlmProviderConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError>;
+    fn build(&self, config: &LlmInstanceConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError>;
 }
 
 pub trait TtsFactory: Send + Sync {
     fn adapter(&self) -> &'static str;
     fn model_identity<'a>(
         &self,
-        config: &'a TtsProviderConfig,
+        config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError>;
     fn build(
         &self,
-        config: &TtsProviderConfig,
+        config: &TtsInstanceConfig,
         runtime: &RuntimeConfig,
         model: Option<&ResolvedModel>,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
@@ -127,27 +127,21 @@ impl VadFactory for SileroOnnxFactory {
 
     fn model_identity<'a>(
         &self,
-        config: &'a VadProviderConfig,
+        config: &'a VadInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
-        Ok(&config
-            .silero_onnx
-            .as_ref()
-            .ok_or_else(|| {
-                ProviderLoadError::Configuration("silero_onnx options are required".into())
-            })?
-            .model)
+        match config {
+            VadInstanceConfig::SileroOnnx(options) => Ok(&options.model),
+        }
     }
 
     fn build(
         &self,
-        config: &VadProviderConfig,
+        config: &VadInstanceConfig,
         runtime: &RuntimeConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn VadProvider>, ProviderLoadError> {
         validate_model_adapter(model, self.adapter())?;
-        let options = config.silero_onnx.as_ref().ok_or_else(|| {
-            ProviderLoadError::Configuration("silero_onnx options are required".into())
-        })?;
+        let VadInstanceConfig::SileroOnnx(options) = config;
         Ok(Arc::new(
             LoadedSileroVad::load(
                 required(model, "vad")?,
@@ -168,10 +162,8 @@ impl LlmFactory for OpenAiFactory {
         "openai"
     }
 
-    fn build(&self, config: &LlmProviderConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError> {
-        let options = config.openai.as_ref().ok_or_else(|| {
-            ProviderLoadError::Configuration("openai options are required".into())
-        })?;
+    fn build(&self, config: &LlmInstanceConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError> {
+        let LlmInstanceConfig::Openai(options) = config;
         if options.model.trim().is_empty() {
             return Err(ProviderLoadError::Configuration(
                 "OpenAI model is required".into(),
@@ -200,28 +192,27 @@ impl TtsFactory for ZeroTtsOnnxFactory {
 
     fn model_identity<'a>(
         &self,
-        config: &'a TtsProviderConfig,
+        config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
-        Ok(Some(
-            &config
-                .zerotts_onnx
-                .as_ref()
-                .ok_or_else(|| {
-                    ProviderLoadError::Configuration("zerotts_onnx options are required".into())
-                })?
-                .model,
-        ))
+        match config {
+            TtsInstanceConfig::ZeroTtsOnnx(options) => Ok(Some(&options.model)),
+            _ => Err(ProviderLoadError::Configuration(
+                "zerotts_onnx factory received another adapter config".into(),
+            )),
+        }
     }
 
     fn build(
         &self,
-        config: &TtsProviderConfig,
+        config: &TtsInstanceConfig,
         runtime: &RuntimeConfig,
         model: Option<&ResolvedModel>,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
-        let config = config.zerotts_onnx.as_ref().ok_or_else(|| {
-            ProviderLoadError::Configuration("zerotts_onnx options are required".into())
-        })?;
+        let TtsInstanceConfig::ZeroTtsOnnx(config) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "zerotts_onnx factory received another adapter config".into(),
+            ));
+        };
         let model = model.ok_or_else(|| {
             ProviderLoadError::Configuration("zerotts_onnx requires a local model".into())
         })?;
@@ -274,13 +265,13 @@ impl TtsFactory for ChillAudioWsFactory {
     }
     fn model_identity<'a>(
         &self,
-        _: &'a TtsProviderConfig,
+        _: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
         Ok(None)
     }
     fn build(
         &self,
-        config: &TtsProviderConfig,
+        config: &TtsInstanceConfig,
         _: &RuntimeConfig,
         model: Option<&ResolvedModel>,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
@@ -289,9 +280,11 @@ impl TtsFactory for ChillAudioWsFactory {
                 "chillaudio_ws must not receive a local model".into(),
             ));
         }
-        let options = config.chillaudio_ws.as_ref().ok_or_else(|| {
-            ProviderLoadError::Configuration("chillaudio_ws options are required".into())
-        })?;
+        let TtsInstanceConfig::ChillAudioWs(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "chillaudio_ws factory received another adapter config".into(),
+            ));
+        };
         Ok(Arc::new(ChillAudioWsProvider::new(options.clone())))
     }
 }
@@ -320,26 +313,20 @@ impl AsrFactory for ZipformerSherpaFactory {
 
     fn model_identity<'a>(
         &self,
-        config: &'a AsrProviderConfig,
+        config: &'a AsrInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
-        Ok(&config
-            .zipformer_sherpa
-            .as_ref()
-            .ok_or_else(|| {
-                ProviderLoadError::Configuration("zipformer_sherpa options are required".into())
-            })?
-            .model)
+        match config {
+            AsrInstanceConfig::ZipformerSherpa(options) => Ok(&options.model),
+        }
     }
 
     fn build(
         &self,
-        config: &AsrProviderConfig,
+        config: &AsrInstanceConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError> {
         validate_model_adapter(model, self.adapter())?;
-        let options = config.zipformer_sherpa.as_ref().ok_or_else(|| {
-            ProviderLoadError::Configuration("zipformer_sherpa options are required".into())
-        })?;
+        let AsrInstanceConfig::ZipformerSherpa(options) = config;
         let mut recognizer_config = OnlineRecognizerConfig::default();
         recognizer_config.model_config.transducer.encoder = Some(required(model, "encoder")?);
         recognizer_config.model_config.transducer.decoder = Some(required(model, "decoder")?);
@@ -404,7 +391,10 @@ fn required(model: &ResolvedModel, role: &str) -> Result<String, ProviderLoadErr
 mod tests {
     use std::path::PathBuf;
 
-    use crate::{config::AsrProviderConfig, models::ResolvedModel};
+    use crate::{
+        config::{AsrInstanceConfig, ZipformerSherpaConfig},
+        models::ResolvedModel,
+    };
 
     use super::compiled_provider_registry;
 
@@ -419,7 +409,10 @@ mod tests {
         let result = compiled_provider_registry()
             .asr_factory("zipformer_sherpa")
             .unwrap()
-            .build(&AsrProviderConfig::default(), &model);
+            .build(
+                &AsrInstanceConfig::ZipformerSherpa(ZipformerSherpaConfig::default()),
+                &model,
+            );
 
         assert!(
             matches!(result, Err(crate::providers::ProviderLoadError::MissingArtifact(role)) if role == "decoder")
@@ -433,7 +426,10 @@ mod tests {
         let result = compiled_provider_registry()
             .asr_factory("zipformer_sherpa")
             .unwrap()
-            .build(&AsrProviderConfig::default(), &model);
+            .build(
+                &AsrInstanceConfig::ZipformerSherpa(ZipformerSherpaConfig::default()),
+                &model,
+            );
 
         assert!(matches!(
             result,

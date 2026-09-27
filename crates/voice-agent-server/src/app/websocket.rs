@@ -7,11 +7,17 @@ pub(super) async fn handler(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config;
-    let providers = state.providers;
-    let asr_runtime = state.asr_runtime;
-    let vad_runtime = state.vad_runtime;
-    let llm_runtime = state.llm_runtime;
-    let tts_runtime = state.tts_runtime;
+    let resolved_runtimes = match state.runtimes.resolve(&config.effective_agent().providers) {
+        Ok(runtimes) => runtimes,
+        Err(error) => {
+            debug!(%error, "configured provider runtime is unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "configured provider runtime is unavailable",
+            )
+                .into_response();
+        }
+    };
     let active_turn_limiter = state.active_turn_limiter;
     if !header_or_query_is_or_absent(
         &headers,
@@ -45,12 +51,11 @@ pub(super) async fn handler(
             handle_socket(
                 socket,
                 config,
-                providers,
                 SocketRuntimes {
-                    asr: asr_runtime,
-                    vad: vad_runtime,
-                    llm: llm_runtime,
-                    tts: tts_runtime,
+                    asr: resolved_runtimes.asr,
+                    vad: resolved_runtimes.vad,
+                    llm: resolved_runtimes.llm,
+                    tts: resolved_runtimes.tts,
                     active_turn_limiter,
                 },
             )
@@ -123,12 +128,7 @@ struct SocketRuntimes {
     active_turn_limiter: Arc<ActiveTurnLimiter>,
 }
 
-async fn handle_socket(
-    socket: WebSocket,
-    config: Arc<AppConfig>,
-    providers: Arc<ProviderSet>,
-    runtimes: SocketRuntimes,
-) {
+async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, runtimes: SocketRuntimes) {
     let (mut sender, mut receiver) = socket.split();
     let first = timeout(
         Duration::from_millis(config.server.hello_timeout_ms),
@@ -164,12 +164,8 @@ async fn handle_socket(
     let (writer_event_tx, writer_event_rx) = mpsc::channel(config.limits.session_event_queue);
     let generation_gate = Arc::new(crate::session::GenerationGate::new());
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-    let vad_config = config
-        .providers
-        .vad
-        .silero_onnx
-        .as_ref()
-        .expect("validated VAD config");
+    let vad_config =
+        config.providers.vad.instances[&config.effective_agent().providers.vad].silero_onnx();
     let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
         Uuid::new_v4().to_string(),
         control_tx.clone(),
@@ -201,8 +197,7 @@ async fn handle_socket(
             return;
         }
     };
-    let actor = match actor.with_delivery_providers_config(&providers, config.speech_output.clone())
-    {
+    let actor = match actor.with_delivery_runtime_config(config.speech_output.clone()) {
         Ok(actor) => actor,
         Err(error) => {
             debug!(%error, "failed to initialize session speech output");

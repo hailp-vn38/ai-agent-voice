@@ -78,6 +78,7 @@ struct State {
 /// Fixed native pool: a thread (and native sessions supplied by `TtsWorker`) is created once per
 /// configured slot, never once per sentence.
 pub struct TtsWorkerRuntime {
+    provider: Arc<dyn TtsProvider>,
     config: WorkerRuntimeConfig,
     state: Arc<Mutex<State>>,
 }
@@ -103,6 +104,7 @@ impl TtsWorkerRuntime {
             });
         }
         Self {
+            provider,
             config,
             state: Arc::new(Mutex::new(State {
                 next: 1,
@@ -113,6 +115,9 @@ impl TtsWorkerRuntime {
                 workers,
             })),
         }
+    }
+    pub fn provider(&self) -> Arc<dyn TtsProvider> {
+        Arc::clone(&self.provider)
     }
     pub fn begin_stream(&self) -> TtsStreamId {
         let mut state = self.state.lock().expect("TTS worker state poisoned");

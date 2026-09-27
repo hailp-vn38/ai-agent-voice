@@ -1,14 +1,37 @@
-use super::*;
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use url::Url;
+
+use super::defaults::*;
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProvidersConfig {
-    pub vad: VadProviderConfig,
-    pub asr: AsrProviderConfig,
     #[serde(default)]
-    pub llm: LlmProviderConfig,
+    pub vad: VadProvidersConfig,
     #[serde(default)]
-    pub tts: TtsProviderConfig,
+    pub asr: AsrProvidersConfig,
+    #[serde(default)]
+    pub llm: LlmProvidersConfig,
+    #[serde(default)]
+    pub tts: TtsProvidersConfig,
 }
+
+macro_rules! provider_catalog_config {
+    ($name:ident, $instance:ident) => {
+        #[derive(Clone, Debug, Default, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct $name {
+            #[serde(default)]
+            pub instances: BTreeMap<String, $instance>,
+        }
+    };
+}
+
+provider_catalog_config!(VadProvidersConfig, VadInstanceConfig);
+provider_catalog_config!(AsrProvidersConfig, AsrInstanceConfig);
+provider_catalog_config!(LlmProvidersConfig, LlmInstanceConfig);
+provider_catalog_config!(TtsProvidersConfig, TtsInstanceConfig);
 
 #[derive(Clone, Default, Deserialize)]
 pub struct SecretString(pub(crate) String);
@@ -27,19 +50,20 @@ impl std::fmt::Debug for SecretString {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LlmProviderConfig {
-    #[serde(rename = "type", default = "default_llm_adapter")]
-    pub adapter: String,
-    #[serde(default)]
-    pub openai: Option<OpenAiConfig>,
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum LlmInstanceConfig {
+    Openai(OpenAiConfig),
 }
 
-impl Default for LlmProviderConfig {
-    fn default() -> Self {
-        Self {
-            adapter: default_llm_adapter(),
-            openai: Some(OpenAiConfig::default()),
+impl LlmInstanceConfig {
+    pub const fn adapter(&self) -> &'static str {
+        match self {
+            Self::Openai(_) => "openai",
+        }
+    }
+    pub fn openai(&self) -> &OpenAiConfig {
+        match self {
+            Self::Openai(config) => config,
         }
     }
 }
@@ -69,22 +93,25 @@ impl Default for OpenAiConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TtsProviderConfig {
-    #[serde(default = "default_tts_adapter")]
-    pub adapter: String,
-    #[serde(default)]
-    pub zerotts_onnx: Option<ZeroTtsOnnxConfig>,
-    #[serde(default)]
-    pub chillaudio_ws: Option<ChillAudioWsConfig>,
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum TtsInstanceConfig {
+    #[serde(rename = "zerotts_onnx")]
+    ZeroTtsOnnx(ZeroTtsOnnxConfig),
+    #[serde(rename = "chillaudio_ws")]
+    ChillAudioWs(ChillAudioWsConfig),
 }
 
-impl Default for TtsProviderConfig {
-    fn default() -> Self {
-        Self {
-            adapter: default_tts_adapter(),
-            zerotts_onnx: Some(ZeroTtsOnnxConfig::default()),
-            chillaudio_ws: None,
+impl TtsInstanceConfig {
+    pub const fn adapter(&self) -> &'static str {
+        match self {
+            Self::ZeroTtsOnnx(_) => "zerotts_onnx",
+            Self::ChillAudioWs(_) => "chillaudio_ws",
+        }
+    }
+    pub const fn preload(&self) -> bool {
+        match self {
+            Self::ZeroTtsOnnx(config) => config.preload,
+            Self::ChillAudioWs(config) => config.preload,
         }
     }
 }
@@ -102,6 +129,8 @@ pub struct ChillAudioWsConfig {
     pub voice: String,
     #[serde(default = "default_chillaudio_timeout_ms")]
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub preload: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -115,6 +144,8 @@ pub struct ZeroTtsOnnxConfig {
     pub voice: String,
     #[serde(default)]
     pub delivery_mode: ZeroTtsDeliveryMode,
+    #[serde(default)]
+    pub preload: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -132,41 +163,25 @@ impl Default for ZeroTtsOnnxConfig {
             num_threads: default_asr_threads(),
             voice: default_tts_voice(),
             delivery_mode: ZeroTtsDeliveryMode::Stream,
+            preload: false,
         }
     }
 }
 
-#[cfg(test)]
-mod zerotts_delivery_tests {
-    use super::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig};
-
-    #[test]
-    fn stream_delivery_is_default_and_file_remains_selectable() {
-        let default: ZeroTtsOnnxConfig = toml::from_str("").unwrap();
-        assert_eq!(default.delivery_mode, ZeroTtsDeliveryMode::Stream);
-        assert_eq!(
-            ZeroTtsOnnxConfig::default().delivery_mode,
-            ZeroTtsDeliveryMode::Stream
-        );
-        let selected: ZeroTtsOnnxConfig = toml::from_str("delivery_mode = 'file'").unwrap();
-        assert_eq!(selected.delivery_mode, ZeroTtsDeliveryMode::File);
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VadProviderConfig {
-    #[serde(default = "default_vad_adapter")]
-    pub adapter: String,
-    #[serde(default)]
-    pub silero_onnx: Option<SileroOnnxConfig>,
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum VadInstanceConfig {
+    #[serde(rename = "silero_onnx")]
+    SileroOnnx(SileroOnnxConfig),
 }
 
-impl Default for VadProviderConfig {
-    fn default() -> Self {
-        Self {
-            adapter: default_vad_adapter(),
-            silero_onnx: Some(SileroOnnxConfig::default()),
+impl VadInstanceConfig {
+    pub const fn adapter(&self) -> &'static str {
+        "silero_onnx"
+    }
+    pub fn silero_onnx(&self) -> &SileroOnnxConfig {
+        match self {
+            Self::SileroOnnx(config) => config,
         }
     }
 }
@@ -205,19 +220,19 @@ impl Default for SileroOnnxConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AsrProviderConfig {
-    #[serde(default = "default_asr_adapter")]
-    pub adapter: String,
-    #[serde(default)]
-    pub zipformer_sherpa: Option<ZipformerSherpaConfig>,
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum AsrInstanceConfig {
+    #[serde(rename = "zipformer_sherpa")]
+    ZipformerSherpa(ZipformerSherpaConfig),
 }
 
-impl Default for AsrProviderConfig {
-    fn default() -> Self {
-        Self {
-            adapter: default_asr_adapter(),
-            zipformer_sherpa: Some(ZipformerSherpaConfig::default()),
+impl AsrInstanceConfig {
+    pub const fn adapter(&self) -> &'static str {
+        "zipformer_sherpa"
+    }
+    pub fn zipformer_sherpa(&self) -> &ZipformerSherpaConfig {
+        match self {
+            Self::ZipformerSherpa(config) => config,
         }
     }
 }
@@ -240,5 +255,21 @@ impl Default for ZipformerSherpaConfig {
             num_threads: default_asr_threads(),
             decoding_method: default_decoding_method(),
         }
+    }
+}
+
+#[cfg(test)]
+mod zerotts_delivery_tests {
+    use super::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig};
+    #[test]
+    fn stream_delivery_is_default_and_file_remains_selectable() {
+        let default: ZeroTtsOnnxConfig = toml::from_str("").unwrap();
+        assert_eq!(default.delivery_mode, ZeroTtsDeliveryMode::Stream);
+        assert_eq!(
+            ZeroTtsOnnxConfig::default().delivery_mode,
+            ZeroTtsDeliveryMode::Stream
+        );
+        let selected: ZeroTtsOnnxConfig = toml::from_str("delivery_mode = 'file'").unwrap();
+        assert_eq!(selected.delivery_mode, ZeroTtsDeliveryMode::File);
     }
 }

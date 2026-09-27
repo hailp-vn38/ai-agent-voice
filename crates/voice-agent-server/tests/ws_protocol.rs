@@ -38,6 +38,12 @@ async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, Joi
         audio: AudioConfig::default(),
         websocket: WebsocketConfig { max_frame_bytes },
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+        },
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),

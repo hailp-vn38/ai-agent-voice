@@ -96,11 +96,12 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
     let config = AppConfig::load_for_benchmark(&config_path, target)
         .map_err(|_| BenchmarkErrorCategory::Config)?;
     let registry = compiled_provider_registry();
+    let instance = &config.providers.tts.instances[&config.effective_agent().providers.tts];
     let factory = registry
-        .tts_factory(&config.providers.tts.adapter)
+        .tts_factory(instance.adapter())
         .map_err(|_| BenchmarkErrorCategory::Config)?;
     let model_identity = factory
-        .model_identity(&config.providers.tts)
+        .model_identity(instance)
         .map_err(|_| BenchmarkErrorCategory::Config)?;
     let preparation_started = Instant::now();
     let model = model_identity
@@ -129,7 +130,7 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
     let model_preparation_ms = elapsed_ms(preparation_started);
     let build_started = Instant::now();
     let provider = factory
-        .build(&config.providers.tts, &config.runtime, model.as_ref())
+        .build(instance, &config.runtime, model.as_ref())
         .map_err(|_| BenchmarkErrorCategory::ProviderBuild)?;
     let provider_build_and_readiness_ms = elapsed_ms(build_started);
     let worker_open_started = Instant::now();

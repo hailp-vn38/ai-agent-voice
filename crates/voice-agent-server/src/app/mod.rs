@@ -39,7 +39,7 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
         .route("/health", get(health))
         .route("/voice/ota/", get(ota::handler).post(ota::handler).options(ota::options))
         .route("/voice/v1/", get(websocket::handler))
-        .with_state(AppState::new(config, providers))
+        .with_state(AppState::from_provider_set(config, providers))
         // Never include query parameters here: browser compatibility may carry an auth token.
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
@@ -50,8 +50,15 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
 
 /// Builds the public application only after local provider validation and warmup succeed.
 pub fn application(config: AppConfig) -> Result<Router, crate::providers::ProviderLoadError> {
-    let providers = Arc::new(ProviderSet::load(&config)?);
-    Ok(router_with_providers(config, providers))
+    let loaded = crate::providers::load_local(&config)?;
+    Ok(Router::new()
+        .route("/health", get(health))
+        .route("/voice/ota/", get(ota::handler).post(ota::handler).options(ota::options))
+        .route("/voice/v1/", get(websocket::handler))
+        .with_state(AppState::new(config, loaded))
+        .layer(TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+            tracing::info_span!("http_request", method = %request.method(), path = request.uri().path())
+        })))
 }
 
 async fn health() -> &'static str {

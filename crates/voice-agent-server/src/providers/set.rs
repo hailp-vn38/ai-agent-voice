@@ -1,12 +1,8 @@
 use std::sync::Arc;
 
-use crate::{
-    config::AppConfig,
-    providers::{
-        AsrError, AsrProvider, AsrSession, LlmProvider, ProviderLoadError, TtsProvider,
-        VadProvider, asr::UnavailableAsr, llm::UnavailableLlm, loader, tts::UnavailableTts,
-        vad::UnavailableVad,
-    },
+use crate::providers::{
+    AsrError, AsrProvider, AsrSession, LlmProvider, TtsProvider, VadProvider, asr::UnavailableAsr,
+    llm::UnavailableLlm, tts::UnavailableTts, vad::UnavailableVad,
 };
 
 /// Application-owned provider pair injected into worker runtimes.
@@ -61,8 +57,5 @@ impl ProviderSet {
     }
     pub fn unavailable() -> Self {
         Self::new(Arc::new(UnavailableAsr))
-    }
-    pub fn load(config: &AppConfig) -> Result<Self, ProviderLoadError> {
-        loader::load_local(config)
     }
 }

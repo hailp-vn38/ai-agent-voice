@@ -1,11 +1,19 @@
-use std::net::SocketAddr;
-
-use std::sync::Arc;
+use std::{
+    collections::BTreeMap,
+    fs,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use url::Url;
 use voice_agent_server::config::{
-    AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, EffectiveAgentConfig,
-    LimitsConfig, LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig,
-    TtsConfig, WebsocketConfig, WorkersConfig,
+    AppConfig, AsrInstanceConfig, AsrProvidersConfig, AudioConfig, AuthConfig, BargeInConfig,
+    DeploymentConfig, EffectiveAgentConfig, EffectiveProviderBindings, LimitsConfig, LlmConfig,
+    LlmInstanceConfig, LlmProvidersConfig, OpenAiConfig, ProviderDefaultsConfig, ProvidersConfig,
+    RuntimeConfig, ServerConfig, SileroOnnxConfig, SpeechOutputConfig, TtsConfig,
+    TtsInstanceConfig, TtsProvidersConfig, VadInstanceConfig, VadProvidersConfig, WebsocketConfig,
+    WorkersConfig, ZeroTtsOnnxConfig, ZipformerSherpaConfig,
 };
 use voice_agent_server::{
     app::AppState,
@@ -39,7 +47,38 @@ fn valid_config() -> AppConfig {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
-        providers: ProvidersConfig::default(),
+        provider_defaults: ProviderDefaultsConfig {
+            vad: "vad".into(),
+            asr: "asr".into(),
+            llm: "llm".into(),
+            tts: "tts".into(),
+        },
+        providers: ProvidersConfig {
+            vad: VadProvidersConfig {
+                instances: BTreeMap::from([(
+                    "vad".into(),
+                    VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()),
+                )]),
+            },
+            asr: AsrProvidersConfig {
+                instances: BTreeMap::from([(
+                    "asr".into(),
+                    AsrInstanceConfig::ZipformerSherpa(ZipformerSherpaConfig::default()),
+                )]),
+            },
+            llm: LlmProvidersConfig {
+                instances: BTreeMap::from([(
+                    "llm".into(),
+                    LlmInstanceConfig::Openai(OpenAiConfig::default()),
+                )]),
+            },
+            tts: TtsProvidersConfig {
+                instances: BTreeMap::from([(
+                    "tts".into(),
+                    TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig::default()),
+                )]),
+            },
+        },
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
@@ -49,8 +88,84 @@ fn valid_config() -> AppConfig {
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
         agent: None,
-        effective_agent: EffectiveAgentConfig::default(),
+        effective_agent: EffectiveAgentConfig {
+            providers: EffectiveProviderBindings {
+                vad: "vad".into(),
+                asr: "asr".into(),
+                llm: "llm".into(),
+                tts: "tts".into(),
+            },
+            ..EffectiveAgentConfig::default()
+        },
     }
+}
+
+fn load_catalog_config(extra: &str) -> Result<AppConfig, voice_agent_server::config::ConfigError> {
+    let path = PathBuf::from(format!(
+        "/tmp/voice-agent-catalog-{}-{}.toml",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::write(
+        &path,
+        format!(
+            r#"
+[server]
+bind = "127.0.0.1:8000"
+public_ws_url = "ws://127.0.0.1:8000/voice/v1/"
+
+[provider_defaults]
+vad = "vad_default"
+asr = "asr_default"
+llm = "openai_primary"
+tts = "tts_a"
+
+[providers.vad.instances.vad_default]
+adapter = "silero_onnx"
+
+[providers.asr.instances.asr_default]
+adapter = "zipformer_sherpa"
+
+[providers.llm.instances.openai_primary]
+adapter = "openai"
+model = "test-model"
+
+[providers.tts.instances.tts_a]
+adapter = "zerotts_onnx"
+
+[providers.tts.instances.tts_b]
+adapter = "zerotts_onnx"
+voice = "maichi"
+
+{extra}
+"#
+        ),
+    )
+    .unwrap();
+    let result = AppConfig::load(&path);
+    let _ = fs::remove_file(path);
+    result
+}
+
+#[test]
+fn config_load_materializes_defaults_and_agent_tts_override_for_catalog_instances() {
+    let config = load_catalog_config("[agent.providers]\ntts = 'tts_b'").unwrap();
+    assert_eq!(config.providers.tts.instances.len(), 2);
+    assert_eq!(config.effective_agent().providers.tts, "tts_b");
+    assert_eq!(config.effective_agent().providers.llm, "openai_primary");
+}
+
+#[test]
+fn config_load_rejects_a_binding_to_an_unknown_instance() {
+    let error = load_catalog_config("[agent.providers]\ntts = 'missing'").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("agent TTS provider `missing` does not exist")
+    );
 }
 
 #[test]
@@ -61,14 +176,16 @@ fn audio_limit_is_converted_to_an_exact_frame_capacity() {
 }
 
 #[test]
-fn phase_three_defaults_pin_local_silero_vad_and_zipformer_asr() {
-    let providers = ProvidersConfig::default();
-
-    assert_eq!(providers.vad.adapter, "silero_onnx");
-    assert_eq!(providers.vad.silero_onnx.unwrap().model, "silero_vad_v5");
-    assert_eq!(providers.asr.adapter, "zipformer_sherpa");
+fn catalog_instances_keep_typed_adapter_options() {
+    let config = valid_config();
     assert_eq!(
-        providers.asr.zipformer_sherpa.unwrap().model,
+        config.providers.vad.instances["vad"].adapter(),
+        "silero_onnx"
+    );
+    assert_eq!(
+        config.providers.asr.instances["asr"]
+            .zipformer_sherpa()
+            .model,
         "zipformer_vi_streaming"
     );
 }
@@ -121,8 +238,7 @@ fn phase_four_delivery_capacity_and_speech_bounds_fail_fast() {
     assert!(config.validate().is_ok());
 
     config.limits.tts_concurrency = 1;
-    assert!(config.validate().is_err());
-    config.limits.tts_concurrency = 2;
+    assert!(config.validate().is_ok());
     config.speech_output.soft_break_min_chars = 23;
     assert!(config.validate().is_err());
 }
@@ -130,12 +246,15 @@ fn phase_four_delivery_capacity_and_speech_bounds_fail_fast() {
 #[test]
 fn local_http_llm_endpoint_is_allowed_but_remote_http_is_rejected() {
     let mut config = valid_config();
-    config.providers.llm.openai.as_mut().unwrap().base_url =
-        Url::parse("http://localhost:20128/v1").unwrap();
+    {
+        let LlmInstanceConfig::Openai(openai) =
+            config.providers.llm.instances.get_mut("llm").unwrap();
+        openai.base_url = Url::parse("http://localhost:20128/v1").unwrap();
+    }
     assert!(config.validate().is_ok());
 
-    config.providers.llm.openai.as_mut().unwrap().base_url =
-        Url::parse("http://example.test/v1").unwrap();
+    let LlmInstanceConfig::Openai(openai) = config.providers.llm.instances.get_mut("llm").unwrap();
+    openai.base_url = Url::parse("http://example.test/v1").unwrap();
     assert!(config.validate().is_err());
 }
 
@@ -143,10 +262,10 @@ fn local_http_llm_endpoint_is_allowed_but_remote_http_is_rejected() {
 fn application_state_preserves_injected_llm_and_tts_test_providers() {
     let providers = ProviderSet::with_llm_tts(Arc::new(FakeLlm), Arc::new(FakeTts));
 
-    let state = AppState::new(valid_config(), Arc::new(providers));
+    let state = AppState::from_provider_set(valid_config(), Arc::new(providers));
 
-    assert_eq!(state.providers.llm_adapter(), "fake_llm");
-    assert_eq!(state.providers.tts_adapter(), "fake_tts");
+    assert_eq!(state.providers.llm("test").unwrap().adapter(), "fake_llm");
+    assert_eq!(state.providers.tts("test").unwrap().adapter(), "fake_tts");
 }
 
 #[test]
@@ -161,9 +280,13 @@ fn application_builds_each_worker_runtime_from_its_own_config() {
     config.workers.vad.reset_timeout_ms = 800;
     config.workers.vad.cleanup_grace_ms = 250;
 
-    let state = AppState::new(config, Arc::new(ProviderSet::unavailable()));
-    let asr = state.asr_runtime.runtime_config();
-    let vad = state.vad_runtime.runtime_config();
+    let state = AppState::from_provider_set(config, Arc::new(ProviderSet::unavailable()));
+    let resolved = state
+        .runtimes
+        .resolve(&state.config.effective_agent().providers)
+        .unwrap();
+    let asr = resolved.asr.runtime_config();
+    let vad = resolved.vad.runtime_config();
     assert_eq!(asr.max_workers, 3);
     assert_eq!(asr.command_capacity, 5);
     assert_eq!(asr.final_timeout.as_millis(), 1_200);
