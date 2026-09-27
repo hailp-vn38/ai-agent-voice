@@ -28,6 +28,7 @@ http.workspace = true
 opus2.workspace = true
 ort.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

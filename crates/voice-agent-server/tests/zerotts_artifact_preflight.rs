@@ -126,10 +126,10 @@ fn factory_rejects_a_prepared_zerotts_pack_missing_a_required_role() {
         &voice_agent_server::config::TtsProviderConfig {
             adapter: "zerotts_onnx".into(),
             zerotts_onnx: Some(ZeroTtsOnnxConfig {
-            model: "zerotts_default".into(),
-            num_threads: 2,
-            voice: "maichi".into(),
-            delivery_mode: Default::default(),
+                model: "zerotts_default".into(),
+                num_threads: 2,
+                voice: "maichi".into(),
+                delivery_mode: Default::default(),
             }),
             chillaudio_ws: None,
         },
