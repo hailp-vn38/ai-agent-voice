@@ -52,10 +52,35 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         registry.tts_factory("zerotts_onnx").unwrap().adapter(),
         "zerotts_onnx"
     );
+    assert_eq!(
+        registry.tts_factory("chillaudio_ws").unwrap().adapter(),
+        "chillaudio_ws"
+    );
     assert!(registry.vad_factory("http_vad").is_err());
     assert!(registry.asr_factory("python_sidecar").is_err());
     assert!(registry.llm_factory("python_llm").is_err());
     assert!(registry.tts_factory("http_tts").is_err());
+}
+
+#[test]
+fn chillaudio_typed_config_is_redacted_and_valid_without_a_local_model() {
+    let tts = toml::from_str(
+        r#"
+adapter = "chillaudio_ws"
+
+[chillaudio_ws]
+voice = "BV421_vivn_streaming"
+token = "secret-do-not-log"
+timeout_ms = 12000
+"#,
+    )
+    .unwrap();
+    let mut config = valid_config();
+    config.providers.tts = tts;
+
+    config.validate().unwrap();
+    assert_eq!(config.providers.tts.adapter, "chillaudio_ws");
+    assert!(!format!("{config:?}").contains("secret-do-not-log"));
 }
 
 #[test]

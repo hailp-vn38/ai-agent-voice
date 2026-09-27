@@ -62,3 +62,22 @@ cargo run -p voice-reference-client --bin audio-turn -- \
 
 Dung `--mode manual` de kiem tra `listen:stop`. `--trailing-silence-frames` chi danh cho
 phep thu chan doan; gate Manual mac dinh gui zero silence de server tu so huu ASR finalization.
+
+## Qualification ChillAudio TTS
+
+Binary `chillaudio-tts` la reference client doc lap cho Phase A. No ket noi truc tiep
+WebSocket ChillAudio, gui `StartTask`, gom cac binary MP3 chunk va chi ghi file sau
+`TaskEnd` hoac `TaskFinished`. No khong thay doi `SpeechOutput`, `TtsWorkerRuntime` hay
+server provider contract.
+
+```bash
+cargo run --release -p voice-reference-client --bin chillaudio-tts -- \
+  "Don't touch it! " \
+  --out output/audio.mp3
+```
+
+Lenh in `first_audio_ms`, `total_ms`, so binary chunk, byte output va duong dan file.
+Khong in token, app key, URL day du hay audio binary. Dung `--voice` voi mot trong bon
+voice ho tro (`BV421_vivn_streaming`, `vi_female_huong`, `BV074_streaming`,
+`BV075_streaming`) va `--timeout-ms` de qualification failure/timeout. Live smoke phu
+thuoc Internet, credential va vendor endpoint, vi vay khong phai CI gate deterministic.

@@ -324,16 +324,34 @@ fn validate_tts_provider(config: &AppConfig) -> Result<(), ConfigError> {
                 config.providers.tts.adapter
             ))
         })?;
-    let tts = config.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
-        ConfigError::Validation(format!(
-            "providers.tts.{} options are required",
-            config.providers.tts.adapter
-        ))
-    })?;
-    if tts.model.trim().is_empty() || tts.voice.trim().is_empty() || tts.num_threads <= 0 {
-        return Err(ConfigError::Validation(
-            "ZeroTTS model, voice, and thread count must be valid".into(),
-        ));
+    match config.providers.tts.adapter.as_str() {
+        "zerotts_onnx" => {
+            let tts = config.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
+                ConfigError::Validation("providers.tts.zerotts_onnx options are required".into())
+            })?;
+            if tts.model.trim().is_empty() || tts.voice.trim().is_empty() || tts.num_threads <= 0 {
+                return Err(ConfigError::Validation(
+                    "ZeroTTS model, voice, and thread count must be valid".into(),
+                ));
+            }
+        }
+        "chillaudio_ws" => {
+            let tts = config.providers.tts.chillaudio_ws.as_ref().ok_or_else(|| {
+                ConfigError::Validation("providers.tts.chillaudio_ws options are required".into())
+            })?;
+            if tts.ws_url.scheme() != "wss"
+                || tts.ws_url.host_str().is_none()
+                || tts.app_key.expose().trim().is_empty()
+                || tts.token.expose().trim().is_empty()
+                || tts.voice.trim().is_empty()
+                || tts.timeout_ms == 0
+            {
+                return Err(ConfigError::Validation(
+                    "ChillAudio WebSocket URL, credential, voice, and timeout must be valid".into(),
+                ));
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

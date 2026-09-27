@@ -103,35 +103,33 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
         .model_identity(&config.providers.tts)
         .map_err(|_| BenchmarkErrorCategory::Config)?;
     let preparation_started = Instant::now();
-    let model = if args.require_local_models {
-        verify_installed(
-            &config.deployment.model_manifest,
-            &config.deployment.models.root,
-            model_identity,
-            factory.adapter(),
-            &config.deployment,
-        )
-    } else {
-        prepare(
-            &config.deployment.model_manifest,
-            &config.deployment.models.root,
-            config.deployment.models.offline,
-            model_identity,
-            factory.adapter(),
-            &config.deployment,
-        )
-    }
-    .map_err(|_| BenchmarkErrorCategory::ModelPreparation)?;
+    let model = model_identity
+        .map(|model_identity| {
+            if args.require_local_models {
+                verify_installed(
+                    &config.deployment.model_manifest,
+                    &config.deployment.models.root,
+                    model_identity,
+                    factory.adapter(),
+                    &config.deployment,
+                )
+            } else {
+                prepare(
+                    &config.deployment.model_manifest,
+                    &config.deployment.models.root,
+                    config.deployment.models.offline,
+                    model_identity,
+                    factory.adapter(),
+                    &config.deployment,
+                )
+            }
+        })
+        .transpose()
+        .map_err(|_| BenchmarkErrorCategory::ModelPreparation)?;
     let model_preparation_ms = elapsed_ms(preparation_started);
     let build_started = Instant::now();
-    let options = config
-        .providers
-        .tts
-        .zerotts_onnx
-        .as_ref()
-        .ok_or(BenchmarkErrorCategory::Config)?;
     let provider = factory
-        .build(options, &config.runtime, &model)
+        .build(&config.providers.tts, &config.runtime, model.as_ref())
         .map_err(|_| BenchmarkErrorCategory::ProviderBuild)?;
     let provider_build_and_readiness_ms = elapsed_ms(build_started);
     let worker_open_started = Instant::now();
@@ -141,7 +139,7 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
     let worker_open_ms = elapsed_ms(worker_open_started);
     let mut report = run_tts_benchmark(worker.as_mut(), args.mode, args.warmup_runs, args.runs)?;
     report.adapter = Some(factory.adapter().into());
-    report.model_identity = Some(model_identity.into());
+    report.model_identity = model_identity.map(str::to_owned);
     report.model_preparation_ms = Some(model_preparation_ms);
     report.provider_build_and_readiness_ms = Some(provider_build_and_readiness_ms);
     report.worker_open_ms = Some(worker_open_ms);

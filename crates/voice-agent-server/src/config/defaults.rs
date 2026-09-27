@@ -64,6 +64,18 @@ pub(super) fn default_tts_model() -> String {
 pub(super) fn default_tts_voice() -> String {
     "maichi".into()
 }
+pub(super) fn default_chillaudio_ws_url() -> Url {
+    Url::parse("wss://sami-normal-sg.capcutapi.com/internal/api/v1/ws?device_id=7486429558272460289&iid=7486431924195657473&app_id=359289&region=VN&update_version_code=5.7.1.2101&version_code=5.7.1&appKey=ddjeqjLGMn&device_type=macos&device_platform=macos").expect("valid ChillAudio URL")
+}
+pub(super) fn default_chillaudio_app_key() -> SecretString {
+    SecretString("ddjeqjLGMn".into())
+}
+pub(super) fn default_chillaudio_voice() -> String {
+    "BV421_vivn_streaming".into()
+}
+pub(super) fn default_chillaudio_timeout_ms() -> u64 {
+    12_000
+}
 pub(super) fn default_provider_threads() -> i32 {
     1
 }
@@ -151,4 +163,5 @@ pub(super) fn default_speech_max_chars() -> usize {
 pub(super) fn default_pending_segments() -> usize {
     8
 }
+use super::SecretString;
 use url::Url;

@@ -1,5 +1,7 @@
 //! Reusable wire checks owned by the independent Voice Protocol Client.
 
+pub mod chillaudio;
+
 use anyhow::{Context, bail, ensure};
 use futures_util::{SinkExt, StreamExt};
 use opus2::{Application, Channels, Decoder, Encoder};

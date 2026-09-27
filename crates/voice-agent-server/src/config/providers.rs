@@ -11,7 +11,7 @@ pub struct ProvidersConfig {
 }
 
 #[derive(Clone, Default, Deserialize)]
-pub struct SecretString(String);
+pub struct SecretString(pub(crate) String);
 
 #[allow(dead_code)]
 impl SecretString {
@@ -75,6 +75,8 @@ pub struct TtsProviderConfig {
     pub adapter: String,
     #[serde(default)]
     pub zerotts_onnx: Option<ZeroTtsOnnxConfig>,
+    #[serde(default)]
+    pub chillaudio_ws: Option<ChillAudioWsConfig>,
 }
 
 impl Default for TtsProviderConfig {
@@ -82,8 +84,24 @@ impl Default for TtsProviderConfig {
         Self {
             adapter: default_tts_adapter(),
             zerotts_onnx: Some(ZeroTtsOnnxConfig::default()),
+            chillaudio_ws: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChillAudioWsConfig {
+    #[serde(default = "default_chillaudio_ws_url")]
+    pub ws_url: Url,
+    #[serde(default = "default_chillaudio_app_key")]
+    pub app_key: SecretString,
+    #[serde(default)]
+    pub token: SecretString,
+    #[serde(default = "default_chillaudio_voice")]
+    pub voice: String,
+    #[serde(default = "default_chillaudio_timeout_ms")]
+    pub timeout_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

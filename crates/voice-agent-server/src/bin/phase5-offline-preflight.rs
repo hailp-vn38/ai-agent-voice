@@ -117,14 +117,9 @@ fn run() -> Result<()> {
         .asr_factory(&config.providers.asr.adapter)?
         .build(&config.providers.asr, &asr_model)?;
     registry.tts_factory(&config.providers.tts.adapter)?.build(
-        config
-            .providers
-            .tts
-            .zerotts_onnx
-            .as_ref()
-            .context("zerotts_onnx options are required")?,
+        &config.providers.tts,
         &config.runtime,
-        &tts_model,
+        Some(&tts_model),
     )?;
     verify_fixture()?;
     Ok(())

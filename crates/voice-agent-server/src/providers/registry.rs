@@ -7,14 +7,13 @@ use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
 use crate::{
     config::{
         AsrProviderConfig, LlmProviderConfig, RuntimeConfig, TtsProviderConfig, VadProviderConfig,
-        ZeroTtsOnnxConfig,
     },
     models::ResolvedModel,
     providers::{
         AsrProvider, LlmProvider, ProviderLoadError, TtsProvider, VadProvider,
         asr::ZipformerAsrProvider,
         llm::ConfiguredOpenAiLlm,
-        tts::{ConfiguredZeroTts, ZeroTtsArtifacts},
+        tts::{ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts},
         vad::LoadedSileroVad,
     },
 };
@@ -56,12 +55,12 @@ pub trait TtsFactory: Send + Sync {
     fn model_identity<'a>(
         &self,
         config: &'a TtsProviderConfig,
-    ) -> Result<&'a str, ProviderLoadError>;
+    ) -> Result<Option<&'a str>, ProviderLoadError>;
     fn build(
         &self,
-        config: &ZeroTtsOnnxConfig,
+        config: &TtsProviderConfig,
         runtime: &RuntimeConfig,
-        model: &ResolvedModel,
+        model: Option<&ResolvedModel>,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
 }
 
@@ -202,22 +201,30 @@ impl TtsFactory for ZeroTtsOnnxFactory {
     fn model_identity<'a>(
         &self,
         config: &'a TtsProviderConfig,
-    ) -> Result<&'a str, ProviderLoadError> {
-        Ok(&config
-            .zerotts_onnx
-            .as_ref()
-            .ok_or_else(|| {
-                ProviderLoadError::Configuration("zerotts_onnx options are required".into())
-            })?
-            .model)
+    ) -> Result<Option<&'a str>, ProviderLoadError> {
+        Ok(Some(
+            &config
+                .zerotts_onnx
+                .as_ref()
+                .ok_or_else(|| {
+                    ProviderLoadError::Configuration("zerotts_onnx options are required".into())
+                })?
+                .model,
+        ))
     }
 
     fn build(
         &self,
-        config: &ZeroTtsOnnxConfig,
+        config: &TtsProviderConfig,
         runtime: &RuntimeConfig,
-        model: &ResolvedModel,
+        model: Option<&ResolvedModel>,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        let config = config.zerotts_onnx.as_ref().ok_or_else(|| {
+            ProviderLoadError::Configuration("zerotts_onnx options are required".into())
+        })?;
+        let model = model.ok_or_else(|| {
+            ProviderLoadError::Configuration("zerotts_onnx requires a local model".into())
+        })?;
         validate_model_adapter(model, self.adapter())?;
         if config.model != "zerotts_default" || config.voice != "maichi" || config.num_threads <= 0
         {
@@ -257,6 +264,35 @@ impl TtsFactory for ZeroTtsOnnxFactory {
             )
             .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
         ))
+    }
+}
+
+struct ChillAudioWsFactory;
+impl TtsFactory for ChillAudioWsFactory {
+    fn adapter(&self) -> &'static str {
+        "chillaudio_ws"
+    }
+    fn model_identity<'a>(
+        &self,
+        _: &'a TtsProviderConfig,
+    ) -> Result<Option<&'a str>, ProviderLoadError> {
+        Ok(None)
+    }
+    fn build(
+        &self,
+        config: &TtsProviderConfig,
+        _: &RuntimeConfig,
+        model: Option<&ResolvedModel>,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        if model.is_some() {
+            return Err(ProviderLoadError::Configuration(
+                "chillaudio_ws must not receive a local model".into(),
+            ));
+        }
+        let options = config.chillaudio_ws.as_ref().ok_or_else(|| {
+            ProviderLoadError::Configuration("chillaudio_ws options are required".into())
+        })?;
+        Ok(Arc::new(ChillAudioWsProvider::new(options.clone())))
     }
 }
 
@@ -326,10 +362,11 @@ static SILERO_ONNX_FACTORY: SileroOnnxFactory = SileroOnnxFactory;
 static ZIPFORMER_SHERPA_FACTORY: ZipformerSherpaFactory = ZipformerSherpaFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
+static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
 static VAD_FACTORIES: [&dyn VadFactory; 1] = [&SILERO_ONNX_FACTORY];
 static ASR_FACTORIES: [&dyn AsrFactory; 1] = [&ZIPFORMER_SHERPA_FACTORY];
 static LLM_FACTORIES: [&dyn LlmFactory; 1] = [&OPENAI_FACTORY];
-static TTS_FACTORIES: [&dyn TtsFactory; 1] = [&ZEROTTS_ONNX_FACTORY];
+static TTS_FACTORIES: [&dyn TtsFactory; 2] = [&ZEROTTS_ONNX_FACTORY, &CHILLAUDIO_WS_FACTORY];
 static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
     vad: &VAD_FACTORIES,
     asr: &ASR_FACTORIES,

@@ -33,20 +33,21 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<ProviderSet, ProviderLoad
         asr_factory.adapter(),
         &config.deployment,
     )?;
-    let tts_model = prepare(
-        &config.deployment.model_manifest,
-        &config.deployment.models.root,
-        config.deployment.models.offline,
-        tts_identity,
-        tts_factory.adapter(),
-        &config.deployment,
-    )?;
+    let tts_model = tts_identity
+        .map(|identity| {
+            prepare(
+                &config.deployment.model_manifest,
+                &config.deployment.models.root,
+                config.deployment.models.offline,
+                identity,
+                tts_factory.adapter(),
+                &config.deployment,
+            )
+        })
+        .transpose()?;
     let vad = vad_factory.build(&config.providers.vad, &config.runtime, &vad_model)?;
     let asr = asr_factory.build(&config.providers.asr, &asr_model)?;
     let llm = llm_factory.build(&config.providers.llm)?;
-    let tts_config = config.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
-        ProviderLoadError::Configuration("zerotts_onnx options are required".into())
-    })?;
-    let tts = tts_factory.build(tts_config, &config.runtime, &tts_model)?;
+    let tts = tts_factory.build(&config.providers.tts, &config.runtime, tts_model.as_ref())?;
     Ok(ProviderSet::with_all(vad, asr, llm, tts))
 }

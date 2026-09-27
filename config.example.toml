@@ -61,6 +61,15 @@ num_threads = 2
 voice = "maichi"
 delivery_mode = "stream"
 
+# Remote ChillAudio alternative. Select this adapter instead of `zerotts_onnx`;
+# it does not participate in local Model Preparation.
+# [providers.tts]
+# adapter = "chillaudio_ws"
+# [providers.tts.chillaudio_ws]
+# token = "set-deployment-token-here"
+# voice = "BV421_vivn_streaming"
+# timeout_ms = 12000
+
 [tts]
 timeout_ms = 15000
 

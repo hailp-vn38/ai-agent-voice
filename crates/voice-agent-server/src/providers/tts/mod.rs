@@ -3,8 +3,10 @@
 use crate::{audio::PcmF32Mono, config::ZeroTtsDeliveryMode};
 use thiserror::Error;
 
+pub mod chillaudio_ws;
 mod file_delivery;
 pub mod zerotts_onnx;
+pub(crate) use chillaudio_ws::ChillAudioWsProvider;
 
 /// Terminal output produced by startup-only ZeroTTS warmup.
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +95,14 @@ pub enum TtsError {
     IncompatibleContract(String),
     #[error("TTS temporary audio file failed: {0}")]
     TemporaryAudio(String),
+    #[error("TTS remote connection failed")]
+    RemoteConnection,
+    #[error("TTS remote task failed")]
+    RemoteTask,
+    #[error("TTS remote timeout")]
+    RemoteTimeout,
+    #[error("TTS audio decode failed")]
+    AudioDecode,
 }
 
 pub struct UnavailableTts;
