@@ -126,6 +126,8 @@ token = "set-deployment-token-here"
 voice = "BV421_vivn_streaming"
 preload = false
 
+Startup load mọi instance mà `[provider_defaults]` hoặc `[agent.providers]` tham chiếu, cùng mọi instance có `preload = true`. Instance khác vẫn được parse và validate nhưng chưa có runtime; binding sang một instance chưa load bị reject cho tới phase lazy-load sau này.
+
 [tts]
 timeout_ms = 15000
 

@@ -169,6 +169,19 @@ fn config_load_rejects_a_binding_to_an_unknown_instance() {
 }
 
 #[test]
+fn validation_rejects_a_missing_default_even_when_agent_overrides_it() {
+    let mut config = valid_config();
+    config.provider_defaults.tts = "missing".into();
+    config.effective_agent.providers.tts = "tts".into();
+    let error = config.validate().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("agent default TTS provider `missing` does not exist")
+    );
+}
+
+#[test]
 fn audio_limit_is_converted_to_an_exact_frame_capacity() {
     let config = valid_config();
     assert_eq!(config.max_capture_frames(), 500);

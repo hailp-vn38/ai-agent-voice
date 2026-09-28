@@ -172,6 +172,26 @@ _Avoid_: skipped sentence, best-effort speech queue
 Implementation compile-time của một provider trait, được chọn một lần tại startup bằng typed provider configuration; adapter không biết Voice Session, WebSocket hoặc worker runtime.
 _Avoid_: dynamic plugin, provider platform, service locator
 
+**Provider Instance**:
+Một cấu hình có ID ổn định của đúng một Provider Adapter; ID là giá trị agent bind, còn adapter chỉ định implementation.
+_Avoid_: adapter name, active provider
+
+**Provider Catalog**:
+Tập read-only các Provider Instance đã được build khi startup, được index theo Provider Instance ID và không thuộc Voice Session.
+_Avoid_: adapter registry, session provider map
+
+**Effective Provider Bindings**:
+Tập Provider Instance ID hoàn chỉnh sau khi materialize provider defaults và agent override tại Config boundary.
+_Avoid_: runtime fallback, adapter binding
+
+**Runtime Catalog**:
+Tập read-only Inference Worker Runtime theo Provider Instance ID; nó resolve Effective Provider Bindings thành runtime snapshot trước khi tạo Voice Session.
+_Avoid_: SessionActor provider lookup, runtime plugin registry
+
+**Runtime Snapshot**:
+Các runtime concrete được resolve một lần cho Voice Session, giữ ổn định trong connection đó.
+_Avoid_: hot-switched segment runtime, catalog-aware SessionActor
+
 **Provider Benchmark**:
 Developer CLI chạy cùng fixed, versioned TTS workload, selected Typed Provider Configuration và run policy ở hai mode để đo initialization và steady-state processing trên hardware hiện tại. Nó tách Model Preparation và provider build/startup readiness (cold) khỏi workload warmup và measured run (steady); warmup không thuộc samples. Không sở hữu Voice Session, WebSocket hoặc pacing. Mode `provider` kết thúc ở PCM provider-facing; mode `delivery` dùng cùng PCM stream và cùng deterministic canonical downlink conversion với production, gồm fade, resample, framing, Opus encode và tail finalization, kết thúc ở canonical Opus packet cuối cùng sẵn sàng gửi. Mặc định chỉ in stdout; artifact JSON là opt-in, không chứa benchmark text, audio, filesystem path, secret hoặc deployment endpoint. Comparison chỉ qualified khi Offline Model Preparation hoặc explicit local-model verification được yêu cầu.
 _Avoid_: correctness test, end-to-end latency benchmark, playback benchmark

@@ -303,6 +303,27 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             _ => {}
         }
     }
+    let defaults = &config.provider_defaults;
+    require_instance(
+        "default VAD",
+        &defaults.vad,
+        &config.providers.vad.instances,
+    )?;
+    require_instance(
+        "default ASR",
+        &defaults.asr,
+        &config.providers.asr.instances,
+    )?;
+    require_instance(
+        "default LLM",
+        &defaults.llm,
+        &config.providers.llm.instances,
+    )?;
+    require_instance(
+        "default TTS",
+        &defaults.tts,
+        &config.providers.tts.instances,
+    )?;
     let bindings = &config.effective_agent.providers;
     require_instance("VAD", &bindings.vad, &config.providers.vad.instances)?;
     require_instance("ASR", &bindings.asr, &config.providers.asr.instances)?;
