@@ -40,6 +40,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
+    pub vision: VisionConfig,
+    #[serde(default)]
     pub agent: Option<AgentConfig>,
     #[serde(skip)]
     pub effective_agent: EffectiveAgentConfig,
@@ -77,6 +79,8 @@ pub struct ProviderDefaultsConfig {
     pub asr: String,
     pub llm: String,
     pub tts: String,
+    #[serde(default)]
+    pub vision: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -86,6 +90,7 @@ pub struct AgentProviderBindings {
     pub asr: Option<String>,
     pub llm: Option<String>,
     pub tts: Option<String>,
+    pub vision: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +99,7 @@ pub struct EffectiveProviderBindings {
     pub asr: String,
     pub llm: String,
     pub tts: String,
+    pub vision: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +123,7 @@ impl EffectiveAgentConfig {
                 asr: provider_defaults.asr.clone(),
                 llm: provider_defaults.llm.clone(),
                 tts: provider_defaults.tts.clone(),
+                vision: provider_defaults.vision.clone(),
             },
         }
     }
@@ -134,6 +141,7 @@ impl Default for EffectiveAgentConfig {
                 asr: String::new(),
                 llm: String::new(),
                 tts: String::new(),
+                vision: None,
             },
         }
     }
@@ -171,6 +179,11 @@ impl AppConfig {
                 .tts
                 .clone()
                 .unwrap_or(effective.providers.tts),
+            vision: overrides
+                .providers
+                .vision
+                .clone()
+                .or(effective.providers.vision),
         };
         if let Some(name) = &overrides.name {
             if name.trim().is_empty() {
@@ -654,6 +667,8 @@ pub struct LimitsConfig {
     pub llm_concurrency: usize,
     #[serde(default = "default_tts_concurrency")]
     pub tts_concurrency: usize,
+    #[serde(default = "default_vision_concurrency")]
+    pub vision_concurrency: usize,
 }
 
 impl Default for LimitsConfig {
@@ -666,6 +681,34 @@ impl Default for LimitsConfig {
             max_active_turns: default_max_active_turns(),
             llm_concurrency: default_llm_concurrency(),
             tts_concurrency: default_tts_concurrency(),
+            vision_concurrency: default_vision_concurrency(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub public_url: Option<Url>,
+    #[serde(default = "default_vision_max_image_bytes")]
+    pub max_image_bytes: usize,
+    #[serde(default = "default_vision_max_question_bytes")]
+    pub max_question_bytes: usize,
+    #[serde(default)]
+    pub advertise_via_mcp: bool,
+}
+
+impl Default for VisionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            public_url: None,
+            max_image_bytes: default_vision_max_image_bytes(),
+            max_question_bytes: default_vision_max_question_bytes(),
+            advertise_via_mcp: false,
         }
     }
 }

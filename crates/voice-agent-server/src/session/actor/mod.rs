@@ -16,7 +16,7 @@ use crate::{
         llm::{ChatMessage, ToolCall},
         tts::UnavailableTts,
     },
-    tools::device_mcp::{DiscoveredTool, LlmVisibleTool, McpRequestId},
+    tools::device_mcp::{DiscoveredTool, LlmVisibleTool, McpRequestId, VisionCapability},
     workers::{
         AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, LlmRuntime, LlmRuntimeEvent,
         TtsWorkerRuntime, VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerLease,
@@ -160,6 +160,7 @@ struct DeviceMcpState {
     visible: Vec<LlmVisibleTool>,
     pending: HashMap<McpRequestId, PendingMcpRequest>,
     batch: Option<ToolBatchState>,
+    vision: Option<VisionCapability>,
 }
 
 struct PendingMcpRequest {

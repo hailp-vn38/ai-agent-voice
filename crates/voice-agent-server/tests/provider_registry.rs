@@ -20,6 +20,10 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
     );
     assert_eq!(registry.llm_factory("openai").unwrap().adapter(), "openai");
     assert_eq!(
+        registry.vision_factory("openai_vision").unwrap().adapter(),
+        "openai_vision"
+    );
+    assert_eq!(
         registry.tts_factory("zerotts_onnx").unwrap().adapter(),
         "zerotts_onnx"
     );

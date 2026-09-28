@@ -245,6 +245,7 @@ impl SessionActor {
         mut self,
         client_advertised: bool,
         config: &crate::config::McpConfig,
+        vision: Option<crate::tools::device_mcp::VisionCapability>,
     ) -> Self {
         self.mcp.enabled = client_advertised && config.enabled;
         self.mcp.allowed_tools = config.allowed_tools.iter().cloned().collect();
@@ -256,6 +257,7 @@ impl SessionActor {
             .collect();
         self.mcp.call_timeout = std::time::Duration::from_millis(config.call_timeout_ms);
         self.mcp.discovery_timeout = std::time::Duration::from_millis(config.discovery_timeout_ms);
+        self.mcp.vision = vision;
         self
     }
 

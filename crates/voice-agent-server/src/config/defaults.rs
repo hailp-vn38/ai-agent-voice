@@ -46,6 +46,27 @@ pub(super) fn default_openai_base_url() -> Url {
 pub(super) fn default_openai_model() -> String {
     "model-name".into()
 }
+pub(super) fn default_vision_timeout_ms() -> u64 {
+    30_000
+}
+pub(super) fn default_vision_max_tokens() -> u32 {
+    500
+}
+pub(super) fn default_vision_temperature() -> f32 {
+    0.7
+}
+pub(super) fn default_vision_top_p() -> f32 {
+    1.0
+}
+pub(super) fn default_vision_max_image_bytes() -> usize {
+    5 * 1024 * 1024
+}
+pub(super) fn default_vision_max_question_bytes() -> usize {
+    4 * 1024
+}
+pub(super) fn default_vision_concurrency() -> usize {
+    2
+}
 pub(super) fn default_tts_model() -> String {
     "zerotts_default".into()
 }

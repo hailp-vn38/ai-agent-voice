@@ -15,6 +15,8 @@ pub struct ProvidersConfig {
     pub llm: LlmProvidersConfig,
     #[serde(default)]
     pub tts: TtsProvidersConfig,
+    #[serde(default)]
+    pub vision: VisionProvidersConfig,
 }
 
 macro_rules! provider_catalog_config {
@@ -32,12 +34,16 @@ provider_catalog_config!(VadProvidersConfig, VadInstanceConfig);
 provider_catalog_config!(AsrProvidersConfig, AsrInstanceConfig);
 provider_catalog_config!(LlmProvidersConfig, LlmInstanceConfig);
 provider_catalog_config!(TtsProvidersConfig, TtsInstanceConfig);
+provider_catalog_config!(VisionProvidersConfig, VisionInstanceConfig);
 
 #[derive(Clone, Default, Deserialize)]
 pub struct SecretString(pub(crate) String);
 
 #[allow(dead_code)]
 impl SecretString {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
     pub(crate) fn expose(&self) -> &str {
         &self.0
     }
@@ -90,6 +96,41 @@ impl Default for OpenAiConfig {
             timeout_ms: default_llm_timeout_ms(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum VisionInstanceConfig {
+    #[serde(rename = "openai_vision")]
+    OpenAiVision(OpenAiVisionConfig),
+}
+
+impl VisionInstanceConfig {
+    pub const fn adapter(&self) -> &'static str {
+        "openai_vision"
+    }
+    pub fn openai_vision(&self) -> &OpenAiVisionConfig {
+        match self {
+            Self::OpenAiVision(config) => config,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenAiVisionConfig {
+    pub base_url: Url,
+    #[serde(default)]
+    pub api_key: SecretString,
+    pub model: String,
+    #[serde(default = "default_vision_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_vision_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default = "default_vision_temperature")]
+    pub temperature: f32,
+    #[serde(default = "default_vision_top_p")]
+    pub top_p: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]

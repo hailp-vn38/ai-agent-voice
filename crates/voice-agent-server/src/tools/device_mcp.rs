@@ -7,6 +7,22 @@ use serde_json::{Map, Value};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct McpRequestId(pub u64);
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct VisionCapability {
+    pub url: String,
+    pub token: String,
+}
+
+impl std::fmt::Debug for VisionCapability {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VisionCapability")
+            .field("url", &self.url)
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum McpIncoming {
     Result {
@@ -28,6 +44,7 @@ pub enum McpIncoming {
 pub enum McpOutgoing {
     Initialize {
         id: McpRequestId,
+        vision: Option<VisionCapability>,
     },
     ToolsList {
         id: McpRequestId,
@@ -43,9 +60,9 @@ pub enum McpOutgoing {
 impl McpOutgoing {
     pub fn payload(&self) -> Value {
         match self {
-            Self::Initialize { id } => serde_json::json!({
+            Self::Initialize { id, vision } => serde_json::json!({
                 "jsonrpc": "2.0", "id": id.0, "method": "initialize",
-                "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                "params": {"protocolVersion": "2024-11-05", "capabilities": vision.as_ref().map(|vision| serde_json::json!({"vision":{"url":vision.url,"token":vision.token}})).unwrap_or_else(|| serde_json::json!({})),
                     "clientInfo": {"name": "voice-agent-server", "version": "0.1.0"}}
             }),
             Self::ToolsList { id, cursor } => {

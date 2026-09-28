@@ -6,6 +6,7 @@ mod llm;
 mod supervisor;
 mod tts;
 mod vad;
+mod vision_runtime;
 
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
 pub use llm::{LlmRuntime, LlmRuntimeEvent};
@@ -14,6 +15,7 @@ pub use tts::{TtsLease, TtsStreamId, TtsWorkerError, TtsWorkerEvent, TtsWorkerRu
 pub use vad::{
     VadCaptureCycleId, VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime,
 };
+pub use vision_runtime::VisionRuntime;
 
 use std::time::Duration;
 

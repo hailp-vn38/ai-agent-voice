@@ -137,6 +137,7 @@ async fn start() -> (String, JoinHandle<()>) {
             asr: "test".into(),
             llm: "test".into(),
             tts: "test".into(),
+            vision: None,
         },
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
@@ -157,6 +158,7 @@ async fn start() -> (String, JoinHandle<()>) {
             ],
             ..McpConfig::default()
         },
+        vision: voice_agent_server::config::VisionConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };

@@ -11,6 +11,7 @@ pub mod asr;
 pub mod llm;
 pub mod tts;
 pub mod vad;
+pub mod vision;
 
 pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession};
 pub use catalog::{ProviderCatalog, ProviderLookupError};
@@ -24,3 +25,6 @@ pub use runtime_catalog::{ResolvedAgentRuntimes, RuntimeCatalog, RuntimeResolveE
 pub use set::ProviderSet;
 pub use tts::{TtsError, TtsProvider, TtsStream, TtsWorker};
 pub use vad::{VadInput, VadProbability, VadProvider, VadSession};
+pub use vision::{
+    OpenAiVisionProvider, VisionError, VisionProvider, VisionRequest, VisionResponse,
+};

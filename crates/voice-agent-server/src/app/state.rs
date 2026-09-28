@@ -20,6 +20,34 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn bound_vision_runtime(&self) -> Option<Arc<crate::workers::VisionRuntime>> {
+        let id = self.config.effective_agent.providers.vision.as_deref()?;
+        self.runtimes.vision(id).ok()
+    }
+
+    /// Deterministic public-HTTP seam: it injects only the already-built Vision runtime,
+    /// leaving the unrelated Voice Session providers unavailable.
+    pub fn with_vision_runtime_for_test(
+        mut self,
+        instance_id: impl Into<String>,
+        provider: Arc<dyn crate::providers::VisionProvider>,
+        concurrency: usize,
+        timeout: Duration,
+    ) -> Self {
+        let instance_id = instance_id.into();
+        let config = Arc::make_mut(&mut self.config);
+        config.vision.enabled = true;
+        config.effective_agent.providers.vision = Some(instance_id.clone());
+        Arc::make_mut(&mut self.runtimes).vision.insert(
+            instance_id,
+            Arc::new(crate::workers::VisionRuntime::new(
+                provider,
+                concurrency,
+                timeout,
+            )),
+        );
+        self
+    }
     pub fn new(config: AppConfig, loaded: LoadedProviders) -> Self {
         let supervisor = Arc::new(WorkerSupervisor::start_many(
             loaded.runtimes.asr.values().cloned().collect(),
@@ -91,12 +119,14 @@ impl AppState {
                     asr: HashMap::from([(id.clone(), asr)]),
                     llm: HashMap::from([(id.clone(), llm)]),
                     tts: HashMap::from([(id.clone(), tts)]),
+                    vision: HashMap::new(),
                 },
                 runtimes: RuntimeCatalog {
                     vad: HashMap::from([(id.clone(), vad_runtime)]),
                     asr: HashMap::from([(id.clone(), asr_runtime)]),
                     llm: HashMap::from([(id.clone(), llm_runtime)]),
                     tts: HashMap::from([(id, tts_runtime)]),
+                    vision: HashMap::new(),
                 },
             },
         )

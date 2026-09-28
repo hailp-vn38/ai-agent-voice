@@ -12,7 +12,10 @@ impl SessionActor {
             return;
         };
         self.send_mcp(
-            McpOutgoing::Initialize { id },
+            McpOutgoing::Initialize {
+                id,
+                vision: self.mcp.vision.clone(),
+            },
             None,
             PendingMcpKind::Initialize,
             self.mcp.discovery_timeout,
@@ -202,7 +205,7 @@ impl SessionActor {
         timeout: std::time::Duration,
     ) {
         let id = match &outgoing {
-            McpOutgoing::Initialize { id }
+            McpOutgoing::Initialize { id, .. }
             | McpOutgoing::ToolsList { id, .. }
             | McpOutgoing::ToolsCall { id, .. } => *id,
         };

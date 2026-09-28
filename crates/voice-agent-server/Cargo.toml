@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 real-model-gate = []
+real-vision-gate = []
 
 [[bin]]
 name = "voice-agent-server"
@@ -19,6 +20,7 @@ path = "src/bin/provider-bench.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+base64.workspace = true
 futures-util.workspace = true
 hound.workspace = true
 llm.workspace = true
@@ -62,3 +64,8 @@ required-features = ["real-model-gate"]
 name = "phase5_reference_gate"
 path = "tests/phase5_reference_gate.rs"
 required-features = ["real-model-gate"]
+
+[[test]]
+name = "vision_real_provider_gate"
+path = "tests/vision_real_provider_gate.rs"
+required-features = ["real-vision-gate"]

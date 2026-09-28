@@ -343,6 +343,7 @@ async fn start_router_with_limits(
             asr: "test".into(),
             llm: "test".into(),
             tts: "test".into(),
+            vision: None,
         },
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
@@ -353,6 +354,7 @@ async fn start_router_with_limits(
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };

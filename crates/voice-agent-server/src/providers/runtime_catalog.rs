@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     config::EffectiveProviderBindings,
-    workers::{AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime},
+    workers::{AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -20,11 +20,13 @@ pub struct ResolvedAgentRuntimes {
 }
 
 /// Read-only runtime catalog. Provider IDs are resolved once at the session boundary.
+#[derive(Clone)]
 pub struct RuntimeCatalog {
     pub(crate) vad: HashMap<String, Arc<VadWorkerRuntime>>,
     pub(crate) asr: HashMap<String, Arc<AsrWorkerRuntime>>,
     pub(crate) llm: HashMap<String, Arc<LlmRuntime>>,
     pub(crate) tts: HashMap<String, Arc<TtsWorkerRuntime>>,
+    pub(crate) vision: HashMap<String, Arc<VisionRuntime>>,
 }
 
 impl RuntimeCatalog {
@@ -34,6 +36,15 @@ impl RuntimeCatalog {
             .cloned()
             .ok_or_else(|| RuntimeResolveError::Unknown {
                 kind: "TTS",
+                id: id.into(),
+            })
+    }
+    pub fn vision(&self, id: &str) -> Result<Arc<VisionRuntime>, RuntimeResolveError> {
+        self.vision
+            .get(id)
+            .cloned()
+            .ok_or_else(|| RuntimeResolveError::Unknown {
+                kind: "VISION",
                 id: id.into(),
             })
     }
@@ -117,6 +128,7 @@ mod tests {
                 "tts_b".into(),
                 Arc::new(TtsWorkerRuntime::new(Arc::new(UnavailableTts), worker)),
             )]),
+            vision: HashMap::new(),
         };
         let resolved = catalog
             .resolve(&EffectiveProviderBindings {
@@ -124,6 +136,7 @@ mod tests {
                 asr: "asr_a".into(),
                 llm: "llm_a".into(),
                 tts: "tts_b".into(),
+                vision: None,
             })
             .unwrap();
         assert_eq!(resolved.tts.provider().adapter(), "unavailable");

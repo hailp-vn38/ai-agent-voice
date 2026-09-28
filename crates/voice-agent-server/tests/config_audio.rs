@@ -4,7 +4,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::atomic::{AtomicU64, Ordering},
 };
 use url::Url;
 use voice_agent_server::config::{
@@ -53,6 +53,7 @@ fn valid_config() -> AppConfig {
             asr: "asr".into(),
             llm: "llm".into(),
             tts: "tts".into(),
+            vision: None,
         },
         providers: ProvidersConfig {
             vad: VadProvidersConfig {
@@ -79,6 +80,7 @@ fn valid_config() -> AppConfig {
                     TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig::default()),
                 )]),
             },
+            vision: voice_agent_server::config::VisionProvidersConfig::default(),
         },
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
@@ -88,6 +90,7 @@ fn valid_config() -> AppConfig {
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
         agent: None,
         effective_agent: EffectiveAgentConfig {
             providers: EffectiveProviderBindings {
@@ -95,6 +98,7 @@ fn valid_config() -> AppConfig {
                 asr: "asr".into(),
                 llm: "llm".into(),
                 tts: "tts".into(),
+                vision: None,
             },
             ..EffectiveAgentConfig::default()
         },
@@ -102,13 +106,11 @@ fn valid_config() -> AppConfig {
 }
 
 fn load_catalog_config(extra: &str) -> Result<AppConfig, voice_agent_server::config::ConfigError> {
+    static NEXT_CONFIG: AtomicU64 = AtomicU64::new(0);
     let path = PathBuf::from(format!(
         "/tmp/voice-agent-catalog-{}-{}.toml",
         std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        NEXT_CONFIG.fetch_add(1, Ordering::Relaxed)
     ));
     fs::write(
         &path,

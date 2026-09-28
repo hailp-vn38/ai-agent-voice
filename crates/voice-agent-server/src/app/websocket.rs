@@ -223,7 +223,7 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, runtimes: Sock
                 trust_client_aec_feature: config.barge_in.trust_client_aec_feature,
             },
         )
-        .with_device_mcp(hello.features.mcp, &config.mcp)
+        .with_device_mcp(hello.features.mcp, &config.mcp, vision_capability(&config))
         .with_llm_tool_depth(config.llm.max_tool_depth)
         .with_writer_events(writer_event_rx);
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
@@ -402,6 +402,20 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, runtimes: Sock
     drop(urgent_tx);
     let _ = writer.await;
     info!("voice session disconnected");
+}
+
+fn vision_capability(config: &AppConfig) -> Option<crate::tools::device_mcp::VisionCapability> {
+    if config.vision.enabled
+        && config.vision.advertise_via_mcp
+        && config.effective_agent.providers.vision.is_some()
+    {
+        Some(crate::tools::device_mcp::VisionCapability {
+            url: config.vision.public_url.as_ref()?.to_string(),
+            token: config.auth.token.clone(),
+        })
+    } else {
+        None
+    }
 }
 
 fn checked_text(message: Message, max: usize) -> Result<String, u16> {

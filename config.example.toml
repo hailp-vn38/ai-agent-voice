@@ -23,12 +23,32 @@ urgent_control_queue = 8
 outbound_audio_queue = 32
 llm_concurrency = 2
 tts_concurrency = 2
+vision_concurrency = 2
 
 [provider_defaults]
 vad = "silero_default"
 asr = "zipformer_vi"
 llm = "openai_primary"
 tts = "zerotts_maichi"
+# Set a Vision instance ID when [vision].enabled is true.
+# vision = "local_vision"
+
+[vision]
+enabled = false
+# public_url = "http://127.0.0.1:8000/mcp/vision/explain"
+max_image_bytes = 5242880
+max_question_bytes = 4096
+advertise_via_mcp = false
+
+# [providers.vision.instances.local_vision]
+# adapter = "openai_vision"
+# base_url = "http://127.0.0.1:11434/v1/"
+# api_key = ""
+# model = "your-vision-model"
+# timeout_ms = 30000
+# max_tokens = 500
+# temperature = 0.2
+# top_p = 1.0
 
 [providers.vad.instances.silero_default]
 adapter = "silero_onnx"

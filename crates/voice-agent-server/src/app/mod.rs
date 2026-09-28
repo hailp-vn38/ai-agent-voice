@@ -29,17 +29,34 @@ use uuid::Uuid;
 
 mod ota;
 mod state;
+mod vision;
 mod websocket;
 
 pub use state::AppState;
 
 /// Application seam for tests and other callers that have already initialized providers.
 pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
-    Router::new()
+    router_with_state(AppState::from_provider_set(config, providers))
+}
+pub fn router_with_state(state: AppState) -> Router {
+    let vision_enabled = state.config.vision.enabled;
+    let router = Router::new()
         .route("/health", get(health))
-        .route("/voice/ota/", get(ota::handler).post(ota::handler).options(ota::options))
-        .route("/voice/v1/", get(websocket::handler))
-        .with_state(AppState::from_provider_set(config, providers))
+        .route(
+            "/voice/ota/",
+            get(ota::handler).post(ota::handler).options(ota::options),
+        )
+        .route("/voice/v1/", get(websocket::handler));
+    let router = if vision_enabled {
+        router.route(
+            "/mcp/vision/explain",
+            get(vision::get_handler).post(vision::post_handler),
+        )
+    } else {
+        router
+    };
+    router
+        .with_state(state)
         // Never include query parameters here: browser compatibility may carry an auth token.
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
@@ -51,14 +68,7 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
 /// Builds the public application only after local provider validation and warmup succeed.
 pub fn application(config: AppConfig) -> Result<Router, crate::providers::ProviderLoadError> {
     let loaded = crate::providers::load_local(&config)?;
-    Ok(Router::new()
-        .route("/health", get(health))
-        .route("/voice/ota/", get(ota::handler).post(ota::handler).options(ota::options))
-        .route("/voice/v1/", get(websocket::handler))
-        .with_state(AppState::new(config, loaded))
-        .layer(TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-            tracing::info_span!("http_request", method = %request.method(), path = request.uri().path())
-        })))
+    Ok(router_with_state(AppState::new(config, loaded)))
 }
 
 async fn health() -> &'static str {

@@ -120,6 +120,7 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
         config.limits.max_active_turns,
         config.limits.llm_concurrency,
         config.limits.tts_concurrency,
+        config.limits.vision_concurrency,
     ]
     .contains(&0)
     {
@@ -319,6 +320,31 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             _ => {}
         }
     }
+    for (id, instance) in &config.providers.vision.instances {
+        validate_instance_id(id)?;
+        registry.vision_factory(instance.adapter()).map_err(|_| {
+            ConfigError::Validation(format!(
+                "VISION instance `{id}` uses adapter `{}` which is not compiled into this binary",
+                instance.adapter()
+            ))
+        })?;
+        let vision = instance.openai_vision();
+        if !matches!(vision.base_url.scheme(), "http" | "https")
+            || vision.base_url.host_str().is_none()
+            || vision.model.trim().is_empty()
+            || vision.timeout_ms == 0
+            || vision.max_tokens == 0
+            || !vision.temperature.is_finite()
+            || !(0.0..=2.0).contains(&vision.temperature)
+            || !vision.top_p.is_finite()
+            || !(0.0..=1.0).contains(&vision.top_p)
+            || vision.top_p == 0.0
+        {
+            return Err(ConfigError::Validation(format!(
+                "VISION instance `{id}` has invalid OpenAI-compatible options"
+            )));
+        }
+    }
     let defaults = &config.provider_defaults;
     require_instance(
         "default VAD",
@@ -344,7 +370,51 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
     require_instance("VAD", &bindings.vad, &config.providers.vad.instances)?;
     require_instance("ASR", &bindings.asr, &config.providers.asr.instances)?;
     require_instance("LLM", &bindings.llm, &config.providers.llm.instances)?;
-    require_instance("TTS", &bindings.tts, &config.providers.tts.instances)
+    require_instance("TTS", &bindings.tts, &config.providers.tts.instances)?;
+    validate_vision(config)
+}
+
+fn validate_vision(config: &AppConfig) -> Result<(), ConfigError> {
+    const HARD_MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+    let vision = &config.vision;
+    if vision.max_image_bytes == 0
+        || vision.max_image_bytes > HARD_MAX_IMAGE_BYTES
+        || vision.max_question_bytes == 0
+    {
+        return Err(ConfigError::Validation(
+            "Vision image and question limits must be within supported bounds".into(),
+        ));
+    }
+    if !vision.enabled {
+        return Ok(());
+    }
+    let binding = config
+        .effective_agent
+        .providers
+        .vision
+        .as_deref()
+        .ok_or_else(|| {
+            ConfigError::Validation(
+                "vision.enabled requires an effective Vision provider binding".into(),
+            )
+        })?;
+    require_instance("VISION", binding, &config.providers.vision.instances)?;
+    if vision.advertise_via_mcp {
+        let public_url = vision.public_url.as_ref().ok_or_else(|| {
+            ConfigError::Validation("vision.advertise_via_mcp requires vision.public_url".into())
+        })?;
+        if public_url.path() != "/mcp/vision/explain" || public_url.query().is_some() {
+            return Err(ConfigError::Validation(
+                "vision.public_url must be the Vision endpoint and must not contain query parameters".into(),
+            ));
+        }
+        if config.auth.token.is_empty() {
+            return Err(ConfigError::Validation(
+                "vision.advertise_via_mcp requires auth.token".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_instance_id(id: &str) -> Result<(), ConfigError> {

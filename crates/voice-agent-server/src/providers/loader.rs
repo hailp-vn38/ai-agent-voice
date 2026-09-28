@@ -5,7 +5,8 @@ use crate::{
     models::prepare,
     providers::{ProviderCatalog, ProviderLoadError, RuntimeCatalog, compiled_provider_registry},
     workers::{
-        AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
+        AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
+        WorkerRuntimeConfig,
     },
 };
 
@@ -152,18 +153,48 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         tts_providers.insert(id.clone(), provider);
     }
 
+    let mut vision_providers = HashMap::new();
+    let mut vision_runtimes = HashMap::new();
+    if config.vision.enabled {
+        let binding = config
+            .effective_agent
+            .providers
+            .vision
+            .as_deref()
+            .expect("validated Vision binding");
+        for (id, instance) in &config.providers.vision.instances {
+            if id != binding {
+                continue;
+            }
+            let provider = registry
+                .vision_factory(instance.adapter())?
+                .build(instance)?;
+            vision_runtimes.insert(
+                id.clone(),
+                Arc::new(VisionRuntime::new(
+                    Arc::clone(&provider),
+                    config.limits.vision_concurrency,
+                    Duration::from_millis(instance.openai_vision().timeout_ms),
+                )),
+            );
+            vision_providers.insert(id.clone(), provider);
+        }
+    }
+
     Ok(LoadedProviders {
         providers: ProviderCatalog {
             vad: vad_providers,
             asr: asr_providers,
             llm: llm_providers,
             tts: tts_providers,
+            vision: vision_providers,
         },
         runtimes: RuntimeCatalog {
             vad: vad_runtimes,
             asr: asr_runtimes,
             llm: llm_runtimes,
             tts: tts_runtimes,
+            vision: vision_runtimes,
         },
     })
 }

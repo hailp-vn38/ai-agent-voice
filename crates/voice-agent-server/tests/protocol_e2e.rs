@@ -202,6 +202,7 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
             asr: "test".into(),
             llm: "test".into(),
             tts: "test".into(),
+            vision: None,
         },
         providers: providers_config,
         workers: WorkersConfig::default(),
@@ -212,6 +213,7 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
@@ -251,6 +253,7 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
             asr: "test".into(),
             llm: "test".into(),
             tts: "test".into(),
+            vision: None,
         },
         providers: providers_config,
         workers: WorkersConfig::default(),
@@ -264,6 +267,7 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
             trust_client_aec_feature: true,
         },
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
