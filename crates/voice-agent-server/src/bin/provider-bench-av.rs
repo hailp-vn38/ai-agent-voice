@@ -178,7 +178,11 @@ fn run_asr(
         factory.adapter(),
         &config.deployment,
     )?;
-    let provider = factory.build(instance, &model)?;
+    let provider = factory.build(
+        instance,
+        &model,
+        usize::try_from(config.audio.max_utterance_ms)? * 16,
+    )?;
     for (_, samples) in &audio {
         for _ in 0..args.warmup {
             run_asr_provider(provider.as_ref(), samples, args.feed)?;

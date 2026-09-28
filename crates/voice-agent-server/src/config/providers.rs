@@ -224,15 +224,20 @@ impl Default for SileroOnnxConfig {
 pub enum AsrInstanceConfig {
     #[serde(rename = "zipformer_sherpa")]
     ZipformerSherpa(ZipformerSherpaConfig),
+    GipformerSherpaOffline(GipformerSherpaOfflineConfig),
 }
 
 impl AsrInstanceConfig {
     pub const fn adapter(&self) -> &'static str {
-        "zipformer_sherpa"
-    }
-    pub fn zipformer_sherpa(&self) -> &ZipformerSherpaConfig {
         match self {
-            Self::ZipformerSherpa(config) => config,
+            Self::ZipformerSherpa(_) => "zipformer_sherpa",
+            Self::GipformerSherpaOffline(_) => "gipformer_sherpa_offline",
+        }
+    }
+    pub fn model(&self) -> &str {
+        match self {
+            Self::ZipformerSherpa(config) => &config.model,
+            Self::GipformerSherpaOffline(config) => &config.model,
         }
     }
 }
@@ -254,6 +259,29 @@ impl Default for ZipformerSherpaConfig {
             model: default_asr_model(),
             num_threads: default_asr_threads(),
             decoding_method: default_decoding_method(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GipformerSherpaOfflineConfig {
+    pub model: String,
+    #[serde(default = "default_gipformer_threads")]
+    pub num_threads: i32,
+    #[serde(default = "default_gipformer_decoding_method")]
+    pub decoding_method: String,
+    #[serde(default = "default_gipformer_max_active_paths")]
+    pub max_active_paths: i32,
+}
+
+impl Default for GipformerSherpaOfflineConfig {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            num_threads: default_gipformer_threads(),
+            decoding_method: default_gipformer_decoding_method(),
+            max_active_paths: default_gipformer_max_active_paths(),
         }
     }
 }

@@ -55,6 +55,45 @@ sha256 = "ca8171f8bbd516c050b627582f2125c8f5f1f6ed967ab41b0fa9aae2cf61b492"
 transform = "sentencepiece_tokens_v1"
 
 [[model]]
+identity = "gipformer15_vi_int8"
+adapter = "gipformer_sherpa_offline"
+source = "https://huggingface.co/g-group-ai-lab/gipformer1.5-68M-rnnt"
+revision = "dd9227dcd8705c13f33bdbe59728d546ab94480f"
+license = "MIT"
+
+[[model.artifacts]]
+role = "encoder"
+remote = "https://huggingface.co/g-group-ai-lab/gipformer1.5-68M-rnnt/resolve/dd9227dcd8705c13f33bdbe59728d546ab94480f/encoder.int8.onnx"
+install_path = "asr/gipformer15-68m-vi-int8/encoder.onnx"
+source_sha256 = "b528768939c7711a889be81a718ea7f2ee50d0d2d384d53f399e15b44bd9408c"
+sha256 = "b528768939c7711a889be81a718ea7f2ee50d0d2d384d53f399e15b44bd9408c"
+transform = "identity"
+
+[[model.artifacts]]
+role = "decoder"
+remote = "https://huggingface.co/g-group-ai-lab/gipformer1.5-68M-rnnt/resolve/dd9227dcd8705c13f33bdbe59728d546ab94480f/decoder.int8.onnx"
+install_path = "asr/gipformer15-68m-vi-int8/decoder.onnx"
+source_sha256 = "e0a156b5454722a524230f9e35d5d928cfcdd3723437b418e5bd5e04f1c3a101"
+sha256 = "e0a156b5454722a524230f9e35d5d928cfcdd3723437b418e5bd5e04f1c3a101"
+transform = "identity"
+
+[[model.artifacts]]
+role = "joiner"
+remote = "https://huggingface.co/g-group-ai-lab/gipformer1.5-68M-rnnt/resolve/dd9227dcd8705c13f33bdbe59728d546ab94480f/joiner.int8.onnx"
+install_path = "asr/gipformer15-68m-vi-int8/joiner.onnx"
+source_sha256 = "12636559d135315f002a1e1b477077d415e888477378db0fd450aee5b21ac551"
+sha256 = "12636559d135315f002a1e1b477077d415e888477378db0fd450aee5b21ac551"
+transform = "identity"
+
+[[model.artifacts]]
+role = "tokens"
+remote = "https://huggingface.co/g-group-ai-lab/gipformer1.5-68M-rnnt/resolve/dd9227dcd8705c13f33bdbe59728d546ab94480f/tokens.txt"
+install_path = "asr/gipformer15-68m-vi-int8/tokens.txt"
+source_sha256 = "f536d03c2e95ebd2930cf0abec88e823bd17d3c1933da7ae6a82db3b80605e15"
+sha256 = "f536d03c2e95ebd2930cf0abec88e823bd17d3c1933da7ae6a82db3b80605e15"
+transform = "identity"
+
+[[model]]
 identity = "zerotts_default"
 adapter = "zerotts_onnx"
 source = "https://huggingface.co/zeroweight-ai/ZeroTTS"

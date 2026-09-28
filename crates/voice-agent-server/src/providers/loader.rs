@@ -71,7 +71,15 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             factory.adapter(),
             &config.deployment,
         )?;
-        let provider = factory.build(instance, &model)?;
+        let max_buffered_samples = usize::try_from(config.audio.max_utterance_ms)
+            .map_err(|_| {
+                ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
+            })?
+            .checked_mul(16)
+            .ok_or_else(|| {
+                ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
+            })?;
+        let provider = factory.build(instance, &model, max_buffered_samples)?;
         asr_runtimes.insert(
             id.clone(),
             Arc::new(AsrWorkerRuntime::new(
@@ -84,7 +92,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                 },
             )),
         );
-        tracing::info!(provider_kind = "asr", provider_instance = %id, adapter = instance.adapter(), "provider runtime loaded");
+        tracing::info!(provider_kind = "asr", provider_instance = %id, adapter = instance.adapter(), model = %model.identity(), "provider runtime loaded");
         asr_providers.insert(id.clone(), provider);
     }
 

@@ -2,16 +2,20 @@
 
 use std::sync::Arc;
 
-use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
+use sherpa_onnx::{
+    OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig, OnlineRecognizer,
+    OnlineRecognizerConfig,
+};
 
 use crate::{
     config::{
-        AsrInstanceConfig, LlmInstanceConfig, RuntimeConfig, TtsInstanceConfig, VadInstanceConfig,
+        AsrInstanceConfig, GipformerSherpaOfflineConfig, LlmInstanceConfig, RuntimeConfig,
+        TtsInstanceConfig, VadInstanceConfig,
     },
     models::ResolvedModel,
     providers::{
         AsrProvider, LlmProvider, ProviderLoadError, TtsProvider, VadProvider,
-        asr::ZipformerAsrProvider,
+        asr::{GipformerAsrProvider, ZipformerAsrProvider},
         llm::ConfiguredOpenAiLlm,
         tts::{ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts},
         vad::LoadedSileroVad,
@@ -42,6 +46,7 @@ pub trait AsrFactory: Send + Sync {
         &self,
         config: &AsrInstanceConfig,
         model: &ResolvedModel,
+        max_buffered_samples: usize,
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError>;
 }
 
@@ -154,6 +159,7 @@ impl VadFactory for SileroOnnxFactory {
 }
 
 struct ZipformerSherpaFactory;
+struct GipformerSherpaOfflineFactory;
 
 struct OpenAiFactory;
 
@@ -317,6 +323,9 @@ impl AsrFactory for ZipformerSherpaFactory {
     ) -> Result<&'a str, ProviderLoadError> {
         match config {
             AsrInstanceConfig::ZipformerSherpa(options) => Ok(&options.model),
+            _ => Err(ProviderLoadError::Configuration(
+                "zipformer_sherpa factory received another adapter config".into(),
+            )),
         }
     }
 
@@ -324,9 +333,14 @@ impl AsrFactory for ZipformerSherpaFactory {
         &self,
         config: &AsrInstanceConfig,
         model: &ResolvedModel,
+        _: usize,
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError> {
         validate_model_adapter(model, self.adapter())?;
-        let AsrInstanceConfig::ZipformerSherpa(options) = config;
+        let AsrInstanceConfig::ZipformerSherpa(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "zipformer_sherpa factory received another adapter config".into(),
+            ));
+        };
         let mut recognizer_config = OnlineRecognizerConfig::default();
         recognizer_config.model_config.transducer.encoder = Some(required(model, "encoder")?);
         recognizer_config.model_config.transducer.decoder = Some(required(model, "decoder")?);
@@ -345,13 +359,75 @@ impl AsrFactory for ZipformerSherpaFactory {
     }
 }
 
+impl AsrFactory for GipformerSherpaOfflineFactory {
+    fn adapter(&self) -> &'static str {
+        "gipformer_sherpa_offline"
+    }
+
+    fn model_identity<'a>(
+        &self,
+        config: &'a AsrInstanceConfig,
+    ) -> Result<&'a str, ProviderLoadError> {
+        match config {
+            AsrInstanceConfig::GipformerSherpaOffline(options) => Ok(&options.model),
+            _ => Err(ProviderLoadError::Configuration(
+                "gipformer_sherpa_offline factory received another adapter config".into(),
+            )),
+        }
+    }
+
+    fn build(
+        &self,
+        config: &AsrInstanceConfig,
+        model: &ResolvedModel,
+        max_buffered_samples: usize,
+    ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError> {
+        let AsrInstanceConfig::GipformerSherpaOffline(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "gipformer_sherpa_offline factory received another adapter config".into(),
+            ));
+        };
+        validate_model_adapter(model, self.adapter())?;
+        let recognizer = build_gipformer_recognizer(options, model)?;
+        drop(recognizer.create_stream());
+        Ok(Arc::new(GipformerAsrProvider {
+            recognizer: Arc::new(recognizer),
+            max_buffered_samples,
+        }))
+    }
+}
+
+fn build_gipformer_recognizer(
+    options: &GipformerSherpaOfflineConfig,
+    model: &ResolvedModel,
+) -> Result<OfflineRecognizer, ProviderLoadError> {
+    let mut config = OfflineRecognizerConfig::default();
+    config.model_config.transducer = OfflineTransducerModelConfig {
+        encoder: Some(required(model, "encoder")?),
+        decoder: Some(required(model, "decoder")?),
+        joiner: Some(required(model, "joiner")?),
+    };
+    config.model_config.tokens = Some(required(model, "tokens")?);
+    config.model_config.num_threads = options.num_threads;
+    config.model_config.provider = Some("cpu".into());
+    config.model_config.model_type = Some("transducer".into());
+    config.feat_config.sample_rate = 16_000;
+    config.feat_config.feature_dim = 80;
+    config.decoding_method = Some(options.decoding_method.clone());
+    config.max_active_paths = options.max_active_paths;
+    OfflineRecognizer::create(&config).ok_or(ProviderLoadError::Initialize("Gipformer ASR"))
+}
+
 static SILERO_ONNX_FACTORY: SileroOnnxFactory = SileroOnnxFactory;
 static ZIPFORMER_SHERPA_FACTORY: ZipformerSherpaFactory = ZipformerSherpaFactory;
+static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
+    GipformerSherpaOfflineFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
 static VAD_FACTORIES: [&dyn VadFactory; 1] = [&SILERO_ONNX_FACTORY];
-static ASR_FACTORIES: [&dyn AsrFactory; 1] = [&ZIPFORMER_SHERPA_FACTORY];
+static ASR_FACTORIES: [&dyn AsrFactory; 2] =
+    [&ZIPFORMER_SHERPA_FACTORY, &GIPFORMER_SHERPA_OFFLINE_FACTORY];
 static LLM_FACTORIES: [&dyn LlmFactory; 1] = [&OPENAI_FACTORY];
 static TTS_FACTORIES: [&dyn TtsFactory; 2] = [&ZEROTTS_ONNX_FACTORY, &CHILLAUDIO_WS_FACTORY];
 static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
@@ -392,7 +468,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        config::{AsrInstanceConfig, ZipformerSherpaConfig},
+        config::{AsrInstanceConfig, GipformerSherpaOfflineConfig, ZipformerSherpaConfig},
         models::ResolvedModel,
     };
 
@@ -412,6 +488,7 @@ mod tests {
             .build(
                 &AsrInstanceConfig::ZipformerSherpa(ZipformerSherpaConfig::default()),
                 &model,
+                480_000,
             );
 
         assert!(
@@ -429,6 +506,88 @@ mod tests {
             .build(
                 &AsrInstanceConfig::ZipformerSherpa(ZipformerSherpaConfig::default()),
                 &model,
+                480_000,
+            );
+
+        assert!(matches!(
+            result,
+            Err(crate::providers::ProviderLoadError::ModelAdapterMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn gipformer_factory_requires_all_transducer_artifacts() {
+        let models = vec![
+            (
+                "encoder",
+                ResolvedModel::for_test("gipformer15_vi_int8", "gipformer_sherpa_offline", []),
+            ),
+            (
+                "decoder",
+                ResolvedModel::for_test(
+                    "gipformer15_vi_int8",
+                    "gipformer_sherpa_offline",
+                    [("encoder", PathBuf::from("encoder.onnx"))],
+                ),
+            ),
+            (
+                "joiner",
+                ResolvedModel::for_test(
+                    "gipformer15_vi_int8",
+                    "gipformer_sherpa_offline",
+                    [
+                        ("encoder", PathBuf::from("encoder.onnx")),
+                        ("decoder", PathBuf::from("decoder.onnx")),
+                    ],
+                ),
+            ),
+            (
+                "tokens",
+                ResolvedModel::for_test(
+                    "gipformer15_vi_int8",
+                    "gipformer_sherpa_offline",
+                    [
+                        ("encoder", PathBuf::from("encoder.onnx")),
+                        ("decoder", PathBuf::from("decoder.onnx")),
+                        ("joiner", PathBuf::from("joiner.onnx")),
+                    ],
+                ),
+            ),
+        ];
+
+        for (missing_role, model) in models {
+            let result = compiled_provider_registry()
+                .asr_factory("gipformer_sherpa_offline")
+                .unwrap()
+                .build(
+                    &AsrInstanceConfig::GipformerSherpaOffline(GipformerSherpaOfflineConfig {
+                        model: "gipformer15_vi_int8".into(),
+                        ..Default::default()
+                    }),
+                    &model,
+                    480_000,
+                );
+
+            assert!(
+                matches!(result, Err(crate::providers::ProviderLoadError::MissingArtifact(role)) if role == missing_role)
+            );
+        }
+    }
+
+    #[test]
+    fn gipformer_factory_rejects_a_resolved_model_for_another_adapter() {
+        let model = ResolvedModel::for_test("zipformer_vi_streaming", "zipformer_sherpa", []);
+
+        let result = compiled_provider_registry()
+            .asr_factory("gipformer_sherpa_offline")
+            .unwrap()
+            .build(
+                &AsrInstanceConfig::GipformerSherpaOffline(GipformerSherpaOfflineConfig {
+                    model: "gipformer15_vi_int8".into(),
+                    ..Default::default()
+                }),
+                &model,
+                480_000,
             );
 
         assert!(matches!(

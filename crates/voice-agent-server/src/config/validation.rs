@@ -236,14 +236,30 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 instance.adapter()
             ))
         })?;
-        let asr = instance.zipformer_sherpa();
-        if asr.num_threads <= 0
-            || asr.decoding_method.trim().is_empty()
-            || asr.model.trim().is_empty()
-        {
-            return Err(ConfigError::Validation(format!(
-                "ASR instance `{id}` has invalid runtime options or model identity"
-            )));
+        match instance {
+            crate::config::AsrInstanceConfig::ZipformerSherpa(asr)
+                if asr.num_threads <= 0
+                    || asr.decoding_method.trim().is_empty()
+                    || asr.model.trim().is_empty() =>
+            {
+                return Err(ConfigError::Validation(format!(
+                    "ASR instance `{id}` has invalid runtime options or model identity"
+                )));
+            }
+            crate::config::AsrInstanceConfig::GipformerSherpaOffline(asr)
+                if asr.model.trim().is_empty()
+                    || asr.num_threads <= 0
+                    || !matches!(
+                        asr.decoding_method.as_str(),
+                        "greedy_search" | "modified_beam_search"
+                    )
+                    || asr.max_active_paths <= 0 =>
+            {
+                return Err(ConfigError::Validation(format!(
+                    "Gipformer ASR instance `{id}` has invalid model identity or runtime options"
+                )));
+            }
+            _ => {}
         }
     }
     for (id, instance) in &config.providers.llm.instances {

@@ -11,6 +11,13 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         registry.asr_factory("zipformer_sherpa").unwrap().adapter(),
         "zipformer_sherpa"
     );
+    assert_eq!(
+        registry
+            .asr_factory("gipformer_sherpa_offline")
+            .unwrap()
+            .adapter(),
+        "gipformer_sherpa_offline"
+    );
     assert_eq!(registry.llm_factory("openai").unwrap().adapter(), "openai");
     assert_eq!(
         registry.tts_factory("zerotts_onnx").unwrap().adapter(),

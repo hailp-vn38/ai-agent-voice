@@ -94,6 +94,15 @@ pub(super) fn default_asr_threads() -> i32 {
 pub(super) fn default_decoding_method() -> String {
     "greedy_search".into()
 }
+pub(super) fn default_gipformer_threads() -> i32 {
+    4
+}
+pub(super) fn default_gipformer_decoding_method() -> String {
+    "modified_beam_search".into()
+}
+pub(super) fn default_gipformer_max_active_paths() -> i32 {
+    4
+}
 pub(super) fn default_manifest_path() -> std::path::PathBuf {
     "models/manifest.toml".into()
 }

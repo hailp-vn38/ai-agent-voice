@@ -9,11 +9,12 @@ use std::{
 use url::Url;
 use voice_agent_server::config::{
     AppConfig, AsrInstanceConfig, AsrProvidersConfig, AudioConfig, AuthConfig, BargeInConfig,
-    DeploymentConfig, EffectiveAgentConfig, EffectiveProviderBindings, LimitsConfig, LlmConfig,
-    LlmInstanceConfig, LlmProvidersConfig, OpenAiConfig, ProviderDefaultsConfig, ProvidersConfig,
-    RuntimeConfig, ServerConfig, SileroOnnxConfig, SpeechOutputConfig, TtsConfig,
-    TtsInstanceConfig, TtsProvidersConfig, VadInstanceConfig, VadProvidersConfig, WebsocketConfig,
-    WorkersConfig, ZeroTtsOnnxConfig, ZipformerSherpaConfig,
+    DeploymentConfig, EffectiveAgentConfig, EffectiveProviderBindings,
+    GipformerSherpaOfflineConfig, LimitsConfig, LlmConfig, LlmInstanceConfig, LlmProvidersConfig,
+    OpenAiConfig, ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig,
+    SileroOnnxConfig, SpeechOutputConfig, TtsConfig, TtsInstanceConfig, TtsProvidersConfig,
+    VadInstanceConfig, VadProvidersConfig, WebsocketConfig, WorkersConfig, ZeroTtsOnnxConfig,
+    ZipformerSherpaConfig,
 };
 use voice_agent_server::{
     app::AppState,
@@ -196,11 +197,80 @@ fn catalog_instances_keep_typed_adapter_options() {
         "silero_onnx"
     );
     assert_eq!(
-        config.providers.asr.instances["asr"]
-            .zipformer_sherpa()
-            .model,
+        config.providers.asr.instances["asr"].model(),
         "zipformer_vi_streaming"
     );
+}
+
+#[test]
+fn config_accepts_multiple_asr_instances_with_different_adapters() {
+    let config = load_catalog_config(
+        r#"
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+num_threads = 4
+decoding_method = "modified_beam_search"
+max_active_paths = 4
+
+[agent.providers]
+asr = "gipformer_vi"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(config.providers.asr.instances.len(), 2);
+    assert_eq!(
+        config.providers.asr.instances["gipformer_vi"].adapter(),
+        "gipformer_sherpa_offline"
+    );
+    assert_eq!(config.effective_agent().providers.asr, "gipformer_vi");
+}
+
+#[test]
+fn config_rejects_invalid_gipformer_runtime_options() {
+    for extra in [
+        r#"
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+num_threads = 0
+"#,
+        r#"
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+decoding_method = "unsupported"
+"#,
+        r#"
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+max_active_paths = 0
+"#,
+        r#"
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = ""
+"#,
+        r#"
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+quantization = "int8"
+"#,
+    ] {
+        assert!(load_catalog_config(extra).is_err());
+    }
+}
+
+#[test]
+fn gipformer_config_defaults_are_qualification_defaults() {
+    let config: GipformerSherpaOfflineConfig = toml::from_str("model = 'gipformer15_vi_int8'")
+        .expect("Gipformer configuration should parse");
+    assert_eq!(config.num_threads, 4);
+    assert_eq!(config.decoding_method, "modified_beam_search");
+    assert_eq!(config.max_active_paths, 4);
 }
 
 #[test]

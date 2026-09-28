@@ -88,6 +88,15 @@ provider = "cpu"
 decoding_method = "greedy_search"
 enable_internal_endpoint = false
 
+# Offline Gipformer buffers canonical 16 kHz PCM and decodes it at finish().
+# Its instance ID, not its adapter name, is what an agent binding selects.
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+num_threads = 4
+decoding_method = "modified_beam_search" # greedy_search is also supported
+max_active_paths = 4
+
 [providers.llm.instances.openai_primary]
 adapter = "openai"
 api_key = ""
@@ -187,6 +196,7 @@ VOICE_AGENT_LLM_API_KEY
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
 - mỗi instance OpenAI phải có `base_url`, `model`, timeout hợp lệ; API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry. Nhiều instance có thể cùng adapter `openai` với endpoint/model khác nhau.
 - mỗi instance ZeroTTS phải có Logical Model Identity, `voice` và thread count hợp lệ; Model Preparation inject `ResolvedModel`, không direct path. Remote ChillAudio không có fake model identity. `[workers.tts]` là template capacity/timeout/cleanup cho từng runtime được load.
+- `gipformer_sherpa_offline` dùng `OfflineRecognizer`: `push_pcm()` chỉ tích luỹ PCM 16 kHz canonical, không phát partial; `finish()` mới decode toàn utterance. `model`, `num_threads`, `decoding_method` (`greedy_search` hoặc `modified_beam_search`) và `max_active_paths > 0` là các option duy nhất của instance. Precision và artifact paths thuộc Model Artifact Manifest, không thuộc TOML provider. Offline decode hiện không hard-cancel được sau khi native decode bắt đầu, nên giữ `workers.asr.final_timeout_ms` theo benchmark target CPU.
 - `[speech_output]` chứa `min_chars`, `soft_break_min_chars`, `max_chars`, `pending_segments` với `1 <= min_chars <= soft_break_min_chars <= max_chars`, `1 <= pending_segments <= 64`. Hai ngưỡng tối thiểu chỉ được giữ để tương thích cấu hình cũ; dấu kết câu flush ngay, dấu mềm không flush. `max_chars` chỉ là ngưỡng khẩn cấp: buffer câu chưa hoàn tất vượt `2 * max_chars` sẽ fail backpressure, không bị cắt giữa câu. Pending full cũng fail `speech_output_backpressure`, cancel LLM operation và không accept thêm delta.
 - `tts.timeout_ms` bắt đầu khi TtsWorkerRuntime accept một segment và kết thúc tại `SegmentFinished`, `Failed` hoặc cancelled acknowledgement; PCM chunks không reset timer. Slot chỉ release sau cleanup acknowledgement, hoặc worker bị quarantine khi hết cleanup grace.
 - `llm_concurrency > 0`; LlmRuntime giữ permit từ khi accept request tới terminal event, timeout request không reset bởi text delta. Bounded event route không được drop terminal event; failure route phải cancel controlled operation.

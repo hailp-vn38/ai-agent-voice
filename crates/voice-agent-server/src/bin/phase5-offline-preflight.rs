@@ -81,8 +81,8 @@ fn run() -> Result<()> {
     let asr_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &asr_instance.zipformer_sherpa().model,
-        "zipformer_sherpa",
+        asr_instance.model(),
+        asr_instance.adapter(),
         &config.deployment,
     )?;
     let tts_model = verify_installed(
@@ -103,9 +103,13 @@ fn run() -> Result<()> {
         &config.runtime,
         &vad_model,
     )?;
-    registry
-        .asr_factory(asr_instance.adapter())?
-        .build(asr_instance, &asr_model)?;
+    registry.asr_factory(asr_instance.adapter())?.build(
+        asr_instance,
+        &asr_model,
+        usize::try_from(config.audio.max_utterance_ms)
+            .context("convert configured ASR capture bound")?
+            * 16,
+    )?;
     registry.tts_factory(tts_instance.adapter())?.build(
         tts_instance,
         &config.runtime,

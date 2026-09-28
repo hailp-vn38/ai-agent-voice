@@ -46,6 +46,16 @@ model = "zipformer_vi_streaming"
 num_threads = 2
 decoding_method = "greedy_search"
 
+# Gipformer is an offline ASR candidate: PCM is buffered during capture and
+# decoded once at utterance end. Keep Zipformer as the application default
+# until a local qualification benchmark supports changing it.
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+num_threads = 4
+decoding_method = "modified_beam_search"
+max_active_paths = 4
+
 [providers.llm.instances.openai_primary]
 adapter = "openai"
 api_key = ""
@@ -115,6 +125,11 @@ revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
 license = "CC-BY-NC-ND-4.0"
 
 [[deployment.model_acknowledgements]]
+model = "gipformer15_vi_int8"
+revision = "dd9227dcd8705c13f33bdbe59728d546ab94480f"
+license = "MIT"
+
+[[deployment.model_acknowledgements]]
 model = "zerotts_default"
 revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
 license = "MIT; bundled-codec=Apache-2.0"
@@ -139,6 +154,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # Optional agent-specific bindings override [provider_defaults].
 # [agent.providers]
 # tts = "chillaudio_default"
+# asr = "gipformer_vi"
 
 [mcp]
 enabled = true
