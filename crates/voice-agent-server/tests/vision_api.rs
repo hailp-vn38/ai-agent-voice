@@ -66,6 +66,7 @@ async fn vision_api_get_probe_and_multipart_post_work_over_tcp() {
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.headers()["access-control-allow-origin"], "*");
     assert_eq!(
         response.json::<serde_json::Value>().await.unwrap()["response"],
         "image/jpeg:4"

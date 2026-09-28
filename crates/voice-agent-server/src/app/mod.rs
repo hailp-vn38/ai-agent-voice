@@ -16,6 +16,7 @@ use axum::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, Request, StatusCode, header},
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -52,7 +53,8 @@ pub fn router_with_state(state: AppState) -> Router {
             "/mcp/vision/explain",
             get(vision::get_handler)
                 .post(vision::post_handler)
-                .options(vision::options_handler),
+                .options(vision::options_handler)
+                .layer(middleware::map_response(vision::cors_response)),
         )
     } else {
         router

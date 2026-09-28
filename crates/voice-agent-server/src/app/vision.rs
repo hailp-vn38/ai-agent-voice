@@ -52,6 +52,27 @@ pub async fn options_handler() -> Response {
     )
         .into_response()
 }
+
+/// Apply the same CORS policy to successful and error responses. Browsers validate the actual
+/// multipart POST response as well as its OPTIONS preflight.
+pub async fn cors_response(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        "access-control-allow-origin",
+        "*".parse().expect("valid header"),
+    );
+    headers.insert(
+        "access-control-allow-methods",
+        "GET, POST, OPTIONS".parse().expect("valid header"),
+    );
+    headers.insert(
+        "access-control-allow-headers",
+        "Authorization, Device-Id, Client-Id, Content-Type"
+            .parse()
+            .expect("valid header"),
+    );
+    response
+}
 pub async fn post_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
