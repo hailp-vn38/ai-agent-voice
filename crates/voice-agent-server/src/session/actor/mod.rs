@@ -78,6 +78,7 @@ pub struct SessionActor {
     speech_output: SpeechOutput,
     tts_started: bool,
     pending_delivery: Option<PendingDelivery>,
+    pending_session_action: Option<PendingSessionAction>,
     control_tx: mpsc::Sender<OutboundMessage>,
     urgent_tx: mpsc::Sender<OutboundMessage>,
     shutdown_tx: watch::Sender<bool>,
@@ -91,6 +92,7 @@ pub struct SessionActor {
     barge_in_enabled: bool,
     trust_client_aec_feature: bool,
     mcp: DeviceMcpState,
+    tool_batch: Option<ToolBatchState>,
     llm_messages: Vec<ChatMessage>,
     llm_round: Option<LlmRoundBuffer>,
     tool_depth: usize,
@@ -130,6 +132,11 @@ struct PendingDelivery {
     assistant_text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingSessionAction {
+    CloseAfterTurn { turn_id: TurnId },
+}
+
 #[derive(Clone, Copy, Debug)]
 enum TurnFailure {
     LlmRequestTooLarge,
@@ -159,7 +166,6 @@ struct DeviceMcpState {
     discovered: Vec<DiscoveredTool>,
     visible: Vec<LlmVisibleTool>,
     pending: HashMap<McpRequestId, PendingMcpRequest>,
-    batch: Option<ToolBatchState>,
     vision: Option<VisionCapability>,
 }
 
@@ -179,6 +185,7 @@ struct ToolBatchState {
     completed_calls: Vec<ToolCall>,
     next: usize,
     results: Vec<ChatMessage>,
+    direct_response: Option<String>,
 }
 #[derive(Default)]
 struct LlmRoundBuffer {
@@ -265,6 +272,7 @@ mod ingress;
 mod lifecycle;
 mod listening;
 mod mcp;
+mod tools;
 fn normalize_detect_text(input: String) -> Option<String> {
     let text = input.trim();
     if text.is_empty()

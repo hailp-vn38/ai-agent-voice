@@ -163,7 +163,7 @@ impl SessionActor {
             return;
         }
         self.interrupt_active_turn();
-        self.cancel_mcp_turn();
+        self.cancel_tool_turn();
         if !self.advance_generation() {
             return;
         }
@@ -453,6 +453,7 @@ impl SessionActor {
             return;
         };
         self.interrupt_active_turn();
+        self.cancel_tool_turn();
         if !self.advance_generation() {
             return;
         }

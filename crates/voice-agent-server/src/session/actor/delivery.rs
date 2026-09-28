@@ -1,5 +1,4 @@
 use super::*;
-use crate::providers::llm::ToolDefinition;
 
 impl SessionActor {
     pub(super) fn commit_user_text(&mut self, final_text: String) -> Option<String> {
@@ -76,23 +75,15 @@ impl SessionActor {
         self.generated_response.clear();
         self.pending_llm_delta = None;
         self.llm_finish_pending = false;
-        self.llm_round =
-            (allow_tools && !self.mcp.visible.is_empty()).then(LlmRoundBuffer::default);
+        let tools = if allow_tools {
+            self.available_llm_tools()
+        } else {
+            Vec::new()
+        };
+        self.llm_round = (!tools.is_empty()).then(LlmRoundBuffer::default);
         let request = crate::providers::llm::LlmRequest {
             messages: self.llm_messages.clone(),
-            tools: if allow_tools {
-                self.mcp
-                    .visible
-                    .iter()
-                    .map(|tool| ToolDefinition {
-                        name: tool.llm_name.clone(),
-                        description: tool.description.clone(),
-                        parameters: tool.input_schema.clone(),
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            },
+            tools,
         };
         if crate::session::prompt::llm_request_size_bytes(&request).is_err() {
             self.terminalize_turn_failure(TurnFailure::LlmRequestTooLarge);
@@ -355,9 +346,12 @@ impl SessionActor {
     pub(super) fn fail_speech_delivery(&mut self) {
         let writer_owns_terminal_outcome = self.tts_started;
         let failed_generation = self.generation;
+        if !writer_owns_terminal_outcome && let Some(turn_id) = self.current_turn_id() {
+            self.cancel_pending_session_action_for_turn(turn_id);
+        }
         self.cancel_speech_delivery();
         self.cancel_llm();
-        self.cancel_mcp_turn();
+        self.cancel_tool_turn();
         if !self.advance_generation() {
             return;
         }
@@ -376,6 +370,9 @@ impl SessionActor {
     /// invalidated before producer cancellation, and releasing the Active Turn is
     /// idempotent through its permit ownership flag.
     pub(super) fn interrupt_active_turn(&mut self) {
+        if let Some(turn_id) = self.current_turn_id() {
+            self.cancel_pending_session_action_for_turn(turn_id);
+        }
         self.cancel_speech_delivery();
         self.cancel_llm();
         self.cancel_asr();

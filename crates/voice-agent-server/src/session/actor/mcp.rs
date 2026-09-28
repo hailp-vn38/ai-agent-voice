@@ -1,6 +1,7 @@
 use super::*;
-use crate::config::McpResultDelivery;
-use crate::tools::device_mcp::{McpIncoming, McpOutgoing, parse_tools_page, visible_tools};
+use crate::tools::device_mcp::{
+    LlmVisibleTool, McpIncoming, McpOutgoing, parse_tools_page, visible_tools,
+};
 
 impl SessionActor {
     pub(super) fn begin_mcp_discovery(&mut self) {
@@ -103,59 +104,11 @@ impl SessionActor {
             .retain(|_, pending| matches!(pending.kind, PendingMcpKind::ToolCall { .. }));
     }
 
-    pub(super) fn start_tool_batch(&mut self, calls: Vec<ToolCall>) {
-        if !self.mcp.ready || calls.is_empty() {
-            self.fail_speech_delivery();
+    pub(super) fn dispatch_device_mcp_tool(&mut self, call: ToolCall, tool: LlmVisibleTool) {
+        if !self.mcp.ready {
+            self.complete_tool_call(call, Err("mcp_unavailable"));
             return;
         }
-        self.mcp.batch = Some(ToolBatchState {
-            generation: self.generation,
-            calls,
-            completed_calls: Vec::new(),
-            next: 0,
-            results: Vec::new(),
-        });
-        self.dispatch_next_tool();
-    }
-
-    fn dispatch_next_tool(&mut self) {
-        let next = self.mcp.batch.as_ref().and_then(|batch| {
-            (batch.generation == self.generation)
-                .then(|| batch.calls.get(batch.next).cloned())
-                .flatten()
-        });
-        let Some(call) = next else {
-            if let Some(batch) = self.mcp.batch.take() {
-                self.commit_tool_exchange(&batch);
-                match self.batch_result_delivery(&batch) {
-                    McpResultDelivery::LlmThenTts => self.begin_tool_continuation(),
-                    McpResultDelivery::DirectTts => {
-                        if let Some(text) = self.direct_tts_text(&batch) {
-                            self.begin_direct_tool_speech(text);
-                        } else {
-                            self.finish_tool_turn_without_speech();
-                        }
-                    }
-                    McpResultDelivery::Silent => self.finish_tool_turn_without_speech(),
-                }
-            }
-            return;
-        };
-        // This call is now terminally owned by this batch. Advance before any
-        // validation failure so an error ToolResult cannot redispatch it forever.
-        if let Some(batch) = self.mcp.batch.as_mut() {
-            batch.next += 1;
-        }
-        let Some(tool) = self
-            .mcp
-            .visible
-            .iter()
-            .find(|tool| tool.llm_name == call.name)
-            .cloned()
-        else {
-            self.complete_tool_call(call, Err("unknown_tool"));
-            return;
-        };
         let Some(arguments) = call.arguments.as_object().cloned() else {
             self.complete_tool_call(call, Err("invalid_arguments"));
             return;
@@ -174,27 +127,6 @@ impl SessionActor {
             PendingMcpKind::ToolCall { call },
             self.mcp.call_timeout,
         );
-    }
-
-    fn complete_tool_call(&mut self, call: ToolCall, result: Result<serde_json::Value, &str>) {
-        let content = match result {
-            Ok(value) => normalize_tool_result(value, self.max_tool_result_chars),
-            Err(code) => serde_json::json!({
-                "ok": false,
-                "code": code,
-                "content": "",
-                "truncated": false,
-            })
-            .to_string(),
-        };
-        if let Some(batch) = self.mcp.batch.as_mut() {
-            batch.completed_calls.push(call.clone());
-            batch.results.push(ChatMessage::ToolResult {
-                tool_call_id: call.id,
-                content,
-            });
-        }
-        self.dispatch_next_tool();
     }
 
     fn send_mcp(
@@ -267,88 +199,14 @@ impl SessionActor {
 
     /// Drop semantic ownership of in-flight tool calls after a turn is cancelled.
     /// The device may still execute a side effect, but its late response cannot restart the LLM.
-    pub(super) fn cancel_mcp_turn(&mut self) {
+    pub(super) fn cancel_pending_mcp_turn(&mut self) {
         self.mcp
             .pending
             .retain(|_, pending| pending.generation.is_none());
-        if let Some(batch) = self.mcp.batch.take() {
-            self.commit_tool_exchange(&batch);
-        }
-        self.llm_round = None;
-    }
-
-    fn commit_tool_exchange(&mut self, batch: &ToolBatchState) {
-        if batch.completed_calls.is_empty() {
-            return;
-        }
-        let Some(turn_id) = self.current_turn_id() else {
-            return;
-        };
-        if self.dialogue_history.append_completed_round(
-            turn_id,
-            batch.completed_calls.clone(),
-            batch.results.clone(),
-        ) {
-            crate::session::prompt::append_completed_round(
-                &mut self.llm_messages,
-                batch.completed_calls.clone(),
-                batch.results.clone(),
-            );
-        }
-    }
-
-    fn batch_result_delivery(&self, batch: &ToolBatchState) -> McpResultDelivery {
-        batch
-            .calls
-            .iter()
-            .fold(McpResultDelivery::Silent, |selected, call| {
-                let delivery = self
-                    .mcp
-                    .visible
-                    .iter()
-                    .find(|tool| tool.llm_name == call.name)
-                    .and_then(|tool| self.mcp.tool_delivery.get(&tool.original_name))
-                    .copied()
-                    .unwrap_or(self.mcp.result_delivery);
-                match (selected, delivery) {
-                    (McpResultDelivery::LlmThenTts, _) | (_, McpResultDelivery::LlmThenTts) => {
-                        McpResultDelivery::LlmThenTts
-                    }
-                    (McpResultDelivery::DirectTts, _) | (_, McpResultDelivery::DirectTts) => {
-                        McpResultDelivery::DirectTts
-                    }
-                    _ => McpResultDelivery::Silent,
-                }
-            })
-    }
-
-    fn direct_tts_text(&self, batch: &ToolBatchState) -> Option<String> {
-        let text = batch
-            .results
-            .iter()
-            .filter_map(|result| match result {
-                ChatMessage::ToolResult { content, .. } => {
-                    serde_json::from_str::<serde_json::Value>(content)
-                        .ok()
-                        .filter(|result| result["ok"].as_bool() == Some(true))
-                        .and_then(|result| {
-                            result["content"].as_str().map(str::trim).map(str::to_owned)
-                        })
-                }
-                _ => None,
-            })
-            .filter(|text| !text.is_empty() && !text.starts_with('{') && !text.starts_with('['))
-            .collect::<Vec<_>>();
-        (!text.is_empty()).then(|| text.join("\n"))
-    }
-
-    fn finish_tool_turn_without_speech(&mut self) {
-        self.generated_response.clear();
-        self.complete_recognition();
     }
 }
 
-fn normalize_tool_result(result: serde_json::Value, max_chars: usize) -> String {
+pub(super) fn normalize_tool_result(result: serde_json::Value, max_chars: usize) -> String {
     let is_error = result
         .get("isError")
         .and_then(serde_json::Value::as_bool)

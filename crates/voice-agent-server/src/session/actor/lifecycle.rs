@@ -49,6 +49,22 @@ impl SessionActor {
         let _ = self.urgent_tx.try_send(OutboundMessage::Close(1011));
     }
 
+    pub(super) fn close_voice_session_normally(&mut self, turn_id: TurnId) {
+        if self.phase == SessionPhase::Closed {
+            return;
+        }
+        tracing::info!(
+            event = "session_close_after_turn_committed",
+            turn_id = turn_id.get(),
+            close_code = 1000,
+            "Closing voice session after final TTS turn"
+        );
+        self.close_vad();
+        self.auto_reset_pending = false;
+        self.phase = SessionPhase::Closed;
+        let _ = self.urgent_tx.try_send(OutboundMessage::Close(1000));
+    }
+
     /// An interruption stop that cannot enter the bounded urgent lane leaves playback state
     /// unknowable.  A close cannot be relied on either, so terminate the writer after the
     /// regular session cleanup has run.

@@ -79,8 +79,19 @@ impl SessionActor {
                             .commit_assistant(turn_id, delivery.assistant_text);
                     }
                 }
+                let close_after_turn = matches!(
+                    self.pending_session_action,
+                    Some(PendingSessionAction::CloseAfterTurn { turn_id: pending }) if pending == turn_id
+                );
                 self.tts_started = false;
                 self.release_active_turn();
+                if close_after_turn {
+                    self.pending_session_action = None;
+                    if matches!(outcome, WriterTurnOutcome::Normal) {
+                        self.close_voice_session_normally(turn_id);
+                        return;
+                    }
+                }
                 self.complete_recognition();
             }
             WriterEvent::Failed { .. } => self.fail_closed(),
@@ -135,6 +146,22 @@ impl SessionActor {
 
     pub(super) fn inbound_session_matches(&self, session_id: Option<&str>) -> bool {
         matches!(session_id, None | Some("")) || session_id == Some(&self.session_id)
+    }
+}
+
+impl SessionActor {
+    pub(super) fn cancel_pending_session_action_for_turn(&mut self, turn_id: TurnId) {
+        if matches!(
+            self.pending_session_action,
+            Some(PendingSessionAction::CloseAfterTurn { turn_id: pending }) if pending == turn_id
+        ) {
+            self.pending_session_action = None;
+            tracing::info!(
+                event = "session_close_after_turn_cancelled",
+                turn_id = turn_id.get(),
+                "Pending session close cancelled by turn interruption"
+            );
+        }
     }
 }
 
