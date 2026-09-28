@@ -268,7 +268,7 @@ pub(super) fn parse_xiaozhi_direct_response(result: &serde_json::Value) -> Optio
     })
 }
 
-pub(super) fn log_xiaozhi_action_shape(result: &serde_json::Value, tool: &str) {
+pub(super) fn log_action_envelope_shape(result: &serde_json::Value, tool: &str) {
     let is_error = result
         .get("isError")
         .and_then(serde_json::Value::as_bool)
@@ -284,7 +284,17 @@ pub(super) fn log_xiaozhi_action_shape(result: &serde_json::Value, tool: &str) {
                         .then(|| {
                             item.get("text")
                                 .and_then(serde_json::Value::as_str)
-                                .map(str::len)
+                                .map(|raw| match serde_json::from_str::<XiaozhiActionEnvelope>(raw) {
+                                    Ok(envelope) => serde_json::json!({
+                                        "bytes": raw.len(),
+                                        "json": true,
+                                        "action": envelope.action,
+                                        "success": envelope.success,
+                                        "response_present": envelope.response.as_ref().is_some_and(|text| !text.trim().is_empty()),
+                                        "response_chars": envelope.response.as_ref().map(|text| text.chars().count()),
+                                    }),
+                                    Err(_) => serde_json::json!({"bytes": raw.len(), "json": false}),
+                                })
                         })
                         .flatten()
                 })
@@ -297,8 +307,8 @@ pub(super) fn log_xiaozhi_action_shape(result: &serde_json::Value, tool: &str) {
         is_error,
         content_count,
         text_item_count = text_items.len(),
-        text_byte_lengths = ?text_items,
-        "MCP tool result received for Xiaozhi action classification"
+        text_envelopes = ?text_items,
+        "MCP tool result received for action-envelope classification"
     );
 }
 

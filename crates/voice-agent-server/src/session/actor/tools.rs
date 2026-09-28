@@ -125,7 +125,7 @@ impl SessionActor {
     ) {
         let content = match result {
             Ok(value) => {
-                crate::session::actor::mcp::log_xiaozhi_action_shape(&value, &call.name);
+                crate::session::actor::mcp::log_action_envelope_shape(&value, &call.name);
                 if let Some(response) =
                     crate::session::actor::mcp::parse_xiaozhi_direct_response(&value)
                 {
@@ -141,7 +141,7 @@ impl SessionActor {
                         event = "mcp_action_response_detected",
                         tool = %call.name,
                         response_chars = response.chars().count(),
-                        "Xiaozhi MCP action response detected"
+                        "MCP action response detected"
                     );
                     self.record_tool_call(call, content);
                     if let (Some(batch), Some(response)) =
