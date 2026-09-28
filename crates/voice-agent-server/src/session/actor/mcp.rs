@@ -243,13 +243,42 @@ pub(super) fn normalize_tool_result(result: serde_json::Value, max_chars: usize)
     .to_string()
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct XiaozhiActionEnvelope {
-    #[serde(default)]
-    success: Option<bool>,
-    action: String,
-    #[serde(default)]
-    response: Option<String>,
+fn parse_json_value(raw: &str) -> Option<serde_json::Value> {
+    let raw = raw.trim_start_matches('\u{feff}').trim();
+    let value = serde_json::from_str(raw).ok()?;
+    match value {
+        serde_json::Value::String(inner) => {
+            serde_json::from_str(inner.trim_start_matches('\u{feff}').trim()).ok()
+        }
+        value => Some(value),
+    }
+}
+
+fn action_response_from_object(value: &serde_json::Value) -> Option<String> {
+    let object = value.as_object()?;
+    if object.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+        return None;
+    }
+    if object.get("action").and_then(serde_json::Value::as_str) != Some("RESPONSE") {
+        return None;
+    }
+    object
+        .get("response")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|response| !response.is_empty())
+        .map(str::to_owned)
+}
+
+fn extract_xiaozhi_action_response(value: &serde_json::Value) -> Option<String> {
+    if value.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+        return None;
+    }
+    action_response_from_object(value).or_else(|| {
+        value
+            .get("vision_analysis")
+            .and_then(action_response_from_object)
+    })
 }
 
 pub(super) fn parse_xiaozhi_direct_response(result: &serde_json::Value) -> Option<String> {
@@ -260,22 +289,59 @@ pub(super) fn parse_xiaozhi_direct_response(result: &serde_json::Value) -> Optio
         if item.get("type").and_then(serde_json::Value::as_str) != Some("text") {
             return None;
         }
-        let raw = item.get("text")?.as_str()?;
-        let envelope = serde_json::from_str::<XiaozhiActionEnvelope>(raw).ok()?;
-        (envelope.success != Some(false) && envelope.action == "RESPONSE")
-            .then(|| envelope.response.unwrap_or_default().trim().to_owned())
-            .filter(|response| !response.is_empty())
+        let value = parse_json_value(item.get("text")?.as_str()?)?;
+        extract_xiaozhi_action_response(&value)
     })
 }
 
+/// Removes the known camera image field from JSON tool text before it can enter LLM history.
+///
+/// This deliberately follows only the explicit top-level wrapper contract rather than scanning
+/// arbitrary client-provided JSON recursively.
+pub(super) fn redact_photo_data_from_tool_result(
+    mut result: serde_json::Value,
+) -> serde_json::Value {
+    let Some(content) = result
+        .get_mut("content")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return result;
+    };
+    for item in content {
+        let Some(raw) = item
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(serde_json::Value::Object(mut object)) = parse_json_value(&raw) else {
+            continue;
+        };
+        if object.remove("photo_data").is_some() {
+            item["text"] = serde_json::Value::Object(object).to_string().into();
+        }
+    }
+    result
+}
+
 pub(super) fn log_action_envelope_shape(result: &serde_json::Value, tool: &str) {
+    const MAX_LOGGED_TEXT_ENVELOPES: usize = 8;
     let is_error = result
         .get("isError")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     let content = result.get("content").and_then(serde_json::Value::as_array);
     let content_count = content.map_or(0, Vec::len);
-    let text_items = content
+    let text_item_count = content
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                .count()
+        })
+        .unwrap_or_default();
+    let text_envelopes = content
         .map(|items| {
             items
                 .iter()
@@ -284,20 +350,31 @@ pub(super) fn log_action_envelope_shape(result: &serde_json::Value, tool: &str) 
                         .then(|| {
                             item.get("text")
                                 .and_then(serde_json::Value::as_str)
-                                .map(|raw| match serde_json::from_str::<XiaozhiActionEnvelope>(raw) {
-                                    Ok(envelope) => serde_json::json!({
-                                        "bytes": raw.len(),
-                                        "json": true,
-                                        "action": envelope.action,
-                                        "success": envelope.success,
-                                        "response_present": envelope.response.as_ref().is_some_and(|text| !text.trim().is_empty()),
-                                        "response_chars": envelope.response.as_ref().map(|text| text.chars().count()),
-                                    }),
-                                    Err(_) => serde_json::json!({"bytes": raw.len(), "json": false}),
+                                .map(|raw| match parse_json_value(raw) {
+                                    Some(serde_json::Value::Object(object)) => {
+                                        let vision = object.get("vision_analysis");
+                                        serde_json::json!({
+                                            "bytes": raw.len(),
+                                            "json_valid": true,
+                                            "root_type": "object",
+                                            "root_keys": object.keys().filter(|key| matches!(key.as_str(), "success" | "action" | "response" | "vision_analysis" | "photo_data" | "photo_width" | "photo_height")).collect::<Vec<_>>(),
+                                            "has_action": object.contains_key("action"),
+                                            "has_response": object.contains_key("response"),
+                                            "has_vision_analysis": vision.is_some(),
+                                            "has_photo_data": object.contains_key("photo_data"),
+                                            "nested_action": vision.and_then(|value| value.get("action")).and_then(serde_json::Value::as_str),
+                                            "nested_response_present": vision.and_then(|value| value.get("response")).and_then(serde_json::Value::as_str).is_some_and(|text| !text.trim().is_empty()),
+                                        })
+                                    }
+                                    Some(serde_json::Value::String(_)) => serde_json::json!({"bytes": raw.len(), "json_valid": true, "root_type": "string"}),
+                                    Some(serde_json::Value::Array(_)) => serde_json::json!({"bytes": raw.len(), "json_valid": true, "root_type": "array"}),
+                                    Some(_) => serde_json::json!({"bytes": raw.len(), "json_valid": true, "root_type": "other"}),
+                                    None => serde_json::json!({"bytes": raw.len(), "json_valid": false}),
                                 })
                         })
                         .flatten()
                 })
+                .take(MAX_LOGGED_TEXT_ENVELOPES)
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -306,15 +383,18 @@ pub(super) fn log_action_envelope_shape(result: &serde_json::Value, tool: &str) 
         tool,
         is_error,
         content_count,
-        text_item_count = text_items.len(),
-        text_envelopes = ?text_items,
+        text_item_count,
+        text_items_truncated = text_item_count > text_envelopes.len(),
+        text_envelopes = ?text_envelopes,
         "MCP tool result received for action-envelope classification"
     );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_tool_result, parse_xiaozhi_direct_response};
+    use super::{
+        normalize_tool_result, parse_xiaozhi_direct_response, redact_photo_data_from_tool_result,
+    };
 
     #[test]
     fn normalizer_joins_nfc_sanitizes_and_caps_after_sanitization() {
@@ -350,11 +430,98 @@ mod tests {
     }
 
     #[test]
+    fn nested_vision_response_ignores_large_photo_data_before_generic_cap() {
+        let photo = "A".repeat(13_000);
+        let text = serde_json::json!({
+            "success": true,
+            "photo_data": format!("data:image/jpeg;base64,{photo}"),
+            "photo_width": 320,
+            "photo_height": 240,
+            "vision_analysis": {
+                "success": true,
+                "action": "RESPONSE",
+                "response": "Trên bàn có một chiếc cốc màu đỏ."
+            }
+        })
+        .to_string();
+        assert!(text.chars().count() > 4_096);
+        let result = serde_json::json!({
+            "isError": false,
+            "content": [{"type": "text", "text": text}]
+        });
+
+        assert_eq!(
+            parse_xiaozhi_direct_response(&result).as_deref(),
+            Some("Trên bàn có một chiếc cốc màu đỏ.")
+        );
+    }
+
+    #[test]
+    fn double_encoded_xiaozhi_response_is_classified() {
+        let wrapped = serde_json::json!({
+            "vision_analysis": {
+                "success": true,
+                "action": "RESPONSE",
+                "response": "Đã nhận diện hình ảnh."
+            }
+        });
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": serde_json::to_string(&wrapped.to_string()).unwrap()}]
+        });
+
+        assert_eq!(
+            parse_xiaozhi_direct_response(&result).as_deref(),
+            Some("Đã nhận diện hình ảnh.")
+        );
+    }
+
+    #[test]
+    fn unsuccessful_outer_wrapper_does_not_speak_nested_vision_response() {
+        let result = serde_json::json!({
+            "content": [{"type": "nonstandard", "text": serde_json::json!({
+                "success": false,
+                "vision_analysis": {
+                    "success": true,
+                    "action": "RESPONSE",
+                    "response": "Không được phát câu này."
+                }
+            }).to_string()}]
+        });
+
+        assert!(parse_xiaozhi_direct_response(&result).is_none());
+    }
+
+    #[test]
+    fn generic_camera_wrapper_redacts_photo_data_before_normalization() {
+        let photo = "A".repeat(13_000);
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": serde_json::json!({
+                "photo_data": format!("data:image/jpeg;base64,{photo}"),
+                "vision_analysis": {"success": false, "action": "RESPONSE"}
+            }).to_string()}]
+        });
+
+        let normalized: serde_json::Value = serde_json::from_str(&normalize_tool_result(
+            redact_photo_data_from_tool_result(result),
+            4_096,
+        ))
+        .unwrap();
+        assert!(!normalized["content"].as_str().unwrap().contains("AAAA"));
+        assert!(
+            normalized["content"]
+                .as_str()
+                .unwrap()
+                .contains("vision_analysis")
+        );
+    }
+
+    #[test]
     fn generic_or_unsuccessful_action_is_not_a_direct_response() {
         for result in [
-            serde_json::json!({"content":[{"text":"{\"volume\":50}"}]}),
-            serde_json::json!({"isError":true,"content":[{"text":"{\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
-            serde_json::json!({"content":[{"text":"{\"success\":false,\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
+            serde_json::json!({"content":[{"type":"text","text":"{\"volume\":50}"}]}),
+            serde_json::json!({"isError":true,"content":[{"type":"text","text":"{\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
+            serde_json::json!({"content":[{"type":"text","text":"{\"success\":false,\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
+            serde_json::json!({"content":[{"type":"text","text":"{\"unexpected\":{\"action\":\"RESPONSE\",\"response\":\"x\"}}"}]}),
         ] {
             assert!(parse_xiaozhi_direct_response(&result).is_none());
         }

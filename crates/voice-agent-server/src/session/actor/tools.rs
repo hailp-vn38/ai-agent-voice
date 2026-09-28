@@ -157,7 +157,10 @@ impl SessionActor {
                     tool = %call.name,
                     "MCP result remains on generic tool-result path"
                 );
-                crate::session::actor::mcp::normalize_tool_result(value, self.max_tool_result_chars)
+                crate::session::actor::mcp::normalize_tool_result(
+                    crate::session::actor::mcp::redact_photo_data_from_tool_result(value),
+                    self.max_tool_result_chars,
+                )
             }
             Err(code) => tool_error_content(code),
         };
