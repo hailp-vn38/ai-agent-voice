@@ -50,7 +50,9 @@ pub fn router_with_state(state: AppState) -> Router {
     let router = if vision_enabled {
         router.route(
             "/mcp/vision/explain",
-            get(vision::get_handler).post(vision::post_handler),
+            get(vision::get_handler)
+                .post(vision::post_handler)
+                .options(vision::options_handler),
         )
     } else {
         router

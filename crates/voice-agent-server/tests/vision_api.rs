@@ -72,6 +72,25 @@ async fn vision_api_get_probe_and_multipart_post_work_over_tcp() {
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn vision_api_options_preflight_works_over_tcp() {
+    let (base, task) = spawn(app()).await;
+    let response = reqwest::Client::new()
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("{base}/mcp/vision/explain"),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(
+        response.headers()["access-control-allow-methods"],
+        "GET, POST, OPTIONS"
+    );
+    task.abort();
+}
 #[tokio::test]
 async fn vision_api_rejects_invalid_public_contract_inputs() {
     let (base, task) = spawn(app()).await;

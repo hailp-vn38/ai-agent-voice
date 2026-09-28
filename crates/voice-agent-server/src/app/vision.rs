@@ -36,6 +36,22 @@ pub async fn get_handler(State(state): State<AppState>) -> Response {
     };
     format!("MCP Vision interface is ready: {url}").into_response()
 }
+
+/// Browser and firmware preflight compatibility; this must never invoke Vision inference.
+pub async fn options_handler() -> Response {
+    (
+        StatusCode::NO_CONTENT,
+        [
+            ("access-control-allow-origin", "*"),
+            ("access-control-allow-methods", "GET, POST, OPTIONS"),
+            (
+                "access-control-allow-headers",
+                "Authorization, Device-Id, Client-Id, Content-Type",
+            ),
+        ],
+    )
+        .into_response()
+}
 pub async fn post_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
