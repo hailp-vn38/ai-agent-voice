@@ -75,6 +75,33 @@ async fn vision_api_get_probe_and_multipart_post_work_over_tcp() {
 }
 
 #[tokio::test]
+async fn vision_api_accepts_firmware_file_field_in_any_order() {
+    let (base, task) = spawn(app()).await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}/mcp/vision/explain"))
+        .header("Device-Id", "device")
+        .header("Client-Id", "client")
+        .multipart(
+            reqwest::multipart::Form::new()
+                .part(
+                    "file",
+                    reqwest::multipart::Part::bytes(vec![0xff, 0xd8, 0xff, 0xd9])
+                        .file_name("camera.jpg"),
+                )
+                .text("question", "what is this?"),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["response"],
+        "image/jpeg:4"
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn vision_api_options_preflight_works_over_tcp() {
     let (base, task) = spawn(app()).await;
     let response = reqwest::Client::new()

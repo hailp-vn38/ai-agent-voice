@@ -2,7 +2,7 @@ use super::AppState;
 use crate::providers::{VisionError, VisionRequest};
 use axum::{
     Json,
-    extract::{Multipart, State},
+    extract::{DefaultBodyLimit, Multipart, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -13,6 +13,14 @@ struct Success {
     success: bool,
     action: &'static str,
     response: String,
+}
+
+pub fn body_limit(max_image: usize, max_question: usize) -> DefaultBodyLimit {
+    DefaultBodyLimit::max(
+        max_image
+            .saturating_add(max_question)
+            .saturating_add(128 * 1024),
+    )
 }
 #[derive(serde::Serialize)]
 struct Failure {
@@ -109,7 +117,7 @@ pub async fn post_handler(
                     };
                 }
             }
-            Some("image") if image.is_none() => {
+            Some("file" | "image") if image.is_none() => {
                 image = match field.bytes().await {
                     Ok(bytes) => Some(bytes.to_vec()),
                     Err(_) => return failure(StatusCode::BAD_REQUEST, "invalid image field"),

@@ -125,6 +125,30 @@ impl SessionActor {
     ) {
         let content = match result {
             Ok(value) => {
+                if let Some(response) =
+                    crate::session::actor::mcp::parse_xiaozhi_direct_response(&value)
+                {
+                    let content = crate::session::actor::mcp::normalize_tool_result(
+                        serde_json::json!({"content":[{"text":response}]}),
+                        self.max_tool_result_chars,
+                    );
+                    let direct_response = serde_json::from_str::<serde_json::Value>(&content)
+                        .ok()
+                        .and_then(|normalized| normalized["content"].as_str().map(str::to_owned))
+                        .filter(|text| !text.trim().is_empty());
+                    self.record_tool_call(call, content);
+                    if let (Some(batch), Some(response)) =
+                        (self.tool_batch.as_mut(), direct_response)
+                    {
+                        batch.direct_response.get_or_insert(response);
+                    }
+                    tracing::info!(
+                        event = "mcp_action_response_detected",
+                        "Xiaozhi MCP action response detected"
+                    );
+                    self.dispatch_next_tool();
+                    return;
+                }
                 crate::session::actor::mcp::normalize_tool_result(value, self.max_tool_result_chars)
             }
             Err(code) => tool_error_content(code),

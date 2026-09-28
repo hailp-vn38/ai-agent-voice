@@ -243,9 +243,34 @@ pub(super) fn normalize_tool_result(result: serde_json::Value, max_chars: usize)
     .to_string()
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct XiaozhiActionEnvelope {
+    #[serde(default)]
+    success: Option<bool>,
+    action: String,
+    #[serde(default)]
+    response: Option<String>,
+}
+
+pub(super) fn parse_xiaozhi_direct_response(result: &serde_json::Value) -> Option<String> {
+    if result.get("isError").and_then(serde_json::Value::as_bool) == Some(true) {
+        return None;
+    }
+    result.get("content")?.as_array()?.iter().find_map(|item| {
+        if item.get("type").and_then(serde_json::Value::as_str) != Some("text") {
+            return None;
+        }
+        let raw = item.get("text")?.as_str()?;
+        let envelope = serde_json::from_str::<XiaozhiActionEnvelope>(raw).ok()?;
+        (envelope.success != Some(false) && envelope.action == "RESPONSE")
+            .then(|| envelope.response.unwrap_or_default().trim().to_owned())
+            .filter(|response| !response.is_empty())
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_tool_result;
+    use super::{normalize_tool_result, parse_xiaozhi_direct_response};
 
     #[test]
     fn normalizer_joins_nfc_sanitizes_and_caps_after_sanitization() {
@@ -269,5 +294,25 @@ mod tests {
             serde_json::from_str(&normalize_tool_result(result, 4)).unwrap();
         assert_eq!(normalized["content"], "abcd");
         assert_eq!(normalized["truncated"], false);
+    }
+
+    #[test]
+    fn xiaozhi_response_action_is_classified_before_generic_normalization() {
+        let result = serde_json::json!({"isError":false,"content":[{"type":"text","text":"{\"success\":true,\"action\":\"RESPONSE\",\"response\":\"Có một chiếc cốc đỏ.\"}"}]});
+        assert_eq!(
+            parse_xiaozhi_direct_response(&result).as_deref(),
+            Some("Có một chiếc cốc đỏ.")
+        );
+    }
+
+    #[test]
+    fn generic_or_unsuccessful_action_is_not_a_direct_response() {
+        for result in [
+            serde_json::json!({"content":[{"text":"{\"volume\":50}"}]}),
+            serde_json::json!({"isError":true,"content":[{"text":"{\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
+            serde_json::json!({"content":[{"text":"{\"success\":false,\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
+        ] {
+            assert!(parse_xiaozhi_direct_response(&result).is_none());
+        }
     }
 }

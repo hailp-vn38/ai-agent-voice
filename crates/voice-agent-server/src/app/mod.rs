@@ -41,6 +41,7 @@ pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> 
 }
 pub fn router_with_state(state: AppState) -> Router {
     let vision_enabled = state.config.vision.enabled;
+    let vision_config = state.config.vision.clone();
     let router = Router::new()
         .route("/health", get(health))
         .route(
@@ -54,6 +55,10 @@ pub fn router_with_state(state: AppState) -> Router {
             get(vision::get_handler)
                 .post(vision::post_handler)
                 .options(vision::options_handler)
+                .layer(vision::body_limit(
+                    vision_config.max_image_bytes,
+                    vision_config.max_question_bytes,
+                ))
                 .layer(middleware::map_response(vision::cors_response)),
         )
     } else {
