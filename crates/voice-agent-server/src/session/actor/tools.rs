@@ -125,6 +125,7 @@ impl SessionActor {
     ) {
         let content = match result {
             Ok(value) => {
+                crate::session::actor::mcp::log_xiaozhi_action_shape(&value, &call.name);
                 if let Some(response) =
                     crate::session::actor::mcp::parse_xiaozhi_direct_response(&value)
                 {
@@ -136,19 +137,26 @@ impl SessionActor {
                         .ok()
                         .and_then(|normalized| normalized["content"].as_str().map(str::to_owned))
                         .filter(|text| !text.trim().is_empty());
+                    tracing::info!(
+                        event = "mcp_action_response_detected",
+                        tool = %call.name,
+                        response_chars = response.chars().count(),
+                        "Xiaozhi MCP action response detected"
+                    );
                     self.record_tool_call(call, content);
                     if let (Some(batch), Some(response)) =
                         (self.tool_batch.as_mut(), direct_response)
                     {
                         batch.direct_response.get_or_insert(response);
                     }
-                    tracing::info!(
-                        event = "mcp_action_response_detected",
-                        "Xiaozhi MCP action response detected"
-                    );
                     self.dispatch_next_tool();
                     return;
                 }
+                tracing::info!(
+                    event = "mcp_action_response_not_detected",
+                    tool = %call.name,
+                    "MCP result remains on generic tool-result path"
+                );
                 crate::session::actor::mcp::normalize_tool_result(value, self.max_tool_result_chars)
             }
             Err(code) => tool_error_content(code),

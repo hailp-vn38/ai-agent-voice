@@ -57,6 +57,11 @@ impl SessionActor {
     }
 
     pub(super) fn begin_direct_tool_speech(&mut self, text: String) {
+        tracing::info!(
+            event = "mcp_direct_response_started",
+            response_chars = text.chars().count(),
+            "Starting direct MCP response speech without LLM continuation"
+        );
         self.generated_response = text.clone();
         self.pending_llm_delta = Some((text, 0));
         self.llm_finish_pending = true;

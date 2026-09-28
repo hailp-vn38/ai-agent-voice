@@ -268,6 +268,40 @@ pub(super) fn parse_xiaozhi_direct_response(result: &serde_json::Value) -> Optio
     })
 }
 
+pub(super) fn log_xiaozhi_action_shape(result: &serde_json::Value, tool: &str) {
+    let is_error = result
+        .get("isError")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let content = result.get("content").and_then(serde_json::Value::as_array);
+    let content_count = content.map_or(0, Vec::len);
+    let text_items = content
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    (item.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                        .then(|| {
+                            item.get("text")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::len)
+                        })
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    tracing::info!(
+        event = "mcp_tool_result_shape",
+        tool,
+        is_error,
+        content_count,
+        text_item_count = text_items.len(),
+        text_byte_lengths = ?text_items,
+        "MCP tool result received for Xiaozhi action classification"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::{normalize_tool_result, parse_xiaozhi_direct_response};
