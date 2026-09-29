@@ -250,8 +250,9 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
     let llm = llm.json::<serde_json::Value>().await.unwrap();
     assert_eq!(llm["has_secret_ref"], true);
     assert!(llm.get("secret_ref").is_none());
-    assert!(llm.get("runtime_status").is_none());
-    assert!(llm.get("requires_restart").is_none());
+    assert_eq!(llm["runtime_status"], "not_loaded");
+    assert_eq!(llm["runtime_matches_desired"], false);
+    assert_eq!(llm["requires_restart"], true);
 
     for (key, kind, adapter, config_json) in [
         (

@@ -1,6 +1,7 @@
 //! Local inference seams and adapters. Provider code never owns workers or Voice Sessions.
 
 mod catalog;
+mod database_loader;
 mod error;
 mod loader;
 mod registry;
@@ -15,6 +16,10 @@ pub mod vision;
 
 pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession};
 pub use catalog::{ProviderCatalog, ProviderLookupError};
+pub use database_loader::{
+    DatabaseMaterialization, DatabaseRuntimeFailure, DatabaseRuntimeSnapshot, DatabaseRuntimeState,
+    DatabaseRuntimeStatus, materialize_database_providers,
+};
 pub use error::{AsrError, ProviderLoadError, VadError};
 pub use llm::{LlmError, LlmEvent, LlmProvider};
 pub(crate) use loader::{LoadedProviders, load_local};

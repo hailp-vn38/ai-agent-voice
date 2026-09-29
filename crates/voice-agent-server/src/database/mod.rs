@@ -21,6 +21,19 @@ pub struct Database {
     pool: SqlitePool,
 }
 
+/// Desired provider copied out of SQLite before runtime construction.  It contains no resolved
+/// credential and is deliberately independent from the read-only runtime catalog.
+#[derive(Clone, Debug)]
+pub struct DesiredProvider {
+    pub id: i64,
+    pub key: String,
+    pub kind: String,
+    pub adapter: String,
+    pub config_json: String,
+    pub secret_ref: Option<String>,
+    pub revision: i64,
+}
+
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("database_busy")]
@@ -94,6 +107,28 @@ impl Database {
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Reads desired state only.  Caller chooses whether an outcome is required, optional, or
+    /// unbound; this database seam never constructs a provider or resolves a secret.
+    pub async fn enabled_provider_rows(&self) -> Result<Vec<DesiredProvider>, DatabaseError> {
+        let rows = sqlx::query_as::<_, (i64, String, String, String, String, Option<String>, i64)>(
+            "SELECT id,key,type,adapter,config_json,secret_ref,revision FROM providers WHERE enabled=1 ORDER BY id",
+        ).fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, key, kind, adapter, config_json, secret_ref, revision)| DesiredProvider {
+                    id,
+                    key,
+                    kind,
+                    adapter,
+                    config_json,
+                    secret_ref,
+                    revision,
+                },
+            )
+            .collect())
     }
 
     /// Resolves the Device and its enabled Agent in one pre-upgrade database operation.

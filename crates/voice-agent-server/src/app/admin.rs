@@ -1492,6 +1492,42 @@ struct Provider {
     updated_at: i64,
     has_secret_ref: bool,
 }
+fn provider_response(
+    provider: Provider,
+    runtime_snapshot: Option<&crate::providers::DatabaseRuntimeSnapshot>,
+) -> Value {
+    let runtime = runtime_snapshot
+        .map(|snapshot| snapshot.runtime_state(&provider.key, provider.revision))
+        .unwrap_or_else(|| crate::providers::DatabaseRuntimeState {
+            provider_id: provider.id,
+            desired_revision: provider.revision,
+            status: crate::providers::DatabaseRuntimeStatus::NotLoaded,
+            failure: None,
+        });
+    let matches_desired = matches!(
+        runtime.status,
+        crate::providers::DatabaseRuntimeStatus::Loaded
+    ) && runtime.desired_revision == provider.revision;
+    let runtime_status = match runtime.status {
+        crate::providers::DatabaseRuntimeStatus::NotLoaded => "not_loaded",
+        crate::providers::DatabaseRuntimeStatus::Unavailable => "unavailable",
+        crate::providers::DatabaseRuntimeStatus::Loaded => "loaded",
+    };
+    let mut response = serde_json::to_value(provider).expect("Provider is serializable");
+    let object = response
+        .as_object_mut()
+        .expect("Provider serializes to object");
+    object.insert(
+        "runtime_status".into(),
+        Value::String(runtime_status.into()),
+    );
+    object.insert(
+        "runtime_matches_desired".into(),
+        Value::Bool(matches_desired),
+    );
+    object.insert("requires_restart".into(), Value::Bool(!matches_desired));
+    response
+}
 #[derive(Deserialize)]
 struct CreateProvider {
     key: String,
@@ -1594,7 +1630,14 @@ async fn create_provider(State(state): State<AppState>, request: Request) -> Res
         );
     };
     match provider_by(pool, &body.key).await {
-        Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
+        Ok(v) => (
+            StatusCode::CREATED,
+            Json(provider_response(
+                v,
+                state.database_runtime_snapshot.as_deref(),
+            )),
+        )
+            .into_response(),
         Err(e) => sql_error(&request, &e),
     }
 }
@@ -1608,7 +1651,11 @@ async fn get_provider(
         Err(e) => return e,
     };
     match provider_by(pool, &key).await {
-        Ok(v) => Json(v).into_response(),
+        Ok(v) => Json(provider_response(
+            v,
+            state.database_runtime_snapshot.as_deref(),
+        ))
+        .into_response(),
         Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
         Err(e) => sql_error(&request, &e),
     }
@@ -1626,7 +1673,7 @@ async fn list_providers(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match sqlx::query_as::<_,Provider>("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await{Ok(items)=>Json(serde_json::json!({"items":items,"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
+    match sqlx::query_as::<_,Provider>("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await{Ok(items)=>Json(serde_json::json!({"items":items.into_iter().map(|item| provider_response(item, state.database_runtime_snapshot.as_deref())).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
 }
 async fn patch_provider(
     State(state): State<AppState>,
@@ -1739,8 +1786,48 @@ async fn patch_provider(
     }
     let _ = kind; // type is immutable and retained for the provider instance.
     match provider_by(pool, &key).await {
-        Ok(v) => Json(v).into_response(),
+        Ok(v) => Json(provider_response(
+            v,
+            state.database_runtime_snapshot.as_deref(),
+        ))
+        .into_response(),
         Err(e) => sql_error(&request, &e),
+    }
+}
+
+#[cfg(test)]
+mod provider_runtime_tests {
+    use super::*;
+    use crate::providers::{DatabaseRuntimeSnapshot, DatabaseRuntimeState, DatabaseRuntimeStatus};
+
+    #[test]
+    fn loaded_runtime_becomes_stale_after_desired_revision_changes() {
+        let provider = Provider {
+            id: 11,
+            key: "llm-main".into(),
+            name: "LLM".into(),
+            kind: "llm".into(),
+            adapter: "openai".into(),
+            config_json: "{}".into(),
+            enabled: 1,
+            revision: 4,
+            created_at: 0,
+            updated_at: 0,
+            has_secret_ref: false,
+        };
+        let snapshot = DatabaseRuntimeSnapshot::from_states([(
+            "llm-main".into(),
+            DatabaseRuntimeState {
+                provider_id: 11,
+                desired_revision: 3,
+                status: DatabaseRuntimeStatus::Loaded,
+                failure: None,
+            },
+        )]);
+        let response = provider_response(provider, Some(&snapshot));
+        assert_eq!(response["runtime_status"], "loaded");
+        assert_eq!(response["runtime_matches_desired"], false);
+        assert_eq!(response["requires_restart"], true);
     }
 }
 

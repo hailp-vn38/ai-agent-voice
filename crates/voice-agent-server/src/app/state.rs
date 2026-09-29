@@ -1,7 +1,12 @@
 use crate::{
     config::{AppConfig, SileroOnnxConfig, VadInstanceConfig},
-    database::Database,
-    providers::{LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog},
+    database::{
+        Database,
+        secrets::{EnvSecretResolver, SecretResolver},
+    },
+    providers::{
+        DatabaseRuntimeSnapshot, LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog,
+    },
     session::ActiveTurnLimiter,
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
@@ -20,6 +25,8 @@ pub struct AppState {
     pub worker_supervisor: Arc<WorkerSupervisor>,
     pub active_turn_limiter: Arc<ActiveTurnLimiter>,
     pub database: Option<Arc<Database>>,
+    pub database_runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
+    pub secret_resolver: Arc<dyn SecretResolver>,
     pub shutdown: CancellationToken,
 }
 
@@ -70,6 +77,36 @@ impl AppState {
         database: Option<Database>,
         shutdown: CancellationToken,
     ) -> Self {
+        Self::new_with_database_runtime_snapshot_and_shutdown(
+            config, loaded, database, None, shutdown,
+        )
+    }
+
+    pub fn new_with_database_runtime_snapshot_and_shutdown(
+        config: AppConfig,
+        loaded: LoadedProviders,
+        database: Option<Database>,
+        database_runtime_snapshot: Option<DatabaseRuntimeSnapshot>,
+        shutdown: CancellationToken,
+    ) -> Self {
+        Self::new_with_database_runtime_snapshot_resolver_and_shutdown(
+            config,
+            loaded,
+            database,
+            database_runtime_snapshot,
+            Arc::new(EnvSecretResolver),
+            shutdown,
+        )
+    }
+
+    pub fn new_with_database_runtime_snapshot_resolver_and_shutdown(
+        config: AppConfig,
+        loaded: LoadedProviders,
+        database: Option<Database>,
+        database_runtime_snapshot: Option<DatabaseRuntimeSnapshot>,
+        secret_resolver: Arc<dyn SecretResolver>,
+        shutdown: CancellationToken,
+    ) -> Self {
         let supervisor = Arc::new(WorkerSupervisor::start_many(
             loaded.runtimes.asr.values().cloned().collect(),
             loaded.runtimes.vad.values().cloned().collect(),
@@ -81,6 +118,8 @@ impl AppState {
             runtimes: Arc::new(loaded.runtimes),
             worker_supervisor: supervisor,
             database: database.map(Arc::new),
+            database_runtime_snapshot: database_runtime_snapshot.map(Arc::new),
+            secret_resolver,
             shutdown,
         }
     }

@@ -15,6 +15,51 @@ pub struct LoadedProviders {
     pub runtimes: RuntimeCatalog,
 }
 
+impl LoadedProviders {
+    /// Database instance keys must never replace a deployment-selected instance.  Ticket 07 can
+    /// resolve DB bindings only when this startup snapshot has an unambiguous runtime.
+    pub(crate) fn extend_database_without_collisions(&mut self, other: Self) -> Vec<String> {
+        let mut collisions = Vec::new();
+        for (key, provider) in other.providers.vad {
+            if self.providers.vad.contains_key(&key) {
+                collisions.push(key);
+            } else {
+                let runtime = other.runtimes.vad[&key].clone();
+                self.providers.vad.insert(key.clone(), provider);
+                self.runtimes.vad.insert(key, runtime);
+            }
+        }
+        for (key, provider) in other.providers.asr {
+            if self.providers.asr.contains_key(&key) {
+                collisions.push(key);
+            } else {
+                let runtime = other.runtimes.asr[&key].clone();
+                self.providers.asr.insert(key.clone(), provider);
+                self.runtimes.asr.insert(key, runtime);
+            }
+        }
+        for (key, provider) in other.providers.llm {
+            if self.providers.llm.contains_key(&key) {
+                collisions.push(key);
+            } else {
+                let runtime = other.runtimes.llm[&key].clone();
+                self.providers.llm.insert(key.clone(), provider);
+                self.runtimes.llm.insert(key, runtime);
+            }
+        }
+        for (key, provider) in other.providers.tts {
+            if self.providers.tts.contains_key(&key) {
+                collisions.push(key);
+            } else {
+                let runtime = other.runtimes.tts[&key].clone();
+                self.providers.tts.insert(key.clone(), provider);
+                self.runtimes.tts.insert(key, runtime);
+            }
+        }
+        collisions
+    }
+}
+
 /// Builds only effective bindings and explicitly preloaded instances. Other valid instances stay
 /// configured but unloaded until a later lazy-loading phase is introduced.
 pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, ProviderLoadError> {

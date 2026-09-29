@@ -1,9 +1,10 @@
 use crate::{
     audio::VadSegmenterConfig,
     config::AppConfig,
+    database::secrets::EnvSecretResolver,
     database::{Database, DatabaseError},
     protocol::{ClientMessage, ServerHello, parse_client_message},
-    providers::ProviderSet,
+    providers::{ProviderSet, materialize_database_providers},
     session::{
         ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent, SessionRuntimes,
         WriterEvent, WriterTurnOutcome,
@@ -114,15 +115,55 @@ pub async fn startup_with_shutdown(
     config: AppConfig,
     shutdown: CancellationToken,
 ) -> Result<Router, BootstrapError> {
+    startup_with_shutdown_and_secret_resolver(config, shutdown, Arc::new(EnvSecretResolver)).await
+}
+
+/// Production startup seam for deployments that own secret resolution.  The runtime receives
+/// only this abstraction; provider adapters never read a resolver backend directly.
+pub async fn startup_with_shutdown_and_secret_resolver(
+    config: AppConfig,
+    shutdown: CancellationToken,
+    secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
+) -> Result<Router, BootstrapError> {
     let database = Database::connect_if_enabled(&config.database).await?;
+    let desired_rows = match &database {
+        Some(database) => database.enabled_provider_rows().await?,
+        None => Vec::new(),
+    };
     let startup_config = config.clone();
-    let loaded = tokio::task::spawn_blocking(move || crate::providers::load_local(&startup_config))
-        .await
-        .map_err(|_| BootstrapError::Provider)?
-        .map_err(|_| BootstrapError::Provider)?;
-    Ok(router_with_state(AppState::new_with_database_and_shutdown(
-        config, loaded, database, shutdown,
-    )))
+    let startup_secret_resolver = Arc::clone(&secret_resolver);
+    let (loaded, database_materialization) = tokio::task::spawn_blocking(move || {
+        let mut local = crate::providers::load_local(&startup_config)?;
+        let database_materialization = materialize_database_providers(
+            &startup_config,
+            desired_rows,
+            startup_secret_resolver.as_ref(),
+        );
+        let mut database_materialization = database_materialization;
+        for collision in
+            local.extend_database_without_collisions(database_materialization.take_loaded())
+        {
+            database_materialization.mark_unavailable(
+                &collision,
+                crate::providers::DatabaseRuntimeFailure::Runtime,
+            );
+        }
+        let database_runtime_snapshot = database_materialization.snapshot();
+        Ok::<_, crate::providers::ProviderLoadError>((local, database_runtime_snapshot))
+    })
+    .await
+    .map_err(|_| BootstrapError::Provider)?
+    .map_err(|_| BootstrapError::Provider)?;
+    Ok(router_with_state(
+        AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
+            config,
+            loaded,
+            database,
+            Some(database_materialization),
+            secret_resolver,
+            shutdown,
+        ),
+    ))
 }
 
 async fn health() -> &'static str {
