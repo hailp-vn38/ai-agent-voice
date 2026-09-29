@@ -50,6 +50,7 @@ tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 unicode-normalization.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true

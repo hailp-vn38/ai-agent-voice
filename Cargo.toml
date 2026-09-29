@@ -43,3 +43,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }
 uuid = { version = "1.26", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
+zeroize = "1.8"
