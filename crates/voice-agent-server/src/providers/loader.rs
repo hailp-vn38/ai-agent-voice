@@ -1,18 +1,49 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
-    config::AppConfig,
+    audio::VadSegmenterConfig,
+    config::{AppConfig, SileroOnnxConfig},
     models::prepare,
-    providers::{ProviderCatalog, ProviderLoadError, RuntimeCatalog, compiled_provider_registry},
+    providers::{
+        LoadedVad, ProviderCatalog, ProviderLoadError, RuntimeCatalog, compiled_provider_registry,
+    },
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
         WorkerRuntimeConfig,
     },
 };
 
+/// One millisecond of VAD timing is exactly 16 samples at the 16 kHz capture rate, so the
+/// deployment TOML and a database provider describe segmentation with the same numbers.
+pub(crate) fn vad_timing(config: &SileroOnnxConfig) -> (VadSegmenterConfig, u64) {
+    (
+        VadSegmenterConfig {
+            speech_threshold: config.speech_threshold,
+            exit_threshold: config.exit_threshold,
+            min_speech_samples: config.min_speech_ms * 16,
+            end_silence_samples: config.end_silence_ms * 16,
+        },
+        config.pre_roll_ms * 16,
+    )
+}
+
 pub struct LoadedProviders {
     pub providers: ProviderCatalog,
     pub runtimes: RuntimeCatalog,
+}
+
+impl LoadedProviders {
+    /// A database instance key that the deployment already loaded can never be resolved
+    /// unambiguously, so the plan rejects it before any credential is resolved.
+    pub(crate) fn has_loaded_key(&self, kind: &str, key: &str) -> bool {
+        match kind {
+            "vad" => self.runtimes.vad.contains_key(key),
+            "asr" => self.runtimes.asr.contains_key(key),
+            "llm" => self.runtimes.llm.contains_key(key),
+            "tts" => self.runtimes.tts.contains_key(key),
+            _ => false,
+        }
+    }
 }
 
 impl LoadedProviders {
@@ -24,9 +55,9 @@ impl LoadedProviders {
             if self.providers.vad.contains_key(&key) {
                 collisions.push(key);
             } else {
-                let runtime = other.runtimes.vad[&key].clone();
+                let loaded = other.runtimes.vad[&key].clone();
                 self.providers.vad.insert(key.clone(), provider);
-                self.runtimes.vad.insert(key, runtime);
+                self.runtimes.vad.insert(key, loaded);
             }
         }
         for (key, provider) in other.providers.asr {
@@ -86,17 +117,22 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             &config.deployment,
         )?;
         let provider = factory.build(instance, &config.runtime, &model)?;
+        let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
         vad_runtimes.insert(
             id.clone(),
-            Arc::new(VadWorkerRuntime::new(
-                Arc::clone(&provider),
-                WorkerRuntimeConfig {
-                    max_workers: config.workers.vad.max_workers,
-                    command_capacity: config.workers.vad.command_queue_capacity,
-                    final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
-                    cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
-                },
-            )),
+            LoadedVad {
+                runtime: Arc::new(VadWorkerRuntime::new(
+                    Arc::clone(&provider),
+                    WorkerRuntimeConfig {
+                        max_workers: config.workers.vad.max_workers,
+                        command_capacity: config.workers.vad.command_queue_capacity,
+                        final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
+                        cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
+                    },
+                )),
+                segmenter,
+                pre_roll_samples,
+            },
         );
         tracing::info!(provider_kind = "vad", provider_instance = %id, adapter = instance.adapter(), "provider runtime loaded");
         vad_providers.insert(id.clone(), provider);

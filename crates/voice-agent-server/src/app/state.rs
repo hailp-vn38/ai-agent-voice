@@ -1,13 +1,16 @@
 use crate::{
     config::{AppConfig, SileroOnnxConfig, VadInstanceConfig},
     database::{
-        Database,
+        Database, DeviceAdmissionError,
         secrets::{EnvSecretResolver, SecretResolver},
     },
     providers::{
         DatabaseRuntimeSnapshot, LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog,
     },
-    session::ActiveTurnLimiter,
+    session::{
+        ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable,
+        resolve_effective_session_profile,
+    },
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
         WorkerSupervisor,
@@ -59,6 +62,57 @@ impl AppState {
         );
         self
     }
+
+    /// Deterministic admission seam: registers one extra already-loaded LLM runtime under an
+    /// explicit instance id so a stored Template can bind a runtime other than the server default.
+    pub fn with_llm_runtime_for_test(
+        mut self,
+        instance_id: impl Into<String>,
+        provider: Arc<dyn crate::providers::LlmProvider>,
+        concurrency: usize,
+        timeout: Duration,
+    ) -> Self {
+        Arc::make_mut(&mut self.runtimes).llm.insert(
+            instance_id.into(),
+            Arc::new(LlmRuntime::new(provider, concurrency, timeout)),
+        );
+        self
+    }
+
+    /// Resolves the one Effective Session Profile this connection may use.  Database-backed
+    /// admission is fail-closed: an unknown Device is denied and any resolution failure is coarse,
+    /// so a broken intended configuration can never be masked by deployment defaults.
+    pub async fn resolve_session_profile(
+        &self,
+        device_id: &str,
+    ) -> Result<EffectiveSessionProfile, SessionProfileAdmissionError> {
+        if !self.config.database.devices.admission_enabled {
+            return EffectiveSessionProfile::server_default(&self.config)
+                .map_err(|_| SessionProfileAdmissionError::ProfileUnavailable);
+        }
+        let database = self
+            .database
+            .as_ref()
+            .ok_or(SessionProfileAdmissionError::AdmissionUnavailable)?;
+        let graph = database
+            .admit_device(device_id, &self.config.database.devices)
+            .await
+            .map_err(|error| match error {
+                DeviceAdmissionError::Denied => SessionProfileAdmissionError::Denied,
+                DeviceAdmissionError::Unavailable => {
+                    SessionProfileAdmissionError::AdmissionUnavailable
+                }
+            })?;
+        resolve_effective_session_profile(
+            graph.device_db_id,
+            graph.agent.id,
+            &graph.agent.key,
+            &graph.assignments,
+            &self.config,
+            &self.runtimes,
+        )
+        .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)
+    }
     pub fn new(config: AppConfig, loaded: LoadedProviders) -> Self {
         Self::new_with_database(config, loaded, None)
     }
@@ -109,7 +163,12 @@ impl AppState {
     ) -> Self {
         let supervisor = Arc::new(WorkerSupervisor::start_many(
             loaded.runtimes.asr.values().cloned().collect(),
-            loaded.runtimes.vad.values().cloned().collect(),
+            loaded
+                .runtimes
+                .vad
+                .values()
+                .map(|vad| Arc::clone(&vad.runtime))
+                .collect(),
         ));
         Self {
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
@@ -143,78 +202,108 @@ impl AppState {
     }
 
     pub fn from_provider_set_with_database_and_shutdown(
-        mut config: AppConfig,
+        config: AppConfig,
         providers: Arc<ProviderSet>,
         database: Option<Database>,
         shutdown: CancellationToken,
     ) -> Self {
-        let id = "test".to_owned();
-        config.effective_agent.providers.vad = id.clone();
-        config.effective_agent.providers.asr = id.clone();
-        config.effective_agent.providers.llm = id.clone();
-        config.effective_agent.providers.tts = id.clone();
-        config
-            .providers
-            .vad
-            .instances
-            .entry(id.clone())
-            .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
-        let vad = providers.vad_provider();
-        let asr = providers.asr_provider();
-        let llm = providers.llm_provider();
-        let tts = providers.tts_provider();
-        let vad_runtime = Arc::new(VadWorkerRuntime::new(
-            Arc::clone(&vad),
-            WorkerRuntimeConfig {
-                max_workers: config.workers.vad.max_workers,
-                command_capacity: config.workers.vad.command_queue_capacity,
-                final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
-                cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
-            },
-        ));
-        let asr_runtime = Arc::new(AsrWorkerRuntime::new(
-            Arc::clone(&asr),
-            WorkerRuntimeConfig {
-                max_workers: config.workers.asr.max_workers,
-                command_capacity: config.workers.asr.command_queue_capacity,
-                final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
-                cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
-            },
-        ));
-        let llm_runtime = Arc::new(LlmRuntime::new(
-            Arc::clone(&llm),
-            config.limits.llm_concurrency,
-            Duration::from_millis(60_000),
-        ));
-        let tts_runtime = Arc::new(TtsWorkerRuntime::new(
-            Arc::clone(&tts),
-            WorkerRuntimeConfig {
-                max_workers: config.workers.tts.max_workers,
-                command_capacity: config.workers.tts.command_queue_capacity,
-                final_timeout: Duration::from_millis(config.tts.timeout_ms),
-                cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
-            },
-        ));
-        Self::new_with_database_and_shutdown(
-            config,
-            LoadedProviders {
-                providers: ProviderCatalog {
-                    vad: HashMap::from([(id.clone(), vad)]),
-                    asr: HashMap::from([(id.clone(), asr)]),
-                    llm: HashMap::from([(id.clone(), llm)]),
-                    tts: HashMap::from([(id.clone(), tts)]),
-                    vision: HashMap::new(),
-                },
-                runtimes: RuntimeCatalog {
-                    vad: HashMap::from([(id.clone(), vad_runtime)]),
-                    asr: HashMap::from([(id.clone(), asr_runtime)]),
-                    llm: HashMap::from([(id.clone(), llm_runtime)]),
-                    tts: HashMap::from([(id, tts_runtime)]),
-                    vision: HashMap::new(),
-                },
-            },
-            database,
-            shutdown,
-        )
+        let (config, loaded) = loaded_from_provider_set(config, &providers);
+        Self::new_with_database_and_shutdown(config, loaded, database, shutdown)
     }
+}
+
+/// Bounded admission failure.  The reason stays internal; the client only sees the coarse class.
+/// The two unavailable classes stay distinct because the integration guide names them as separate
+/// internal diagnostics: a broken database versus an unresolvable Agent profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SessionProfileAdmissionError {
+    #[error("device_not_admitted")]
+    Denied,
+    #[error("device_resolution_failed")]
+    AdmissionUnavailable,
+    #[error("agent_profile_resolution_failed")]
+    ProfileUnavailable,
+}
+
+/// Publishes an injected ProviderSet as already-loaded runtime under the single `test` instance
+/// id.  Deterministic routers use it so no model is ever prepared in a test process.
+pub(super) fn loaded_from_provider_set(
+    mut config: AppConfig,
+    providers: &ProviderSet,
+) -> (AppConfig, LoadedProviders) {
+    let id = "test".to_owned();
+    config.effective_agent.providers.vad = id.clone();
+    config.effective_agent.providers.asr = id.clone();
+    config.effective_agent.providers.llm = id.clone();
+    config.effective_agent.providers.tts = id.clone();
+    config
+        .providers
+        .vad
+        .instances
+        .entry(id.clone())
+        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
+    let vad = providers.vad_provider();
+    let asr = providers.asr_provider();
+    let llm = providers.llm_provider();
+    let tts = providers.tts_provider();
+    let vad_runtime = Arc::new(VadWorkerRuntime::new(
+        Arc::clone(&vad),
+        WorkerRuntimeConfig {
+            max_workers: config.workers.vad.max_workers,
+            command_capacity: config.workers.vad.command_queue_capacity,
+            final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
+            cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
+        },
+    ));
+    let asr_runtime = Arc::new(AsrWorkerRuntime::new(
+        Arc::clone(&asr),
+        WorkerRuntimeConfig {
+            max_workers: config.workers.asr.max_workers,
+            command_capacity: config.workers.asr.command_queue_capacity,
+            final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
+            cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
+        },
+    ));
+    let llm_runtime = Arc::new(LlmRuntime::new(
+        Arc::clone(&llm),
+        config.limits.llm_concurrency,
+        Duration::from_millis(60_000),
+    ));
+    let tts_runtime = Arc::new(TtsWorkerRuntime::new(
+        Arc::clone(&tts),
+        WorkerRuntimeConfig {
+            max_workers: config.workers.tts.max_workers,
+            command_capacity: config.workers.tts.command_queue_capacity,
+            final_timeout: Duration::from_millis(config.tts.timeout_ms),
+            cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
+        },
+    ));
+    let (segmenter, pre_roll) =
+        crate::providers::vad_timing(config.providers.vad.instances[&id].silero_onnx());
+    (
+        config,
+        LoadedProviders {
+            providers: ProviderCatalog {
+                vad: HashMap::from([(id.clone(), vad)]),
+                asr: HashMap::from([(id.clone(), asr)]),
+                llm: HashMap::from([(id.clone(), llm)]),
+                tts: HashMap::from([(id.clone(), tts)]),
+                vision: HashMap::new(),
+            },
+            runtimes: RuntimeCatalog {
+                vad: HashMap::from([(
+                    id.clone(),
+                    crate::providers::LoadedVad {
+                        runtime: vad_runtime,
+                        segmenter,
+                        pre_roll_samples: pre_roll,
+                    },
+                )]),
+                asr: HashMap::from([(id.clone(), asr_runtime)]),
+                llm: HashMap::from([(id.clone(), llm_runtime)]),
+                tts: HashMap::from([(id, tts_runtime)]),
+                vision: HashMap::new(),
+            },
+        },
+    )
 }

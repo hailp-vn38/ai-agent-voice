@@ -10,12 +10,13 @@ use crate::{
         AppConfig, AsrInstanceConfig, LlmInstanceConfig, TtsInstanceConfig, VadInstanceConfig,
     },
     database::{
-        DesiredProvider, provider_config,
+        DesiredProvider, ProviderLoadPlan, ProviderLoadRequirement, provider_config,
         secrets::{SecretRef, SecretResolver},
     },
     models::prepare,
     providers::{
-        ProviderCatalog, RuntimeCatalog, compiled_provider_registry, loader::LoadedProviders,
+        LoadedVad, ProviderCatalog, RuntimeCatalog, compiled_provider_registry,
+        loader::LoadedProviders, loader::vad_timing,
     },
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
@@ -106,34 +107,77 @@ impl DatabaseRuntimeSnapshot {
     }
 }
 
-/// Validates and attempts every enabled desired row.  Per-row failure is intentionally reported
-/// as `Unavailable`: Ticket 07's Provider Load Plan decides whether that outcome blocks startup
-/// (required) or excludes an optional candidate.  This function never falls back or loads later.
+/// A required database provider could not become Loaded Runtime, so startup must fail before the
+/// listener binds.  Only the provider key and the coarse failure class survive for telemetry.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("required provider `{provider_key}` is unavailable")]
+pub struct RequiredProviderUnavailable {
+    pub provider_key: String,
+    pub failure: DatabaseRuntimeFailure,
+}
+
+/// Applies the startup Provider Load Plan to the enabled desired rows.
+///
+/// Required rows must materialize or startup fails.  Optional rows are still attempted so a
+/// non-default Template can become a switch candidate, and their failure only excludes that
+/// candidate.  Unbound rows are validated but never resolve a secret or build a runtime.
 pub fn materialize_database_providers(
     config: &AppConfig,
     rows: Vec<DesiredProvider>,
+    plan: &ProviderLoadPlan,
     secrets: &dyn SecretResolver,
-) -> DatabaseMaterialization {
+) -> Result<DatabaseMaterialization, RequiredProviderUnavailable> {
     let mut loaded = empty_loaded();
     let mut states = HashMap::with_capacity(rows.len());
     for row in rows {
-        let state = DatabaseRuntimeState {
-            provider_id: row.id,
-            desired_revision: row.revision,
-            status: DatabaseRuntimeStatus::Loaded,
-            failure: None,
-        };
-        let state = match materialize_one(config, &row, secrets, &mut loaded) {
-            Ok(()) => state,
-            Err(failure) => DatabaseRuntimeState {
-                status: DatabaseRuntimeStatus::Unavailable,
-                failure: Some(failure),
-                ..state
-            },
-        };
+        let requirement = plan.requirement(&row.key);
+        let state = load_one(config, &row, requirement, secrets, &mut loaded);
+        if requirement == ProviderLoadRequirement::Required
+            && let Some(failure) = state.failure
+        {
+            return Err(RequiredProviderUnavailable {
+                provider_key: row.key.clone(),
+                failure,
+            });
+        }
         states.insert(row.key.clone(), state);
     }
-    DatabaseMaterialization { loaded, states }
+    Ok(DatabaseMaterialization { loaded, states })
+}
+
+fn load_one(
+    config: &AppConfig,
+    row: &DesiredProvider,
+    requirement: ProviderLoadRequirement,
+    secrets: &dyn SecretResolver,
+    loaded: &mut LoadedProviders,
+) -> DatabaseRuntimeState {
+    // An unbound provider is still configuration-validated, so Admin inspection is honest, but it
+    // must not cost a secret resolution or a model build for a session that cannot use it.
+    let (status, outcome) = match requirement {
+        ProviderLoadRequirement::Unbound => (
+            DatabaseRuntimeStatus::NotLoaded,
+            desired_value(row).map(|_| ()),
+        ),
+        ProviderLoadRequirement::Required | ProviderLoadRequirement::Optional => (
+            DatabaseRuntimeStatus::Loaded,
+            materialize_one(config, row, secrets, loaded),
+        ),
+    };
+    match outcome {
+        Ok(()) => DatabaseRuntimeState {
+            provider_id: row.id,
+            desired_revision: row.revision,
+            status,
+            failure: None,
+        },
+        Err(failure) => DatabaseRuntimeState {
+            provider_id: row.id,
+            desired_revision: row.revision,
+            status: DatabaseRuntimeStatus::Unavailable,
+            failure: Some(failure),
+        },
+    }
 }
 
 impl DatabaseMaterialization {
@@ -200,12 +244,17 @@ fn materialize_one(
             let provider = factory
                 .build(&instance, &config.runtime, &model)
                 .map_err(|_| ())?;
+            let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
             loaded.runtimes.vad.insert(
                 row.key.clone(),
-                Arc::new(VadWorkerRuntime::new(
-                    Arc::clone(&provider),
-                    vad_worker_config(config),
-                )),
+                LoadedVad {
+                    runtime: Arc::new(VadWorkerRuntime::new(
+                        Arc::clone(&provider),
+                        vad_worker_config(config),
+                    )),
+                    segmenter,
+                    pre_roll_samples,
+                },
             );
             loaded.providers.vad.insert(row.key.clone(), provider);
         }
@@ -386,13 +435,28 @@ mod tests {
         }
     }
 
+    fn plan(requirement: ProviderLoadRequirement) -> ProviderLoadPlan {
+        let key = "db-llm".to_owned();
+        match requirement {
+            ProviderLoadRequirement::Required => ProviderLoadPlan::new([key], []),
+            ProviderLoadRequirement::Optional => ProviderLoadPlan::new([], [key]),
+            ProviderLoadRequirement::Unbound => ProviderLoadPlan::default(),
+        }
+    }
+
+    fn valid_config() -> &'static str {
+        r#"{"base_url":"https://example.test/v1","model":"x"}"#
+    }
+
     #[test]
-    fn invalid_config_and_unavailable_secret_are_classified_without_runtime() {
+    fn optional_and_unbound_failures_stay_unavailable_without_loading_a_runtime() {
         let invalid = materialize_database_providers(
             &config(),
             vec![row(r#"{"model":"x","unexpected":true}"#, None)],
+            &plan(ProviderLoadRequirement::Optional),
             &EnvSecretResolver,
-        );
+        )
+        .expect("an optional provider never blocks startup");
         assert_eq!(
             invalid.runtime_state("db-llm", 3).status,
             DatabaseRuntimeStatus::Unavailable
@@ -404,12 +468,11 @@ mod tests {
 
         let unavailable_secret = materialize_database_providers(
             &config(),
-            vec![row(
-                r#"{"base_url":"https://example.test/v1","model":"x"}"#,
-                Some("VOICE_AGENT_TEST_MISSING_SECRET"),
-            )],
+            vec![row(valid_config(), Some("VOICE_AGENT_TEST_MISSING_SECRET"))],
+            &plan(ProviderLoadRequirement::Optional),
             &EnvSecretResolver,
-        );
+        )
+        .expect("an optional provider never blocks startup");
         assert_eq!(
             unavailable_secret.runtime_state("db-llm", 3).status,
             DatabaseRuntimeStatus::Unavailable
@@ -419,12 +482,63 @@ mod tests {
             Some(DatabaseRuntimeFailure::Secret)
         );
         assert!(
-            unavailable_secret
+            !unavailable_secret
                 .loaded
                 .runtimes
                 .llm
-                .get("db-llm")
-                .is_none()
+                .contains_key("db-llm")
+        );
+    }
+
+    #[test]
+    fn a_required_failure_reports_the_coarse_reason_and_blocks_startup() {
+        let Err(error) = materialize_database_providers(
+            &config(),
+            vec![row(valid_config(), Some("VOICE_AGENT_TEST_MISSING_SECRET"))],
+            &plan(ProviderLoadRequirement::Required),
+            &EnvSecretResolver,
+        ) else {
+            panic!("a required provider must block startup");
+        };
+        assert_eq!(error.provider_key, "db-llm");
+        assert_eq!(error.failure, DatabaseRuntimeFailure::Secret);
+    }
+
+    #[test]
+    fn an_unbound_provider_never_resolves_a_secret_or_builds_a_runtime() {
+        let materialization = materialize_database_providers(
+            &config(),
+            vec![row(valid_config(), Some("VOICE_AGENT_TEST_MISSING_SECRET"))],
+            &plan(ProviderLoadRequirement::Unbound),
+            &EnvSecretResolver,
+        )
+        .expect("unbound configuration never blocks boot");
+        assert_eq!(
+            materialization.runtime_state("db-llm", 3).status,
+            DatabaseRuntimeStatus::NotLoaded
+        );
+        assert!(
+            !materialization.loaded.runtimes.llm.contains_key("db-llm"),
+            "an unbound provider must not build a runtime"
+        );
+    }
+
+    #[test]
+    fn an_unbound_provider_with_invalid_config_is_unavailable_without_blocking_boot() {
+        let materialization = materialize_database_providers(
+            &config(),
+            vec![row(r#"{"model":"x","unexpected":true}"#, None)],
+            &plan(ProviderLoadRequirement::Unbound),
+            &EnvSecretResolver,
+        )
+        .expect("unbound configuration never blocks boot");
+        assert_eq!(
+            materialization.runtime_state("db-llm", 3).status,
+            DatabaseRuntimeStatus::Unavailable
+        );
+        assert_eq!(
+            materialization.runtime_state("db-llm", 3).failure,
+            Some(DatabaseRuntimeFailure::Configuration)
         );
     }
 }

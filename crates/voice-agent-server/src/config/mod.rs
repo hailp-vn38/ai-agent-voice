@@ -65,7 +65,9 @@ pub const DEFAULT_PROMPT_TEMPLATE: &str = include_str!(concat!(
 ));
 const MAX_PERSONA_BYTES: usize = 16 * 1024;
 const MAX_PROMPT_TEMPLATE_BYTES: usize = 64 * 1024;
-const MAX_RENDERED_SYSTEM_PROMPT_BYTES: usize = 96 * 1024;
+/// Hard bound for any system prompt a session may compose, whether it came from the deployment
+/// template or from a stored Template row.
+pub const MAX_RENDERED_SYSTEM_PROMPT_BYTES: usize = 96 * 1024;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]

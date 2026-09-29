@@ -278,6 +278,22 @@ impl SessionActor {
         Ok(self)
     }
 
+    /// Installs the prompt the Effective Session Profile already resolved.  The actor never
+    /// re-reads it, so a later Template or Agent change cannot reach this session.  The bound is
+    /// re-checked here so the invariant holds at the seam that actually installs the prompt.
+    pub fn with_system_prompt(
+        mut self,
+        system_prompt: String,
+        max_tool_result_chars: usize,
+    ) -> Result<Self, crate::session::prompt::PromptError> {
+        if system_prompt.len() > crate::session::profile::MAX_TEMPLATE_PROMPT_BYTES {
+            return Err(crate::session::prompt::PromptError::SystemPromptTooLarge);
+        }
+        self.system_prompt = system_prompt;
+        self.max_tool_result_chars = max_tool_result_chars;
+        Ok(self)
+    }
+
     pub fn start_mcp_discovery(&mut self) {
         self.begin_mcp_discovery();
     }

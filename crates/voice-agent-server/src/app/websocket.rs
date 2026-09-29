@@ -6,8 +6,8 @@ pub(super) async fn handler(
     Query(query): Query<WebsocketQuery>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let config = state.config;
-    let shutdown = state.shutdown;
+    let config = state.config.clone();
+    let shutdown = state.shutdown.clone();
     if shutdown.is_cancelled() {
         return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
     }
@@ -40,34 +40,30 @@ pub(super) async fn handler(
     if !valid_device_identity(device_id) {
         return (StatusCode::BAD_REQUEST, "invalid Device-Id").into_response();
     }
-    let admission = if config.database.devices.admission_enabled {
-        let Some(database) = state.database.as_ref() else {
+    // One immutable Effective Session Profile per connection.  Resolution is fail-closed: a
+    // database-backed Agent whose default Template cannot be materialized is never silently
+    // downgraded to the deployment's server defaults.
+    let profile = match state.resolve_session_profile(device_id).await {
+        Ok(profile) => profile,
+        Err(SessionProfileAdmissionError::Denied) => {
+            return (StatusCode::FORBIDDEN, "device not admitted").into_response();
+        }
+        Err(SessionProfileAdmissionError::AdmissionUnavailable) => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "device admission unavailable",
             )
                 .into_response();
-        };
-        match database
-            .admit_device(device_id, &config.database.devices)
-            .await
-        {
-            Ok(admission) => Some(admission),
-            Err(crate::database::DeviceAdmissionError::Denied) => {
-                return (StatusCode::FORBIDDEN, "device not admitted").into_response();
-            }
-            Err(crate::database::DeviceAdmissionError::Unavailable) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "device admission unavailable",
-                )
-                    .into_response();
-            }
         }
-    } else {
-        None
+        Err(SessionProfileAdmissionError::ProfileUnavailable) => {
+            debug!(
+                agent_key = %device_id,
+                "the admitted agent has no usable effective session profile"
+            );
+            return (StatusCode::SERVICE_UNAVAILABLE, "agent profile unavailable").into_response();
+        }
     };
-    let resolved_runtimes = match state.runtimes.resolve(&config.effective_agent().providers) {
+    let resolved_runtimes = match state.runtimes.resolve(&profile.providers) {
         Ok(runtimes) => runtimes,
         Err(error) => {
             debug!(%error, "configured provider runtime is unavailable");
@@ -79,7 +75,11 @@ pub(super) async fn handler(
         }
     };
     let active_turn_limiter = state.active_turn_limiter;
-    info!("WebSocket upgrade accepted");
+    info!(
+        agent_key = %profile.agent_key,
+        template = ?profile.source,
+        "WebSocket upgrade accepted"
+    );
     let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
@@ -92,8 +92,10 @@ pub(super) async fn handler(
                     vad: resolved_runtimes.vad,
                     llm: resolved_runtimes.llm,
                     tts: resolved_runtimes.tts,
+                    vad_segmenter: resolved_runtimes.vad_segmenter,
+                    vad_pre_roll_samples: resolved_runtimes.vad_pre_roll_samples,
                     active_turn_limiter,
-                    admission,
+                    profile,
                 },
                 shutdown,
             )
@@ -184,8 +186,10 @@ struct SocketRuntimes {
     vad: Arc<VadWorkerRuntime>,
     llm: Arc<LlmRuntime>,
     tts: Arc<TtsWorkerRuntime>,
+    vad_segmenter: VadSegmenterConfig,
+    vad_pre_roll_samples: u64,
     active_turn_limiter: Arc<ActiveTurnLimiter>,
-    admission: Option<crate::database::DeviceAdmission>,
+    profile: crate::session::EffectiveSessionProfile,
 }
 
 async fn handle_socket(
@@ -194,9 +198,9 @@ async fn handle_socket(
     runtimes: SocketRuntimes,
     shutdown: tokio_util::sync::CancellationToken,
 ) {
-    // This snapshot remains owned by the connection lifetime. SessionActor receives only
-    // concrete runtime handles and never a Database/pool or live Device/Agent row.
-    let _admission = runtimes.admission;
+    // The profile stays owned by the connection lifetime. SessionActor receives only concrete
+    // runtime handles and a rendered prompt, never a Database/pool or a live Device/Agent row.
+    let profile = runtimes.profile;
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
         _ = shutdown.cancelled() => return,
@@ -234,8 +238,6 @@ async fn handle_socket(
     // Keep the watch channel open until the writer drains a terminal control message. Otherwise
     // dropping SessionActor could make the writer exit before it sends Close(1001).
     let _writer_shutdown_tx = shutdown_tx.clone();
-    let vad_config =
-        config.providers.vad.instances[&config.effective_agent().providers.vad].silero_onnx();
     let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
         Uuid::new_v4().to_string(),
         control_tx.clone(),
@@ -251,13 +253,8 @@ async fn handle_socket(
             llm: runtimes.llm,
             tts: runtimes.tts,
             active_turn_limiter: runtimes.active_turn_limiter,
-            vad_segmenter_config: VadSegmenterConfig {
-                speech_threshold: vad_config.speech_threshold,
-                exit_threshold: vad_config.exit_threshold,
-                min_speech_samples: vad_config.min_speech_ms * 16,
-                end_silence_samples: vad_config.end_silence_ms * 16,
-            },
-            pre_roll_samples: vad_config.pre_roll_ms * 16,
+            vad_segmenter_config: runtimes.vad_segmenter,
+            pre_roll_samples: runtimes.vad_pre_roll_samples,
         },
     ) {
         Ok(actor) => actor,
@@ -275,16 +272,15 @@ async fn handle_socket(
             return;
         }
     };
-    let actor = match actor
-        .with_prompt_config(config.effective_agent(), config.llm.max_tool_result_chars)
-    {
-        Ok(actor) => actor,
-        Err(error) => {
-            debug!(%error, "failed to initialize session prompt");
-            close_direct(&mut sender, 1011).await;
-            return;
-        }
-    };
+    let actor =
+        match actor.with_system_prompt(profile.system_prompt, config.llm.max_tool_result_chars) {
+            Ok(actor) => actor,
+            Err(error) => {
+                debug!(%error, "session profile prompt exceeds the system prompt bound");
+                close_direct(&mut sender, 1011).await;
+                return;
+            }
+        };
     let mut actor = actor
         .with_client_capabilities(
             hello.features.aec,

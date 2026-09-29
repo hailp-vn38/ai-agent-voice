@@ -2,9 +2,12 @@ use crate::{
     audio::VadSegmenterConfig,
     config::AppConfig,
     database::secrets::EnvSecretResolver,
-    database::{Database, DatabaseError},
+    database::{Database, DatabaseError, DesiredProvider, ProviderLoadPlan},
     protocol::{ClientMessage, ServerHello, parse_client_message},
-    providers::{ProviderSet, materialize_database_providers},
+    providers::{
+        DatabaseMaterialization, LoadedProviders, ProviderSet, RequiredProviderUnavailable,
+        materialize_database_providers,
+    },
     session::{
         ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent, SessionRuntimes,
         WriterEvent, WriterTurnOutcome,
@@ -38,22 +41,46 @@ mod state;
 mod vision;
 mod websocket;
 
-pub use state::AppState;
+pub use state::{AppState, SessionProfileAdmissionError};
 
 /// Application seam for tests and other callers that have already initialized providers.
 pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
     router_with_state(AppState::from_provider_set(config, providers))
 }
 
-/// Public startup seam for deterministic bootstrap tests. SQLite opens and migrates before the
-/// application router exists; the injected providers keep model loading outside this seam.
+/// Public startup seam for deterministic bootstrap tests. SQLite opens, migrates and applies the
+/// Provider Load Plan before the application router exists; the injected providers keep model
+/// loading outside this seam.
 pub async fn bootstrap_with_providers(
     config: AppConfig,
     providers: Arc<ProviderSet>,
 ) -> Result<Router, BootstrapError> {
+    bootstrap_with_providers_and_secret_resolver(config, providers, Arc::new(EnvSecretResolver))
+        .await
+}
+
+/// Same bootstrap for deployments that own secret resolution, so database provider credentials
+/// resolve through the same abstraction production uses.
+pub async fn bootstrap_with_providers_and_secret_resolver(
+    config: AppConfig,
+    providers: Arc<ProviderSet>,
+    secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
+) -> Result<Router, BootstrapError> {
     let database = Database::connect_if_enabled(&config.database).await?;
+    let (plan, rows) = read_load_plan(&config, database.as_ref()).await?;
+    let (config, loaded) = state::loaded_from_provider_set(config, &providers);
+    let (loaded, materialization) =
+        apply_load_plan(&config, loaded, rows, &plan, secret_resolver.as_ref())
+            .map_err(map_load_plan_failure)?;
     Ok(router_with_state(
-        AppState::from_provider_set_with_database(config, providers, database),
+        AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
+            config,
+            loaded,
+            database,
+            Some(materialization.snapshot()),
+            secret_resolver,
+            CancellationToken::new(),
+        ),
     ))
 }
 pub fn router_with_state(state: AppState) -> Router {
@@ -126,44 +153,96 @@ pub async fn startup_with_shutdown_and_secret_resolver(
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect_if_enabled(&config.database).await?;
-    let desired_rows = match &database {
-        Some(database) => database.enabled_provider_rows().await?,
-        None => Vec::new(),
-    };
+    // The plan and the desired rows are read before any runtime exists, so a required provider is
+    // known to be required before the first model is prepared.
+    let (plan, rows) = read_load_plan(&config, database.as_ref()).await?;
     let startup_config = config.clone();
     let startup_secret_resolver = Arc::clone(&secret_resolver);
-    let (loaded, database_materialization) = tokio::task::spawn_blocking(move || {
-        let mut local = crate::providers::load_local(&startup_config)?;
-        let database_materialization = materialize_database_providers(
+    let (loaded, materialization) = tokio::task::spawn_blocking(move || {
+        let local =
+            crate::providers::load_local(&startup_config).map_err(|_| BootstrapError::Provider)?;
+        apply_load_plan(
             &startup_config,
-            desired_rows,
+            local,
+            rows,
+            &plan,
             startup_secret_resolver.as_ref(),
-        );
-        let mut database_materialization = database_materialization;
-        for collision in
-            local.extend_database_without_collisions(database_materialization.take_loaded())
-        {
-            database_materialization.mark_unavailable(
-                &collision,
-                crate::providers::DatabaseRuntimeFailure::Runtime,
-            );
-        }
-        let database_runtime_snapshot = database_materialization.snapshot();
-        Ok::<_, crate::providers::ProviderLoadError>((local, database_runtime_snapshot))
+        )
+        .map_err(map_load_plan_failure)
     })
     .await
-    .map_err(|_| BootstrapError::Provider)?
-    .map_err(|_| BootstrapError::Provider)?;
+    .map_err(|_| BootstrapError::Provider)??;
     Ok(router_with_state(
         AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
             config,
             loaded,
             database,
-            Some(database_materialization),
+            Some(materialization.snapshot()),
             secret_resolver,
             shutdown,
         ),
     ))
+}
+
+/// Derives the Provider Load Plan from the persisted graph plus the deployment's server provider
+/// defaults.  Requirements never come from `AppConfig::effective_agent`, whose overrides describe
+/// a single process-local agent rather than database intent.
+async fn read_load_plan(
+    config: &AppConfig,
+    database: Option<&Database>,
+) -> Result<(ProviderLoadPlan, Vec<DesiredProvider>), BootstrapError> {
+    let Some(database) = database else {
+        return Ok((
+            ProviderLoadPlan::from_server_defaults(&config.provider_defaults),
+            Vec::new(),
+        ));
+    };
+    let plan = database
+        .provider_load_plan(&config.provider_defaults)
+        .await?;
+    let rows = database.enabled_provider_rows().await?;
+    Ok((plan, rows))
+}
+
+/// Folds the plan's database runtimes into the already-loaded snapshot.
+///
+/// A required provider whose key the deployment already occupies can never be resolved
+/// unambiguously, so it is rejected before any credential is resolved or any model is prepared.
+/// An optional collision is just an optional failure: the database instance stays unavailable and
+/// its dependent non-default candidate is excluded, while boot continues.
+fn apply_load_plan(
+    config: &AppConfig,
+    mut loaded: LoadedProviders,
+    rows: Vec<DesiredProvider>,
+    plan: &ProviderLoadPlan,
+    secrets: &dyn crate::database::secrets::SecretResolver,
+) -> Result<(LoadedProviders, DatabaseMaterialization), RequiredProviderUnavailable> {
+    if let Some(row) = rows
+        .iter()
+        .find(|row| plan.is_required(&row.key) && loaded.has_loaded_key(&row.kind, &row.key))
+    {
+        return Err(RequiredProviderUnavailable {
+            provider_key: row.key.clone(),
+            failure: crate::providers::DatabaseRuntimeFailure::Runtime,
+        });
+    }
+    let mut materialization = materialize_database_providers(config, rows, plan, secrets)?;
+    for collision in loaded.extend_database_without_collisions(materialization.take_loaded()) {
+        materialization.mark_unavailable(
+            &collision,
+            crate::providers::DatabaseRuntimeFailure::Runtime,
+        );
+    }
+    Ok((loaded, materialization))
+}
+
+fn map_load_plan_failure(error: RequiredProviderUnavailable) -> BootstrapError {
+    tracing::error!(
+        provider_key = %error.provider_key,
+        reason = ?error.failure,
+        "required database provider is unavailable; refusing to bind the listener"
+    );
+    BootstrapError::Provider
 }
 
 async fn health() -> &'static str {

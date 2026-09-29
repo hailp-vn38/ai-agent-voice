@@ -266,26 +266,6 @@ async fn enabled_admission_returns_coarse_503_when_its_database_pool_is_closed()
 }
 
 #[tokio::test]
-async fn enabled_template_assignment_without_a_resolved_profile_returns_coarse_503() {
-    let (base, database_url, task) = start(admission_config()).await;
-    insert_agent_and_device(&database_url, "profile-device", true).await;
-    let pool = SqlitePool::connect(&database_url).await.unwrap();
-    sqlx::query("INSERT INTO agent_templates (key,name,language,prompt,created_at,updated_at) VALUES ('template', 'Template', 'vi', 'Prompt', 1, 1)")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO agent_template_assignments (agent_id,template_id,enabled,created_at) VALUES (1, 1, 1, 1)")
-        .execute(&pool)
-        .await
-        .unwrap();
-    let error = connect_async(request(&base, "profile-device"))
-        .await
-        .unwrap_err();
-    assert_eq!(rejected_status(error), StatusCode::SERVICE_UNAVAILABLE);
-    task.abort();
-}
-
-#[tokio::test]
 async fn auto_registration_is_atomic_for_racing_connections_and_stores_only_safe_metadata() {
     let (base, database_url, task) = start(voice_agent_server::config::DatabaseDevicesConfig {
         admission_enabled: true,

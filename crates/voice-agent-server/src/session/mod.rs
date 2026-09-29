@@ -1,6 +1,7 @@
 mod actor;
 mod event;
 mod generation_gate;
+mod profile;
 mod prompt;
 mod speech_output;
 mod state;
@@ -11,5 +12,9 @@ pub use actor::{
 };
 pub use event::SessionEvent;
 pub use generation_gate::GenerationGate;
+pub use profile::{
+    EffectiveSessionProfile, ProfileSource, ProfileUnavailable, ResolvedTemplateProfile,
+    TemplateSwitchCatalog, resolve_effective_session_profile,
+};
 pub use state::SessionPhase;
 pub use turn::{ActiveTurnLimiter, TurnId};

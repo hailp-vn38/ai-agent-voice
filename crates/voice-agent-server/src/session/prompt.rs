@@ -20,6 +20,8 @@ pub enum PromptError {
     MissingCurrentUser,
     #[error("LLM request exceeds the Phase A hard limit")]
     RequestTooLarge,
+    #[error("system prompt exceeds the hard bound")]
+    SystemPromptTooLarge,
 }
 
 pub fn render_system(agent: &EffectiveAgentConfig) -> Result<String, PromptError> {
