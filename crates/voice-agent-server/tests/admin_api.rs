@@ -85,6 +85,28 @@ async fn admin_router_auth_crud_revision_and_transport_contract() {
             .status(),
         StatusCode::UNSUPPORTED_MEDIA_TYPE
     );
+    assert_eq!(
+        client
+            .post(&url)
+            .bearer_auth("admin-test-token")
+            .header("content-type", "application/json; nonsense")
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/api/admin/agents?page_size=201"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
 
     let created = client
         .post(&url)
@@ -137,6 +159,18 @@ async fn admin_router_auth_crud_revision_and_transport_contract() {
             .unwrap()
             .status(),
         StatusCode::CONFLICT
+    );
+    assert_eq!(
+        client
+            .patch(format!("{base}/api/admin/devices/device-1"))
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"agent_key": null}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
     );
     assert_eq!(
         client

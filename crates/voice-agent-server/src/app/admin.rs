@@ -160,6 +160,13 @@ fn sql_error(request: &Request, sql_error_value: &sqlx::Error) -> Response {
         sql_error_kind(sql_error_value),
     )
 }
+fn mutation_sql_error(request: &Request, sql_error_value: &sqlx::Error) -> Response {
+    if sql_error_kind(sql_error_value) == "database_busy" {
+        sql_error(request, sql_error_value)
+    } else {
+        error(request, StatusCode::CONFLICT, "resource_conflict")
+    }
+}
 
 async fn json<T: DeserializeOwned>(request: Request) -> Result<(Request, T), Response> {
     if request
@@ -178,11 +185,18 @@ async fn json<T: DeserializeOwned>(request: Request) -> Result<(Request, T), Res
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if !content_type
-        .split(';')
+    let mut content_parts = content_type.split(';');
+    let media_type_ok = content_parts
         .next()
-        .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
-    {
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+    let parameters_ok = content_parts.all(|parameter| {
+        let parameter = parameter.trim();
+        !parameter.is_empty()
+            && parameter
+                .split_once('=')
+                .is_some_and(|(name, value)| !name.trim().is_empty() && !value.trim().is_empty())
+    });
+    if !media_type_ok || !parameters_ok {
         return Err(error(
             &request,
             StatusCode::BAD_REQUEST,
@@ -279,9 +293,9 @@ struct PatchDevice {
 #[derive(Default, Deserialize)]
 #[serde(untagged)]
 enum Patch<T> {
+    Clear(Option<T>),
     #[default]
     Absent,
-    Clear(Option<T>),
 }
 impl<T> Patch<T> {
     fn value(self) -> Option<Option<T>> {
@@ -299,6 +313,18 @@ struct PageQuery {
     enabled: Option<bool>,
     #[serde(default)]
     sort: Option<String>,
+    #[serde(default)]
+    page_size: Option<u32>,
+}
+
+fn page_bounds(query: &PageQuery) -> Result<(u32, u32), &'static str> {
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(PAGE_DEFAULT);
+    if page == 0 || page > 10_000 || !(1..=PAGE_MAX).contains(&page_size) {
+        Err("invalid_query")
+    } else {
+        Ok((page, page_size))
+    }
 }
 
 fn valid_key(value: &str) -> bool {
@@ -409,7 +435,7 @@ async fn create_agent(State(state): State<AppState>, request: Request) -> Respon
     .await;
     let resource_id = match result {
         Ok(v) => v.last_insert_rowid(),
-        Err(_) => return error(&request, StatusCode::BAD_REQUEST, "resource_conflict"),
+        Err(error_value) => return mutation_sql_error(&request, &error_value),
     };
     if audit(
         &mut *tx,
@@ -472,12 +498,14 @@ async fn list_agents(
     Query(query): Query<PageQuery>,
     request: Request,
 ) -> Response {
-    if query.page.unwrap_or(1) == 0
-        || query.page.unwrap_or(1) > 10_000
-        || query
-            .sort
-            .as_deref()
-            .is_some_and(|v| !matches!(v, "key" | "name"))
+    let (page, page_size) = match page_bounds(&query) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    if query
+        .sort
+        .as_deref()
+        .is_some_and(|v| !matches!(v, "key" | "name" | "-key" | "-name"))
     {
         return error(&request, StatusCode::BAD_REQUEST, "invalid_query");
     };
@@ -491,10 +519,24 @@ async fn list_agents(
             );
         }
     };
-    let page = query.page.unwrap_or(1);
     let enabled = query.enabled.map(i64::from);
-    let rows=sqlx::query_as::<_,Agent>("SELECT id,key,name,description,enabled,revision,created_at,updated_at FROM agents WHERE (? IS NULL OR enabled=?) ORDER BY key LIMIT ? OFFSET ?").bind(enabled).bind(enabled).bind(i64::from(PAGE_DEFAULT)).bind(i64::from((page-1)*PAGE_DEFAULT)).fetch_all(pool).await;
-    match rows {Ok(items)=>Json(serde_json::json!({"items":items,"page":page,"page_size":PAGE_DEFAULT,"max_page_size":PAGE_MAX})).into_response(),Err(error_value)=>sql_error(&request, &error_value)}
+    let order = match query.sort.as_deref().unwrap_or("key") {
+        "name" => "name ASC",
+        "-name" => "name DESC",
+        "-key" => "key DESC",
+        _ => "key ASC",
+    };
+    let sql = format!(
+        "SELECT id,key,name,description,enabled,revision,created_at,updated_at FROM agents WHERE (? IS NULL OR enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
+    );
+    let rows = sqlx::query_as::<_, Agent>(&sql)
+        .bind(enabled)
+        .bind(enabled)
+        .bind(i64::from(page_size))
+        .bind(i64::from((page - 1) * page_size))
+        .fetch_all(pool)
+        .await;
+    match rows {Ok(items)=>Json(serde_json::json!({"items":items,"page":page,"page_size":page_size,"max_page_size":PAGE_MAX})).into_response(),Err(error_value)=>sql_error(&request, &error_value)}
 }
 #[axum::debug_handler]
 async fn patch_agent(
@@ -525,7 +567,10 @@ async fn patch_agent(
     };
     let old = match get_agent_by(pool, &key).await {
         Ok(v) => v,
-        Err(_) => return error(&request, StatusCode::NOT_FOUND, "not_found"),
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
     };
     if old.revision != expected {
         {
@@ -762,7 +807,7 @@ async fn create_device(State(state): State<AppState>, request: Request) -> Respo
     let result=sqlx::query("INSERT INTO devices (device_id,agent_id,name,description,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(&body.device_id).bind(agent.id).bind(&body.name).bind(&body.description).bind(metadata).bind(time).bind(time).execute(&mut *tx).await;
     let device_id = match result {
         Ok(v) => v.last_insert_rowid(),
-        Err(_) => return error(&request, StatusCode::BAD_REQUEST, "resource_conflict"),
+        Err(error_value) => return mutation_sql_error(&request, &error_value),
     };
     if audit(
         &mut *tx,
@@ -811,10 +856,11 @@ async fn get_device(
             );
         }
     };
-    get_device_by(pool, &device_id)
-        .await
-        .map(|v| Json(v).into_response())
-        .unwrap_or_else(|_| error(&request, StatusCode::NOT_FOUND, "not_found"))
+    match get_device_by(pool, &device_id).await {
+        Ok(v) => Json(v).into_response(),
+        Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
+        Err(error_value) => sql_error(&request, &error_value),
+    }
 }
 async fn get_device_by(pool: &SqlitePool, device_id: &str) -> Result<Device, sqlx::Error> {
     sqlx::query_as("SELECT d.id,d.device_id,a.key AS agent_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id WHERE d.device_id=?").bind(device_id).fetch_one(pool).await
@@ -824,12 +870,14 @@ async fn list_devices(
     Query(query): Query<PageQuery>,
     request: Request,
 ) -> Response {
-    if query.page.unwrap_or(1) == 0
-        || query.page.unwrap_or(1) > 10_000
-        || query
-            .sort
-            .as_deref()
-            .is_some_and(|v| !matches!(v, "device_id" | "name"))
+    let (page, page_size) = match page_bounds(&query) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    if query
+        .sort
+        .as_deref()
+        .is_some_and(|v| !matches!(v, "device_id" | "name" | "-device_id" | "-name"))
     {
         return error(&request, StatusCode::BAD_REQUEST, "invalid_query");
     };
@@ -843,10 +891,24 @@ async fn list_devices(
             );
         }
     };
-    let page = query.page.unwrap_or(1);
     let enabled = query.enabled.map(i64::from);
-    let rows=sqlx::query_as::<_,Device>("SELECT d.id,d.device_id,a.key AS agent_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id WHERE (? IS NULL OR d.enabled=?) ORDER BY d.device_id LIMIT ? OFFSET ?").bind(enabled).bind(enabled).bind(i64::from(PAGE_DEFAULT)).bind(i64::from((page-1)*PAGE_DEFAULT)).fetch_all(pool).await;
-    match rows{Ok(items)=>Json(serde_json::json!({"items":items,"page":page,"page_size":PAGE_DEFAULT,"max_page_size":PAGE_MAX})).into_response(),Err(_)=>error(&request,StatusCode::SERVICE_UNAVAILABLE,"database_unavailable")}
+    let order = match query.sort.as_deref().unwrap_or("device_id") {
+        "name" => "d.name ASC",
+        "-name" => "d.name DESC",
+        "-device_id" => "d.device_id DESC",
+        _ => "d.device_id ASC",
+    };
+    let sql = format!(
+        "SELECT d.id,d.device_id,a.key AS agent_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id WHERE (? IS NULL OR d.enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
+    );
+    let rows = sqlx::query_as::<_, Device>(&sql)
+        .bind(enabled)
+        .bind(enabled)
+        .bind(i64::from(page_size))
+        .bind(i64::from((page - 1) * page_size))
+        .fetch_all(pool)
+        .await;
+    match rows{Ok(items)=>Json(serde_json::json!({"items":items,"page":page,"page_size":page_size,"max_page_size":PAGE_MAX})).into_response(),Err(error_value)=>sql_error(&request, &error_value)}
 }
 async fn patch_device(
     State(state): State<AppState>,
@@ -876,7 +938,10 @@ async fn patch_device(
     };
     let old = match get_device_by(pool, &device_id).await {
         Ok(v) => v,
-        Err(_) => return error(&request, StatusCode::NOT_FOUND, "not_found"),
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
     };
     if old.revision != expected {
         {
@@ -884,11 +949,11 @@ async fn patch_device(
             return error(&request, StatusCode::CONFLICT, "revision_conflict");
         }
     };
-    let agent_key = body
-        .agent_key
-        .value()
-        .flatten()
-        .unwrap_or(old.agent_key.clone());
+    let agent_key = match body.agent_key.value() {
+        None => old.agent_key.clone(),
+        Some(Some(value)) => value,
+        Some(None) => return error(&request, StatusCode::BAD_REQUEST, "immutable_field"),
+    };
     let agent = match get_agent_by(pool, &agent_key).await {
         Ok(v) if v.enabled == 1 => v,
         _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_agent"),
@@ -908,12 +973,11 @@ async fn patch_device(
     {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     };
-    let enabled = body
-        .enabled
-        .value()
-        .flatten()
-        .map(i64::from)
-        .unwrap_or(old.enabled);
+    let enabled = match body.enabled.value() {
+        None => old.enabled,
+        Some(Some(value)) => i64::from(value),
+        Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
+    };
     let mut tx = match pool.begin().await {
         Ok(v) => v,
         Err(_) => {
