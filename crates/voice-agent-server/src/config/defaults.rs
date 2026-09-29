@@ -1,6 +1,21 @@
 pub(super) fn default_hello_timeout_ms() -> u64 {
     5_000
 }
+pub(super) fn default_database_url() -> String {
+    "sqlite://data/voice-agent.db".into()
+}
+pub(super) fn default_true() -> bool {
+    true
+}
+pub(super) fn default_database_max_connections() -> u32 {
+    5
+}
+pub(super) fn default_database_busy_timeout_ms() -> u64 {
+    5_000
+}
+pub(super) fn default_shutdown_grace_ms() -> u64 {
+    15_000
+}
 pub(super) fn default_input_rate() -> u32 {
     16_000
 }

@@ -1,5 +1,6 @@
 use crate::{
     config::{AppConfig, SileroOnnxConfig, VadInstanceConfig},
+    database::Database,
     providers::{LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog},
     session::ActiveTurnLimiter,
     workers::{
@@ -8,6 +9,7 @@ use crate::{
     },
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio_util::sync::CancellationToken;
 
 /// Application-owned state. Production sessions resolve a fixed runtime snapshot from catalogs.
 #[derive(Clone)]
@@ -17,6 +19,8 @@ pub struct AppState {
     pub runtimes: Arc<RuntimeCatalog>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
     pub active_turn_limiter: Arc<ActiveTurnLimiter>,
+    pub database: Option<Arc<Database>>,
+    pub shutdown: CancellationToken,
 }
 
 impl AppState {
@@ -49,6 +53,23 @@ impl AppState {
         self
     }
     pub fn new(config: AppConfig, loaded: LoadedProviders) -> Self {
+        Self::new_with_database(config, loaded, None)
+    }
+
+    pub fn new_with_database(
+        config: AppConfig,
+        loaded: LoadedProviders,
+        database: Option<Database>,
+    ) -> Self {
+        Self::new_with_database_and_shutdown(config, loaded, database, CancellationToken::new())
+    }
+
+    pub fn new_with_database_and_shutdown(
+        config: AppConfig,
+        loaded: LoadedProviders,
+        database: Option<Database>,
+        shutdown: CancellationToken,
+    ) -> Self {
         let supervisor = Arc::new(WorkerSupervisor::start_many(
             loaded.runtimes.asr.values().cloned().collect(),
             loaded.runtimes.vad.values().cloned().collect(),
@@ -59,11 +80,35 @@ impl AppState {
             providers: Arc::new(loaded.providers),
             runtimes: Arc::new(loaded.runtimes),
             worker_supervisor: supervisor,
+            database: database.map(Arc::new),
+            shutdown,
         }
     }
 
     /// Compatibility constructor for deterministic test routers. Production uses `new`.
-    pub fn from_provider_set(mut config: AppConfig, providers: Arc<ProviderSet>) -> Self {
+    pub fn from_provider_set(config: AppConfig, providers: Arc<ProviderSet>) -> Self {
+        Self::from_provider_set_with_database(config, providers, None)
+    }
+
+    pub fn from_provider_set_with_database(
+        config: AppConfig,
+        providers: Arc<ProviderSet>,
+        database: Option<Database>,
+    ) -> Self {
+        Self::from_provider_set_with_database_and_shutdown(
+            config,
+            providers,
+            database,
+            CancellationToken::new(),
+        )
+    }
+
+    pub fn from_provider_set_with_database_and_shutdown(
+        mut config: AppConfig,
+        providers: Arc<ProviderSet>,
+        database: Option<Database>,
+        shutdown: CancellationToken,
+    ) -> Self {
         let id = "test".to_owned();
         config.effective_agent.providers.vad = id.clone();
         config.effective_agent.providers.asr = id.clone();
@@ -111,7 +156,7 @@ impl AppState {
                 cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
             },
         ));
-        Self::new(
+        Self::new_with_database_and_shutdown(
             config,
             LoadedProviders {
                 providers: ProviderCatalog {
@@ -129,6 +174,8 @@ impl AppState {
                     vision: HashMap::new(),
                 },
             },
+            database,
+            shutdown,
         )
     }
 }

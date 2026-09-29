@@ -6,6 +6,18 @@ hello_timeout_ms = 5000
 [auth]
 token = ""
 
+# SQLite is opt-in. V1 supports one Voice Agent process owning one local filesystem path;
+# NFS/SMB, active-active, and multi-process writers are unsupported.
+[database]
+enabled = false
+url = "sqlite://data/voice-agent.db"
+max_connections = 5
+busy_timeout_ms = 5000
+migrate_on_start = true
+
+[shutdown]
+grace_ms = 15000
+
 [audio]
 input_sample_rate = 16000
 output_sample_rate = 24000

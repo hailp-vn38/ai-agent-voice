@@ -7,6 +7,10 @@ pub(super) async fn handler(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config;
+    let shutdown = state.shutdown;
+    if shutdown.is_cancelled() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
+    }
     let resolved_runtimes = match state.runtimes.resolve(&config.effective_agent().providers) {
         Ok(runtimes) => runtimes,
         Err(error) => {
@@ -58,6 +62,7 @@ pub(super) async fn handler(
                     tts: resolved_runtimes.tts,
                     active_turn_limiter,
                 },
+                shutdown,
             )
         })
         .into_response()
@@ -128,13 +133,17 @@ struct SocketRuntimes {
     active_turn_limiter: Arc<ActiveTurnLimiter>,
 }
 
-async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, runtimes: SocketRuntimes) {
+async fn handle_socket(
+    socket: WebSocket,
+    config: Arc<AppConfig>,
+    runtimes: SocketRuntimes,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
     let (mut sender, mut receiver) = socket.split();
-    let first = timeout(
-        Duration::from_millis(config.server.hello_timeout_ms),
-        receiver.next(),
-    )
-    .await;
+    let first = tokio::select! {
+        _ = shutdown.cancelled() => return,
+        first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
+    };
     let hello = match first {
         Ok(Some(Ok(message))) => message,
         _ => {
@@ -164,6 +173,9 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, runtimes: Sock
     let (writer_event_tx, writer_event_rx) = mpsc::channel(config.limits.session_event_queue);
     let generation_gate = Arc::new(crate::session::GenerationGate::new());
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    // Keep the watch channel open until the writer drains a terminal control message. Otherwise
+    // dropping SessionActor could make the writer exit before it sends Close(1001).
+    let _writer_shutdown_tx = shutdown_tx.clone();
     let vad_config =
         config.providers.vad.instances[&config.effective_agent().providers.vad].silero_onnx();
     let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
@@ -351,8 +363,15 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, runtimes: Sock
     let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
     let session = tokio::spawn(actor.run(ingress_rx));
 
-    while let Some(next) = receiver.next().await {
-        match next {
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                let _ = ingress_tx.send(SessionEvent::Shutdown).await;
+                break;
+            }
+            next = receiver.next() => {
+                let Some(next) = next else { break; };
+                match next {
             Ok(Message::Text(text)) => {
                 if text.len() > config.websocket.max_frame_bytes {
                     let _ = urgent_tx.send(OutboundMessage::Close(1009)).await;
@@ -393,7 +412,9 @@ async fn handle_socket(socket: WebSocket, config: Arc<AppConfig>, runtimes: Sock
                 warn!(%error, "websocket receive failed");
                 break;
             }
-            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+                }
+            }
         }
     }
     drop(ingress_tx);

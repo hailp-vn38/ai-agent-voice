@@ -37,6 +37,7 @@ serde_json.workspace = true
 symphonia.workspace = true
 sha2.workspace = true
 sherpa-onnx.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true

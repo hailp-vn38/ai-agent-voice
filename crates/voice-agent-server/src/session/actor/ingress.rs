@@ -109,6 +109,11 @@ impl SessionActor {
                 event = ingress.recv() => match event {
                     Some(SessionEvent::ClientMessage(message)) => self.on_client_message(message),
                     Some(SessionEvent::ClientAudio(payload)) => { self.on_binary(payload); }
+                    Some(SessionEvent::Shutdown) => {
+                        self.begin_application_shutdown();
+                        let _ = self.urgent_tx.send(OutboundMessage::Close(1001)).await;
+                        break;
+                    }
                     None => break,
                 }
             }

@@ -227,6 +227,8 @@ async fn start(tool_was_advertised: Arc<AtomicBool>) -> (String, JoinHandle<()>)
             ..McpConfig::default()
         },
         vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };

@@ -91,6 +91,8 @@ fn valid_config() -> AppConfig {
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
         vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: EffectiveAgentConfig {
             providers: EffectiveProviderBindings {
@@ -168,6 +170,87 @@ fn config_load_rejects_a_binding_to_an_unknown_instance() {
         error
             .to_string()
             .contains("agent TTS provider `missing` does not exist")
+    );
+}
+
+#[test]
+fn config_rejects_invalid_database_and_shutdown_bounds_when_database_is_enabled() {
+    let error = load_catalog_config(
+        r#"
+[database]
+enabled = true
+busy_timeout_ms = 0
+
+[shutdown]
+grace_ms = 999
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("database requires a local sqlite URL")
+    );
+
+    let error = load_catalog_config(
+        r#"
+[database]
+enabled = true
+url = "sqlite::memory:"
+
+[shutdown]
+grace_ms = 15000
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("database requires a local sqlite URL")
+    );
+
+    let error = load_catalog_config(
+        r#"
+[database]
+enabled = true
+url = "sqlite://?mode=memory"
+
+[shutdown]
+grace_ms = 15000
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("database requires a local sqlite URL")
+    );
+
+    let error = load_catalog_config(
+        r#"
+[database]
+enabled = true
+url = "sqlite://?mo%64e=memory"
+
+[shutdown]
+grace_ms = 15000
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("database requires a local sqlite URL")
+    );
+}
+
+#[test]
+fn config_rejects_shutdown_grace_outside_the_bounded_drain_window() {
+    let error = load_catalog_config("[shutdown]\ngrace_ms = 60001").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("shutdown.grace_ms must be 1000..=60000")
     );
 }
 

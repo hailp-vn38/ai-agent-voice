@@ -42,6 +42,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub vision: VisionConfig,
     #[serde(default)]
+    pub database: DatabaseConfig,
+    #[serde(default)]
+    pub shutdown: ShutdownConfig,
+    #[serde(default)]
     pub agent: Option<AgentConfig>,
     #[serde(skip)]
     pub effective_agent: EffectiveAgentConfig,
@@ -603,6 +607,49 @@ pub struct ServerConfig {
     pub public_ws_url: Url,
     #[serde(default = "default_hello_timeout_ms")]
     pub hello_timeout_ms: u64,
+}
+
+/// Optional local SQLite control plane. A single process owns each configured path.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_database_url")]
+    pub url: String,
+    #[serde(default = "default_database_max_connections")]
+    pub max_connections: u32,
+    #[serde(default = "default_database_busy_timeout_ms")]
+    pub busy_timeout_ms: u64,
+    #[serde(default = "default_true")]
+    pub migrate_on_start: bool,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: default_database_url(),
+            max_connections: default_database_max_connections(),
+            busy_timeout_ms: default_database_busy_timeout_ms(),
+            migrate_on_start: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShutdownConfig {
+    #[serde(default = "default_shutdown_grace_ms")]
+    pub grace_ms: u64,
+}
+
+impl Default for ShutdownConfig {
+    fn default() -> Self {
+        Self {
+            grace_ms: default_shutdown_grace_ms(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

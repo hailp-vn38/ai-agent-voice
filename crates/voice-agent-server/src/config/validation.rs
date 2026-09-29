@@ -1,5 +1,5 @@
 use super::AppConfig;
-use std::{fs, path::Path};
+use std::{fs, path::Path, str::FromStr};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -64,12 +64,46 @@ impl AppConfig {
         validate_providers(self)?;
         validate_speech_output(self)?;
         validate_deployment(self)?;
+        validate_database(self)?;
+        validate_shutdown(self)?;
         Ok(())
     }
 
     pub fn max_capture_frames(&self) -> usize {
         (self.audio.max_utterance_ms / u64::from(self.audio.frame_ms)) as usize
     }
+}
+
+fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
+    let database = &config.database;
+    if !database.enabled {
+        return Ok(());
+    }
+    let has_memory_mode = url::Url::parse(&database.url).is_ok_and(|url| {
+        url.query_pairs()
+            .any(|(key, value)| key == "mode" && value == "memory")
+    });
+    if !(1..=32).contains(&database.max_connections)
+        || !(1..=30_000).contains(&database.busy_timeout_ms)
+        || database.url.contains(":memory:")
+        || has_memory_mode
+        || !database.url.starts_with("sqlite://")
+        || sqlx::sqlite::SqliteConnectOptions::from_str(&database.url).is_err()
+    {
+        return Err(ConfigError::Validation(
+            "database requires a local sqlite URL, 1..=32 pool connections, and busy_timeout_ms 1..=30000".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_shutdown(config: &AppConfig) -> Result<(), ConfigError> {
+    if !(1_000..=60_000).contains(&config.shutdown.grace_ms) {
+        return Err(ConfigError::Validation(
+            "shutdown.grace_ms must be 1000..=60000".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_transport(config: &AppConfig) -> Result<(), ConfigError> {

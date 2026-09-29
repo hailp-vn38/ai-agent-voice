@@ -12,7 +12,7 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use voice_agent_server::{
-    app::router_with_providers,
+    app::{AppState, router_with_state},
     config::{
         AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
         LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
@@ -26,6 +26,20 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
 }
 
 async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, JoinHandle<()>) {
+    let (base, task, _) = start_with_token_and_shutdown(
+        max_frame_bytes,
+        token,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await;
+    (base, task)
+}
+
+async fn start_with_token_and_shutdown(
+    max_frame_bytes: usize,
+    token: String,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> (String, JoinHandle<()>, tokio_util::sync::CancellationToken) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -55,14 +69,18 @@ async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, Joi
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
         vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
-    let app: Router = router_with_providers(config, Arc::new(ProviderSet::unavailable()));
+    let mut state = AppState::from_provider_set(config, Arc::new(ProviderSet::unavailable()));
+    state.shutdown = shutdown.clone();
+    let app: Router = router_with_state(state);
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{address}"), task)
+    (format!("http://{address}"), task, shutdown)
 }
 
 fn request(base: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
@@ -116,6 +134,27 @@ async fn ota_advertises_ws_url_and_health_is_available() {
         ota["websocket"]["url"],
         format!("ws://{}/voice/v1/", base.trim_start_matches("http://"))
     );
+    task.abort();
+}
+
+#[tokio::test]
+async fn application_shutdown_controlled_closes_an_upgraded_voice_session() {
+    let (base, task, shutdown) = start_with_token_and_shutdown(
+        1_024,
+        String::new(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
+    assert!(matches!(next_message(&mut socket).await, Message::Text(_)));
+
+    shutdown.cancel();
+    let close = next_message(&mut socket).await;
+    assert!(matches!(
+        close,
+        Message::Close(Some(frame)) if u16::from(frame.code) == 1001
+    ));
     task.abort();
 }
 

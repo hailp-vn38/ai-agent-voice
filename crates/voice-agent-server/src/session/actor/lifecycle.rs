@@ -65,6 +65,17 @@ impl SessionActor {
         let _ = self.urgent_tx.try_send(OutboundMessage::Close(1000));
     }
 
+    pub(super) fn begin_application_shutdown(&mut self) {
+        if self.phase == SessionPhase::Closed {
+            return;
+        }
+        self.interrupt_active_turn();
+        let _ = self.advance_generation();
+        self.close_vad();
+        self.auto_reset_pending = false;
+        self.phase = SessionPhase::Closed;
+    }
+
     /// An interruption stop that cannot enter the bounded urgent lane leaves playback state
     /// unknowable.  A close cannot be relied on either, so terminate the writer after the
     /// regular session cleanup has run.

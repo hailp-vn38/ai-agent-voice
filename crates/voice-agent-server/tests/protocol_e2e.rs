@@ -214,6 +214,8 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
         vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
@@ -268,6 +270,8 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
         },
         mcp: voice_agent_server::config::McpConfig::default(),
         vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
