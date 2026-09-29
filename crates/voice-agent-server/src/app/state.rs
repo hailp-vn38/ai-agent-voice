@@ -8,7 +8,7 @@ use crate::{
         DatabaseRuntimeSnapshot, LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog,
     },
     session::{
-        ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable,
+        ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable, WriterOutcomeProbe,
         resolve_effective_session_profile,
     },
     workers::{
@@ -31,6 +31,8 @@ pub struct AppState {
     pub database_runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
     pub secret_resolver: Arc<dyn SecretResolver>,
     pub shutdown: CancellationToken,
+    /// Test-only; see [`WriterOutcomeProbe`]. Production leaves it unset.
+    pub writer_outcome_probe: Option<Arc<dyn WriterOutcomeProbe>>,
 }
 
 impl AppState {
@@ -180,7 +182,14 @@ impl AppState {
             database_runtime_snapshot: database_runtime_snapshot.map(Arc::new),
             secret_resolver,
             shutdown,
+            writer_outcome_probe: None,
         }
+    }
+
+    /// Installs the test-only writer outcome probe; see [`WriterOutcomeProbe`].
+    pub fn with_writer_outcome_probe(mut self, probe: Arc<dyn WriterOutcomeProbe>) -> Self {
+        self.writer_outcome_probe = Some(probe);
+        self
     }
 
     /// Compatibility constructor for deterministic test routers. Production uses `new`.

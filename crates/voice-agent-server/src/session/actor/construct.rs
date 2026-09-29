@@ -231,6 +231,7 @@ impl SessionActor {
             // A session that never received an admission profile keeps no switch capability.
             switch_catalog: TemplateSwitchCatalog::default(),
             speech_output_config: crate::config::SpeechOutputConfig::default(),
+            writer_probe: None,
         })
     }
 
@@ -301,6 +302,16 @@ impl SessionActor {
         self.switch_catalog = switch_catalog;
         self.max_tool_result_chars = max_tool_result_chars;
         Ok(self)
+    }
+
+    /// Installs the test-only writer outcome probe.  Production never calls this, so both the
+    /// writer's boundary and the actor's periodic drain behave exactly as they do without it.
+    pub fn with_writer_outcome_probe_opt(
+        mut self,
+        probe: Option<std::sync::Arc<dyn super::WriterOutcomeProbe>>,
+    ) -> Self {
+        self.writer_probe = probe;
+        self
     }
 
     pub fn profile_revision(&self) -> u64 {

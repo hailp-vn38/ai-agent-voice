@@ -11,6 +11,20 @@ impl SessionActor {
 
     pub(super) fn drain_worker_events(&mut self) {
         self.drain_writer_events();
+        self.drain_provider_events();
+    }
+
+    /// The periodic drain withholds already-reported turn outcomes while a harness is holding
+    /// them, leaving client ingress as the only path that can apply one. With no probe installed
+    /// this is always false and the tick behaves exactly as before.
+    pub(super) fn drain_reported_outcomes(&mut self) {
+        if !self.writer_outcomes_withheld() {
+            self.drain_writer_events();
+        }
+        self.drain_provider_events();
+    }
+
+    fn drain_provider_events(&mut self) {
         self.expire_mcp_requests();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
@@ -102,7 +116,7 @@ impl SessionActor {
         loop {
             tokio::select! {
                 _ = worker_tick.tick() => {
-                    self.drain_worker_events();
+                    self.drain_reported_outcomes();
                     self.drain_speech_output();
                 }
                 event = ingress.recv() => match event {
@@ -146,6 +160,12 @@ impl SessionActor {
     /// the same one.
     fn apply_reported_turn_outcomes(&mut self) {
         self.drain_writer_events();
+    }
+
+    fn writer_outcomes_withheld(&self) -> bool {
+        self.writer_probe
+            .as_ref()
+            .is_some_and(|probe| probe.holds_writer_outcomes())
     }
 
     pub fn on_client_message(&mut self, message: ClientMessage) {

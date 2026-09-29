@@ -75,6 +75,7 @@ pub(super) async fn handler(
         }
     };
     let active_turn_limiter = state.active_turn_limiter;
+    let writer_probe = state.writer_outcome_probe.clone();
     info!(
         agent_key = %profile.agent_key,
         template = ?profile.source,
@@ -95,6 +96,7 @@ pub(super) async fn handler(
                     vad_segmenter: resolved_runtimes.vad_segmenter,
                     vad_pre_roll_samples: resolved_runtimes.vad_pre_roll_samples,
                     active_turn_limiter,
+                    writer_probe,
                     profile,
                 },
                 shutdown,
@@ -117,6 +119,32 @@ pub(super) struct WebsocketQuery {
 struct PlaybackTurn {
     id: crate::session::TurnId,
     start_was_sent: bool,
+}
+
+/// Reports a turn's terminal outcome to the actor, giving a test harness its boundary probe.
+/// Every `TurnClosed` the writer produces goes through here so no boundary can bypass the seam.
+async fn report_turn_closed(
+    writer_event_tx: &mpsc::Sender<WriterEvent>,
+    probe: Option<&Arc<dyn crate::session::WriterOutcomeProbe>>,
+    turn_id: crate::session::TurnId,
+    outcome: WriterTurnOutcome,
+) {
+    if let Some(probe) = probe {
+        probe
+            .before_terminal_outcome(turn_id, outcome.clone())
+            .await;
+    }
+    let _ = writer_event_tx
+        .send(WriterEvent::TurnClosed {
+            turn_id,
+            outcome: outcome.clone(),
+        })
+        .await;
+    if let Some(probe) = probe {
+        probe
+            .after_terminal_outcome_reported(turn_id, outcome)
+            .await;
+    }
 }
 
 fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
@@ -189,6 +217,8 @@ struct SocketRuntimes {
     vad_segmenter: VadSegmenterConfig,
     vad_pre_roll_samples: u64,
     active_turn_limiter: Arc<ActiveTurnLimiter>,
+    /// Test-only; see [`WriterOutcomeProbe`](crate::session::WriterOutcomeProbe).
+    writer_probe: Option<Arc<dyn crate::session::WriterOutcomeProbe>>,
     profile: crate::session::EffectiveSessionProfile,
 }
 
@@ -202,6 +232,7 @@ async fn handle_socket(
     // materialized snapshot and its admission-time switch catalog, never a Database/pool or a
     // live Device/Agent row.
     let (active_profile, switch_catalog) = runtimes.profile.into_active_profile();
+    let writer_probe = runtimes.writer_probe;
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
         _ = shutdown.cancelled() => return,
@@ -286,6 +317,7 @@ async fn handle_socket(
         }
     };
     let mut actor = actor
+        .with_writer_outcome_probe_opt(writer_probe.clone())
         .with_client_capabilities(
             hello.features.aec,
             crate::session::BargeInPolicy {
@@ -305,6 +337,7 @@ async fn handle_socket(
     actor.start_mcp_discovery();
     info!("ServerHello sent; voice session connected");
     let writer = tokio::spawn(async move {
+        let probe = writer_probe.clone();
         let mut active_turn: Option<PlaybackTurn> = None;
         let mut deferred_finish: Option<OutboundMessage> = None;
         loop {
@@ -331,24 +364,13 @@ async fn handle_socket(
                                     false
                                 };
                                 active_turn = None;
-                                let _ = writer_event_tx.send(WriterEvent::TurnClosed {
-                                    turn_id,
-                                    outcome: WriterTurnOutcome::Aborted { start_was_sent, stop_was_sent },
-                                }).await;
+                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent, stop_was_sent }).await;
                             } else {
                                 // Begin may still be queued behind this urgent command. The
                                 // actor needs a terminal outcome so it can release this turn's
                                 // permit; a later Begin for the same invalid generation is
                                 // rejected at the gate.
-                                let _ = writer_event_tx
-                                    .send(WriterEvent::TurnClosed {
-                                        turn_id,
-                                        outcome: WriterTurnOutcome::Aborted {
-                                            start_was_sent: false,
-                                            stop_was_sent: false,
-                                        },
-                                    })
-                                    .await;
+                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent: false, stop_was_sent: false }).await;
                             }
                         }
                         message => if send_outbound(&mut sender, message, &generation_gate).await {
@@ -365,7 +387,7 @@ async fn handle_socket(
                         break;
                     }
                     active_turn = None;
-                    let _ = writer_event_tx.send(WriterEvent::TurnClosed { turn_id, outcome: WriterTurnOutcome::Normal }).await;
+                    report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
                 },
                 Some(message) = control_rx.recv() => {
                     match message {
@@ -389,7 +411,7 @@ async fn handle_socket(
                                     break;
                                 }
                                 active_turn = None;
-                                let _ = writer_event_tx.send(WriterEvent::TurnClosed { turn_id, outcome: WriterTurnOutcome::Normal }).await;
+                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
                             }
                         }
                         message => if send_outbound(&mut sender, message, &generation_gate).await {

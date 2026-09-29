@@ -9,7 +9,12 @@ use std::{
 use futures_util::{SinkExt, StreamExt, stream};
 use opus2::{Application, Channels, Encoder};
 use sqlx::SqlitePool;
-use tokio::{net::TcpListener, task::JoinHandle, time::timeout};
+use tokio::{
+    net::TcpListener,
+    sync::{Notify, mpsc},
+    task::JoinHandle,
+    time::timeout,
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message, client::IntoClientRequest, http::StatusCode},
@@ -30,6 +35,7 @@ use voice_agent_server::{
         VadSession,
         llm::{ChatMessage, LlmEventStream, LlmRequest, ToolCall, ToolDefinition},
     },
+    session::{TurnId, WriterOutcomeProbe, WriterTurnOutcome},
     tools::builtin::SWITCH_TEMPLATE_TOOL_NAME,
 };
 
@@ -1217,5 +1223,185 @@ async fn the_turn_after_a_switch_keeps_every_audio_frame_and_runs_the_new_profil
             "turn {turn} must run the switched prompt on the switched already-loaded runtime"
         );
     }
+    task.abort();
+}
+
+/// Holds the writer at its terminal-outcome boundary and withholds the reported outcome from the
+/// actor's periodic drain, so client ingress is the only path left that can apply it.
+///
+/// That replaces the black-box race with a deterministic sequence: the harness releases the writer,
+/// waits for proof the outcome is in the actor's mailbox, and only then delivers the next client
+/// message. Production installs no probe, so none of this exists outside a test.
+struct ControlledBoundary {
+    at_boundary: mpsc::UnboundedReceiver<WriterTurnOutcome>,
+    enqueued: mpsc::UnboundedReceiver<WriterTurnOutcome>,
+    release: Arc<Notify>,
+    hold: Arc<AtomicBool>,
+}
+
+impl ControlledBoundary {
+    /// Runs one turn, then stops the writer exactly at that turn's terminal outcome and does not
+    /// let it go until the outcome is provably sitting in the actor's mailbox.
+    async fn run_turn_and_hold_at_its_boundary(&mut self, socket: &mut Socket) -> TurnOutcome {
+        let outcome = speak_and_observe(socket).await;
+        let reported = self
+            .at_boundary
+            .recv()
+            .await
+            .expect("the writer always reaches a terminal boundary");
+        assert_eq!(
+            reported,
+            WriterTurnOutcome::Normal,
+            "the scripted turn must close normally for this ordering to mean anything"
+        );
+        self.release.notify_one();
+        assert_eq!(
+            self.enqueued.recv().await,
+            Some(WriterTurnOutcome::Normal),
+            "the outcome must reach the actor's mailbox before any further client message"
+        );
+        outcome
+    }
+}
+
+async fn start_controlled_switch(
+    templates: &[&str],
+) -> (
+    String,
+    String,
+    JoinHandle<()>,
+    OfferedTools,
+    ControlledBoundary,
+) {
+    let (llm, offered_tools) = SwitchScriptLlm::new("default-llm", templates);
+    let slot: Arc<Mutex<Option<ControlledBoundary>>> = Arc::new(Mutex::new(None));
+    let installed = Arc::clone(&slot);
+    let (base, url, task) = start_with_llm(
+        with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url())),
+        Arc::new(llm),
+        move |state| {
+            let (at_boundary, at_boundary_rx) = mpsc::unbounded_channel();
+            let (enqueued, enqueued_rx) = mpsc::unbounded_channel();
+            let release = Arc::new(Notify::new());
+            let hold = Arc::new(AtomicBool::new(true));
+            let probe = Arc::new(BoundaryProbe {
+                at_boundary,
+                enqueued,
+                release: Arc::clone(&release),
+                hold: Arc::clone(&hold),
+            });
+            *installed.lock().unwrap() = Some(ControlledBoundary {
+                at_boundary: at_boundary_rx,
+                enqueued: enqueued_rx,
+                release,
+                hold,
+            });
+            with_template_llm(state).with_writer_outcome_probe(probe)
+        },
+    )
+    .await;
+    let boundary = slot
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the router state extension installed the boundary probe");
+    (base, url, task, offered_tools, boundary)
+}
+
+struct BoundaryProbe {
+    at_boundary: mpsc::UnboundedSender<WriterTurnOutcome>,
+    enqueued: mpsc::UnboundedSender<WriterTurnOutcome>,
+    release: Arc<Notify>,
+    hold: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl WriterOutcomeProbe for BoundaryProbe {
+    async fn before_terminal_outcome(&self, _: TurnId, outcome: WriterTurnOutcome) {
+        let _ = self.at_boundary.send(outcome.clone());
+        self.release.notified().await;
+    }
+
+    async fn after_terminal_outcome_reported(&self, _: TurnId, outcome: WriterTurnOutcome) {
+        let _ = self.enqueued.send(outcome);
+    }
+
+    fn holds_writer_outcomes(&self) -> bool {
+        self.hold.load(Ordering::SeqCst)
+    }
+}
+
+/// Deterministic proof of AC2 at the WebSocket boundary.
+///
+/// The outcome is provably in the actor's mailbox and provably not applied, so the only way the
+/// next turn can be captured and answered under the switched profile is that client ingress applies
+/// the boundary before interpreting it. Removing that step fails this test every single run.
+#[tokio::test]
+async fn a_turn_arriving_after_a_reported_boundary_keeps_its_frames_and_uses_the_switched_profile()
+{
+    let (base, url, task, _, mut boundary) = start_controlled_switch(&["sales"]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    let mut socket = admit(&base).await;
+
+    let switching = boundary
+        .run_turn_and_hold_at_its_boundary(&mut socket)
+        .await;
+    assert_eq!(
+        switching.answer, "default-llm[TEMPLATE-PROMPT-V1]",
+        "the turn that requested the switch must finish under the profile it started with"
+    );
+
+    let switched = speak_and_observe(&mut socket).await;
+
+    assert_eq!(
+        switched.transcript.as_deref(),
+        Some("utterance"),
+        "the reported boundary must be applied before this turn is interpreted, or its capture \
+         frames are dropped against a turn that has already closed"
+    );
+    assert!(switched.playback_started);
+    assert_eq!(switched.audio_frames, switching.audio_frames);
+    assert_eq!(
+        switched.answer, "template-llm[TEMPLATE-PROMPT-V2]",
+        "the reported boundary must be applied before this turn is interpreted, so the switch it \
+         armed takes effect exactly now"
+    );
+    boundary.hold.store(false, Ordering::SeqCst);
+    task.abort();
+}
+
+/// Deterministic proof that a normal boundary stays normal.
+///
+/// An `abort` arriving after the writer reported `TurnClosed(Normal)` must not retroactively turn
+/// that turn into an aborted one: the boundary commits first, switch included, and the abort then
+/// applies to the fresh session.
+#[tokio::test]
+async fn an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_switch() {
+    let (base, url, task, _, mut boundary) = start_controlled_switch(&["sales"]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    let mut socket = admit(&base).await;
+
+    let switching = boundary
+        .run_turn_and_hold_at_its_boundary(&mut socket)
+        .await;
+    assert_eq!(switching.answer, "default-llm[TEMPLATE-PROMPT-V1]");
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "abort"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let after_abort = speak_and_observe(&mut socket).await;
+
+    assert_eq!(
+        after_abort.answer, "template-llm[TEMPLATE-PROMPT-V2]",
+        "the normal boundary commits its switch before the abort is interpreted; treating the abort \
+         first would discard the switch as an interrupted turn"
+    );
+    assert_eq!(after_abort.transcript.as_deref(), Some("utterance"));
+    boundary.hold.store(false, Ordering::SeqCst);
     task.abort();
 }

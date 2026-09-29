@@ -111,6 +111,8 @@ pub struct SessionActor {
     /// Delivery settings are retained so a switch can rebuild SpeechOutput on the candidate's
     /// already-loaded TTS runtime without re-deriving pacing behavior.
     speech_output_config: crate::config::SpeechOutputConfig,
+    /// Installed only by a test harness; see [`WriterOutcomeProbe`].
+    writer_probe: Option<std::sync::Arc<dyn WriterOutcomeProbe>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -242,6 +244,33 @@ pub enum WriterTurnOutcome {
         start_was_sent: bool,
         stop_was_sent: bool,
     },
+}
+
+/// Test-only observation point at the writer's terminal-outcome boundary.
+///
+/// A Voice Protocol Client learns a turn has closed from `tts:stop`, which the writer sends
+/// immediately *before* it reports the turn's terminal outcome to the actor. Nothing visible to
+/// the client synchronizes those two steps, so a black-box client can only ever probe the ordering
+/// probabilistically. This probe lets a test harness hold the writer at the exact boundary and
+/// learn the instant the outcome has entered the actor's mailbox, which makes that ordering
+/// testable deterministically.
+///
+/// Production installs no probe, so the writer's behaviour and the actor's periodic drain are
+/// byte-for-byte what they were.
+#[async_trait::async_trait]
+pub trait WriterOutcomeProbe: Send + Sync {
+    /// Awaited by the writer immediately before it reports a turn's terminal outcome.
+    async fn before_terminal_outcome(&self, _turn_id: TurnId, _outcome: WriterTurnOutcome) {}
+
+    /// Awaited by the writer immediately after that outcome entered the actor's mailbox.
+    async fn after_terminal_outcome_reported(&self, _turn_id: TurnId, _outcome: WriterTurnOutcome) {
+    }
+
+    /// True while a harness deliberately withholds already-reported outcomes from the actor's
+    /// periodic drain, so the only remaining path that can apply one is client ingress.
+    fn holds_writer_outcomes(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

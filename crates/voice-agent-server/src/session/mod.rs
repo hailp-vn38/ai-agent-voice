@@ -8,7 +8,8 @@ mod state;
 mod turn;
 
 pub use actor::{
-    BargeInPolicy, OutboundMessage, SessionActor, SessionRuntimes, WriterEvent, WriterTurnOutcome,
+    BargeInPolicy, OutboundMessage, SessionActor, SessionRuntimes, WriterEvent, WriterOutcomeProbe,
+    WriterTurnOutcome,
 };
 pub use event::SessionEvent;
 pub use generation_gate::GenerationGate;
