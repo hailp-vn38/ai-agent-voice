@@ -1,6 +1,12 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream};
 use opus2::{Application, Channels, Encoder};
 use sqlx::SqlitePool;
 use tokio::{net::TcpListener, task::JoinHandle, time::timeout};
@@ -19,15 +25,18 @@ use voice_agent_server::{
     },
     database::Database,
     providers::{
-        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmProvider, ProviderSet,
-        TtsError, TtsProvider, VadError, VadInput, VadProbability, VadProvider, VadSession,
-        llm::{ChatMessage, LlmRequest},
+        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmEvent, LlmProvider,
+        ProviderSet, TtsError, TtsProvider, VadError, VadInput, VadProbability, VadProvider,
+        VadSession,
+        llm::{ChatMessage, LlmEventStream, LlmRequest, ToolCall, ToolDefinition},
     },
+    tools::builtin::SWITCH_TEMPLATE_TOOL_NAME,
 };
 
 const DEFAULT_PROMPT_MARKER: &str = "SERVER-DEFAULT-PROMPT";
 const TEMPLATE_PROMPT_V1: &str = "TEMPLATE-PROMPT-V1";
 const TEMPLATE_PROMPT_V2: &str = "TEMPLATE-PROMPT-V2";
+const TEMPLATE_PROMPT_V3: &str = "TEMPLATE-PROMPT-V3";
 
 /// Echoes the system prompt it was given so the Effective Session Profile's prompt is observable
 /// through the public LLM message rather than through an internal side channel.
@@ -41,16 +50,105 @@ impl LlmProvider for EchoLlm {
     }
 
     fn complete(&self, request: &LlmRequest) -> Result<String, LlmError> {
-        let system = request
+        Ok(format!("{}[{}]", self.label, system_prompt(request)))
+    }
+}
+
+/// A Template script that the model requests in order, recording every tool advertisement it was
+/// offered.  It answers a turn with `label[system]` once its script is exhausted, so one provider
+/// can both drive a switch and prove which prompt the next turn actually ran under.
+struct SwitchScriptLlm {
+    label: &'static str,
+    templates: Mutex<Vec<String>>,
+    /// Holds the first tool continuation open so a test can interrupt inside the very turn that
+    /// requested a switch, before that turn reaches its boundary.
+    continuation_stall: Duration,
+    stalled_once: AtomicBool,
+    offered_tools: Arc<Mutex<Vec<Vec<ToolDefinition>>>>,
+}
+
+impl SwitchScriptLlm {
+    fn new(
+        label: &'static str,
+        templates: &[&str],
+    ) -> (Self, Arc<Mutex<Vec<Vec<ToolDefinition>>>>) {
+        Self::with_stall(label, templates, Duration::ZERO)
+    }
+
+    fn with_stall(
+        label: &'static str,
+        templates: &[&str],
+        continuation_stall: Duration,
+    ) -> (Self, Arc<Mutex<Vec<Vec<ToolDefinition>>>>) {
+        let offered_tools = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                label,
+                templates: Mutex::new(templates.iter().map(|key| (*key).to_owned()).collect()),
+                continuation_stall,
+                stalled_once: AtomicBool::new(false),
+                offered_tools: Arc::clone(&offered_tools),
+            },
+            offered_tools,
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for SwitchScriptLlm {
+    fn adapter(&self) -> &'static str {
+        "switch-script-llm"
+    }
+
+    async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
+        self.offered_tools
+            .lock()
+            .unwrap()
+            .push(request.tools.clone());
+        let script_exhausted = self.templates.lock().unwrap().is_empty();
+        // A tool round carries its own result back, so it is the same Conversational Turn and never
+        // draws another script entry.
+        let answered_tool_round = request
             .messages
             .iter()
-            .find_map(|message| match message {
-                ChatMessage::System { content } => Some(content.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
-        Ok(format!("{}[{}]", self.label, system))
+            .any(|message| matches!(message, ChatMessage::ToolResult { .. }));
+        if !script_exhausted && !answered_tool_round {
+            let template = self.templates.lock().unwrap().remove(0);
+            return Ok(Box::pin(stream::iter(vec![
+                Ok(LlmEvent::ToolCall(ToolCall {
+                    id: "switch-1".into(),
+                    name: SWITCH_TEMPLATE_TOOL_NAME.into(),
+                    arguments: serde_json::json!({"template": template}),
+                })),
+                Ok(LlmEvent::Finished),
+            ])));
+        }
+        if answered_tool_round
+            && !self.continuation_stall.is_zero()
+            && !self.stalled_once.swap(true, Ordering::SeqCst)
+        {
+            tokio::time::sleep(self.continuation_stall).await;
+        }
+        Ok(Box::pin(stream::iter(vec![
+            Ok(LlmEvent::TextDelta(format!(
+                "{}[{}]",
+                self.label,
+                system_prompt(&request)
+            ))),
+            Ok(LlmEvent::Finished),
+        ])))
     }
+}
+
+fn system_prompt(request: &LlmRequest) -> String {
+    request
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            ChatMessage::System { content } => Some(content.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 struct FinalAsr;
@@ -216,6 +314,23 @@ async fn start_with_state(
     app_config: AppConfig,
     extend: impl FnOnce(AppState) -> AppState,
 ) -> (String, String, JoinHandle<()>) {
+    start_with_llm(
+        app_config,
+        Arc::new(EchoLlm {
+            label: "default-llm",
+        }),
+        extend,
+    )
+    .await
+}
+
+/// Serves the scripted LLM as the server default instance so a stored Template can still bind a
+/// second, distinguishable runtime through `with_llm_runtime_for_test`.
+async fn start_with_llm(
+    app_config: AppConfig,
+    llm: Arc<dyn LlmProvider>,
+    extend: impl FnOnce(AppState) -> AppState,
+) -> (String, String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let url = app_config.database.url.clone();
@@ -224,9 +339,7 @@ async fn start_with_state(
         Arc::new(ProviderSet::with_all(
             Arc::new(SilentVad),
             Arc::new(FinalAsr),
-            Arc::new(EchoLlm {
-                label: "default-llm",
-            }),
+            llm,
             Arc::new(ShortTts),
         )),
         Some(
@@ -761,5 +874,268 @@ async fn concurrent_sessions_each_resolve_their_own_immutable_profile() {
     let (left, right) = tokio::join!(speak_once(&mut first), speak_once(&mut second));
     assert_eq!(left, "default-llm[TEMPLATE-PROMPT-V1]");
     assert_eq!(right, "default-llm[TEMPLATE-PROMPT-V1]");
+    task.abort();
+}
+
+/// A switch target whose Providers all resolve, so it belongs to the admission-time catalog.
+async fn seed_switchable_pair(pool: &SqlitePool) {
+    let primary = insert_template(pool, "primary", TEMPLATE_PROMPT_V1, true).await;
+    bind(pool, primary, &full_bindings("test")).await;
+    assign(pool, primary, true, true).await;
+    let secondary = insert_template(pool, "sales", TEMPLATE_PROMPT_V2, true).await;
+    bind(pool, secondary, &full_bindings("db-llm")).await;
+    assign(pool, secondary, false, true).await;
+}
+
+/// Registers the second already-loaded LLM runtime a stored Template binds.
+fn with_template_llm(state: AppState) -> AppState {
+    state.with_llm_runtime_for_test(
+        "db-llm",
+        Arc::new(EchoLlm {
+            label: "template-llm",
+        }),
+        1,
+        Duration::from_secs(30),
+    )
+}
+
+type OfferedTools = Arc<Mutex<Vec<Vec<ToolDefinition>>>>;
+
+async fn start_with_scripted_switch(
+    templates: &[&str],
+) -> (String, String, JoinHandle<()>, OfferedTools) {
+    start_with_stalled_switch(templates, Duration::ZERO).await
+}
+
+async fn start_with_stalled_switch(
+    templates: &[&str],
+    continuation_stall: Duration,
+) -> (String, String, JoinHandle<()>, OfferedTools) {
+    let (llm, offered_tools) =
+        SwitchScriptLlm::with_stall("default-llm", templates, continuation_stall);
+    let (base, url, task) = start_with_llm(
+        with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url())),
+        Arc::new(llm),
+        with_template_llm,
+    )
+    .await;
+    (base, url, task, offered_tools)
+}
+
+#[tokio::test]
+async fn a_session_without_a_template_assignment_is_never_offered_the_switch_tool() {
+    let (llm, offered_tools) = SwitchScriptLlm::new("default-llm", &["primary"]);
+    let (base, url, task) = start_with_llm(
+        with_server_default_prompt(config("127.0.0.1:0".parse().unwrap(), database_url())),
+        Arc::new(llm),
+        |state| state,
+    )
+    .await;
+    let _pool = seed(&url).await;
+
+    let mut socket = admit(&base).await;
+    assert!(
+        speak_once(&mut socket)
+            .await
+            .contains(DEFAULT_PROMPT_MARKER)
+    );
+    assert!(
+        offered_tools
+            .lock()
+            .unwrap()
+            .iter()
+            .flatten()
+            .all(|tool| tool.name != SWITCH_TEMPLATE_TOOL_NAME),
+        "an Agent with no assignment must not be offered a switch it cannot honor"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn the_switch_tool_offers_exactly_the_candidates_admission_validated() {
+    let (base, url, task, offered_tools) = start_with_scripted_switch(&[]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    // Bound to a provider this process never loaded, so admission must exclude it from the catalog.
+    let broken = insert_template(&pool, "broken", TEMPLATE_PROMPT_V3, true).await;
+    bind(
+        &pool,
+        broken,
+        &[
+            ("vad", "test"),
+            ("asr", "test"),
+            ("tts", "test"),
+            ("llm", "never-loaded"),
+        ],
+    )
+    .await;
+    assign(&pool, broken, false, true).await;
+
+    let mut socket = admit(&base).await;
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "default-llm[TEMPLATE-PROMPT-V1]"
+    );
+    let switch_tool = offered_tools
+        .lock()
+        .unwrap()
+        .first()
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool.name == SWITCH_TEMPLATE_TOOL_NAME)
+        })
+        .cloned()
+        .expect("an Agent with admitted candidates may switch");
+    assert_eq!(
+        switch_tool.parameters["properties"]["template"]["enum"],
+        serde_json::json!(["primary", "sales"]),
+        "the model is offered this session's own candidates and nothing else"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_switch_applies_at_the_next_turn_boundary_on_the_candidates_loaded_runtime() {
+    let (base, url, task, _) = start_with_scripted_switch(&["sales"]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+
+    let mut socket = admit(&base).await;
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "default-llm[TEMPLATE-PROMPT-V1]",
+        "the turn that requested the switch must finish under the profile it started with"
+    );
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "template-llm[TEMPLATE-PROMPT-V2]",
+        "the next turn must run the switched prompt on the switched already-loaded runtime"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_switch_uses_the_admission_snapshot_even_after_the_database_changes() {
+    let (base, url, task, _) = start_with_scripted_switch(&["sales"]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    let mut socket = admit(&base).await;
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "default-llm[TEMPLATE-PROMPT-V1]"
+    );
+
+    sqlx::query("UPDATE agent_templates SET prompt = ? WHERE key = 'sales'")
+        .bind(TEMPLATE_PROMPT_V3)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_template_assignments SET enabled = 0 WHERE template_id = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE providers SET revision = revision + 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "template-llm[TEMPLATE-PROMPT-V2]",
+        "a switch must never read live database state, so the admission snapshot stays authoritative"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_candidate_excluded_at_admission_can_never_be_switched_to() {
+    let (base, url, task, offered_tools) = start_with_scripted_switch(&["broken"]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    let broken = insert_template(&pool, "broken", TEMPLATE_PROMPT_V3, true).await;
+    bind(
+        &pool,
+        broken,
+        &[
+            ("vad", "test"),
+            ("asr", "test"),
+            ("tts", "test"),
+            ("llm", "never-loaded"),
+        ],
+    )
+    .await;
+    assign(&pool, broken, false, true).await;
+
+    let mut socket = admit(&base).await;
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "default-llm[TEMPLATE-PROMPT-V1]",
+        "a rejected switch is answered by the ordinary tool continuation"
+    );
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "default-llm[TEMPLATE-PROMPT-V1]",
+        "a rejected switch must leave the active profile untouched"
+    );
+    let switch_tool = offered_tools
+        .lock()
+        .unwrap()
+        .first()
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool.name == SWITCH_TEMPLATE_TOOL_NAME)
+        })
+        .cloned()
+        .expect("an Agent with admitted candidates may switch");
+    assert_eq!(
+        switch_tool.parameters["properties"]["template"]["enum"],
+        serde_json::json!(["primary", "sales"]),
+        "an excluded candidate is never advertised, let alone switchable"
+    );
+    task.abort();
+}
+
+/// A switch the session armed is discarded when its turn is interrupted before the boundary, so a
+/// later turn still runs the profile it started with and the revision never advances.
+#[tokio::test]
+async fn an_interrupted_turn_drops_the_switch_it_armed() {
+    let (base, url, task, _) =
+        start_with_stalled_switch(&["sales"], Duration::from_millis(750)).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    let mut socket = admit(&base).await;
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "listen", "state": "start", "mode": "manual"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "listen", "state": "detect", "text": "chuyển sang sales"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    // The switch is armed and the turn is now parked in its continuation, well inside the stall.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type": "abort"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        speak_once(&mut socket).await,
+        "default-llm[TEMPLATE-PROMPT-V1]",
+        "a turn interrupted before its boundary must not carry its switch forward"
+    );
     task.abort();
 }

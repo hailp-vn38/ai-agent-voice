@@ -163,7 +163,9 @@ impl SessionActor {
         );
         let asr_events = runtimes.asr.register_session(&session_id);
         let vad_events = runtimes.vad.register_session(&session_id);
-        let llm_events = runtimes.llm.register_session(&session_id, 64);
+        let llm_events = runtimes
+            .llm
+            .register_session(&session_id, LLM_EVENT_CAPACITY);
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
@@ -207,7 +209,7 @@ impl SessionActor {
             )?,
             tts_started: false,
             pending_delivery: None,
-            pending_session_action: None,
+            pending_actions: PendingSessionActions::default(),
             control_tx,
             urgent_tx,
             shutdown_tx,
@@ -225,10 +227,10 @@ impl SessionActor {
             tool_depth: 0,
             max_tool_depth: 4,
             max_tool_result_chars: 4_096,
-            system_prompt: crate::session::prompt::render_system(
-                &crate::config::EffectiveAgentConfig::default(),
-            )
-            .expect("built-in prompt template is valid"),
+            profile: ActiveTemplateProfile::server_default(),
+            // A session that never received an admission profile keeps no switch capability.
+            switch_catalog: TemplateSwitchCatalog::default(),
+            speech_output_config: crate::config::SpeechOutputConfig::default(),
         })
     }
 
@@ -273,25 +275,36 @@ impl SessionActor {
         agent: &crate::config::EffectiveAgentConfig,
         max_tool_result_chars: usize,
     ) -> Result<Self, crate::session::prompt::PromptError> {
-        self.system_prompt = crate::session::prompt::render_system(agent)?;
+        self.profile.system_prompt = crate::session::prompt::render_system(agent)?;
+        self.profile.language = agent.language.clone();
+        self.profile.providers = agent.providers.clone();
         self.max_tool_result_chars = max_tool_result_chars;
         Ok(self)
     }
 
-    /// Installs the prompt the Effective Session Profile already resolved.  The actor never
-    /// re-reads it, so a later Template or Agent change cannot reach this session.  The bound is
-    /// re-checked here so the invariant holds at the seam that actually installs the prompt.
-    pub fn with_system_prompt(
+    /// Installs the Effective Session Profile admission already resolved, together with the
+    /// Template Switch Catalog this session may use for the rest of its life.
+    ///
+    /// The actor never re-reads either half, so a later Template, Agent or Provider mutation
+    /// cannot reach this session.  The prompt bound is re-checked at the seam that actually
+    /// installs it rather than trusting the resolver.
+    pub fn with_effective_profile(
         mut self,
-        system_prompt: String,
+        profile: ActiveTemplateProfile,
+        switch_catalog: TemplateSwitchCatalog,
         max_tool_result_chars: usize,
     ) -> Result<Self, crate::session::prompt::PromptError> {
-        if system_prompt.len() > crate::session::profile::MAX_TEMPLATE_PROMPT_BYTES {
+        if profile.system_prompt.len() > crate::session::profile::MAX_TEMPLATE_PROMPT_BYTES {
             return Err(crate::session::prompt::PromptError::SystemPromptTooLarge);
         }
-        self.system_prompt = system_prompt;
+        self.profile = profile;
+        self.switch_catalog = switch_catalog;
         self.max_tool_result_chars = max_tool_result_chars;
         Ok(self)
+    }
+
+    pub fn profile_revision(&self) -> u64 {
+        self.profile.revision
     }
 
     pub fn start_mcp_discovery(&mut self) {
@@ -344,8 +357,11 @@ impl SessionActor {
         config: crate::config::SpeechOutputConfig,
     ) -> Result<Self, crate::audio::AudioError> {
         let tts_runtime = std::sync::Arc::clone(&self.tts_runtime);
-        self.speech_output =
-            SpeechOutput::with_worker(tts_runtime.provider(), tts_runtime, config)?;
+        let speech_output =
+            SpeechOutput::with_worker(tts_runtime.provider(), tts_runtime, config.clone())?;
+        self.speech_output.release();
+        self.speech_output = speech_output;
+        self.speech_output_config = config;
         Ok(self)
     }
 

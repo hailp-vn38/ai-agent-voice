@@ -198,9 +198,10 @@ async fn handle_socket(
     runtimes: SocketRuntimes,
     shutdown: tokio_util::sync::CancellationToken,
 ) {
-    // The profile stays owned by the connection lifetime. SessionActor receives only concrete
-    // runtime handles and a rendered prompt, never a Database/pool or a live Device/Agent row.
-    let profile = runtimes.profile;
+    // The profile stays owned by the connection lifetime. SessionActor receives only the
+    // materialized snapshot and its admission-time switch catalog, never a Database/pool or a
+    // live Device/Agent row.
+    let (active_profile, switch_catalog) = runtimes.profile.into_active_profile();
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
         _ = shutdown.cancelled() => return,
@@ -272,15 +273,18 @@ async fn handle_socket(
             return;
         }
     };
-    let actor =
-        match actor.with_system_prompt(profile.system_prompt, config.llm.max_tool_result_chars) {
-            Ok(actor) => actor,
-            Err(error) => {
-                debug!(%error, "session profile prompt exceeds the system prompt bound");
-                close_direct(&mut sender, 1011).await;
-                return;
-            }
-        };
+    let actor = match actor.with_effective_profile(
+        active_profile,
+        switch_catalog,
+        config.llm.max_tool_result_chars,
+    ) {
+        Ok(actor) => actor,
+        Err(error) => {
+            debug!(%error, "session profile prompt exceeds the system prompt bound");
+            close_direct(&mut sender, 1011).await;
+            return;
+        }
+    };
     let mut actor = actor
         .with_client_capabilities(
             hello.features.aec,

@@ -1,5 +1,6 @@
 use crate::session::{
-    ActiveTurnLimiter, GenerationGate, SessionPhase, TurnId,
+    ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, SessionPhase, TemplateSwitchCatalog,
+    TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -37,6 +38,10 @@ mod retention;
 use retention::{AutoPcmRetention, auto_retention_capacity};
 
 const MAX_DETECT_TEXT_SCALARS: usize = 4_096;
+
+/// Per-session LLM event buffer.  A switch re-registers this session on the candidate's runtime,
+/// so the capacity must not drift between the initial registration and a switched one.
+const LLM_EVENT_CAPACITY: usize = 64;
 
 /// The only mutable owner of an accepted Voice Session's phase.
 pub struct SessionActor {
@@ -78,7 +83,7 @@ pub struct SessionActor {
     speech_output: SpeechOutput,
     tts_started: bool,
     pending_delivery: Option<PendingDelivery>,
-    pending_session_action: Option<PendingSessionAction>,
+    pending_actions: PendingSessionActions,
     control_tx: mpsc::Sender<OutboundMessage>,
     urgent_tx: mpsc::Sender<OutboundMessage>,
     shutdown_tx: watch::Sender<bool>,
@@ -98,7 +103,14 @@ pub struct SessionActor {
     tool_depth: usize,
     max_tool_depth: usize,
     max_tool_result_chars: usize,
-    system_prompt: String,
+    /// The one configuration snapshot this session runs with.  Admission installs it; a successful
+    /// switch replaces it whole at a turn boundary.
+    profile: ActiveTemplateProfile,
+    /// Admission-time switch candidates.  Never re-read, never grown, never pruned.
+    switch_catalog: TemplateSwitchCatalog,
+    /// Delivery settings are retained so a switch can rebuild SpeechOutput on the candidate's
+    /// already-loaded TTS runtime without re-deriving pacing behavior.
+    speech_output_config: crate::config::SpeechOutputConfig,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -132,9 +144,39 @@ struct PendingDelivery {
     assistant_text: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PendingSessionAction {
-    CloseAfterTurn { turn_id: TurnId },
+/// Session actions the Voice Session itself requested that may only take effect once the current
+/// normal Conversational Turn has closed.  Keeping them apart means an exit and a Template switch
+/// armed in the same turn neither overwrites nor cancels the other.
+#[derive(Default)]
+struct PendingSessionActions {
+    close_after_turn: Option<TurnId>,
+    switch_template_after_turn: Option<PendingTemplateSwitch>,
+}
+
+impl PendingSessionActions {
+    /// Takes whatever this turn armed and leaves anything another turn armed in place.
+    fn take_for_turn(&mut self, turn_id: TurnId) -> Self {
+        Self {
+            close_after_turn: self
+                .close_after_turn
+                .take()
+                .filter(|pending| *pending == turn_id),
+            switch_template_after_turn: self
+                .switch_template_after_turn
+                .take()
+                .filter(|pending| pending.turn_id == turn_id),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.close_after_turn.is_none() && self.switch_template_after_turn.is_none()
+    }
+}
+
+/// A Template this session admitted, scheduled to become active at the next turn boundary.
+struct PendingTemplateSwitch {
+    turn_id: TurnId,
+    template_key: String,
 }
 
 #[derive(Clone, Copy, Debug)]

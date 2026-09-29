@@ -79,15 +79,14 @@ impl SessionActor {
                             .commit_assistant(turn_id, delivery.assistant_text);
                     }
                 }
-                let close_after_turn = matches!(
-                    self.pending_session_action,
-                    Some(PendingSessionAction::CloseAfterTurn { turn_id: pending }) if pending == turn_id
-                );
+                let actions = self.pending_actions.take_for_turn(turn_id);
                 self.tts_started = false;
                 self.release_active_turn();
-                if close_after_turn {
-                    self.pending_session_action = None;
-                    if matches!(outcome, WriterTurnOutcome::Normal) {
+                if matches!(outcome, WriterTurnOutcome::Normal) {
+                    if let Some(switch) = actions.switch_template_after_turn {
+                        self.apply_template_switch(&switch.template_key);
+                    }
+                    if actions.close_after_turn.is_some() {
                         self.close_voice_session_normally(turn_id);
                         return;
                     }
@@ -107,8 +106,14 @@ impl SessionActor {
                     self.drain_speech_output();
                 }
                 event = ingress.recv() => match event {
-                    Some(SessionEvent::ClientMessage(message)) => self.on_client_message(message),
-                    Some(SessionEvent::ClientAudio(payload)) => { self.on_binary(payload); }
+                    Some(SessionEvent::ClientMessage(message)) => {
+                        self.apply_reported_turn_outcomes();
+                        self.on_client_message(message)
+                    }
+                    Some(SessionEvent::ClientAudio(payload)) => {
+                        self.apply_reported_turn_outcomes();
+                        self.on_binary(payload);
+                    }
                     Some(SessionEvent::Shutdown) => {
                         self.begin_application_shutdown();
                         let _ = self.urgent_tx.send(OutboundMessage::Close(1001)).await;
@@ -119,6 +124,15 @@ impl SessionActor {
             }
         }
         self.phase = SessionPhase::Closed;
+    }
+
+    /// The writer reports a turn's terminal outcome right after the client sees `tts:stop`, so a
+    /// client is entitled to start the next turn immediately. Applying every outcome already in
+    /// hand before interpreting new client intent keeps the next turn from overtaking the
+    /// previous turn's boundary — which would drop its first audio frames, and would let a
+    /// boundary action such as a Template switch land after the turn it belonged to.
+    fn apply_reported_turn_outcomes(&mut self) {
+        self.drain_writer_events();
     }
 
     pub fn on_client_message(&mut self, message: ClientMessage) {
@@ -155,18 +169,20 @@ impl SessionActor {
 }
 
 impl SessionActor {
-    pub(super) fn cancel_pending_session_action_for_turn(&mut self, turn_id: TurnId) {
-        if matches!(
-            self.pending_session_action,
-            Some(PendingSessionAction::CloseAfterTurn { turn_id: pending }) if pending == turn_id
-        ) {
-            self.pending_session_action = None;
-            tracing::info!(
-                event = "session_close_after_turn_cancelled",
-                turn_id = turn_id.get(),
-                "Pending session close cancelled by turn interruption"
-            );
+    /// An interrupted turn never reaches its boundary, so nothing it armed is carried forward.
+    pub(super) fn cancel_pending_actions_for_active_turn(&mut self) {
+        let Some(turn_id) = self.current_turn_id() else {
+            return;
+        };
+        let cancelled = self.pending_actions.take_for_turn(turn_id);
+        if cancelled.is_empty() {
+            return;
         }
+        tracing::info!(
+            event = "pending_session_action_cancelled",
+            turn_id = turn_id.get(),
+            "Pending session action cancelled by turn interruption"
+        );
     }
 }
 

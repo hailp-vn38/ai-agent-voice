@@ -11,7 +11,7 @@ use tracing::warn;
 use crate::{
     config::{AppConfig, EffectiveProviderBindings},
     database::AdmittedAssignment,
-    providers::RuntimeCatalog,
+    providers::{ResolvedAgentRuntimes, RuntimeCatalog},
 };
 
 use super::prompt;
@@ -35,7 +35,7 @@ pub enum ProfileSource {
 
 /// One enabled Template whose bindings all have Loaded Runtime.  Invalid candidates never enter
 /// the catalog, so a switch can only ever select a profile that already works.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ResolvedTemplateProfile {
     pub template_id: i64,
     pub template_key: String,
@@ -43,10 +43,41 @@ pub struct ResolvedTemplateProfile {
     pub language: String,
     pub system_prompt: String,
     pub providers: EffectiveProviderBindings,
+    /// The already-loaded runtime handles this Template names.  A switch installs these; it
+    /// never constructs one, so switching can never hot-load a Provider.
+    pub runtimes: ResolvedAgentRuntimes,
+    /// The stored Template revision, reported as provenance only.  It never becomes the
+    /// Session Profile Revision and never leaves the session.
+    template_revision: i64,
+}
+
+impl ResolvedTemplateProfile {
+    fn source(&self) -> ProfileSource {
+        ProfileSource::Template {
+            template_id: self.template_id,
+            template_key: self.template_key.clone(),
+            template_name: self.template_name.clone(),
+            template_revision: self.template_revision,
+        }
+    }
+}
+
+/// Runtime handles are process-owned and carry no profile meaning, so diagnostics describe the
+/// stored Template only.  A prompt or provider key must never reach a log through this type.
+impl std::fmt::Debug for ResolvedTemplateProfile {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ResolvedTemplateProfile")
+            .field("template_id", &self.template_id)
+            .field("template_key", &self.template_key)
+            .field("template_name", &self.template_name)
+            .field("language", &self.language)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Immutable candidate list for this session only.  It is a snapshot, never a query.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default)]
 pub struct TemplateSwitchCatalog {
     candidates: Vec<ResolvedTemplateProfile>,
 }
@@ -54,6 +85,14 @@ pub struct TemplateSwitchCatalog {
 impl TemplateSwitchCatalog {
     pub fn candidates(&self) -> &[ResolvedTemplateProfile] {
         &self.candidates
+    }
+
+    /// Membership is the whole authorization rule for a switch: an assignment this session never
+    /// admitted, or one it excluded as invalid, simply is not here.
+    pub fn find(&self, template_key: &str) -> Option<&ResolvedTemplateProfile> {
+        self.candidates
+            .iter()
+            .find(|candidate| candidate.template_key == template_key)
     }
 
     fn insert(&mut self, candidate: ResolvedTemplateProfile) {
@@ -69,9 +108,57 @@ impl TemplateSwitchCatalog {
     pub fn is_empty(&self) -> bool {
         self.candidates.is_empty()
     }
+
+    /// The switch tool is advertised only when this session can actually honor it, so the model
+    /// is told exactly which Templates it may ask for.
+    pub fn template_keys(&self) -> Vec<&str> {
+        self.candidates
+            .iter()
+            .map(|candidate| candidate.template_key.as_str())
+            .collect()
+    }
 }
 
+/// The one configuration snapshot a Voice Session currently runs with.
+///
+/// Admission installs it; a successful switch replaces it atomically together with the Session
+/// Profile Revision.  It never changes while a Conversational Turn is in flight.
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveTemplateProfile {
+    pub source: ProfileSource,
+    pub language: String,
+    pub system_prompt: String,
+    pub providers: EffectiveProviderBindings,
+    pub revision: u64,
+}
+
+impl ActiveTemplateProfile {
+    /// The deployment's own agent configuration, used before an admission profile is installed
+    /// and by the manual-only constructor seams that never reach a database.
+    pub fn server_default() -> Self {
+        ActiveTemplateProfile {
+            source: ProfileSource::ServerDefault,
+            language: String::new(),
+            system_prompt: prompt::render_system(&crate::config::EffectiveAgentConfig::default())
+                .expect("built-in prompt template is valid"),
+            providers: crate::config::EffectiveAgentConfig::default().providers,
+            revision: 1,
+        }
+    }
+
+    /// Replaces this snapshot with a candidate the session already admitted and advances the
+    /// Session Profile Revision.  It cannot fail, so no partially switched profile exists: the
+    /// caller installs the candidate's runtime handles in the same boundary step.
+    pub fn switched_to(&mut self, candidate: &ResolvedTemplateProfile) {
+        self.source = candidate.source();
+        self.language = candidate.language.clone();
+        self.system_prompt = candidate.system_prompt.clone();
+        self.providers = candidate.providers.clone();
+        self.revision = self.revision.saturating_add(1);
+    }
+}
+
+#[derive(Clone)]
 pub struct EffectiveSessionProfile {
     pub device_db_id: i64,
     pub agent_id: i64,
@@ -107,6 +194,22 @@ impl EffectiveSessionProfile {
             // An Agent without assignments must not advertise a switch capability it cannot honor.
             switch_catalog: TemplateSwitchCatalog::default(),
         })
+    }
+
+    /// Splits the resolved profile into the snapshot a session installs and the candidate list it
+    /// may switch among.  Neither half can reach back into the admission read.
+    pub fn into_active_profile(self) -> (ActiveTemplateProfile, TemplateSwitchCatalog) {
+        let catalog = self.switch_catalog;
+        (
+            ActiveTemplateProfile {
+                source: self.source,
+                language: self.language,
+                system_prompt: self.system_prompt,
+                providers: self.providers,
+                revision: self.revision,
+            },
+            catalog,
+        )
     }
 }
 
@@ -207,8 +310,9 @@ fn resolve_template(
         tts: bound_key(bound.get("tts").copied())?,
         vision: None,
     };
-    // One resolution proves all four slots resolve to runtimes this process actually loaded.
-    runtimes
+    // One resolution proves all four slots resolve to runtimes this process actually loaded, and
+    // hands the session the exact handles a later switch installs.
+    let runtimes = runtimes
         .resolve(&providers)
         .map_err(|_| TemplateCandidateError::RuntimeMissing)?;
     Ok(ResolvedTemplateProfile {
@@ -218,6 +322,8 @@ fn resolve_template(
         language: assignment.language.clone(),
         system_prompt: assignment.prompt.clone(),
         providers,
+        runtimes,
+        template_revision: assignment.template_revision,
     })
 }
 
@@ -309,7 +415,7 @@ mod tests {
             &config(),
             &RuntimeCatalog::default(),
         );
-        assert_eq!(profile, Err(ProfileUnavailable));
+        assert_eq!(profile.err(), Some(ProfileUnavailable));
 
         let server_defaults = resolve_effective_session_profile(
             1,
@@ -334,7 +440,7 @@ mod tests {
             &config(),
             &RuntimeCatalog::default(),
         );
-        assert_eq!(profile, Err(ProfileUnavailable));
+        assert_eq!(profile.err(), Some(ProfileUnavailable));
     }
 
     #[test]
@@ -393,14 +499,26 @@ mod tests {
                     worker.clone(),
                 )),
             )]),
-            llm: HashMap::from([(
-                "llm".to_owned(),
-                Arc::new(LlmRuntime::new(
-                    Arc::new(UnavailableLlm),
-                    1,
-                    Duration::from_secs(1),
-                )),
-            )]),
+            // Two distinct LLM instances so a switch between already-loaded runtimes is provable
+            // by runtime identity rather than by binding name alone.
+            llm: HashMap::from([
+                (
+                    "llm".to_owned(),
+                    Arc::new(LlmRuntime::new(
+                        Arc::new(UnavailableLlm),
+                        1,
+                        Duration::from_secs(1),
+                    )),
+                ),
+                (
+                    "alternate".to_owned(),
+                    Arc::new(LlmRuntime::new(
+                        Arc::new(UnavailableLlm),
+                        1,
+                        Duration::from_secs(1),
+                    )),
+                ),
+            ]),
             tts: HashMap::from([(
                 "tts".to_owned(),
                 Arc::new(TtsWorkerRuntime::new(Arc::new(UnavailableTts), worker)),
@@ -415,6 +533,18 @@ mod tests {
             template_key: key.into(),
             ..assignment(default, enabled, full_bindings())
         }
+    }
+
+    /// Binds the LLM slot to a different already-loaded instance so a switch is observable as a
+    /// runtime change, not only as a prompt change.
+    fn alternate_llm(mut candidate: AdmittedAssignment) -> AdmittedAssignment {
+        candidate
+            .bindings
+            .iter_mut()
+            .find(|binding| binding.provider_type == "llm")
+            .expect("the full binding set always carries an LLM slot")
+            .provider_key = "alternate".into();
+        candidate
     }
 
     #[test]
@@ -462,6 +592,67 @@ mod tests {
             .map(|candidate| candidate.template_key.clone())
             .collect::<Vec<_>>();
         assert_eq!(keys, vec!["primary".to_owned(), "usable".to_owned()]);
+    }
+
+    #[test]
+    fn a_switch_targets_only_a_candidate_this_session_admitted() {
+        let profile = resolve_effective_session_profile(
+            1,
+            2,
+            "agent",
+            &[
+                named(1, "primary", true, true),
+                named(7, "usable", false, true),
+            ],
+            &config(),
+            &loaded_catalog(),
+        )
+        .expect("a valid default template still admits the session");
+        assert!(
+            profile.switch_catalog.find("usable").is_some(),
+            "an admitted candidate must be selectable"
+        );
+        assert!(
+            profile.switch_catalog.find("unloaded").is_none(),
+            "a candidate that never entered the catalog is not selectable"
+        );
+    }
+
+    #[test]
+    fn a_successful_switch_replaces_the_active_snapshot_and_advances_the_revision() {
+        let mut usable = alternate_llm(named(7, "usable", false, true));
+        usable.prompt = "secondary system prompt".into();
+        let profile = resolve_effective_session_profile(
+            1,
+            2,
+            "agent",
+            &[named(1, "primary", true, true), usable],
+            &config(),
+            &loaded_catalog(),
+        )
+        .expect("a valid default template still admits the session");
+        let (mut active, catalog) = profile.into_active_profile();
+        assert_eq!(active.revision, 1);
+        assert_eq!(active.system_prompt, "stored system prompt");
+
+        let Some(candidate) = catalog.find("usable").cloned() else {
+            panic!("the catalog holds the candidate");
+        };
+        active.switched_to(&candidate);
+
+        assert_eq!(active.system_prompt, "secondary system prompt");
+        assert_eq!(active.language, "vi-VN");
+        assert_eq!(
+            active.source,
+            ProfileSource::Template {
+                template_id: 7,
+                template_key: "usable".into(),
+                template_name: "Support".into(),
+                template_revision: 2,
+            }
+        );
+        assert_eq!(active.providers.llm, "alternate");
+        assert_eq!(active.revision, 2);
     }
 
     #[test]

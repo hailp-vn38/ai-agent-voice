@@ -35,7 +35,7 @@ impl SessionActor {
         );
         self.llm_messages = Vec::with_capacity(history.len() + 1);
         self.llm_messages.push(ChatMessage::System {
-            content: self.system_prompt.clone(),
+            content: self.profile.system_prompt.clone(),
         });
         self.llm_messages.extend(history);
         self.tool_depth = 0;
@@ -86,8 +86,8 @@ impl SessionActor {
             Vec::new()
         };
         // Device MCP can alter the final answer, so its tool-capable rounds must remain
-        // buffered (ADR-0018). The builtin exit tool is different: a normal no-tool response
-        // must retain token-to-speech streaming merely because it is available.
+        // buffered (ADR-0018). The builtin tools are different: a normal no-tool response must
+        // retain token-to-speech streaming merely because they are available.
         self.llm_round =
             (allow_tools && !self.mcp.visible.is_empty()).then(LlmRoundBuffer::default);
         let request = crate::providers::llm::LlmRequest {
@@ -175,7 +175,7 @@ impl SessionActor {
             LlmRuntimeEvent::ToolCall { call, .. } => {
                 if self.llm_round.is_none()
                     && self.generated_response.is_empty()
-                    && call.name == crate::tools::builtin::EXIT_TOOL_NAME
+                    && super::tools::is_builtin_tool_name(&call.name)
                 {
                     self.llm_round = Some(LlmRoundBuffer::default());
                 }
@@ -361,8 +361,8 @@ impl SessionActor {
     pub(super) fn fail_speech_delivery(&mut self) {
         let writer_owns_terminal_outcome = self.tts_started;
         let failed_generation = self.generation;
-        if !writer_owns_terminal_outcome && let Some(turn_id) = self.current_turn_id() {
-            self.cancel_pending_session_action_for_turn(turn_id);
+        if !writer_owns_terminal_outcome {
+            self.cancel_pending_actions_for_active_turn();
         }
         self.cancel_speech_delivery();
         self.cancel_llm();
@@ -385,9 +385,7 @@ impl SessionActor {
     /// invalidated before producer cancellation, and releasing the Active Turn is
     /// idempotent through its permit ownership flag.
     pub(super) fn interrupt_active_turn(&mut self) {
-        if let Some(turn_id) = self.current_turn_id() {
-            self.cancel_pending_session_action_for_turn(turn_id);
-        }
+        self.cancel_pending_actions_for_active_turn();
         self.cancel_speech_delivery();
         self.cancel_llm();
         self.cancel_asr();

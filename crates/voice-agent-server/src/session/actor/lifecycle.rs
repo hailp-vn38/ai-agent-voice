@@ -6,17 +6,29 @@ impl SessionActor {
         if matches!(
             self.listening_mode,
             Some(ListenMode::Auto | ListenMode::Realtime)
-        ) && self.vad_session.is_some()
-        {
+        ) {
+            let Some(mode) = self.listening_mode.clone() else {
+                unreachable!("checked above")
+            };
+            let Some((lease, _)) = self.vad_session else {
+                // A Template switch rebased capture onto another already-loaded VAD runtime and
+                // closed the old lease. Re-arm here instead of silently dropping an Auto or
+                // Realtime client out of capture.
+                tracing::info!(
+                    event = "vad_capture_rearmed",
+                    reason = "vad_runtime_rebased",
+                    "Re-arming the VAD capture cycle on the rebound runtime"
+                );
+                self.replace_listening_mode(mode);
+                return;
+            };
             if self.auto_reset_pending {
                 return;
             }
-            if let Some((lease, _)) = self.vad_session {
-                if self.reset_vad_capture_cycle(lease).is_err() {
-                    self.fail_closed();
-                } else {
-                    self.auto_reset_pending = true;
-                }
+            if self.reset_vad_capture_cycle(lease).is_err() {
+                self.fail_closed();
+            } else {
+                self.auto_reset_pending = true;
             }
         } else {
             self.activate_pending_listen_arm();

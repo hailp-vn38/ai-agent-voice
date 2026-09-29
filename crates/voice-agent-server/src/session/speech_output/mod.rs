@@ -106,6 +106,16 @@ impl SpeechOutput {
         Ok(output)
     }
 
+    /// Releases the worker stream this output holds, for an owner that replaces it wholesale.
+    ///
+    /// `cancel` deliberately reopens a stream for the next turn; a replaced output has no next
+    /// turn on that runtime, so its stream must be closed or the runtime registry grows per switch.
+    pub fn release(&mut self) {
+        if let (Some(runtime), Some(stream)) = (&self.tts_runtime, self.tts_stream.take()) {
+            runtime.close_stream(stream);
+        }
+    }
+
     /// Accepts LLM text incrementally. Every completed segment is admitted atomically.
     pub fn push_delta(&mut self, text: &str) -> Result<(), SpeechOutputError> {
         let text = self.json_filter.push(text);
