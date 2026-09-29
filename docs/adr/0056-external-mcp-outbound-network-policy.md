@@ -20,3 +20,17 @@ Hệ quả thực thi: host phải được so khớp bằng **typed host** (`ur
 ## Metrics
 
 External MCP là feature đầu tiên của service báo cáo bằng số chứ không chỉ bằng log. Telemetry seam là process-owned và **bounded**: caller chọn metric từ tập cố định và label từ bounded class, nên không có cách nào để destination, header value, credential, protocol session id, tool argument hay tool result trở thành label — chúng không phải tham số ở đó. Giá trị tự do duy nhất là `server_key`, vốn đã bị Admin API bound ở 64 byte `[a-z0-9_]`.
+
+Hai điểm guide để ngỏ, đã chốt:
+
+- **Resolve duration mang cùng label với counter đi cạnh.** `mcp_resolve_success_total{server_key,outcome}`,
+  `mcp_resolve_failure_total{server_key,outcome,reason}` và `mcp_resolve_duration_ms{server_key,outcome}`
+  dùng chung một tập label, nên một server chậm tìm được từ duration chứ không chỉ từ một failure.
+
+- **Aggregate cap có counter riêng, không mượn counter per-server.** Cap tổng thuộc về cả snapshot chứ
+  không thuộc về server nào, nên nó đếm một lần vào `external_mcp_session_tool_cap_exceeded_total`
+  không mang label, và **không** phát `mcp_resolve_failure_total` hay duration per-server cho nó. Mỗi
+  server đã discovery thành công vẫn được đếm là resolved, kể cả khi snapshot aggregate sau đó bị
+  reject. Đếm nó thêm một lần nữa như một server failure sẽ báo ra một outcome thứ hai, và một
+  duration cho công việc chưa từng xảy ra.
+

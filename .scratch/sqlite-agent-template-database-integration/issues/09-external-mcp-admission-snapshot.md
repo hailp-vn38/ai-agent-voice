@@ -68,8 +68,10 @@ from a bounded class, and the only free-form value it can pass is a `server_key`
 API already bounds to 64 bytes of `[a-z0-9_]`. A destination, a header value, a credential, a
 protocol session id, a tool argument and a tool result are not parameters of the seam at all.
 
-Reported: `mcp_resolve_success_total`, `mcp_resolve_failure_total{reason}`,
-`mcp_resolve_duration_ms`, `external_mcp_tool_calls_total{server_key,outcome}`,
+Reported: `mcp_resolve_success_total{server_key,outcome="success"}`,
+`mcp_resolve_failure_total{server_key,outcome="failure",reason}`,
+`mcp_resolve_duration_ms{server_key,outcome}`,
+`external_mcp_session_tool_cap_exceeded_total`, `external_mcp_tool_calls_total{server_key,outcome}`,
 `external_mcp_tool_call_duration_ms{server_key,outcome}` and
 `external_mcp_call_limiter_rejected_total`. `ExternalMcpManager::new` wires the default
 `TracingTelemetry` sink, which renders each observation as a structured event carrying the metric
@@ -77,13 +79,14 @@ name and the bounded classes — enough to alert on and for a collector to scrap
 service choosing a metrics backend the deployment has not asked for. `new_with_telemetry` takes any
 sink, and `RecordingTelemetry` lets a test assert the label contract rather than take it on trust.
 
-Two decisions the guide left open:
+Two decisions the guide left open, now decided and recorded in ADR-0056:
 
 - `mcp_resolve_duration_ms` carries the same `server_key` and `outcome` as the counter it sits
   beside. A duration with no label cannot be attributed to a server at all.
-- The aggregate cap `external_mcp_session_tool_cap_exceeded` is a fact about the whole snapshot, so
-  it is not counted as a server resolve failure. A server that resolved and published still counts
-  as resolved; counting it twice with a duration it never had would be worse than not counting it.
+- The aggregate cap is counted only as `external_mcp_session_tool_cap_exceeded_total`, a fact about
+  the whole snapshot. It is not a server resolve failure and emits no invented per-server duration.
+  A server whose discovery passed still counts as resolved, even though aggregate publication is
+  rejected.
 
 ## Review follow-up
 

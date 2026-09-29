@@ -379,9 +379,10 @@ impl ExternalMcpManager {
             .map(|server| server.tools.len())
             .sum::<usize>();
         // The aggregate cap is a fact about the whole snapshot, not about any one server's
-        // resolution, so it is not counted as a server outcome: a server that resolved and published
-        // is still counted as having resolved.
+        // resolution, so it gets its own counter and emits no per-server duration: every server in
+        // here has already reported whether it resolved.
         if total > self.limits.max_tools_per_session {
+            self.telemetry.session_tool_cap_exceeded();
             exclusions.extend(published.iter().map(|server| ExternalMcpExclusion {
                 server_key: server.server_key.clone(),
                 reason: ExternalMcpExclusionReason::SessionToolCapExceeded,

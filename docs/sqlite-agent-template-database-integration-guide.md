@@ -3006,9 +3006,10 @@ Log drop chỉ có `event=history_write_dropped`, `role`, `reason`.
 External MCP metrics:
 
 ```text
-mcp_resolve_success_total
-mcp_resolve_failure_total{reason}
-mcp_resolve_duration_ms
+mcp_resolve_success_total{server_key,outcome="success"}
+mcp_resolve_failure_total{server_key,outcome="failure",reason}
+mcp_resolve_duration_ms{server_key,outcome}
+external_mcp_session_tool_cap_exceeded_total
 external_mcp_tool_calls_total{server_key,outcome}
 external_mcp_tool_call_duration_ms{server_key,outcome}
 ```
@@ -3022,9 +3023,11 @@ class. Giá trị tự do duy nhất là `server_key`, vốn đã bị Admin API
 destination, header value, credential, protocol session id, tool argument và tool result không
 phải tham số của seam nên không có cách nào trở thành label. `mcp_resolve_duration_ms` được gắn
 cùng `server_key` và `outcome` với counter nó đi cùng, vì một duration không có label thì không
-quy được về server nào. Aggregate cap `external_mcp_session_tool_cap_exceeded` là một sự kiện
-của cả snapshot chứ không phải của một server, nên nó không được đếm như một server resolve
-failure: một server đã resolve và publish vẫn được đếm là đã resolve. ADR-0056 là nguồn chốt.
+quy được về server nào. Aggregate cap được đếm riêng là
+`external_mcp_session_tool_cap_exceeded_total`: nó là một sự kiện của cả snapshot chứ không phải
+của một server, nên không được đếm như server resolve failure và không emit per-server duration.
+Mỗi server đã discovery thành công vẫn được đếm là resolved, dù snapshot aggregate sau đó bị
+reject. ADR-0056 là nguồn chốt.
 
 ---
 

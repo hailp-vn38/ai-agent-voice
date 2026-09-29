@@ -46,9 +46,9 @@ use voice_agent_server::{
     },
     session::EffectiveSessionProfile,
     telemetry::{
-        EXTERNAL_MCP_CALL_LIMITER_REJECTED_TOTAL, EXTERNAL_MCP_TOOL_CALL_DURATION_MS,
-        EXTERNAL_MCP_TOOL_CALLS_TOTAL, MCP_RESOLVE_DURATION_MS, MCP_RESOLVE_FAILURE_TOTAL,
-        MCP_RESOLVE_SUCCESS_TOTAL, RecordingTelemetry,
+        EXTERNAL_MCP_CALL_LIMITER_REJECTED_TOTAL, EXTERNAL_MCP_SESSION_TOOL_CAP_EXCEEDED_TOTAL,
+        EXTERNAL_MCP_TOOL_CALL_DURATION_MS, EXTERNAL_MCP_TOOL_CALLS_TOTAL, MCP_RESOLVE_DURATION_MS,
+        MCP_RESOLVE_FAILURE_TOTAL, MCP_RESOLVE_SUCCESS_TOTAL, RecordingTelemetry,
     },
     tools::external_mcp::{
         ExternalMcpExclusionReason, ExternalMcpManager, ExternalMcpSnapshot, ResolvedExternalMcp,
@@ -927,6 +927,78 @@ async fn external_mcp_refuses_server_keys_that_normalize_alike() {
     server.task.abort();
 }
 
+/// The aggregate cap gets its own counter and no per-server duration, and every server that did
+/// resolve still counts as resolved.  Counting it a second time as a server failure would report
+/// an outcome and a duration for work that never happened.
+#[tokio::test]
+async fn external_mcp_aggregate_tool_cap_is_counted_once_and_not_as_a_server_failure() {
+    let first = start_mcp(McpBehaviour::with_tools(vec![tool("A0"), tool("A1")])).await;
+    let second = start_mcp(McpBehaviour::with_tools(vec![tool("B0"), tool("B1")])).await;
+    let recorder = Arc::new(RecordingTelemetry::default());
+    let mut app_config = config(database_url());
+    app_config.mcp.external.limits = ExternalMcpLimitsConfig {
+        max_tools_per_session: 3,
+        ..ExternalMcpLimitsConfig::default()
+    };
+    let voice = start_with_config(app_config, ConstantSecrets(None)).await;
+    let manager =
+        ExternalMcpManager::new_with_telemetry(&voice.state.config.mcp.external, recorder.clone())
+            .expect("the transport builds");
+    let pool = voice.database().await;
+    seed(&pool).await;
+    bind_server(&pool, "alpha", &first.url(), "{}", ("none", None, None)).await;
+    bind_server(&pool, "beta", &second.url(), "{}", ("none", None, None)).await;
+
+    let snapshot = manager
+        .resolve_snapshot(
+            &Database::connect(&voice.state.config.database)
+                .await
+                .expect("the control plane is reachable")
+                .agent_mcp_servers(1)
+                .await
+                .expect("the bindings are readable"),
+            &ConstantSecrets(None),
+        )
+        .await;
+    assert!(snapshot.servers.is_empty());
+    assert_eq!(snapshot.exclusions.len(), 2);
+
+    let recorded = recorder.recorded();
+    let counted: Vec<(&str, Vec<(&str, String)>)> = recorded
+        .iter()
+        .map(|event| (event.metric, event.labels.clone()))
+        .collect();
+
+    // Counted once, with no label: it is a property of the snapshot, not of a server.
+    let cap: Vec<_> = recorded
+        .iter()
+        .filter(|event| event.metric == EXTERNAL_MCP_SESSION_TOOL_CAP_EXCEEDED_TOTAL)
+        .collect();
+    assert_eq!(
+        cap.len(),
+        1,
+        "the aggregate cap is counted once: {counted:?}"
+    );
+    assert_eq!(cap[0].labels, Vec::<(&str, String)>::new());
+
+    // Both servers still counted as resolved, and neither as a failure.
+    let successes: Vec<&Vec<(&str, String)>> = recorded
+        .iter()
+        .filter(|event| event.metric == MCP_RESOLVE_SUCCESS_TOTAL)
+        .map(|event| &event.labels)
+        .collect();
+    assert_eq!(successes.len(), 2, "each resolved server still counts once");
+    assert!(
+        recorded
+            .iter()
+            .all(|event| event.metric != MCP_RESOLVE_FAILURE_TOTAL)
+    );
+
+    voice.task.abort();
+    first.task.abort();
+    second.task.abort();
+}
+
 /// The aggregate cap drops the whole External MCP snapshot rather than any subset of it.
 #[tokio::test]
 async fn external_mcp_aggregate_tool_cap_drops_the_whole_snapshot() {
@@ -1450,6 +1522,7 @@ async fn external_mcp_telemetry_carries_bounded_labels_and_no_content() {
                     matches!(
                         value.as_str(),
                         "success"
+                            | "failure"
                             | "timeout"
                             | "unavailable"
                             | "auth_failed"
