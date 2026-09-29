@@ -235,7 +235,32 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
             "MCP tool policy names must be unique, non-empty, and non-dangerous".into(),
         ));
     }
+    let network = &config.mcp.external.network;
+    if network.allowed_hosts.iter().any(|host| {
+        host.is_empty()
+            || host.len() > 253
+            || !host
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'*'))
+    }) || network.allowed_cidrs.iter().any(|cidr| !valid_cidr(cidr))
+    {
+        return Err(ConfigError::Validation(
+            "External MCP network allowlist must contain valid host patterns and CIDRs".into(),
+        ));
+    }
     Ok(())
+}
+
+fn valid_cidr(value: &str) -> bool {
+    let Some((address, prefix)) = value.split_once('/') else {
+        return false;
+    };
+    let Ok(address) = address.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    prefix
+        .parse::<u8>()
+        .is_ok_and(|prefix| prefix <= if address.is_ipv4() { 32 } else { 128 })
 }
 
 fn validate_workers(config: &AppConfig) -> Result<(), ConfigError> {

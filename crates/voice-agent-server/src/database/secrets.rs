@@ -57,3 +57,23 @@ pub enum SecretResolveError {
 pub trait SecretResolver: Send + Sync {
     fn resolve(&self, reference: &SecretRef) -> Result<SecretValue, SecretResolveError>;
 }
+
+/// V1 deployment resolver. Only this boundary interprets an opaque reference as an
+/// environment-variable name; Admin and SQLite continue to treat it as opaque text.
+#[derive(Default)]
+pub struct EnvSecretResolver;
+
+impl SecretResolver for EnvSecretResolver {
+    fn resolve(&self, reference: &SecretRef) -> Result<SecretValue, SecretResolveError> {
+        let name = reference.as_str();
+        if !name
+            .bytes()
+            .all(|byte| byte == b'_' || byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        {
+            return Err(SecretResolveError::Invalid);
+        }
+        std::env::var(name)
+            .map(SecretValue::new)
+            .map_err(|_| SecretResolveError::Unavailable)
+    }
+}

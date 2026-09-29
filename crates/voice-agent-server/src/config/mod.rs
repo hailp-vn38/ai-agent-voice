@@ -522,6 +522,26 @@ pub struct McpConfig {
     pub result_delivery: McpResultDelivery,
     #[serde(default)]
     pub tool_policy: Vec<McpToolPolicy>,
+    #[serde(default)]
+    pub external: ExternalMcpConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalMcpConfig {
+    #[serde(default)]
+    pub network: ExternalMcpNetworkConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalMcpNetworkConfig {
+    #[serde(default)]
+    pub allow_http_lan: bool,
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+    #[serde(default)]
+    pub allowed_cidrs: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -549,6 +569,7 @@ impl Default for McpConfig {
             allowed_tools: Vec::new(),
             result_delivery: McpResultDelivery::default(),
             tool_policy: Vec::new(),
+            external: ExternalMcpConfig::default(),
         }
     }
 }

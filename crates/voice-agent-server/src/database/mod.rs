@@ -10,6 +10,10 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod external_mcp_policy;
+pub mod provider_config;
+pub mod secrets;
+
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Clone)]
@@ -31,6 +35,8 @@ pub enum DatabaseError {
     SchemaPending,
     #[error("database_migration_failed")]
     Migration,
+    #[error("provider_config_invalid")]
+    ProviderConfig,
 }
 
 /// Immutable database facts captured before a WebSocket is upgraded.
@@ -131,7 +137,7 @@ impl Database {
         .await
         .map_err(map_admission_error)?;
         if assignments != 0 {
-            // Template profile resolution is intentionally introduced by Ticket 06. Do not
+            // Template profile resolution is intentionally introduced by Ticket 07. Do not
             // accept a partial profile or fall back to deployment defaults here.
             return Err(DeviceAdmissionError::Unavailable);
         }
@@ -184,7 +190,8 @@ fn map_admission_error(error: sqlx::Error) -> DeviceAdmissionError {
         }
         DatabaseError::SchemaIncompatible
         | DatabaseError::SchemaPending
-        | DatabaseError::Migration => DeviceAdmissionError::Unavailable,
+        | DatabaseError::Migration
+        | DatabaseError::ProviderConfig => DeviceAdmissionError::Unavailable,
     }
 }
 
