@@ -44,6 +44,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub database: DatabaseConfig,
     #[serde(default)]
+    pub api: AdminApiConfig,
+    #[serde(default)]
     pub shutdown: ShutdownConfig,
     #[serde(default)]
     pub agent: Option<AgentConfig>,
@@ -623,6 +625,16 @@ pub struct DatabaseConfig {
     pub busy_timeout_ms: u64,
     #[serde(default = "default_true")]
     pub migrate_on_start: bool,
+}
+
+/// Optional, separately authenticated administrative control plane.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdminApiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub admin_token: String,
 }
 
 impl Default for DatabaseConfig {

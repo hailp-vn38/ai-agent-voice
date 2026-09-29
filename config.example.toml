@@ -15,6 +15,11 @@ max_connections = 5
 busy_timeout_ms = 5000
 migrate_on_start = true
 
+# The Admin API mounts only when both this and database.enabled are true.
+[api]
+enabled = false
+admin_token = ""
+
 [shutdown]
 grace_ms = 15000
 

@@ -65,6 +65,7 @@ impl AppConfig {
         validate_speech_output(self)?;
         validate_deployment(self)?;
         validate_database(self)?;
+        validate_admin_api(self)?;
         validate_shutdown(self)?;
         Ok(())
     }
@@ -72,6 +73,16 @@ impl AppConfig {
     pub fn max_capture_frames(&self) -> usize {
         (self.audio.max_utterance_ms / u64::from(self.audio.frame_ms)) as usize
     }
+}
+
+fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
+    if config.api.enabled && (!config.database.enabled || config.api.admin_token.trim().is_empty())
+    {
+        return Err(ConfigError::Validation(
+            "api.enabled requires database.enabled and a non-empty admin_token".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {

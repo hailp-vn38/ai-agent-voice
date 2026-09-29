@@ -31,6 +31,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+mod admin;
 mod ota;
 mod state;
 mod vision;
@@ -77,6 +78,11 @@ pub fn router_with_state(state: AppState) -> Router {
                 ))
                 .layer(middleware::map_response(vision::cors_response)),
         )
+    } else {
+        router
+    };
+    let router = if state.config.database.enabled && state.config.api.enabled {
+        router.nest("/api/admin", admin::router(state.clone()))
     } else {
         router
     };
