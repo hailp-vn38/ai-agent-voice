@@ -29,6 +29,8 @@ Client-Id: <uuid>
 
 Khi `auth.token` không rỗng, `Authorization` bắt buộc; thiếu hoặc sai token bị từ chối WebSocket upgrade với HTTP 401. Khi token rỗng, server không yêu cầu header. OTA trả static token khi auth bật, do đó chỉ supported trong trusted LAN và không phải security boundary.
 
+`session_id` được sinh ra *trước* upgrade, ngay cùng lúc Effective Session Profile được resolve, vì cùng một identity đó vừa là `session_id` của Voice Session vừa là session key của optional Persistent Transcript. Một connection có đúng một session identity, và nó thuộc về connection chứ không thuộc về database: `SessionActor` không giữ identity thứ hai.
+
 Sau upgrade:
 
 ```mermaid

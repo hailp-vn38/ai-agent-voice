@@ -2,6 +2,7 @@ use crate::{
     config::{AppConfig, SileroOnnxConfig, VadInstanceConfig},
     database::{
         Database, DeviceAdmissionError,
+        history::{HistoryArchive, HistoryWriter, HistoryWriterMetrics, TranscriptCapture},
         secrets::{EnvSecretResolver, SecretResolver},
     },
     providers::{
@@ -35,6 +36,9 @@ pub struct AppState {
     /// per-server call limiter for every session.  `None` only when the shared transport could
     /// not be built, which leaves every bound server fail-soft unavailable.
     pub external_mcp: Option<Arc<ExternalMcpManager>>,
+    /// The optional Persistent Transcript: the one archival writer every session shares plus the
+    /// retention job.  `None` only when the database is off, in which case no session can archive.
+    pub history: Option<Arc<HistoryArchive>>,
     pub shutdown: CancellationToken,
     /// Test-only; see [`WriterOutcomeProbe`]. Production leaves it unset.
     pub writer_outcome_probe: Option<Arc<dyn WriterOutcomeProbe>>,
@@ -213,6 +217,15 @@ impl AppState {
                 .collect(),
         ));
         let external_mcp = shared_external_mcp(&config);
+        // The archive exists whenever the database does, even with capture off: retention keeps
+        // running over whatever an earlier deployment already stored.
+        let history = database.as_ref().map(|database| {
+            Arc::new(HistoryArchive::start(
+                database,
+                &config.database.history,
+                shutdown.clone(),
+            ))
+        });
         Self {
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
             config: Arc::new(config),
@@ -223,9 +236,45 @@ impl AppState {
             database_runtime_snapshot: database_runtime_snapshot.map(Arc::new),
             secret_resolver,
             external_mcp,
+            history,
             shutdown,
             writer_outcome_probe: None,
         }
+    }
+
+    /// Binds one admitted connection's Persistent Transcript capture, or `None`.
+    ///
+    /// Capture needs the opt-in, the database, and an admission identity: an archive row belongs to
+    /// the admitted Device and Agent, and a session admitted without the database has neither.
+    /// Deciding it here keeps the WebSocket boundary from knowing any of that, and the answer never
+    /// depends on a query — turning capture on is a configuration decision, not a live lookup.
+    pub fn transcript_capture(
+        &self,
+        session_id: &str,
+        profile: &EffectiveSessionProfile,
+    ) -> Option<TranscriptCapture> {
+        if !self.config.database.history.enabled {
+            return None;
+        }
+        TranscriptCapture::new(
+            self.history_writer()?,
+            session_id,
+            profile.device_db_id,
+            profile.agent_id,
+        )
+    }
+
+    /// The archival writer this process owns, or `None` when the database is off.
+    pub fn history_writer(&self) -> Option<&HistoryWriter> {
+        self.history.as_ref().map(|archive| archive.writer())
+    }
+
+    /// The archive's bounded counters.  An operator or a test reads the archive's behaviour
+    /// through these; nothing else about the writer is observable.
+    pub fn history_metrics(&self) -> Option<Arc<HistoryWriterMetrics>> {
+        self.history
+            .as_ref()
+            .map(|archive| Arc::clone(archive.metrics()))
     }
 
     /// Installs the test-only writer outcome probe; see [`WriterOutcomeProbe`].

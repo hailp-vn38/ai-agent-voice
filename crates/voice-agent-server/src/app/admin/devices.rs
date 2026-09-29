@@ -97,12 +97,12 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
         &mut *tx,
         id(&request),
         "device",
-        device_id,
+        Some(device_id),
         "create",
         None,
         Some(1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()
@@ -154,7 +154,7 @@ pub(super) async fn list_devices(
     Query(query): Query<PageQuery>,
     request: Request,
 ) -> Response {
-    let (page, page_size) = match page_bounds(&query) {
+    let (page, page_size) = match page_bounds(query.page, query.page_size) {
         Ok(value) => value,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
@@ -287,12 +287,12 @@ pub(super) async fn patch_device(
         &mut *tx,
         id(&request),
         "device",
-        old.id,
+        Some(old.id),
         "update",
         Some(expected),
         Some(expected + 1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()

@@ -314,6 +314,46 @@ fn validate_prompt_template(template: &str) -> Result<(), ConfigError> {
 }
 
 #[cfg(test)]
+mod database_history_config_tests {
+    use super::{DatabaseConfig, DatabaseHistoryConfig};
+
+    fn same(left: &DatabaseHistoryConfig, right: &DatabaseHistoryConfig) -> bool {
+        left.enabled == right.enabled
+            && left.retention_days == right.retention_days
+            && left.queue_capacity == right.queue_capacity
+    }
+
+    /// `DatabaseHistoryConfig::default` restates the `#[serde(default = …)]` values on purpose, for
+    /// the same reason `LlmToolsConfig::default` does: a section that deserialized to zeroes is a
+    /// configuration that fails its own validation.
+    #[test]
+    fn the_default_history_configuration_is_the_documented_one() {
+        let default = DatabaseHistoryConfig::default();
+        assert!(!default.enabled, "capture is opt-in");
+        assert_eq!(default.retention_days, 30);
+        assert_eq!(default.queue_capacity, 256);
+        assert!(same(&default, &DatabaseConfig::default().history));
+
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            database: super::DatabaseConfig,
+        }
+        let parsed: Wrapper = toml::from_str(
+            r#"
+            [database]
+            enabled = true
+            url = "sqlite://data/voice-agent.db"
+            "#,
+        )
+        .expect("a configuration with no history section is still a configuration");
+        assert!(same(
+            &parsed.database.history,
+            &DatabaseHistoryConfig::default()
+        ));
+    }
+}
+
+#[cfg(test)]
 mod agent_template_tests {
     use super::validate_prompt_template;
 
@@ -845,6 +885,8 @@ pub struct DatabaseConfig {
     pub migrate_on_start: bool,
     #[serde(default)]
     pub devices: DatabaseDevicesConfig,
+    #[serde(default)]
+    pub history: DatabaseHistoryConfig,
 }
 
 /// Explicit controls for database-backed Voice Protocol Client admission.
@@ -857,6 +899,34 @@ pub struct DatabaseDevicesConfig {
     pub auto_register: bool,
     #[serde(default)]
     pub auto_register_agent_key: String,
+}
+
+/// Optional Persistent Transcript capture and the retention of the archive it writes.
+///
+/// Capture and retention are separate policies.  `enabled` decides whether a Voice Session
+/// enqueues anything at all; `retention_days` decides how long whatever is already archived
+/// survives, so switching capture off never turns existing data into unbounded retention.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseHistoryConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_history_retention_days")]
+    pub retention_days: u32,
+    /// Records the archival writer may hold before a new one is dropped.  Bounded so a slow
+    /// database can never turn into an unbounded in-process backlog.
+    #[serde(default = "default_history_queue_capacity")]
+    pub queue_capacity: usize,
+}
+
+impl Default for DatabaseHistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retention_days: default_history_retention_days(),
+            queue_capacity: default_history_queue_capacity(),
+        }
+    }
 }
 
 /// Optional, separately authenticated administrative control plane.
@@ -878,6 +948,7 @@ impl Default for DatabaseConfig {
             busy_timeout_ms: default_database_busy_timeout_ms(),
             migrate_on_start: true,
             devices: DatabaseDevicesConfig::default(),
+            history: DatabaseHistoryConfig::default(),
         }
     }
 }

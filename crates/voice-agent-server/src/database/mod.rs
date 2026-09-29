@@ -10,9 +10,15 @@ use thiserror::Error;
 pub mod admission;
 pub mod external_mcp;
 pub mod external_mcp_policy;
+pub mod history;
 pub mod load_plan;
 pub mod provider_config;
 pub mod secrets;
+
+pub use history::{
+    HistoryArchive, HistoryDrop, HistoryRole, HistoryWrite, HistoryWriter, HistoryWriterCounters,
+    HistoryWriterMetrics, TranscriptCapture,
+};
 
 pub use admission::{
     AdmittedAgent, AdmittedAssignment, AdmittedProviderBinding, DeviceAdmissionError,

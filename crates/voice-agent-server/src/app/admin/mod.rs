@@ -57,6 +57,8 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/devices", get(list_devices).post(create_device))
         .route("/devices/{device_id}", get(get_device).patch(patch_device))
+        .route("/history", get(list_history))
+        .route("/history/purge", axum::routing::post(purge_history))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             authenticate,
@@ -68,12 +70,14 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
 
 mod agents;
 mod devices;
+mod history;
 mod mcp_servers;
 mod providers;
 mod templates;
 
 use agents::{create_agent, get_agent, list_agents, patch_agent};
 use devices::{create_device, get_device, list_devices, patch_device};
+use history::{list_history, purge_history};
 use mcp_servers::{
     create_mcp_server, get_mcp_server, list_agent_mcp_bindings, list_mcp_servers, patch_mcp_server,
     put_agent_mcp_binding,
@@ -298,9 +302,11 @@ struct PageQuery {
     page_size: Option<u32>,
 }
 
-fn page_bounds(query: &PageQuery) -> Result<(u32, u32), &'static str> {
-    let page = query.page.unwrap_or(1);
-    let page_size = query.page_size.unwrap_or(PAGE_DEFAULT);
+/// The shared page window.  It takes the two bounds rather than a resource query so every list
+/// surface can declare only the filters it actually has.
+fn page_bounds(page: Option<u32>, page_size: Option<u32>) -> Result<(u32, u32), &'static str> {
+    let page = page.unwrap_or(1);
+    let page_size = page_size.unwrap_or(PAGE_DEFAULT);
     if page == 0 || page > 10_000 || !(1..=PAGE_MAX).contains(&page_size) {
         Err("invalid_query")
     } else {
@@ -352,21 +358,67 @@ fn expected(headers: &HeaderMap) -> Result<i64, &'static str> {
         .filter(|v: &i64| *v > 0)
         .ok_or("invalid_if_match")
 }
+/// What an administration did, and therefore what its audit row records.
+///
+/// The outcome and the reason a row failed travel as one value because they are never independent:
+/// a mismatched pair would be representable as two free strings and meaningless in practice.
+#[derive(Clone, Copy)]
+pub(super) enum AuditOutcome {
+    Success,
+    RevisionConflict,
+}
+
+impl AuditOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::RevisionConflict => "conflict",
+        }
+    }
+
+    /// The only reason kind V1 records, and it belongs to exactly one outcome.
+    fn error_kind(self) -> Option<&'static str> {
+        match self {
+            Self::Success => None,
+            Self::RevisionConflict => Some("revision_conflict"),
+        }
+    }
+}
+
+/// One audit row: enough to account for an administration without recording any of it.
+///
+/// `resource_id` is `None` for an operation that stands behind no single resource row — a scoped
+/// History Purge names a scope rather than a resource and has no revision pair, so its `action` and
+/// `affected_rows` are the only thing that identifies it.  Nothing about the text a purge deleted
+/// does: a purge must leave a countable trace, not a second copy of what it removed.
 async fn audit<'e, E>(
     executor: E,
     request_id: &str,
     resource: &str,
-    resource_id: i64,
+    resource_id: Option<i64>,
     action: &str,
     prior: Option<i64>,
     new: Option<i64>,
-    outcome: &str,
-    error_kind: Option<&str>,
+    outcome: AuditOutcome,
+    affected_rows: u64,
 ) -> Result<(), sqlx::Error>
 where
     E: Executor<'e, Database = Sqlite>,
 {
-    sqlx::query("INSERT INTO admin_audit_events (created_at,request_id,resource_type,resource_id,action,prior_revision,new_revision,outcome,error_kind,affected_rows) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(now()).bind(request_id).bind(resource).bind(resource_id).bind(action).bind(prior).bind(new).bind(outcome).bind(error_kind).bind(1i64).execute(executor).await.map(|_|())
+    sqlx::query("INSERT INTO admin_audit_events (created_at,request_id,resource_type,resource_id,action,prior_revision,new_revision,outcome,error_kind,affected_rows) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .bind(now())
+        .bind(request_id)
+        .bind(resource)
+        .bind(resource_id)
+        .bind(action)
+        .bind(prior)
+        .bind(new)
+        .bind(outcome.as_str())
+        .bind(outcome.error_kind())
+        .bind(affected_rows as i64)
+        .execute(executor)
+        .await
+        .map(|_| ())
 }
 
 async fn audit_conflict(
@@ -380,12 +432,12 @@ async fn audit_conflict(
         pool,
         &request_id,
         resource,
-        resource_id,
+        Some(resource_id),
         "update",
         Some(expected),
         None,
-        "conflict",
-        Some("revision_conflict"),
+        AuditOutcome::RevisionConflict,
+        1,
     )
     .await;
 }

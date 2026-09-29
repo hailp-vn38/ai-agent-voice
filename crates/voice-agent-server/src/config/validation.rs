@@ -92,6 +92,11 @@ fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
             "database.devices.admission_enabled requires database.enabled".into(),
         ));
     }
+    if database.history.enabled && !database.enabled {
+        return Err(ConfigError::Validation(
+            "database.history.enabled requires database.enabled".into(),
+        ));
+    }
     if database.devices.auto_register
         && (!database.devices.admission_enabled
             || database.devices.auto_register_agent_key.trim().is_empty())
@@ -102,6 +107,19 @@ fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
     }
     if !database.enabled {
         return Ok(());
+    }
+    // Retention is a property of the archive rather than of capture, so its bounds hold whether
+    // capture is on or off.  `0` is refused alongside an out-of-range value: an unbounded
+    // retention is not a retention policy, and there is no "keep forever" in V1.
+    if !(1..=365).contains(&database.history.retention_days) {
+        return Err(ConfigError::Validation(
+            "database.history.retention_days must be 1..=365".into(),
+        ));
+    }
+    if database.history.queue_capacity == 0 || database.history.queue_capacity > 65_536 {
+        return Err(ConfigError::Validation(
+            "database.history.queue_capacity must be 1..=65536".into(),
+        ));
     }
     let has_memory_mode = url::Url::parse(&database.url).is_ok_and(|url| {
         url.query_pairs()
@@ -632,4 +650,101 @@ fn validate_deployment(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A configuration that parses, so a test can be about the database section and nothing else.
+    fn config(extra: &str) -> AppConfig {
+        toml::from_str(&format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+
+[provider_defaults]
+vad = "vad"
+asr = "asr"
+llm = "llm"
+tts = "tts"
+
+[database]
+enabled = true
+url = "sqlite://data/voice-agent.db"
+{extra}
+"#
+        ))
+        .expect("the minimal configuration parses")
+    }
+
+    #[test]
+    fn capture_and_retention_bounds_are_checked_before_a_listener_binds() {
+        assert!(validate_database(&config("")).is_ok());
+
+        assert!(
+            validate_database(&config(
+                r#"
+[database.history]
+enabled = true
+"#
+            ))
+            .is_ok(),
+            "the opt-in is accepted with the documented defaults"
+        );
+        assert!(
+            validate_database(&config(
+                r#"
+[database.history]
+retention_days = 0
+"#
+            ))
+            .is_err(),
+            "an archive with no retention window is not a retention policy"
+        );
+        assert!(
+            validate_database(&config(
+                r#"
+[database.history]
+retention_days = 366
+"#
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_database(&config(
+                r#"
+[database.history]
+queue_capacity = 0
+"#
+            ))
+            .is_err(),
+            "a zero-capacity hand-off could only ever drop every record"
+        );
+        let mut disabled = config("");
+        disabled.database.enabled = false;
+        disabled.database.history.enabled = true;
+        assert!(
+            validate_database(&disabled).is_err(),
+            "capture needs the archive it writes to"
+        );
+    }
+
+    #[test]
+    fn retention_is_bounded_whether_or_not_capture_is_on() {
+        let mut capture_off = config(
+            r#"
+[database.history]
+enabled = false
+retention_days = 0
+"#,
+        );
+        assert!(
+            validate_database(&capture_off).is_err(),
+            "turning capture off must not make retention unbounded either"
+        );
+        capture_off.database.history.retention_days = 30;
+        assert!(validate_database(&capture_off).is_ok());
+    }
 }

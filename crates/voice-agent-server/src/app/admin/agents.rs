@@ -83,12 +83,12 @@ pub(super) async fn create_agent(State(state): State<AppState>, request: Request
         &mut *tx,
         id(&request),
         "agent",
-        resource_id,
+        Some(resource_id),
         "create",
         None,
         Some(1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()
@@ -140,7 +140,7 @@ pub(super) async fn list_agents(
     Query(query): Query<PageQuery>,
     request: Request,
 ) -> Response {
-    let (page, page_size) = match page_bounds(&query) {
+    let (page, page_size) = match page_bounds(query.page, query.page_size) {
         Ok(value) => value,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
@@ -262,12 +262,12 @@ pub(super) async fn patch_agent(
         &mut *tx,
         id(&request),
         "agent",
-        old.id,
+        Some(old.id),
         "update",
         Some(expected),
         Some(expected + 1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()
@@ -350,12 +350,12 @@ async fn patch_agent_enabled(
             &mut *tx,
             id(request),
             "agent",
-            old.id,
+            Some(old.id),
             "update",
             Some(expected),
             Some(expected + 1),
-            "success",
-            None,
+            AuditOutcome::Success,
+            1,
         )
         .await
         .is_err()

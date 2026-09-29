@@ -93,6 +93,17 @@ impl SessionActor {
                         return;
                     }
                     if matches!(outcome, WriterTurnOutcome::Normal) {
+                        // The Delivered Assistant Response, archived at the only boundary where it
+                        // is final: the writer closed the turn normally.  This runs before the
+                        // boundary actions below, so a switch this turn armed is still the pending
+                        // one and the record keeps the Template the turn actually ran on.
+                        if delivery.archives_as_assistant {
+                            self.record_transcript(
+                                HistoryRole::Assistant,
+                                &delivery.assistant_text,
+                                turn_id,
+                            );
+                        }
                         self.dialogue_history
                             .commit_assistant(turn_id, delivery.assistant_text);
                     }

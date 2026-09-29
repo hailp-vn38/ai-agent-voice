@@ -74,6 +74,11 @@ pub(super) async fn handler(
                 .into_response();
         }
     };
+    // One session identity, used both as the Voice Session's own id and as the archive's session
+    // key: a transcript row groups by the same WebSocket connection, so a second database-side
+    // session identity would be a second thing to keep in step.
+    let session_id = Uuid::new_v4().to_string();
+    let transcript = state.transcript_capture(&session_id, &profile);
     let active_turn_limiter = state.active_turn_limiter;
     let writer_probe = state.writer_outcome_probe.clone();
     info!(
@@ -98,6 +103,8 @@ pub(super) async fn handler(
                     active_turn_limiter,
                     writer_probe,
                     profile,
+                    session_id,
+                    transcript,
                 },
                 shutdown,
             )
@@ -220,6 +227,13 @@ struct SocketRuntimes {
     /// Test-only; see [`WriterOutcomeProbe`](crate::session::WriterOutcomeProbe).
     writer_probe: Option<Arc<dyn crate::session::WriterOutcomeProbe>>,
     profile: crate::session::EffectiveSessionProfile,
+    /// This connection's own session identity, resolved before the upgrade so the archive and the
+    /// Voice Session cannot disagree about which connection a transcript belongs to.
+    session_id: String,
+    /// The optional Persistent Transcript binding, resolved with the profile above.  `None` means
+    /// capture is off or this session has no database identity, and the actor then archives
+    /// nothing at all.
+    transcript: Option<crate::database::history::TranscriptCapture>,
 }
 
 async fn handle_socket(
@@ -233,6 +247,7 @@ async fn handle_socket(
     // call, never a Database/pool or a live Device/Agent row.
     let admitted = runtimes.profile.into_admitted_profile();
     let writer_probe = runtimes.writer_probe;
+    let session_id = runtimes.session_id;
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
         _ = shutdown.cancelled() => return,
@@ -271,7 +286,7 @@ async fn handle_socket(
     // dropping SessionActor could make the writer exit before it sends Close(1001).
     let _writer_shutdown_tx = shutdown_tx.clone();
     let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
-        Uuid::new_v4().to_string(),
+        session_id,
         control_tx.clone(),
         urgent_tx.clone(),
         audio_tx,
@@ -318,6 +333,7 @@ async fn handle_socket(
         }
     };
     let mut actor = actor
+        .with_transcript(runtimes.transcript)
         .with_writer_outcome_probe_opt(writer_probe.clone())
         .with_client_capabilities(
             hello.features.aec,

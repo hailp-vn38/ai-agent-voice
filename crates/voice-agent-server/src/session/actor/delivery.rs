@@ -9,6 +9,9 @@ impl SessionActor {
         let text = text.to_owned();
         let turn_id = self.current_turn_id()?;
         self.dialogue_history.commit_user(turn_id, text.clone());
+        // The final accepted user text, archived after it was accepted for this turn.  An ASR
+        // partial never reaches this seam, so it can never reach the archive either.
+        self.record_transcript(HistoryRole::User, &text, turn_id);
         let payload = serde_json::json!({
             "session_id": self.session_id,
             "type": "stt",
@@ -72,6 +75,9 @@ impl SessionActor {
             "Starting direct MCP response speech without LLM continuation"
         );
         self.generated_response = text.clone();
+        // This is a tool's own result, so it is never the model's Delivered Assistant Response and
+        // never belongs in the Persistent Transcript.
+        self.generated_by_model = false;
         self.pending_llm_delta = Some((text, 0));
         self.llm_finish_pending = true;
         self.flush_pending_llm_text();
@@ -89,6 +95,9 @@ impl SessionActor {
         self.generated_response.clear();
         self.pending_llm_delta = None;
         self.llm_finish_pending = false;
+        // Whatever this round produces comes from the model, whatever the previous turn's last
+        // words were.
+        self.generated_by_model = true;
         let tools = if allow_tools {
             self.available_llm_tools()
         } else {
@@ -355,6 +364,7 @@ impl SessionActor {
                     self.pending_delivery = Some(PendingDelivery {
                         turn_id,
                         assistant_text: std::mem::take(&mut self.generated_response),
+                        archives_as_assistant: self.generated_by_model,
                     });
                     if self.writer_events.is_none() {
                         self.on_writer_event(WriterEvent::TurnClosed {

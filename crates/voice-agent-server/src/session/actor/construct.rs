@@ -202,6 +202,8 @@ impl SessionActor {
             pending_llm_delta: None,
             llm_finish_pending: false,
             generated_response: String::new(),
+            // Nothing has been generated yet, so no text can be the model's yet either.
+            generated_by_model: false,
             tts_runtime: std::sync::Arc::clone(&runtimes.tts),
             speech_output: SpeechOutput::with_worker(
                 std::sync::Arc::new(UnavailableTts),
@@ -236,8 +238,21 @@ impl SessionActor {
             // Likewise no External MCP tools: a session only ever calls what admission resolved.
             external_mcp: SessionExternalMcp::default(),
             speech_output_config: crate::config::SpeechOutputConfig::default(),
+            // Capture is opt-in, so an actor that is never bound archives nothing.
+            transcript: None,
             writer_probe: None,
         })
+    }
+
+    /// Binds this Voice Session to the optional Persistent Transcript.
+    ///
+    /// Admission decides this, because a session is bound only when capture is enabled and it has
+    /// the database identity its records are attributed to.  The actor keeps no database handle
+    /// either way: with a capture it holds the archive's one-way hand-off, and without one there
+    /// is nothing to call.
+    pub fn with_transcript(mut self, transcript: Option<TranscriptCapture>) -> Self {
+        self.transcript = transcript;
+        self
     }
 
     pub fn with_client_capabilities(

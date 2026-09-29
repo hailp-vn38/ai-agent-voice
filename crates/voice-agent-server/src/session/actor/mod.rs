@@ -1,6 +1,6 @@
 use crate::session::{
-    ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, SessionPhase, TemplateSwitchCatalog,
-    TurnId,
+    ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ProfileSource, SessionPhase,
+    TemplateSwitchCatalog, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -10,6 +10,7 @@ use crate::{
         CaptureOutcome, DecodeOutcome, ManualCapture, PcmF32Mono, UplinkOpusDecoder, VadBoundary,
         VadSegmenter, VadSegmenterConfig,
     },
+    database::history::{HistoryRole, TranscriptCapture},
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::{
         ProviderSet,
@@ -90,6 +91,12 @@ pub struct SessionActor {
     pending_llm_delta: Option<(String, usize)>,
     llm_finish_pending: bool,
     generated_response: String,
+    /// Whether `generated_response` holds the model's own text rather than a tool's result.
+    ///
+    /// A round that starts or continues an LLM operation clears it, so the only way it can be set
+    /// is the seam where a tool result is handed straight to speech.  It is what keeps a delivered
+    /// tool result out of the Persistent Transcript.
+    generated_by_model: bool,
     tts_runtime: std::sync::Arc<TtsWorkerRuntime>,
     speech_output: SpeechOutput,
     tts_started: bool,
@@ -134,6 +141,9 @@ pub struct SessionActor {
     /// Delivery settings are retained so a switch can rebuild SpeechOutput on the candidate's
     /// already-loaded TTS runtime without re-deriving pacing behavior.
     speech_output_config: crate::config::SpeechOutputConfig,
+    /// The optional Persistent Transcript this Voice Session was bound to at admission.  `None` is
+    /// the normal case: capture is opt-in, and it is a one-way hand-off that no turn can fail on.
+    transcript: Option<TranscriptCapture>,
     /// Installed only by a test harness; see [`WriterOutcomeProbe`].
     writer_probe: Option<std::sync::Arc<dyn WriterOutcomeProbe>>,
 }
@@ -167,6 +177,14 @@ struct TurnContext {
 struct PendingDelivery {
     turn_id: TurnId,
     assistant_text: String,
+    /// Whether this text is the model's own Delivered Assistant Response and therefore belongs in
+    /// the Persistent Transcript.
+    ///
+    /// A Device MCP tool answered directly, and the session-local built-in actions speak their own
+    /// text; both put a tool's result where the model's text goes.  Dialogue History still commits
+    /// it exactly as before — that is RAM conversational state and not the archive's business —
+    /// but a tool result is never archived.
+    archives_as_assistant: bool,
 }
 
 /// Session actions the Voice Session itself requested that may only take effect once the current
@@ -511,6 +529,31 @@ impl SessionActor {
 
     pub(super) fn current_turn_id(&self) -> Option<TurnId> {
         self.turn.as_ref().map(|turn| turn.turn_id)
+    }
+
+    /// The Template this Voice Session is running, or `None` while it is on server defaults.
+    ///
+    /// Read at the moment a record is produced, never afterwards: a switch that is armed but not
+    /// yet applied has not changed what the turn was run on, so the archive keeps the Template the
+    /// turn actually used.
+    fn active_template_id(&self) -> Option<i64> {
+        match &self.profile.source {
+            ProfileSource::Template { template_id, .. } => Some(*template_id),
+            ProfileSource::ServerDefault => None,
+        }
+    }
+
+    /// The one place a Voice Session produces a Persistent Transcript record.
+    ///
+    /// A session with no capture produces nothing at all, and producing nothing is the outcome when
+    /// capture is off rather than a special case: there is no record to enqueue and no writer to
+    /// call.  Both roles are archived exactly once, at the two seams where the text becomes final.
+    fn record_transcript(&mut self, role: HistoryRole, text: &str, turn_id: TurnId) {
+        let template_id = self.active_template_id();
+        let turn_id = turn_id.get().to_string();
+        if let Some(capture) = self.transcript.as_mut() {
+            capture.record(role, template_id, &turn_id, text);
+        }
     }
 
     /// Generation is a cancellation epoch, never an identity reused after overflow.

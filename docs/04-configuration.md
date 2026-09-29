@@ -192,6 +192,13 @@ max_pages_per_server = 32
 allow_http_lan = false
 allowed_hosts = []
 allowed_cidrs = []
+
+# Optional Persistent Transcript. Capture is opt-in; retention belongs to the archive rather than
+# to capture, so it keeps running and the Admin read/purge stay available when capture is off.
+[database.history]
+enabled = false
+retention_days = 30
+queue_capacity = 256
 ```
 
 ## 3. Environment override
@@ -230,6 +237,7 @@ VOICE_AGENT_LLM_API_KEY
   round mà một Conversational Turn được tiếp tục ngoài round đầu tiên của nó.
 - `[agent]` là optional. Field bị omit dùng built-in default; field đã khai báo nhưng rỗng/whitespace fail startup. Built-in template compile vào binary; custom `agent.prompt_template` được resolve một lần theo thư mục config và phải chứa exact `{{persona}}`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
+- `[database.history]` là policy của optional Persistent Transcript, validate trước khi bind listener: `database.history.enabled` yêu cầu `database.enabled`; `retention_days ∈ 1..=365`; `queue_capacity ∈ 1..=65_536`. `retention_days` được bound bất kể capture đang bật hay tắt, vì retention thuộc về archive chứ không thuộc về capture: tắt capture mới không được biến dữ liệu đã có thành retention vô hạn. `0` bị từ chối như giá trị vượt range, vì một retention không có cửa sổ không phải retention policy. Default lần lượt là `false`, `30`, `256`.
 - mỗi instance OpenAI phải có `base_url`, `model`, timeout hợp lệ; API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry. Nhiều instance có thể cùng adapter `openai` với endpoint/model khác nhau.
 - mỗi instance ZeroTTS phải có Logical Model Identity, `voice` và thread count hợp lệ; Model Preparation inject `ResolvedModel`, không direct path. Remote ChillAudio không có fake model identity. `[workers.tts]` là template capacity/timeout/cleanup cho từng runtime được load.
 - `gipformer_sherpa_offline` dùng `OfflineRecognizer`: `push_pcm()` chỉ tích luỹ PCM 16 kHz canonical, không phát partial; `finish()` mới decode toàn utterance. `model`, `num_threads`, `decoding_method` (`greedy_search` hoặc `modified_beam_search`) và `max_active_paths > 0` là các option duy nhất của instance. Precision và artifact paths thuộc Model Artifact Manifest, không thuộc TOML provider. Offline decode hiện không hard-cancel được sau khi native decode bắt đầu, nên giữ `workers.asr.final_timeout_ms` theo benchmark target CPU.

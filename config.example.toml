@@ -15,6 +15,17 @@ max_connections = 5
 busy_timeout_ms = 5000
 migrate_on_start = true
 
+# Persistent Transcript. Capture is off by default: with it off nothing is enqueued or written,
+# while the retention of an already-captured archive, the Admin API read and the scoped purge all
+# keep working. Retention is a property of the archive, not of capture, so turning capture off never
+# turns existing data into unbounded retention.
+[database.history]
+enabled = false
+retention_days = 30
+# Records the archival writer may hold before it drops one. A dropped record costs the archive that
+# row and nothing else: never a turn, a WebSocket close, or a change to Dialogue History.
+queue_capacity = 256
+
 # The Admin API mounts only when both this and database.enabled are true.
 [api]
 enabled = false

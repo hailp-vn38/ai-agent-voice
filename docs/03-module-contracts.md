@@ -168,6 +168,47 @@ session-local built-in action. Chi tiết quyết định ở `docs/adr/0060-seq
   body; chỉ bounded class đi vào log và metric label.
 
 
+### 6.2. Persistent Transcript contract
+
+Optional archive của final user text và Delivered Assistant Response. Quyết định ở
+`docs/adr/0048-opt-in-transcript-persistence-and-retention.md` và `docs/adr/0055-history-purge-is-explicit-and-scoped.md`.
+
+- **Opt-in, và là bản sao chứ không phải nguồn sự thật.** `database.history.enabled` mặc định `false`;
+  khi tắt không có `HistoryWrite` nào được tạo, enqueue hay ghi. Archive không bao giờ được đọc ngược
+  vào Conversational Turn: Dialogue History vẫn nằm trong RAM, nên một lần drop vĩnh viễn không đổi
+  conversational correctness.
+- **Chỉ hai text, đúng một lần mỗi loại.** `role=user` là final user text đã được accept cho turn
+  (`commit_user_text`); `role=assistant` là Delivered Assistant Response, chỉ sau
+  `WriterEvent::TurnClosed { outcome: Normal }`. ASR partial, LLM delta, system prompt, tool
+  argument, tool result và audio không có đường nào tới archive: một turn nói thẳng tool result đi
+  thẳng qua Device MCP `direct_tts` hay session-local built-in action vẫn commit Dialogue History
+  như trước, nhưng không được archive như assistant.
+- **Attribution quyết định tại chỗ text tồn tại.** Mỗi record mang identity từ Effective Session
+  Profile lúc admission (`device_id`, `agent_id`) và Template đang active tại thời điểm đó. Một
+  switch đã arm nhưng chưa apply vẫn ghi Template cũ, vì đó là Template turn đó thực sự chạy. Không
+  query DB sống và không dựng lại attribution sau này, nên admin mutation hay switch về sau không sửa
+  được một record đã lưu. `sequence` là counter monotonic của chính session, giữ
+  `UNIQUE(session_id, sequence)` mà không cần query giá trị kế tiếp.
+- **Best-effort, không bao giờ chặn.** `try_send` vào queue bounded rồi một writer task ghi SQLite.
+  Queue full, writer đã dừng, database lỗi hoặc text vượt `MAX_TRANSCRIPT_TEXT_BYTES` đều drop
+  đúng record đó với metric bounded (`history_written_total`, `history_dropped_total` với reason
+  `queue_full` / `writer_closed` / `database` / `text_out_of_bounds`) và một `debug!` cùng metric
+  name. Không await, không retry, không fail turn, không đóng WebSocket, không mutate Dialogue
+  History. Partial exchange được chấp nhận.
+- **Session không có database identity thì không archive.** `history_messages` FK tới `devices` và
+  `agents`; một session admit khi database-backed admission tắt không có identity nào để gán, nên
+  không được bind.
+- **Retention là maintenance, không phải realtime work.** Cutoff tuyệt đối UTC
+  `now_utc - retention_days` (Unix milliseconds), chạy một lần lúc startup rồi mỗi 24 giờ trên task
+  riêng, kể cả khi capture đang tắt. Run bị contended thì abort run đó và chờ lịch kế tiếp; không
+  retry loop.
+- **Read và purge qua Admin API đã xác thực, không phụ thuộc capture.** `GET /api/admin/history` lọc
+  bằng typed filter/sort và page có giới hạn; `POST /api/admin/history/purge` cần đúng một scope
+  Device, Voice Session hoặc `all`, và scope `all` cần `confirm: "PURGE_ALL_HISTORY"`. Purge là
+  transaction duy nhất cùng audit row của nó và không đụng Dialogue History hay profile của session
+  đang mở.
+
+
 ## 7. Error policy
 
 | Lỗi | Hành vi |
@@ -180,6 +221,7 @@ session-local built-in action. Chi tiết quyết định ở `docs/adr/0060-seq
 | MCP timeout khi session khỏe | normalized tool error về LLM; terminal khi session/cancellation failure |
 | Tool-round cap hoặc hết Tool Execution Budget | terminalize turn (`tool_call_limit_exceeded` / `tool_round_limit_exceeded` / `tool_execution_budget_exceeded`), giữ completed prefix, không continuation |
 | External ToolCall timeout/unavailable/auth/response | typed content-free ToolResult, sibling call trong round vẫn chạy, không retry, không close session |
+| Persistent Transcript record bị drop (queue full, writer closed, database, text ngoài bound) | drop record đó, `history_dropped_total{reason}`, turn đi tiếp bình thường |
 | WS disconnect | cancel toàn session |
 
 Không `unwrap()` trên dữ liệu đến từ network hoặc provider.

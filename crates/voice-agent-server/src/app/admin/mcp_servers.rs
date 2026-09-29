@@ -194,12 +194,12 @@ pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Re
         &mut *tx,
         id(&request),
         "mcp_server",
-        resource_id,
+        Some(resource_id),
         "create",
         None,
         Some(1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()
@@ -236,7 +236,7 @@ pub(super) async fn list_mcp_servers(
     Query(query): Query<PageQuery>,
     request: Request,
 ) -> Response {
-    let (page, size) = match page_bounds(&query) {
+    let (page, size) = match page_bounds(query.page, query.page_size) {
         Ok(v) => v,
         Err(c) => return error(&request, StatusCode::BAD_REQUEST, c),
     };
@@ -339,12 +339,12 @@ pub(super) async fn patch_mcp_server(
         &mut *tx,
         id(&request),
         "mcp_server",
-        old.id,
+        Some(old.id),
         "update",
         Some(expected),
         Some(expected + 1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()
@@ -433,12 +433,12 @@ pub(super) async fn put_agent_mcp_binding(
         &mut *tx,
         id(&request),
         "agent",
-        agent.id,
+        Some(agent.id),
         "upsert_mcp_binding",
         Some(expected),
         Some(expected + 1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()

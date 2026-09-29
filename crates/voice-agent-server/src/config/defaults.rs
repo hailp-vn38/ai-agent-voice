@@ -16,6 +16,12 @@ pub(super) fn default_database_busy_timeout_ms() -> u64 {
 pub(super) fn default_shutdown_grace_ms() -> u64 {
     15_000
 }
+pub(super) fn default_history_retention_days() -> u32 {
+    30
+}
+pub(super) fn default_history_queue_capacity() -> usize {
+    256
+}
 pub(super) fn default_input_rate() -> u32 {
     16_000
 }

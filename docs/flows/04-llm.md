@@ -83,6 +83,14 @@ Nếu turn cancel giữa chừng:
 - không ghi chunk dở như một assistant response hoàn chỉnh;
 - optional: có thể lưu telemetry riêng.
 
+`dialogue history` ở đây là RAM state của `SessionActor` và là nguồn sự thật của prompt. Optional
+Persistent Transcript là một bản archive riêng, không bao giờ đọc ngược vào prompt: tại
+`WriterEvent::TurnClosed { outcome: Normal }` — cùng boundary mà commit dialogue history — turn đó
+đẩy *một* record `role=assistant` vào handoff best-effort. Một turn nói thẳng tool result qua Device
+MCP `direct_tts` hoặc session-local built-in action vẫn commit dialogue history như trước, nhưng không
+có record assistant nào, vì đó không phải Generated Assistant Response của model. Xem
+`docs/03-module-contracts.md` §6.2.
+
 ## 6. Provider abstraction
 
 V1 dùng OpenAI qua typed API của crate `llm` 1.3.8, pin exact với default features tắt và chỉ `openai`/`rustls-tls`. Adapter phải bridge stream thành event chuẩn:

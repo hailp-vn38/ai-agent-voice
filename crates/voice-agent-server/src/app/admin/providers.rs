@@ -136,12 +136,12 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
         &mut *tx,
         id(&request),
         "provider",
-        provider_id,
+        Some(provider_id),
         "create",
         None,
         Some(1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()
@@ -189,7 +189,7 @@ pub(super) async fn list_providers(
     Query(query): Query<PageQuery>,
     request: Request,
 ) -> Response {
-    let (page, size) = match page_bounds(&query) {
+    let (page, size) = match page_bounds(query.page, query.page_size) {
         Ok(v) => v,
         Err(c) => return error(&request, StatusCode::BAD_REQUEST, c),
     };
@@ -291,12 +291,12 @@ pub(super) async fn patch_provider(
         &mut *tx,
         id(&request),
         "provider",
-        provider_id,
+        Some(provider_id),
         "update",
         Some(expected),
         Some(expected + 1),
-        "success",
-        None,
+        AuditOutcome::Success,
+        1,
     )
     .await
     .is_err()
