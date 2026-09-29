@@ -811,6 +811,7 @@ mod tests {
             reqwest::Client::new(),
             network,
             &crate::config::ExternalMcpLimitsConfig::default(),
+            Arc::new(crate::telemetry::TracingTelemetry),
             &Fixed,
         )
         .expect("an allowlisted destination produces a client");

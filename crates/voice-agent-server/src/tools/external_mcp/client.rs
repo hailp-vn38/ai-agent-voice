@@ -6,7 +6,10 @@
 //! hot path.  Rotating it is therefore invisible to an open session and visible only to the next
 //! admission.
 
-use std::time::Duration;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::Value;
@@ -18,6 +21,7 @@ use crate::{
         external_mcp_policy,
         secrets::{SecretRef, SecretResolveError, SecretResolver},
     },
+    telemetry::{CallOutcome, Telemetry},
 };
 
 use super::transport::{
@@ -115,11 +119,28 @@ pub struct ExternalMcpClient {
     page_cap: usize,
     result_cap: usize,
     result_wire_cap: usize,
+    /// Process-owned, so every call this session makes reports into the same counters.
+    telemetry: Arc<dyn Telemetry>,
     session_id: Option<HeaderValue>,
 }
 
 /// The handle never renders a credential, a header value or the destination: a debug rendering of
 /// a session's MCP snapshot has to be safe to log.
+impl From<Option<ExternalMcpError>> for CallOutcome {
+    /// The bounded class one call's outcome is reported as.  It is a total mapping, so a class can
+    /// never be missing for an error this client can produce.
+    fn from(outcome: Option<ExternalMcpError>) -> Self {
+        match outcome {
+            None => Self::Success,
+            Some(ExternalMcpError::ToolTimeout) => Self::Timeout,
+            Some(ExternalMcpError::ToolUnavailable) => Self::Unavailable,
+            Some(ExternalMcpError::ToolAuthFailed) => Self::AuthFailed,
+            Some(ExternalMcpError::ToolInvalidResponse) => Self::InvalidResponse,
+            Some(_) => Self::ProtocolError,
+        }
+    }
+}
+
 impl std::fmt::Debug for ExternalMcpClient {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -153,6 +174,7 @@ impl ExternalMcpClient {
         http: reqwest::Client,
         network: ExternalMcpNetworkConfig,
         limits: &ExternalMcpLimitsConfig,
+        telemetry: Arc<dyn Telemetry>,
         secrets: &dyn SecretResolver,
     ) -> Result<Self, ConnectFailure> {
         let usable = || ConnectFailure::Unusable;
@@ -180,6 +202,7 @@ impl ExternalMcpClient {
             page_cap,
             result_cap: tool_result_byte_cap(limits),
             result_wire_cap: tool_result_wire_cap(limits),
+            telemetry,
             session_id: None,
         })
     }
@@ -293,12 +316,17 @@ impl ExternalMcpClient {
         arguments: &Value,
         budget: Duration,
     ) -> Result<ExternalToolOutcome, ExternalMcpError> {
-        // The permit is taken before the request exists.
-        let _permit = limiter
-            .acquire_within(&self.server_key, budget)
-            .await
-            .ok_or(ExternalMcpError::ToolUnavailable)?;
-        let exchange = self
+        // The permit is taken before the request exists.  A caller that runs out of budget waiting
+        // sends nothing, which is its own observation and not a call.
+        let _permit = match limiter.acquire_within(&self.server_key, budget).await {
+            Some(permit) => permit,
+            None => {
+                self.telemetry.call_limiter_rejected(&self.server_key);
+                return Err(ExternalMcpError::ToolUnavailable);
+            }
+        };
+        let started = Instant::now();
+        let outcome = self
             .exchange(
                 &rpc(
                     3,
@@ -312,14 +340,20 @@ impl ExternalMcpClient {
                 self.result_wire_cap,
                 PhaseFailure::TOOL_CALL,
             )
-            .await?;
-        match exchange.outcome {
-            HttpOutcome::Result(result) => canonical_tool_result(&result, self.result_cap),
-            HttpOutcome::Unauthenticated => Err(ExternalMcpError::ToolAuthFailed),
-            HttpOutcome::RemoteError => Err(ExternalMcpError::ToolProtocolError),
-            HttpOutcome::Unavailable => Err(ExternalMcpError::ToolUnavailable),
-            HttpOutcome::Malformed => Err(ExternalMcpError::ToolInvalidResponse),
-        }
+            .await
+            .and_then(|exchange| match exchange.outcome {
+                HttpOutcome::Result(result) => canonical_tool_result(&result, self.result_cap),
+                HttpOutcome::Unauthenticated => Err(ExternalMcpError::ToolAuthFailed),
+                HttpOutcome::RemoteError => Err(ExternalMcpError::ToolProtocolError),
+                HttpOutcome::Unavailable => Err(ExternalMcpError::ToolUnavailable),
+                HttpOutcome::Malformed => Err(ExternalMcpError::ToolInvalidResponse),
+            });
+        self.telemetry.call_finished(
+            &self.server_key,
+            CallOutcome::from(outcome.as_ref().err().copied()),
+            started.elapsed(),
+        );
+        outcome
     }
 
     /// Every outbound exchange goes through here, so destination policy, header assembly and the

@@ -42,16 +42,48 @@ circuit breaker.
 
 Three findings worth recording:
 
-- The LAN exception now also accepts loopback, so a homelab MCP server on the same host is
-  reachable. This is a deliberate reading of ADR-0056's "explicit LAN enable" as a question of
-  *who* may be reached rather than *where*: the operator still has to name `127.0.0.0/8` or the
-  host in the allowlist, so the predicate widens where an operator may point HTTP without widening
-  who may. It also removes the need for a test-only policy bypass.
 - A `tools/call` response is read under the operator's result cap plus a bounded envelope allowance;
   the canonical result is then checked against the cap on its own. Using the result cap directly as
   the HTTP body cap refused legal results by their own JSON-RPC framing.
 - A configuration whose derived page budget cannot be buffered is rejected at config load rather
   than surprising an operator at admission time.
+
+## Loopback, formalized
+
+Loopback is inside the LAN scope `allow_http_lan` opens, because a homelab MCP server usually runs
+on the same host. It grants nothing on its own, and ADR-0056 now says so in terms: an HTTP loopback
+destination is valid only when the exception is on **and** the operator named that destination —
+an IP literal in `allowed_cidrs`, a hostname in `allowed_hosts` — and the same destination still
+passes the post-DNS check. An empty allowlist refuses loopback too, and there is no test-only
+bypass.
+
+Making that true for IPv6 required a fix: `Url::host_str` renders an IPv6 literal bracketed, so
+`[::1]` matched no CIDR an operator had written and silently took a weaker path. Host matching now
+uses the typed `url::Host::{Domain, Ipv4, Ipv6}`.
+
+## Bounded telemetry
+
+`src/telemetry.rs` is the process-owned seam. A caller names a metric from a fixed set and a label
+from a bounded class, and the only free-form value it can pass is a `server_key` — which the Admin
+API already bounds to 64 bytes of `[a-z0-9_]`. A destination, a header value, a credential, a
+protocol session id, a tool argument and a tool result are not parameters of the seam at all.
+
+Reported: `mcp_resolve_success_total`, `mcp_resolve_failure_total{reason}`,
+`mcp_resolve_duration_ms`, `external_mcp_tool_calls_total{server_key,outcome}`,
+`external_mcp_tool_call_duration_ms{server_key,outcome}` and
+`external_mcp_call_limiter_rejected_total`. `ExternalMcpManager::new` wires the default
+`TracingTelemetry` sink, which renders each observation as a structured event carrying the metric
+name and the bounded classes — enough to alert on and for a collector to scrape, without this
+service choosing a metrics backend the deployment has not asked for. `new_with_telemetry` takes any
+sink, and `RecordingTelemetry` lets a test assert the label contract rather than take it on trust.
+
+Two decisions the guide left open:
+
+- `mcp_resolve_duration_ms` carries the same `server_key` and `outcome` as the counter it sits
+  beside. A duration with no label cannot be attributed to a server at all.
+- The aggregate cap `external_mcp_session_tool_cap_exceeded` is a fact about the whole snapshot, so
+  it is not counted as a server resolve failure. A server that resolved and published still counts
+  as resolved; counting it twice with a duration it never had would be worse than not counting it.
 
 ## Review follow-up
 
@@ -86,10 +118,17 @@ Judgement calls the review raised that were deliberately kept, and why:
 - A database read that fails while resolving the optional MCP bindings stays fail-soft. ADR-0053
   scopes fail-soft to optional External MCP, and refusing a Voice Session over a binding read would
   contradict the ticket's own headline. Readiness degradation is ticket 12.
-- There are no counters, only `tracing` events. The repository has no metrics registry, and adding
-  one is a change this ticket did not ask for; the bounded reason classes are on the wire, on the
-  snapshot, and in the events, so a metrics backend can read them when one exists.
+- (Superseded: the seam below was added rather than deferred. The reason classes that were on the
+  wire and in the events are now counters too.)
 
 Validation: `cargo fmt --check`, `cargo clippy -p voice-agent-server --all-targets` back at the
-pre-change warning count (12 lib / 13 lib test), and `cargo test --workspace` fully green,
-including the three `speechoutput_tracer` timing tests that earlier tickets noted as flaky.
+pre-change warning count (12 lib / 13 lib test), and `cargo test --workspace` fully green across 47
+test binaries, including the three `speechoutput_tracer` timing tests that earlier tickets noted as
+flaky.
+
+The telemetry test resolves a real snapshot against a real MCP server carrying a bearer credential
+and a static header, then reads back every recorded label. It asserts the label set is closed
+(`server_key`, `reason`, `outcome` and nothing else), that a `server_key` is the Admin API's bounded
+resource key, and that the recording contains none of the secret value, the secret reference, the
+static header value, the wire tool name, the URL, the loopback address, or the argument the model
+sent.

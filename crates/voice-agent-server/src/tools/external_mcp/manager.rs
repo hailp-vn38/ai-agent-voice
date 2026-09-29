@@ -21,6 +21,7 @@ use crate::{
         AdmittedMcpServer,
         secrets::{SecretRef, SecretResolver},
     },
+    telemetry::{Telemetry, TracingTelemetry},
 };
 
 use super::{
@@ -69,28 +70,61 @@ impl std::fmt::Debug for ResolvedExternalMcp {
 
 /// Why one bound server contributed no tools.  Bounded classes only, so a diagnostic can name a
 /// server without saying anything about its destination, credentials or catalog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+///
+/// One class name serves the log line, the exclusion and the metric label, so a counter and the
+/// diagnostic beside it can never disagree about why a server published nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExternalMcpExclusionReason {
-    #[error("mcp_server_unavailable")]
     ServerUnavailable,
-    #[error("mcp_initialize_failed")]
     InitializeFailed,
-    #[error("mcp_tools_list_timeout")]
     ToolsListTimeout,
-    #[error("mcp_tools_list_invalid")]
     ToolsListInvalid,
-    #[error("mcp_tool_name_collision")]
     ToolNameCollision,
-    #[error("mcp_server_catalog_rejected")]
     CatalogRejected,
-    #[error("mcp_server_key_collision")]
     ServerKeyCollision,
     /// A bounded secret resolution class — never the reference and never the value.
-    #[error("external_mcp_secret_resolution_failed:{0}")]
     SecretResolutionFailed(&'static str),
-    #[error("external_mcp_session_tool_cap_exceeded")]
     SessionToolCapExceeded,
 }
+
+impl ExternalMcpExclusionReason {
+    /// The bounded class this refusal is reported as.  It is the only spelling a metric label or a
+    /// log line may use for it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ServerUnavailable => "mcp_server_unavailable",
+            Self::InitializeFailed => "mcp_initialize_failed",
+            Self::ToolsListTimeout => "mcp_tools_list_timeout",
+            Self::ToolsListInvalid => "mcp_tools_list_invalid",
+            Self::ToolNameCollision => "mcp_tool_name_collision",
+            Self::CatalogRejected => "mcp_server_catalog_rejected",
+            Self::ServerKeyCollision => "mcp_server_key_collision",
+            Self::SecretResolutionFailed(reason) => {
+                // The inner reason is itself a bounded class from the secret boundary.
+                match reason {
+                    "secret_missing" | "secret_invalid" | "secret_resolver_unavailable" => reason,
+                    _ => "secret_resolver_unavailable",
+                }
+            }
+            Self::SessionToolCapExceeded => "external_mcp_session_tool_cap_exceeded",
+        }
+    }
+}
+
+impl std::fmt::Display for ExternalMcpExclusionReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SecretResolutionFailed(_) => write!(
+                formatter,
+                "external_mcp_secret_resolution_failed:{}",
+                self.as_str()
+            ),
+            class => formatter.write_str(class.as_str()),
+        }
+    }
+}
+
+impl std::error::Error for ExternalMcpExclusionReason {}
 
 impl From<ExternalMcpError> for ExternalMcpExclusionReason {
     fn from(error: ExternalMcpError) -> Self {
@@ -214,6 +248,8 @@ impl SessionExternalMcp {
 pub struct ExternalMcpManager {
     http: reqwest::Client,
     limiter: Arc<ExternalMcpCallLimiter>,
+    /// Process-owned, so every session and every server reports into the same counters.
+    telemetry: Arc<dyn Telemetry>,
     per_server_timeout: Duration,
     overall_budget: Duration,
     limits: ExternalMcpLimitsConfig,
@@ -225,6 +261,7 @@ impl std::fmt::Debug for ExternalMcpManager {
         formatter
             .debug_struct("ExternalMcpManager")
             .field("limiter", &self.limiter)
+            .field("telemetry", &std::any::type_name::<Self>())
             .field("per_server_timeout", &self.per_server_timeout)
             .field("overall_budget", &self.overall_budget)
             .field("limits", &self.limits)
@@ -233,9 +270,20 @@ impl std::fmt::Debug for ExternalMcpManager {
 }
 
 impl ExternalMcpManager {
-    /// Builds the shared transport.  Redirects are disabled and TLS keeps its normal certificate
-    /// chain and hostname checks: there is no insecure mode for a database record to ask for.
+    /// Builds the shared transport and the process-global call limiter.
+    ///
+    /// Redirects are disabled and TLS keeps its normal certificate chain and hostname checks: there
+    /// is no insecure mode for a database record to ask for.
     pub fn new(config: &ExternalMcpConfig) -> Result<Self, reqwest::Error> {
+        Self::new_with_telemetry(config, Arc::new(TracingTelemetry))
+    }
+
+    /// The same manager reporting into a caller-owned sink, so a deployment's metrics backend and a
+    /// test's recorder are the same seam with a different sink.
+    pub fn new_with_telemetry(
+        config: &ExternalMcpConfig,
+        telemetry: Arc<dyn Telemetry>,
+    ) -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("voice-agent-server/", env!("CARGO_PKG_VERSION")))
@@ -245,6 +293,7 @@ impl ExternalMcpManager {
             limiter: Arc::new(ExternalMcpCallLimiter::new(
                 config.max_concurrent_calls_per_server,
             )),
+            telemetry,
             per_server_timeout: Duration::from_millis(config.per_server_resolution_timeout_ms),
             overall_budget: Duration::from_millis(config.overall_resolution_budget_ms),
             limits: config.limits.clone(),
@@ -287,9 +336,11 @@ impl ExternalMcpManager {
             Ok(resolutions) => resolutions,
             // The whole snapshot ran out of budget: every server loses its tools together rather
             // than leaving whichever finished first published as if the set were complete.
-            Err(_) => (0..servers.len())
-                .map(|_| {
-                    Err(Excluded::reason(
+            Err(_) => servers
+                .iter()
+                .map(|server| {
+                    Err(Excluded::for_server(
+                        &server.key,
                         ExternalMcpExclusionReason::ToolsListTimeout,
                     ))
                 })
@@ -298,17 +349,24 @@ impl ExternalMcpManager {
 
         let mut published: Vec<ResolvedExternalMcp> = Vec::new();
         let mut exclusions: Vec<ExternalMcpExclusion> = Vec::new();
-        for (server, resolution) in servers.iter().zip(resolutions) {
+        for resolution in resolutions {
             match resolution {
-                Ok(resolved) => published.push(resolved),
-                Err(Excluded { server_key, reason }) => exclusions.push(ExternalMcpExclusion {
-                    server_key: if server_key.is_empty() {
-                        server.key.clone()
-                    } else {
-                        server_key
-                    },
-                    reason,
-                }),
+                Ok(Resolved { server, elapsed }) => {
+                    self.telemetry
+                        .resolve_succeeded(&server.server_key, elapsed);
+                    published.push(server);
+                }
+                Err(excluded) => {
+                    self.telemetry.resolve_failed(
+                        &excluded.server_key,
+                        excluded.reason.as_str(),
+                        excluded.elapsed,
+                    );
+                    exclusions.push(ExternalMcpExclusion {
+                        server_key: excluded.server_key,
+                        reason: excluded.reason,
+                    });
+                }
             }
         }
 
@@ -320,6 +378,9 @@ impl ExternalMcpManager {
             .iter()
             .map(|server| server.tools.len())
             .sum::<usize>();
+        // The aggregate cap is a fact about the whole snapshot, not about any one server's
+        // resolution, so it is not counted as a server outcome: a server that resolved and published
+        // is still counted as having resolved.
         if total > self.limits.max_tools_per_session {
             exclusions.extend(published.iter().map(|server| ExternalMcpExclusion {
                 server_key: server.server_key.clone(),
@@ -331,7 +392,7 @@ impl ExternalMcpManager {
             tracing::warn!(
                 event = "external_mcp_server_excluded",
                 server_key = %exclusion.server_key,
-                reason = %exclusion.reason,
+                reason = exclusion.reason.as_str(),
                 "An External MCP server contributed no tools to this admission"
             );
         }
@@ -355,10 +416,31 @@ impl ExternalMcpManager {
         server: &AdmittedMcpServer,
         secrets: &dyn SecretResolver,
         colliding: &BTreeSet<String>,
+    ) -> Result<Resolved, Excluded> {
+        let started = std::time::Instant::now();
+        match self.resolve_one_inner(server, secrets, colliding).await {
+            Ok(server) => Ok(Resolved {
+                server,
+                elapsed: started.elapsed(),
+            }),
+            Err(excluded) => Err(Excluded {
+                server_key: excluded.server_key,
+                reason: excluded.reason,
+                elapsed: started.elapsed(),
+            }),
+        }
+    }
+
+    async fn resolve_one_inner(
+        &self,
+        server: &AdmittedMcpServer,
+        secrets: &dyn SecretResolver,
+        colliding: &BTreeSet<String>,
     ) -> Result<ResolvedExternalMcp, Excluded> {
         let server_key = server.key.clone();
         if colliding.contains(&server_key) {
-            return Err(Excluded::reason(
+            return Err(Excluded::for_server(
+                &server_key,
                 ExternalMcpExclusionReason::ServerKeyCollision,
             ));
         }
@@ -369,7 +451,8 @@ impl ExternalMcpManager {
                 // at something that cannot be read, and the reference itself never becomes a
                 // diagnostic.
                 Err(_) => {
-                    return Err(Excluded::reason(
+                    return Err(Excluded::for_server(
+                        &server_key,
                         ExternalMcpExclusionReason::SecretResolutionFailed("secret_invalid"),
                     ));
                 }
@@ -388,16 +471,19 @@ impl ExternalMcpManager {
             self.http.clone(),
             self.network.clone(),
             &self.limits,
+            Arc::clone(&self.telemetry),
             secrets,
         ) {
             Ok(client) => client,
             Err(ConnectFailure::Secret(reason)) => {
-                return Err(Excluded::reason(
+                return Err(Excluded::for_server(
+                    &server_key,
                     ExternalMcpExclusionReason::SecretResolutionFailed(reason),
                 ));
             }
             Err(ConnectFailure::Unusable) => {
-                return Err(Excluded::reason(
+                return Err(Excluded::for_server(
+                    &server_key,
                     ExternalMcpExclusionReason::ServerUnavailable,
                 ));
             }
@@ -413,17 +499,19 @@ impl ExternalMcpManager {
         };
         let catalog = match tokio::time::timeout(self.per_server_timeout, walk).await {
             Ok(Ok(catalog)) => catalog,
-            Ok(Err(reason)) => return Err(Excluded::reason(reason)),
+            Ok(Err(reason)) => return Err(Excluded::for_server(&server_key, reason)),
             // The server did not finish its walk in its own budget.  Nothing discovered so far is
             // published: a partial catalog is exactly the stale-looking snapshot this avoids.
             Err(_) => {
-                return Err(Excluded::reason(
+                return Err(Excluded::for_server(
+                    &server_key,
                     ExternalMcpExclusionReason::ToolsListTimeout,
                 ));
             }
         };
         if catalog.tools.is_empty() {
-            return Err(Excluded::reason(
+            return Err(Excluded::for_server(
+                &server_key,
                 ExternalMcpExclusionReason::CatalogRejected,
             ));
         }
@@ -501,18 +589,25 @@ impl ExternalMcpManager {
     }
 }
 
+/// A server that published tools, with how long producing them took.
+struct Resolved {
+    server: ResolvedExternalMcp,
+    elapsed: Duration,
+}
+
 /// The outcome of one server's resolution: the tools to publish, or the bounded reason not to.
 struct Excluded {
     server_key: String,
     reason: ExternalMcpExclusionReason,
+    elapsed: Duration,
 }
 
 impl Excluded {
-    /// An exclusion attributed to the server being resolved, with no key of its own.
-    fn reason(reason: ExternalMcpExclusionReason) -> Self {
+    fn for_server(server_key: &str, reason: ExternalMcpExclusionReason) -> Self {
         Self {
-            server_key: String::new(),
+            server_key: server_key.to_owned(),
             reason,
+            elapsed: Duration::ZERO,
         }
     }
 }

@@ -45,9 +45,14 @@ use voice_agent_server::{
         llm::LlmRequest,
     },
     session::EffectiveSessionProfile,
+    telemetry::{
+        EXTERNAL_MCP_CALL_LIMITER_REJECTED_TOTAL, EXTERNAL_MCP_TOOL_CALL_DURATION_MS,
+        EXTERNAL_MCP_TOOL_CALLS_TOTAL, MCP_RESOLVE_DURATION_MS, MCP_RESOLVE_FAILURE_TOTAL,
+        MCP_RESOLVE_SUCCESS_TOTAL, RecordingTelemetry,
+    },
     tools::external_mcp::{
-        ExternalMcpExclusionReason, ExternalMcpManager, ResolvedExternalMcp, ResolvedExternalTool,
-        SessionExternalMcp,
+        ExternalMcpExclusionReason, ExternalMcpManager, ExternalMcpSnapshot, ResolvedExternalMcp,
+        ResolvedExternalTool, SessionExternalMcp,
     },
 };
 
@@ -1294,4 +1299,202 @@ async fn external_mcp_diagnostics_stay_bounded_classes() {
     );
     let manager = ExternalMcpManager::new(&external_mcp_config()).expect("the transport builds");
     assert_eq!(manager.limiter().capacity(), 16);
+}
+
+/// The telemetry seam reports the guide's metrics, and the only free-form value it can carry is a
+/// server key the Admin API already bounds.  A credential, a destination, a protocol session id, a
+/// tool name, a tool argument and a tool result have no way in.
+#[tokio::test]
+async fn external_mcp_telemetry_carries_bounded_labels_and_no_content() {
+    let recorder = Arc::new(RecordingTelemetry::default());
+    let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light/Turn-On")])).await;
+    let mut app_config = config(database_url());
+    app_config.mcp.external.max_concurrent_calls_per_server = 1;
+    app_config.mcp.external.limits = ExternalMcpLimitsConfig {
+        max_external_tool_result_bytes: 64,
+        ..ExternalMcpLimitsConfig::default()
+    };
+    let voice = start_with_config(app_config, ConstantSecrets(Some("s3cr3t-bearer".into()))).await;
+    let manager = Arc::new(
+        ExternalMcpManager::new_with_telemetry(&voice.state.config.mcp.external, recorder.clone())
+            .expect("the transport builds"),
+    );
+    let pool = voice.database().await;
+    seed(&pool).await;
+    bind_server(
+        &pool,
+        "kitchen",
+        &server.url(),
+        r#"{"X-Tenant": "tenant-a"}"#,
+        ("bearer", None, Some("WEATHER_TOKEN")),
+    )
+    .await;
+    // A second server that cannot answer, so a failure class is recorded beside a success.
+    bind_server(
+        &pool,
+        "dead",
+        "http://127.0.0.1:1/mcp",
+        "{}",
+        ("none", None, None),
+    )
+    .await;
+
+    let snapshot = manager
+        .resolve_snapshot(
+            &Database::connect(&voice.state.config.database)
+                .await
+                .expect("the control plane is reachable")
+                .agent_mcp_servers(1)
+                .await
+                .expect("the bindings are readable"),
+            &ConstantSecrets(Some("s3cr3t-bearer".into())),
+        )
+        .await;
+    assert_eq!(snapshot.servers.len(), 1);
+
+    let limiter = Arc::clone(manager.limiter());
+    let (handle, tool) = route(
+        &snapshot_catalog(snapshot),
+        "external.kitchen.light_turn_on",
+    );
+    assert!(
+        handle
+            .client
+            .call_tool(
+                &limiter,
+                &tool,
+                &serde_json::json!({"room": "bedroom"}),
+                Duration::from_secs(5)
+            )
+            .await
+            .is_ok()
+    );
+    // A refused call: the server's concurrency is exhausted, so no request is sent at all.
+    let _held = limiter
+        .try_acquire("kitchen")
+        .expect("the bound has a permit");
+    assert!(
+        handle
+            .client
+            .call_tool(
+                &limiter,
+                &tool,
+                &serde_json::json!({"room": "bedroom"}),
+                Duration::from_millis(50)
+            )
+            .await
+            .is_err()
+    );
+    drop(_held);
+
+    // A failing call, so every outcome class the seam can report is exercised.
+    server.rewrite(|script| script.call_status = Some(401));
+    assert!(
+        handle
+            .client
+            .call_tool(
+                &limiter,
+                &tool,
+                &serde_json::json!({"room": "bedroom"}),
+                Duration::from_secs(5)
+            )
+            .await
+            .is_err()
+    );
+
+    let recorded = recorder.recorded();
+    let metrics: Vec<&str> = recorded.iter().map(|event| event.metric).collect();
+    for expected in [
+        MCP_RESOLVE_SUCCESS_TOTAL,
+        MCP_RESOLVE_FAILURE_TOTAL,
+        MCP_RESOLVE_DURATION_MS,
+        EXTERNAL_MCP_TOOL_CALLS_TOTAL,
+        EXTERNAL_MCP_TOOL_CALL_DURATION_MS,
+        EXTERNAL_MCP_CALL_LIMITER_REJECTED_TOTAL,
+    ] {
+        assert!(
+            metrics.contains(&expected),
+            "{expected} must be reported: {metrics:?}"
+        );
+    }
+
+    // The label set is closed: a server key and a bounded class, nothing else.
+    for event in &recorded {
+        for (name, value) in &event.labels {
+            match *name {
+                "server_key" => assert!(
+                    value.len() <= 64
+                        && value.bytes().all(|byte| byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || byte == b'_'),
+                    "a server key label is the Admin API's bounded resource key: {value}"
+                ),
+                "reason" => assert!(
+                    matches!(
+                        value.as_str(),
+                        "mcp_server_unavailable"
+                            | "mcp_initialize_failed"
+                            | "mcp_tools_list_timeout"
+                            | "mcp_tools_list_invalid"
+                            | "mcp_tool_name_collision"
+                            | "mcp_server_catalog_rejected"
+                            | "mcp_server_key_collision"
+                            | "secret_missing"
+                            | "secret_invalid"
+                            | "secret_resolver_unavailable"
+                            | "external_mcp_session_tool_cap_exceeded"
+                    ),
+                    "a reason label is a bounded class: {value}"
+                ),
+                "outcome" => assert!(
+                    matches!(
+                        value.as_str(),
+                        "success"
+                            | "timeout"
+                            | "unavailable"
+                            | "auth_failed"
+                            | "invalid_response"
+                            | "protocol_error"
+                    ),
+                    "an outcome label is a bounded class: {value}"
+                ),
+                other => panic!("{other} is not a label this seam may carry"),
+            }
+        }
+    }
+
+    // And nothing that had better not be observable made it into a recorded label.
+    let rendered: Vec<&str> = recorded
+        .iter()
+        .flat_map(|event| {
+            event
+                .labels
+                .iter()
+                .map(|(_, value)| value.as_str())
+                .chain(std::iter::once(event.metric))
+        })
+        .collect();
+    let url = server.url();
+    for forbidden in [
+        "s3cr3t-bearer".to_owned(),
+        "WEATHER_TOKEN".to_owned(),
+        "tenant-a".to_owned(),      // the static header value
+        "Light/Turn-On".to_owned(), // the wire tool name
+        url.clone(),
+        "127.0.0.1".to_owned(),
+    ] {
+        assert!(
+            rendered.iter().all(|value| *value != forbidden),
+            "{forbidden} must never become a telemetry label: {rendered:?}"
+        );
+    }
+    // The argument the model sent is likewise not observable.
+    assert!(!rendered.iter().any(|value| value.contains("bedroom")));
+
+    voice.task.abort();
+    server.task.abort();
+}
+
+fn snapshot_catalog(snapshot: ExternalMcpSnapshot) -> SessionExternalMcp {
+    SessionExternalMcp::new(snapshot.servers)
 }
