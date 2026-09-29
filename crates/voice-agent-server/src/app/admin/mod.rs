@@ -1,0 +1,391 @@
+//! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
+//! Agent and Device desired configuration in this rollout.
+use super::AppState;
+use crate::database::secrets::SecretRef;
+use crate::database::{external_mcp_policy, provider_config};
+use axum::{
+    Json, Router,
+    body::{Body, to_bytes},
+    extract::{Path, Query, Request, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware::Next,
+    response::{IntoResponse, Response},
+    routing::{get, put},
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
+use sqlx::{Executor, FromRow, Sqlite, SqlitePool};
+use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
+
+const MAX_BODY: usize = 256 * 1024;
+const PAGE_DEFAULT: u32 = 50;
+const PAGE_MAX: u32 = 200;
+
+pub(super) fn router(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/agents", get(list_agents).post(create_agent))
+        .route("/agents/{key}", get(get_agent).patch(patch_agent))
+        .route(
+            "/agents/{key}/default-template/{template_key}",
+            put(set_default_template),
+        )
+        .route(
+            "/agents/{key}/templates/{template_key}",
+            put(assign_template),
+        )
+        .route("/templates", get(list_templates).post(create_template))
+        .route("/templates/{key}", get(get_template).patch(patch_template))
+        .route(
+            "/templates/{key}/providers/{provider_type}",
+            put(bind_template_provider),
+        )
+        .route("/providers", get(list_providers).post(create_provider))
+        .route("/providers/{key}", get(get_provider).patch(patch_provider))
+        .route(
+            "/mcp-servers",
+            get(list_mcp_servers).post(create_mcp_server),
+        )
+        .route(
+            "/mcp-servers/{key}",
+            get(get_mcp_server).patch(patch_mcp_server),
+        )
+        .route("/agents/{key}/mcp-bindings", get(list_agent_mcp_bindings))
+        .route(
+            "/agents/{key}/mcp-bindings/{server_key}",
+            put(put_agent_mcp_binding),
+        )
+        .route("/devices", get(list_devices).post(create_device))
+        .route("/devices/{device_id}", get(get_device).patch(patch_device))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            authenticate,
+        ))
+        .layer(axum::middleware::from_fn(transport))
+        .layer(axum::middleware::from_fn(request_id))
+        .with_state(state)
+}
+
+mod agents;
+mod devices;
+mod mcp_servers;
+mod providers;
+mod templates;
+
+use agents::{create_agent, get_agent, list_agents, patch_agent};
+use devices::{create_device, get_device, list_devices, patch_device};
+use mcp_servers::{
+    create_mcp_server, get_mcp_server, list_agent_mcp_bindings, list_mcp_servers, patch_mcp_server,
+    put_agent_mcp_binding,
+};
+use providers::{create_provider, get_provider, list_providers, patch_provider};
+use templates::{
+    assign_template, bind_template_provider, create_template, get_template, list_templates,
+    patch_template, set_default_template,
+};
+
+async fn transport(request: Request, next: Next) -> Response {
+    if request
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .is_some_and(|value| value != "identity")
+    {
+        return error(
+            &request,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_content_encoding",
+        );
+    }
+    let is_mutation = matches!(
+        request.method(),
+        &http::Method::POST | &http::Method::PATCH | &http::Method::PUT
+    );
+    if is_mutation {
+        if let Some(length) = request
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            if length > MAX_BODY {
+                return error(&request, StatusCode::PAYLOAD_TOO_LARGE, "request_too_large");
+            }
+        }
+    }
+    next.run(request).await
+}
+
+async fn request_id(mut request: Request, next: Next) -> Response {
+    let id = Uuid::new_v4().to_string();
+    request.extensions_mut().insert(RequestId(id.clone()));
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        "x-request-id",
+        HeaderValue::from_str(&id).expect("uuid header"),
+    );
+    response
+}
+
+async fn authenticate(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let valid = request
+        .headers()
+        .get_all(header::AUTHORIZATION)
+        .iter()
+        .count()
+        == 1
+        && request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .is_some_and(|token| {
+                !token.is_empty()
+                    && constant_time_eq(token.as_bytes(), state.config.api.admin_token.as_bytes())
+            });
+    if valid {
+        next.run(request).await
+    } else {
+        error(&request, StatusCode::UNAUTHORIZED, "unauthorized")
+    }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    let mut diff = left.len() ^ right.len();
+    for index in 0..left.len().max(right.len()) {
+        diff |= usize::from(*left.get(index).unwrap_or(&0) ^ *right.get(index).unwrap_or(&0));
+    }
+    diff == 0
+}
+
+#[derive(Clone)]
+struct RequestId(String);
+fn id(request: &Request) -> &str {
+    request
+        .extensions()
+        .get::<RequestId>()
+        .map(|v| v.0.as_str())
+        .unwrap_or("unknown")
+}
+fn error(request: &Request, status: StatusCode, code: &'static str) -> Response {
+    (
+        status,
+        Json(serde_json::json!({"error":{"code":code,"request_id":id(request)}})),
+    )
+        .into_response()
+}
+fn db(state: &AppState) -> Result<&SqlitePool, Response> {
+    state.database.as_ref().map(|db| db.pool()).ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":{"code":"database_unavailable"}})),
+        )
+            .into_response()
+    })
+}
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+fn sql_error_kind(error: &sqlx::Error) -> &'static str {
+    match error {
+        sqlx::Error::PoolTimedOut => "database_unavailable",
+        sqlx::Error::Database(error)
+            if matches!(
+                error.code().as_deref(),
+                Some("5" | "6" | "SQLITE_BUSY" | "SQLITE_LOCKED")
+            ) =>
+        {
+            "database_busy"
+        }
+        _ => "database_unavailable",
+    }
+}
+fn sql_error(request: &Request, sql_error_value: &sqlx::Error) -> Response {
+    error(
+        request,
+        StatusCode::SERVICE_UNAVAILABLE,
+        sql_error_kind(sql_error_value),
+    )
+}
+fn mutation_sql_error(request: &Request, sql_error_value: &sqlx::Error) -> Response {
+    if sql_error_kind(sql_error_value) == "database_busy" {
+        sql_error(request, sql_error_value)
+    } else {
+        error(request, StatusCode::CONFLICT, "resource_conflict")
+    }
+}
+
+async fn json<T: DeserializeOwned>(request: Request) -> Result<(Request, T), Response> {
+    if request
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .is_some_and(|v| v != "identity")
+    {
+        return Err(error(
+            &request,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_content_encoding",
+        ));
+    }
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let mut content_parts = content_type.split(';');
+    let media_type_ok = content_parts
+        .next()
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"));
+    let parameters_ok = content_parts.all(|parameter| {
+        let parameter = parameter.trim();
+        !parameter.is_empty()
+            && parameter
+                .split_once('=')
+                .is_some_and(|(name, value)| !name.trim().is_empty() && !value.trim().is_empty())
+    });
+    if !media_type_ok || !parameters_ok {
+        return Err(error(
+            &request,
+            StatusCode::BAD_REQUEST,
+            "invalid_content_type",
+        ));
+    }
+    let (parts, body) = request.into_parts();
+    let bytes = match to_bytes(body, MAX_BODY).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let request = Request::from_parts(parts, Body::empty());
+            return Err(error(
+                &request,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request_too_large",
+            ));
+        }
+    };
+    let request = Request::from_parts(parts, Body::empty());
+    match serde_json::from_slice(&bytes) {
+        Ok(payload) => Ok((request, payload)),
+        Err(_) => Err(error(&request, StatusCode::BAD_REQUEST, "invalid_json")),
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(untagged)]
+enum Patch<T> {
+    Clear(Option<T>),
+    #[default]
+    Absent,
+}
+impl<T> Patch<T> {
+    fn value(self) -> Option<Option<T>> {
+        match self {
+            Self::Absent => None,
+            Self::Clear(v) => Some(v),
+        }
+    }
+}
+#[derive(Deserialize)]
+struct PageQuery {
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    sort: Option<String>,
+    #[serde(default)]
+    page_size: Option<u32>,
+}
+
+fn page_bounds(query: &PageQuery) -> Result<(u32, u32), &'static str> {
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(PAGE_DEFAULT);
+    if page == 0 || page > 10_000 || !(1..=PAGE_MAX).contains(&page_size) {
+        Err("invalid_query")
+    } else {
+        Ok((page, page_size))
+    }
+}
+
+fn valid_key(value: &str) -> bool {
+    value.len() <= 64
+        && value.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+fn valid_text(value: &str, max: usize, allow_empty: bool) -> bool {
+    value.len() <= max && (allow_empty || !value.trim().is_empty())
+}
+fn valid_identity(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128 && value.bytes().all(|b| b > 0x1f && b != 0x7f)
+}
+fn valid_metadata(value: &Value) -> bool {
+    serde_json::to_vec(value).is_ok_and(|v| v.len() <= 16 * 1024) && json_shape(value, 0, &mut 0)
+}
+fn json_shape(value: &Value, depth: u8, nodes: &mut u16) -> bool {
+    if depth > 8 {
+        return false;
+    };
+    match value {
+        Value::Array(items) => items.iter().all(|item| {
+            *nodes += 1;
+            *nodes <= 256 && json_shape(item, depth + 1, nodes)
+        }),
+        Value::Object(items) => items.values().all(|item| {
+            *nodes += 1;
+            *nodes <= 256 && json_shape(item, depth + 1, nodes)
+        }),
+        _ => true,
+    }
+}
+fn expected(headers: &HeaderMap) -> Result<i64, &'static str> {
+    let value = headers
+        .get(header::IF_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .ok_or("invalid_if_match")?;
+    value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .and_then(|v| v.parse().ok())
+        .filter(|v: &i64| *v > 0)
+        .ok_or("invalid_if_match")
+}
+async fn audit<'e, E>(
+    executor: E,
+    request_id: &str,
+    resource: &str,
+    resource_id: i64,
+    action: &str,
+    prior: Option<i64>,
+    new: Option<i64>,
+    outcome: &str,
+    error_kind: Option<&str>,
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    sqlx::query("INSERT INTO admin_audit_events (created_at,request_id,resource_type,resource_id,action,prior_revision,new_revision,outcome,error_kind,affected_rows) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(now()).bind(request_id).bind(resource).bind(resource_id).bind(action).bind(prior).bind(new).bind(outcome).bind(error_kind).bind(1i64).execute(executor).await.map(|_|())
+}
+
+async fn audit_conflict(
+    pool: &SqlitePool,
+    request_id: String,
+    resource: &str,
+    resource_id: i64,
+    expected: i64,
+) {
+    let _ = audit(
+        pool,
+        &request_id,
+        resource,
+        resource_id,
+        "update",
+        Some(expected),
+        None,
+        "conflict",
+        Some("revision_conflict"),
+    )
+    .await;
+}
