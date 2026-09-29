@@ -166,6 +166,7 @@ impl SessionActor {
         let llm_events = runtimes
             .llm
             .register_session(&session_id, LLM_EVENT_CAPACITY);
+        let (external_calls_tx, external_calls) = mpsc::channel(EXTERNAL_CALL_CAPACITY);
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
@@ -224,8 +225,10 @@ impl SessionActor {
             tool_batch: None,
             llm_messages: Vec::new(),
             llm_round: None,
-            tool_depth: 0,
-            max_tool_depth: 4,
+            // The documented defaults, until a deployment installs its own validated caps.
+            tool_rounds: ToolRoundState::new(ToolRoundLimits::default()),
+            external_calls_tx,
+            external_calls,
             max_tool_result_chars: 4_096,
             profile: ActiveTemplateProfile::server_default(),
             // A session that never received an admission profile keeps no switch capability.
@@ -268,8 +271,12 @@ impl SessionActor {
         self
     }
 
-    pub fn with_llm_tool_depth(mut self, max_tool_depth: usize) -> Self {
-        self.max_tool_depth = max_tool_depth;
+    /// Installs the caps the Tool-round Executor runs under.
+    ///
+    /// They arrive from a configuration the deployment already validated, so nothing here re-checks
+    /// or re-derives them: a session that holds these is a deployment that started.
+    pub fn with_tool_round_limits(mut self, limits: ToolRoundLimits) -> Self {
+        self.tool_rounds = ToolRoundState::new(limits);
         self
     }
 

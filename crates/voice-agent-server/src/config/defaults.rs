@@ -169,8 +169,14 @@ pub(super) fn default_prompt_budget_tokens() -> usize {
 pub(super) fn default_max_tool_result_chars() -> usize {
     4_096
 }
-pub(super) fn default_max_tool_depth() -> usize {
+pub(super) fn default_max_calls_per_round() -> usize {
+    8
+}
+pub(super) fn default_max_rounds_per_turn() -> usize {
     4
+}
+pub(super) fn default_tool_execution_budget_ms() -> u64 {
+    30_000
 }
 pub(super) fn default_mcp_enabled() -> bool {
     true

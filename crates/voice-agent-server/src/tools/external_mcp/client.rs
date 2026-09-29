@@ -217,6 +217,16 @@ impl ExternalMcpClient {
         self.call_timeout
     }
 
+    /// The process-owned sink this server's calls report into.
+    ///
+    /// A caller that has to report something only a session can observe — a call dropped by
+    /// cancellation, a response that arrived after its turn ended — reports it here, so those
+    /// observations land in the same counters as the calls themselves instead of in a second,
+    /// session-scoped tally.
+    pub fn telemetry(&self) -> &Arc<dyn Telemetry> {
+        &self.telemetry
+    }
+
     /// `initialize`, then the required `initialized` notification.
     ///
     /// Mutating because this is the only moment the handle changes: afterwards it is the immutable

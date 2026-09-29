@@ -375,6 +375,65 @@ mod external_mcp_config_tests {
     }
 }
 
+#[cfg(test)]
+mod tool_round_config_tests {
+    use super::{LlmConfig, LlmToolsConfig, validation::validate_tool_rounds};
+
+    /// `LlmToolsConfig::default` restates the `#[serde(default = …)]` values on purpose, for the
+    /// same reason `ExternalMcpConfig` does: a section that deserialized to zeroes is a
+    /// configuration that fails its own validation.
+    #[test]
+    fn the_default_tool_round_configuration_is_the_documented_one() {
+        let default = LlmToolsConfig::default();
+        assert_eq!(default.max_calls_per_round, 8);
+        assert_eq!(default.max_rounds_per_turn, 4);
+        assert_eq!(default.execution_budget_ms, 30_000);
+        assert_eq!(default, LlmConfig::default().tools);
+
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            llm: LlmConfig,
+        }
+        let parsed: Wrapper = toml::from_str(
+            r#"
+            [llm]
+            max_history_messages = 20
+            "#,
+        )
+        .expect("a configuration with no tools section is still a configuration");
+        assert_eq!(parsed.llm.tools, LlmToolsConfig::default());
+    }
+
+    /// A zero cap is refused as loudly as an oversized one: `0` would mean the executor silently
+    /// refuses every tool call instead of the deployment failing at startup.
+    #[test]
+    fn every_tool_round_cap_refuses_zero_and_its_hard_ceiling() {
+        let base = LlmToolsConfig::default();
+        for (calls, rounds, budget) in [
+            (0, 4, 30_000),
+            (33, 4, 30_000),
+            (8, 0, 30_000),
+            (8, 9, 30_000),
+            (8, 4, 0),
+            (8, 4, 120_001),
+        ] {
+            let candidate = LlmToolsConfig {
+                max_calls_per_round: calls,
+                max_rounds_per_turn: rounds,
+                execution_budget_ms: budget,
+            };
+            assert!(
+                validate_tool_rounds(&candidate).is_err(),
+                "calls={calls} rounds={rounds} budget_ms={budget} must fail startup"
+            );
+        }
+        assert!(
+            validate_tool_rounds(&base).is_ok(),
+            "the documented defaults are a valid configuration"
+        );
+    }
+}
+
 mod defaults;
 mod providers;
 
@@ -541,6 +600,7 @@ pub struct ModelAcknowledgement {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LlmConfig {
     #[serde(default = "default_max_history_messages")]
     pub max_history_messages: usize,
@@ -548,8 +608,34 @@ pub struct LlmConfig {
     pub prompt_budget_tokens: usize,
     #[serde(default = "default_max_tool_result_chars")]
     pub max_tool_result_chars: usize,
-    #[serde(default = "default_max_tool_depth")]
-    pub max_tool_depth: usize,
+    #[serde(default)]
+    pub tools: LlmToolsConfig,
+}
+
+/// The Tool-round Executor's three policy caps.
+///
+/// These are policy, not queue capacity: nothing here pre-allocates.  A cap is checked before the
+/// work it bounds, and exceeding one terminalizes the Conversational Turn rather than producing a
+/// synthetic ToolResult, because a cap is never a completed ToolCall's outcome.
+///
+/// Every bound is checked once, here at the configuration layer, before a listener binds.  The
+/// executor takes the validated values and never re-derives them.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LlmToolsConfig {
+    /// How many ToolCalls one LLM round may contain.  The whole round is validated before call
+    /// one, so exceeding this executes no call at all.
+    #[serde(default = "default_max_calls_per_round")]
+    pub max_calls_per_round: usize,
+    /// How many tool rounds one Conversational Turn may continue past its first.  Checked before
+    /// the next round's request is sent, so exceeding it starts no further call.
+    #[serde(default = "default_max_rounds_per_turn")]
+    pub max_rounds_per_turn: usize,
+    /// The Tool Execution Budget: what one Conversational Turn may spend on tool work in total,
+    /// starting at its first ToolCall.  Each call is bounded by what is left of it, so waiting for
+    /// an outbound permit is spent out of the same budget as the request.
+    #[serde(default = "default_tool_execution_budget_ms")]
+    pub execution_budget_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -720,7 +806,17 @@ impl Default for LlmConfig {
             max_history_messages: default_max_history_messages(),
             prompt_budget_tokens: default_prompt_budget_tokens(),
             max_tool_result_chars: default_max_tool_result_chars(),
-            max_tool_depth: default_max_tool_depth(),
+            tools: LlmToolsConfig::default(),
+        }
+    }
+}
+
+impl Default for LlmToolsConfig {
+    fn default() -> Self {
+        Self {
+            max_calls_per_round: default_max_calls_per_round(),
+            max_rounds_per_turn: default_max_rounds_per_turn(),
+            execution_budget_ms: default_tool_execution_budget_ms(),
         }
     }
 }

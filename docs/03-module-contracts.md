@@ -137,6 +137,37 @@ Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Start
 - Tool result chỉ đi vào LLM/history sau normalize, sanitize và cap theo Rust `char`; raw device result không được lưu.
 - `TurnOutcome` là `Completed`, `CompletedSilent`, `Cancelled` hoặc `Failed`; ASR success nhưng `trim()` rỗng là `CompletedSilent`, không tạo dialogue message.
 
+### 6.1. Tool-round Executor contract
+
+Một executor duy nhất (`SessionActor`) chạy Device MCP ToolCall, External MCP ToolCall và
+session-local built-in action. Chi tiết quyết định ở `docs/adr/0060-sequential-shared-tool-round-executor.md`.
+
+- **Tuần tự, theo model order.** Không `join_all`, `FuturesUnordered` hay spawn song song. Executor
+  chỉ re-enter từ terminal outcome của một call, nên thứ tự model = thứ tự thực thi = thứ tự
+  ToolResult/history/continuation.
+- **Index-aligned.** `calls.len() == results.len()` và `results[i]` thuộc `calls[i]`; chỉ
+  `record_tool_call` được push cả hai cùng lúc. Call chưa terminal không vào history và không
+  dangling ở continuation.
+- **Validate cả round trước call một.** `calls.len() > llm.tools.max_calls_per_round` là
+  `tool_call_limit_exceeded`: execute zero call, terminalize turn, không synthetic ToolResult.
+- **Cap round trước request kế tiếp.** `llm.tools.max_rounds_per_turn` kiểm ở nơi sẽ gửi request
+  của round kế tiếp, nên vượt cap không bắt đầu call nào mới; completed prefix vẫn giữ.
+- **Tool Execution Budget** bắt đầu ở ToolCall đầu tiên của turn. Mỗi call nhận
+  `min(per-call timeout, remaining)`; hết budget trước call mới là `tool_execution_budget_exceeded`,
+  hết khi in-flight thì drop và terminalize, không retry và không continuation.
+- **Một outbound attempt.** External ToolCall gửi đúng một request. Timeout → `external_tool_timeout`,
+  unavailable → `external_tool_unavailable`, `401`/`403` → `external_tool_auth_failed`, malformed →
+  `external_tool_invalid_response`, JSON-RPC error → `external_tool_protocol_error`. Payload synthetic
+  do server sinh, không chứa remote body, URL, arguments, secret hay internal diagnostic; failure
+  không refresh secret, không mutate catalog và không close session.
+- **Cancellation là TurnId + GenerationId boundary.** Cancel/drop in-flight External ToolCall, bỏ
+  semantic ownership của Device MCP request, cấm bắt đầu call sau. Late response bị discard: không
+  ToolResult, không continuation, không history, không TTS. Metrics bounded:
+  `external_tool_call_cancelled_total` và `external_tool_late_response_discarded_total`.
+- **Tool result không persist.** Không tool argument/result nào vào optional transcript archive hay log
+  body; chỉ bounded class đi vào log và metric label.
+
+
 ## 7. Error policy
 
 | Lỗi | Hành vi |
@@ -147,6 +178,8 @@ Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Start
 | LLM timeout | cancel TTS pending + stop turn |
 | TTS timeout | gửi `tts:stop` và trở lại listening |
 | MCP timeout khi session khỏe | normalized tool error về LLM; terminal khi session/cancellation failure |
+| Tool-round cap hoặc hết Tool Execution Budget | terminalize turn (`tool_call_limit_exceeded` / `tool_round_limit_exceeded` / `tool_execution_budget_exceeded`), giữ completed prefix, không continuation |
+| External ToolCall timeout/unavailable/auth/response | typed content-free ToolResult, sibling call trong round vẫn chạy, không retry, không close session |
 | WS disconnect | cancel toàn session |
 
 Không `unwrap()` trên dữ liệu đến từ network hoặc provider.

@@ -104,7 +104,17 @@ impl SessionActor {
             .retain(|_, pending| matches!(pending.kind, PendingMcpKind::ToolCall { .. }));
     }
 
-    pub(super) fn dispatch_device_mcp_tool(&mut self, call: ToolCall, tool: LlmVisibleTool) {
+    /// Sends one Device MCP `tools/call` and waits for the device to correlate it.
+    ///
+    /// `budget` is what this turn has left of its Tool Execution Budget, so the per-call timeout can
+    /// only ever be made shorter by the turn and never longer: a device that stops answering
+    /// cannot hold a turn past the point where its result could still be used.
+    pub(super) fn dispatch_device_mcp_tool(
+        &mut self,
+        call: ToolCall,
+        tool: LlmVisibleTool,
+        budget: std::time::Duration,
+    ) {
         if !self.mcp.ready {
             self.complete_tool_call(call, Err("mcp_unavailable"));
             return;
@@ -125,7 +135,7 @@ impl SessionActor {
             },
             Some(self.generation),
             PendingMcpKind::ToolCall { call },
-            self.mcp.call_timeout,
+            self.mcp.call_timeout.min(budget),
         );
     }
 

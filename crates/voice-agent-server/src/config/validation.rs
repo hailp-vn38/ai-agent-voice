@@ -189,12 +189,12 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
     if config.llm.max_history_messages == 0
         || config.llm.prompt_budget_tokens == 0
         || config.llm.max_tool_result_chars == 0
-        || config.llm.max_tool_depth == 0
     {
         return Err(ConfigError::Validation(
-            "LLM history, prompt budget and tool limits must be positive".into(),
+            "LLM history, prompt budget and tool result limits must be positive".into(),
         ));
     }
+    validate_tool_rounds(&config.llm.tools)?;
     if config.mcp.call_timeout_ms == 0
         || config.mcp.discovery_timeout_ms == 0
         || config
@@ -249,6 +249,33 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     validate_external_mcp(&config.mcp.external)
+}
+
+/// The Tool-round Executor's caps are the last thing an operator can widen, so each one is bounded
+/// by a fixed hard ceiling here rather than trusted downstream.
+///
+/// A `0` is refused alongside an out-of-range value on purpose: these are policy caps, and a cap of
+/// zero would mean the executor silently refuses every tool call rather than the deployment
+/// failing loudly at startup.
+pub(super) fn validate_tool_rounds(
+    tools: &crate::config::LlmToolsConfig,
+) -> Result<(), ConfigError> {
+    if !(1..=32).contains(&tools.max_calls_per_round) {
+        return Err(ConfigError::Validation(
+            "Tool calls per round must be between 1 and 32".into(),
+        ));
+    }
+    if !(1..=8).contains(&tools.max_rounds_per_turn) {
+        return Err(ConfigError::Validation(
+            "Tool rounds per turn must be between 1 and 8".into(),
+        ));
+    }
+    if !(1..=120_000).contains(&tools.execution_budget_ms) {
+        return Err(ConfigError::Validation(
+            "Tool execution budget must be between 1 and 120000 milliseconds".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// External MCP budgets and caps are deployment policy, so every bound is checked once here,

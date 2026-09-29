@@ -24,6 +24,12 @@ pub const EXTERNAL_MCP_TOOL_CALLS_TOTAL: &str = "external_mcp_tool_calls_total";
 pub const EXTERNAL_MCP_TOOL_CALL_DURATION_MS: &str = "external_mcp_tool_call_duration_ms";
 pub const EXTERNAL_MCP_CALL_LIMITER_REJECTED_TOTAL: &str =
     "external_mcp_call_limiter_rejected_total";
+/// A call this turn started was dropped because the turn was cancelled before it answered.
+pub const EXTERNAL_TOOL_CALL_CANCELLED_TOTAL: &str = "external_tool_call_cancelled_total";
+/// A call that answered after the turn that started it was already gone.  Its result is discarded:
+/// no ToolResult, no continuation, no archive and no speech.
+pub const EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL: &str =
+    "external_tool_late_response_discarded_total";
 
 /// The bounded classes one `tools/call` can report.
 ///
@@ -105,6 +111,12 @@ pub trait Telemetry: Send + Sync {
     /// `external_mcp_tool_calls_total{server_key,outcome}` and one
     /// `external_mcp_tool_call_duration_ms{server_key,outcome}` sample.
     fn call_finished(&self, server_key: &str, outcome: CallOutcome, elapsed: Duration);
+    /// `external_tool_call_cancelled_total`: a call whose turn was cancelled before it answered, so
+    /// the in-flight request was dropped.  No ToolResult exists for it and none will be sent.
+    fn call_cancelled(&self, server_key: &str);
+    /// `external_tool_late_response_discarded_total`: a call that answered after the turn that
+    /// started it was gone.  The result is counted and dropped; nothing acts on it.
+    fn late_response_discarded(&self, server_key: &str);
 }
 
 /// The production sink.
@@ -162,6 +174,24 @@ impl Telemetry for TracingTelemetry {
             outcome = outcome.as_str(),
             duration_ms = duration_ms(elapsed),
             "External MCP tool call completed"
+        );
+    }
+
+    fn call_cancelled(&self, server_key: &str) {
+        tracing::info!(
+            event = "external_mcp_call",
+            metric = EXTERNAL_TOOL_CALL_CANCELLED_TOTAL,
+            server_key,
+            "External MCP tool call was dropped because its turn was cancelled"
+        );
+    }
+
+    fn late_response_discarded(&self, server_key: &str) {
+        tracing::info!(
+            event = "external_mcp_call",
+            metric = EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL,
+            server_key,
+            "External MCP tool call answered after its turn ended; the result was discarded"
         );
     }
 }
@@ -256,6 +286,18 @@ impl Telemetry for RecordingTelemetry {
             duration_ms(elapsed),
         );
     }
+
+    fn call_cancelled(&self, server_key: &str) {
+        self.push(EXTERNAL_TOOL_CALL_CANCELLED_TOTAL, keyed(server_key), 1);
+    }
+
+    fn late_response_discarded(&self, server_key: &str) {
+        self.push(
+            EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL,
+            keyed(server_key),
+            1,
+        );
+    }
 }
 
 fn keyed(server_key: &str) -> Vec<(&'static str, String)> {
@@ -297,6 +339,8 @@ mod tests {
             CallOutcome::Timeout,
             Duration::from_millis(30_000),
         );
+        sink.call_cancelled("weather");
+        sink.late_response_discarded("weather");
 
         let recorded = sink.recorded();
         assert_eq!(recorded[0].metric, MCP_RESOLVE_SUCCESS_TOTAL);
@@ -344,6 +388,20 @@ mod tests {
         );
         assert_eq!(recorded[7].metric, EXTERNAL_MCP_TOOL_CALL_DURATION_MS);
         assert_eq!(recorded[7].value, 30_000);
+
+        // A cancelled call and a discarded late response are facts about one call against one
+        // server, so they carry the same single bounded label and no payload.
+        assert_eq!(recorded[8].metric, EXTERNAL_TOOL_CALL_CANCELLED_TOTAL);
+        assert_eq!(
+            recorded[8].labels,
+            vec![("server_key", "weather".to_owned())]
+        );
+        assert_eq!(
+            recorded[9].metric,
+            EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL
+        );
+        assert_eq!(recorded[9].labels, recorded[8].labels);
+        assert_eq!(recorded[9].value, 1);
     }
 
     #[test]

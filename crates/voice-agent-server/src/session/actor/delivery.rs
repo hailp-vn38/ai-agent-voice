@@ -38,19 +38,28 @@ impl SessionActor {
             content: self.profile.system_prompt.clone(),
         });
         self.llm_messages.extend(history);
-        self.tool_depth = 0;
+        self.tool_rounds.begin_turn();
         self.start_llm_round(true);
     }
 
     pub(super) fn begin_tool_continuation(&mut self) {
-        if self.tool_depth >= self.max_tool_depth {
-            self.terminalize_turn_failure(TurnFailure::ToolDepthExceeded);
+        // Checked before the next round's request is sent, so a turn that has spent its whole tool
+        // allowance starts no further round and therefore no further call.
+        if self.tool_rounds.rounds >= self.tool_rounds.limits.max_rounds_per_turn {
+            self.terminalize_tool_round(ToolRoundFailure::RoundLimitExceeded);
             return;
         }
-        self.tool_depth += 1;
+        // The budget is checked here rather than per origin, so a turn that ran out of tool time
+        // ends the same way whichever transport spent it.
+        if self.tool_rounds.remaining().is_none() {
+            self.terminalize_tool_round(ToolRoundFailure::ExecutionBudgetExceeded);
+            return;
+        }
+        self.tool_rounds.rounds += 1;
         tracing::info!(
             event = "llm_tool_continuation_started",
-            tool_depth = self.tool_depth,
+            tool_round = self.tool_rounds.rounds,
+            max_rounds_per_turn = self.tool_rounds.limits.max_rounds_per_turn,
             "LLM tool continuation started"
         );
         self.start_llm_round(true);
@@ -85,11 +94,12 @@ impl SessionActor {
         } else {
             Vec::new()
         };
-        // Device MCP can alter the final answer, so its tool-capable rounds must remain
-        // buffered (ADR-0018). The builtin tools are different: a normal no-tool response must
-        // retain token-to-speech streaming merely because they are available.
+        // A tool that can change the final answer forces its whole round to be buffered
+        // (ADR-0018), so the round's prose is never spoken before the tools have had their say.
+        // The builtin tools are different: a normal no-tool response must retain
+        // token-to-speech streaming merely because they are available.
         self.llm_round =
-            (allow_tools && !self.mcp.visible.is_empty()).then(LlmRoundBuffer::default);
+            (allow_tools && self.offers_answer_changing_tools()).then(LlmRoundBuffer::default);
         let request = crate::providers::llm::LlmRequest {
             messages: self.llm_messages.clone(),
             tools,
@@ -120,7 +130,7 @@ impl SessionActor {
         self.complete_recognition();
     }
 
-    fn terminalize_turn_failure(&mut self, failure: TurnFailure) {
+    pub(super) fn terminalize_turn_failure(&mut self, failure: TurnFailure) {
         warn!(code = failure.code(), "conversational turn terminalized");
         self.terminalize_llm_failure();
     }
@@ -384,10 +394,15 @@ impl SessionActor {
     /// Cancels a Conversational Turn in its required order. The outbound gate is
     /// invalidated before producer cancellation, and releasing the Active Turn is
     /// idempotent through its permit ownership flag.
+    ///
+    /// The tool round is cancelled here rather than by each caller, because a turn that has been
+    /// interrupted must not start another call whichever of these paths noticed — a barge-in, a
+    /// shutdown and a fail-closed are the same event to the executor.
     pub(super) fn interrupt_active_turn(&mut self) {
         self.cancel_pending_actions_for_active_turn();
         self.cancel_speech_delivery();
         self.cancel_llm();
+        self.cancel_tool_turn();
         self.cancel_asr();
     }
 

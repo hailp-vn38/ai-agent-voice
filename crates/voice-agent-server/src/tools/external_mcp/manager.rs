@@ -52,6 +52,12 @@ pub struct ResolvedExternalMcp {
     pub client: Arc<ExternalMcpClient>,
     pub tools: Arc<[ResolvedExternalTool]>,
     pub call_timeout: Duration,
+    /// The process-global bound on concurrent outbound calls to this server.
+    ///
+    /// It travels with the server handle rather than with the session, so every session admitted to
+    /// this server acquires from the same semaphore: a caller cannot reach an External MCP server
+    /// without also passing through the deployment's concurrency bound for it.
+    pub limiter: Arc<ExternalMcpCallLimiter>,
 }
 
 impl std::fmt::Debug for ResolvedExternalMcp {
@@ -212,6 +218,16 @@ impl SessionExternalMcp {
 
     pub fn servers(&self) -> &[ResolvedExternalMcp] {
         &self.servers
+    }
+
+    /// The handle for one admitted server, by the immutable identity it was admitted under.
+    ///
+    /// The catalog never changes, so a server a session called once is still here afterwards; this
+    /// is how a response that arrived too late is still attributed to the server that produced it.
+    pub fn server(&self, server_key: &str) -> Option<&ResolvedExternalMcp> {
+        self.positions
+            .get(server_key)
+            .map(|position| &self.servers[*position])
     }
 
     pub fn tool_count(&self) -> usize {
@@ -522,6 +538,7 @@ impl ExternalMcpManager {
             client: Arc::new(client),
             tools: Arc::from(catalog.tools),
             call_timeout,
+            limiter: Arc::clone(&self.limiter),
         })
     }
 

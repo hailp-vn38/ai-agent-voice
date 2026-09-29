@@ -1,4 +1,6 @@
 use super::*;
+use std::sync::Arc;
+
 use crate::{
     config::McpResultDelivery,
     providers::{ResolvedAgentRuntimes, llm::ToolDefinition},
@@ -8,6 +10,8 @@ use crate::{
             parse_exit_args, parse_switch_template_args, switch_template_tool_definition,
         },
         device_mcp::LlmVisibleTool,
+        external_mcp::{ResolvedExternalMcp, ResolvedExternalTool},
+        round::external_tool_result,
     },
 };
 
@@ -17,13 +21,22 @@ pub(super) fn is_builtin_tool_name(name: &str) -> bool {
     name == EXIT_TOOL_NAME || name == SWITCH_TEMPLATE_TOOL_NAME
 }
 
+/// Where one ToolCall goes, decided from the name the model used and nothing else.
+///
+/// Every arm is a capability this session was actually admitted with, so resolving to one is a
+/// statement about this session's immutable catalog rather than about what exists anywhere.
 #[derive(Clone, Debug)]
 enum ToolTarget {
     Builtin(BuiltinTool),
     DeviceMcp(LlmVisibleTool),
+    ExternalMcp(ResolvedExternalMcp, ResolvedExternalTool),
 }
 
 impl SessionActor {
+    /// Everything this session may call, in the order the model will see it.
+    ///
+    /// The order is the admission order, not a ranking: the catalog is immutable, so what this
+    /// returns is a property of the session rather than a snapshot of anything that can change.
     pub(super) fn available_llm_tools(&self) -> Vec<ToolDefinition> {
         let mut tools = vec![exit_tool_definition()];
         // A session whose admission catalog is empty never offers a capability it cannot honor.
@@ -43,7 +56,23 @@ impl SessionActor {
                     parameters: tool.input_schema.clone(),
                 }),
         );
+        tools.extend(self.external_mcp.servers().iter().flat_map(|server| {
+            server.tools.iter().map(|tool| ToolDefinition {
+                name: tool.llm_name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.input_schema.clone(),
+            })
+        }));
         tools
+    }
+
+    /// Whether this session holds a tool that can change the final answer.
+    ///
+    /// A round that might call one stays buffered: its prose must not reach SpeechOutput before
+    /// the tools have had their say.  The builtin actions are excluded on purpose, so an ordinary
+    /// answer keeps streaming to speech merely because those are available.
+    pub(super) fn offers_answer_changing_tools(&self) -> bool {
+        !self.mcp.visible.is_empty() || !self.external_mcp.is_empty()
     }
 
     fn resolve_tool(&self, name: &str) -> Option<ToolTarget> {
@@ -53,19 +82,53 @@ impl SessionActor {
         if name == SWITCH_TEMPLATE_TOOL_NAME {
             return Some(ToolTarget::Builtin(BuiltinTool::SwitchTemplate));
         }
-        self.mcp
+        // Device MCP is consulted first because an External MCP name is namespaced and can never
+        // collide with a sanitized Device MCP name, and routing through the origin rather than
+        // through the name is what keeps the two apart.
+        if let Some(tool) = self
+            .mcp
             .visible
             .iter()
             .find(|tool| tool.llm_name == name)
             .cloned()
-            .map(ToolTarget::DeviceMcp)
+        {
+            return Some(ToolTarget::DeviceMcp(tool));
+        }
+        self.external_mcp
+            .find(name)
+            .map(|(server, tool)| ToolTarget::ExternalMcp(server.clone(), tool.clone()))
     }
 
+    /// The one place a tool round begins.
+    ///
+    /// The whole round is validated before call one, so a model that asks for more calls than the
+    /// deployment allows has none of them executed: there is no partial round to reason about
+    /// afterwards, and no ToolResult to invent for a call that never ran.
     pub(super) fn start_tool_batch(&mut self, calls: Vec<ToolCall>) {
         if calls.is_empty() {
             self.fail_speech_delivery();
             return;
         }
+        if calls.len() > self.tool_rounds.limits.max_calls_per_round {
+            tracing::warn!(
+                event = "tool_round_rejected",
+                code = ToolRoundFailure::CallLimitExceeded.code(),
+                calls = calls.len(),
+                max_calls_per_round = self.tool_rounds.limits.max_calls_per_round,
+                "LLM round asked for more tool calls than the configured cap allows; none were executed"
+            );
+            self.terminalize_turn_failure(TurnFailure::Tool(ToolRoundFailure::CallLimitExceeded));
+            return;
+        }
+        tracing::info!(
+            event = "tool_round_started",
+            generation = self.generation,
+            turn_id = self.current_turn_id().map(TurnId::get),
+            calls = calls.len(),
+            tool_round = self.tool_rounds.rounds + 1,
+            "Tool round started"
+        );
+        let delivery = self.round_result_delivery(&calls);
         self.tool_batch = Some(ToolBatchState {
             generation: self.generation,
             calls,
@@ -73,28 +136,209 @@ impl SessionActor {
             next: 0,
             results: Vec::new(),
             direct_response: None,
+            in_flight: None,
+            delivery,
         });
         self.dispatch_next_tool();
     }
 
+    /// Starts the next call of the round, or ends the round.
+    ///
+    /// This is the executor's only step function, and it is what makes the round strictly
+    /// sequential: it is re-entered only from a call's terminal outcome, so a second call cannot
+    /// begin until the previous one has produced its result, and model order is therefore
+    /// execution order is result order.
     fn dispatch_next_tool(&mut self) {
-        let next = self.tool_batch.as_ref().and_then(|batch| {
-            (batch.generation == self.generation)
-                .then(|| batch.calls.get(batch.next).cloned())
-                .flatten()
-        });
-        let Some(call) = next else {
+        let Some(batch) = self.tool_batch.as_ref() else {
+            return;
+        };
+        if batch.generation != self.generation {
+            // The turn that owned this round is gone.  Its completed calls keep their history, and
+            // nothing else in the round starts — not even another Device MCP request.
+            self.cancel_tool_turn();
+            return;
+        }
+        let Some(call) = batch.calls.get(batch.next).cloned() else {
             self.finish_tool_batch();
             return;
         };
         if let Some(batch) = self.tool_batch.as_mut() {
             batch.next += 1;
         }
+        // Whatever is left of the turn's execution budget bounds this call.  A turn that has spent
+        // it starts nothing further: the alternative is a side effect whose result could never be
+        // reported back to the model.
+        let Some(budget) = self.tool_rounds.budget_for_next_call() else {
+            self.terminalize_tool_round(ToolRoundFailure::ExecutionBudgetExceeded);
+            return;
+        };
         match self.resolve_tool(&call.name) {
             Some(ToolTarget::Builtin(tool)) => self.execute_builtin_tool(call, tool),
-            Some(ToolTarget::DeviceMcp(tool)) => self.dispatch_device_mcp_tool(call, tool),
+            Some(ToolTarget::DeviceMcp(tool)) => self.dispatch_device_mcp_tool(call, tool, budget),
+            Some(ToolTarget::ExternalMcp(server, tool)) => {
+                self.dispatch_external_tool(call, &server, &tool, budget)
+            }
             None => self.complete_tool_call(call, Err("unknown_tool")),
         }
+    }
+
+    /// Starts the single outbound attempt this External Tool Call is allowed to make.
+    ///
+    /// The request leaves the process on a task of its own, so the session's state machine is never
+    /// blocked on a network call, and the completion comes back through this session's own bounded
+    /// mailbox.  Cancellation is that task's own arm rather than something the session discovers
+    /// afterwards, so an interrupted turn drops the in-flight request instead of waiting it out.
+    ///
+    /// There is no retry anywhere in this path: a side effect may already have happened remotely
+    /// before a timeout or a dropped connection, so a second attempt is not a recovery strategy.
+    fn dispatch_external_tool(
+        &mut self,
+        call: ToolCall,
+        server: &ResolvedExternalMcp,
+        tool: &ResolvedExternalTool,
+        budget: std::time::Duration,
+    ) {
+        let Some(turn) = self.turn.as_ref() else {
+            self.complete_external_tool_call(call, Err(&ExternalMcpError::ToolUnavailable));
+            return;
+        };
+        let (turn_id, generation) = (turn.turn_id, turn.generation);
+        let cancellation = turn.cancellation.clone();
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            // Without a runtime no request can leave the process at all, which is the same
+            // observable outcome as a permit that never became available: nothing was sent.
+            self.complete_external_tool_call(call, Err(&ExternalMcpError::ToolUnavailable));
+            return;
+        };
+        let arguments = call.arguments.clone();
+        let client = Arc::clone(&server.client);
+        let limiter = Arc::clone(&server.limiter);
+        let call_id = call.id.clone();
+        let completions = self.external_calls_tx.clone();
+        let tool = tool.clone();
+        let server_key = server.server_key.clone();
+        tracing::info!(
+            event = "external_tool_call_sent",
+            generation = self.generation,
+            turn_id = turn_id.get(),
+            server_key = %server_key,
+            "External MCP tool call sent"
+        );
+        runtime.spawn(async move {
+            let outcome = tokio::select! {
+                biased;
+                // Cancellation first: a turn that has been interrupted has no use for whatever
+                // this call answers, so nothing is sent and nothing is waited for.
+                () = cancellation.cancelled() => {
+                    client.telemetry().call_cancelled(&server_key);
+                    return;
+                }
+                outcome = client.call_tool(&limiter, &tool, &arguments, budget) => outcome,
+            };
+            let completion = ExternalCallCompletion {
+                turn_id,
+                generation,
+                call_id,
+                server_key: server_key.clone(),
+                outcome,
+            };
+            // A mailbox that cannot take this is the same observable situation as a round that is
+            // already gone: nobody may act on the result, so it is counted as late rather than
+            // dropped in silence.  A closed mailbox means the session itself is gone, which needs
+            // no result and no retry at all.
+            if completions.try_send(completion).is_err() {
+                client.telemetry().late_response_discarded(&server_key);
+            }
+        });
+        if let Some(batch) = self.tool_batch.as_mut() {
+            batch.in_flight = Some(InFlightExternalCall {
+                call,
+                turn_id,
+                generation,
+            });
+        }
+    }
+
+    /// Applies one External Tool Call's terminal outcome, then continues the round.
+    ///
+    /// The caller has already established that this completion belongs to the call in flight, so
+    /// the slot is simply released here: exactly one call is outstanding at a time, and a slot that
+    /// survived would mean a second call could start beside it.
+    fn complete_external_tool_call(
+        &mut self,
+        call: ToolCall,
+        outcome: Result<&crate::tools::external_mcp::ExternalToolOutcome, &ExternalMcpError>,
+    ) {
+        if let Some(batch) = self.tool_batch.as_mut() {
+            batch.in_flight = None;
+        }
+        let content = external_tool_result(outcome.map_err(|error| *error));
+        tracing::info!(
+            event = "external_tool_result_received",
+            generation = self.generation,
+            turn_id = self.current_turn_id().map(TurnId::get),
+            ok = outcome.is_ok(),
+            "External MCP tool result received"
+        );
+        self.record_tool_call(call, content);
+        self.dispatch_next_tool();
+    }
+
+    /// Applies the completions of External Tool Calls this session started.
+    ///
+    /// A completion whose turn, generation or call no longer matches the one in flight is a late
+    /// response: it is counted and dropped, so it can produce no ToolResult, no continuation, no
+    /// archive entry and no speech.
+    pub(super) fn drain_external_call_completions(&mut self) {
+        while let Ok(completion) = self.external_calls.try_recv() {
+            let in_flight = self.tool_batch.as_ref().and_then(|batch| {
+                batch.in_flight.as_ref().filter(|in_flight| {
+                    in_flight.call.id == completion.call_id
+                        && in_flight.turn_id == completion.turn_id
+                        && in_flight.generation == completion.generation
+                })
+            });
+            let Some(in_flight) = in_flight.map(|in_flight| in_flight.call.clone()) else {
+                tracing::info!(
+                    event = "external_tool_late_response_discarded",
+                    generation = completion.generation,
+                    turn_id = completion.turn_id.get(),
+                    server_key = %completion.server_key,
+                    "External MCP tool result arrived after its round ended and was discarded"
+                );
+                if let Some(telemetry) = self.external_telemetry(&completion.server_key) {
+                    telemetry.late_response_discarded(&completion.server_key);
+                }
+                continue;
+            };
+            self.complete_external_tool_call(in_flight, completion.outcome.as_ref());
+        }
+    }
+
+    /// The process-owned sink for one admitted server.
+    ///
+    /// The catalog is immutable, so a server a session once called is still there afterwards; this
+    /// is how a late response is still counted against the server that produced it.
+    fn external_telemetry(&self, server_key: &str) -> Option<Arc<dyn crate::telemetry::Telemetry>> {
+        self.external_mcp
+            .servers()
+            .iter()
+            .find(|server| server.server_key == server_key)
+            .map(|server| Arc::clone(server.client.telemetry()))
+    }
+
+    /// Ends the turn for a cap or an exhausted execution budget.
+    ///
+    /// The completed prefix is committed first, because those calls did finish and a completed
+    /// ToolResult must never be discarded.  Then the turn ends: no continuation, no synthetic
+    /// result and no sentinel `tool_call_id` standing in for a call that never completed.
+    pub(super) fn terminalize_tool_round(&mut self, failure: ToolRoundFailure) {
+        warn!(code = failure.code(), "tool round terminalized the turn");
+        if let Some(batch) = self.tool_batch.take() {
+            self.commit_tool_exchange(&batch);
+        }
+        self.llm_round = None;
+        self.terminalize_turn_failure(TurnFailure::Tool(failure));
     }
 
     fn execute_builtin_tool(&mut self, call: ToolCall, tool: BuiltinTool) {
@@ -270,6 +514,12 @@ impl SessionActor {
         self.dispatch_next_tool();
     }
 
+    /// The one place a completed call joins its round.
+    ///
+    /// Calls and results are pushed together, so `results[i]` always belongs to `calls[i]` and the
+    /// round can only be handed to history and to the continuation once the two are the same
+    /// length.  A call that has not completed is not here at all, which is what keeps a
+    /// continuation from ever seeing an `AssistantToolCall` without its `ToolResult`.
     fn record_tool_call(&mut self, call: ToolCall, content: String) {
         if let Some(batch) = self.tool_batch.as_mut() {
             batch.completed_calls.push(call.clone());
@@ -289,7 +539,7 @@ impl SessionActor {
             self.begin_direct_tool_speech(goodbye);
             return;
         }
-        match self.batch_result_delivery(&batch) {
+        match batch.delivery {
             McpResultDelivery::LlmThenTts => self.begin_tool_continuation(),
             McpResultDelivery::DirectTts => {
                 if let Some(text) = self.direct_tts_text(&batch) {
@@ -322,9 +572,16 @@ impl SessionActor {
         }
     }
 
-    fn batch_result_delivery(&self, batch: &ToolBatchState) -> McpResultDelivery {
-        batch
-            .calls
+    /// How this round's results are delivered once every call in it has terminalized.
+    ///
+    /// Resolved once, where the round begins, because the answer cannot change while the round runs
+    /// and re-deriving it per call site is a second, silent copy of the name-to-origin decision.
+    ///
+    /// An External MCP call always returns to the model.  A per-tool delivery policy is a Device
+    /// MCP concept, and speaking a server-side answer directly would both bypass the model that
+    /// asked for it and let a tool's own policy mean something it was never documented to mean.
+    fn round_result_delivery(&self, calls: &[ToolCall]) -> McpResultDelivery {
+        calls
             .iter()
             .fold(McpResultDelivery::Silent, |selected, call| {
                 let delivery = self
@@ -335,6 +592,9 @@ impl SessionActor {
                     .and_then(|tool| self.mcp.tool_delivery.get(&tool.original_name))
                     .copied()
                     .unwrap_or(self.mcp.result_delivery);
+                if self.external_mcp.find(&call.name).is_some() {
+                    return McpResultDelivery::LlmThenTts;
+                }
                 match (selected, delivery) {
                     (McpResultDelivery::LlmThenTts, _) | (_, McpResultDelivery::LlmThenTts) => {
                         McpResultDelivery::LlmThenTts
@@ -372,6 +632,13 @@ impl SessionActor {
         self.complete_recognition();
     }
 
+    /// Ends the turn's tool work, whatever the reason.
+    ///
+    /// The completed prefix is committed because those calls did finish and a completed
+    /// ToolResult must never be lost.  Everything still outstanding is dropped: the Device MCP
+    /// requests lose their semantic ownership, and the in-flight External Tool Call loses the slot
+    /// that would have accepted its result — so a response that arrives afterwards is late, and a
+    /// late response becomes nothing at all.
     pub(super) fn cancel_tool_turn(&mut self) {
         self.cancel_pending_mcp_turn();
         if let Some(batch) = self.tool_batch.take() {
@@ -777,16 +1044,42 @@ mod tests {
         normalize_external_tool_segment,
     };
 
-    /// A client handle resolved once, exactly as admission would produce it, without any network
-    /// work.  The credential lives here and nowhere the session can reach.
+    /// A server handle exactly as admission produces one, from a client that is already resolved.
+    ///
+    /// The credential, if there is one, lives inside the client handle and nowhere the session can
+    /// reach — which is the whole reason the executor is handed this and not a resolver.
+    fn resolved_server(
+        server_key: &str,
+        original_name: &str,
+        client: crate::tools::external_mcp::ExternalMcpClient,
+    ) -> ResolvedExternalMcp {
+        // Admission names the namespace from the normalized key, never from the raw one, so a
+        // hand-built handle here is named the same way a resolved one would be.
+        let namespace = format!(
+            "external.{}",
+            normalize_external_tool_segment(server_key).expect("a server key normalizes")
+        );
+        let published = ExternalToolCatalog::publish(
+            &namespace,
+            vec![(
+                original_name.to_owned(),
+                format!("{original_name} tool"),
+                serde_json::json!({"type": "object"}),
+            )],
+        )
+        .expect("a single tool publishes");
+        ResolvedExternalMcp {
+            server_key: server_key.to_owned(),
+            namespace,
+            client: Arc::new(client),
+            tools: Arc::from(published.tools().to_vec()),
+            call_timeout: std::time::Duration::from_secs(1),
+            limiter: Arc::new(crate::tools::external_mcp::ExternalMcpCallLimiter::new(16)),
+        }
+    }
+
+    /// A catalog resolved once against an allowlisted name, without any network work.
     fn admitted_external_mcp() -> SessionExternalMcp {
-        let network = crate::config::ExternalMcpNetworkConfig {
-            allow_http_lan: false,
-            allowed_hosts: vec!["mcp.internal.test".into()],
-            allowed_cidrs: vec![],
-        };
-        let reference = crate::database::secrets::SecretRef::parse("WEATHER_TOKEN".into())
-            .expect("an opaque reference parses");
         struct Fixed;
         impl crate::database::secrets::SecretResolver for Fixed {
             fn resolve(
@@ -799,6 +1092,8 @@ mod tests {
                 Ok(crate::database::secrets::SecretValue::new("s3cr3t".into()))
             }
         }
+        let reference = crate::database::secrets::SecretRef::parse("WEATHER_TOKEN".into())
+            .expect("an opaque reference parses");
         let client = crate::tools::external_mcp::ExternalMcpClient::connect(
             "home-assistant",
             "https://mcp.internal.test/rpc",
@@ -809,28 +1104,21 @@ mod tests {
             std::time::Duration::from_secs(1),
             std::time::Duration::from_secs(1),
             reqwest::Client::new(),
-            network,
+            crate::config::ExternalMcpNetworkConfig {
+                allow_http_lan: false,
+                allowed_hosts: vec!["mcp.internal.test".into()],
+                allowed_cidrs: vec![],
+            },
             &crate::config::ExternalMcpLimitsConfig::default(),
             Arc::new(crate::telemetry::TracingTelemetry),
             &Fixed,
         )
         .expect("an allowlisted destination produces a client");
-        let published = ExternalToolCatalog::publish(
-            "external.home_assistant",
-            vec![(
-                "Light/Turn-On".to_owned(),
-                "turns a light on".to_owned(),
-                serde_json::json!({"type": "object"}),
-            )],
-        )
-        .expect("a single tool publishes");
-        SessionExternalMcp::new(vec![ResolvedExternalMcp {
-            server_key: "home-assistant".to_owned(),
-            namespace: "external.home_assistant".to_owned(),
-            client: Arc::new(client),
-            tools: Arc::from(published.tools().to_vec()),
-            call_timeout: std::time::Duration::from_secs(1),
-        }])
+        SessionExternalMcp::new(vec![resolved_server(
+            "home-assistant",
+            "Light/Turn-On",
+            client,
+        )])
     }
 
     fn session_with_external_mcp(external_mcp: SessionExternalMcp) -> SessionActor {
@@ -974,6 +1262,302 @@ mod tests {
                 .iter()
                 .all(|tool| tool.name != SWITCH_TEMPLATE_TOOL_NAME),
             "a session with no admission catalog cannot offer a switch"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // The late-response window
+    // ---------------------------------------------------------------------------
+
+    /// A local External MCP server whose `tools/call` answer is held until the test opens it.
+    ///
+    /// A gate rather than a sleep is what makes the window below reachable on purpose: the test
+    /// chooses the instant the response becomes available, instead of hoping a timer lines up.
+    struct GatedServer {
+        url: String,
+        held: Arc<tokio::sync::Notify>,
+        opener: watch::Sender<bool>,
+        #[allow(dead_code)]
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl GatedServer {
+        async fn start() -> Self {
+            let held = Arc::new(tokio::sync::Notify::new());
+            let (opener, open) = watch::channel(false);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("a loopback listener binds");
+            let address = listener.local_addr().expect("the listener has an address");
+            let route_held = Arc::clone(&held);
+            let route_open = open.clone();
+            let router = axum::Router::new().route(
+                "/mcp",
+                axum::routing::post(move |body: axum::body::Bytes| {
+                    let held = Arc::clone(&route_held);
+                    let mut open = route_open.clone();
+                    async move {
+                        let request: serde_json::Value =
+                            serde_json::from_slice(&body).unwrap_or_default();
+                        let id = request.get("id").cloned();
+                        let result = match request.get("method").and_then(serde_json::Value::as_str)
+                        {
+                            Some("initialize") => serde_json::json!({
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {"tools": {}},
+                                "serverInfo": {"name": "gated", "version": "1"}
+                            }),
+                            Some("tools/list") => serde_json::json!({"tools": [{
+                                "name": "Forecast",
+                                "description": "forecast",
+                                "inputSchema": {"type": "object", "properties": {},
+                                                "additionalProperties": false}
+                            }]}),
+                            Some("tools/call") => {
+                                held.notify_one();
+                                while !*open.borrow_and_update() {
+                                    open.changed().await.ok();
+                                }
+                                serde_json::json!({
+                                    "content": [{"type": "text", "text": "late"}],
+                                    "isError": false
+                                })
+                            }
+                            _ => serde_json::json!({}),
+                        };
+                        let mut document = serde_json::json!({"jsonrpc": "2.0", "result": result});
+                        if let Some(id) = id {
+                            document["id"] = id;
+                        }
+                        use axum::response::IntoResponse;
+                        (
+                            axum::http::StatusCode::OK,
+                            [(
+                                axum::http::header::CONTENT_TYPE,
+                                "application/json".to_owned(),
+                            )],
+                            document.to_string(),
+                        )
+                            .into_response()
+                    }
+                }),
+            );
+            let task = tokio::spawn(async move {
+                axum::serve(listener, router).await.ok();
+            });
+            Self {
+                url: format!("http://{address}/mcp"),
+                held,
+                opener,
+                task,
+            }
+        }
+
+        async fn wait_until_held(&self) {
+            self.held.notified().await;
+        }
+
+        fn release(&self) {
+            let _ = self.opener.send(true);
+        }
+    }
+
+    /// A snapshot whose calls report into a sink the test can read.
+    fn gated_snapshot(
+        server: &GatedServer,
+        telemetry: Arc<crate::telemetry::RecordingTelemetry>,
+    ) -> SessionExternalMcp {
+        let client = crate::tools::external_mcp::ExternalMcpClient::connect(
+            "weather",
+            &server.url,
+            "{}",
+            "none",
+            None,
+            None,
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(2),
+            reqwest::Client::new(),
+            crate::config::ExternalMcpNetworkConfig {
+                allow_http_lan: true,
+                allowed_hosts: vec![],
+                allowed_cidrs: vec!["127.0.0.0/8".into()],
+            },
+            &crate::config::ExternalMcpLimitsConfig::default(),
+            telemetry,
+            &crate::database::secrets::EnvSecretResolver,
+        )
+        .expect("an allowlisted loopback destination produces a client");
+        SessionExternalMcp::new(vec![resolved_server("weather", "Forecast", client)])
+    }
+
+    fn counted(telemetry: &Arc<crate::telemetry::RecordingTelemetry>, metric: &str) -> usize {
+        telemetry
+            .recorded()
+            .iter()
+            .filter(|entry| entry.metric == metric)
+            .count()
+    }
+
+    /// Waits for one observation, which is the exit condition rather than a delay chosen in
+    /// advance of knowing how long the observation takes.
+    async fn await_count(telemetry: &Arc<crate::telemetry::RecordingTelemetry>, metric: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if counted(telemetry, metric) > 0 {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{metric} is observed within its own budget"));
+    }
+
+    /// The completed tool pairs the turn is holding, in order.
+    fn tool_round(actor: &SessionActor) -> Vec<String> {
+        actor
+            .llm_messages
+            .iter()
+            .filter_map(|message| match message {
+                ChatMessage::ToolResult { tool_call_id, .. } => Some(tool_call_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A response that lands after the round that started it is gone becomes nothing at all.
+    ///
+    /// This is the window a socket test cannot order: in production the call's task posts its
+    /// completion into the session's bounded mailbox, and an abort arriving before the next drain
+    /// takes the round away first.  The test reproduces that end state exactly — the round is gone
+    /// before the response is even allowed to exist — so the executor has only one thing it could
+    /// possibly do with what arrives, and the assertion is on what it does instead.
+    #[tokio::test]
+    async fn a_response_that_lands_after_its_round_is_discarded_and_acts_on_nothing() {
+        let server = GatedServer::start().await;
+        let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
+        let mut actor = session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)));
+        actor
+            .begin_active_turn()
+            .expect("an active turn is admitted");
+        actor
+            .commit_user_text("what is the forecast".to_owned())
+            .expect("the accepted user text is committed to the turn");
+
+        actor.start_tool_batch(vec![ToolCall {
+            id: "call-1".to_owned(),
+            name: "external.weather.forecast".to_owned(),
+            arguments: serde_json::json!({}),
+        }]);
+        assert!(
+            actor
+                .tool_batch
+                .as_ref()
+                .is_some_and(|batch| batch.in_flight.is_some()),
+            "the round waits for exactly one call, and never more than one"
+        );
+
+        server.wait_until_held().await;
+        // The turn ends while the call is still in flight and its answer still held, so the
+        // response cannot have been applied by anything: the round it belonged to no longer exists.
+        actor.cancel_tool_turn();
+        assert!(actor.advance_generation());
+        server.release();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                actor.drain_external_call_completions();
+                if counted(
+                    &telemetry,
+                    crate::telemetry::EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL,
+                ) > 0
+                {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the late response reaches the session's mailbox");
+
+        assert_eq!(
+            counted(
+                &telemetry,
+                crate::telemetry::EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL
+            ),
+            1,
+            "the late response is counted once, against the server that produced it"
+        );
+        assert!(
+            actor.tool_batch.is_none(),
+            "a discarded response starts no round, so nothing is left to finish"
+        );
+        assert!(
+            tool_round(&actor).is_empty(),
+            "a discarded response produces no ToolResult in the prompt base snapshot"
+        );
+        let turn_id = actor.current_turn_id().expect("the turn is still open");
+        let history = actor
+            .dialogue_history
+            .messages_for_prompt(turn_id)
+            .expect("the turn's history renders");
+        assert!(
+            history
+                .iter()
+                .all(|message| !matches!(message, ChatMessage::ToolResult { .. })),
+            "a discarded response produces no completed round in history either"
+        );
+    }
+
+    /// An interrupted turn drops the call it had in flight rather than waiting for it.
+    ///
+    /// The turn's own cancellation is what the executor observes, so this goes through the same
+    /// `cancel_llm` seam a barge-in, a client abort and a shutdown all take.
+    #[tokio::test]
+    async fn an_interrupted_turn_drops_its_in_flight_call_without_producing_a_result() {
+        let server = GatedServer::start().await;
+        let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
+        let mut actor = session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)));
+        actor
+            .begin_active_turn()
+            .expect("an active turn is admitted");
+
+        actor.start_tool_batch(vec![ToolCall {
+            id: "call-1".to_owned(),
+            name: "external.weather.forecast".to_owned(),
+            arguments: serde_json::json!({}),
+        }]);
+        server.wait_until_held().await;
+
+        // Cancellation first, then the round: the order every interruption path uses.
+        actor.cancel_llm();
+        actor.cancel_tool_turn();
+        server.release();
+        await_count(
+            &telemetry,
+            crate::telemetry::EXTERNAL_TOOL_CALL_CANCELLED_TOTAL,
+        )
+        .await;
+        actor.drain_external_call_completions();
+
+        assert_eq!(
+            counted(
+                &telemetry,
+                crate::telemetry::EXTERNAL_TOOL_CALL_CANCELLED_TOTAL
+            ),
+            1,
+            "the in-flight call is reported as dropped exactly once"
+        );
+        assert_eq!(
+            counted(
+                &telemetry,
+                crate::telemetry::EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL
+            ),
+            0,
+            "a call dropped by cancellation is never answered, so nothing is ever discarded"
+        );
+        assert!(
+            tool_round(&actor).is_empty(),
+            "a dropped call produces no ToolResult, so no continuation can be built on one"
         );
     }
 }

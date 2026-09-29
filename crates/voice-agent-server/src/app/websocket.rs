@@ -327,7 +327,9 @@ async fn handle_socket(
             },
         )
         .with_device_mcp(hello.features.mcp, &config.mcp, vision_capability(&config))
-        .with_llm_tool_depth(config.llm.max_tool_depth)
+        .with_tool_round_limits(crate::tools::round::ToolRoundLimits::from_config(
+            &config.llm.tools,
+        ))
         .with_writer_events(writer_event_rx);
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
         .expect("ServerHello is serializable");

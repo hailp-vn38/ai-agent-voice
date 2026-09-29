@@ -68,11 +68,11 @@ sequenceDiagram
     A->>L: continue with tool result
 ```
 
-`max_tool_depth` giới hạn vòng lặp. Khi request có LLM-visible Tool, actor phải buffer prose và tool call đến hết round; không dựa vào prompt để bảo đảm thứ tự. Nếu round có tool call, prose round đó không đi vào TTS; server gọi MCP rồi bắt đầu round kế tiếp với tool result. Chỉ final round không tool call được đưa vào SpeechOutput. Request không có tool vẫn stream token → segmenter → TTS như bình thường.
+`llm.tools.max_rounds_per_turn` giới hạn vòng lặp. Khi request có LLM-visible Tool, actor phải buffer prose và tool call đến hết round; không dựa vào prompt để bảo đảm thứ tự. Nếu round có tool call, prose round đó không đi vào TTS; server gọi MCP rồi bắt đầu round kế tiếp với tool result. Chỉ final round không tool call được đưa vào SpeechOutput. Request không có tool vẫn stream token → segmenter → TTS như bình thường.
 
-Tool-level failure khi session khỏe được normalize thành tool result `ok:false` không chứa error body/secret rồi quay lại LLM. Khi tool depth vượt limit, inject `tool_depth_exceeded` và chỉ cho một final no-tools round; terminal session/cancellation failure không tiếp tục LLM.
+Tool-level failure khi session khỏe được normalize thành tool result `ok:false` không chứa error body/secret rồi quay lại LLM. Khi vượt `max_rounds_per_turn`, turn terminalize bằng `tool_round_limit_exceeded` trước khi gửi request của round kế tiếp, nên không có call nào mới bắt đầu; terminal session/cancellation failure không tiếp tục LLM.
 
-Nhiều tool call của một round chạy tuần tự theo thứ tự LLM trả về, mỗi call có timeout riêng. Tool-level error không ngăn sibling call còn allowlisted khi session/generation vẫn khỏe; result giữ đúng tool_call_id và thứ tự để gửi vào round kế tiếp. `max_tool_depth` đếm tool round, không đếm individual call. Final no-tool round với text rỗng sau trim là `Failed(llm_empty_final_response)`, không gọi TTS.
+Nhiều tool call của một round chạy tuần tự theo thứ tự LLM trả về, mỗi call có timeout riêng. Tool-level error không ngăn sibling call còn allowlisted khi session/generation vẫn khỏe; result giữ đúng tool_call_id và thứ tự để gửi vào round kế tiếp. `llm.tools.max_rounds_per_turn` đếm tool round, không đếm individual call; `llm.tools.max_calls_per_round` giới hạn số call của một round và được kiểm tra cho cả round trước call đầu tiên. Một Tool-round Executor chung chạy Device MCP, External MCP và session-local action tuần tự; xem `docs/adr/0060-sequential-shared-tool-round-executor.md`. Final no-tool round với text rỗng sau trim là `Failed(llm_empty_final_response)`, không gọi TTS.
 
 ## 5. History commit
 

@@ -175,7 +175,18 @@ license = "MIT; bundled-codec=Apache-2.0"
 max_history_messages = 20
 prompt_budget_tokens = 12000
 max_tool_result_chars = 4096
-max_tool_depth = 4
+
+# Tool-round Executor caps, applied to Device MCP, External MCP and the builtin
+# actions alike. A cap is checked before the work it bounds, and exceeding one
+# terminalizes the turn: it never produces a synthetic tool result. Every bound is
+# a hard ceiling, so `0` and an out-of-range value both fail startup.
+#   max_calls_per_round  1..=32
+#   max_rounds_per_turn  1..=8   (tool rounds a turn may continue past its first)
+#   execution_budget_ms  1..=120000 (one turn's total tool work, from its first call)
+[llm.tools]
+max_calls_per_round = 8
+max_rounds_per_turn = 4
+execution_budget_ms = 30000
 
 # Optional: omit [agent] to use the built-in Mây / vi-VN persona and template.
 [agent]

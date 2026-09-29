@@ -26,6 +26,10 @@ impl SessionActor {
 
     fn drain_provider_events(&mut self) {
         self.expire_mcp_requests();
+        // External Tool Calls complete out of band, so their results are collected before anything
+        // else: applying one can start the next call of the round, or the next round's LLM request,
+        // and both belong in this same drain rather than in the next tick.
+        self.drain_external_call_completions();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
         }

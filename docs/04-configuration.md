@@ -108,7 +108,13 @@ timeout_ms = 60000
 max_history_messages = 20
 prompt_budget_tokens = 12000
 max_tool_result_chars = 4096
-max_tool_depth = 4
+
+# Caps của Tool-round Executor, áp dụng giống nhau cho Device MCP, External MCP và
+# session-local action.
+[llm.tools]
+max_calls_per_round = 8
+max_rounds_per_turn = 4
+execution_budget_ms = 30000
 
 # Optional. Omit the whole table to use Mây / vi-VN / built-in template.
 [agent]
@@ -215,7 +221,13 @@ VOICE_AGENT_LLM_API_KEY
 - VAD validate `0.0 <= exit_threshold < speech_threshold <= 1.0`; `min_speech_ms > 0`, `end_silence_ms > 0`, `pre_roll_ms` bounded và retention capacity phải gồm pre-roll, confirmation horizon, bounded VAD in-flight lag cùng rechunk/frame slack.
 - `[barge_in]` có hai bool default false. `enabled=true` chỉ có tác dụng khi `trust_client_aec_feature=true`, client Hello có `features.aec=true`, và Listening Mode là Auto/Realtime; đây là client-side echo-suppression assertion, không thay cho server-side AEC.
 - `shutdown_grace_ms > 0`; config chỉ có hiệu lực khi process khởi động lại.
-- `prompt_budget_tokens > 0`, `max_tool_result_chars > 0`, `max_tool_depth > 0`.
+- `prompt_budget_tokens > 0`, `max_tool_result_chars > 0`.
+- `[llm.tools]` là ba policy cap của Tool-round Executor, validate tại config layer trước khi bind
+  listener: `max_calls_per_round ∈ 1..=32`, `max_rounds_per_turn ∈ 1..=8`,
+  `execution_budget_ms ∈ 1..=120_000`. Default lần lượt là `8`, `4`, `30_000`. `0` và giá trị vượt
+  hard ceiling đều fail startup: đây là policy cap, không phải queue capacity, nên không có queue
+  nào được pre-allocate và `SessionActor` không validate lại. `max_rounds_per_turn` đếm các tool
+  round mà một Conversational Turn được tiếp tục ngoài round đầu tiên của nó.
 - `[agent]` là optional. Field bị omit dùng built-in default; field đã khai báo nhưng rỗng/whitespace fail startup. Built-in template compile vào binary; custom `agent.prompt_template` được resolve một lần theo thư mục config và phải chứa exact `{{persona}}`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
 - mỗi instance OpenAI phải có `base_url`, `model`, timeout hợp lệ; API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry. Nhiều instance có thể cùng adapter `openai` với endpoint/model khác nhau.
