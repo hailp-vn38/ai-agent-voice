@@ -85,7 +85,11 @@ impl SessionActor {
         } else {
             Vec::new()
         };
-        self.llm_round = (!tools.is_empty()).then(LlmRoundBuffer::default);
+        // Device MCP can alter the final answer, so its tool-capable rounds must remain
+        // buffered (ADR-0018). The builtin exit tool is different: a normal no-tool response
+        // must retain token-to-speech streaming merely because it is available.
+        self.llm_round =
+            (allow_tools && !self.mcp.visible.is_empty()).then(LlmRoundBuffer::default);
         let request = crate::providers::llm::LlmRequest {
             messages: self.llm_messages.clone(),
             tools,
@@ -169,6 +173,12 @@ impl SessionActor {
                 self.flush_pending_llm_text();
             }
             LlmRuntimeEvent::ToolCall { call, .. } => {
+                if self.llm_round.is_none()
+                    && self.generated_response.is_empty()
+                    && call.name == crate::tools::builtin::EXIT_TOOL_NAME
+                {
+                    self.llm_round = Some(LlmRoundBuffer::default());
+                }
                 let Some(round) = self.llm_round.as_mut() else {
                     self.fail_speech_delivery();
                     return;
