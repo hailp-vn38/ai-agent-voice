@@ -87,6 +87,19 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
 
 fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
     let database = &config.database;
+    if database.devices.admission_enabled && !database.enabled {
+        return Err(ConfigError::Validation(
+            "database.devices.admission_enabled requires database.enabled".into(),
+        ));
+    }
+    if database.devices.auto_register
+        && (!database.devices.admission_enabled
+            || database.devices.auto_register_agent_key.trim().is_empty())
+    {
+        return Err(ConfigError::Validation(
+            "database.devices.auto_register requires admission_enabled and a non-empty auto_register_agent_key".into(),
+        ));
+    }
     if !database.enabled {
         return Ok(());
     }

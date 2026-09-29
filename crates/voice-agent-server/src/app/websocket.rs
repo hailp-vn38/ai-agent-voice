@@ -11,18 +11,6 @@ pub(super) async fn handler(
     if shutdown.is_cancelled() {
         return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
     }
-    let resolved_runtimes = match state.runtimes.resolve(&config.effective_agent().providers) {
-        Ok(runtimes) => runtimes,
-        Err(error) => {
-            debug!(%error, "configured provider runtime is unavailable");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "configured provider runtime is unavailable",
-            )
-                .into_response();
-        }
-    };
-    let active_turn_limiter = state.active_turn_limiter;
     if !header_or_query_is_or_absent(
         &headers,
         "protocol-version",
@@ -47,6 +35,50 @@ pub(super) async fn handler(
     {
         return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
     }
+    let device_id = header_or_query_value(&headers, "device-id", query.device_id.as_deref())
+        .expect("validated above");
+    if !valid_device_identity(device_id) {
+        return (StatusCode::BAD_REQUEST, "invalid Device-Id").into_response();
+    }
+    let admission = if config.database.devices.admission_enabled {
+        let Some(database) = state.database.as_ref() else {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "device admission unavailable",
+            )
+                .into_response();
+        };
+        match database
+            .admit_device(device_id, &config.database.devices)
+            .await
+        {
+            Ok(admission) => Some(admission),
+            Err(crate::database::DeviceAdmissionError::Denied) => {
+                return (StatusCode::FORBIDDEN, "device not admitted").into_response();
+            }
+            Err(crate::database::DeviceAdmissionError::Unavailable) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "device admission unavailable",
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
+    let resolved_runtimes = match state.runtimes.resolve(&config.effective_agent().providers) {
+        Ok(runtimes) => runtimes,
+        Err(error) => {
+            debug!(%error, "configured provider runtime is unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "configured provider runtime is unavailable",
+            )
+                .into_response();
+        }
+    };
+    let active_turn_limiter = state.active_turn_limiter;
     info!("WebSocket upgrade accepted");
     let max = config.websocket.max_frame_bytes;
     upgrade
@@ -61,6 +93,7 @@ pub(super) async fn handler(
                     llm: resolved_runtimes.llm,
                     tts: resolved_runtimes.tts,
                     active_turn_limiter,
+                    admission,
                 },
                 shutdown,
             )
@@ -125,12 +158,34 @@ fn header_or_query_present(
     }
 }
 
+fn header_or_query_value<'a>(
+    headers: &'a HeaderMap,
+    header_name: &str,
+    query_value: Option<&'a str>,
+) -> Option<&'a str> {
+    headers
+        .get(header_name)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .or(query_value.filter(|value| !value.is_empty()))
+}
+
+/// Device identity is an opaque protocol key: bounded, printable and never normalized before
+/// admission so the database unique key retains the exact client-provided identity.
+fn valid_device_identity(value: &str) -> bool {
+    (1..=128).contains(&value.len())
+        && !value
+            .bytes()
+            .any(|byte| byte == b'\0' || byte.is_ascii_control())
+}
+
 struct SocketRuntimes {
     asr: Arc<AsrWorkerRuntime>,
     vad: Arc<VadWorkerRuntime>,
     llm: Arc<LlmRuntime>,
     tts: Arc<TtsWorkerRuntime>,
     active_turn_limiter: Arc<ActiveTurnLimiter>,
+    admission: Option<crate::database::DeviceAdmission>,
 }
 
 async fn handle_socket(
@@ -139,6 +194,9 @@ async fn handle_socket(
     runtimes: SocketRuntimes,
     shutdown: tokio_util::sync::CancellationToken,
 ) {
+    // This snapshot remains owned by the connection lifetime. SessionActor receives only
+    // concrete runtime handles and never a Database/pool or live Device/Agent row.
+    let _admission = runtimes.admission;
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
         _ = shutdown.cancelled() => return,

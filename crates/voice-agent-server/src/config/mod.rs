@@ -625,6 +625,20 @@ pub struct DatabaseConfig {
     pub busy_timeout_ms: u64,
     #[serde(default = "default_true")]
     pub migrate_on_start: bool,
+    #[serde(default)]
+    pub devices: DatabaseDevicesConfig,
+}
+
+/// Explicit controls for database-backed Voice Protocol Client admission.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseDevicesConfig {
+    #[serde(default)]
+    pub admission_enabled: bool,
+    #[serde(default)]
+    pub auto_register: bool,
+    #[serde(default)]
+    pub auto_register_agent_key: String,
 }
 
 /// Optional, separately authenticated administrative control plane.
@@ -645,6 +659,7 @@ impl Default for DatabaseConfig {
             max_connections: default_database_max_connections(),
             busy_timeout_ms: default_database_busy_timeout_ms(),
             migrate_on_start: true,
+            devices: DatabaseDevicesConfig::default(),
         }
     }
 }

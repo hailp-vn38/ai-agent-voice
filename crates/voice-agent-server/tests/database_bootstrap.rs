@@ -29,6 +29,7 @@ fn database_config(url: String) -> DatabaseConfig {
         max_connections: 2,
         busy_timeout_ms: 5_000,
         migrate_on_start: true,
+        devices: Default::default(),
     }
 }
 
