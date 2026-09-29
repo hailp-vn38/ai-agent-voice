@@ -162,6 +162,30 @@ result_delivery = "llm_then_tts"
 [[mcp.tool_policy]]
 name = "self.audio_speaker.set_volume"
 result_delivery = "direct_tts"
+
+# External MCP is server-side Streamable HTTP bound to an Agent, separate from Device MCP.
+# Every value here has the shown default; omitting the section is a valid configuration.
+[mcp.external]
+per_server_resolution_timeout_ms = 3000
+overall_resolution_budget_ms = 5000
+# Process-global outbound concurrency per MCP server, shared by every session.
+max_concurrent_calls_per_server = 16
+
+# Caps apply at the untrusted catalog boundary and reject a server rather than truncate one.
+[mcp.external.limits]
+max_tools_per_server = 128
+max_tools_per_session = 512
+max_tool_schema_bytes = 16384
+max_tool_description_bytes = 4096
+max_external_tool_result_bytes = 16384
+max_pages_per_server = 32
+
+# A destination must match an allowlist entry after DNS resolution. HTTPS is the only scheme
+# unless allow_http_lan is set for an explicitly LAN-scoped deployment; redirects are off.
+[mcp.external.network]
+allow_http_lan = false
+allowed_hosts = []
+allowed_cidrs = []
 ```
 
 ## 3. Environment override
@@ -207,3 +231,5 @@ VOICE_AGENT_LLM_API_KEY
 - `auth.token = ""` tắt authentication; token không rỗng bắt buộc Bearer token. Device-Id và Client-Id không phải credential.
 - OTA trả static token khi auth bật và không phải security boundary; Internet không nằm trong supported V1 profile.
 - mọi limits và queue capacity > 0.
+- `[mcp.external]` toàn bộ field có default, nên bỏ hẳn section cũng là configuration hợp lệ. `per_server_resolution_timeout_ms` và `overall_resolution_budget_ms` phải dương và `overall_resolution_budget_ms >= per_server_resolution_timeout_ms`; `max_concurrent_calls_per_server` nằm trong `1..=64` và đây chính là bound của process-global semaphore per MCP server dùng chung cho mọi session. Operator chỉ cấu hình trong hard ceiling: `max_tools_per_server <= 512`, `max_tools_per_session <= 2_048`, `max_tool_schema_bytes` và `max_external_tool_result_bytes <= 65_536`, `max_tool_description_bytes <= 16_384`, `max_pages_per_server <= 256`. Mọi limit phải dương, và một tổ hợp limit mô tả một `tools/list` page lớn hơn buffer một response thì fail startup thay vì biến thành server lặng lẽ không resolve được.
+- `[mcp.external.network]` bắt buộc có ít nhất một entry trong `allowed_hosts` hoặc `allowed_cidrs`; chỉ HTTPS trừ khi `allow_http_lan = true`, và khi đó destination vẫn phải match allowlist. `allowed_hosts` chỉ nhận hostname pattern hợp lệ và `allowed_cidrs` chỉ nhận CIDR hợp lệ. URL không có userinfo, query string hay fragment; redirect tắt. Validate hostname allowlist, resolve DNS ngay trước connect, và mọi resolved IP cũng phải pass policy để chống DNS rebinding.

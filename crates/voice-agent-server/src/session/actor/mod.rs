@@ -17,7 +17,10 @@ use crate::{
         llm::{ChatMessage, ToolCall},
         tts::UnavailableTts,
     },
-    tools::device_mcp::{DiscoveredTool, LlmVisibleTool, McpRequestId, VisionCapability},
+    tools::{
+        device_mcp::{DiscoveredTool, LlmVisibleTool, McpRequestId, VisionCapability},
+        external_mcp::SessionExternalMcp,
+    },
     workers::{
         AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime, LlmRuntime, LlmRuntimeEvent,
         TtsWorkerRuntime, VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerLease,
@@ -108,6 +111,13 @@ pub struct SessionActor {
     profile: ActiveTemplateProfile,
     /// Admission-time switch candidates.  Never re-read, never grown, never pruned.
     switch_catalog: TemplateSwitchCatalog,
+    /// The External MCP tools admission resolved, held as immutable handles.
+    ///
+    /// The actor owns the snapshot, never the credential behind it: each `ResolvedExternalMcp`
+    /// keeps its `SecretValue` inside the client handle, so nothing here can be logged or printed
+    /// and no hot path can re-resolve anything.  Admitting, calling and advertising these tools
+    /// belongs to the shared Tool-round Executor, which this snapshot exists to feed.
+    external_mcp: SessionExternalMcp,
     /// Delivery settings are retained so a switch can rebuild SpeechOutput on the candidate's
     /// already-loaded TTS runtime without re-deriving pacing behavior.
     speech_output_config: crate::config::SpeechOutputConfig,

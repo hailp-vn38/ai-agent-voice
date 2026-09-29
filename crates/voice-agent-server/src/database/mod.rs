@@ -8,6 +8,7 @@ use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
 pub mod admission;
+pub mod external_mcp;
 pub mod external_mcp_policy;
 pub mod load_plan;
 pub mod provider_config;
@@ -17,6 +18,7 @@ pub use admission::{
     AdmittedAgent, AdmittedAssignment, AdmittedProviderBinding, DeviceAdmissionError,
     DeviceAdmissionGraph,
 };
+pub use external_mcp::{AdmittedMcpServer, McpAdmissionError};
 pub use load_plan::{ProviderLoadPlan, ProviderLoadRequirement};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");

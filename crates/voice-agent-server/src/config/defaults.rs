@@ -196,5 +196,32 @@ pub(super) fn default_speech_max_chars() -> usize {
 pub(super) fn default_pending_segments() -> usize {
     8
 }
+pub(super) fn default_external_per_server_resolution_timeout_ms() -> u64 {
+    3_000
+}
+pub(super) fn default_external_overall_resolution_budget_ms() -> u64 {
+    5_000
+}
+pub(super) fn default_external_max_concurrent_calls_per_server() -> u32 {
+    16
+}
+pub(super) fn default_external_max_tools_per_server() -> usize {
+    128
+}
+pub(super) fn default_external_max_tools_per_session() -> usize {
+    512
+}
+pub(super) fn default_external_max_tool_schema_bytes() -> usize {
+    16_384
+}
+pub(super) fn default_external_max_tool_description_bytes() -> usize {
+    4_096
+}
+pub(super) fn default_external_max_tool_result_bytes() -> usize {
+    16_384
+}
+pub(super) fn default_external_max_pages_per_server() -> usize {
+    32
+}
 use super::SecretString;
 use url::Url;

@@ -230,6 +230,8 @@ impl SessionActor {
             profile: ActiveTemplateProfile::server_default(),
             // A session that never received an admission profile keeps no switch capability.
             switch_catalog: TemplateSwitchCatalog::default(),
+            // Likewise no External MCP tools: a session only ever calls what admission resolved.
+            external_mcp: SessionExternalMcp::default(),
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             writer_probe: None,
         })
@@ -286,13 +288,14 @@ impl SessionActor {
     /// Installs the Effective Session Profile admission already resolved, together with the
     /// Template Switch Catalog this session may use for the rest of its life.
     ///
-    /// The actor never re-reads either half, so a later Template, Agent or Provider mutation
-    /// cannot reach this session.  The prompt bound is re-checked at the seam that actually
-    /// installs it rather than trusting the resolver.
+    /// The actor never re-reads any half of it, so a later Template, Agent, Provider or External
+    /// MCP mutation cannot reach this session.  The prompt bound is re-checked at the seam that
+    /// actually installs it rather than trusting the resolver.
     pub fn with_effective_profile(
         mut self,
         profile: ActiveTemplateProfile,
         switch_catalog: TemplateSwitchCatalog,
+        external_mcp: SessionExternalMcp,
         max_tool_result_chars: usize,
     ) -> Result<Self, crate::session::prompt::PromptError> {
         if profile.system_prompt.len() > crate::session::profile::MAX_TEMPLATE_PROMPT_BYTES {
@@ -300,6 +303,7 @@ impl SessionActor {
         }
         self.profile = profile;
         self.switch_catalog = switch_catalog;
+        self.external_mcp = external_mcp;
         self.max_tool_result_chars = max_tool_result_chars;
         Ok(self)
     }
@@ -316,6 +320,12 @@ impl SessionActor {
 
     pub fn profile_revision(&self) -> u64 {
         self.profile.revision
+    }
+
+    /// The External MCP catalog this session was admitted with.  Read-only by construction: there
+    /// is no mutator, so nothing a `tools/call` does can change what this session may call.
+    pub fn session_external_mcp(&self) -> &SessionExternalMcp {
+        &self.external_mcp
     }
 
     pub fn start_mcp_discovery(&mut self) {

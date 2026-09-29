@@ -229,9 +229,9 @@ async fn handle_socket(
     shutdown: tokio_util::sync::CancellationToken,
 ) {
     // The profile stays owned by the connection lifetime. SessionActor receives only the
-    // materialized snapshot and its admission-time switch catalog, never a Database/pool or a
-    // live Device/Agent row.
-    let (active_profile, switch_catalog) = runtimes.profile.into_active_profile();
+    // materialized snapshot, its admission-time switch catalog and the External MCP tools it may
+    // call, never a Database/pool or a live Device/Agent row.
+    let admitted = runtimes.profile.into_admitted_profile();
     let writer_probe = runtimes.writer_probe;
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
@@ -305,8 +305,9 @@ async fn handle_socket(
         }
     };
     let actor = match actor.with_effective_profile(
-        active_profile,
-        switch_catalog,
+        admitted.active,
+        admitted.switch_catalog,
+        admitted.external_mcp,
         config.llm.max_tool_result_chars,
     ) {
         Ok(actor) => actor,

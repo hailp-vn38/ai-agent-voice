@@ -12,6 +12,7 @@ use crate::{
     config::{AppConfig, EffectiveProviderBindings},
     database::AdmittedAssignment,
     providers::{ResolvedAgentRuntimes, RuntimeCatalog},
+    tools::external_mcp::SessionExternalMcp,
 };
 
 use super::prompt;
@@ -77,7 +78,7 @@ impl std::fmt::Debug for ResolvedTemplateProfile {
 }
 
 /// Immutable candidate list for this session only.  It is a snapshot, never a query.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct TemplateSwitchCatalog {
     candidates: Vec<ResolvedTemplateProfile>,
 }
@@ -122,7 +123,9 @@ impl TemplateSwitchCatalog {
 /// The one configuration snapshot a Voice Session currently runs with.
 ///
 /// Admission installs it; a successful switch replaces it atomically together with the Session
-/// Profile Revision.  It never changes while a Conversational Turn is in flight.
+/// Profile Revision.  It never changes while a Conversational Turn is in flight.  External MCP
+/// tools are part of this snapshot but not of this struct: they are fixed for the whole session,
+/// including across a switch, so they travel beside the profile rather than inside it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveTemplateProfile {
     pub source: ProfileSource,
@@ -170,6 +173,9 @@ pub struct EffectiveSessionProfile {
     /// Session Profile Revision starts at one and only advances on a successful switch.
     pub revision: u64,
     pub switch_catalog: TemplateSwitchCatalog,
+    /// Filled in by admission after the External MCP snapshot resolves.  The synchronous
+    /// resolver cannot produce it, so it is always empty here and never read from.
+    external_mcp: SessionExternalMcp,
 }
 
 /// Coarse admission outcome.  The client only ever learns "unavailable"; the reason stays internal
@@ -193,24 +199,48 @@ impl EffectiveSessionProfile {
             revision: 1,
             // An Agent without assignments must not advertise a switch capability it cannot honor.
             switch_catalog: TemplateSwitchCatalog::default(),
+            external_mcp: SessionExternalMcp::default(),
         })
+    }
+
+    /// Attaches the External MCP tools this session was admitted with.
+    ///
+    /// The resolver above is pure and synchronous, so it cannot reach a network or a credential.
+    /// Admission adds the snapshot once, right after it resolves, and nothing ever replaces it: a
+    /// Template switch changes prompt, language and providers, not the tools a session may call.
+    pub fn with_external_mcp(mut self, external_mcp: SessionExternalMcp) -> Self {
+        self.external_mcp = external_mcp;
+        self
+    }
+
+    pub fn external_mcp(&self) -> &SessionExternalMcp {
+        &self.external_mcp
     }
 
     /// Splits the resolved profile into the snapshot a session installs and the candidate list it
     /// may switch among.  Neither half can reach back into the admission read.
-    pub fn into_active_profile(self) -> (ActiveTemplateProfile, TemplateSwitchCatalog) {
-        let catalog = self.switch_catalog;
-        (
-            ActiveTemplateProfile {
+    pub fn into_admitted_profile(self) -> AdmittedSessionProfile {
+        AdmittedSessionProfile {
+            active: ActiveTemplateProfile {
                 source: self.source,
                 language: self.language,
                 system_prompt: self.system_prompt,
                 providers: self.providers,
                 revision: self.revision,
             },
-            catalog,
-        )
+            switch_catalog: self.switch_catalog,
+            external_mcp: self.external_mcp,
+        }
     }
+}
+
+/// Everything one admission hands a Voice Session.  It travels as one value so a session can never
+/// be installed with a profile and without the candidates and tools it was admitted alongside.
+#[derive(Clone, Debug)]
+pub struct AdmittedSessionProfile {
+    pub active: ActiveTemplateProfile,
+    pub switch_catalog: TemplateSwitchCatalog,
+    pub external_mcp: SessionExternalMcp,
 }
 
 /// Resolves exactly one Effective Session Profile for an admitted Device.
@@ -275,6 +305,7 @@ pub fn resolve_effective_session_profile(
         providers: active.providers,
         revision: 1,
         switch_catalog,
+        external_mcp: SessionExternalMcp::default(),
     })
 }
 
@@ -631,7 +662,8 @@ mod tests {
             &loaded_catalog(),
         )
         .expect("a valid default template still admits the session");
-        let (mut active, catalog) = profile.into_active_profile();
+        let admitted = profile.into_admitted_profile();
+        let (mut active, catalog) = (admitted.active, admitted.switch_catalog);
         assert_eq!(active.revision, 1);
         assert_eq!(active.system_prompt, "stored system prompt");
 

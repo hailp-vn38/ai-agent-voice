@@ -332,6 +332,49 @@ mod agent_template_tests {
     }
 }
 
+#[cfg(test)]
+mod external_mcp_config_tests {
+    use super::{ExternalMcpConfig, ExternalMcpLimitsConfig, McpConfig};
+    use toml;
+
+    /// The `Default` impls below restate the `#[serde(default = …)]` values on purpose: an
+    /// `ExternalMcpConfig` that deserialized to zeroes would be a configuration that fails its own
+    /// validation, and `McpConfig::default()` is what a deployment that names no `[mcp.external]`
+    /// section actually runs with.  This test is what keeps the two spellings in step.
+    #[test]
+    fn the_default_external_mcp_configuration_is_the_documented_one() {
+        let default = McpConfig::default().external;
+        assert_eq!(default.per_server_resolution_timeout_ms, 3_000);
+        assert_eq!(default.overall_resolution_budget_ms, 5_000);
+        assert_eq!(default.max_concurrent_calls_per_server, 16);
+        assert_eq!(default.limits, ExternalMcpLimitsConfig::default());
+        assert_eq!(default.limits.max_tools_per_server, 128);
+        assert_eq!(default.limits.max_tools_per_session, 512);
+        assert_eq!(default.limits.max_tool_schema_bytes, 16_384);
+        assert_eq!(default.limits.max_tool_description_bytes, 4_096);
+        assert_eq!(default.limits.max_external_tool_result_bytes, 16_384);
+        assert_eq!(default.limits.max_pages_per_server, 32);
+        assert_eq!(default, ExternalMcpConfig::default());
+    }
+
+    /// An omitted `[mcp.external]` section must produce exactly the default, not a partial one.
+    #[test]
+    fn an_omitted_section_deserializes_to_the_documented_defaults() {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            mcp: McpConfig,
+        }
+        let parsed: Wrapper = toml::from_str(
+            r#"
+            [mcp]
+            enabled = true
+            "#,
+        )
+        .expect("a configuration with no external section is still a configuration");
+        assert_eq!(parsed.mcp.external, ExternalMcpConfig::default());
+    }
+}
+
 mod defaults;
 mod providers;
 
@@ -528,14 +571,70 @@ pub struct McpConfig {
     pub external: ExternalMcpConfig,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExternalMcpConfig {
+    /// Budget for one server's whole `initialize` + paginated `tools/list` walk.  A server that
+    /// cannot finish inside it is excluded, never truncated.
+    #[serde(default = "default_external_per_server_resolution_timeout_ms")]
+    pub per_server_resolution_timeout_ms: u64,
+    /// Budget for the entire admission snapshot across every bound server.
+    #[serde(default = "default_external_overall_resolution_budget_ms")]
+    pub overall_resolution_budget_ms: u64,
+    /// Process-global concurrency bound per immutable MCP server identity, shared by every session.
+    #[serde(default = "default_external_max_concurrent_calls_per_server")]
+    pub max_concurrent_calls_per_server: u32,
+    #[serde(default)]
+    pub limits: ExternalMcpLimitsConfig,
     #[serde(default)]
     pub network: ExternalMcpNetworkConfig,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+impl Default for ExternalMcpConfig {
+    fn default() -> Self {
+        Self {
+            per_server_resolution_timeout_ms: default_external_per_server_resolution_timeout_ms(),
+            overall_resolution_budget_ms: default_external_overall_resolution_budget_ms(),
+            max_concurrent_calls_per_server: default_external_max_concurrent_calls_per_server(),
+            limits: ExternalMcpLimitsConfig::default(),
+            network: ExternalMcpNetworkConfig::default(),
+        }
+    }
+}
+
+/// Caps applied at the raw, untrusted catalog boundary before anything is converted for the LLM.
+/// Every cap rejects the whole affected catalog; none of them truncates.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalMcpLimitsConfig {
+    #[serde(default = "default_external_max_tools_per_server")]
+    pub max_tools_per_server: usize,
+    #[serde(default = "default_external_max_tools_per_session")]
+    pub max_tools_per_session: usize,
+    #[serde(default = "default_external_max_tool_schema_bytes")]
+    pub max_tool_schema_bytes: usize,
+    #[serde(default = "default_external_max_tool_description_bytes")]
+    pub max_tool_description_bytes: usize,
+    #[serde(default = "default_external_max_tool_result_bytes")]
+    pub max_external_tool_result_bytes: usize,
+    #[serde(default = "default_external_max_pages_per_server")]
+    pub max_pages_per_server: usize,
+}
+
+impl Default for ExternalMcpLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_tools_per_server: default_external_max_tools_per_server(),
+            max_tools_per_session: default_external_max_tools_per_session(),
+            max_tool_schema_bytes: default_external_max_tool_schema_bytes(),
+            max_tool_description_bytes: default_external_max_tool_description_bytes(),
+            max_external_tool_result_bytes: default_external_max_tool_result_bytes(),
+            max_pages_per_server: default_external_max_pages_per_server(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExternalMcpNetworkConfig {
     #[serde(default)]

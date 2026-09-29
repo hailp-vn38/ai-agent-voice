@@ -11,6 +11,7 @@ use crate::{
         ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable, WriterOutcomeProbe,
         resolve_effective_session_profile,
     },
+    tools::external_mcp::{ExternalMcpManager, ExternalMcpSnapshot, SessionExternalMcp},
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
         WorkerSupervisor,
@@ -30,6 +31,10 @@ pub struct AppState {
     pub database: Option<Arc<Database>>,
     pub database_runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
     pub secret_resolver: Arc<dyn SecretResolver>,
+    /// Application-owned External MCP resolution: one shared transport and one process-global
+    /// per-server call limiter for every session.  `None` only when the shared transport could
+    /// not be built, which leaves every bound server fail-soft unavailable.
+    pub external_mcp: Option<Arc<ExternalMcpManager>>,
     pub shutdown: CancellationToken,
     /// Test-only; see [`WriterOutcomeProbe`]. Production leaves it unset.
     pub writer_outcome_probe: Option<Arc<dyn WriterOutcomeProbe>>,
@@ -84,6 +89,10 @@ impl AppState {
     /// Resolves the one Effective Session Profile this connection may use.  Database-backed
     /// admission is fail-closed: an unknown Device is denied and any resolution failure is coarse,
     /// so a broken intended configuration can never be masked by deployment defaults.
+    ///
+    /// External MCP is the one part that is fail-soft in V1: its snapshot is resolved after the
+    /// profile and a server that cannot be reached, validated or budgeted simply contributes no
+    /// tools, because an unavailable optional capability must never refuse a Voice Session.
     pub async fn resolve_session_profile(
         &self,
         device_id: &str,
@@ -105,7 +114,7 @@ impl AppState {
                     SessionProfileAdmissionError::AdmissionUnavailable
                 }
             })?;
-        resolve_effective_session_profile(
+        let profile = resolve_effective_session_profile(
             graph.device_db_id,
             graph.agent.id,
             &graph.agent.key,
@@ -113,8 +122,39 @@ impl AppState {
             &self.config,
             &self.runtimes,
         )
-        .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)
+        .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)?;
+        Ok(profile.with_external_mcp(self.resolve_external_mcp(graph.agent.id).await))
     }
+
+    /// The fresh External MCP snapshot for one Agent, or an empty one.
+    ///
+    /// Every failure on this path is fail-soft by contract: a database that cannot answer the
+    /// binding read, a transport that could not be built, and a server that will not resolve all
+    /// produce a session with fewer tools, never a rejected admission.
+    async fn resolve_external_mcp(&self, agent_id: i64) -> SessionExternalMcp {
+        let Some(manager) = self.external_mcp.as_ref() else {
+            return SessionExternalMcp::default();
+        };
+        let Some(database) = self.database.as_ref() else {
+            return SessionExternalMcp::default();
+        };
+        let servers = match database.agent_mcp_servers(agent_id).await {
+            Ok(servers) => servers,
+            Err(_) => {
+                tracing::warn!(
+                    event = "external_mcp_bindings_unavailable",
+                    reason = "database_unavailable",
+                    "No External MCP binding could be read; admitting without External MCP tools"
+                );
+                return SessionExternalMcp::default();
+            }
+        };
+        let ExternalMcpSnapshot { servers, .. } = manager
+            .resolve_snapshot(&servers, self.secret_resolver.as_ref())
+            .await;
+        SessionExternalMcp::new(servers)
+    }
+
     pub fn new(config: AppConfig, loaded: LoadedProviders) -> Self {
         Self::new_with_database(config, loaded, None)
     }
@@ -172,6 +212,7 @@ impl AppState {
                 .map(|vad| Arc::clone(&vad.runtime))
                 .collect(),
         ));
+        let external_mcp = shared_external_mcp(&config);
         Self {
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
             config: Arc::new(config),
@@ -181,6 +222,7 @@ impl AppState {
             database: database.map(Arc::new),
             database_runtime_snapshot: database_runtime_snapshot.map(Arc::new),
             secret_resolver,
+            external_mcp,
             shutdown,
             writer_outcome_probe: None,
         }
@@ -216,8 +258,34 @@ impl AppState {
         database: Option<Database>,
         shutdown: CancellationToken,
     ) -> Self {
+        Self::from_provider_set_with_database_resolver_and_shutdown(
+            config,
+            providers,
+            database,
+            Arc::new(EnvSecretResolver),
+            shutdown,
+        )
+    }
+
+    /// Same seam for deployments that own secret resolution.  External MCP resolves its
+    /// credentials through this same abstraction, so a deployment that swaps the resolver changes
+    /// provider and MCP credentials together rather than one without the other.
+    pub fn from_provider_set_with_database_resolver_and_shutdown(
+        config: AppConfig,
+        providers: Arc<ProviderSet>,
+        database: Option<Database>,
+        secret_resolver: Arc<dyn SecretResolver>,
+        shutdown: CancellationToken,
+    ) -> Self {
         let (config, loaded) = loaded_from_provider_set(config, &providers);
-        Self::new_with_database_and_shutdown(config, loaded, database, shutdown)
+        Self::new_with_database_runtime_snapshot_resolver_and_shutdown(
+            config,
+            loaded,
+            database,
+            None,
+            secret_resolver,
+            shutdown,
+        )
     }
 }
 
@@ -232,6 +300,25 @@ pub enum SessionProfileAdmissionError {
     AdmissionUnavailable,
     #[error("agent_profile_resolution_failed")]
     ProfileUnavailable,
+}
+
+/// Builds the one process-wide External MCP transport and call limiter.
+///
+/// External MCP is optional in V1, so a transport that cannot be built degrades to "no External
+/// MCP tools" instead of failing a startup that has nothing else to do with the failure.  The
+/// reason is logged; the destination and its configuration are not.
+fn shared_external_mcp(config: &AppConfig) -> Option<Arc<ExternalMcpManager>> {
+    match ExternalMcpManager::new(&config.mcp.external) {
+        Ok(manager) => Some(Arc::new(manager)),
+        Err(error) => {
+            tracing::warn!(
+                event = "external_mcp_transport_unavailable",
+                reason = %error,
+                "The shared External MCP transport could not be built; every bound server stays unavailable"
+            );
+            None
+        }
+    }
 }
 
 /// Publishes an injected ProviderSet as already-loaded runtime under the single `test` instance

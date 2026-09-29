@@ -74,10 +74,14 @@ fn host_allowed(host: &str, allowed: &[String]) -> bool {
 fn cidr_allowed(ip: IpAddr, allowed: &[String]) -> bool {
     allowed.iter().any(|cidr| cidr_contains(cidr, ip))
 }
+/// Whether a destination sits inside the private scope the explicit `allow_http_lan` exception
+/// covers.  Loopback counts: a homelab MCP server usually runs on the same host as the agent, and
+/// reaching it still requires the operator to name `127.0.0.0/8` or the host explicitly in the
+/// allowlist, so this widens where an operator may point HTTP without widening who may.
 fn is_lan_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => ip.is_private() || ip.is_link_local(),
-        IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local(),
+        IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_loopback(),
+        IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_loopback(),
     }
 }
 fn cidr_contains(cidr: &str, ip: IpAddr) -> bool {
@@ -146,5 +150,38 @@ mod tests {
             &["10.12.0.5".parse().unwrap()],
             &network
         ));
+    }
+
+    /// A same-host MCP server is the common homelab case.  It is reachable over the documented LAN
+    /// exception, and only because the operator named the loopback range themselves.
+    #[test]
+    fn http_lan_exception_reaches_loopback_only_when_it_is_allowlisted() {
+        let named = ExternalMcpNetworkConfig {
+            allow_http_lan: true,
+            allowed_hosts: vec![],
+            allowed_cidrs: vec!["127.0.0.0/8".into()],
+        };
+        assert!(valid_desired_url("http://127.0.0.1:8931/rpc", &named));
+        let loopback = Url::parse("http://127.0.0.1:8931/rpc").unwrap();
+        assert!(valid_resolved_destination(
+            &loopback,
+            &["127.0.0.1".parse().unwrap()],
+            &named
+        ));
+
+        // The same destination without an operator-named range, and the same shape with the
+        // exception switched off, both stay refused.
+        let unnamed = ExternalMcpNetworkConfig {
+            allow_http_lan: true,
+            allowed_hosts: vec![],
+            allowed_cidrs: vec![],
+        };
+        assert!(!valid_desired_url("http://127.0.0.1:8931/rpc", &unnamed));
+        let https_only = ExternalMcpNetworkConfig {
+            allow_http_lan: false,
+            allowed_cidrs: vec!["127.0.0.0/8".into()],
+            ..Default::default()
+        };
+        assert!(!valid_desired_url("http://127.0.0.1:8931/rpc", &https_only));
     }
 }

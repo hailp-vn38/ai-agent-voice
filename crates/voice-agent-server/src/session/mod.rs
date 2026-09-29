@@ -14,8 +14,9 @@ pub use actor::{
 pub use event::SessionEvent;
 pub use generation_gate::GenerationGate;
 pub use profile::{
-    ActiveTemplateProfile, EffectiveSessionProfile, ProfileSource, ProfileUnavailable,
-    ResolvedTemplateProfile, TemplateSwitchCatalog, resolve_effective_session_profile,
+    ActiveTemplateProfile, AdmittedSessionProfile, EffectiveSessionProfile, ProfileSource,
+    ProfileUnavailable, ResolvedTemplateProfile, TemplateSwitchCatalog,
+    resolve_effective_session_profile,
 };
 pub use state::SessionPhase;
 pub use turn::{ActiveTurnLimiter, TurnId};

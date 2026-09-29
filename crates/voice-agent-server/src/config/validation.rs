@@ -248,6 +248,53 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
             "External MCP network allowlist must contain valid host patterns and CIDRs".into(),
         ));
     }
+    validate_external_mcp(&config.mcp.external)
+}
+
+/// External MCP budgets and caps are deployment policy, so every bound is checked once here,
+/// before a listener binds, and never re-derived by the admission path.
+fn validate_external_mcp(external: &crate::config::ExternalMcpConfig) -> Result<(), ConfigError> {
+    let limits = &external.limits;
+    if external.per_server_resolution_timeout_ms == 0
+        || external.overall_resolution_budget_ms == 0
+        || external.overall_resolution_budget_ms < external.per_server_resolution_timeout_ms
+    {
+        return Err(ConfigError::Validation(
+            "External MCP resolution timeouts must be positive and the overall budget must not be smaller than one server timeout"
+                .into(),
+        ));
+    }
+    if !(1..=64).contains(&external.max_concurrent_calls_per_server) {
+        return Err(ConfigError::Validation(
+            "External MCP per-server call concurrency must be between 1 and 64".into(),
+        ));
+    }
+    // Operator values are capped by fixed hard ceilings so persistent configuration can never
+    // describe an unbounded catalog or an unbounded response body.
+    if limits.max_tools_per_server == 0
+        || limits.max_tools_per_server > 512
+        || limits.max_tools_per_session == 0
+        || limits.max_tools_per_session > 2_048
+        || limits.max_tool_schema_bytes == 0
+        || limits.max_tool_schema_bytes > 65_536
+        || limits.max_tool_description_bytes == 0
+        || limits.max_tool_description_bytes > 16_384
+        || limits.max_external_tool_result_bytes == 0
+        || limits.max_external_tool_result_bytes > 65_536
+        || limits.max_pages_per_server == 0
+        || limits.max_pages_per_server > 256
+    {
+        return Err(ConfigError::Validation(
+            "External MCP catalog limits must be positive and within their hard ceilings".into(),
+        ));
+    }
+    // A catalog that legally cannot be buffered in one response is refused here rather than
+    // becoming a server that silently fails to resolve at admission.
+    if crate::tools::external_mcp::response_byte_cap(limits).is_none() {
+        return Err(ConfigError::Validation(
+            "External MCP catalog limits describe a page larger than one response can hold; lower max_tools_per_server or max_tool_schema_bytes".into(),
+        ));
+    }
     Ok(())
 }
 

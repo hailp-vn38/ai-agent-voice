@@ -206,3 +206,28 @@ result_delivery = "llm_then_tts"
 # [[mcp.tool_policy]]
 # name = "self.audio_speaker.set_volume"
 # result_delivery = "direct_tts"
+
+# External MCP is separate from Device MCP: these are server-side Streamable HTTP
+# servers bound to an Agent, snapshotted once at each Voice Session admission.
+[mcp.external]
+per_server_resolution_timeout_ms = 3000
+overall_resolution_budget_ms = 5000
+# Process-global outbound concurrency per MCP server, shared by every session.
+max_concurrent_calls_per_server = 16
+
+# Caps are applied at the untrusted catalog boundary and reject rather than truncate.
+[mcp.external.limits]
+max_tools_per_server = 128
+max_tools_per_session = 512
+max_tool_schema_bytes = 16384
+max_tool_description_bytes = 4096
+max_external_tool_result_bytes = 16384
+max_pages_per_server = 32
+
+# A destination must match an allowlist entry after DNS resolution. HTTPS is the
+# only scheme unless `allow_http_lan` is enabled for an explicitly LAN-scoped
+# deployment; redirects are never followed.
+[mcp.external.network]
+allow_http_lan = false
+allowed_hosts = []
+allowed_cidrs = []

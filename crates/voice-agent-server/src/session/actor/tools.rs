@@ -603,7 +603,8 @@ mod tests {
             catalog,
         )
         .expect("the default template resolves against the loaded catalog");
-        let (active, switch_catalog) = profile.into_active_profile();
+        let admitted = profile.into_admitted_profile();
+        let (active, switch_catalog) = (admitted.active, admitted.switch_catalog);
         let bound = catalog
             .resolve(&EffectiveProviderBindings {
                 vad: "vad".to_owned(),
@@ -632,7 +633,7 @@ mod tests {
             },
         )
         .expect("the session audio runtime initializes")
-        .with_effective_profile(active, switch_catalog, 4_096)
+        .with_effective_profile(active, switch_catalog, admitted.external_mcp, 4_096)
         .expect("the admitted prompt is within the bound")
     }
 
@@ -726,7 +727,8 @@ mod tests {
             &catalog,
         )
         .expect("the default template resolves against the loaded catalog");
-        let (active, switch_catalog) = profile.into_active_profile();
+        let admitted = profile.into_admitted_profile();
+        let (active, switch_catalog) = (admitted.active, admitted.switch_catalog);
         let bound = catalog
             .resolve(&EffectiveProviderBindings {
                 vad: "vad".to_owned(),
@@ -755,7 +757,7 @@ mod tests {
             },
         )
         .expect("the session audio runtime initializes")
-        .with_effective_profile(active, switch_catalog, 4_096)
+        .with_effective_profile(active, switch_catalog, admitted.external_mcp, 4_096)
         .expect("the admitted prompt is within the bound");
         actor.start_listening(crate::protocol::ListenMode::Auto);
         let lease = actor.vad_session.as_ref().map(|(lease, _)| *lease);
@@ -768,6 +770,169 @@ mod tests {
             lease,
             "an unchanged capture runtime must keep the lease the session already holds"
         );
+    }
+
+    use crate::tools::external_mcp::{
+        ExternalToolCatalog, ResolvedExternalMcp, ResolvedExternalTool, SessionExternalMcp,
+        normalize_external_tool_segment,
+    };
+
+    /// A client handle resolved once, exactly as admission would produce it, without any network
+    /// work.  The credential lives here and nowhere the session can reach.
+    fn admitted_external_mcp() -> SessionExternalMcp {
+        let network = crate::config::ExternalMcpNetworkConfig {
+            allow_http_lan: false,
+            allowed_hosts: vec!["mcp.internal.test".into()],
+            allowed_cidrs: vec![],
+        };
+        let reference = crate::database::secrets::SecretRef::parse("WEATHER_TOKEN".into())
+            .expect("an opaque reference parses");
+        struct Fixed;
+        impl crate::database::secrets::SecretResolver for Fixed {
+            fn resolve(
+                &self,
+                _: &crate::database::secrets::SecretRef,
+            ) -> Result<
+                crate::database::secrets::SecretValue,
+                crate::database::secrets::SecretResolveError,
+            > {
+                Ok(crate::database::secrets::SecretValue::new("s3cr3t".into()))
+            }
+        }
+        let client = crate::tools::external_mcp::ExternalMcpClient::connect(
+            "home-assistant",
+            "https://mcp.internal.test/rpc",
+            "{}",
+            "bearer",
+            None,
+            Some(&reference),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(1),
+            reqwest::Client::new(),
+            network,
+            &crate::config::ExternalMcpLimitsConfig::default(),
+            &Fixed,
+        )
+        .expect("an allowlisted destination produces a client");
+        let published = ExternalToolCatalog::publish(
+            "external.home_assistant",
+            vec![(
+                "Light/Turn-On".to_owned(),
+                "turns a light on".to_owned(),
+                serde_json::json!({"type": "object"}),
+            )],
+        )
+        .expect("a single tool publishes");
+        SessionExternalMcp::new(vec![ResolvedExternalMcp {
+            server_key: "home-assistant".to_owned(),
+            namespace: "external.home_assistant".to_owned(),
+            client: Arc::new(client),
+            tools: Arc::from(published.tools().to_vec()),
+            call_timeout: std::time::Duration::from_secs(1),
+        }])
+    }
+
+    fn session_with_external_mcp(external_mcp: SessionExternalMcp) -> SessionActor {
+        let catalog = catalog();
+        let profile = resolve_effective_session_profile(
+            1,
+            2,
+            "agent",
+            &[candidate(1, "primary", "primary prompt", "llm", "vad")],
+            &deployment(),
+            &catalog,
+        )
+        .expect("the default template resolves against the loaded catalog");
+        let admitted = profile
+            .with_external_mcp(external_mcp)
+            .into_admitted_profile();
+        let bound = catalog
+            .resolve(&EffectiveProviderBindings {
+                vad: "vad".to_owned(),
+                asr: "asr".to_owned(),
+                llm: "llm".to_owned(),
+                tts: "tts".to_owned(),
+                vision: None,
+            })
+            .expect("the default bindings resolve");
+        let (control_tx, _control_rx) = mpsc::channel(4);
+        let (audio_tx, _audio_rx) = mpsc::channel(4);
+        SessionActor::new_with_runtimes_and_limiter(
+            "session".to_owned(),
+            control_tx,
+            audio_tx,
+            16,
+            20,
+            SessionRuntimes {
+                asr: bound.asr,
+                vad: bound.vad,
+                llm: bound.llm,
+                tts: bound.tts,
+                active_turn_limiter: Arc::new(ActiveTurnLimiter::new(1)),
+                vad_segmenter_config: bound.vad_segmenter,
+                pre_roll_samples: bound.vad_pre_roll_samples,
+            },
+        )
+        .expect("the session audio runtime initializes")
+        .with_effective_profile(
+            admitted.active,
+            admitted.switch_catalog,
+            admitted.external_mcp,
+            4_096,
+        )
+        .expect("the admitted prompt is within the bound")
+    }
+
+    /// A Voice Session runs with exactly the External MCP snapshot admission resolved: the
+    /// namespaced names it may call, and the original wire name each one is called with.
+    #[test]
+    fn a_session_installs_the_admitted_external_mcp_catalog() {
+        let actor = session_with_external_mcp(admitted_external_mcp());
+        let installed = actor.session_external_mcp();
+        assert_eq!(installed.tool_count(), 1);
+        let (server, tool) = installed
+            .find("external.home_assistant.light_turn_on")
+            .expect("the admitted tool is routable");
+        assert_eq!(server.server_key, "home-assistant");
+        assert_eq!(server.call_timeout, std::time::Duration::from_secs(1));
+        assert_eq!(tool.original_name, "Light/Turn-On");
+        // A Device MCP name, or a name from a server this session never admitted, resolves to
+        // nothing: routing goes through the origin, not through the visible name.
+        assert!(installed.find("self.light_turn_on").is_none());
+        assert!(installed.find("external.other.light_turn_on").is_none());
+        assert!(installed.find("external.home_assistant.dim").is_none());
+    }
+
+    /// Nothing a session holds renders a credential: the handle owns it and prints none of it.
+    #[test]
+    fn a_sessions_external_mcp_snapshot_renders_without_a_credential() {
+        let installed = admitted_external_mcp();
+        let rendered = format!("{:?}", installed);
+        assert!(rendered.contains("external.home_assistant.light_turn_on"));
+        assert!(!rendered.contains("s3cr3t"), "{rendered}");
+        assert!(!rendered.contains("WEATHER_TOKEN"), "{rendered}");
+    }
+
+    /// The published names are the guide's fixed namespace, and the tool behind one keeps the
+    /// original wire name it is actually called with.
+    #[test]
+    fn external_tool_names_are_namespaced_and_keep_their_wire_name() {
+        assert_eq!(
+            normalize_external_tool_segment("Home-Assistant").as_deref(),
+            Some("home_assistant")
+        );
+        let published = ExternalToolCatalog::publish(
+            "external.home_assistant",
+            vec![(
+                "Light/Turn-On".to_owned(),
+                "turns a light on".to_owned(),
+                serde_json::json!({"type": "object"}),
+            )],
+        )
+        .expect("a single tool publishes");
+        let tool: &ResolvedExternalTool = &published.tools()[0];
+        assert_eq!(tool.llm_name, "external.home_assistant.light_turn_on");
+        assert_eq!(tool.original_name, "Light/Turn-On");
     }
 
     #[test]
