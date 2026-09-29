@@ -126,11 +126,24 @@ impl SessionActor {
         self.phase = SessionPhase::Closed;
     }
 
-    /// The writer reports a turn's terminal outcome right after the client sees `tts:stop`, so a
-    /// client is entitled to start the next turn immediately. Applying every outcome already in
-    /// hand before interpreting new client intent keeps the next turn from overtaking the
-    /// previous turn's boundary — which would drop its first audio frames, and would let a
-    /// boundary action such as a Template switch land after the turn it belonged to.
+    /// Applies the turn outcomes the writer has already reported, before new client intent is
+    /// interpreted.
+    ///
+    /// The writer reports a turn's terminal outcome immediately after the client sees `tts:stop`,
+    /// so a client is entitled to start the next turn at once. This restores the invariant that
+    /// such an outcome is applied first: otherwise the next turn overtakes the boundary it is
+    /// supposed to follow, drops its first audio frames, and lets a boundary action such as a
+    /// Template switch land after the turn it belonged to.
+    ///
+    /// Scope is deliberately narrow, because barge-in ordering belongs to phase 5:
+    /// - only already-reported `WriterEvent`s are drained, non-blockingly, from this session's own
+    ///   writer mailbox — never ASR, VAD or LLM events, and never a wait;
+    /// - select fairness, queue capacities, the barge-in policy and the audio-drop policy in
+    ///   `on_binary` are untouched.
+    ///
+    /// The one visible consequence is timing: an `abort` or `listen` that arrives after a normal
+    /// close is now applied after that close rather than racing it. The policy it then follows is
+    /// the same one.
     fn apply_reported_turn_outcomes(&mut self) {
         self.drain_writer_events();
     }

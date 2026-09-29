@@ -504,8 +504,18 @@ async fn admit(base: &str) -> Socket {
     socket
 }
 
-/// Runs one manual turn and returns the protocol-visible assistant answer.
-async fn speak_once(socket: &mut Socket) -> String {
+/// What one manual turn actually delivered to the client, so a dropped capture frame or a lost
+/// turn boundary is observable rather than merely inferred from a missing answer.
+struct TurnOutcome {
+    transcript: Option<String>,
+    answer: String,
+    playback_started: bool,
+    audio_frames: usize,
+}
+
+/// Runs one manual turn, back-to-back with whatever ran before it, and returns everything the
+/// client received up to and including `tts:stop`.
+async fn speak_and_observe(socket: &mut Socket) -> TurnOutcome {
     socket
         .send(Message::Text(
             serde_json::json!({"type": "listen", "state": "start", "mode": "manual"})
@@ -526,24 +536,46 @@ async fn speak_once(socket: &mut Socket) -> String {
         ))
         .await
         .unwrap();
-    let mut answer = None;
+    let mut observed = TurnOutcome {
+        transcript: None,
+        answer: String::new(),
+        playback_started: false,
+        audio_frames: 0,
+    };
     loop {
         match timeout(Duration::from_secs(5), socket.next()).await {
             Ok(Some(Ok(Message::Text(text)))) => {
                 let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-                if value["type"] == "llm" {
-                    answer = Some(value["text"].as_str().unwrap_or_default().to_owned());
-                }
-                // Wait for the turn to close so the next turn starts from an idle session.
-                if value["type"] == "tts" && value["state"] == "stop" {
-                    return answer.expect("a closed turn must carry its assistant answer");
+                match value["type"].as_str() {
+                    Some("stt") => observed.transcript = value["text"].as_str().map(str::to_owned),
+                    Some("llm") => {
+                        observed.answer = value["text"].as_str().unwrap_or_default().to_owned()
+                    }
+                    Some("tts") => match value["state"].as_str() {
+                        Some("start") => observed.playback_started = true,
+                        Some("stop") => {
+                            assert!(
+                                !observed.answer.is_empty(),
+                                "a closed turn must carry its assistant answer"
+                            );
+                            return observed;
+                        }
+                        _ => {}
+                    },
+                    _ => {}
                 }
             }
+            Ok(Some(Ok(Message::Binary(_)))) => observed.audio_frames += 1,
             Ok(Some(Ok(_))) => {}
             Ok(Some(Err(error))) => panic!("WebSocket error: {error}"),
             Ok(None) | Err(_) => panic!("the session closed before answering"),
         }
     }
+}
+
+/// Runs one manual turn and returns the protocol-visible assistant answer.
+async fn speak_once(socket: &mut Socket) -> String {
+    speak_and_observe(socket).await.answer
 }
 
 #[tokio::test]
@@ -1137,5 +1169,53 @@ async fn an_interrupted_turn_drops_the_switch_it_armed() {
         "default-llm[TEMPLATE-PROMPT-V1]",
         "a turn interrupted before its boundary must not carry its switch forward"
     );
+    task.abort();
+}
+
+/// Regression for the boundary ordering a switch depends on.
+///
+/// The writer reports `TurnClosed(Normal)` immediately after the client sees `tts:stop`, so the
+/// turns below are sent back-to-back with no delay in between. Each must reach the new profile and
+/// keep its captured audio intact — a client that starts a turn the instant a turn closes is
+/// entitled to that.
+///
+/// There is no client-visible synchronization point between `tts:stop` and the writer's own report,
+/// so a single turn is only a probabilistic probe. Repeating the back-to-back boundary several
+/// times multiplies the opportunities to overtake it, which is what makes this a regression rather
+/// than a formality.
+#[tokio::test]
+async fn the_turn_after_a_switch_keeps_every_audio_frame_and_runs_the_new_profile() {
+    const BACK_TO_BACK_TURNS: usize = 4;
+
+    let (base, url, task, _) = start_with_scripted_switch(&["sales"]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    let mut socket = admit(&base).await;
+
+    let switching = speak_and_observe(&mut socket).await;
+    assert_eq!(
+        switching.answer, "default-llm[TEMPLATE-PROMPT-V1]",
+        "the turn that requested the switch must finish under the profile it started with"
+    );
+    assert!(switching.audio_frames > 0);
+
+    for turn in 0..BACK_TO_BACK_TURNS {
+        let switched = speak_and_observe(&mut socket).await;
+        assert_eq!(
+            switched.transcript.as_deref(),
+            Some("utterance"),
+            "turn {turn} started the instant the previous one closed, so its capture frames must \
+             reach ASR rather than be dropped against a still-closing turn"
+        );
+        assert!(switched.playback_started, "turn {turn} must reach playback");
+        assert_eq!(
+            switched.audio_frames, switching.audio_frames,
+            "turn {turn} must deliver the same audio as the turn before it"
+        );
+        assert_eq!(
+            switched.answer, "template-llm[TEMPLATE-PROMPT-V2]",
+            "turn {turn} must run the switched prompt on the switched already-loaded runtime"
+        );
+    }
     task.abort();
 }
