@@ -10,6 +10,7 @@ pub mod models;
 pub mod protocol;
 pub mod providers;
 pub mod session;
+pub mod startup_handshake;
 pub mod telemetry;
 pub mod tools;
 pub mod workers;

@@ -3,6 +3,7 @@ use voice_agent_server::{
     app::{new_lifecycle, startup_with_lifecycle},
     config::AppConfig,
     lifecycle::CONTROLLED_CLOSE_SETTLE,
+    startup_handshake::StartupHandshake,
 };
 
 #[tokio::main]
@@ -25,8 +26,19 @@ async fn main() -> anyhow::Result<()> {
     let app = startup_with_lifecycle(config.clone(), lifecycle.clone())
         .await
         .context("initialize database and local providers")?;
-    let listener = tokio::net::TcpListener::bind(config.server.bind).await?;
-    tracing::info!(address = %listener.local_addr()?, "voice protocol server listening");
+    let handshake = StartupHandshake::from_env()?;
+    let bind_address = handshake
+        .as_ref()
+        .map_or(config.server.bind, StartupHandshake::bind_address);
+    let listener = tokio::net::TcpListener::bind(bind_address).await?;
+    let address = listener.local_addr()?;
+    if let Some(handshake) = &handshake {
+        if let Err(error) = handshake.publish(address) {
+            drop(listener);
+            return Err(error);
+        }
+    }
+    tracing::info!(address = %address, "voice protocol server listening");
     let listening = lifecycle.listening().clone();
     let mut server = tokio::spawn(async move {
         axum::serve(listener, app).with_graceful_shutdown(listening.cancelled_owned()).await

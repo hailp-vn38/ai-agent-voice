@@ -1,6 +1,41 @@
 //! Reusable wire checks owned by the independent Voice Protocol Client.
 
+pub mod admin;
 pub mod chillaudio;
+pub mod scenario;
+
+#[cfg(test)]
+mod admin_url_contract_tests {
+    #[test]
+    fn admin_url_accepts_only_explicit_local_http_origins() {
+        for accepted in [
+            "http://127.0.0.1:8080/api/admin/",
+            "http://127.99.1.2/api/admin/",
+            "http://[::1]:8080/api/admin/",
+            "http://localhost:8080/api/admin/",
+            "https://admin.example.test/api/admin/",
+        ] {
+            assert!(
+                crate::admin::AdminBaseUrl::parse(accepted).is_ok(),
+                "{accepted}"
+            );
+        }
+
+        for rejected in [
+            "http://0.0.0.0:8080/api/admin/",
+            "http://[::ffff:127.0.0.1]:8080/api/admin/",
+            "http://127.0.0.1:8080/api/admin",
+            "http://example.test/api/admin/",
+            "https://user@example.test/api/admin/",
+            "https://example.test/api/admin/?query=1",
+        ] {
+            assert!(
+                crate::admin::AdminBaseUrl::parse(rejected).is_err(),
+                "{rejected}"
+            );
+        }
+    }
+}
 
 use anyhow::{Context, bail, ensure};
 use futures_util::{SinkExt, StreamExt};
