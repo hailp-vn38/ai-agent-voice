@@ -19,6 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 const MAX_BODY: usize = 256 * 1024;
+pub(super) const MAX_ASR_TEST_BODY: usize = 5 * 1024 * 1024;
 const PAGE_DEFAULT: u32 = 50;
 const PAGE_MAX: u32 = 200;
 
@@ -49,6 +50,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route(
             "/providers/{key}/test/tts",
             axum::routing::post(test_tts_provider),
+        )
+        .route(
+            "/providers/{key}/test/asr",
+            axum::routing::post(test_asr_provider),
         )
         .route(
             "/providers/{key}/capabilities",
@@ -106,7 +111,7 @@ use provider_adapters::{
     discover_provider_capabilities, get_provider_adapter, get_provider_capabilities,
     list_provider_adapters,
 };
-use provider_tests::{test_llm_provider, test_tts_provider};
+use provider_tests::{test_asr_provider, test_llm_provider, test_tts_provider};
 use providers::{create_provider, get_provider, list_providers, patch_provider};
 use templates::{
     assign_template, bind_template_provider, create_template, get_template, list_templates,
@@ -130,13 +135,18 @@ async fn transport(request: Request, next: Next) -> Response {
         &http::Method::POST | &http::Method::PATCH | &http::Method::PUT
     );
     if is_mutation {
+        let max_body = if request.uri().path().ends_with("/test/asr") {
+            MAX_ASR_TEST_BODY
+        } else {
+            MAX_BODY
+        };
         if let Some(length) = request
             .headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<usize>().ok())
         {
-            if length > MAX_BODY {
+            if length > max_body {
                 return error(&request, StatusCode::PAYLOAD_TOO_LARGE, "request_too_large");
             }
         }

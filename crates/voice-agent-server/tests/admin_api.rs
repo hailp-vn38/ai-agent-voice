@@ -11,7 +11,8 @@ use voice_agent_server::{
     config::AppConfig,
     database::Database,
     providers::{
-        LlmError, LlmProvider, ProviderSet, TtsDiagnosticRequest, TtsError, TtsProvider,
+        AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmProvider, ProviderSet,
+        TtsDiagnosticRequest, TtsError, TtsProvider,
         llm::{ChatMessage, LlmRequest},
     },
     workers::WorkerRuntimeConfig,
@@ -23,6 +24,38 @@ struct DiagnosticLlm {
 
 struct DiagnosticTts {
     requests: Arc<Mutex<Vec<TtsDiagnosticRequest>>>,
+}
+
+struct DiagnosticAsr {
+    received_samples: Arc<Mutex<Vec<usize>>>,
+}
+
+struct DiagnosticAsrSession {
+    received_samples: Arc<Mutex<Vec<usize>>>,
+    samples: usize,
+}
+
+impl AsrProvider for DiagnosticAsr {
+    fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
+        Ok(Box::new(DiagnosticAsrSession {
+            received_samples: Arc::clone(&self.received_samples),
+            samples: 0,
+        }))
+    }
+}
+
+impl AsrSession for DiagnosticAsrSession {
+    fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
+        self.samples += pcm.samples().len();
+        Ok(Vec::new())
+    }
+
+    fn finish(&mut self) -> Result<AsrResult, AsrError> {
+        self.received_samples.lock().unwrap().push(self.samples);
+        Ok(AsrResult::new("xin chao"))
+    }
+
+    fn cancel(&mut self) {}
 }
 
 impl TtsProvider for DiagnosticTts {
@@ -232,6 +265,87 @@ allowed_hosts = ["mcp.example.test"]
     (format!("http://{address}"), requests, task)
 }
 
+async fn server_with_loaded_asr() -> (String, Arc<Mutex<Vec<usize>>>, tokio::task::JoinHandle<()>) {
+    let config_path = std::env::temp_dir().join(format!(
+        "voice-agent-admin-asr-diagnostic-{}.toml",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+enabled = true
+url = "{}"
+[api]
+enabled = true
+admin_token = "admin-test-token"
+[mcp.external.network]
+allowed_hosts = ["mcp.example.test"]
+"#,
+            database_url()
+        ),
+    )
+    .unwrap();
+    let config = AppConfig::parse_and_resolve(&config_path).unwrap();
+    fs::remove_file(config_path).unwrap();
+    let database = Database::connect_if_enabled(&config.database)
+        .await
+        .unwrap();
+    let received_samples = Arc::new(Mutex::new(Vec::new()));
+    let state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        database,
+    )
+    .with_database_asr_runtime_for_test(
+        "asr_loaded",
+        Arc::new(DiagnosticAsr {
+            received_samples: Arc::clone(&received_samples),
+        }),
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            voice_reserved_capacity: 1,
+            command_capacity: 4,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_millis(100),
+        },
+        1,
+    );
+    let router = router_with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), received_samples, task)
+}
+
+fn wav_pcm16_mono(sample_rate: u32, samples: usize) -> Vec<u8> {
+    let data_bytes = u32::try_from(samples.checked_mul(2).unwrap()).unwrap();
+    let mut wav = Vec::with_capacity(44 + data_bytes as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16_u32.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.checked_mul(2).unwrap().to_le_bytes());
+    wav.extend_from_slice(&2_u16.to_le_bytes());
+    wav.extend_from_slice(&16_u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_bytes.to_le_bytes());
+    wav.resize(44 + data_bytes as usize, 0);
+    wav
+}
+
 #[tokio::test]
 async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request() {
     let (base, requests, task) = server_with_loaded_llm().await;
@@ -353,6 +467,70 @@ async fn tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_p
             voice: Some("maichi".into()),
             language: Some("vi-VN".into()),
         }]
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
+    let (base, received_samples, task) = server_with_loaded_asr().await;
+    let client = Client::new();
+    let providers = format!("{base}/api/admin/providers");
+    assert_eq!(client.post(&providers).bearer_auth("admin-test-token").json(&serde_json::json!({
+        "key":"asr_loaded", "name":"Loaded ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
+        "config_json":{"model":"gipformer15_vi_int8","language":"vi-VN","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}
+    })).send().await.unwrap().status(), StatusCode::CREATED);
+    let url = format!("{providers}/asr_loaded/test/asr");
+
+    let response = client
+        .post(&url)
+        .bearer_auth("admin-test-token")
+        .header("content-type", "audio/wav")
+        .body(wav_pcm16_mono(16_000, 16_000))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(response["provider_key"], "asr_loaded");
+    assert_eq!(response["type"], "asr");
+    assert_eq!(response["result"]["text"], "xin chao");
+    assert_eq!(response["result"]["language"], "vi-VN");
+    assert_eq!(response["metrics"]["audio_duration_ms"], 1_000);
+    assert!(response["metrics"]["rtf"].is_number());
+    assert_eq!(*received_samples.lock().unwrap(), vec![16_000]);
+
+    for (content_type, body) in [
+        ("audio/mpeg", wav_pcm16_mono(16_000, 1)),
+        ("audio/wav", wav_pcm16_mono(8_000, 8_000)),
+        ("audio/wav", wav_pcm16_mono(16_000, 16_000 * 31)),
+    ] {
+        let response = client
+            .post(&url)
+            .bearer_auth("admin-test-token")
+            .header("content-type", content_type)
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+            "invalid_test_input"
+        );
+    }
+    let response = client
+        .post(&url)
+        .bearer_auth("admin-test-token")
+        .header("content-type", "audio/wav")
+        .body(vec![0; 5 * 1024 * 1024 + 1])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "request_too_large"
     );
     task.abort();
 }

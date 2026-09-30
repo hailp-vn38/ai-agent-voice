@@ -12,6 +12,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    audio::PcmF32Mono,
     database::Database,
     providers::{
         DatabaseRuntimeSnapshot, DatabaseRuntimeStatus, DiagnosticRuntimeError,
@@ -72,6 +73,13 @@ pub struct LlmDiagnosticResult {
 pub struct TtsDiagnosticResult {
     pub provider_key: String,
     pub wav: Vec<u8>,
+    pub runtime: ProviderDiagnosticRuntimeMetadata,
+}
+
+pub struct AsrDiagnosticResult {
+    pub provider_key: String,
+    pub text: String,
+    pub language: String,
     pub runtime: ProviderDiagnosticRuntimeMetadata,
 }
 
@@ -277,6 +285,68 @@ impl ProviderDiagnosticService {
         Ok(TtsDiagnosticResult {
             provider_key,
             wav: output.wav,
+            runtime,
+        })
+    }
+
+    /// Executes one bounded ASR diagnostic against the runtime loaded at process startup.
+    pub async fn execute_asr(
+        &self,
+        key: &str,
+        pcm: PcmF32Mono,
+    ) -> Result<AsrDiagnosticResult, ProviderDiagnosticRequestError> {
+        let database = self
+            .database
+            .as_ref()
+            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
+        let row: (String, String, String, i64, i64, String) = sqlx::query_as(
+            "SELECT key,type,adapter,enabled,revision,config_json FROM providers WHERE key=?",
+        )
+        .bind(key)
+        .fetch_one(database.pool())
+        .await
+        .map_err(|error| match error {
+            sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
+            _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
+        })?;
+        let (provider_key, provider_type, adapter, enabled, revision, config_json) = row;
+        if enabled == 0 {
+            return Err(ProviderDiagnosticRequestError::Disabled);
+        }
+        if provider_type != "asr" {
+            return Err(ProviderDiagnosticRequestError::TypeMismatch);
+        }
+        let accepts_sample_rate = crate::providers::compiled_provider_adapter_registry()
+            .get(&adapter)
+            .filter(|descriptor| descriptor.provider_type == ProviderType::Asr)
+            .and_then(|descriptor| descriptor.capabilities.input_sample_rates)
+            .is_some_and(|rates| rates.contains(&pcm.sample_rate_hz()));
+        if !accepts_sample_rate {
+            return Err(ProviderDiagnosticRequestError::InvalidInput);
+        }
+        let language = serde_json::from_str::<serde_json::Value>(&config_json)
+            .ok()
+            .and_then(|config| config.get("language")?.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "und".to_owned());
+        let operation = self
+            .registry
+            .asr_diagnostic(&provider_key, pcm)
+            .map_err(|_| ProviderDiagnosticError::RuntimeNotLoaded)?;
+        let (text, runtime) = self
+            .execute(
+                ProviderDiagnosticTarget {
+                    key: provider_key.clone(),
+                    provider_type: ProviderType::Asr,
+                    desired_revision: revision,
+                },
+                operation,
+                Duration::from_millis(100),
+            )
+            .await?;
+        Ok(AsrDiagnosticResult {
+            provider_key,
+            text,
+            language,
             runtime,
         })
     }

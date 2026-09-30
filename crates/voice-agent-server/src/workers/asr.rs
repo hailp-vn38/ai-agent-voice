@@ -1,3 +1,4 @@
+use crate::{audio::PcmF32Mono, providers::AsrProvider};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, mpsc},
@@ -5,8 +6,6 @@ use std::{
     time::Instant,
 };
 use tokio::sync::mpsc as session_mpsc;
-
-use crate::{audio::PcmF32Mono, providers::AsrProvider};
 
 use super::{
     ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission,
@@ -159,6 +158,12 @@ impl AsrWorkerRuntime {
     /// Acquires capacity for a bounded diagnostic operation.
     pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
+    }
+
+    /// Builds a standalone diagnostic operation without loading or reconfiguring the provider.
+    /// Admission remains owned by `ProviderDiagnosticService`.
+    pub fn diagnostic(&self, pcm: PcmF32Mono) -> super::AsrDiagnosticOperation {
+        super::AsrDiagnosticOperation::new(Arc::clone(&self.provider), pcm)
     }
 
     pub fn send(&self, lease: AsrStreamLease, command: AsrCommand) -> Result<(), AsrWorkerError> {

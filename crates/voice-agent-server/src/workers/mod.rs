@@ -3,6 +3,7 @@
 
 mod admission;
 mod asr;
+mod asr_diagnostic;
 mod llm;
 mod supervisor;
 mod tts;
@@ -13,6 +14,7 @@ pub use admission::{
     ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission, ProviderWorkloadClass,
 };
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
+pub use asr_diagnostic::AsrDiagnosticOperation;
 pub use llm::{LlmDiagnosticOperation, LlmRuntime, LlmRuntimeEvent};
 pub use supervisor::WorkerSupervisor;
 pub use tts::{

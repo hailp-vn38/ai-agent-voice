@@ -5,9 +5,9 @@ use crate::{
     audio::VadSegmenterConfig,
     config::EffectiveProviderBindings,
     workers::{
-        AsrWorkerRuntime, LlmDiagnosticOperation, LlmRuntime, ProviderAdmissionError,
-        ProviderCapacityPermit, TtsDiagnosticOperation, TtsWorkerRuntime, VadWorkerRuntime,
-        VisionRuntime,
+        AsrDiagnosticOperation, AsrWorkerRuntime, LlmDiagnosticOperation, LlmRuntime,
+        ProviderAdmissionError, ProviderCapacityPermit, TtsDiagnosticOperation, TtsWorkerRuntime,
+        VadWorkerRuntime, VisionRuntime,
     },
 };
 
@@ -128,6 +128,16 @@ impl RuntimeCatalog {
         self.llm
             .get(key)
             .map(|runtime| runtime.diagnostic(request, max_text_bytes))
+            .ok_or(DiagnosticRuntimeError::NotLoaded)
+    }
+    pub fn asr_diagnostic(
+        &self,
+        key: &str,
+        pcm: crate::audio::PcmF32Mono,
+    ) -> Result<AsrDiagnosticOperation, DiagnosticRuntimeError> {
+        self.asr
+            .get(key)
+            .map(|runtime| runtime.diagnostic(pcm))
             .ok_or(DiagnosticRuntimeError::NotLoaded)
     }
     pub fn tts_diagnostic(

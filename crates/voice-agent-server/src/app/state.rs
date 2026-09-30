@@ -239,6 +239,39 @@ impl AppState {
         self
     }
 
+    /// Deterministic public-HTTP seam for ASR diagnostics. The provider is already materialized
+    /// before the router is built; no Admin request can load or reconfigure it.
+    pub fn with_database_asr_runtime_for_test(
+        mut self,
+        instance_id: impl Into<String>,
+        provider: Arc<dyn crate::providers::AsrProvider>,
+        worker_config: WorkerRuntimeConfig,
+        desired_revision: i64,
+    ) -> Self {
+        let instance_id = instance_id.into();
+        Arc::make_mut(&mut self.runtimes).asr.insert(
+            instance_id.clone(),
+            Arc::new(AsrWorkerRuntime::new(provider, worker_config)),
+        );
+        self.database_runtime_snapshot = Some(Arc::new(DatabaseRuntimeSnapshot::from_states([(
+            instance_id,
+            crate::providers::DatabaseRuntimeState {
+                provider_id: 0,
+                desired_revision,
+                status: crate::providers::DatabaseRuntimeStatus::Loaded,
+                failure: None,
+            },
+        )])));
+        self.provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
+            Arc::clone(&self.runtimes),
+            self.database_runtime_snapshot.clone(),
+            self.database.clone(),
+            ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+            Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+        ));
+        self
+    }
+
     /// Resolves the one Effective Session Profile this connection may use.  Database-backed
     /// admission is fail-closed: an unknown Device is denied and any resolution failure is coarse,
     /// so a broken intended configuration can never be masked by deployment defaults.
