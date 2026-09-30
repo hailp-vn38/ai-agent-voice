@@ -57,7 +57,13 @@ impl AdminClient {
                 .json::<serde_json::Value>()
                 .await
                 .ok()
-                .and_then(|v| v.get("code").and_then(|v| v.as_str()).map(str::to_owned))
+                .and_then(|value| {
+                    value
+                        .get("error")
+                        .and_then(|error| error.get("code"))
+                        .and_then(|code| code.as_str())
+                        .map(str::to_owned)
+                })
                 .unwrap_or_else(|| "unknown".into());
             return Err(AdminError::Rejected { status, code });
         }
@@ -88,6 +94,9 @@ impl AdminClient {
         revision: u64,
         value: BindTemplateProviderRequest,
     ) -> Result<TemplateView, AdminError> {
+        if !valid_resource_key(template) || !valid_provider_kind(kind) {
+            return Err(AdminError::Wire);
+        }
         self.send(
             reqwest::Method::PUT,
             &format!("templates/{template}/providers/{kind}"),
@@ -117,6 +126,9 @@ impl AdminClient {
         revision: u64,
         value: McpBindingRequest,
     ) -> Result<AgentView, AdminError> {
+        if !valid_resource_key(agent) || !valid_resource_key(server) {
+            return Err(AdminError::Wire);
+        }
         self.send(
             reqwest::Method::PUT,
             &format!("agents/{agent}/mcp-bindings/{server}"),
@@ -125,6 +137,18 @@ impl AdminClient {
         )
         .await
     }
+}
+
+fn valid_resource_key(value: &str) -> bool {
+    value.len() <= 64
+        && value.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn valid_provider_kind(value: &str) -> bool {
+    matches!(value, "vad" | "asr" | "llm" | "tts")
 }
 
 /// A validated Admin API collection base. Resource paths are always joined relatively.
@@ -172,6 +196,9 @@ impl AdminBaseUrl {
             || relative.starts_with('/')
             || relative.contains('?')
             || relative.contains('#')
+            || relative.split('/').any(|segment| {
+                segment.is_empty() || segment == "." || segment == ".." || segment.contains('%')
+            })
         {
             return Err(AdminUrlError::Invalid);
         }

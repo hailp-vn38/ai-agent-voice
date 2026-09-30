@@ -1,11 +1,17 @@
 //! Immutable qualification scenario identities and handoff state.
 
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs::OpenOptions, io::Write, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::OpenOptions,
+    io::Write,
+    path::Path,
+};
 use thiserror::Error;
 
 const RUN_ID_PREFIX: &str = "it_";
 const RUN_TOKEN_LEN: usize = 24;
+const REQUIRED_RESOURCE_ROLES: [&str; 7] = ["agent", "template", "vad", "asr", "llm", "tts", "mcp"];
 
 #[derive(Debug, Error)]
 pub enum ScenarioError {
@@ -43,6 +49,11 @@ impl ScenarioPlan {
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             || key_prefix.is_empty()
         {
+            return Err(ScenarioError::Identity);
+        }
+        let unique_roles = roles.iter().copied().collect::<BTreeSet<_>>();
+        let required_roles = REQUIRED_RESOURCE_ROLES.into_iter().collect::<BTreeSet<_>>();
+        if roles.len() != REQUIRED_RESOURCE_ROLES.len() || unique_roles != required_roles {
             return Err(ScenarioError::Identity);
         }
         let mut resource_keys = BTreeMap::new();
@@ -121,7 +132,13 @@ impl ScenarioState {
             serde_json::to_writer(&mut file, self).map_err(|_| ScenarioError::Io)?;
             file.write_all(b"\n").map_err(|_| ScenarioError::Io)?;
             file.sync_all().map_err(|_| ScenarioError::Io)?;
-            std::fs::hard_link(&temp, path).map_err(|_| ScenarioError::StateExists)?;
+            std::fs::hard_link(&temp, path).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    ScenarioError::StateExists
+                } else {
+                    ScenarioError::Io
+                }
+            })?;
             std::fs::remove_file(&temp).map_err(|_| ScenarioError::Io)
         })();
         if result.is_err() {
@@ -148,7 +165,7 @@ mod tests {
             raw,
             "it_0123456789abcdef01234567",
             "qual",
-            &["agent", "template", "asr"],
+            &REQUIRED_RESOURCE_ROLES,
         )
         .unwrap();
         assert_eq!(
