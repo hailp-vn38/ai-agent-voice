@@ -125,6 +125,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                     Arc::clone(&provider),
                     WorkerRuntimeConfig {
                         max_workers: config.workers.vad.max_workers,
+                        voice_reserved_capacity: 1,
                         command_capacity: config.workers.vad.command_queue_capacity,
                         final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
                         cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
@@ -168,6 +169,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                 Arc::clone(&provider),
                 WorkerRuntimeConfig {
                     max_workers: config.workers.asr.max_workers,
+                    voice_reserved_capacity: 1,
                     command_capacity: config.workers.asr.command_queue_capacity,
                     final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
                     cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
@@ -224,6 +226,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                 Arc::clone(&provider),
                 WorkerRuntimeConfig {
                     max_workers: config.workers.tts.max_workers,
+                    voice_reserved_capacity: 1,
                     command_capacity: config.workers.tts.command_queue_capacity,
                     final_timeout: Duration::from_millis(config.tts.timeout_ms),
                     cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),

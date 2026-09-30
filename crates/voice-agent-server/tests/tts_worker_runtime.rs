@@ -133,6 +133,7 @@ fn detached_cancel_drains_queued_pcm_and_releases_full_event_channel() {
         Arc::new(BurstingWorkerProvider(first_sent)),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 1,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -161,6 +162,7 @@ fn native_workers_are_created_once_per_pool_slot_not_per_synthesis() {
         Arc::new(CountedWorkerProvider(Arc::clone(&created))),
         WorkerRuntimeConfig {
             max_workers: 2,
+            voice_reserved_capacity: 1,
             command_capacity: 4,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_millis(10),
@@ -189,6 +191,7 @@ fn native_slot_stays_occupied_until_runtime_consumes_terminal_acknowledgement() 
         }),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 2,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_millis(10),
@@ -223,6 +226,7 @@ fn streaming_provider_delivers_each_pcm_chunk_before_terminal_acknowledgement() 
         Arc::new(StreamingTts),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 4,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_millis(10),
@@ -280,6 +284,7 @@ fn detached_cancel_quarantines_a_worker_that_misses_cleanup_grace() {
         }),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 2,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_millis(10),
@@ -308,6 +313,7 @@ fn timeout_starts_cleanup_from_worker_acceptance_and_quarantines_without_later_p
         }),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 2,
             final_timeout: Duration::from_millis(10),
             cleanup_grace: Duration::from_millis(10),
@@ -336,6 +342,7 @@ fn completed_synthesis_is_not_timed_out_while_pcm_waits_for_pacing() {
         Arc::new(StreamingTts),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 4,
             final_timeout: Duration::from_millis(10),
             cleanup_grace: Duration::from_millis(10),

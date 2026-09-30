@@ -101,6 +101,7 @@ fn worker_fails_when_provider_mutates_the_canonical_sample_range() {
         Arc::new(InvalidRangeVad),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 2,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),

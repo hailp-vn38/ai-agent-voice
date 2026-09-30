@@ -1,6 +1,7 @@
 //! Bounded local-inference workers. They own mutable provider streams; session actors only route
 //! identity-tagged commands and events.
 
+mod admission;
 mod asr;
 mod llm;
 mod supervisor;
@@ -8,6 +9,9 @@ mod tts;
 mod vad;
 mod vision_runtime;
 
+pub use admission::{
+    ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission, ProviderWorkloadClass,
+};
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
 pub use llm::{LlmRuntime, LlmRuntimeEvent};
 pub use supervisor::WorkerSupervisor;
@@ -49,6 +53,8 @@ impl WorkerIdentity {
 #[derive(Clone, Debug)]
 pub struct WorkerRuntimeConfig {
     pub max_workers: usize,
+    /// Capacity permanently reserved for Voice operations; Diagnostic work may use only the rest.
+    pub voice_reserved_capacity: usize,
     pub command_capacity: usize,
     pub final_timeout: Duration,
     pub cleanup_grace: Duration,
@@ -58,6 +64,7 @@ impl Default for WorkerRuntimeConfig {
     fn default() -> Self {
         Self {
             max_workers: 8,
+            voice_reserved_capacity: 1,
             command_capacity: 32,
             final_timeout: Duration::from_secs(15),
             cleanup_grace: Duration::from_secs(5),
@@ -67,7 +74,11 @@ impl Default for WorkerRuntimeConfig {
 
 impl WorkerRuntimeConfig {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        if self.max_workers == 0 || self.command_capacity == 0 {
+        if self.max_workers == 0
+            || self.voice_reserved_capacity == 0
+            || self.voice_reserved_capacity > self.max_workers
+            || self.command_capacity == 0
+        {
             return Err("worker and command capacities must be positive");
         }
         if self.final_timeout.is_zero() || self.cleanup_grace.is_zero() {

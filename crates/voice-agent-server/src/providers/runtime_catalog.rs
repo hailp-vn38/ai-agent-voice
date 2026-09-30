@@ -1,15 +1,48 @@
 use std::{collections::HashMap, sync::Arc};
 
+use super::ProviderType;
 use crate::{
     audio::VadSegmenterConfig,
     config::EffectiveProviderBindings,
-    workers::{AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime},
+    workers::{
+        AsrWorkerRuntime, LlmRuntime, ProviderAdmissionError, ProviderCapacityPermit,
+        TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeResolveError {
     #[error("unknown {kind} runtime for provider instance `{id}`")]
     Unknown { kind: &'static str, id: String },
+}
+
+/// A diagnostic can only target runtime classes that own bounded provider capacity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiagnosticRuntimeKind {
+    Asr,
+    Llm,
+    Tts,
+}
+
+impl TryFrom<ProviderType> for DiagnosticRuntimeKind {
+    type Error = ();
+
+    fn try_from(value: ProviderType) -> Result<Self, Self::Error> {
+        match value {
+            ProviderType::Asr => Ok(Self::Asr),
+            ProviderType::Llm => Ok(Self::Llm),
+            ProviderType::Tts => Ok(Self::Tts),
+            ProviderType::Vad => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DiagnosticRuntimeError {
+    #[error("provider runtime is not loaded")]
+    NotLoaded,
+    #[error("provider diagnostic capacity is exhausted")]
+    Capacity,
 }
 
 /// One loaded VAD instance. Segmentation timing belongs to the provider that produced it, so a
@@ -42,6 +75,30 @@ pub struct RuntimeCatalog {
 }
 
 impl RuntimeCatalog {
+    /// Atomically admits diagnostic work at the runtime materialized during startup.
+    pub fn admit_diagnostic(
+        &self,
+        kind: DiagnosticRuntimeKind,
+        key: &str,
+    ) -> Result<ProviderCapacityPermit, DiagnosticRuntimeError> {
+        match kind {
+            DiagnosticRuntimeKind::Asr => self
+                .asr
+                .get(key)
+                .ok_or(DiagnosticRuntimeError::NotLoaded)
+                .and_then(|runtime| runtime.admit_diagnostic().map_err(map_admission_error)),
+            DiagnosticRuntimeKind::Llm => self
+                .llm
+                .get(key)
+                .ok_or(DiagnosticRuntimeError::NotLoaded)
+                .and_then(|runtime| runtime.admit_diagnostic().map_err(map_admission_error)),
+            DiagnosticRuntimeKind::Tts => self
+                .tts
+                .get(key)
+                .ok_or(DiagnosticRuntimeError::NotLoaded)
+                .and_then(|runtime| runtime.admit_diagnostic().map_err(map_admission_error)),
+        }
+    }
     pub fn tts(&self, id: &str) -> Result<Arc<TtsWorkerRuntime>, RuntimeResolveError> {
         self.tts
             .get(id)
@@ -101,6 +158,10 @@ impl RuntimeCatalog {
     }
 }
 
+fn map_admission_error(_: ProviderAdmissionError) -> DiagnosticRuntimeError {
+    DiagnosticRuntimeError::Capacity
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +178,7 @@ mod tests {
     fn resolve_returns_the_runtime_snapshot_named_by_effective_bindings() {
         let worker = WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 1,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),

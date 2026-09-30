@@ -9,7 +9,10 @@ use std::{
     time::Instant,
 };
 
-use super::WorkerRuntimeConfig;
+use super::{
+    ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission,
+    ProviderWorkloadClass, WorkerRuntimeConfig,
+};
 use crate::{
     audio::PcmF32Mono,
     providers::{TtsError, TtsProvider, TtsStream, TtsWorker},
@@ -65,6 +68,7 @@ struct Slot {
     cleanup_deadline: Option<Instant>,
     quarantined: bool,
     cleanup_reported: bool,
+    _permit: ProviderCapacityPermit,
 }
 struct State {
     next: u64,
@@ -81,6 +85,7 @@ pub struct TtsWorkerRuntime {
     provider: Arc<dyn TtsProvider>,
     config: WorkerRuntimeConfig,
     state: Arc<Mutex<State>>,
+    admission: ProviderRuntimeAdmission,
 }
 
 impl TtsWorkerRuntime {
@@ -103,6 +108,8 @@ impl TtsWorkerRuntime {
                 quarantined: false,
             });
         }
+        let admission =
+            ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
         Self {
             provider,
             config,
@@ -114,6 +121,7 @@ impl TtsWorkerRuntime {
                 closed_streams: HashSet::new(),
                 workers,
             })),
+            admission,
         }
     }
     pub fn provider(&self) -> Arc<dyn TtsProvider> {
@@ -155,6 +163,10 @@ impl TtsWorkerRuntime {
         stream: Option<TtsStreamId>,
         text: String,
     ) -> Result<TtsLease, TtsWorkerError> {
+        let permit = self
+            .admission
+            .try_admit(ProviderWorkloadClass::Voice)
+            .map_err(|_| TtsWorkerError::Capacity)?;
         let mut state = self.state.lock().expect("TTS worker state poisoned");
         let worker = match stream {
             Some(stream) => match state
@@ -197,6 +209,7 @@ impl TtsWorkerRuntime {
                 cleanup_deadline: None,
                 quarantined: false,
                 cleanup_reported: false,
+                _permit: permit,
             },
         );
         let command = state.workers[worker].command_tx.clone();
@@ -308,6 +321,11 @@ impl TtsWorkerRuntime {
             .expect("TTS worker state poisoned")
             .slots
             .len()
+    }
+
+    /// Acquires capacity for a bounded diagnostic operation.
+    pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 }
 impl Drop for TtsWorkerRuntime {

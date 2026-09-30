@@ -16,6 +16,12 @@ pub(super) fn default_database_busy_timeout_ms() -> u64 {
 pub(super) fn default_shutdown_grace_ms() -> u64 {
     15_000
 }
+pub(super) fn default_provider_test_concurrency() -> usize {
+    2
+}
+pub(super) fn default_provider_test_timeout_ms() -> u64 {
+    30_000
+}
 pub(super) fn default_history_retention_days() -> u32 {
     30
 }

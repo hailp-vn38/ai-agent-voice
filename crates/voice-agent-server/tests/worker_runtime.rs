@@ -70,6 +70,7 @@ fn stale_cancel_acknowledgement_releases_its_pinned_stream_without_exposing_a_lo
         Arc::new(FakeAsr),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 2,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -95,6 +96,7 @@ fn cleanup_timeout_quarantines_the_exact_worker_instead_of_reusing_it() {
         Arc::new(FakeAsr),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 1,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_millis(1),

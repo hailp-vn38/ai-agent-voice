@@ -5,7 +5,7 @@ use std::{
 };
 
 use futures_util::StreamExt;
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -13,7 +13,10 @@ use crate::{
         LlmEvent, LlmProvider,
         llm::{LlmRequest, ToolCall},
     },
-    workers::WorkerIdentity,
+    workers::{
+        ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission,
+        ProviderWorkloadClass, WorkerIdentity,
+    },
 };
 
 /// Why an LLM operation could not be accepted without exposing provider details.
@@ -50,7 +53,7 @@ pub enum LlmRuntimeEvent {
 /// Application-owned bounded runtime for remote LLM operations.
 pub struct LlmRuntime {
     provider: Arc<dyn LlmProvider>,
-    permits: Arc<Semaphore>,
+    admission: ProviderRuntimeAdmission,
     timeout: Duration,
     routes: Arc<Mutex<HashMap<String, mpsc::Sender<LlmRuntimeEvent>>>>,
     cancellations: Arc<Mutex<HashMap<WorkerIdentity, CancellationToken>>>,
@@ -58,11 +61,21 @@ pub struct LlmRuntime {
 
 impl LlmRuntime {
     pub fn new(provider: Arc<dyn LlmProvider>, capacity: usize, timeout: Duration) -> Self {
+        Self::new_with_voice_reservation(provider, capacity, 1, timeout)
+    }
+
+    pub fn new_with_voice_reservation(
+        provider: Arc<dyn LlmProvider>,
+        capacity: usize,
+        voice_reserved_capacity: usize,
+        timeout: Duration,
+    ) -> Self {
         assert!(capacity > 0);
+        assert!(voice_reserved_capacity > 0 && voice_reserved_capacity <= capacity);
         assert!(!timeout.is_zero());
         Self {
             provider,
-            permits: Arc::new(Semaphore::new(capacity)),
+            admission: ProviderRuntimeAdmission::new(capacity, voice_reserved_capacity),
             timeout,
             routes: Arc::new(Mutex::new(HashMap::new())),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
@@ -98,9 +111,8 @@ impl LlmRuntime {
             return Err(LlmStartError::NoTokioRuntime);
         }
         let permit = self
-            .permits
-            .clone()
-            .try_acquire_owned()
+            .admission
+            .try_admit(ProviderWorkloadClass::Voice)
             .map_err(|_| LlmStartError::Capacity)?;
         self.cancellations
             .lock()
@@ -159,6 +171,12 @@ impl LlmRuntime {
         {
             token.cancel();
         }
+    }
+
+    /// Acquires capacity for a bounded diagnostic. The returned permit must live until the
+    /// provider operation has acknowledged terminal completion or has been quarantined.
+    pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 }
 

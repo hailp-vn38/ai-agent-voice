@@ -293,6 +293,7 @@ fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         api: AdminApiConfig {
             enabled: true,
             admin_token: ADMIN_TOKEN.to_owned(),
+            ..Default::default()
         },
         shutdown: Default::default(),
         agent: None,

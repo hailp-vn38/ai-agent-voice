@@ -9,6 +9,7 @@ use crate::{
     providers::{
         DatabaseRuntimeSnapshot, LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog,
     },
+    services::provider_diagnostic::{ProviderDiagnosticLimiter, ProviderDiagnosticService},
     session::{
         ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable, WriterOutcomeProbe,
         resolve_effective_session_profile,
@@ -28,6 +29,8 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub providers: Arc<ProviderCatalog>,
     pub runtimes: Arc<RuntimeCatalog>,
+    /// One process-wide diagnostic boundary shared by all future Admin provider-test routes.
+    pub provider_diagnostics: Arc<ProviderDiagnosticService>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
     pub active_turn_limiter: Arc<ActiveTurnLimiter>,
     pub database: Option<Arc<Database>>,
@@ -313,14 +316,24 @@ impl AppState {
                 lifecycle.stopping().clone(),
             ))
         });
+        let config = Arc::new(config);
+        let runtimes = Arc::new(loaded.runtimes);
+        let database_runtime_snapshot = database_runtime_snapshot.map(Arc::new);
+        let provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
+            Arc::clone(&runtimes),
+            database_runtime_snapshot.clone(),
+            ProviderDiagnosticLimiter::new(config.api.provider_tests.max_concurrency),
+            Duration::from_millis(config.api.provider_tests.timeout_ms),
+        ));
         let state = Self {
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
-            config: Arc::new(config),
+            config,
             providers: Arc::new(loaded.providers),
-            runtimes: Arc::new(loaded.runtimes),
+            runtimes,
+            provider_diagnostics,
             worker_supervisor: supervisor,
             database: database.map(Arc::new),
-            database_runtime_snapshot: database_runtime_snapshot.map(Arc::new),
+            database_runtime_snapshot,
             secret_resolver,
             external_mcp,
             history,
@@ -501,6 +514,7 @@ pub(super) fn loaded_from_provider_set(
         Arc::clone(&vad),
         WorkerRuntimeConfig {
             max_workers: config.workers.vad.max_workers,
+            voice_reserved_capacity: 1,
             command_capacity: config.workers.vad.command_queue_capacity,
             final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
             cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
@@ -510,6 +524,7 @@ pub(super) fn loaded_from_provider_set(
         Arc::clone(&asr),
         WorkerRuntimeConfig {
             max_workers: config.workers.asr.max_workers,
+            voice_reserved_capacity: 1,
             command_capacity: config.workers.asr.command_queue_capacity,
             final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
             cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
@@ -524,6 +539,7 @@ pub(super) fn loaded_from_provider_set(
         Arc::clone(&tts),
         WorkerRuntimeConfig {
             max_workers: config.workers.tts.max_workers,
+            voice_reserved_capacity: 1,
             command_capacity: config.workers.tts.command_queue_capacity,
             final_timeout: Duration::from_millis(config.tts.timeout_ms),
             cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),

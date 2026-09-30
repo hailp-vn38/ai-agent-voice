@@ -398,6 +398,7 @@ fn reject_secret_value(secret: Option<&crate::database::secrets::SecretValue>) -
 fn vad_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
         max_workers: config.workers.vad.max_workers,
+        voice_reserved_capacity: 1,
         command_capacity: config.workers.vad.command_queue_capacity,
         final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
         cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
@@ -406,6 +407,7 @@ fn vad_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
 fn asr_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
         max_workers: config.workers.asr.max_workers,
+        voice_reserved_capacity: 1,
         command_capacity: config.workers.asr.command_queue_capacity,
         final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
         cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
@@ -414,6 +416,7 @@ fn asr_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
 fn tts_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
         max_workers: config.workers.tts.max_workers,
+        voice_reserved_capacity: 1,
         command_capacity: config.workers.tts.command_queue_capacity,
         final_timeout: Duration::from_millis(config.tts.timeout_ms),
         cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),

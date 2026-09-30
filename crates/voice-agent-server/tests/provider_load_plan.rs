@@ -71,6 +71,7 @@ fn config(url: String) -> AppConfig {
         api: AdminApiConfig {
             enabled: true,
             admin_token: ADMIN_TOKEN.into(),
+            ..Default::default()
         },
         shutdown: Default::default(),
         agent: None,

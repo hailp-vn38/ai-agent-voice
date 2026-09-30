@@ -8,7 +8,10 @@ use tokio::sync::mpsc as session_mpsc;
 
 use crate::{audio::PcmF32Mono, providers::AsrProvider};
 
-use super::{WorkerIdentity, WorkerRuntimeConfig};
+use super::{
+    ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission,
+    ProviderWorkloadClass, WorkerIdentity, WorkerRuntimeConfig,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AsrStreamLease(u64);
@@ -62,6 +65,7 @@ pub struct AsrWorkerRuntime {
     events_rx: Mutex<mpsc::Receiver<AsrWorkerEvent>>,
     events_tx: mpsc::Sender<AsrWorkerEvent>,
     routes: Mutex<HashMap<String, session_mpsc::Sender<AsrWorkerEvent>>>,
+    admission: ProviderRuntimeAdmission,
 }
 
 struct State {
@@ -73,6 +77,7 @@ struct Slot {
     identity: WorkerIdentity,
     command_tx: mpsc::SyncSender<AsrCommand>,
     state: SlotState,
+    _permit: ProviderCapacityPermit,
 }
 
 enum SlotState {
@@ -86,6 +91,8 @@ impl AsrWorkerRuntime {
     pub fn new(provider: Arc<dyn AsrProvider>, config: WorkerRuntimeConfig) -> Self {
         config.validate().expect("invalid worker runtime config");
         let (events_tx, events_rx) = mpsc::channel();
+        let admission =
+            ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
         Self {
             provider,
             config,
@@ -96,6 +103,7 @@ impl AsrWorkerRuntime {
             events_rx: Mutex::new(events_rx),
             events_tx,
             routes: Mutex::new(HashMap::new()),
+            admission,
         }
     }
 
@@ -122,6 +130,10 @@ impl AsrWorkerRuntime {
     }
 
     pub fn open(&self, identity: WorkerIdentity) -> Result<AsrStreamLease, AsrWorkerError> {
+        let permit = self
+            .admission
+            .try_admit(ProviderWorkloadClass::Voice)
+            .map_err(|_| AsrWorkerError::Capacity)?;
         let mut state = self.state.lock().expect("ASR worker state poisoned");
         if state.slots.len() >= self.config.max_workers {
             return Err(AsrWorkerError::Capacity);
@@ -135,12 +147,18 @@ impl AsrWorkerRuntime {
                 identity: identity.clone(),
                 command_tx,
                 state: SlotState::Active,
+                _permit: permit,
             },
         );
         let provider = Arc::clone(&self.provider);
         let events_tx = self.events_tx.clone();
         thread::spawn(move || run_worker(provider, identity, command_rx, events_tx));
         Ok(lease)
+    }
+
+    /// Acquires capacity for a bounded diagnostic operation.
+    pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 
     pub fn send(&self, lease: AsrStreamLease, command: AsrCommand) -> Result<(), AsrWorkerError> {

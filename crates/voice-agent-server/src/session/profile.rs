@@ -507,6 +507,7 @@ mod tests {
 
         let worker = WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 1,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),

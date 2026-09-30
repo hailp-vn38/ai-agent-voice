@@ -937,6 +937,25 @@ pub struct AdminApiConfig {
     pub enabled: bool,
     #[serde(default)]
     pub admin_token: String,
+    #[serde(default)]
+    pub provider_tests: ProviderTestsConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderTestsConfig {
+    #[serde(default = "default_provider_test_concurrency")]
+    pub max_concurrency: usize,
+    #[serde(default = "default_provider_test_timeout_ms")]
+    pub timeout_ms: u64,
+}
+impl Default for ProviderTestsConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrency: default_provider_test_concurrency(),
+            timeout_ms: default_provider_test_timeout_ms(),
+        }
+    }
 }
 
 impl Default for DatabaseConfig {
