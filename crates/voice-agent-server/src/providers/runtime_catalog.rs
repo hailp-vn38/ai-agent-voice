@@ -5,8 +5,8 @@ use crate::{
     audio::VadSegmenterConfig,
     config::EffectiveProviderBindings,
     workers::{
-        AsrWorkerRuntime, LlmRuntime, ProviderAdmissionError, ProviderCapacityPermit,
-        TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
+        AsrWorkerRuntime, LlmDiagnosticOperation, LlmRuntime, ProviderAdmissionError,
+        ProviderCapacityPermit, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
     },
 };
 
@@ -107,6 +107,19 @@ impl RuntimeCatalog {
                 kind: "TTS",
                 id: id.into(),
             })
+    }
+    /// Builds a diagnostic request for an already-loaded LLM runtime without admitting capacity
+    /// or altering the catalog. Admission remains atomic at `admit_diagnostic`.
+    pub fn llm_diagnostic(
+        &self,
+        key: &str,
+        request: crate::providers::llm::LlmRequest,
+        max_text_bytes: usize,
+    ) -> Result<LlmDiagnosticOperation, DiagnosticRuntimeError> {
+        self.llm
+            .get(key)
+            .map(|runtime| runtime.diagnostic(request, max_text_bytes))
+            .ok_or(DiagnosticRuntimeError::NotLoaded)
     }
     pub fn vision(&self, id: &str) -> Result<Arc<VisionRuntime>, RuntimeResolveError> {
         self.vision

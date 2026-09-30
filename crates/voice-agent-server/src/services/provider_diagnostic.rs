@@ -12,9 +12,10 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    database::Database,
     providers::{
         DatabaseRuntimeSnapshot, DatabaseRuntimeStatus, DiagnosticRuntimeError,
-        DiagnosticRuntimeKind, ProviderType, RuntimeCatalog,
+        DiagnosticRuntimeKind, ProviderType, RuntimeCatalog, llm::LlmRequest,
     },
     workers::ProviderCapacityPermit,
 };
@@ -42,6 +43,27 @@ pub enum ProviderDiagnosticError {
     InvalidResponse,
     #[error("provider diagnostic failed")]
     Failed,
+}
+
+/// Coarse, privacy-safe result for a public Admin provider diagnostic request.
+#[derive(Debug, thiserror::Error)]
+pub enum ProviderDiagnosticRequestError {
+    #[error("provider was not found")]
+    NotFound,
+    #[error("provider is disabled")]
+    Disabled,
+    #[error("database is unavailable")]
+    DatabaseUnavailable,
+    #[error("provider type does not support this diagnostic")]
+    TypeMismatch,
+    #[error(transparent)]
+    Diagnostic(#[from] ProviderDiagnosticError),
+}
+
+pub struct LlmDiagnosticResult {
+    pub provider_key: String,
+    pub text: String,
+    pub runtime: ProviderDiagnosticRuntimeMetadata,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +125,7 @@ pub struct ProviderDiagnosticService {
     execution_timeout: Duration,
     registry: Arc<RuntimeCatalog>,
     runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
+    database: Option<Arc<Database>>,
     /// Quarantined permits intentionally stay owned until process teardown. This makes degraded
     /// capacity observable by admission rather than accidentally reusing a worker that has not
     /// acknowledged cancellation.
@@ -120,6 +143,7 @@ impl ProviderDiagnosticService {
     pub fn new(
         registry: Arc<RuntimeCatalog>,
         runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
+        database: Option<Arc<Database>>,
         limiter: ProviderDiagnosticLimiter,
         execution_timeout: Duration,
     ) -> Self {
@@ -129,6 +153,7 @@ impl ProviderDiagnosticService {
             execution_timeout,
             registry,
             runtime_snapshot,
+            database,
             quarantined_capacity: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -136,6 +161,56 @@ impl ProviderDiagnosticService {
     /// Shared execution bound used by every provider-specific diagnostic runner.
     pub fn execution_timeout(&self) -> Duration {
         self.execution_timeout
+    }
+
+    /// Executes a tool-free LLM diagnostic against the exact runtime loaded at process startup.
+    /// This is the service boundary for desired-row lookup, type validation, runtime lookup,
+    /// admission and timeout ownership; HTTP only supplies already-validated text and maps errors.
+    pub async fn execute_llm(
+        &self,
+        key: &str,
+        input: String,
+    ) -> Result<LlmDiagnosticResult, ProviderDiagnosticRequestError> {
+        let database = self
+            .database
+            .as_ref()
+            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
+        let row: (String, String, i64, i64) =
+            sqlx::query_as("SELECT key,type,enabled,revision FROM providers WHERE key=?")
+                .bind(key)
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| match error {
+                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
+                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
+                })?;
+        let (provider_key, provider_type, enabled, revision) = row;
+        if enabled == 0 {
+            return Err(ProviderDiagnosticRequestError::Disabled);
+        }
+        if provider_type != "llm" {
+            return Err(ProviderDiagnosticRequestError::TypeMismatch);
+        }
+        let operation = self
+            .registry
+            .llm_diagnostic(&provider_key, LlmRequest::text_turn(input), 32 * 1024)
+            .map_err(|_| ProviderDiagnosticError::RuntimeNotLoaded)?;
+        let (text, runtime) = self
+            .execute(
+                ProviderDiagnosticTarget {
+                    key: provider_key.clone(),
+                    provider_type: ProviderType::Llm,
+                    desired_revision: revision,
+                },
+                operation,
+                Duration::from_millis(100),
+            )
+            .await?;
+        Ok(LlmDiagnosticResult {
+            provider_key,
+            text,
+            runtime,
+        })
     }
 
     /// Owns a diagnostic from execution through terminal acknowledgement. A timeout never drops

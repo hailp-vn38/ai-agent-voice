@@ -43,6 +43,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/providers", get(list_providers).post(create_provider))
         .route("/providers/{key}", get(get_provider).patch(patch_provider))
         .route(
+            "/providers/{key}/test/llm",
+            axum::routing::post(test_llm_provider),
+        )
+        .route(
             "/providers/{key}/capabilities",
             get(get_provider_capabilities),
         )
@@ -83,6 +87,7 @@ mod devices;
 mod history;
 mod mcp_servers;
 mod provider_adapters;
+mod provider_tests;
 mod providers;
 mod templates;
 
@@ -97,6 +102,7 @@ use provider_adapters::{
     discover_provider_capabilities, get_provider_adapter, get_provider_capabilities,
     list_provider_adapters,
 };
+use provider_tests::test_llm_provider;
 use providers::{create_provider, get_provider, list_providers, patch_provider};
 use templates::{
     assign_template, bind_template_provider, create_template, get_template, list_templates,

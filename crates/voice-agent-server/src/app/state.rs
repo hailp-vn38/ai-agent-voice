@@ -171,6 +171,41 @@ impl AppState {
         self
     }
 
+    /// Deterministic public-HTTP seam for Admin provider diagnostics. It installs an
+    /// already-loaded LLM runtime and the immutable startup snapshot a database-backed provider
+    /// test compares against; it never materializes a provider from an Admin request.
+    pub fn with_database_llm_runtime_for_test(
+        mut self,
+        instance_id: impl Into<String>,
+        provider: Arc<dyn crate::providers::LlmProvider>,
+        concurrency: usize,
+        timeout: Duration,
+        desired_revision: i64,
+    ) -> Self {
+        let instance_id = instance_id.into();
+        Arc::make_mut(&mut self.runtimes).llm.insert(
+            instance_id.clone(),
+            Arc::new(LlmRuntime::new(provider, concurrency, timeout)),
+        );
+        self.database_runtime_snapshot = Some(Arc::new(DatabaseRuntimeSnapshot::from_states([(
+            instance_id,
+            crate::providers::DatabaseRuntimeState {
+                provider_id: 0,
+                desired_revision,
+                status: crate::providers::DatabaseRuntimeStatus::Loaded,
+                failure: None,
+            },
+        )])));
+        self.provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
+            Arc::clone(&self.runtimes),
+            self.database_runtime_snapshot.clone(),
+            self.database.clone(),
+            ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+            Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+        ));
+        self
+    }
+
     /// Resolves the one Effective Session Profile this connection may use.  Database-backed
     /// admission is fail-closed: an unknown Device is denied and any resolution failure is coarse,
     /// so a broken intended configuration can never be masked by deployment defaults.
@@ -322,6 +357,7 @@ impl AppState {
         let provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
             Arc::clone(&runtimes),
             database_runtime_snapshot.clone(),
+            database.as_ref().cloned().map(Arc::new),
             ProviderDiagnosticLimiter::new(config.api.provider_tests.max_concurrency),
             Duration::from_millis(config.api.provider_tests.timeout_ms),
         ));

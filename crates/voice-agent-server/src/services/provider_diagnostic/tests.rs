@@ -48,6 +48,7 @@ fn service(desired_revision: i64) -> ProviderDiagnosticService {
     ProviderDiagnosticService::new(
         Arc::new(registry),
         Some(Arc::new(snapshot)),
+        None,
         ProviderDiagnosticLimiter::new(1),
         Duration::from_secs(1),
     )
@@ -141,6 +142,7 @@ async fn timeout_cancels_then_acknowledges_before_releasing_capacity() {
                 failure: None,
             },
         )]))),
+        None,
         ProviderDiagnosticLimiter::new(1),
         Duration::from_millis(1),
     );

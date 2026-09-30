@@ -1,9 +1,34 @@
-use std::{fs, sync::Arc};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use reqwest::{Client, StatusCode};
 use voice_agent_server::{
-    app::bootstrap_with_providers, config::AppConfig, providers::ProviderSet,
+    app::{AppState, bootstrap_with_providers, router_with_state},
+    config::AppConfig,
+    database::Database,
+    providers::{
+        LlmError, LlmProvider, ProviderSet,
+        llm::{ChatMessage, LlmRequest},
+    },
 };
+
+struct DiagnosticLlm {
+    requests: Arc<Mutex<Vec<LlmRequest>>>,
+}
+
+impl LlmProvider for DiagnosticLlm {
+    fn adapter(&self) -> &'static str {
+        "diagnostic-test"
+    }
+
+    fn complete(&self, request: &LlmRequest) -> Result<String, LlmError> {
+        self.requests.lock().unwrap().push(request.clone());
+        Ok("diagnostic answer".into())
+    }
+}
 
 fn database_url() -> String {
     format!(
@@ -52,6 +77,155 @@ allowed_hosts = ["mcp.example.test"]
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (format!("http://{address}"), task)
+}
+
+async fn server_with_loaded_llm() -> (
+    String,
+    Arc<Mutex<Vec<LlmRequest>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let config_path = std::env::temp_dir().join(format!(
+        "voice-agent-admin-diagnostic-{}.toml",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+enabled = true
+url = "{}"
+[api]
+enabled = true
+admin_token = "admin-test-token"
+[mcp.external.network]
+allowed_hosts = ["mcp.example.test"]
+"#,
+            database_url(),
+        ),
+    )
+    .unwrap();
+    let config = AppConfig::parse_and_resolve(&config_path).unwrap();
+    fs::remove_file(config_path).unwrap();
+    let database = Database::connect_if_enabled(&config.database)
+        .await
+        .unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        database,
+    )
+    .with_database_llm_runtime_for_test(
+        "llm_loaded",
+        Arc::new(DiagnosticLlm {
+            requests: Arc::clone(&requests),
+        }),
+        2,
+        Duration::from_secs(1),
+        1,
+    );
+    let router = router_with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), requests, task)
+}
+
+#[tokio::test]
+async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request() {
+    let (base, requests, task) = server_with_loaded_llm().await;
+    let client = Client::new();
+    let providers = format!("{base}/api/admin/providers");
+    let created = client
+        .post(&providers)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({
+            "key": "llm_loaded",
+            "name": "Loaded LLM",
+            "type": "llm",
+            "adapter": "openai",
+            "config_json": {"base_url":"https://example.test/v1","model":"test","max_tokens":8}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+
+    let response = client
+        .post(format!("{providers}/llm_loaded/test/llm"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"input":"xin chao"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(response["provider_key"], "llm_loaded");
+    assert_eq!(response["type"], "llm");
+    assert_eq!(response["status"], "success");
+    assert_eq!(response["result"]["text"], "diagnostic answer");
+    assert_eq!(response["runtime"]["runtime_status"], "loaded");
+    assert_eq!(response["runtime"]["tested_runtime"], "loaded");
+    assert_eq!(response["runtime"]["runtime_matches_desired"], true);
+    assert_eq!(response["runtime"]["requires_restart"], false);
+    assert!(response["metrics"]["elapsed_ms"].is_u64());
+
+    let changed = client
+        .patch(format!("{providers}/llm_loaded"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"name":"Changed desired state"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), StatusCode::OK);
+    let stale = client
+        .post(format!("{providers}/llm_loaded/test/llm"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"input":"still loaded"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(stale["status"], "success");
+    assert_eq!(stale["runtime"]["runtime_matches_desired"], false);
+    assert_eq!(stale["runtime"]["requires_restart"], true);
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].tools.is_empty());
+    assert_eq!(
+        requests[0].messages,
+        vec![ChatMessage::User {
+            content: "xin chao".into()
+        }]
+    );
+    drop(requests);
+
+    let invalid = client
+        .post(format!("{providers}/llm_loaded/test/llm"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"input":""}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "invalid_test_input"
+    );
+    task.abort();
 }
 
 #[tokio::test]

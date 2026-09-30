@@ -13,6 +13,9 @@ use crate::{
         LlmEvent, LlmProvider,
         llm::{LlmRequest, ToolCall},
     },
+    services::provider_diagnostic::{
+        ProviderDiagnosticOperation, ProviderDiagnosticOperationError,
+    },
     workers::{
         ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission,
         ProviderWorkloadClass, WorkerIdentity,
@@ -57,6 +60,14 @@ pub struct LlmRuntime {
     timeout: Duration,
     routes: Arc<Mutex<HashMap<String, mpsc::Sender<LlmRuntimeEvent>>>>,
     cancellations: Arc<Mutex<HashMap<WorkerIdentity, CancellationToken>>>,
+}
+
+/// One bounded, tool-free LLM request that is independent of a Voice Session.
+pub struct LlmDiagnosticOperation {
+    provider: Arc<dyn LlmProvider>,
+    request: LlmRequest,
+    max_text_bytes: usize,
+    cancellation: Option<CancellationToken>,
 }
 
 impl LlmRuntime {
@@ -178,6 +189,77 @@ impl LlmRuntime {
     pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
+
+    /// Builds an operation for the already-materialized provider. Capacity is admitted by
+    /// `ProviderDiagnosticService`, so constructing this value neither starts a request nor
+    /// changes the runtime.
+    pub fn diagnostic(&self, request: LlmRequest, max_text_bytes: usize) -> LlmDiagnosticOperation {
+        debug_assert!(request.tools.is_empty());
+        assert!(max_text_bytes > 0);
+        LlmDiagnosticOperation {
+            provider: Arc::clone(&self.provider),
+            request,
+            max_text_bytes,
+            cancellation: None,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
+    type Output = String;
+
+    async fn execute(
+        &mut self,
+        cancellation: CancellationToken,
+    ) -> Result<Self::Output, ProviderDiagnosticOperationError> {
+        self.cancellation = Some(cancellation.clone());
+        let mut stream = self
+            .provider
+            .stream(self.request.clone())
+            .await
+            .map_err(|_| ProviderDiagnosticOperationError::Failed)?;
+        let mut text = String::new();
+        loop {
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(ProviderDiagnosticOperationError::Failed),
+                item = stream.next() => match item {
+                    Some(Ok(LlmEvent::TextDelta(delta))) => {
+                        let Some(next_length) = text.len().checked_add(delta.len()) else {
+                            return Err(ProviderDiagnosticOperationError::InvalidResponse);
+                        };
+                        if next_length > self.max_text_bytes {
+                            return Err(ProviderDiagnosticOperationError::InvalidResponse);
+                        }
+                        text.push_str(&delta);
+                    }
+                    Some(Ok(LlmEvent::ToolCall(_))) => {
+                        return Err(ProviderDiagnosticOperationError::InvalidResponse);
+                    }
+                    Some(Ok(LlmEvent::Finished)) | None => return Ok(text),
+                    Some(Err(_)) => return Err(ProviderDiagnosticOperationError::Failed),
+                },
+            }
+        }
+    }
+
+    fn cancel_exact(&mut self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+        }
+    }
+
+    async fn await_terminal_acknowledgement(&mut self) -> bool {
+        // `LlmProvider` has no provider-specific cancellation acknowledgement seam. Dropping a
+        // Rust stream is not evidence that its remote operation has terminated, so timeout must
+        // retain (quarantine) this exact capacity rather than release it optimistically.
+        false
+    }
+
+    fn quarantine_exact(&mut self) {
+        // There is no reusable native worker behind this direct provider stream. The service
+        // retains the exact runtime capacity permit in its quarantine set.
+    }
 }
 
 async fn run_operation(
@@ -210,3 +292,7 @@ async fn run_operation(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "llm/tests.rs"]
+mod tests;
