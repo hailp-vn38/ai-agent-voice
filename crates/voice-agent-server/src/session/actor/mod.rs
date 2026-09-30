@@ -11,6 +11,7 @@ use crate::{
         VadSegmenter, VadSegmenterConfig,
     },
     database::history::{HistoryRole, TranscriptCapture},
+    lifecycle::AdmissionGate,
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::{
         ProviderSet,
@@ -144,6 +145,10 @@ pub struct SessionActor {
     /// The optional Persistent Transcript this Voice Session was bound to at admission.  `None` is
     /// the normal case: capture is opt-in, and it is a one-way hand-off that no turn can fail on.
     transcript: Option<TranscriptCapture>,
+    /// The application admission gate.  A Voice Session does not own it and cannot reopen it: it
+    /// only asks, so a Tool-round Executor cannot start new work after the application has stopped
+    /// accepting it, whether or not this session ever observed the shutdown signal.
+    admission_gate: std::sync::Arc<AdmissionGate>,
     /// Installed only by a test harness; see [`WriterOutcomeProbe`].
     writer_probe: Option<std::sync::Arc<dyn WriterOutcomeProbe>>,
 }

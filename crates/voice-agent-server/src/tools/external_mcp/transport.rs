@@ -20,6 +20,7 @@ use crate::{
     config::{ExternalMcpLimitsConfig, ExternalMcpNetworkConfig},
     database::external_mcp_policy,
     database::secrets::SecretValue,
+    lifecycle::AdmissionGate,
 };
 
 use super::registry::ToolPublishError;
@@ -129,6 +130,12 @@ impl From<ToolPublishError> for ExternalMcpError {
 pub struct ExternalMcpCallLimiter {
     capacity: u32,
     servers: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+    /// The application admission gate.  A closed gate refuses a *new* permit, which is what stops a
+    /// Tool-round work item queued before shutdown from putting a request on the network after it.
+    /// It never revokes a permit already held: the call that took one either finishes inside its
+    /// own budget or is dropped by its turn's cancellation, and revoking it would be a second,
+    /// different close mechanism.
+    gate: Arc<AdmissionGate>,
 }
 
 impl std::fmt::Debug for ExternalMcpCallLimiter {
@@ -137,6 +144,7 @@ impl std::fmt::Debug for ExternalMcpCallLimiter {
             .debug_struct("ExternalMcpCallLimiter")
             .field("capacity", &self.capacity)
             .field("servers", &self.server_count())
+            .field("admission_open", &self.gate.is_open())
             .finish()
     }
 }
@@ -145,6 +153,11 @@ impl ExternalMcpCallLimiter {
     /// The bound is validated as `1..=64` at configuration load, so a limiter always has a
     /// usable permit count.
     pub fn new(capacity: u32) -> Self {
+        Self::with_gate(capacity, AdmissionGate::open())
+    }
+
+    /// The same limiter, refusing new permits once the application has closed its admission gate.
+    pub fn with_gate(capacity: u32, gate: Arc<AdmissionGate>) -> Self {
         assert!(
             (1..=64).contains(&capacity),
             "the configured per-server call bound is validated at config load"
@@ -152,6 +165,7 @@ impl ExternalMcpCallLimiter {
         Self {
             capacity,
             servers: Arc::new(Mutex::new(HashMap::new())),
+            gate,
         }
     }
 
@@ -173,11 +187,19 @@ impl ExternalMcpCallLimiter {
     /// free — it is spent out of the turn's execution budget — so a caller that arrives with no
     /// budget left sends nothing at all, and one that runs out while waiting does the same.  There
     /// is no queue, no retry and no separate backoff behind this bound.
+    ///
+    /// A closed application gate refuses the permit without waiting at all, and the caller reports
+    /// that refusal as the same bounded class as an exhausted bound: the request was never sent, so
+    /// nothing observable distinguishes the two, and neither class carries a destination, an
+    /// argument or a credential.
     pub async fn acquire_within(
         &self,
         server_key: &str,
         budget: Duration,
     ) -> Option<OwnedSemaphorePermit> {
+        if !self.gate.is_open() {
+            return None;
+        }
         let semaphore = self.semaphore(server_key)?;
         tokio::time::timeout(budget, Arc::clone(&semaphore).acquire_owned())
             .await
@@ -187,6 +209,9 @@ impl ExternalMcpCallLimiter {
 
     /// Non-blocking acquisition, for a caller that has already decided not to wait.
     pub fn try_acquire(&self, server_key: &str) -> Option<OwnedSemaphorePermit> {
+        if !self.gate.is_open() {
+            return None;
+        }
         Arc::clone(&self.semaphore(server_key)?)
             .try_acquire_owned()
             .ok()

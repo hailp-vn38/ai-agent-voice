@@ -68,6 +68,11 @@ pub enum ToolRoundFailure {
     /// one was in flight, the outcome for the model is the same — a turn with no tool time left —
     /// so it is one class, reported as one bounded string.
     ExecutionBudgetExceeded,
+    /// The application closed its admission gate.  This is not a per-turn budget like the classes
+    /// above: it is one application-wide decision that outlives every turn, and it reaches a round
+    /// that was already running when the gate closed.  It is its own class rather than an
+    /// "unavailable" result because nothing was attempted — no call, no request, no ToolResult.
+    ShuttingDown,
 }
 
 impl ToolRoundFailure {
@@ -77,6 +82,7 @@ impl ToolRoundFailure {
             Self::CallLimitExceeded => "tool_call_limit_exceeded",
             Self::RoundLimitExceeded => "tool_round_limit_exceeded",
             Self::ExecutionBudgetExceeded => "tool_execution_budget_exceeded",
+            Self::ShuttingDown => "tool_round_shutting_down",
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::{
     config::AppConfig,
     database::secrets::EnvSecretResolver,
     database::{Database, DatabaseError, DesiredProvider, ProviderLoadPlan},
+    lifecycle::RuntimeLifecycle,
     protocol::{ClientMessage, ServerHello, parse_client_message},
     providers::{
         DatabaseMaterialization, LoadedProviders, ProviderSet, RequiredProviderUnavailable,
@@ -72,6 +73,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     let (loaded, materialization) =
         apply_load_plan(&config, loaded, rows, &plan, secret_resolver.as_ref())
             .map_err(map_load_plan_failure)?;
+    let lifecycle = new_lifecycle(&config);
     Ok(router_with_state(
         AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
             config,
@@ -79,9 +81,20 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
             database,
             Some(materialization.snapshot()),
             secret_resolver,
-            CancellationToken::new(),
+            lifecycle,
         ),
     ))
+}
+
+/// A lifecycle that owns its own signals, for a process that has nothing outside it to stop.
+pub fn new_lifecycle(config: &AppConfig) -> Arc<RuntimeLifecycle> {
+    RuntimeLifecycle::new(Duration::from_millis(config.shutdown.grace_ms))
+}
+
+/// The same, from the raw configured grace.  Test routers that build their own `AppConfig` use
+/// this so they run under the deadline their configuration actually names.
+pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
+    RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
 pub fn router_with_state(state: AppState) -> Router {
     let vision_enabled = state.config.vision.enabled;
@@ -133,23 +146,28 @@ pub fn application(config: AppConfig) -> Result<Router, crate::providers::Provid
 /// Production startup orders the database dependency before provider initialization and listener
 /// binding. Database failure is therefore always a pre-bind failure.
 pub async fn startup(config: AppConfig) -> Result<Router, BootstrapError> {
-    startup_with_shutdown(config, CancellationToken::new()).await
+    let lifecycle = RuntimeLifecycle::from_config(&config);
+    startup_with_lifecycle(config, lifecycle).await
 }
 
-/// Production startup with an application-owned shutdown signal shared by the listener and
-/// already-upgraded Voice Sessions.
-pub async fn startup_with_shutdown(
+/// Production startup on a lifecycle the caller owns.
+///
+/// Handing the lifecycle in rather than building it here is what lets the process owner drive the
+/// same ordered shutdown the router's own components see: it holds the gate the WebSocket boundary,
+/// the admission resolver and the External MCP limiter all ask, and the drain registry those
+/// sessions register with. A caller that only wants a router uses [`startup`].
+pub async fn startup_with_lifecycle(
     config: AppConfig,
-    shutdown: CancellationToken,
+    lifecycle: Arc<RuntimeLifecycle>,
 ) -> Result<Router, BootstrapError> {
-    startup_with_shutdown_and_secret_resolver(config, shutdown, Arc::new(EnvSecretResolver)).await
+    startup_with_lifecycle_and_secret_resolver(config, lifecycle, Arc::new(EnvSecretResolver)).await
 }
 
 /// Production startup seam for deployments that own secret resolution.  The runtime receives
 /// only this abstraction; provider adapters never read a resolver backend directly.
-pub async fn startup_with_shutdown_and_secret_resolver(
+pub async fn startup_with_lifecycle_and_secret_resolver(
     config: AppConfig,
-    shutdown: CancellationToken,
+    lifecycle: Arc<RuntimeLifecycle>,
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect_if_enabled(&config.database).await?;
@@ -179,7 +197,7 @@ pub async fn startup_with_shutdown_and_secret_resolver(
             database,
             Some(materialization.snapshot()),
             secret_resolver,
-            shutdown,
+            lifecycle,
         ),
     ))
 }
@@ -245,12 +263,35 @@ fn map_load_plan_failure(error: RequiredProviderUnavailable) -> BootstrapError {
     BootstrapError::Provider
 }
 
+/// Liveness.  It answers exactly one question — is this process running — and deliberately
+/// depends on nothing else.
+///
+/// A database that has gone away, an External MCP server that is refusing connections, or a
+/// shutdown that has begun must not make this route fail: doing so would tell an orchestrator to
+/// kill a process that is still serving the Voice Sessions it already admitted, and those sessions
+/// hold the only copy of their Dialogue History.
 async fn health() -> &'static str {
     "ok"
 }
 
-async fn ready() -> &'static str {
-    "ready"
+/// Readiness.  It answers whether this process can accept a *new* connection, and reports only the
+/// application-owned dependencies that decide that.
+///
+/// The route is deliberately thin: it delegates to [`AppState::readiness`] and returns the bounded
+/// class it produced.  There is no admission, no Device lookup, no External MCP discovery and no
+/// provider or secret reload on this path — see that method for why each of those belongs to a
+/// session instead of to a probe.
+async fn ready(State(state): State<AppState>) -> Response {
+    let readiness = state.readiness().await;
+    if !readiness.is_ready() {
+        warn!(
+            event = "readiness_degraded",
+            reason = readiness.as_str(),
+            "The process is running but cannot accept a new Voice connection"
+        );
+        return (StatusCode::SERVICE_UNAVAILABLE, readiness.as_str()).into_response();
+    }
+    (StatusCode::OK, "ready").into_response()
 }
 
 #[derive(Debug, Error)]

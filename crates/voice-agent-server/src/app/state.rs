@@ -5,6 +5,7 @@ use crate::{
         history::{HistoryArchive, HistoryWriter, HistoryWriterMetrics, TranscriptCapture},
         secrets::{EnvSecretResolver, SecretResolver},
     },
+    lifecycle::{AdmissionGate, Readiness, RuntimeLifecycle},
     providers::{
         DatabaseRuntimeSnapshot, LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog,
     },
@@ -12,6 +13,7 @@ use crate::{
         ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable, WriterOutcomeProbe,
         resolve_effective_session_profile,
     },
+    telemetry::TracingTelemetry,
     tools::external_mcp::{ExternalMcpManager, ExternalMcpSnapshot, SessionExternalMcp},
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
@@ -19,7 +21,6 @@ use crate::{
     },
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio_util::sync::CancellationToken;
 
 /// Application-owned state. Production sessions resolve a fixed runtime snapshot from catalogs.
 #[derive(Clone)]
@@ -39,12 +40,89 @@ pub struct AppState {
     /// The optional Persistent Transcript: the one archival writer every session shares plus the
     /// retention job.  `None` only when the database is off, in which case no session can archive.
     pub history: Option<Arc<HistoryArchive>>,
-    pub shutdown: CancellationToken,
+    /// The application-owned lifecycle: one admission/work gate, the drain registry, and the
+    /// ordered shutdown that uses them.  A session holds nothing of it but its own registration.
+    pub lifecycle: Arc<RuntimeLifecycle>,
     /// Test-only; see [`WriterOutcomeProbe`]. Production leaves it unset.
     pub writer_outcome_probe: Option<Arc<dyn WriterOutcomeProbe>>,
 }
 
 impl AppState {
+    /// The admission/work gate every new piece of work passes before it starts.
+    pub fn admission_gate(&self) -> &Arc<AdmissionGate> {
+        self.lifecycle.gate()
+    }
+
+    /// Registers this connection with the drain registry before it begins work.
+    ///
+    /// A session that never registers cannot be observed draining and cannot be issued a
+    /// controlled close, so registration happens here rather than anywhere the session decides it
+    /// has become worth counting.
+    pub fn register_session(&self) -> crate::lifecycle::DrainRegistration {
+        self.lifecycle.drain().register()
+    }
+
+    /// Whether this process can accept a *new* Voice connection right now.
+    ///
+    /// This is the whole of readiness, and what it deliberately does not do is the point: it never
+    /// resolves a Device, never runs full admission, never discovers or calls an External MCP
+    /// server, and never reloads a provider model or a secret.  Those are per-session costs with
+    /// per-session failure modes, and folding any of them in here would make an orchestrator's
+    /// health check the most expensive thing the process does.
+    ///
+    /// The checks are, in order: the application lifecycle is still accepting work, startup and
+    /// schema are authoritative, the runtimes the deployment requires are present, the admission
+    /// resolver is operational, and the database answers when an active feature needs it.  The
+    /// database question is one `SELECT 1` — the pool can still produce a connection and the file
+    /// is still there — so a busy database or a degraded archive shows up here as reachable while
+    /// an actually-unreachable one does not.
+    pub async fn readiness(&self) -> Readiness {
+        if !self.lifecycle.gate().is_open() {
+            return Readiness::ShuttingDown;
+        }
+        if self.database.is_none() && self.config.database.enabled {
+            // The database is configured but this process never opened one, so nothing about the
+            // schema is authoritative.  Startup refused to bind in that case; reaching here means
+            // a test or an embedder constructed the state directly, and it is still not ready.
+            return Readiness::StartupIncomplete;
+        }
+        if self.required_runtime_missing() {
+            return Readiness::RequiredRuntimeUnavailable;
+        }
+        if let Some(database) = self.admission_database()
+            && database.is_reachable().await.is_err()
+        {
+            return Readiness::DatabaseUnreachable;
+        }
+        Readiness::Ready
+    }
+
+    /// The database a new Voice connection's admission depends on, or `None` when admission does not
+    /// depend on one.
+    ///
+    /// Database-backed admission is the only feature whose failure refuses a *new* Voice Session, so
+    /// it is the only one this reaches for.  The Admin API and the Persistent Transcript also need
+    /// the database, but their failure is coarse for the caller rather than process-wide: an admin
+    /// request that cannot reach it is answered 503 and an archive write is dropped, neither of
+    /// which is a reason to pull the Voice listener out of an orchestrator's rotation.
+    fn admission_database(&self) -> Option<&Arc<Database>> {
+        if !self.config.database.devices.admission_enabled {
+            return None;
+        }
+        self.database.as_ref()
+    }
+
+    /// Whether a provider instance this deployment's own server defaults require is missing.
+    ///
+    /// This is a map lookup against the already-loaded RuntimeCatalog.  It prepares nothing, opens
+    /// no model and resolves no secret — a required provider that could not be materialized never
+    /// reached the listener in the first place, so this only catches state assembled some other
+    /// way.
+    fn required_runtime_missing(&self) -> bool {
+        let providers = &self.config.effective_agent.providers;
+        self.runtimes.resolve(providers).is_err()
+    }
+
     pub fn bound_vision_runtime(&self) -> Option<Arc<crate::workers::VisionRuntime>> {
         let id = self.config.effective_agent.providers.vision.as_deref()?;
         self.runtimes.vision(id).ok()
@@ -101,6 +179,12 @@ impl AppState {
         &self,
         device_id: &str,
     ) -> Result<EffectiveSessionProfile, SessionProfileAdmissionError> {
+        if !self.lifecycle.gate().is_open() {
+            // The application has stopped accepting work.  This is checked here rather than only
+            // at the WebSocket boundary so that no caller can start a database admission after
+            // shutdown has begun, whatever route it took to reach this seam.
+            return Err(SessionProfileAdmissionError::ShuttingDown);
+        }
         if !self.config.database.devices.admission_enabled {
             return EffectiveSessionProfile::server_default(&self.config)
                 .map_err(|_| SessionProfileAdmissionError::ProfileUnavailable);
@@ -168,17 +252,18 @@ impl AppState {
         loaded: LoadedProviders,
         database: Option<Database>,
     ) -> Self {
-        Self::new_with_database_and_shutdown(config, loaded, database, CancellationToken::new())
+        let lifecycle = RuntimeLifecycle::from_config(&config);
+        Self::new_with_database_and_shutdown(config, loaded, database, lifecycle)
     }
 
     pub fn new_with_database_and_shutdown(
         config: AppConfig,
         loaded: LoadedProviders,
         database: Option<Database>,
-        shutdown: CancellationToken,
+        lifecycle: Arc<RuntimeLifecycle>,
     ) -> Self {
         Self::new_with_database_runtime_snapshot_and_shutdown(
-            config, loaded, database, None, shutdown,
+            config, loaded, database, None, lifecycle,
         )
     }
 
@@ -187,7 +272,7 @@ impl AppState {
         loaded: LoadedProviders,
         database: Option<Database>,
         database_runtime_snapshot: Option<DatabaseRuntimeSnapshot>,
-        shutdown: CancellationToken,
+        lifecycle: Arc<RuntimeLifecycle>,
     ) -> Self {
         Self::new_with_database_runtime_snapshot_resolver_and_shutdown(
             config,
@@ -195,7 +280,7 @@ impl AppState {
             database,
             database_runtime_snapshot,
             Arc::new(EnvSecretResolver),
-            shutdown,
+            lifecycle,
         )
     }
 
@@ -205,7 +290,7 @@ impl AppState {
         database: Option<Database>,
         database_runtime_snapshot: Option<DatabaseRuntimeSnapshot>,
         secret_resolver: Arc<dyn SecretResolver>,
-        shutdown: CancellationToken,
+        lifecycle: Arc<RuntimeLifecycle>,
     ) -> Self {
         let supervisor = Arc::new(WorkerSupervisor::start_many(
             loaded.runtimes.asr.values().cloned().collect(),
@@ -216,17 +301,19 @@ impl AppState {
                 .map(|vad| Arc::clone(&vad.runtime))
                 .collect(),
         ));
-        let external_mcp = shared_external_mcp(&config);
+        // The gate lives in the lifecycle rather than in the manager, so a limiter refuses a permit
+        // for exactly the same reason the WebSocket boundary refuses a connection.
+        let external_mcp = shared_external_mcp(&config, lifecycle.gate());
         // The archive exists whenever the database does, even with capture off: retention keeps
         // running over whatever an earlier deployment already stored.
         let history = database.as_ref().map(|database| {
             Arc::new(HistoryArchive::start(
                 database,
                 &config.database.history,
-                shutdown.clone(),
+                lifecycle.stopping().clone(),
             ))
         });
-        Self {
+        let state = Self {
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
             config: Arc::new(config),
             providers: Arc::new(loaded.providers),
@@ -237,9 +324,16 @@ impl AppState {
             secret_resolver,
             external_mcp,
             history,
-            shutdown,
+            lifecycle,
             writer_outcome_probe: None,
+        };
+        // The archive that owns the writer was only just built, so this is the first moment the
+        // shutdown sequence can observe whether there is anything left to flush.  A deployment
+        // with capture off registers nothing and its shutdown waits for nothing.
+        if let Some(metrics) = state.history_metrics() {
+            state.lifecycle.observe_history_writer(metrics);
         }
+        state
     }
 
     /// Binds one admitted connection's Persistent Transcript capture, or `None`.
@@ -293,26 +387,22 @@ impl AppState {
         providers: Arc<ProviderSet>,
         database: Option<Database>,
     ) -> Self {
-        Self::from_provider_set_with_database_and_shutdown(
-            config,
-            providers,
-            database,
-            CancellationToken::new(),
-        )
+        let lifecycle = RuntimeLifecycle::from_config(&config);
+        Self::from_provider_set_with_database_and_shutdown(config, providers, database, lifecycle)
     }
 
     pub fn from_provider_set_with_database_and_shutdown(
         config: AppConfig,
         providers: Arc<ProviderSet>,
         database: Option<Database>,
-        shutdown: CancellationToken,
+        lifecycle: Arc<RuntimeLifecycle>,
     ) -> Self {
         Self::from_provider_set_with_database_resolver_and_shutdown(
             config,
             providers,
             database,
             Arc::new(EnvSecretResolver),
-            shutdown,
+            lifecycle,
         )
     }
 
@@ -324,7 +414,7 @@ impl AppState {
         providers: Arc<ProviderSet>,
         database: Option<Database>,
         secret_resolver: Arc<dyn SecretResolver>,
-        shutdown: CancellationToken,
+        lifecycle: Arc<RuntimeLifecycle>,
     ) -> Self {
         let (config, loaded) = loaded_from_provider_set(config, &providers);
         Self::new_with_database_runtime_snapshot_resolver_and_shutdown(
@@ -333,10 +423,11 @@ impl AppState {
             database,
             None,
             secret_resolver,
-            shutdown,
+            lifecycle,
         )
     }
 }
+
 
 /// Bounded admission failure.  The reason stays internal; the client only sees the coarse class.
 /// The two unavailable classes stay distinct because the integration guide names them as separate
@@ -349,6 +440,11 @@ pub enum SessionProfileAdmissionError {
     AdmissionUnavailable,
     #[error("agent_profile_resolution_failed")]
     ProfileUnavailable,
+    /// The application is shutting down and is no longer admitting anybody.  A session that was
+    /// already admitted keeps running; only a *new* one is refused, which is why this is its own
+    /// class rather than a database failure a client could retry through.
+    #[error("server_is_shutting_down")]
+    ShuttingDown,
 }
 
 /// Builds the one process-wide External MCP transport and call limiter.
@@ -356,8 +452,19 @@ pub enum SessionProfileAdmissionError {
 /// External MCP is optional in V1, so a transport that cannot be built degrades to "no External
 /// MCP tools" instead of failing a startup that has nothing else to do with the failure.  The
 /// reason is logged; the destination and its configuration are not.
-fn shared_external_mcp(config: &AppConfig) -> Option<Arc<ExternalMcpManager>> {
-    match ExternalMcpManager::new(&config.mcp.external) {
+///
+/// The limiter carries the application admission gate: once shutdown has begun it refuses a new
+/// outbound permit, so a Tool-round work item that was queued before the gate closed still cannot
+/// put a request on the network afterwards.
+fn shared_external_mcp(
+    config: &AppConfig,
+    gate: &Arc<AdmissionGate>,
+) -> Option<Arc<ExternalMcpManager>> {
+    match ExternalMcpManager::new_with_telemetry_and_gate(
+        &config.mcp.external,
+        Arc::new(TracingTelemetry),
+        Arc::clone(gate),
+    ) {
         Ok(manager) => Some(Arc::new(manager)),
         Err(error) => {
             tracing::warn!(

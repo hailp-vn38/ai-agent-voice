@@ -21,6 +21,7 @@ use crate::{
         AdmittedMcpServer,
         secrets::{SecretRef, SecretResolver},
     },
+    lifecycle::AdmissionGate,
     telemetry::{Telemetry, TracingTelemetry},
 };
 
@@ -296,9 +297,25 @@ impl ExternalMcpManager {
 
     /// The same manager reporting into a caller-owned sink, so a deployment's metrics backend and a
     /// test's recorder are the same seam with a different sink.
+    ///
+    /// This and [`new`](Self::new) are deterministic test seams: they install a gate that stays
+    /// open, so nothing refuses a permit. Production builds the manager through
+    /// [`new_with_telemetry_and_gate`](Self::new_with_telemetry_and_gate) with the application's
+    /// own gate, and that is the only constructor from which a running process should be built.
     pub fn new_with_telemetry(
         config: &ExternalMcpConfig,
         telemetry: Arc<dyn Telemetry>,
+    ) -> Result<Self, reqwest::Error> {
+        Self::new_with_telemetry_and_gate(config, telemetry, AdmissionGate::open())
+    }
+
+    /// The production seam: caller-owned telemetry and the application admission gate together, so
+    /// the shared limiter refuses a new permit once the application has closed its gate and a
+    /// Tool-round work item queued before shutdown cannot put a request on the network afterwards.
+    pub fn new_with_telemetry_and_gate(
+        config: &ExternalMcpConfig,
+        telemetry: Arc<dyn Telemetry>,
+        gate: Arc<AdmissionGate>,
     ) -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -306,8 +323,9 @@ impl ExternalMcpManager {
             .build()?;
         Ok(Self {
             http,
-            limiter: Arc::new(ExternalMcpCallLimiter::new(
+            limiter: Arc::new(ExternalMcpCallLimiter::with_gate(
                 config.max_concurrent_calls_per_server,
+                gate,
             )),
             telemetry,
             per_server_timeout: Duration::from_millis(config.per_server_resolution_timeout_ms),

@@ -109,6 +109,18 @@ impl SessionActor {
             self.fail_speech_delivery();
             return;
         }
+        // The application gate is asked before the round's own caps, because a closed gate means
+        // no work of any kind starts rather than this round happening to exceed a limit.
+        if !self.admission_gate.is_open() {
+            tracing::warn!(
+                event = "tool_round_rejected",
+                code = ToolRoundFailure::ShuttingDown.code(),
+                calls = calls.len(),
+                "The application is shutting down; no tool round was executed"
+            );
+            self.terminalize_turn_failure(TurnFailure::Tool(ToolRoundFailure::ShuttingDown));
+            return;
+        }
         if calls.len() > self.tool_rounds.limits.max_calls_per_round {
             tracing::warn!(
                 event = "tool_round_rejected",
@@ -156,6 +168,19 @@ impl SessionActor {
             // The turn that owned this round is gone.  Its completed calls keep their history, and
             // nothing else in the round starts — not even another Device MCP request.
             self.cancel_tool_turn();
+            return;
+        }
+        // Asked per call rather than only per round, so a round that was already in flight when
+        // shutdown began cannot use the next slot in its own budget to start another call.
+        if !self.admission_gate.is_open() {
+            tracing::warn!(
+                event = "tool_round_rejected",
+                code = ToolRoundFailure::ShuttingDown.code(),
+                generation = self.generation,
+                turn_id = self.current_turn_id().map(TurnId::get),
+                "The application is shutting down; the rest of this tool round was not executed"
+            );
+            self.terminalize_tool_round(ToolRoundFailure::ShuttingDown);
             return;
         }
         let Some(call) = batch.calls.get(batch.next).cloned() else {
@@ -1170,6 +1195,106 @@ mod tests {
             4_096,
         )
         .expect("the admitted prompt is within the bound")
+    }
+
+    /// A round that starts after the application closed its gate executes nothing at all.
+    ///
+    /// The gate is what shutdown depends on, so this is the property that makes the drain
+    /// meaningful: a session that never observed the shutdown signal still cannot put a call on the
+    /// network once the application has stopped accepting work.
+    #[test]
+    fn a_closed_gate_starts_no_tool_round_at_all() {
+        let gate = AdmissionGate::open();
+        let mut actor =
+            session_with_external_mcp(admitted_external_mcp()).with_admission_gate(Arc::clone(&gate));
+        actor
+            .begin_active_turn()
+            .expect("an active turn is admitted");
+        actor
+            .commit_user_text("turn on the light".to_owned())
+            .expect("the accepted user text is committed to the turn");
+
+        gate.close();
+        actor.start_tool_batch(vec![ToolCall {
+            id: "call-1".to_owned(),
+            name: "external.home_assistant.light_turn_on".to_owned(),
+            arguments: serde_json::json!({}),
+        }]);
+
+        assert!(
+            actor.tool_batch.is_none(),
+            "no round is opened, so no call can be dispatched from it"
+        );
+        assert!(
+            tool_round(&actor).is_empty(),
+            "nothing was called, so there is no ToolResult standing in for a call"
+        );
+    }
+
+    /// A round that was already running when the gate closed cannot use the next slot in its own
+    /// budget to start another call.
+    ///
+    /// This is the half the round-start check cannot cover: the call already on the network was
+    /// permitted, and it still keeps its own paired result.  Only what would have been sent after
+    /// the gate closed is refused.
+    #[tokio::test]
+    async fn a_closed_gate_stops_a_round_that_was_already_running() {
+        let server = GatedServer::start().await;
+        let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
+        let gate = AdmissionGate::open();
+        let mut actor =
+            session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)))
+                .with_admission_gate(Arc::clone(&gate));
+        actor
+            .begin_active_turn()
+            .expect("an active turn is admitted");
+        actor
+            .commit_user_text("what is the forecast".to_owned())
+            .expect("the accepted user text is committed to the turn");
+
+        let call = |id: &str| ToolCall {
+            id: id.to_owned(),
+            name: "external.weather.forecast".to_owned(),
+            arguments: serde_json::json!({}),
+        };
+        actor.start_tool_batch(vec![call("call-1"), call("call-2")]);
+        server.wait_until_held().await;
+
+        // The gate closes while the first call is still on the network.
+        gate.close();
+        server.release();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                actor.drain_external_call_completions();
+                if !tool_round(&actor).is_empty() {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the call that was already in flight reports its outcome");
+        actor.drain_external_call_completions();
+
+        assert_eq!(
+            tool_round(&actor),
+            vec!["call-1".to_owned()],
+            "the call that had already been sent keeps its paired result, and the second is not \
+             paired because it never ran"
+        );
+        assert!(
+            actor.tool_batch.is_none(),
+            "the refused call terminalized the round rather than leaving it half-executed"
+        );
+        assert_eq!(
+            counted(
+                &telemetry,
+                crate::telemetry::EXTERNAL_MCP_TOOL_CALLS_TOTAL
+            ),
+            1,
+            "exactly one request reached the network"
+        );
     }
 
     /// A Voice Session runs with exactly the External MCP snapshot admission resolved: the

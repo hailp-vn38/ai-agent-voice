@@ -244,6 +244,26 @@ _Avoid_: capture stream, turn stream
 Kết quả có kiểu của việc dừng một Manual Capture: Uplink Audio Utterance, empty hoặc overflowed.
 _Avoid_: optional audio, capture status flag
 
+**Readiness**:
+Khả năng process nhận connection mới bằng các dependency application-owned, tách process liveness và không probe External MCP optional.
+_Avoid_: full admission probe, per-device resolution, optional MCP availability gate
+
+**Admission Gate**:
+Một gate application-owned duy nhất quyết định công việc mới có được bắt đầu hay không: listener mới, DB admission mới và Tool-round work mới. Shutdown đóng nó một lần trước khi drain, và không SessionActor nào phải quan sát shutdown trước khi nó đóng.
+_Avoid_: per-session shutdown flag, cancel token thay gate, admission check lặp lại ở từng component
+
+**Session Drain Registry**:
+Registry application-owned của các Voice Session đã nhận và chưa xong, mỗi entry giữ một completion handle đăng ký trước khi connection bắt đầu làm việc, để shutdown quan sát drain completion và phát controlled close cho đúng những session còn mở tại deadline.
+_Avoid_: task abort, broadcast không đếm, đếm session theo ước lượng
+
+**Controlled Close**:
+Close protocol do chính Voice Session thực hiện khi drain deadline tới hoặc process dừng, khác với abort cưỡng bức task; client vẫn nhận close code bình thường.
+_Avoid_: task abort, drop socket im lặng, ungraceful server shutdown
+
+**Liveness**:
+Câu hỏi duy nhất process còn chạy hay không, không phụ thuộc database, External MCP hay shutdown; `/health` chỉ trả lời điều này.
+_Avoid_: readiness synonym, dependency-aware health check, restart khi database hỏng
+
 **Trace Session ID**:
 UUID ngẫu nhiên chỉ dùng để tương quan telemetry của một Voice Session mà không ghi Device ID hay Client ID.
 _Avoid_: device identifier, client identifier

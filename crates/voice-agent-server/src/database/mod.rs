@@ -110,6 +110,21 @@ impl Database {
         &self.pool
     }
 
+    /// Whether the database still answers at all.
+    ///
+    /// This is the only database question readiness asks, and it is deliberately the cheapest one:
+    /// one statement over one acquired connection, with no application row read, no schema walk,
+    /// no Device lookup and no write.  `SELECT 1` is what proves the pool can still hand out a
+    /// connection and the file is still there — a process whose schema is newer than its binary
+    /// never reaches this point, because startup rejected it before the listener was bound.
+    pub async fn is_reachable(&self) -> Result<(), DatabaseError> {
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(map_sqlx_error)
+    }
+
     /// Reads desired state only.  Caller chooses whether an outcome is required, optional, or
     /// unbound; this database seam never constructs a provider or resolves a secret.
     pub async fn enabled_provider_rows(&self) -> Result<Vec<DesiredProvider>, DatabaseError> {

@@ -26,20 +26,19 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
 }
 
 async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, JoinHandle<()>) {
-    let (base, task, _) = start_with_token_and_shutdown(
-        max_frame_bytes,
-        token,
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await;
+    let (base, task, _) =
+        start_with_token_and_lifecycle(max_frame_bytes, token, None).await;
     (base, task)
 }
 
-async fn start_with_token_and_shutdown(
+/// `lifecycle` is `None` for a router that is only ever torn down by aborting its task, and
+/// `Some` for one whose shutdown is driven through the application lifecycle.
+async fn start_with_token_and_lifecycle(
     max_frame_bytes: usize,
     token: String,
-    shutdown: tokio_util::sync::CancellationToken,
-) -> (String, JoinHandle<()>, tokio_util::sync::CancellationToken) {
+    lifecycle: Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
+) -> (String, JoinHandle<()>, Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>)
+{
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -75,13 +74,21 @@ async fn start_with_token_and_shutdown(
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
-    let mut state = AppState::from_provider_set(config, Arc::new(ProviderSet::unavailable()));
-    state.shutdown = shutdown.clone();
+    let state = AppState::from_provider_set_with_database_and_shutdown(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        None,
+        lifecycle
+            .clone()
+            .unwrap_or_else(|| {
+                voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(1_024))
+            }),
+    );
     let app: Router = router_with_state(state);
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{address}"), task, shutdown)
+    (format!("http://{address}"), task, lifecycle)
 }
 
 fn request(base: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
@@ -140,17 +147,19 @@ async fn ota_advertises_ws_url_and_health_is_available() {
 
 #[tokio::test]
 async fn application_shutdown_controlled_closes_an_upgraded_voice_session() {
-    let (base, task, shutdown) = start_with_token_and_shutdown(
+    let (base, task, lifecycle) = start_with_token_and_lifecycle(
         1_024,
         String::new(),
-        tokio_util::sync::CancellationToken::new(),
+        Some(voice_agent_server::lifecycle::RuntimeLifecycle::new(
+            std::time::Duration::from_millis(50),
+        )),
     )
     .await;
     let (mut socket, _) = connect_async(request(&base)).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
     assert!(matches!(next_message(&mut socket).await, Message::Text(_)));
 
-    shutdown.cancel();
+    lifecycle.expect("this router is driven through its lifecycle").shutdown().await;
     let close = next_message(&mut socket).await;
     assert!(matches!(
         close,

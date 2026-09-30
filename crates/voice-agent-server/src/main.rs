@@ -1,7 +1,9 @@
 use anyhow::Context;
-use std::time::Duration;
-use tokio_util::sync::CancellationToken;
-use voice_agent_server::{app::startup_with_shutdown, config::AppConfig};
+use voice_agent_server::{
+    app::{new_lifecycle, startup_with_lifecycle},
+    config::AppConfig,
+    lifecycle::CONTROLLED_CLOSE_SETTLE,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,27 +18,41 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let path = std::env::var("VOICE_AGENT_CONFIG").unwrap_or_else(|_| "config.toml".into());
     let config = AppConfig::load(&path).with_context(|| format!("load {path}"))?;
-    let shutdown_grace = Duration::from_millis(config.shutdown.grace_ms);
-    let cancellation = CancellationToken::new();
-    let app = startup_with_shutdown(config.clone(), cancellation.clone())
+    // Built before startup so the listener, every admitted Voice Session and the shutdown sequence
+    // all hold the same admission gate and drain registry. Building it afterwards would leave the
+    // process briefly running with two lifecycles and no shared decision between them.
+    let lifecycle = new_lifecycle(&config);
+    let app = startup_with_lifecycle(config.clone(), lifecycle.clone())
         .await
         .context("initialize database and local providers")?;
     let listener = tokio::net::TcpListener::bind(config.server.bind).await?;
     tracing::info!(address = %listener.local_addr()?, "voice protocol server listening");
-    let server_cancellation = cancellation.clone();
+    let listening = lifecycle.listening().clone();
     let mut server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(server_cancellation.cancelled_owned())
-            .await
+        axum::serve(listener, app).with_graceful_shutdown(listening.cancelled_owned()).await
     });
     shutdown_signal().await;
-    cancellation.cancel();
-    match tokio::time::timeout(shutdown_grace, &mut server).await {
+    // The ordered shutdown: close the admission gate so nothing new starts, drain the sessions this
+    // process already admitted, controlled-close whatever is still open at the deadline, and flush
+    // the archival writer inside that same deadline.
+    let report = lifecycle.shutdown().await;
+    tracing::info!(
+        event = "voice_session_drain_completed",
+        outcome = ?report.outcome,
+        controlled_closes = report.controlled_closes,
+        history_flushed = report.history_flushed,
+        "Voice Sessions drained"
+    );
+    // Every session has been asked to close, so this only waits for the closes to land. It is
+    // bounded rather than open-ended, and it is the last thing that may end a process abruptly:
+    // a session that has already stopped answering its controlled close is not something a longer
+    // wait fixes.
+    match tokio::time::timeout(CONTROLLED_CLOSE_SETTLE, &mut server).await {
         Ok(result) => result.context("join server shutdown")??,
         Err(_) => {
             tracing::warn!(
-                ?shutdown_grace,
-                "shutdown grace expired; aborting remaining sessions"
+                ?CONTROLLED_CLOSE_SETTLE,
+                "Voice Sessions did not finish their controlled close in time; abandoning them"
             );
             server.abort();
             let _ = server.await;

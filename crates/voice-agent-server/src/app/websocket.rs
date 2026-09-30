@@ -7,9 +7,16 @@ pub(super) async fn handler(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config.clone();
-    let shutdown = state.shutdown.clone();
-    if shutdown.is_cancelled() {
-        return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
+    // Registered before anything else happens, so the drain can observe and close a connection
+    // even if it never reaches the handshake.  The handle is moved into the socket task, which is
+    // what keeps this connection counted for exactly as long as it exists.
+    let drain = state.register_session();
+    if !state.admission_gate().is_open() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server is shutting down",
+        )
+            .into_response();
     }
     if !header_or_query_is_or_absent(
         &headers,
@@ -62,6 +69,13 @@ pub(super) async fn handler(
             );
             return (StatusCode::SERVICE_UNAVAILABLE, "agent profile unavailable").into_response();
         }
+        Err(SessionProfileAdmissionError::ShuttingDown) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "server is shutting down",
+            )
+                .into_response();
+        }
     };
     let resolved_runtimes = match state.runtimes.resolve(&profile.providers) {
         Ok(runtimes) => runtimes,
@@ -79,7 +93,9 @@ pub(super) async fn handler(
     // session identity would be a second thing to keep in step.
     let session_id = Uuid::new_v4().to_string();
     let transcript = state.transcript_capture(&session_id, &profile);
+    let admission_gate = Arc::clone(state.admission_gate());
     let active_turn_limiter = state.active_turn_limiter;
+    let stopping = state.lifecycle.stopping().clone();
     let writer_probe = state.writer_outcome_probe.clone();
     info!(
         agent_key = %profile.agent_key,
@@ -105,8 +121,13 @@ pub(super) async fn handler(
                     profile,
                     session_id,
                     transcript,
+                    admission_gate,
                 },
-                shutdown,
+                SessionControl {
+                    stopping,
+                    drain_close: drain.close_signal(),
+                    registration: drain,
+                },
             )
         })
         .into_response()
@@ -234,13 +255,28 @@ struct SocketRuntimes {
     /// capture is off or this session has no database identity, and the actor then archives
     /// nothing at all.
     transcript: Option<crate::database::history::TranscriptCapture>,
+    /// The application admission gate. The actor only asks; the application closes it.
+    admission_gate: Arc<crate::lifecycle::AdmissionGate>,
+}
+
+/// The application-owned handles that keep one connection countable and closable.
+///
+/// Holding `registration` is what keeps this connection in the drain registry: it is registered
+/// before the upgrade and released when the socket task ends, so the registry's count is a fact
+/// about live connections rather than a guess.  The two signals are separate decisions — `stopping`
+/// is the process finishing, `drain_close` is the deadline reaching *this* connection — and a
+/// controlled close is a request the session performs itself, not a force.
+struct SessionControl {
+    stopping: CancellationToken,
+    drain_close: CancellationToken,
+    registration: crate::lifecycle::DrainRegistration,
 }
 
 async fn handle_socket(
     socket: WebSocket,
     config: Arc<AppConfig>,
     runtimes: SocketRuntimes,
-    shutdown: tokio_util::sync::CancellationToken,
+    control: SessionControl,
 ) {
     // The profile stays owned by the connection lifetime. SessionActor receives only the
     // materialized snapshot, its admission-time switch catalog and the External MCP tools it may
@@ -248,9 +284,13 @@ async fn handle_socket(
     let admitted = runtimes.profile.into_admitted_profile();
     let writer_probe = runtimes.writer_probe;
     let session_id = runtimes.session_id;
+    let stopping = control.stopping.clone();
+    let drain_close = control.drain_close.clone();
+    // `control` itself is held to the end of this function: its registration is the connection's
+    // place in the drain registry, and dropping it early would un-count a live session.
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
-        _ = shutdown.cancelled() => return,
+        _ = stopping.cancelled() => return,
         first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
     };
     let hello = match first {
@@ -282,9 +322,10 @@ async fn handle_socket(
     let (writer_event_tx, writer_event_rx) = mpsc::channel(config.limits.session_event_queue);
     let generation_gate = Arc::new(crate::session::GenerationGate::new());
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-    // Keep the watch channel open until the writer drains a terminal control message. Otherwise
-    // dropping SessionActor could make the writer exit before it sends Close(1001).
-    let _writer_shutdown_tx = shutdown_tx.clone();
+    // The writer reads this to learn the application stopped it. It must outlive SessionActor's own
+    // sender — an actor that ends for an ordinary reason would otherwise stop the writer mid-drain —
+    // and is released explicitly once the actor has finished and every lane has been closed.
+    let writer_shutdown_tx = shutdown_tx.clone();
     let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
         session_id,
         control_tx.clone(),
@@ -334,6 +375,7 @@ async fn handle_socket(
     };
     let mut actor = actor
         .with_transcript(runtimes.transcript)
+        .with_admission_gate(runtimes.admission_gate)
         .with_writer_outcome_probe_opt(writer_probe.clone())
         .with_client_capabilities(
             hello.features.aec,
@@ -362,11 +404,6 @@ async fn handle_socket(
         loop {
             tokio::select! {
                 biased;
-                changed = shutdown_rx.changed() => {
-                    if changed.is_err() || *shutdown_rx.borrow() {
-                        break;
-                    }
-                },
                 Some(message) = urgent_rx.recv() => {
                     match message {
                         OutboundMessage::AbortTurn { turn_id, text } => {
@@ -446,6 +483,23 @@ async fn handle_socket(
                         break;
                     }
                 },
+                // The application's stop signal for this writer is deliberately the *last* branch,
+                // and `biased` makes that deterministic: every lane above is served first, so a
+                // terminal control message the actor already queued — `Close(1001)` on a controlled
+                // close — still reaches the client before the loop ends. Stopping here first would
+                // discard it.
+                //
+                // It is also the only branch that can stay pending once every lane has closed,
+                // because it never completes while any sender for the watch channel lives — and
+                // until it completes, `select!` keeps the whole loop pending no matter how many
+                // lanes have closed. That is why the sender is released explicitly during teardown
+                // rather than left to the end of this function: a writer waiting on it is a session
+                // the drain can never observe finishing.
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        break;
+                    }
+                },
                 else => {
                     if let Some(OutboundMessage::FinishTurn { turn_id, text }) = deferred_finish.take()
                         && send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await
@@ -464,7 +518,17 @@ async fn handle_socket(
 
     loop {
         tokio::select! {
-            _ = shutdown.cancelled() => {
+            // The deadline reached this session. It closes cleanly: the actor is told to stop,
+            // sends its terminal close frame and lets the writer drain, and this loop only exits
+            // once the connection itself is done. No task is aborted.
+            _ = drain_close.cancelled() => {
+                info!("controlled close issued at the shutdown grace deadline");
+                let _ = ingress_tx.send(SessionEvent::Shutdown).await;
+                break;
+            }
+            // The process is finishing outright. There is no deadline left to wait for, so this
+            // session ends now rather than holding the process open.
+            _ = stopping.cancelled() => {
                 let _ = ingress_tx.send(SessionEvent::Shutdown).await;
                 break;
             }
@@ -520,7 +584,14 @@ async fn handle_socket(
     let _ = session.await;
     drop(control_tx);
     drop(urgent_tx);
+    // The actor is gone and no lane can produce another message, so the watch channel's last sender
+    // goes too. That is what lets the writer's stop branch complete; awaiting it before this point
+    // is the deadlock this ordering exists to avoid.
+    drop(writer_shutdown_tx);
     let _ = writer.await;
+    // The session is finished: releasing its drain registration here is what lets a shutdown that
+    // is waiting observe that this connection is gone.
+    drop(control.registration);
     info!("voice session disconnected");
 }
 

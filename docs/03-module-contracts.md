@@ -166,6 +166,10 @@ session-local built-in action. Chi tiết quyết định ở `docs/adr/0060-seq
   `external_tool_call_cancelled_total` và `external_tool_late_response_discarded_total`.
 - **Tool result không persist.** Không tool argument/result nào vào optional transcript archive hay log
   body; chỉ bounded class đi vào log và metric label.
+- **Admission Gate là điều kiện bắt đầu, không phải cancel.** Executor hỏi application-owned gate trước
+  khi bắt đầu round và trước khi dispatch từng call, nên một round đã chạy dở không dùng được slot
+  kế tiếp trong budget của chính nó. Gate đóng là `tool_round_shutting_down`: terminalize turn,
+  execute zero call mới, giữ completed prefix, không continuation, không retry.
 
 
 ### 6.2. Persistent Transcript contract
@@ -225,8 +229,10 @@ Optional archive của final user text và Delivered Assistant Response. Quyết
 | TTS timeout | gửi `tts:stop` và trở lại listening |
 | MCP timeout khi session khỏe | normalized tool error về LLM; terminal khi session/cancellation failure |
 | Tool-round cap hoặc hết Tool Execution Budget | terminalize turn (`tool_call_limit_exceeded` / `tool_round_limit_exceeded` / `tool_execution_budget_exceeded`), giữ completed prefix, không continuation |
+| Application đóng Admission Gate giữa lúc | terminalize turn (`tool_round_shutting_down`), execute zero call mới, WebSocket upgrade mới 503, DB admission mới `server_is_shutting_down` |
 | External ToolCall timeout/unavailable/auth/response | typed content-free ToolResult, sibling call trong round vẫn chạy, không retry, không close session |
 | Persistent Transcript record bị drop (queue full, writer closed, database, text ngoài bound) | drop record đó, `history_dropped_total{reason}`, turn đi tiếp bình thường |
+| Shutdown grace deadline tới khi writer còn giữ record | `history_dropped_total{reason=shutdown}`, không retry, không kéo dài deadline |
 | WS disconnect | cancel toàn session |
 
 Không `unwrap()` trên dữ liệu đến từ network hoặc provider.

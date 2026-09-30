@@ -54,6 +54,9 @@ zeroize.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+# `test-util` gives the paused clock `docs/testing/00-test-strategy.md` requires for time-dependent
+# tests. It is test-only: the shipped binary keeps the real clock.
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
 voice-reference-client = { path = "../voice-reference-client" }
 

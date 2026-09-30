@@ -240,6 +240,9 @@ impl SessionActor {
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             // Capture is opt-in, so an actor that is never bound archives nothing.
             transcript: None,
+            // An actor built outside an application has nothing to ask, so it starts with a gate
+            // that stays open.  Production installs the real one before any turn can start.
+            admission_gate: AdmissionGate::open(),
             writer_probe: None,
         })
     }
@@ -292,6 +295,17 @@ impl SessionActor {
     /// or re-derives them: a session that holds these is a deployment that started.
     pub fn with_tool_round_limits(mut self, limits: ToolRoundLimits) -> Self {
         self.tool_rounds = ToolRoundState::new(limits);
+        self
+    }
+
+    /// Installs the application admission gate this session's Tool-round work asks before it
+    /// starts.
+    ///
+    /// The session cannot close it and cannot substitute its own: it holds the same gate the
+    /// listener, the admission resolver and the External MCP limiter hold, which is what makes
+    /// shutdown a single decision rather than one each component makes on its own.
+    pub fn with_admission_gate(mut self, gate: std::sync::Arc<AdmissionGate>) -> Self {
+        self.admission_gate = gate;
         self
     }
 

@@ -97,6 +97,10 @@ pub enum HistoryDrop {
     Database,
     /// The text is outside what one archived record may hold.
     TextOutOfBounds,
+    /// The archival writer still held records when the shutdown deadline passed.  It is its own
+    /// class because the record was never refused by the queue or the database — the process simply
+    /// stopped before it could be written, which is a different fact with a different fix.
+    Shutdown,
 }
 
 impl HistoryDrop {
@@ -106,6 +110,7 @@ impl HistoryDrop {
             Self::WriterClosed => "writer_closed",
             Self::Database => "database",
             Self::TextOutOfBounds => "text_out_of_bounds",
+            Self::Shutdown => "shutdown",
         }
     }
 }
@@ -146,6 +151,7 @@ pub struct HistoryWriterMetrics {
     writer_closed: AtomicU64,
     database: AtomicU64,
     text_out_of_bounds: AtomicU64,
+    shutdown: AtomicU64,
 }
 
 /// One reading of the counters, so a caller never sees a half-updated set.
@@ -158,6 +164,7 @@ pub struct HistoryWriterCounters {
     pub dropped_writer_closed: u64,
     pub dropped_database: u64,
     pub dropped_text_out_of_bounds: u64,
+    pub dropped_shutdown: u64,
 }
 
 impl HistoryWriterCounters {
@@ -178,14 +185,16 @@ impl HistoryWriterMetrics {
         let writer_closed = self.writer_closed.load(Ordering::Relaxed);
         let database = self.database.load(Ordering::Relaxed);
         let text_out_of_bounds = self.text_out_of_bounds.load(Ordering::Relaxed);
+        let shutdown = self.shutdown.load(Ordering::Relaxed);
         HistoryWriterCounters {
             enqueued: self.enqueued.load(Ordering::Relaxed),
             written: self.written.load(Ordering::Relaxed),
-            dropped: queue_full + writer_closed + database + text_out_of_bounds,
+            dropped: queue_full + writer_closed + database + text_out_of_bounds + shutdown,
             dropped_queue_full: queue_full,
             dropped_writer_closed: writer_closed,
             dropped_database: database,
             dropped_text_out_of_bounds: text_out_of_bounds,
+            dropped_shutdown: shutdown,
         }
     }
 
@@ -213,7 +222,35 @@ impl HistoryWriterMetrics {
             HistoryDrop::TextOutOfBounds => {
                 self.text_out_of_bounds.fetch_add(1, Ordering::Relaxed);
             }
+            HistoryDrop::Shutdown => {
+                self.shutdown.fetch_add(1, Ordering::Relaxed);
+            }
         }
+    }
+
+    /// Counts, once, everything the writer still held when the shutdown deadline passed.
+    ///
+    /// `is_settled` already answers how many records are outstanding; recording the same fact again
+    /// under its own class is what lets an operator see those records go rather than seeing the
+    /// archive quietly stop writing.
+    pub(crate) fn record_shutdown_drop(&self) {
+        let counters = self.counters();
+        let outstanding = counters
+            .enqueued
+            .saturating_sub(counters.written)
+            .saturating_sub(counters.dropped_database);
+        if outstanding == 0 {
+            return;
+        }
+        self.shutdown.fetch_add(outstanding, Ordering::Relaxed);
+        tracing::info!(
+            event = "history_record_dropped",
+            metric = HISTORY_DROPPED_TOTAL,
+            reason = HistoryDrop::Shutdown.as_str(),
+            dropped = outstanding,
+            "The shutdown deadline passed with Persistent Transcript records still unwritten; they \
+             are dropped, which is the archive's best-effort contract"
+        );
     }
 }
 

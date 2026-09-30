@@ -5,6 +5,7 @@ pub mod audio;
 pub mod benchmark;
 pub mod config;
 pub mod database;
+pub mod lifecycle;
 pub mod models;
 pub mod protocol;
 pub mod providers;
