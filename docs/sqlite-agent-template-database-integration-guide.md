@@ -2056,9 +2056,19 @@ src/tools/external_mcp/
 └── transport.rs
 ```
 
-DB chỉ cung cấp MCP config snapshot.
+SQLite `mcp_servers` và `agent_mcp_bindings` là desired-configuration source of truth.
+Admission đọc một DB snapshot, validate rồi materialize client/tool snapshot immutable; DB không đi
+vào tool hot path.
 
-`ExternalMcpManager` application-owned có thể reuse connection/client state giữa sessions khi transport/library cho phép.
+`rmcp` là sole protocol engine cho modern single-endpoint Streamable HTTP (`application/json` và
+`text/event-stream`): `initialize`, paginated `tools/list` và `tools/call`. Không support legacy
+two-endpoint HTTP+SSE và không giữ manual/fallback protocol engine song song. `rmcp` không nhận
+`Database`/repository/DB row; application vẫn sở hữu outbound policy, auth/secret lifecycle,
+limiter, turn budget/cancellation, schema validation và typed failure mapping. ADR-0069 là nguồn
+chốt lựa chọn engine và ranh giới ownership này.
+
+`ExternalMcpManager` application-owned có thể reuse connection/client state giữa sessions khi
+transport/library cho phép, nhưng không được reuse discovery catalog hay availability state cũ.
 
 Agent session nhận filtered tool snapshot từ các MCP servers bind với Agent.
 
@@ -2135,8 +2145,8 @@ so khớp bằng typed host (`url::Host`), không phải `Url::host_str`, vì `h
 literal dạng `[::1]`. ADR-0056 là nguồn chốt.
 
 Mỗi WS admission lấy fresh External MCP snapshot: `initialize → tools/list` tới hết
-pagination → normalize/validate → Session MCP snapshot. Có thể reuse reqwest client,
-connection pool, TLS session, DNS cache và HTTP transport; không reuse tools/list,
+pagination → normalize/validate → Session MCP snapshot. Có thể reuse SDK transport,
+connection pool, TLS session và DNS cache; không reuse tools/list,
 sanitized registry hay availability state cũ làm authoritative. Resolve các binding
 song song bounded, timeout tối đa
 `mcp.external.per_server_resolution_timeout_ms` cho mỗi server và toàn bộ admission

@@ -55,9 +55,9 @@ vision_concurrency = 2
 
 [provider_defaults]
 vad = "silero_default"
-asr = "zipformer_vi"
+asr = "gipformer_vi"
 llm = "openai_primary"
-tts = "zerotts_maichi"
+tts = "chillaudio_default"
 # Set a Vision instance ID when [vision].enabled is true.
 # vision = "local_vision"
 

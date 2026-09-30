@@ -1,6 +1,6 @@
 # Phase 5 — Interruption và acoustic barge-in correctness
 
-Status: ready-for-agent
+Status: ready-for-human
 
 ## Problem Statement
 
