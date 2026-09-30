@@ -4,10 +4,16 @@ use crate::{audio::PcmF32Mono, config::ZeroTtsDeliveryMode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 
-pub mod chillaudio_ws;
+pub(crate) mod chillaudio;
 mod file_delivery;
-pub mod zerotts_onnx;
-pub(crate) use chillaudio_ws::ChillAudioWsProvider;
+pub(crate) mod zerotts;
+pub(crate) use chillaudio::ChillAudioWsProvider;
+/// Compatibility exports for native ZeroTTS tooling.
+pub mod zerotts_onnx {
+    pub use super::zerotts::runtime::{
+        ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream, normalize_text,
+    };
+}
 
 /// Terminal output produced by startup-only ZeroTTS warmup.
 #[derive(Debug, Clone, PartialEq)]

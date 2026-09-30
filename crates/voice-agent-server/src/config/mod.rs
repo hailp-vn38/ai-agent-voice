@@ -474,7 +474,7 @@ mod tool_round_config_tests {
     }
 }
 
-mod defaults;
+pub(crate) mod defaults;
 mod providers;
 
 use defaults::*;

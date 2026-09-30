@@ -294,5 +294,4 @@ async fn run_operation(
 }
 
 #[cfg(test)]
-#[path = "llm/tests.rs"]
 mod tests;

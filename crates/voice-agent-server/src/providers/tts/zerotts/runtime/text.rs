@@ -9,7 +9,8 @@ const DIGITS: [&str; 10] = [
     "không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín",
 ];
 const SCALES: [&str; 7] = ["", "nghìn", "triệu", "tỷ", "nghìn tỷ", "triệu tỷ", "tỷ tỷ"];
-const ABBREVIATIONS: &str = include_str!("../../../../../../assets/zerotts-text/abbreviations.txt");
+const ABBREVIATIONS: &str =
+    include_str!("../../../../../../../assets/zerotts-text/abbreviations.txt");
 
 #[derive(Clone, Copy)]
 enum Form {

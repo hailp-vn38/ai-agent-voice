@@ -55,7 +55,7 @@ pub(super) fn default_max_active_turns() -> usize {
 pub(super) fn default_llm_concurrency() -> usize {
     2
 }
-pub(super) fn default_llm_timeout_ms() -> u64 {
+pub(crate) fn default_llm_timeout_ms() -> u64 {
     60_000
 }
 pub(super) fn default_tts_concurrency() -> usize {
@@ -64,13 +64,13 @@ pub(super) fn default_tts_concurrency() -> usize {
 pub(super) fn default_vad_model() -> String {
     "silero_vad_v5".into()
 }
-pub(super) fn default_asr_model() -> String {
+pub(crate) fn default_asr_model() -> String {
     "zipformer_vi_streaming".into()
 }
-pub(super) fn default_openai_base_url() -> Url {
+pub(crate) fn default_openai_base_url() -> Url {
     Url::parse("https://api.openai.com/v1").expect("valid default OpenAI URL")
 }
-pub(super) fn default_openai_model() -> String {
+pub(crate) fn default_openai_model() -> String {
     "model-name".into()
 }
 pub(super) fn default_vision_timeout_ms() -> u64 {
@@ -94,25 +94,25 @@ pub(super) fn default_vision_max_question_bytes() -> usize {
 pub(super) fn default_vision_concurrency() -> usize {
     2
 }
-pub(super) fn default_tts_model() -> String {
+pub(crate) fn default_tts_model() -> String {
     "zerotts_default".into()
 }
-pub(super) fn default_tts_voice() -> String {
+pub(crate) fn default_tts_voice() -> String {
     "maichi".into()
 }
-pub(super) fn default_vietnamese_language() -> String {
+pub(crate) fn default_vietnamese_language() -> String {
     "vi-VN".into()
 }
-pub(super) fn default_chillaudio_ws_url() -> Url {
+pub(crate) fn default_chillaudio_ws_url() -> Url {
     Url::parse("wss://sami-normal-sg.capcutapi.com/internal/api/v1/ws?device_id=7486429558272460289&iid=7486431924195657473&app_id=359289&region=VN&update_version_code=5.7.1.2101&version_code=5.7.1&appKey=ddjeqjLGMn&device_type=macos&device_platform=macos").expect("valid ChillAudio URL")
 }
-pub(super) fn default_chillaudio_app_key() -> SecretString {
+pub(crate) fn default_chillaudio_app_key() -> SecretString {
     SecretString("ddjeqjLGMn".into())
 }
-pub(super) fn default_chillaudio_voice() -> String {
+pub(crate) fn default_chillaudio_voice() -> String {
     "BV421_vivn_streaming".into()
 }
-pub(super) fn default_chillaudio_timeout_ms() -> u64 {
+pub(crate) fn default_chillaudio_timeout_ms() -> u64 {
     12_000
 }
 pub(super) fn default_provider_threads() -> i32 {
@@ -139,19 +139,19 @@ pub(super) fn default_vad_worker_count() -> usize {
 pub(super) fn default_asr_worker_count() -> usize {
     2
 }
-pub(super) fn default_asr_threads() -> i32 {
+pub(crate) fn default_asr_threads() -> i32 {
     2
 }
-pub(super) fn default_decoding_method() -> String {
+pub(crate) fn default_decoding_method() -> String {
     "greedy_search".into()
 }
-pub(super) fn default_gipformer_threads() -> i32 {
+pub(crate) fn default_gipformer_threads() -> i32 {
     4
 }
-pub(super) fn default_gipformer_decoding_method() -> String {
+pub(crate) fn default_gipformer_decoding_method() -> String {
     "modified_beam_search".into()
 }
-pub(super) fn default_gipformer_max_active_paths() -> i32 {
+pub(crate) fn default_gipformer_max_active_paths() -> i32 {
     4
 }
 pub(super) fn default_manifest_path() -> std::path::PathBuf {

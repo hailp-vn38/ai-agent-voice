@@ -6,6 +6,8 @@ use futures_util::Stream;
 use serde_json::Value;
 use thiserror::Error;
 
+pub(crate) mod openai;
+
 pub type LlmEventStream = Pin<Box<dyn Stream<Item = Result<LlmEvent, LlmError>> + Send>>;
 
 #[derive(Clone, Debug, PartialEq)]

@@ -21,7 +21,7 @@ use std::{
 use tokenizers::Tokenizer;
 use unicode_normalization::UnicodeNormalization;
 
-use super::TtsError;
+use super::super::TtsError;
 use crate::{audio::PcmF32Mono, providers::vad::initialize_ort};
 use codec::*;
 pub use contract::ZeroTtsContract;

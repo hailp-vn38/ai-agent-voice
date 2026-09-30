@@ -12,7 +12,7 @@ use symphonia::core::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::{TtsError, TtsProvider, TtsWorker};
+use super::super::{TtsError, TtsProvider, TtsWorker};
 use crate::{audio::PcmF32Mono, config::ChillAudioWsConfig};
 
 pub(crate) struct ChillAudioWsProvider {

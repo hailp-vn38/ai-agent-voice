@@ -79,5 +79,4 @@ impl Drop for ProviderCapacityPermit {
 }
 
 #[cfg(test)]
-#[path = "admission/tests.rs"]
 mod tests;

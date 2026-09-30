@@ -1,8 +1,18 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use url::Url;
 
 use super::defaults::*;
+pub use crate::providers::{
+    asr::{
+        gipformer::config::GipformerSherpaOfflineConfig, zipformer::config::ZipformerSherpaConfig,
+    },
+    llm::openai::config::OpenAiConfig,
+    tts::{
+        chillaudio::config::ChillAudioWsConfig,
+        zerotts::config::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig},
+    },
+};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,30 +85,6 @@ impl LlmInstanceConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OpenAiConfig {
-    #[serde(default)]
-    pub api_key: SecretString,
-    #[serde(default = "default_openai_base_url")]
-    pub base_url: Url,
-    #[serde(default = "default_openai_model")]
-    pub model: String,
-    #[serde(default = "default_llm_timeout_ms")]
-    pub timeout_ms: u64,
-}
-
-impl Default for OpenAiConfig {
-    fn default() -> Self {
-        Self {
-            api_key: SecretString(String::new()),
-            base_url: default_openai_base_url(),
-            model: default_openai_model(),
-            timeout_ms: default_llm_timeout_ms(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum VisionInstanceConfig {
     #[serde(rename = "openai_vision")]
@@ -153,61 +139,6 @@ impl TtsInstanceConfig {
         match self {
             Self::ZeroTtsOnnx(config) => config.preload,
             Self::ChillAudioWs(config) => config.preload,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ChillAudioWsConfig {
-    #[serde(default = "default_chillaudio_ws_url")]
-    pub ws_url: Url,
-    #[serde(default = "default_chillaudio_app_key")]
-    pub app_key: SecretString,
-    #[serde(default)]
-    pub token: SecretString,
-    #[serde(default = "default_chillaudio_voice")]
-    pub voice: String,
-    #[serde(default = "default_chillaudio_timeout_ms")]
-    pub timeout_ms: u64,
-    #[serde(default)]
-    pub preload: bool,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ZeroTtsOnnxConfig {
-    #[serde(default = "default_tts_model")]
-    pub model: String,
-    #[serde(default = "default_asr_threads")]
-    pub num_threads: i32,
-    #[serde(default = "default_tts_voice")]
-    pub voice: String,
-    #[serde(default = "default_vietnamese_language")]
-    pub language: String,
-    #[serde(default)]
-    pub delivery_mode: ZeroTtsDeliveryMode,
-    #[serde(default)]
-    pub preload: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ZeroTtsDeliveryMode {
-    File,
-    #[default]
-    Stream,
-}
-
-impl Default for ZeroTtsOnnxConfig {
-    fn default() -> Self {
-        Self {
-            model: default_tts_model(),
-            num_threads: default_asr_threads(),
-            voice: default_tts_voice(),
-            language: default_vietnamese_language(),
-            delivery_mode: ZeroTtsDeliveryMode::Stream,
-            preload: false,
         }
     }
 }
@@ -282,53 +213,6 @@ impl AsrInstanceConfig {
         match self {
             Self::ZipformerSherpa(config) => &config.model,
             Self::GipformerSherpaOffline(config) => &config.model,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ZipformerSherpaConfig {
-    #[serde(default = "default_asr_model")]
-    pub model: String,
-    #[serde(default = "default_asr_threads")]
-    pub num_threads: i32,
-    #[serde(default = "default_decoding_method")]
-    pub decoding_method: String,
-}
-
-impl Default for ZipformerSherpaConfig {
-    fn default() -> Self {
-        Self {
-            model: default_asr_model(),
-            num_threads: default_asr_threads(),
-            decoding_method: default_decoding_method(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GipformerSherpaOfflineConfig {
-    pub model: String,
-    #[serde(default = "default_vietnamese_language")]
-    pub language: String,
-    #[serde(default = "default_gipformer_threads")]
-    pub num_threads: i32,
-    #[serde(default = "default_gipformer_decoding_method")]
-    pub decoding_method: String,
-    #[serde(default = "default_gipformer_max_active_paths")]
-    pub max_active_paths: i32,
-}
-
-impl Default for GipformerSherpaOfflineConfig {
-    fn default() -> Self {
-        Self {
-            model: String::new(),
-            language: default_vietnamese_language(),
-            num_threads: default_gipformer_threads(),
-            decoding_method: default_gipformer_decoding_method(),
-            max_active_paths: default_gipformer_max_active_paths(),
         }
     }
 }
