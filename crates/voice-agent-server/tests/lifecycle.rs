@@ -43,10 +43,7 @@ fn database_url() -> String {
     format!(
         "sqlite://{}",
         std::env::temp_dir()
-            .join(format!(
-                "voice-agent-lifecycle-{}.db",
-                uuid::Uuid::new_v4()
-            ))
+            .join(format!("voice-agent-lifecycle-{}.db", uuid::Uuid::new_v4()))
             .display()
     )
 }
@@ -189,7 +186,10 @@ async fn start_without_database(grace: Duration) -> Voice {
     }
 }
 
-fn request(base: &str, device_id: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
+fn request(
+    base: &str,
+    device_id: &str,
+) -> tokio_tungstenite::tungstenite::handshake::client::Request {
     let mut request = format!("{}/voice/v1/", base.replacen("http", "ws", 1))
         .into_client_request()
         .unwrap();
@@ -217,16 +217,20 @@ fn rejected_status(error: tokio_tungstenite::tungstenite::Error) -> StatusCode {
 }
 
 async fn seed(pool: &SqlitePool) {
-    sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) \
-                 VALUES ('agent','Agent',1,1,1)")
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) \
-                 VALUES ('device',1,1,1,1)")
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO agents (key,name,enabled,created_at,updated_at) \
+                 VALUES ('agent','Agent',1,1,1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) \
+                 VALUES ('device',1,1,1,1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +260,10 @@ async fn a_degraded_database_degrades_readiness_without_taking_the_process_down(
         StatusCode::OK,
         "the process is still running and still serving the sessions it admitted"
     );
-    assert_eq!(voice.status("/ready").await, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        voice.status("/ready").await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
     assert_eq!(
         voice.body("/ready").await,
         "database_unreachable",
@@ -280,7 +287,10 @@ async fn a_session_admitted_before_a_database_outage_keeps_its_profile() {
 
     voice.state.database.as_ref().unwrap().pool().close().await;
 
-    assert_eq!(voice.status("/ready").await, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        voice.status("/ready").await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
     assert!(
         admitted.agent_key == "agent",
         "the admitted snapshot is owned by the session, not re-read from the database"
@@ -306,7 +316,11 @@ async fn a_shutting_down_process_is_live_but_no_longer_ready() {
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
     assert!(matches!(
-        timeout(Duration::from_secs(2), socket.next()).await.unwrap().unwrap().unwrap(),
+        timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
         Message::Text(_)
     ));
 
@@ -472,11 +486,13 @@ async fn readiness_never_runs_full_admission() {
     let pool = voice.database().await;
     // An Agent whose default Template cannot be materialized: full admission fails closed for it,
     // and readiness must not notice or care.
-    sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) \
-                 VALUES ('agent','Agent',1,1,1)")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO agents (key,name,enabled,created_at,updated_at) \
+                 VALUES ('agent','Agent',1,1,1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let template_id: i64 = sqlx::query_scalar(
         "INSERT INTO agent_templates (key,name,description,language,prompt,enabled,created_at,updated_at) \
          VALUES ('broken','Broken',NULL,'','prompt',1,1,1) RETURNING id",
@@ -492,11 +508,13 @@ async fn readiness_never_runs_full_admission() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) \
-                 VALUES ('device',1,1,1,1)")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) \
+                 VALUES ('device',1,1,1,1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     drop(pool);
 
     assert!(
@@ -521,7 +539,11 @@ async fn a_closed_gate_refuses_a_new_voice_connection() {
     let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
     seed(&voice.database().await).await;
     assert_eq!(
-        connect_async(request(&voice.base, "device")).await.unwrap().1.status(),
+        connect_async(request(&voice.base, "device"))
+            .await
+            .unwrap()
+            .1
+            .status(),
         StatusCode::SWITCHING_PROTOCOLS,
         "the boundary admits while the process is working"
     );
@@ -529,7 +551,9 @@ async fn a_closed_gate_refuses_a_new_voice_connection() {
     // Close the gate without draining anything: this is the state shutdown reaches first.
     assert!(voice.lifecycle.begin_shutdown());
 
-    let refusal = connect_async(request(&voice.base, "device")).await.unwrap_err();
+    let refusal = connect_async(request(&voice.base, "device"))
+        .await
+        .unwrap_err();
     assert_eq!(
         rejected_status(refusal),
         StatusCode::SERVICE_UNAVAILABLE,
@@ -573,7 +597,11 @@ async fn a_session_that_finishes_on_its_own_drains_before_the_deadline() {
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
     assert!(matches!(
-        timeout(Duration::from_secs(2), socket.next()).await.unwrap().unwrap().unwrap(),
+        timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
         Message::Text(_)
     ));
     // The client goes away on its own terms, which is the ordinary case: the connection ends and
@@ -602,7 +630,11 @@ async fn a_session_open_at_the_deadline_is_controlled_closed_not_aborted() {
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
     assert!(matches!(
-        timeout(Duration::from_secs(2), socket.next()).await.unwrap().unwrap().unwrap(),
+        timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
         Message::Text(_)
     ));
     // The session stays connected and idle across the deadline.
@@ -680,7 +712,11 @@ async fn the_history_flush_never_decides_how_long_shutdown_takes() {
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
     assert!(matches!(
-        timeout(Duration::from_secs(2), socket.next()).await.unwrap().unwrap().unwrap(),
+        timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
         Message::Text(_)
     ));
 
@@ -694,10 +730,7 @@ async fn the_history_flush_never_decides_how_long_shutdown_takes() {
     // Whether the archive settled is reported, not awaited, so both answers are acceptable here and
     // the property under test is the bound above.
     let _ = report.history_flushed;
-    assert!(
-        report.outcome != DrainOutcome::Drained
-            || report.controlled_closes == 0
-    );
+    assert!(report.outcome != DrainOutcome::Drained || report.controlled_closes == 0);
     let _ = socket;
 }
 
@@ -709,7 +742,11 @@ async fn a_capture_off_process_reports_nothing_left_to_flush() {
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
     assert!(matches!(
-        timeout(Duration::from_secs(2), socket.next()).await.unwrap().unwrap().unwrap(),
+        timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
         Message::Text(_)
     ));
 
@@ -808,12 +845,8 @@ async fn await_drain(drain: &DrainRegistry) {
 }
 
 /// Runs the ordered shutdown and fails the test rather than hanging if it never returns.
-async fn shutdown_within(
-    lifecycle: Arc<RuntimeLifecycle>,
-    limit: Duration,
-) -> ShutdownReport {
+async fn shutdown_within(lifecycle: Arc<RuntimeLifecycle>, limit: Duration) -> ShutdownReport {
     timeout(limit, lifecycle.shutdown())
         .await
         .expect("the ordered shutdown returns within its bound")
 }
-

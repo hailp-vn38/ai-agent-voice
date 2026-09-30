@@ -41,7 +41,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(address = %address, "voice protocol server listening");
     let listening = lifecycle.listening().clone();
     let mut server = tokio::spawn(async move {
-        axum::serve(listener, app).with_graceful_shutdown(listening.cancelled_owned()).await
+        axum::serve(listener, app)
+            .with_graceful_shutdown(listening.cancelled_owned())
+            .await
     });
     shutdown_signal().await;
     // The ordered shutdown: close the admission gate so nothing new starts, drain the sessions this

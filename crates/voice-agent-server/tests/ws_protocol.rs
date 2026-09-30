@@ -26,8 +26,7 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
 }
 
 async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, JoinHandle<()>) {
-    let (base, task, _) =
-        start_with_token_and_lifecycle(max_frame_bytes, token, None).await;
+    let (base, task, _) = start_with_token_and_lifecycle(max_frame_bytes, token, None).await;
     (base, task)
 }
 
@@ -37,8 +36,11 @@ async fn start_with_token_and_lifecycle(
     max_frame_bytes: usize,
     token: String,
     lifecycle: Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
-) -> (String, JoinHandle<()>, Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>)
-{
+) -> (
+    String,
+    JoinHandle<()>,
+    Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -78,11 +80,11 @@ async fn start_with_token_and_lifecycle(
         config,
         Arc::new(ProviderSet::unavailable()),
         None,
-        lifecycle
-            .clone()
-            .unwrap_or_else(|| {
-                voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(1_024))
-            }),
+        lifecycle.clone().unwrap_or_else(|| {
+            voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(
+                1_024,
+            ))
+        }),
     );
     let app: Router = router_with_state(state);
     let task = tokio::spawn(async move {
@@ -159,7 +161,10 @@ async fn application_shutdown_controlled_closes_an_upgraded_voice_session() {
     socket.send(Message::Text(hello().into())).await.unwrap();
     assert!(matches!(next_message(&mut socket).await, Message::Text(_)));
 
-    lifecycle.expect("this router is driven through its lifecycle").shutdown().await;
+    lifecycle
+        .expect("this router is driven through its lifecycle")
+        .shutdown()
+        .await;
     let close = next_message(&mut socket).await;
     assert!(matches!(
         close,

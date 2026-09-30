@@ -483,8 +483,9 @@ async fn a_closed_gate_stops_a_round_that_was_already_running() {
     let server = GatedServer::start().await;
     let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
     let gate = AdmissionGate::open();
-    let mut actor = session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)))
-        .with_admission_gate(Arc::clone(&gate));
+    let mut actor =
+        session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await)
+            .with_admission_gate(Arc::clone(&gate));
     actor
         .begin_active_turn()
         .expect("an active turn is admitted");
@@ -659,10 +660,18 @@ impl GatedServer {
                 let held = Arc::clone(&route_held);
                 let mut open = route_open.clone();
                 async move {
+                    use axum::response::IntoResponse;
+
                     let request: serde_json::Value =
                         serde_json::from_slice(&body).unwrap_or_default();
                     let id = request.get("id").cloned();
-                    let result = match request.get("method").and_then(serde_json::Value::as_str) {
+                    let method = request.get("method").and_then(serde_json::Value::as_str);
+                    if id.is_none()
+                        || method.is_some_and(|method| method.starts_with("notifications/"))
+                    {
+                        return axum::http::StatusCode::ACCEPTED.into_response();
+                    }
+                    let result = match method {
                         Some("initialize") => serde_json::json!({
                             "protocolVersion": "2024-11-05",
                             "capabilities": {"tools": {}},
@@ -690,7 +699,6 @@ impl GatedServer {
                     if let Some(id) = id {
                         document["id"] = id;
                     }
-                    use axum::response::IntoResponse;
                     (
                         axum::http::StatusCode::OK,
                         [(
@@ -715,7 +723,9 @@ impl GatedServer {
     }
 
     async fn wait_until_held(&self) {
-        self.held.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), self.held.notified())
+            .await
+            .expect("the fixture receives the in-flight tools/call within its bound");
     }
 
     fn release(&self) {
@@ -724,11 +734,11 @@ impl GatedServer {
 }
 
 /// A snapshot whose calls report into a sink the test can read.
-fn gated_snapshot(
+async fn gated_snapshot(
     server: &GatedServer,
     telemetry: Arc<crate::telemetry::RecordingTelemetry>,
 ) -> SessionExternalMcp {
-    let client = crate::tools::external_mcp::ExternalMcpClient::connect(
+    let mut client = crate::tools::external_mcp::ExternalMcpClient::connect(
         "weather",
         &server.url,
         "{}",
@@ -748,6 +758,10 @@ fn gated_snapshot(
         &crate::database::secrets::EnvSecretResolver,
     )
     .expect("an allowlisted loopback destination produces a client");
+    client
+        .initialize()
+        .await
+        .expect("the fixture completes the RMCP initialize lifecycle before a call");
     SessionExternalMcp::new(vec![resolved_server("weather", "Forecast", client)])
 }
 
@@ -797,7 +811,8 @@ fn tool_round(actor: &SessionActor) -> Vec<String> {
 async fn a_response_that_lands_after_its_round_is_discarded_and_acts_on_nothing() {
     let server = GatedServer::start().await;
     let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
-    let mut actor = session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)));
+    let mut actor =
+        session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await);
     actor
         .begin_active_turn()
         .expect("an active turn is admitted");
@@ -877,7 +892,8 @@ async fn a_response_that_lands_after_its_round_is_discarded_and_acts_on_nothing(
 async fn an_interrupted_turn_drops_its_in_flight_call_without_producing_a_result() {
     let server = GatedServer::start().await;
     let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
-    let mut actor = session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)));
+    let mut actor =
+        session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await);
     actor
         .begin_active_turn()
         .expect("an active turn is admitted");

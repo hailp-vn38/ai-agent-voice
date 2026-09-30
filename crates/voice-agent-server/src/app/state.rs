@@ -428,7 +428,6 @@ impl AppState {
     }
 }
 
-
 /// Bounded admission failure.  The reason stays internal; the client only sees the coarse class.
 /// The two unavailable classes stay distinct because the integration guide names them as separate
 /// internal diagnostics: a broken database versus an unresolvable Agent profile.

@@ -45,6 +45,10 @@ _Avoid_: human-log parsing, reserved-port handoff, PID-only identity, file exist
 Artifact handoff immutable, create-new và được validate trước side effect giữa lifetime hai process của Integration Harness. Chỉ giữ public resource identity, revision, run/spec identity và runtime observation cần thiết; không giữ credential, secret reference, authorization header, prompt, result hay audio.
 _Avoid_: resume journal, mutable provisioning cache, secret store
 
+**Scenario Plan**:
+Kế hoạch immutable được materialize và validate từ ScenarioSpec trước bất kỳ provisioning side effect nào, chứa identity run và resource graph dự kiến nhưng chưa khẳng định resource đã tồn tại.
+_Avoid_: Scenario State, partial provisioning record, retry journal
+
 **Reference Client Wire Type**:
 Biểu diễn request/response public contract do Reference Integration Client sở hữu độc lập với server implementation types, để API drift trở thành failure quan sát được.
 _Avoid_: shared repository row, imported server handler DTO, server domain type

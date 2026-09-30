@@ -12,11 +12,7 @@ pub(super) async fn handler(
     // what keeps this connection counted for exactly as long as it exists.
     let drain = state.register_session();
     if !state.admission_gate().is_open() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "server is shutting down",
-        )
-            .into_response();
+        return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
     }
     if !header_or_query_is_or_absent(
         &headers,
@@ -70,11 +66,7 @@ pub(super) async fn handler(
             return (StatusCode::SERVICE_UNAVAILABLE, "agent profile unavailable").into_response();
         }
         Err(SessionProfileAdmissionError::ShuttingDown) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "server is shutting down",
-            )
-                .into_response();
+            return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
         }
     };
     let resolved_runtimes = match state.runtimes.resolve(&profile.providers) {

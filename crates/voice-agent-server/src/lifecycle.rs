@@ -242,9 +242,7 @@ pub enum DrainOutcome {
     Drained,
     /// The deadline arrived with sessions still registered.  They are closed at this point, not
     /// before it.
-    DeadlineReached {
-        remaining: usize,
-    },
+    DeadlineReached { remaining: usize },
 }
 
 /// What one ordered shutdown observed.
@@ -423,10 +421,7 @@ mod tests {
     use super::*;
     use crate::session::GenerationGate;
 
-    fn registry_with(
-        registry: &Arc<DrainRegistry>,
-        sessions: usize,
-    ) -> Vec<DrainRegistration> {
+    fn registry_with(registry: &Arc<DrainRegistry>, sessions: usize) -> Vec<DrainRegistration> {
         let handles = (0..sessions).map(|_| registry.register()).collect();
         assert_eq!(registry.active(), sessions);
         handles
@@ -484,7 +479,9 @@ mod tests {
         let shutdown = tokio::spawn(async move { owned.shutdown().await });
         // Past the grace deadline with the session still registered.
         tokio::time::advance(Duration::from_secs(31)).await;
-        let report = shutdown.await.expect("the ordered shutdown returns at its deadline");
+        let report = shutdown
+            .await
+            .expect("the ordered shutdown returns at its deadline");
 
         assert_eq!(
             report.outcome,
@@ -608,7 +605,9 @@ mod tests {
         let owned = Arc::clone(&lifecycle);
         let shutdown = tokio::spawn(async move { owned.shutdown().await });
         tokio::time::advance(grace).await;
-        let report = shutdown.await.expect("the flush returns at the shared deadline");
+        let report = shutdown
+            .await
+            .expect("the flush returns at the shared deadline");
 
         assert!(
             !report.history_flushed,
@@ -622,7 +621,10 @@ mod tests {
         // Resolving without any further clock movement is the proof it never extended: a flush that
         // retried or kept waiting would still be pending here.
         let counters = metrics.counters();
-        assert_eq!(counters.enqueued, 1, "the record was accepted by the hand-off");
+        assert_eq!(
+            counters.enqueued, 1,
+            "the record was accepted by the hand-off"
+        );
         assert_eq!(
             counters.dropped_shutdown, 1,
             "and it is reported under its own bounded class rather than silently lost"

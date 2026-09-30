@@ -4,7 +4,7 @@
 
 **Blocked by:** 09: External MCP admission snapshot; 10: Shared Tool-round Executor.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Architecture:** ADR-0069.
 
@@ -34,3 +34,25 @@ The official SDK currently targets modern MCP Streamable HTTP and documents no l
 HTTP+SSE transport for protocol `2024-11-05`. Since this project already declares only
 `streamable_http`, the migration makes that existing boundary explicit rather than silently carrying
 a partial legacy implementation.
+
+## Comments
+
+- 2026-09-30: Commit `d12c28f` pins published `rmcp 3.5.0` and replaces the handwritten External
+  MCP JSON-RPC/lifecycle parser with the RMCP Streamable HTTP client plus a policy-owning backend.
+  The adapter keeps DNS/CIDR revalidation immediately before outbound I/O, redirect prohibition,
+  static/typed-auth snapshot ownership and bounded response handling outside RMCP.
+- Regression `external_mcp_tool_catalog_survives_every_call_failure` đã pass và chứng minh mỗi
+  `401`/`503`, malformed result, oversized result và timeout chỉ tới mock đúng một lần; call hợp lệ
+  sau đó vẫn tới được mock. `ServiceError::UnexpectedResponse` tại seam `tools/call` được map thành
+  `external_tool_invalid_response`, còn transport/network vẫn là `external_tool_unavailable`; không
+  có reinitialize, rediscovery, secret refresh hay request retry.
+- 2026-09-30: Đã hoàn tất hai gate còn thiếu. Fixture
+  `external_mcp_session_capable_sse_keeps_its_session_across_lifecycle` trả SSE thực và mint
+  `mcp-session-id` ở `initialize`; fixture từ chối nếu notification `initialized`, `tools/list`
+  hoặc `tools/call` không gửi lại identity đó. Regression workspace là test `GatedServer` dựng
+  client chưa RMCP-initialize rồi chờ call vô hạn; fixture nay initialize trước dispatch và chính
+  wait được bound 5 giây.
+- Validation pass: `cargo test -p voice-agent-server --test external_mcp_admission` (15/15),
+  `cargo test --workspace --quiet -- --test-threads=1`, `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets` (exit 0, còn warning) và `git diff --check`.
+  Không còn gate acceptance mở; trạng thái `resolved` có bằng chứng workspace hiện tại.

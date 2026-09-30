@@ -113,6 +113,11 @@ Chúng deterministic tuyệt đối: VAD trả probabilities/boundaries cố đ�
 cố định, LLM trả response/tool behavior cố định, TTS trả valid deterministic PCM/audio. Chúng không
 dùng network, SecretResolver, `secret_ref`, model download, environment credential hoặc randomness.
 
+Factory VAD/ASR nhận `Option<ResolvedModel>` chỉ tại shared construction seam: production provider
+phải được config/load-plan chứng minh `Some(ResolvedModel)` trước khi factory chạy, còn
+`qualification_vad`/`qualification_asr` hợp lệ duy nhất với `None`. `None` không được lan sang
+production runtime, không là runtime flag và không cho phép production adapter bỏ model validation.
+
 Default/release build không chứa hoặc advertise adapter qualification. CI có hai gates: default
 build chứng minh `qualification_*` absent; qualification build chứng minh chúng present. Đây là
 qualification build của production binary, không phải khẳng định bit-for-bit giống deployed release
@@ -320,10 +325,13 @@ voice-admin-client   --admin-url http://127.0.0.1:8000/api/admin/   --admin-toke
 Client không log token.
 
 `--admin-url` là exact Admin API base và phải có canonical trailing slash. Chỉ nhận `http`/`https`,
-cấm userinfo, query và fragment; `http` chỉ hợp lệ với loopback, còn non-loopback bắt buộc
-`https`. Resource endpoint chỉ được join bằng relative path sau validation. Admin `reqwest::Client`
-disable redirect và chỉ attach Bearer vào origin đã validate. Harness dựng base từ bound address +
-fixed `/api/admin/`; `--ota-url` là contract riêng và không dùng generic Admin URL join.
+cấm userinfo, query và fragment; `http` chỉ hợp lệ với IPv4 `127.0.0.0/8`, IPv6 `::1`, hoặc hostname
+đúng bằng `localhost` (không cần ép caller dùng literal). `localhost` là exception local tường minh,
+không mở acceptance cho hostname DNS khác; mapped IPv4-in-IPv6, wildcard/bind-all và hostname khác
+vẫn bị reject. Non-loopback bắt buộc `https`. Resource endpoint chỉ được join bằng relative path sau
+validation. Admin `reqwest::Client` disable redirect và chỉ attach Bearer vào origin đã validate.
+Harness dựng base từ bound address + fixed `/api/admin/`; `--ota-url` là contract riêng và không dùng
+generic Admin URL join.
 
 ---
 
@@ -444,7 +452,17 @@ pub struct Versioned<T> {
 
 ---
 
-## 10. ScenarioState
+## 10. ScenarioPlan và ScenarioState
+
+`ScenarioPlan` là artifact in-memory immutable được tạo **trước** mọi network/HTTP/Voice side
+effect. Nó parse raw ScenarioSpec, check digest và grammar/bounds, tạo/validate `run_id` cùng mọi
+resource key/Device ID derived, rồi cố định dependency graph mà provisioning sẽ gửi. Plan không là
+evidence rằng resource đã được tạo, không được dùng để resume/reconcile và không được persist như
+`ScenarioState`.
+
+`ScenarioState` chỉ được create-new sau khi toàn bộ provisioning create-only thành công và runner đã
+đọc lại public resource graph. Vì vậy failure/conflict tại bất kỳ request nào không tạo state partial
+để verify process sau hiểu nhầm là scenario đã provision.
 
 Provisioning phải ghi state ra file để verify sau restart.
 
@@ -608,7 +626,7 @@ enabled = true
 Mandatory scenario cũng bind `[providers.vad]` với `qualification_vad`; snippet rút gọn phần config
 VAD cho dễ đọc.
 
-Runner generate một lần trước network side effect:
+Runner materialize đúng một `ScenarioPlan` trước network side effect:
 
 ```text
 run_token = 24 lowercase random hex từ CSPRNG
@@ -618,9 +636,10 @@ final key = <key_prefix>_<run_token>_<role_suffix>
 
 `--run-id` explicit phải parse đúng canonical `it_` + 24 lowercase hex; runner lấy phần hex làm
 `run_token`, không hash/truncate/normalize. Tất cả final resource keys và derived Device ID được
-materialize, validate cùng lúc rồi persist vào state trước request đầu tiên. Bất kỳ identity nào
-vi phạm server grammar/bound (`Resource Key <=64`, Device ID `<=128`) fail
-`scenario_identity_invalid`. Sau request đầu tiên không regenerate, truncate hoặc collision-retry.
+materialize, validate cùng lúc trong `ScenarioPlan` trước request đầu tiên. Bất kỳ identity nào vi
+phạm server grammar/bound (`Resource Key <=64`, Device ID `<=128`) fail
+`scenario_identity_invalid`. Sau request đầu tiên không regenerate, truncate hoặc collision-retry;
+chỉ state cuối successful mới được persist.
 
 ---
 
@@ -629,6 +648,7 @@ vi phạm server grammar/bound (`Resource Key <=64`, Device ID `<=128`) fail
 Scenario runner provision deterministic theo dependency graph:
 
 ```text
+0. parse/validate ScenarioSpec → immutable ScenarioPlan
 1. GET /ready
 2. GET provider adapter descriptors
 
@@ -1231,9 +1251,17 @@ pub struct ScenarioRunner {
 }
 
 impl ScenarioRunner {
+    pub fn plan(
+        &self,
+        raw_spec: &[u8],
+        run_id: Option<&str>,
+    ) -> Result<ScenarioPlan, ScenarioError> {
+        todo!()
+    }
+
     pub async fn provision(
         &self,
-        spec: ScenarioSpec,
+        plan: ScenarioPlan,
     ) -> Result<ScenarioState, ScenarioError> {
         todo!()
     }

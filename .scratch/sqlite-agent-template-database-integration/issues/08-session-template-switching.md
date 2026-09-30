@@ -4,7 +4,7 @@
 
 **Blocked by:** 07: Provider Load Plan và Effective Session Profile.
 
-**Status:** ready-for-human
+**Status:** resolved
 
 - [x] Admission constructs immutable Template Switch Catalog from enabled, valid, loaded non-default candidates; no-assignment Server Default Profile has empty catalog and does not advertise switch capability. The internal tool is represented as a session-local built-in/action, so Ticket 10 can preserve it while replacing the shared round executor.
 - [x] Switch validates catalog membership and applies only after the current normal turn boundary; it never changes an in-flight turn or resolves Provider desired config from DB.
@@ -13,6 +13,9 @@
 - [x] WebSocket tests prove advertised/non-advertised behavior, current-turn stability, next-turn application, no SQLite query during switch, revision increments and invalid candidate exclusion.
 
 ## Comments
+
+- Resolved: mọi acceptance criterion đã được đánh dấu và completion evidence bên dưới ghi nhận
+  targeted gates cùng `cargo test --workspace` pass cho thay đổi Ticket 08.
 
 - `ResolvedTemplateProfile` now carries the `ResolvedAgentRuntimes` admission already resolved, so a switch installs handles that provably already exist in the Loaded Runtime catalog instead of constructing anything. `EffectiveSessionProfile::into_active_profile` splits the resolved value into the `ActiveTemplateProfile` a session runs with and the immutable `TemplateSwitchCatalog` it may switch among; `ActiveTemplateProfile::switched_to` is the single transition and advances the Session Profile Revision.
 - The switch is the session-local builtin `server.switch_template` (`tools::builtin`), advertised only when the admission catalog is non-empty and only with the candidate keys this session admitted. The dotted name namespaces it as a server action and is structurally collision-free, because a Device MCP tool name is sanitized to alphanumerics, `_` and `-` before it can reach the model.

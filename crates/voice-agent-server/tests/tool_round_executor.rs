@@ -594,7 +594,9 @@ async fn start(mut app_config: AppConfig, llm: ScriptedLlm) -> Voice {
         )),
         Some(database),
         Arc::new(ConstantSecrets(Some("s3cr3t-bearer".into()))),
-        voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(1_024)),
+        voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(
+            1_024,
+        )),
     );
     let served = state.clone();
     let task = tokio::spawn(async move {

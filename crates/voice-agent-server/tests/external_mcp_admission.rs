@@ -75,15 +75,28 @@ struct McpBehaviour {
     call_result: Option<serde_json::Value>,
     /// Delay every `tools/call` answer.
     call_delay: Duration,
+    /// A modern stateful Streamable HTTP fixture returns response events over SSE and mints this
+    /// identity at `initialize`.
+    session_id: Option<String>,
     calls: Arc<Mutex<Vec<serde_json::Value>>>,
     /// What the assembled request actually carried, so header assembly is observable end to end.
     seen: Arc<Mutex<Vec<ObservedHeaders>>>,
+    /// `(method, mcp-session-id)` records the stateful lifecycle, not only an SSE content type.
+    sessions: Arc<Mutex<Vec<ObservedSession>>>,
 }
 
 impl McpBehaviour {
     fn with_tools(tools: Vec<serde_json::Value>) -> Self {
         Self {
             tools,
+            ..Self::default()
+        }
+    }
+
+    fn session_capable_sse(tools: Vec<serde_json::Value>) -> Self {
+        Self {
+            tools,
+            session_id: Some("fixture-session".to_owned()),
             ..Self::default()
         }
     }
@@ -101,12 +114,20 @@ impl McpBehaviour {
             .expect("the script mailbox is not poisoned")
             .clone()
     }
+
+    fn sessions(&self) -> Vec<ObservedSession> {
+        self.sessions
+            .lock()
+            .expect("the script mailbox is not poisoned")
+            .clone()
+    }
 }
 
 type SharedBehaviour = Arc<Mutex<McpBehaviour>>;
 
 /// What one assembled request carried: `(Authorization, X-Tenant)`.
 type ObservedHeaders = (Option<String>, Option<String>);
+type ObservedSession = (String, Option<String>);
 
 fn tool(name: &str) -> serde_json::Value {
     serde_json::json!({
@@ -146,26 +167,40 @@ async fn mcp_endpoint(
             header(&headers, "authorization"),
             header(&headers, "x-tenant"),
         ));
-    let method = request.get("method").and_then(serde_json::Value::as_str);
+    let method = request
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
     let id = request.get("id").cloned();
+    let session = header(&headers, "mcp-session-id");
+    script
+        .sessions
+        .lock()
+        .expect("the script mailbox is not poisoned")
+        .push((method.to_owned(), session.clone()));
+    if script
+        .session_id
+        .as_deref()
+        .is_some_and(|expected| method != "initialize" && session.as_deref() != Some(expected))
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
 
     match method {
         // A notification expects acceptance, not an answer: a JSON-RPC document here would be a
         // response to a request that was never made.
-        None => StatusCode::ACCEPTED.into_response(),
-        Some(method) if method.starts_with("notifications/") => {
-            StatusCode::ACCEPTED.into_response()
-        }
-        Some("initialize") => json_response(
+        "" => StatusCode::ACCEPTED.into_response(),
+        method if method.starts_with("notifications/") => StatusCode::ACCEPTED.into_response(),
+        "initialize" => streamable_response(
             id,
             serde_json::json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "scripted", "version": "1"}
             }),
-        )
-        .into_response(),
-        Some("tools/list") => {
+            script.session_id.as_deref(),
+        ),
+        "tools/list" => {
             if let Some(target) = script.redirect_tools_list_to.as_deref() {
                 return (
                     StatusCode::FOUND,
@@ -185,9 +220,9 @@ async fn mcp_endpoint(
             if end < script.tools.len() {
                 result["nextCursor"] = serde_json::json!(end.to_string());
             }
-            json_response(id, result).into_response()
+            streamable_response(id, result, script.session_id.as_deref())
         }
-        Some("tools/call") => {
+        "tools/call" => {
             script
                 .calls
                 .lock()
@@ -201,15 +236,15 @@ async fn mcp_endpoint(
                     .unwrap_or(StatusCode::BAD_GATEWAY)
                     .into_response();
             }
-            json_response(
+            streamable_response(
                 id,
                 script.call_result.unwrap_or_else(
                     || serde_json::json!({"content": [{"type": "text", "text": "ok"}]}),
                 ),
+                script.session_id.as_deref(),
             )
-            .into_response()
         }
-        Some(_) => error_response(id).into_response(),
+        _ => error_response(id).into_response(),
     }
 }
 
@@ -220,12 +255,30 @@ fn header(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn json_response(id: Option<serde_json::Value>, result: serde_json::Value) -> Response {
+fn streamable_response(
+    id: Option<serde_json::Value>,
+    result: serde_json::Value,
+    session_id: Option<&str>,
+) -> Response {
     let mut document = serde_json::json!({"jsonrpc": "2.0", "result": result});
     if let Some(id) = id {
         document["id"] = id;
     }
-    raw_json(document)
+    let Some(session_id) = session_id else {
+        return raw_json(document);
+    };
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "text/event-stream"),
+            (
+                axum::http::HeaderName::from_static("mcp-session-id"),
+                session_id,
+            ),
+        ],
+        format!("event: message\ndata: {document}\n\n"),
+    )
+        .into_response()
 }
 
 fn error_response(id: Option<serde_json::Value>) -> Response {
@@ -279,6 +332,13 @@ impl McpServer {
             .lock()
             .expect("the script mailbox is not poisoned")
             .seen()
+    }
+
+    fn sessions(&self) -> Vec<ObservedSession> {
+        self.behaviour
+            .lock()
+            .expect("the script mailbox is not poisoned")
+            .sessions()
     }
 }
 
@@ -702,6 +762,63 @@ async fn external_mcp_admission_snapshot_is_fresh_bounded_and_immutable() {
         2,
         "a later admission never mutates an open session's snapshot"
     );
+
+    voice.task.abort();
+    server.task.abort();
+}
+
+/// The modern stateful variant is an SSE lifecycle, not a stateless JSON fixture wearing an SSE
+/// content type: RMCP must retain the identity minted at initialize for its notification,
+/// discovery and later tool invocation.
+#[tokio::test]
+async fn external_mcp_session_capable_sse_keeps_its_session_across_lifecycle() {
+    let server = start_mcp(McpBehaviour::session_capable_sse(vec![tool("Light")])).await;
+    let voice = start(ConstantSecrets(None)).await;
+    let pool = voice.database().await;
+    seed(&pool).await;
+    bind_server(&pool, "kitchen", &server.url(), "{}", ("none", None, None)).await;
+
+    let profile = voice.admit().await;
+    let (server_handle, light) = route(profile.external_mcp(), "external.kitchen.light");
+    let limiter = Arc::clone(
+        voice
+            .state
+            .external_mcp
+            .as_ref()
+            .expect("the shared transport is available")
+            .limiter(),
+    );
+    assert_eq!(
+        server_handle
+            .client
+            .call_tool(
+                &limiter,
+                &light,
+                &serde_json::json!({}),
+                Duration::from_millis(500),
+            )
+            .await
+            .expect("the SSE call completes")
+            .content,
+        "ok"
+    );
+
+    let sessions = server.sessions();
+    assert!(
+        sessions
+            .iter()
+            .any(|(method, session)| method == "initialize" && session.is_none()),
+        "initialize mints the server session rather than guessing one: {sessions:?}"
+    );
+    for method in ["notifications/initialized", "tools/list", "tools/call"] {
+        assert!(
+            sessions
+                .iter()
+                .any(|(seen, session)| seen == method
+                    && session.as_deref() == Some("fixture-session")),
+            "{method} carries the session identity through the SSE lifecycle: {sessions:?}"
+        );
+    }
 
     voice.task.abort();
     server.task.abort();
