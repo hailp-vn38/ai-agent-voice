@@ -7,11 +7,23 @@
 //! admission.
 
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use reqwest::header::{HeaderName, HeaderValue};
+use rmcp::{
+    ClientHandler, RoleClient,
+    model::{
+        CallToolRequestParams, CallToolResponse, ClientCapabilities, ClientConfig, Implementation,
+        PaginatedRequestParams, ProtocolVersion,
+    },
+    service::{RunningService, serve_client},
+    transport::streamable_http_client::{
+        StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+    },
+};
 use serde_json::Value;
 use url::Url;
 
@@ -24,10 +36,10 @@ use crate::{
     telemetry::{CallOutcome, Telemetry},
 };
 
+use super::rmcp_adapter::PolicyHttpClient;
 use super::transport::{
-    ExternalMcpAuth, ExternalMcpCallLimiter, ExternalMcpError, MCP_PROTOCOL_VERSION, ReadRejection,
-    RpcOutcome, assemble, canonical_static_headers, dial, parse_rpc_response, read_bounded,
-    response_byte_cap, tool_result_byte_cap, tool_result_wire_cap,
+    ExternalMcpAuth, ExternalMcpCallLimiter, ExternalMcpError, canonical_static_headers,
+    response_byte_cap, tool_result_byte_cap,
 };
 
 /// One tool exactly as the remote server described it.  It is untrusted until the manager has
@@ -67,43 +79,19 @@ pub enum ConnectFailure {
 }
 
 /// What the remote server actually answered.  Every branch is content-free.
-enum HttpOutcome {
-    Result(Value),
-    RemoteError,
-    Unauthenticated,
-    Unavailable,
-    Malformed,
+struct VoiceAgentRmcp;
+
+impl ClientHandler for VoiceAgentRmcp {
+    fn get_info(&self) -> ClientConfig {
+        ClientConfig::new(
+            ClientCapabilities::default(),
+            Implementation::new("voice-agent-server", env!("CARGO_PKG_VERSION")),
+        )
+        .with_protocol_version(ProtocolVersion::V_2024_11_05)
+    }
 }
 
-/// How one phase of the protocol names its two transport failures.  The codes are what reach
-/// telemetry, and telling a dial failure from a deadline apart is what makes an outage
-/// diagnosable without logging anything about the server.
-#[derive(Clone, Copy)]
-struct PhaseFailure {
-    timeout: ExternalMcpError,
-    unavailable: ExternalMcpError,
-}
-
-impl PhaseFailure {
-    const INITIALIZE: Self = Self {
-        timeout: ExternalMcpError::InitializeTimeout,
-        unavailable: ExternalMcpError::InitializeUnavailable,
-    };
-    const TOOLS_LIST: Self = Self {
-        timeout: ExternalMcpError::ToolsListTimeout,
-        unavailable: ExternalMcpError::ToolsListUnavailable,
-    };
-    const TOOL_CALL: Self = Self {
-        timeout: ExternalMcpError::ToolTimeout,
-        unavailable: ExternalMcpError::ToolUnavailable,
-    };
-}
-
-/// One MCP response and the protocol session id it offered, if any.
-struct Exchange {
-    outcome: HttpOutcome,
-    session_id: Option<HeaderValue>,
-}
+type RmcpSession = RunningService<RoleClient, VoiceAgentRmcp>;
 
 /// One MCP server, as one Voice Session may use it: an immutable handle holding the destination,
 /// the validated static headers, the typed credential and the protocol session id.
@@ -112,16 +100,15 @@ pub struct ExternalMcpClient {
     endpoint: Url,
     static_headers: Vec<(HeaderName, HeaderValue)>,
     auth: ExternalMcpAuth,
-    http: reqwest::Client,
-    network: ExternalMcpNetworkConfig,
     connect_timeout: Duration,
     call_timeout: Duration,
     page_cap: usize,
     result_cap: usize,
-    result_wire_cap: usize,
     /// Process-owned, so every call this session makes reports into the same counters.
     telemetry: Arc<dyn Telemetry>,
-    session_id: Option<HeaderValue>,
+    /// RMCP owns the negotiated session id, JSON-RPC request IDs, lifecycle and SSE parsing.
+    rmcp: Option<RmcpSession>,
+    policy_http: PolicyHttpClient,
 }
 
 /// The handle never renders a credential, a header value or the destination: a debug rendering of
@@ -150,7 +137,7 @@ impl std::fmt::Debug for ExternalMcpClient {
             .field("static_header_count", &self.static_headers.len())
             .field("auth", &self.auth)
             .field("call_timeout", &self.call_timeout)
-            .field("initialized", &self.session_id.is_some())
+            .field("initialized", &self.rmcp.is_some())
             .finish()
     }
 }
@@ -190,20 +177,25 @@ impl ExternalMcpClient {
         let Some(page_cap) = response_byte_cap(limits) else {
             return Err(usable());
         };
+        let auth = resolve_auth(auth_type, auth_header_name, secret_ref, secrets)?;
+        let policy_http = PolicyHttpClient::new(
+            endpoint.clone(),
+            http.clone(),
+            network.clone(),
+            response_byte_cap(limits).ok_or_else(usable)?,
+        );
         Ok(Self {
             server_key: server_key.to_owned(),
             endpoint,
             static_headers,
-            auth: resolve_auth(auth_type, auth_header_name, secret_ref, secrets)?,
-            http,
-            network,
+            auth,
             connect_timeout,
             call_timeout,
             page_cap,
             result_cap: tool_result_byte_cap(limits),
-            result_wire_cap: tool_result_wire_cap(limits),
             telemetry,
-            session_id: None,
+            rmcp: None,
+            policy_http,
         })
     }
 
@@ -232,53 +224,41 @@ impl ExternalMcpClient {
     /// Mutating because this is the only moment the handle changes: afterwards it is the immutable
     /// snapshot the session keeps, credential and protocol session included.
     pub async fn initialize(&mut self) -> Result<(), ExternalMcpError> {
-        let exchange = self
-            .exchange(
-                &rpc(1, "initialize", Some(initialization_params())),
-                self.connect_timeout,
-                self.page_cap,
-                PhaseFailure::INITIALIZE,
-            )
-            .await?;
-        match exchange.outcome {
-            HttpOutcome::Result(_) => {}
-            HttpOutcome::RemoteError | HttpOutcome::Unauthenticated | HttpOutcome::Unavailable => {
-                return Err(ExternalMcpError::InitializeFailed);
-            }
-            HttpOutcome::Malformed => return Err(ExternalMcpError::InitializeProtocolError),
+        let (bearer, typed_header) = self.auth.rmcp_parts();
+        let mut headers = HashMap::from_iter(self.static_headers.iter().cloned());
+        if let Some((name, value)) = typed_header {
+            headers.insert(name, value);
         }
-        // The protocol session id belongs to every later request on this handle. It is a
-        // credential-free identifier, so adopting it discloses nothing.
-        self.session_id = exchange.session_id;
-
-        // A notification is not a request, so its answer is judged by status alone: a body here
-        // is not something to parse into a protocol answer this client can check.
-        self.notify("notifications/initialized")
+        let mut config =
+            StreamableHttpClientTransportConfig::with_uri(self.endpoint.as_str().to_owned());
+        config.auth_header = bearer;
+        config.custom_headers = headers;
+        config.max_concurrent_requests = 1;
+        // Modern Streamable HTTP permits stateless JSON responses as well as servers that mint an
+        // `mcp-session-id`; RMCP retains either lifecycle without falling back to legacy transport.
+        config.allow_stateless = true;
+        config.reinit_on_expired_session = false;
+        config.control_request_timeout = self.connect_timeout;
+        config.session_recovery_timeout = self.connect_timeout;
+        config.max_sse_event_size = self.page_cap;
+        let transport =
+            StreamableHttpClientTransport::with_client(self.policy_http.clone(), config);
+        self.rmcp = Some(
+            tokio::time::timeout(
+                self.connect_timeout,
+                serve_client(VoiceAgentRmcp, transport),
+            )
             .await
-            .map_err(|_| ExternalMcpError::InitializeFailed)
-    }
-
-    /// Sends a notification and requires acceptance.  No response document is read, because a
-    /// notification has none to validate.
-    async fn notify(&mut self, method: &str) -> Result<(), ()> {
-        let request = assemble(
-            &self.http,
-            &self.endpoint,
-            &self.static_headers,
-            &self.auth,
-            self.session_id.as_ref(),
-            &notification(method),
+            .map_err(|_| ExternalMcpError::InitializeTimeout)?
+            .map_err(|_| {
+                if self.policy_http.take_auth_failed() {
+                    ExternalMcpError::InitializeAuthFailed
+                } else {
+                    ExternalMcpError::InitializeFailed
+                }
+            })?,
         );
-        let response = match tokio::time::timeout(
-            self.connect_timeout,
-            dial(&self.endpoint, &self.network, request),
-        )
-        .await
-        {
-            Ok(Ok(response)) => response,
-            _ => return Err(()),
-        };
-        response.status().is_success().then_some(()).ok_or(())
+        Ok(())
     }
 
     /// One page of the catalog, in remote order, with the cursor that continues it.  A truncated
@@ -287,26 +267,19 @@ impl ExternalMcpClient {
         &self,
         cursor: Option<&str>,
     ) -> Result<ExternalToolsPage, ExternalMcpError> {
+        let session = self
+            .rmcp
+            .as_ref()
+            .ok_or(ExternalMcpError::ToolsListInvalid)?;
         let params = cursor
-            .filter(|cursor| !cursor.is_empty())
-            .map(|cursor| serde_json::json!({ "cursor": cursor }));
-        let exchange = self
-            .exchange(
-                &rpc(2, "tools/list", params),
-                self.call_timeout,
-                self.page_cap,
-                PhaseFailure::TOOLS_LIST,
-            )
-            .await?;
-        match exchange.outcome {
-            HttpOutcome::Result(result) => parse_tools_page(&result),
-            HttpOutcome::Unauthenticated | HttpOutcome::RemoteError => {
-                Err(ExternalMcpError::ToolsListInvalid)
-            }
-            HttpOutcome::Unavailable | HttpOutcome::Malformed => {
-                Err(ExternalMcpError::ToolsListInvalid)
-            }
-        }
+            .filter(|value| !value.is_empty())
+            .map(|value| PaginatedRequestParams::default().with_cursor(Some(value.to_owned())));
+        let page = tokio::time::timeout(self.call_timeout, session.peer().list_tools(params))
+            .await
+            .map_err(|_| ExternalMcpError::ToolsListTimeout)?
+            .map_err(|_| ExternalMcpError::ToolsListInvalid)?;
+        let result = serde_json::to_value(page).map_err(|_| ExternalMcpError::ToolsListInvalid)?;
+        parse_tools_page(&result)
     }
 
     /// One bounded outbound `tools/call` attempt, and never a second one.
@@ -336,28 +309,59 @@ impl ExternalMcpClient {
             }
         };
         let started = Instant::now();
-        let outcome = self
-            .exchange(
-                &rpc(
-                    3,
-                    "tools/call",
-                    Some(serde_json::json!({
-                        "name": tool.original_name,
-                        "arguments": arguments
-                    })),
-                ),
+        let outcome = async {
+            let session = self
+                .rmcp
+                .as_ref()
+                .ok_or(ExternalMcpError::ToolUnavailable)?;
+            let arguments = arguments
+                .as_object()
+                .cloned()
+                .ok_or(ExternalMcpError::ToolInvalidResponse)?;
+            let params =
+                CallToolRequestParams::new(tool.original_name.clone()).with_arguments(arguments);
+            let response = tokio::time::timeout(
                 budget.min(self.call_timeout),
-                self.result_wire_cap,
-                PhaseFailure::TOOL_CALL,
+                session.call_tool_once(params),
             )
             .await
-            .and_then(|exchange| match exchange.outcome {
-                HttpOutcome::Result(result) => canonical_tool_result(&result, self.result_cap),
-                HttpOutcome::Unauthenticated => Err(ExternalMcpError::ToolAuthFailed),
-                HttpOutcome::RemoteError => Err(ExternalMcpError::ToolProtocolError),
-                HttpOutcome::Unavailable => Err(ExternalMcpError::ToolUnavailable),
-                HttpOutcome::Malformed => Err(ExternalMcpError::ToolInvalidResponse),
-            });
+            .map_err(|_| ExternalMcpError::ToolTimeout)?
+            .map_err(|error| {
+                if self.policy_http.take_auth_failed() {
+                    ExternalMcpError::ToolAuthFailed
+                } else if self.policy_http.take_invalid_response() {
+                    ExternalMcpError::ToolInvalidResponse
+                } else {
+                    match error {
+                        // RMCP received a response for this request but it cannot be the
+                        // `tools/call` result our protocol contract requires.  The request did
+                        // reach the peer (the regression asserts that), so this is not network
+                        // unavailability.
+                        rmcp::service::ServiceError::UnexpectedResponse => {
+                            ExternalMcpError::ToolInvalidResponse
+                        }
+                        rmcp::service::ServiceError::Timeout { .. } => {
+                            ExternalMcpError::ToolTimeout
+                        }
+                        _ => ExternalMcpError::ToolUnavailable,
+                    }
+                }
+            })?;
+            if self.policy_http.take_auth_failed() {
+                return Err(ExternalMcpError::ToolAuthFailed);
+            }
+            if self.policy_http.take_unavailable() {
+                return Err(ExternalMcpError::ToolUnavailable);
+            }
+            let CallToolResponse::Complete(result) = response else {
+                return Err(ExternalMcpError::ToolProtocolError);
+            };
+            canonical_tool_result(
+                &serde_json::to_value(result).map_err(|_| ExternalMcpError::ToolInvalidResponse)?,
+                self.result_cap,
+            )
+        }
+        .await;
         self.telemetry.call_finished(
             &self.server_key,
             CallOutcome::from(outcome.as_ref().err().copied()),
@@ -365,104 +369,6 @@ impl ExternalMcpClient {
         );
         outcome
     }
-
-    /// Every outbound exchange goes through here, so destination policy, header assembly and the
-    /// response cap cannot be bypassed by a new method.
-    async fn exchange(
-        &self,
-        body: &Value,
-        bound: Duration,
-        cap: usize,
-        failure: PhaseFailure,
-    ) -> Result<Exchange, ExternalMcpError> {
-        let request = assemble(
-            &self.http,
-            &self.endpoint,
-            &self.static_headers,
-            &self.auth,
-            self.session_id.as_ref(),
-            body,
-        );
-        let response =
-            match tokio::time::timeout(bound, dial(&self.endpoint, &self.network, request)).await {
-                Ok(Ok(response)) => response,
-                Ok(Err(_)) => return Err(failure.unavailable),
-                Err(_) => return Err(failure.timeout),
-            };
-        let session_id = response
-            .headers()
-            .get("mcp-session-id")
-            .cloned()
-            .filter(|value| !value.as_bytes().is_empty());
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Ok(Exchange {
-                outcome: HttpOutcome::Unauthenticated,
-                session_id,
-            });
-        }
-        if !status.is_success() {
-            return Ok(Exchange {
-                outcome: HttpOutcome::Unavailable,
-                session_id,
-            });
-        }
-        let media_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_owned();
-        let bytes = match read_bounded(response, cap).await {
-            Ok(bytes) => bytes,
-            Err(ReadRejection::TooLarge) => {
-                return Ok(Exchange {
-                    outcome: HttpOutcome::Malformed,
-                    session_id,
-                });
-            }
-            Err(ReadRejection::Unavailable) => {
-                return Ok(Exchange {
-                    outcome: HttpOutcome::Unavailable,
-                    session_id,
-                });
-            }
-        };
-        if bytes.is_empty() {
-            return Ok(Exchange {
-                outcome: HttpOutcome::Unavailable,
-                session_id,
-            });
-        }
-        Ok(Exchange {
-            outcome: match parse_rpc_response(&media_type, &bytes) {
-                Some(RpcOutcome::Result(result)) => HttpOutcome::Result(result),
-                Some(RpcOutcome::Error) => HttpOutcome::RemoteError,
-                None => HttpOutcome::Malformed,
-            },
-            session_id,
-        })
-    }
-}
-
-fn initialization_params() -> Value {
-    serde_json::json!({
-        "protocolVersion": MCP_PROTOCOL_VERSION,
-        "capabilities": {},
-        "clientInfo": {"name": "voice-agent-server", "version": env!("CARGO_PKG_VERSION")}
-    })
-}
-
-fn rpc(id: u64, method: &str, params: Option<Value>) -> Value {
-    let mut request = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method});
-    if let Some(params) = params {
-        request["params"] = params;
-    }
-    request
-}
-
-fn notification(method: &str) -> Value {
-    serde_json::json!({"jsonrpc": "2.0", "method": method})
 }
 
 /// Typed authentication resolution.

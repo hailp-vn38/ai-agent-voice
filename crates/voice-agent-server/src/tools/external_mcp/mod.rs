@@ -1,6 +1,7 @@
 pub mod client;
 pub mod manager;
 pub mod registry;
+mod rmcp_adapter;
 pub mod transport;
 
 pub use client::{

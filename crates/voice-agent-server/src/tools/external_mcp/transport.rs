@@ -12,25 +12,18 @@ use std::{
     time::Duration,
 };
 
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::Value;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    config::{ExternalMcpLimitsConfig, ExternalMcpNetworkConfig},
-    database::external_mcp_policy,
-    database::secrets::SecretValue,
-    lifecycle::AdmissionGate,
+    config::ExternalMcpLimitsConfig, database::secrets::SecretValue, lifecycle::AdmissionGate,
 };
 
 use super::registry::ToolPublishError;
 
 /// The protocol revision this client speaks.  It travels on every request after `initialize`.
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
-
-/// Standard MCP headers are always sent, so a configured static header can never displace the
-/// transport contract.
-const MCP_MEDIA_TYPE: &str = "application/json";
 
 /// One MCP response is buffered once, so its cap is derived from the operator's catalog limits
 /// rather than guessed: it must carry a full legal page and refuse anything larger.
@@ -246,20 +239,19 @@ impl std::fmt::Debug for ExternalMcpAuth {
 }
 
 impl ExternalMcpAuth {
-    /// Injected last, after static and standard headers, so nothing can overwrite it.
-    fn apply(&self, headers: &mut HeaderMap) {
+    /// Turns the already-resolved credential snapshot into the two shapes the RMCP transport
+    /// accepts.  This is intentionally crate-private: no caller receives a `SecretValue` or a
+    /// general-purpose request builder.
+    pub(crate) fn rmcp_parts(&self) -> (Option<String>, Option<(HeaderName, HeaderValue)>) {
         match self {
-            Self::None => {}
-            Self::Bearer(token) => {
-                if let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", token.expose())) {
-                    headers.insert(reqwest::header::AUTHORIZATION, value);
-                }
-            }
-            Self::Header(name, token) => {
-                if let Ok(value) = HeaderValue::from_str(token.expose()) {
-                    headers.insert(name.clone(), value);
-                }
-            }
+            Self::None => (None, None),
+            Self::Bearer(token) => (Some(token.expose().to_owned()), None),
+            Self::Header(name, token) => (
+                None,
+                HeaderValue::from_str(token.expose())
+                    .ok()
+                    .map(|value| (name.clone(), value)),
+            ),
         }
     }
 }
@@ -317,70 +309,6 @@ pub fn canonical_static_headers(
     Ok(headers)
 }
 
-/// Builds one outbound request.  The order is fixed and total: validated static headers, then
-/// standard MCP headers, then typed authentication.
-pub(crate) fn assemble(
-    http: &reqwest::Client,
-    endpoint: &url::Url,
-    static_headers: &[(HeaderName, HeaderValue)],
-    auth: &ExternalMcpAuth,
-    session_id: Option<&HeaderValue>,
-    body: &Value,
-) -> reqwest::RequestBuilder {
-    let mut headers = HeaderMap::new();
-    for (name, value) in static_headers {
-        headers.insert(name.clone(), value.clone());
-    }
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static(MCP_MEDIA_TYPE));
-    headers.insert(
-        ACCEPT,
-        HeaderValue::from_static("application/json, text/event-stream"),
-    );
-    if let Some(session_id) = session_id {
-        headers.insert(
-            HeaderName::from_static("mcp-session-id"),
-            session_id.clone(),
-        );
-    }
-    auth.apply(&mut headers);
-    http.post(endpoint.clone()).headers(headers).json(body)
-}
-
-/// The outcome of one JSON-RPC exchange.  A remote error is a protocol-level answer, not a
-/// transport failure.  Its code and message are deliberately not carried further: a remote server
-/// gets to describe its own failure, not to describe this deployment's session.
-pub(crate) enum RpcOutcome {
-    Result(Value),
-    Error,
-}
-
-/// Accepts only the two response encodings MCP Streamable HTTP defines.  Anything else, and any
-/// body that is not a well-formed JSON-RPC response for the id we sent, is malformed.
-pub(crate) fn parse_rpc_response(content_type: &str, body: &[u8]) -> Option<RpcOutcome> {
-    let media_type = content_type.split(';').next()?.trim().to_ascii_lowercase();
-    let document = match media_type.as_str() {
-        MCP_MEDIA_TYPE => serde_json::from_slice::<Value>(body).ok()?,
-        "text/event-stream" => {
-            let text = std::str::from_utf8(body).ok()?;
-            text.lines()
-                .filter_map(|line| line.strip_prefix("data:").map(str::trim))
-                .find_map(|event| serde_json::from_str::<Value>(event).ok())?
-        }
-        _ => return None,
-    };
-    if document.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-        return None;
-    }
-    document.get("id")?;
-    match document.get("result") {
-        Some(result) => Some(RpcOutcome::Result(result.clone())),
-        None => document
-            .get("error")
-            .filter(|error| error.get("code").is_some())
-            .map(|_| RpcOutcome::Error),
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadRejection {
     Unavailable,
@@ -405,23 +333,6 @@ pub(crate) async fn read_bounded(
         body.extend_from_slice(&chunk);
     }
     Ok(body)
-}
-
-/// One dial, revalidating the destination immediately before the bytes leave the process.  The
-/// authorization a hostname rule grants and the numeric destination it resolves to are checked
-/// together, so a DNS answer cannot point somewhere the operator did not allow.
-///
-/// A destination the policy refuses is reported exactly like one that is simply down: the caller
-/// owns the phase classification, and the reason never travels further.
-pub(crate) async fn dial(
-    endpoint: &url::Url,
-    network: &ExternalMcpNetworkConfig,
-    request: reqwest::RequestBuilder,
-) -> Result<reqwest::Response, ()> {
-    external_mcp_policy::resolve_and_validate(endpoint, network)
-        .await
-        .map_err(|_| ())?;
-    request.send().await.map_err(|_| ())
 }
 
 #[cfg(test)]
@@ -513,77 +424,16 @@ mod tests {
     }
 
     #[test]
-    fn typed_auth_is_assembled_last_and_never_renders_its_credential() {
-        let http = reqwest::Client::new();
-        let endpoint = url::Url::parse("https://mcp.internal.test/rpc").unwrap();
-        let static_headers = canonical_static_headers(&serde_json::json!({"X-Tenant": "kitchen"}))
-            .expect("the static header is valid");
+    fn typed_auth_is_redacted_until_the_rmcp_adapter_materializes_it() {
         let auth = ExternalMcpAuth::Bearer(SecretValue::new("s3cr3t".into()));
         assert_eq!(
             format!("{auth:?}"),
             "ExternalMcpAuth(bearer, [REDACTED])",
             "a debug rendering must not disclose a credential"
         );
-        let request = assemble(
-            &http,
-            &endpoint,
-            &static_headers,
-            &auth,
-            None,
-            &serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
-        )
-        .build()
-        .expect("the assembled request is well formed");
-        let headers = request.headers();
-        assert_eq!(headers.get("x-tenant").unwrap(), "kitchen");
-        assert_eq!(headers.get("content-type").unwrap(), MCP_MEDIA_TYPE);
-        assert_eq!(headers.get("authorization").unwrap(), "Bearer s3cr3t");
-    }
-
-    #[test]
-    fn only_the_two_defined_streamable_http_encodings_are_accepted() {
-        let result = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"ok": true}});
-        assert!(matches!(
-            parse_rpc_response("application/json", result.to_string().as_bytes()),
-            Some(RpcOutcome::Result(_))
-        ));
-        let stream = format!(
-            "event: message\ndata: {}\n\n",
-            serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"ok": true}})
-        );
-        assert!(matches!(
-            parse_rpc_response("text/event-stream", stream.as_bytes()),
-            Some(RpcOutcome::Result(_))
-        ));
-        assert!(matches!(
-            parse_rpc_response(
-                "application/json",
-                serde_json::json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "x"}})
-                    .to_string()
-                    .as_bytes()
-            ),
-            Some(RpcOutcome::Error)
-        ));
-        for refused in [
-            ("text/html", "<html/>"),
-            ("application/json", "not json"),
-            (
-                "application/json",
-                r#"{"jsonrpc":"1.0","id":1,"result":{}}"#,
-            ),
-            // A notification is not an answer to the request we sent.
-            (
-                "application/json",
-                r#"{"jsonrpc":"2.0","method":"notifications/x"}"#,
-            ),
-            ("application/json", r#"{"jsonrpc":"2.0","id":1}"#),
-        ] {
-            assert!(
-                parse_rpc_response(refused.0, refused.1.as_bytes()).is_none(),
-                "{} must not be read as a JSON-RPC response",
-                refused.0
-            );
-        }
+        let (bearer, header) = auth.rmcp_parts();
+        assert_eq!(bearer.as_deref(), Some("s3cr3t"));
+        assert!(header.is_none());
     }
 
     #[test]

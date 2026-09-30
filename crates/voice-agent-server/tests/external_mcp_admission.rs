@@ -506,7 +506,9 @@ async fn start_with_config(app_config: AppConfig, secrets: ConstantSecrets) -> V
         )),
         Some(database),
         Arc::new(secrets),
-        voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(1_024)),
+        voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(
+            1_024,
+        )),
     );
     let served = state.clone();
     let task = tokio::spawn(async move {
@@ -1190,15 +1192,21 @@ async fn external_mcp_tool_catalog_survives_every_call_failure() {
             "external_tool_timeout",
         ),
     ];
-    for (label, edit, expected) in failures {
+    for (index, (label, edit, expected)) in failures.into_iter().enumerate() {
         server.rewrite(|script| {
             script.call_status = None;
             script.call_result = None;
             script.call_delay = Duration::ZERO;
             edit(script);
         });
+        let outcome = call(&server_handle, &light, &limiter).await;
         assert_eq!(
-            call(&server_handle, &light, &limiter).await,
+            server.calls(),
+            index + 2,
+            "{label} must make exactly one request; a later failure must still reach the mock server"
+        );
+        assert_eq!(
+            outcome,
             Err(expected.to_owned()),
             "{label} must be a typed failure of one call"
         );
