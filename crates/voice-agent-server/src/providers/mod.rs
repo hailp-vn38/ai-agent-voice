@@ -2,6 +2,7 @@
 
 mod catalog;
 mod database_loader;
+mod descriptor;
 mod error;
 mod loader;
 mod registry;
@@ -20,6 +21,14 @@ pub use database_loader::{
     DatabaseMaterialization, DatabaseRuntimeFailure, DatabaseRuntimeSnapshot, DatabaseRuntimeState,
     DatabaseRuntimeStatus, RequiredProviderUnavailable, materialize_database_providers,
 };
+pub use descriptor::{
+    AdapterSummary, DiscoveredCapabilities, ProviderAdapterRegistry, ProviderDescriptor,
+    ProviderInspectError, ProviderType, compiled_provider_adapter_registry,
+};
+
+pub fn admin_provider_adapter_matches_kind(kind: &str, adapter: &str) -> bool {
+    compiled_provider_adapter_registry().supports(adapter, kind)
+}
 pub use error::{AsrError, ProviderLoadError, VadError};
 pub use llm::{LlmError, LlmEvent, LlmProvider};
 pub(crate) use loader::{LoadedProviders, load_local, vad_timing};

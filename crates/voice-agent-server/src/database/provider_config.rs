@@ -1,4 +1,5 @@
 //! Credential-free, bounded provider desired-configuration validation.
+use crate::config::ZeroTtsDeliveryMode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
@@ -32,6 +33,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "zipformer_sherpa" => canonical::<Zipformer, _>(&value, Zipformer::valid),
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
+        "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
         _ => return Err(ProviderConfigError::Invalid),
     }
 }
@@ -146,6 +148,8 @@ impl Zipformer {
 #[serde(deny_unknown_fields)]
 struct Gipformer {
     model: String,
+    #[serde(default = "default_vietnamese_language")]
+    language: String,
     num_threads: i32,
     #[serde(default = "default_decode")]
     decoding_method: String,
@@ -155,6 +159,7 @@ struct Gipformer {
 impl Gipformer {
     fn valid(&self) -> bool {
         string(&self.model, 256)
+            && self.language == "vi-VN"
             && threads(self.num_threads)
             && string(&self.decoding_method, 64)
             && (1..=10_000).contains(&self.max_active_paths)
@@ -166,20 +171,41 @@ struct ZeroTts {
     model: String,
     num_threads: i32,
     voice: String,
+    #[serde(default = "default_vietnamese_language")]
+    language: String,
     #[serde(default)]
     preload: bool,
     #[serde(default)]
-    delivery_mode: Option<String>,
+    delivery_mode: ZeroTtsDeliveryMode,
 }
 impl ZeroTts {
     fn valid(&self) -> bool {
         string(&self.model, 256)
             && threads(self.num_threads)
             && string(&self.voice, 128)
-            && self
-                .delivery_mode
-                .as_ref()
-                .is_none_or(|v| matches!(v.as_str(), "file" | "stream"))
+            && self.language == "vi-VN"
+            && matches!(
+                self.delivery_mode,
+                ZeroTtsDeliveryMode::File | ZeroTtsDeliveryMode::Stream
+            )
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ChillAudio {
+    ws_url: Url,
+    voice: String,
+    #[serde(default = "default_chillaudio_timeout")]
+    timeout_ms: u64,
+    #[serde(default)]
+    preload: bool,
+}
+impl ChillAudio {
+    fn valid(&self) -> bool {
+        self.ws_url.scheme() == "wss"
+            && self.ws_url.host_str().is_some()
+            && string(&self.voice, 128)
+            && (1..=120_000).contains(&self.timeout_ms)
     }
 }
 fn default_timeout() -> u64 {
@@ -190,4 +216,10 @@ fn default_decode() -> String {
 }
 fn default_paths() -> i32 {
     4
+}
+fn default_vietnamese_language() -> String {
+    "vi-VN".into()
+}
+fn default_chillaudio_timeout() -> u64 {
+    12_000
 }

@@ -94,6 +94,9 @@ pub(super) fn default_tts_model() -> String {
 pub(super) fn default_tts_voice() -> String {
     "maichi".into()
 }
+pub(super) fn default_vietnamese_language() -> String {
+    "vi-VN".into()
+}
 pub(super) fn default_chillaudio_ws_url() -> Url {
     Url::parse("wss://sami-normal-sg.capcutapi.com/internal/api/v1/ws?device_id=7486429558272460289&iid=7486431924195657473&app_id=359289&region=VN&update_version_code=5.7.1.2101&version_code=5.7.1&appKey=ddjeqjLGMn&device_type=macos&device_platform=macos").expect("valid ChillAudio URL")
 }

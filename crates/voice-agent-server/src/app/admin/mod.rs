@@ -42,6 +42,12 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/providers", get(list_providers).post(create_provider))
         .route("/providers/{key}", get(get_provider).patch(patch_provider))
+        .route("/provider-adapters", get(list_provider_adapters))
+        .route("/provider-adapters/{adapter}", get(get_provider_adapter))
+        .route(
+            "/provider-adapters/{adapter}/capabilities/discover",
+            axum::routing::post(discover_provider_capabilities),
+        )
         .route(
             "/mcp-servers",
             get(list_mcp_servers).post(create_mcp_server),
@@ -72,6 +78,7 @@ mod agents;
 mod devices;
 mod history;
 mod mcp_servers;
+mod provider_adapters;
 mod providers;
 mod templates;
 
@@ -81,6 +88,9 @@ use history::{list_history, purge_history};
 use mcp_servers::{
     create_mcp_server, get_mcp_server, list_agent_mcp_bindings, list_mcp_servers, patch_mcp_server,
     put_agent_mcp_binding,
+};
+use provider_adapters::{
+    discover_provider_capabilities, get_provider_adapter, list_provider_adapters,
 };
 use providers::{create_provider, get_provider, list_providers, patch_provider};
 use templates::{

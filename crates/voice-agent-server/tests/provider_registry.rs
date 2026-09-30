@@ -1,4 +1,9 @@
-use voice_agent_server::{config::AppConfig, providers::compiled_provider_registry};
+use std::collections::HashSet;
+
+use voice_agent_server::{
+    config::AppConfig,
+    providers::{ProviderType, compiled_provider_adapter_registry, compiled_provider_registry},
+};
 
 #[test]
 fn registry_exposes_only_adapters_compiled_into_the_binary() {
@@ -66,4 +71,76 @@ token = "secret-do-not-log"
         "chillaudio_ws"
     );
     assert!(!format!("{config:?}").contains("secret-do-not-log"));
+}
+
+#[test]
+fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapters() {
+    let descriptors: Vec<_> = compiled_provider_adapter_registry().list(None).collect();
+    let adapters: HashSet<_> = descriptors
+        .iter()
+        .map(|descriptor| descriptor.adapter)
+        .collect();
+    assert_eq!(adapters.len(), descriptors.len());
+    assert!(adapters.contains("zerotts_onnx"));
+    assert!(adapters.contains("chillaudio_ws"));
+    let factory_adapters: HashSet<_> = compiled_provider_registry()
+        .admin_adapters()
+        .map(|(_, adapter)| adapter)
+        .collect();
+    assert_eq!(adapters, factory_adapters);
+
+    for descriptor in descriptors {
+        assert!(descriptor.adapter.len() <= 64);
+        assert!(descriptor.display_name.len() <= 128);
+        assert!(descriptor.description.len() <= 2_048);
+        assert!(descriptor.config_schema.fields.len() <= 64);
+        let keys: HashSet<_> = descriptor
+            .config_schema
+            .fields
+            .iter()
+            .map(|field| field.key)
+            .collect();
+        assert_eq!(keys.len(), descriptor.config_schema.fields.len());
+        let models = descriptor.capabilities.models.unwrap_or(&[]);
+        assert!(models.len() <= 128);
+        for model in models {
+            assert!(model.id.len() <= 128);
+            assert!(model.name.len() <= 128);
+            assert!(
+                model
+                    .description
+                    .is_none_or(|description| description.len() <= 2_048)
+            );
+        }
+        let languages = descriptor.capabilities.languages.unwrap_or(&[]);
+        assert!(languages.len() <= 64);
+        for language in languages {
+            assert!(language.id.len() <= 32);
+            assert!(language.name.len() <= 128);
+        }
+        let voices = descriptor.capabilities.voices.unwrap_or(&[]);
+        assert!(voices.len() <= 256);
+        for voice in voices {
+            assert!(voice.id.len() <= 128);
+            assert!(voice.name.len() <= 128);
+            assert!(
+                voice
+                    .model
+                    .is_none_or(|model| models.iter().any(|item| item.id == model))
+            );
+            assert!(
+                voice
+                    .languages
+                    .iter()
+                    .all(|language| languages.iter().any(|item| item.id == *language))
+            );
+        }
+        let registry = compiled_provider_registry();
+        match descriptor.provider_type {
+            ProviderType::Vad => assert!(registry.vad_factory(descriptor.adapter).is_ok()),
+            ProviderType::Asr => assert!(registry.asr_factory(descriptor.adapter).is_ok()),
+            ProviderType::Llm => assert!(registry.llm_factory(descriptor.adapter).is_ok()),
+            ProviderType::Tts => assert!(registry.tts_factory(descriptor.adapter).is_ok()),
+        }
+    }
 }

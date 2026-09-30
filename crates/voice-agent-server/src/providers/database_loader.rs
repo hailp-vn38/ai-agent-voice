@@ -308,8 +308,7 @@ fn materialize_one(
             loaded.providers.llm.insert(row.key.clone(), provider);
         }
         "tts" => {
-            reject_secret(row, secret.as_ref())?;
-            let instance: TtsInstanceConfig = typed_instance(&mut value, &row.adapter, None)?;
+            let instance = typed_tts_instance(&mut value, &row.adapter, secret.as_ref())?;
             let factory = registry.tts_factory(instance.adapter()).map_err(|_| ())?;
             let model = factory
                 .model_identity(&instance)
@@ -365,6 +364,22 @@ fn typed_instance<T: serde::de::DeserializeOwned>(
     serde_json::from_value(value.clone()).map_err(|_| ())
 }
 
+fn typed_tts_instance(
+    value: &mut Value,
+    adapter: &str,
+    secret: Option<&crate::database::secrets::SecretValue>,
+) -> Result<TtsInstanceConfig, ()> {
+    if adapter != "chillaudio_ws" {
+        return reject_secret_value(secret).and_then(|()| typed_instance(value, adapter, None));
+    }
+    let object = value.as_object_mut().ok_or(())?;
+    object.insert("adapter".into(), Value::String(adapter.into()));
+    if let Some(secret) = secret {
+        object.insert("token".into(), Value::String(secret.expose().into()));
+    }
+    serde_json::from_value(value.clone()).map_err(|_| ())
+}
+
 fn reject_secret(
     row: &DesiredProvider,
     secret: Option<&crate::database::secrets::SecretValue>,
@@ -374,6 +389,10 @@ fn reject_secret(
     } else {
         Ok(())
     }
+}
+
+fn reject_secret_value(secret: Option<&crate::database::secrets::SecretValue>) -> Result<(), ()> {
+    if secret.is_some() { Err(()) } else { Ok(()) }
 }
 
 fn vad_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
@@ -404,7 +423,21 @@ fn tts_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::secrets::EnvSecretResolver;
+    use crate::database::secrets::{EnvSecretResolver, SecretValue};
+
+    #[test]
+    fn chillaudio_tts_materialization_maps_the_secret_reference_to_its_runtime_token() {
+        let mut value = serde_json::json!({
+            "ws_url": "wss://tts.example.test/socket",
+            "voice": "BV421_vivn_streaming"
+        });
+        let secret = SecretValue::new("runtime-token".into());
+        let instance = typed_tts_instance(&mut value, "chillaudio_ws", Some(&secret)).unwrap();
+        let TtsInstanceConfig::ChillAudioWs(config) = instance else {
+            panic!("expected ChillAudio runtime configuration");
+        };
+        assert_eq!(config.token.expose(), "runtime-token");
+    }
 
     fn config() -> AppConfig {
         toml::from_str(

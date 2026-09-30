@@ -180,6 +180,7 @@ fn phase5_zerotts_config() -> &'static voice_agent_server::config::ZeroTtsOnnxCo
         model: "zerotts_default".into(),
         num_threads: 1,
         voice: "maichi".into(),
+        language: "vi-VN".into(),
         delivery_mode: Default::default(),
     })
 }

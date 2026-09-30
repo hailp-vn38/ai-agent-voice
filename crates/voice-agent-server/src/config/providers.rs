@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use url::Url;
 
@@ -183,13 +183,15 @@ pub struct ZeroTtsOnnxConfig {
     pub num_threads: i32,
     #[serde(default = "default_tts_voice")]
     pub voice: String,
+    #[serde(default = "default_vietnamese_language")]
+    pub language: String,
     #[serde(default)]
     pub delivery_mode: ZeroTtsDeliveryMode,
     #[serde(default)]
     pub preload: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ZeroTtsDeliveryMode {
     File,
@@ -203,6 +205,7 @@ impl Default for ZeroTtsOnnxConfig {
             model: default_tts_model(),
             num_threads: default_asr_threads(),
             voice: default_tts_voice(),
+            language: default_vietnamese_language(),
             delivery_mode: ZeroTtsDeliveryMode::Stream,
             preload: false,
         }
@@ -308,6 +311,8 @@ impl Default for ZipformerSherpaConfig {
 #[serde(deny_unknown_fields)]
 pub struct GipformerSherpaOfflineConfig {
     pub model: String,
+    #[serde(default = "default_vietnamese_language")]
+    pub language: String,
     #[serde(default = "default_gipformer_threads")]
     pub num_threads: i32,
     #[serde(default = "default_gipformer_decoding_method")]
@@ -320,6 +325,7 @@ impl Default for GipformerSherpaOfflineConfig {
     fn default() -> Self {
         Self {
             model: String::new(),
+            language: default_vietnamese_language(),
             num_threads: default_gipformer_threads(),
             decoding_method: default_gipformer_decoding_method(),
             max_active_paths: default_gipformer_max_active_paths(),

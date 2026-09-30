@@ -82,13 +82,7 @@ pub(super) fn valid_secret_ref(value: &str) -> bool {
     SecretRef::parse(value.into()).is_ok()
 }
 fn adapter_matches_kind(kind: &str, adapter: &str) -> bool {
-    matches!(
-        (kind, adapter),
-        ("vad", "silero_onnx")
-            | ("asr", "zipformer_sherpa" | "gipformer_sherpa_offline")
-            | ("llm", "openai")
-            | ("tts", "zerotts_onnx")
-    )
+    crate::providers::admin_provider_adapter_matches_kind(kind, adapter)
 }
 async fn provider_by(pool: &SqlitePool, key: &str) -> Result<Provider, sqlx::Error> {
     sqlx::query_as("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers WHERE key=?").bind(key).fetch_one(pool).await

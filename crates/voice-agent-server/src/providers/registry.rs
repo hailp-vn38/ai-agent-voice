@@ -14,7 +14,8 @@ use crate::{
     },
     models::ResolvedModel,
     providers::{
-        AsrProvider, LlmProvider, ProviderLoadError, TtsProvider, VadProvider, VisionProvider,
+        AsrProvider, LlmProvider, ProviderLoadError, ProviderType, TtsProvider, VadProvider,
+        VisionProvider,
         asr::{GipformerAsrProvider, ZipformerAsrProvider},
         llm::ConfiguredOpenAiLlm,
         tts::{ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts},
@@ -87,6 +88,27 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
+    pub fn admin_adapters(&self) -> impl Iterator<Item = (ProviderType, &'static str)> + '_ {
+        self.vad
+            .iter()
+            .map(|factory| (ProviderType::Vad, factory.adapter()))
+            .chain(
+                self.asr
+                    .iter()
+                    .map(|factory| (ProviderType::Asr, factory.adapter())),
+            )
+            .chain(
+                self.llm
+                    .iter()
+                    .map(|factory| (ProviderType::Llm, factory.adapter())),
+            )
+            .chain(
+                self.tts
+                    .iter()
+                    .map(|factory| (ProviderType::Tts, factory.adapter())),
+            )
+    }
+
     pub fn vad_factory(&self, adapter: &str) -> Result<&'static dyn VadFactory, ProviderLoadError> {
         self.vad
             .iter()
@@ -265,10 +287,13 @@ impl TtsFactory for ZeroTtsOnnxFactory {
             ProviderLoadError::Configuration("zerotts_onnx requires a local model".into())
         })?;
         validate_model_adapter(model, self.adapter())?;
-        if config.model != "zerotts_default" || config.voice != "maichi" || config.num_threads <= 0
+        if config.model != "zerotts_default"
+            || config.voice != "maichi"
+            || config.language != "vi-VN"
+            || config.num_threads <= 0
         {
             return Err(ProviderLoadError::Configuration(
-                "ZeroTTS requires model `zerotts_default`, voice `maichi`, and positive thread count"
+                "ZeroTTS requires model `zerotts_default`, voice `maichi`, language `vi-VN`, and positive thread count"
                     .into(),
             ));
         }
@@ -443,6 +468,11 @@ fn build_gipformer_recognizer(
     options: &GipformerSherpaOfflineConfig,
     model: &ResolvedModel,
 ) -> Result<OfflineRecognizer, ProviderLoadError> {
+    if options.language != "vi-VN" {
+        return Err(ProviderLoadError::Configuration(
+            "Gipformer requires language `vi-VN`".into(),
+        ));
+    }
     let mut config = OfflineRecognizerConfig::default();
     config.model_config.transducer = OfflineTransducerModelConfig {
         encoder: Some(required(model, "encoder")?),
