@@ -17,7 +17,7 @@ pub mod secrets;
 
 pub use history::{
     HistoryArchive, HistoryDrop, HistoryRole, HistoryWrite, HistoryWriter, HistoryWriterCounters,
-    HistoryWriterMetrics, TranscriptCapture,
+    HistoryWriterMetrics, RetentionCleaner, TranscriptCapture,
 };
 
 pub use admission::{

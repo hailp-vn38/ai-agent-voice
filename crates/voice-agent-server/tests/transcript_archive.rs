@@ -35,7 +35,7 @@ use voice_agent_server::{
     },
     database::{
         Database,
-        history::{HistoryWriterMetrics, spawn_retention, unix_millis_now},
+        history::{HistoryWriterMetrics, RetentionCleaner, unix_millis_now},
     },
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmEvent, LlmProvider,
@@ -632,8 +632,9 @@ async fn capture_is_off_by_default_so_a_turn_archives_nothing() {
     .await;
     let pool = seed(&harness.url).await;
     assert!(
-        harness.metrics.is_some(),
-        "the archive exists even with capture off, so retention still has an archive to maintain"
+        harness.metrics.is_none(),
+        "capture is opt-in, so the default configuration has no archival writer at all — not an \
+         idle one, and no queue for a record to reach"
     );
     let mut socket = admit(&harness.base).await;
 
@@ -645,6 +646,34 @@ async fn capture_is_off_by_default_so_a_turn_archives_nothing() {
         "capture is opt-in, so the default configuration must not enqueue or write anything"
     );
     harness.task.abort();
+}
+
+/// Retention is a property of the archive rather than of capture, so it keeps running with capture
+/// off — and it keeps running because the archive is still there, not because a writer was left
+/// behind to justify it.
+#[tokio::test]
+async fn capture_off_still_prunes_what_an_earlier_deployment_archived() {
+    let url = database_url();
+    let app_config = config(url.clone(), DatabaseHistoryConfig::default());
+    let database = Database::connect(&app_config.database).await.unwrap();
+    let pool = seed(&url).await;
+    let now = unix_millis_now();
+    let day: i64 = 24 * 60 * 60 * 1_000;
+    sqlx::query(
+        "INSERT INTO history_messages \
+         (session_id, device_id, agent_id, template_id, sequence, turn_id, role, text, created_at) \
+         VALUES ('aged', 1, 1, NULL, 1, '1', 'user', 'expired', ?)",
+    )
+    .bind(now - 40 * day)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let _cleaner =
+        RetentionCleaner::start(&database, 30, Duration::from_millis(50), shutdown.clone());
+
+    await_rows(&pool, 0).await;
+    shutdown.cancel();
 }
 
 #[tokio::test]
@@ -1051,7 +1080,8 @@ async fn retention_runs_at_startup_and_again_on_its_schedule() {
     insert(1, now - 40 * day, "expired before the first run").await;
     insert(2, now, "kept by the first run").await;
     let shutdown = tokio_util::sync::CancellationToken::new();
-    let _retention = spawn_retention(database, 30, Duration::from_millis(50), shutdown.clone());
+    let _retention =
+        RetentionCleaner::start(&database, 30, Duration::from_millis(50), shutdown.clone());
 
     await_rows(&pool, 1).await;
     assert_eq!(
@@ -1111,12 +1141,8 @@ async fn a_contended_retention_run_is_abandoned_and_the_next_one_still_happens()
         .await
         .unwrap();
     let shutdown = tokio_util::sync::CancellationToken::new();
-    let _retention = spawn_retention(
-        database.clone(),
-        30,
-        Duration::from_millis(50),
-        shutdown.clone(),
-    );
+    let _retention =
+        RetentionCleaner::start(&database, 30, Duration::from_millis(50), shutdown.clone());
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         rows(&pool).await.len(),

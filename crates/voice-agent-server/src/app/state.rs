@@ -244,18 +244,16 @@ impl AppState {
 
     /// Binds one admitted connection's Persistent Transcript capture, or `None`.
     ///
-    /// Capture needs the opt-in, the database, and an admission identity: an archive row belongs to
-    /// the admitted Device and Agent, and a session admitted without the database has neither.
-    /// Deciding it here keeps the WebSocket boundary from knowing any of that, and the answer never
-    /// depends on a query — turning capture on is a configuration decision, not a live lookup.
+    /// Two things decide it, and neither is a query.  The writer exists only when the deployment
+    /// opted in, so asking for it *is* the capture policy rather than a second copy of it.  An
+    /// admission identity has to exist too: an archive row belongs to the admitted Device and Agent,
+    /// and a session admitted without the database has neither.  Deciding both here keeps the
+    /// WebSocket boundary from knowing either.
     pub fn transcript_capture(
         &self,
         session_id: &str,
         profile: &EffectiveSessionProfile,
     ) -> Option<TranscriptCapture> {
-        if !self.config.database.history.enabled {
-            return None;
-        }
         TranscriptCapture::new(
             self.history_writer()?,
             session_id,
@@ -264,17 +262,19 @@ impl AppState {
         )
     }
 
-    /// The archival writer this process owns, or `None` when the database is off.
+    /// The archival writer this process owns, or `None`.
+    ///
+    /// `None` covers both halves of the opt-in: no database, and no capture.  A session that cannot
+    /// be handed a writer has no way to enqueue a record, which is the whole boundary.
     pub fn history_writer(&self) -> Option<&HistoryWriter> {
-        self.history.as_ref().map(|archive| archive.writer())
+        self.history.as_ref().and_then(|archive| archive.writer())
     }
 
-    /// The archive's bounded counters.  An operator or a test reads the archive's behaviour
-    /// through these; nothing else about the writer is observable.
+    /// The archival writer's bounded counters, or `None` when there is no writer to count for.  An
+    /// operator or a test reads the archive's behaviour through these; nothing else about the
+    /// writer is observable.
     pub fn history_metrics(&self) -> Option<Arc<HistoryWriterMetrics>> {
-        self.history
-            .as_ref()
-            .map(|archive| Arc::clone(archive.metrics()))
+        Some(Arc::clone(self.history_writer()?.metrics()))
     }
 
     /// Installs the test-only writer outcome probe; see [`WriterOutcomeProbe`].

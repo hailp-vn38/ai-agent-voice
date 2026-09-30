@@ -1,6 +1,13 @@
 //! Optional Persistent Transcript: the archival writer a Voice Session hands records to, and the
 //! retention that keeps the archive bounded.
 //!
+//! Those are two policies, and this module keeps them apart on purpose.  **Capture** is opt-in and
+//! decides whether anything is enqueued at all: with it off there is no writer, no queue and no
+//! task, so a deployment that never asked for a transcript has no archival path to leak through.
+//! **Retention** is a property of the archive rather than of capture, so it runs whenever the
+//! database does — turning capture off must not turn whatever is already archived into unbounded
+//! retention.  Only the cleaner can touch an existing record, and all it can do is delete it.
+//!
 //! The archive is a copy, never an authority.  Nothing in this module is read back into a
 //! Conversational Turn: a Voice Session keeps its RAM Dialogue History whatever this does, so a
 //! full queue, a stopped writer or a database failure costs at most the record that carried them.
@@ -256,6 +263,12 @@ impl HistoryWriter {
              turn is unaffected"
         );
     }
+
+    /// The bounded counters of this writer.  They are the only thing about it an operator or a test
+    /// can observe, which is the point: the writer has no state a session can reach back into.
+    pub fn metrics(&self) -> &Arc<HistoryWriterMetrics> {
+        &self.metrics
+    }
 }
 
 /// One Voice Session's handle on the Persistent Transcript.
@@ -328,59 +341,126 @@ impl TranscriptCapture {
     }
 }
 
-/// The process-owned Persistent Transcript: one archival writer every session shares, and the
-/// retention job that keeps the archive bounded.
+/// The retention of the Persistent Transcript archive: one cleanup at startup, then one a day.
+///
+/// This is the part of the archive that outlives capture.  It exists whenever the database does,
+/// because how long the archive keeps what it holds is a property of the archive and not of whether
+/// anything is being added to it right now — turning capture off must not turn whatever is already
+/// stored into unbounded retention.
+///
+/// It is also the only part of the archive that can touch an existing record, and the only thing it
+/// can do with one is delete it.  There is no way to hand a record to a cleaner.
+pub struct RetentionCleaner {
+    task: JoinHandle<()>,
+}
+
+impl RetentionCleaner {
+    /// Starts the scheduled cleanup.  Requires a Tokio runtime.
+    ///
+    /// `interval` is [`RETENTION_INTERVAL`] in production and is a parameter only so a test can
+    /// watch the schedule fire without waiting a day for it.
+    pub fn start(
+        database: &Database,
+        retention_days: u32,
+        interval: Duration,
+        shutdown: CancellationToken,
+    ) -> Self {
+        // The cleaner owns the database, not a borrow of it: a `Database` clone is an `Arc` over the
+        // same pool, so the task can outlive this call without extending a lifetime into it.
+        let database = database.clone();
+        let task = tokio::spawn(async move {
+            let mut schedule = tokio::time::interval(interval.max(Duration::from_millis(1)));
+            // A run that overran its schedule waits for the next one instead of firing a burst of
+            // cleanup passes back to back.
+            schedule.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    // The first tick is already due, so this is the startup run rather than a wait.
+                    _ = schedule.tick() => {
+                        if let Err(error) = database.purge_history_expired(retention_days).await {
+                            tracing::warn!(
+                                event = "history_retention_skipped",
+                                retention_days,
+                                reason = %error,
+                                "A Persistent Transcript retention run was abandoned; the next \
+                                 scheduled run still happens"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        Self { task }
+    }
+}
+
+impl Drop for RetentionCleaner {
+    /// The cleaner stops with the archive that owns it.  A `Database` clone keeps the pool alive
+    /// independently, so without this a dropped archive would leave a task deleting rows nothing
+    /// else is still responsible for.
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// The process-owned Persistent Transcript: the retention of the archive, plus the archival writer
+/// when capture is on.
+///
+/// The two halves have different existences, and this type is where that is decided.  The retention
+/// is unconditional — the database is enough.  The writer is not: it exists only when the deployment
+/// asked for capture, so a process that never opted in has no archival queue and no archival task at
+/// all, rather than an idle one waiting for a record that can never come.
 pub struct HistoryArchive {
-    writer: HistoryWriter,
-    metrics: Arc<HistoryWriterMetrics>,
-    /// Held so both background tasks live as long as the archive does rather than than the router.
-    _writer_task: JoinHandle<()>,
-    _retention_task: JoinHandle<()>,
+    /// Held for its `Drop`, which is the whole point: the cleaner's lifetime is the archive's, so a
+    /// dropped archive leaves no task behind it still deleting rows.
+    _retention: RetentionCleaner,
+    writer: Option<HistoryWriter>,
 }
 
 impl HistoryArchive {
-    /// Starts the writer and the retention job.  Requires a Tokio runtime: both are tasks, and
-    /// `try_send` is the only way in.
-    ///
-    /// The writer runs whether or not capture is enabled, because a deployment that turns capture
-    /// off still owns an archive whose retention has to keep running.
+    /// Starts the retention, and the archival writer when capture is enabled.  Requires a Tokio
+    /// runtime: both halves are tasks.
     pub fn start(
         database: &Database,
         config: &DatabaseHistoryConfig,
         shutdown: CancellationToken,
     ) -> Self {
-        let metrics = Arc::new(HistoryWriterMetrics::default());
-        let (records, received) = mpsc::channel(config.queue_capacity);
-        let writer = HistoryWriter {
-            records,
-            metrics: Arc::clone(&metrics),
-        };
-        let writer_task = tokio::spawn(writer_loop(
-            database.clone(),
-            received,
-            Arc::clone(&metrics),
-        ));
-        let retention_task = spawn_retention(
-            database.clone(),
+        let retention = RetentionCleaner::start(
+            database,
             config.retention_days,
             RETENTION_INTERVAL,
             shutdown,
         );
+        let writer = config.enabled.then(|| start_writer(database, config));
         Self {
+            _retention: retention,
             writer,
-            metrics,
-            _writer_task: writer_task,
-            _retention_task: retention_task,
         }
     }
 
-    pub fn writer(&self) -> &HistoryWriter {
-        &self.writer
+    /// The archival writer, or `None` when capture is off.  `None` is the whole opt-in boundary: a
+    /// session that cannot be handed a writer has no way to enqueue a record.
+    pub fn writer(&self) -> Option<&HistoryWriter> {
+        self.writer.as_ref()
     }
+}
 
-    pub fn metrics(&self) -> &Arc<HistoryWriterMetrics> {
-        &self.metrics
-    }
+/// Starts the one archival writer and its task.  Separate from [`HistoryArchive`] so the capture
+/// decision stays a single `then` rather than something a caller can half-apply.
+fn start_writer(database: &Database, config: &DatabaseHistoryConfig) -> HistoryWriter {
+    let metrics = Arc::new(HistoryWriterMetrics::default());
+    let (records, received) = mpsc::channel(config.queue_capacity);
+    let writer = HistoryWriter {
+        records,
+        metrics: Arc::clone(&metrics),
+    };
+    tokio::spawn(writer_loop(
+        database.clone(),
+        received,
+        Arc::clone(&metrics),
+    ));
+    writer
 }
 
 /// The one task every session's `try_send` reaches.
@@ -428,42 +508,6 @@ pub fn unix_millis_now() -> i64 {
 /// The absolute cutoff a retention run deletes at.
 pub fn retention_cutoff(now_millis: i64, retention_days: u32) -> i64 {
     now_millis.saturating_sub(i64::from(retention_days).saturating_mul(MILLIS_PER_DAY))
-}
-
-/// Runs retention at startup and then once per `interval`, until shutdown.
-///
-/// A contended run is abandoned rather than retried: busy timeout is the only lock wait in V1, and
-/// maintenance that retried would hold the write lock the archival writes themselves need.  The
-/// next run is a day away either way, which is the whole cost of a skip.
-pub fn spawn_retention(
-    database: Database,
-    retention_days: u32,
-    interval: Duration,
-    shutdown: CancellationToken,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut schedule = tokio::time::interval(interval.max(Duration::from_millis(1)));
-        // A run that overran its schedule waits for the next one instead of firing a burst of
-        // cleanup passes back to back.
-        schedule.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => break,
-                // The first tick is already due, so this is the startup run rather than a wait.
-                _ = schedule.tick() => {
-                    if let Err(error) = database.purge_history_expired(retention_days).await {
-                        tracing::warn!(
-                            event = "history_retention_skipped",
-                            retention_days,
-                            reason = %error,
-                            "A Persistent Transcript retention run was abandoned; the next \
-                             scheduled run still happens"
-                        );
-                    }
-                }
-            }
-        }
-    })
 }
 
 impl Database {

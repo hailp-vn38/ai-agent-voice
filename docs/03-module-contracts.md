@@ -174,9 +174,11 @@ Optional archive của final user text và Delivered Assistant Response. Quyết
 `docs/adr/0048-opt-in-transcript-persistence-and-retention.md` và `docs/adr/0055-history-purge-is-explicit-and-scoped.md`.
 
 - **Opt-in, và là bản sao chứ không phải nguồn sự thật.** `database.history.enabled` mặc định `false`;
-  khi tắt không có `HistoryWrite` nào được tạo, enqueue hay ghi. Archive không bao giờ được đọc ngược
-  vào Conversational Turn: Dialogue History vẫn nằm trong RAM, nên một lần drop vĩnh viễn không đổi
-  conversational correctness.
+  khi tắt **không có `HistoryWriter` nào được khởi động** — không queue, không task, không
+  `HistoryWrite`, không enqueue, không write. `AppState::transcript_capture` hỏi writer, nên chính
+  sự tồn tại của writer *là* policy capture chứ không phải một bản sao thứ hai của nó. Archive không
+  bao giờ được đọc ngược vào Conversational Turn: Dialogue History vẫn nằm trong RAM, nên một lần
+  drop vĩnh viễn không đổi conversational correctness.
 - **Chỉ hai text, đúng một lần mỗi loại.** `role=user` là final user text đã được accept cho turn
   (`commit_user_text`); `role=assistant` là Delivered Assistant Response, chỉ sau
   `WriterEvent::TurnClosed { outcome: Normal }`. ASR partial, LLM delta, system prompt, tool
@@ -198,10 +200,13 @@ Optional archive của final user text và Delivered Assistant Response. Quyết
 - **Session không có database identity thì không archive.** `history_messages` FK tới `devices` và
   `agents`; một session admit khi database-backed admission tắt không có identity nào để gán, nên
   không được bind.
-- **Retention là maintenance, không phải realtime work.** Cutoff tuyệt đối UTC
+- **Retention là maintenance, không phải realtime work, và sống lâu hơn capture.** `RetentionCleaner`
+  chạy mọi lúc database tồn tại; `HistoryWriter` chỉ tồn tại khi capture bật. Cutoff tuyệt đối UTC
   `now_utc - retention_days` (Unix milliseconds), chạy một lần lúc startup rồi mỗi 24 giờ trên task
-  riêng, kể cả khi capture đang tắt. Run bị contended thì abort run đó và chờ lịch kế tiếp; không
-  retry loop.
+  riêng, kể cả khi capture đang tắt — tắt capture mới không được biến dữ liệu đã có thành retention
+  vô hạn. Run bị contended thì abort run đó và chờ lịch kế tiếp; không retry loop. Cleaner là phần
+  duy nhất của archive được chạm vào record đã tồn tại, và nó chỉ có thể xóa — không có đường nào đưa
+  một record cho cleaner. Nó dừng cùng archive nhờ `Drop`.
 - **Read và purge qua Admin API đã xác thực, không phụ thuộc capture.** `GET /api/admin/history` lọc
   bằng typed filter/sort và page có giới hạn; `POST /api/admin/history/purge` cần đúng một scope
   Device, Voice Session hoặc `all`, và scope `all` cần `confirm: "PURGE_ALL_HISTORY"`. Purge là

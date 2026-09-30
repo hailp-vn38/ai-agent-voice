@@ -64,19 +64,35 @@ The writer task does **not** stop on the shutdown token. It lives as long as its
 session still draining inside `shutdown.grace_ms` can keep archiving into the same deadline ADR 0066
 allows, and the closed-writer drop is what a finished shutdown turns into once the archive is gone.
 
+### Two policies, two existences
+
+`RetentionCleaner` runs whenever the database does. `HistoryWriter` exists only when
+`database.history.enabled = true`, and `HistoryArchive::start` is the one place that decides it, with
+a single `then`. So a deployment that never opted in has no archival queue and no archival task at
+all — not an idle one waiting for a record that can never come.
+
+That split is the point, and an earlier version of this change got it wrong: it started one
+`HistoryArchive` carrying both, which meant a capture-off process still held a writer and its
+`mpsc` queue. Guide §21 is explicit that the writer is only started when capture is enabled, and the
+privacy boundary is worth stating structurally rather than in a comment. `AppState::transcript_capture`
+now asks for the writer and treats its absence as the answer, so there is no second copy of the
+capture policy that could drift from the one the archive actually applied.
+
+The cleaner is also the only part of the archive that can touch an existing record, and the only
+thing it can do with one is delete it — there is no way to hand a record to it. Its `Drop` aborts the
+task, so an archive that goes away leaves no task still deleting rows behind it.
+
 ### Retention, and what an abandoned run costs
 
 `retention_cutoff(now, days)` is an absolute UTC cutoff in Unix milliseconds — the same unit the
 records are stamped in — so a run that started late or was skipped still deletes exactly the same
-set. The job runs once at startup and then every 24 hours on its own task, outside the realtime path.
-A contended run logs and is abandoned: busy timeout is the only lock wait in V1, and maintenance that
-retried would hold the write lock the archival writes themselves need. The next run is a day away
-either way, which is the whole cost of a skip.
+set. The cleaner runs once at startup and then every 24 hours on its own task, outside the realtime
+path. A contended run logs and is abandoned: busy timeout is the only lock wait in V1, and
+maintenance that retried would hold the write lock the archival writes themselves need. The next run
+is a day away either way, which is the whole cost of a skip.
 
-The archive exists whenever the database does, capture on or off. Toggling capture is a
-configuration decision made before any session exists, so the writer is started unconditionally and
-simply never receives a record; what a deployment turning capture off keeps is retention, the
-authenticated read and the purge.
+What a deployment turning capture off keeps is the retention of whatever it already archived, plus
+the authenticated read and the purge.
 
 ### One filter that had to fail loudly
 
@@ -102,14 +118,15 @@ are validated configuration, like every other bound in this repo.
 
 ### Test seams
 
-- `tests/transcript_archive.rs` — 14 tests over a real WebSocket session with a real SQLite
-  database: capture off by default, the two archived texts and their numbering, a server-default
-  session archiving with no Template, a tool argument that was delivered to the client and is not in
-  the archive, an interrupted turn that keeps its user text and loses its answer while the same
-  session keeps working, template attribution across a real switch, a session with no admission
-  identity, the drop policy under a held exclusive write lock and under a foreign key the archive
-  cannot satisfy, retention at startup and again on its schedule, a contended run abandoned and the
-  next one still happening, and the Admin read/purge with its authentication and scope rules.
+- `tests/transcript_archive.rs` — 15 tests over a real WebSocket session with a real SQLite
+  database: capture off by default *and with no writer at all*, the two archived texts and their
+  numbering, a server-default session archiving with no Template, a tool argument that was delivered
+  to the client and is not in the archive, an interrupted turn that keeps its user text and loses its
+  answer while the same session keeps working, template attribution across a real switch, a session
+  with no admission identity, the drop policy under a held exclusive write lock and under a foreign
+  key the archive cannot satisfy, retention at startup and again on its schedule, a contended run
+  abandoned and the next one still happening, retention still pruning with capture off, and the Admin
+  read/purge with its authentication and scope rules.
 - Eight unit tests in `database::history` own the drop policy, the identity rule, the monotonic
   sequence, the settle arithmetic and the cutoff — the parts a socket cannot order, including the
   closed-writer drop.
@@ -161,10 +178,10 @@ A two-axis review (standards / spec) ran over the staged diff. Everything substa
 
 Three findings were declined, with reasons:
 
-- **`list_sessions_for_device` is not implemented.** Guide §22 asks for a per-Device session listing
-  and §25 explicitly does not require every query surface in this phase; the ticket's own criterion is
-  "authenticated history operations remain available", which they are. Recorded here as deliberately
-  deferred, not as an oversight.
+- **`list_sessions_for_device` is not implemented, and that is settled rather than open.** Guide §22
+  asks for a per-Device session listing and §25 explicitly does not require every query surface in
+  this phase; the ticket's own criterion is "authenticated history operations remain available",
+  which they are. It is not a follow-up for this ticket.
 - **The metric vocabulary sits in `database/history.rs` rather than `telemetry.rs`.** That module
   documents itself as the one place *External MCP* numbers leave this process, so moving history
   metrics there would contradict it.
@@ -177,6 +194,15 @@ Three findings were declined, with reasons:
 The one remaining tool-level delta is gone: `audit` went from nine arguments to nine again by
 replacing the `outcome`/`error_kind` pair, so the workspace clippy warning set is byte-identical to
 the pre-change set.
+
+### Contract deviation found after review, and fixed
+
+`HistoryArchive` originally started the writer unconditionally, so a capture-off process still held
+an archival queue and task. Guide §21 says the writer is only started when
+`database.history.enabled = true`, and while the *behaviour* was already right — nothing was ever
+enqueued — the structure was not: the privacy boundary was a config check rather than an absence.
+`RetentionCleaner` and `HistoryWriter` are now separate, `HistoryArchive` decides between them in one
+`then`, and a WebSocket test asserts the writer does not exist at all with capture off.
 
 ### Verification
 

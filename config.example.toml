@@ -15,10 +15,10 @@ max_connections = 5
 busy_timeout_ms = 5000
 migrate_on_start = true
 
-# Persistent Transcript. Capture is off by default: with it off nothing is enqueued or written,
-# while the retention of an already-captured archive, the Admin API read and the scoped purge all
-# keep working. Retention is a property of the archive, not of capture, so turning capture off never
-# turns existing data into unbounded retention.
+# Persistent Transcript. Capture is off by default: with it off no archival writer, queue or task is
+# started at all, while the retention of an already-captured archive, the Admin API read and the
+# scoped purge all keep working. Retention is a property of the archive, not of capture, so turning
+# capture off never turns existing data into unbounded retention.
 [database.history]
 enabled = false
 retention_days = 30
