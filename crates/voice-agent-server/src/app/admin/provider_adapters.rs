@@ -52,6 +52,71 @@ pub(super) async fn get_provider_adapter(
     }
 }
 
+pub(super) async fn get_provider_capabilities(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let pool = match db(&state) {
+        Ok(pool) => pool,
+        Err(response) => return response,
+    };
+    let provider: Result<(String, String, i64), _> =
+        sqlx::query_as("SELECT adapter,type,revision FROM providers WHERE key=?")
+            .bind(&key)
+            .fetch_one(pool)
+            .await;
+    let (adapter, kind, revision) = match provider {
+        Ok(provider) => provider,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let Some(snapshot) = state.database_runtime_snapshot.as_deref() else {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "provider_runtime_not_loaded",
+        );
+    };
+    let runtime = snapshot.runtime_state(&key, revision);
+    if !matches!(
+        runtime.status,
+        crate::providers::DatabaseRuntimeStatus::Loaded
+    ) {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "provider_runtime_not_loaded",
+        );
+    }
+    let Some(descriptor) = compiled_provider_adapter_registry().get(&adapter) else {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "provider_runtime_not_loaded",
+        );
+    };
+    if descriptor.provider_type.as_str() != kind {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "provider_runtime_not_loaded",
+        );
+    }
+    Json(serde_json::json!({
+        "provider_key": key,
+        "capabilities": descriptor.capabilities,
+        "runtime": {
+            "runtime_status": "loaded",
+            "runtime_matches_desired": runtime.desired_revision == revision,
+            "requires_restart": runtime.desired_revision != revision,
+        }
+    }))
+    .into_response()
+}
+
 pub(super) async fn discover_provider_capabilities(
     Path(adapter): Path<String>,
     request: Request,

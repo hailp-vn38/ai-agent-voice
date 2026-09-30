@@ -42,6 +42,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/providers", get(list_providers).post(create_provider))
         .route("/providers/{key}", get(get_provider).patch(patch_provider))
+        .route(
+            "/providers/{key}/capabilities",
+            get(get_provider_capabilities),
+        )
         .route("/provider-adapters", get(list_provider_adapters))
         .route("/provider-adapters/{adapter}", get(get_provider_adapter))
         .route(
@@ -90,7 +94,8 @@ use mcp_servers::{
     put_agent_mcp_binding,
 };
 use provider_adapters::{
-    discover_provider_capabilities, get_provider_adapter, list_provider_adapters,
+    discover_provider_capabilities, get_provider_adapter, get_provider_capabilities,
+    list_provider_adapters,
 };
 use providers::{create_provider, get_provider, list_providers, patch_provider};
 use templates::{
