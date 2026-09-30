@@ -15,8 +15,14 @@ use super::{
 };
 use crate::{
     audio::PcmF32Mono,
-    providers::{TtsError, TtsProvider, TtsStream, TtsWorker},
+    providers::{TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsWorker},
+    services::provider_diagnostic::{
+        ProviderDiagnosticOperation, ProviderDiagnosticOperationError,
+    },
 };
+use tokio_util::sync::CancellationToken;
+
+const MAX_DIAGNOSTIC_WAV_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TtsLease(u64);
@@ -46,12 +52,17 @@ pub enum TtsWorkerError {
 
 enum WorkerCommand {
     Start {
-        text: String,
+        request: TtsWorkRequest,
         cancelled: Arc<AtomicBool>,
         events: mpsc::SyncSender<TtsWorkerEvent>,
     },
     Reset,
     Shutdown,
+}
+
+enum TtsWorkRequest {
+    Voice(String),
+    Diagnostic(TtsDiagnosticRequest),
 }
 struct WorkerRecord {
     command_tx: mpsc::SyncSender<WorkerCommand>,
@@ -68,7 +79,7 @@ struct Slot {
     cleanup_deadline: Option<Instant>,
     quarantined: bool,
     cleanup_reported: bool,
-    _permit: ProviderCapacityPermit,
+    _permit: Option<ProviderCapacityPermit>,
 }
 struct State {
     next: u64,
@@ -86,6 +97,19 @@ pub struct TtsWorkerRuntime {
     config: WorkerRuntimeConfig,
     state: Arc<Mutex<State>>,
     admission: ProviderRuntimeAdmission,
+}
+
+/// Provider-boundary WAV returned by a TTS diagnostic. It deliberately never enters Voice
+/// delivery conversion, resampling or Opus encoding.
+pub struct TtsDiagnosticOutput {
+    pub wav: Vec<u8>,
+}
+
+pub struct TtsDiagnosticOperation {
+    runtime: Arc<TtsWorkerRuntime>,
+    request: TtsDiagnosticRequest,
+    lease: Option<TtsLease>,
+    terminal: bool,
 }
 
 impl TtsWorkerRuntime {
@@ -149,23 +173,24 @@ impl TtsWorkerRuntime {
         }
     }
     pub fn start(&self, text: String) -> Result<TtsLease, TtsWorkerError> {
-        self.start_internal(None, text)
+        self.start_internal(None, TtsWorkRequest::Voice(text), true)
     }
     pub fn start_in_stream(
         &self,
         stream: TtsStreamId,
         text: String,
     ) -> Result<TtsLease, TtsWorkerError> {
-        self.start_internal(Some(stream), text)
+        self.start_internal(Some(stream), TtsWorkRequest::Voice(text), true)
     }
     fn start_internal(
         &self,
         stream: Option<TtsStreamId>,
-        text: String,
+        request: TtsWorkRequest,
+        reserve_voice_capacity: bool,
     ) -> Result<TtsLease, TtsWorkerError> {
-        let permit = self
-            .admission
-            .try_admit(ProviderWorkloadClass::Voice)
+        let permit = reserve_voice_capacity
+            .then(|| self.admission.try_admit(ProviderWorkloadClass::Voice))
+            .transpose()
             .map_err(|_| TtsWorkerError::Capacity)?;
         let mut state = self.state.lock().expect("TTS worker state poisoned");
         let worker = match stream {
@@ -215,7 +240,7 @@ impl TtsWorkerRuntime {
         let command = state.workers[worker].command_tx.clone();
         if command
             .send(WorkerCommand::Start {
-                text,
+                request,
                 cancelled,
                 events: events_tx,
             })
@@ -327,6 +352,39 @@ impl TtsWorkerRuntime {
     pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
+
+    /// Builds a diagnostic for an already-materialized native worker pool. Capacity admission is
+    /// owned by `ProviderDiagnosticService`; this value cannot load a provider or alter config.
+    pub fn diagnostic(self: &Arc<Self>, request: TtsDiagnosticRequest) -> TtsDiagnosticOperation {
+        TtsDiagnosticOperation {
+            runtime: Arc::clone(self),
+            request,
+            lease: None,
+            terminal: false,
+        }
+    }
+
+    pub fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
+        self.provider.validate_diagnostic(request)
+    }
+
+    pub(super) fn start_diagnostic(
+        &self,
+        request: TtsDiagnosticRequest,
+    ) -> Result<TtsLease, TtsWorkerError> {
+        self.start_internal(None, TtsWorkRequest::Diagnostic(request), false)
+    }
+
+    pub(super) fn quarantine_diagnostic(&self, lease: TtsLease) {
+        let mut state = self.state.lock().expect("TTS worker state poisoned");
+        if let Some(worker) = state.slots.get_mut(&lease).map(|slot| {
+            slot.quarantined = true;
+            slot.cleanup_reported = true;
+            slot.worker
+        }) {
+            state.workers[worker].quarantined = true;
+        }
+    }
 }
 impl Drop for TtsWorkerRuntime {
     fn drop(&mut self) {
@@ -365,23 +423,38 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                 let _ = worker.reset();
             }
             WorkerCommand::Start {
-                text,
+                request,
                 cancelled,
                 events,
             } => {
-                tracing::info!(
-                    tts_input = %text,
-                    chars = text.chars().count(),
-                    delivery = "worker",
-                    "TTS synthesis input"
-                );
+                let diagnostic = matches!(&request, TtsWorkRequest::Diagnostic(_));
+                if let TtsWorkRequest::Voice(text) = &request {
+                    tracing::info!(
+                        tts_input = %text,
+                        chars = text.chars().count(),
+                        delivery = "worker",
+                        "TTS synthesis input"
+                    );
+                }
                 let started = Instant::now();
-                let result = worker.synthesize(&text, &cancelled, &mut |pcm| {
-                    if cancelled.load(Ordering::Acquire) {
-                        return Err(TtsError::Failed);
+                let result = match request {
+                    TtsWorkRequest::Voice(text) => {
+                        worker.synthesize(&text, &cancelled, &mut |pcm| {
+                            if cancelled.load(Ordering::Acquire) {
+                                return Err(TtsError::Failed);
+                            }
+                            send_pcm_until_cancelled(&events, &cancelled, pcm)
+                        })
                     }
-                    send_pcm_until_cancelled(&events, &cancelled, pcm)
-                });
+                    TtsWorkRequest::Diagnostic(request) => {
+                        worker.synthesize_diagnostic(&request, &cancelled, &mut |pcm| {
+                            if cancelled.load(Ordering::Acquire) {
+                                return Err(TtsError::Failed);
+                            }
+                            send_pcm_until_cancelled(&events, &cancelled, pcm)
+                        })
+                    }
+                };
                 let event = if cancelled.load(Ordering::Acquire) {
                     TtsWorkerEvent::Cancelled
                 } else if result.is_ok() {
@@ -389,11 +462,9 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                 } else {
                     TtsWorkerEvent::Failed
                 };
-                tracing::info!(
-                    outcome = ?event,
-                    elapsed_ms = started.elapsed().as_millis(),
-                    "TTS synthesis ended"
-                );
+                if !diagnostic {
+                    tracing::info!(outcome = ?event, elapsed_ms = started.elapsed().as_millis(), "TTS synthesis ended");
+                }
                 let _ = events.send(event);
             }
         }
@@ -448,4 +519,147 @@ impl TtsWorker for ProviderWorker {
     fn reset(&mut self) -> Result<(), TtsError> {
         Ok(())
     }
+
+    fn synthesize_diagnostic(
+        &mut self,
+        request: &TtsDiagnosticRequest,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        self.provider
+            .synthesize_diagnostic(request, cancelled, on_pcm)
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderDiagnosticOperation for TtsDiagnosticOperation {
+    type Output = TtsDiagnosticOutput;
+
+    async fn execute(
+        &mut self,
+        _: CancellationToken,
+    ) -> Result<Self::Output, ProviderDiagnosticOperationError> {
+        let lease = self
+            .runtime
+            .start_diagnostic(self.request.clone())
+            .map_err(|_| ProviderDiagnosticOperationError::Unavailable)?;
+        self.lease = Some(lease);
+        let mut sample_rate = None;
+        let mut samples = Vec::new();
+        loop {
+            match self
+                .runtime
+                .poll(lease)
+                .map_err(|_| ProviderDiagnosticOperationError::Failed)?
+            {
+                Some(TtsWorkerEvent::Pcm(pcm)) => append_pcm(&mut sample_rate, &mut samples, pcm)?,
+                Some(TtsWorkerEvent::Finished) => {
+                    self.terminal = true;
+                    return wav(sample_rate, samples).map(|wav| TtsDiagnosticOutput { wav });
+                }
+                Some(TtsWorkerEvent::Failed) | Some(TtsWorkerEvent::Cancelled) => {
+                    self.terminal = true;
+                    return Err(ProviderDiagnosticOperationError::Failed);
+                }
+                Some(TtsWorkerEvent::CleanupTimedOut) => {
+                    return Err(ProviderDiagnosticOperationError::Unavailable);
+                }
+                Some(TtsWorkerEvent::TimedOut) | None => {
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await
+                }
+            }
+        }
+    }
+
+    fn cancel_exact(&mut self) {
+        if let Some(lease) = self.lease {
+            let _ = self.runtime.cancel(lease);
+        }
+    }
+
+    async fn await_terminal_acknowledgement(&mut self) -> bool {
+        let Some(lease) = self.lease else {
+            return self.terminal;
+        };
+        while !self.terminal {
+            match self.runtime.poll(lease) {
+                Ok(Some(event)) if event.is_terminal() => self.terminal = true,
+                Ok(Some(TtsWorkerEvent::CleanupTimedOut)) | Err(_) => return false,
+                _ => tokio::time::sleep(std::time::Duration::from_millis(1)).await,
+            }
+        }
+        true
+    }
+
+    fn quarantine_exact(&mut self) {
+        if let Some(lease) = self.lease {
+            self.runtime.quarantine_diagnostic(lease);
+        }
+    }
+}
+
+fn append_pcm(
+    sample_rate: &mut Option<u32>,
+    output: &mut Vec<i16>,
+    pcm: PcmF32Mono,
+) -> Result<(), ProviderDiagnosticOperationError> {
+    if pcm.sample_rate_hz() == 0 || sample_rate.is_some_and(|rate| rate != pcm.sample_rate_hz()) {
+        return Err(ProviderDiagnosticOperationError::InvalidResponse);
+    }
+    *sample_rate = Some(pcm.sample_rate_hz());
+    let added = pcm.samples().len();
+    if output.len().saturating_add(added) > (MAX_DIAGNOSTIC_WAV_BYTES - 44) / 2
+        || pcm.samples().iter().any(|sample| !sample.is_finite())
+    {
+        return Err(ProviderDiagnosticOperationError::InvalidResponse);
+    }
+    output.extend(
+        pcm.samples()
+            .iter()
+            .map(|sample| (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16),
+    );
+    Ok(())
+}
+
+fn wav(
+    sample_rate: Option<u32>,
+    samples: Vec<i16>,
+) -> Result<Vec<u8>, ProviderDiagnosticOperationError> {
+    let sample_rate = sample_rate
+        .filter(|_| !samples.is_empty())
+        .ok_or(ProviderDiagnosticOperationError::InvalidResponse)?;
+    let data_bytes = u32::try_from(
+        samples
+            .len()
+            .checked_mul(2)
+            .ok_or(ProviderDiagnosticOperationError::InvalidResponse)?,
+    )
+    .map_err(|_| ProviderDiagnosticOperationError::InvalidResponse)?;
+    let mut result = Vec::with_capacity(44 + data_bytes as usize);
+    result.extend_from_slice(b"RIFF");
+    result.extend_from_slice(
+        &(36_u32
+            .checked_add(data_bytes)
+            .ok_or(ProviderDiagnosticOperationError::InvalidResponse)?)
+        .to_le_bytes(),
+    );
+    result.extend_from_slice(b"WAVEfmt ");
+    result.extend_from_slice(&16_u32.to_le_bytes());
+    result.extend_from_slice(&1_u16.to_le_bytes());
+    result.extend_from_slice(&1_u16.to_le_bytes());
+    result.extend_from_slice(&sample_rate.to_le_bytes());
+    result.extend_from_slice(
+        &(sample_rate
+            .checked_mul(2)
+            .ok_or(ProviderDiagnosticOperationError::InvalidResponse)?)
+        .to_le_bytes(),
+    );
+    result.extend_from_slice(&2_u16.to_le_bytes());
+    result.extend_from_slice(&16_u16.to_le_bytes());
+    result.extend_from_slice(b"data");
+    result.extend_from_slice(&data_bytes.to_le_bytes());
+    for sample in samples {
+        result.extend_from_slice(&sample.to_le_bytes());
+    }
+    Ok(result)
 }

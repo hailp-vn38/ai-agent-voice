@@ -6,7 +6,8 @@ use crate::{
     config::EffectiveProviderBindings,
     workers::{
         AsrWorkerRuntime, LlmDiagnosticOperation, LlmRuntime, ProviderAdmissionError,
-        ProviderCapacityPermit, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
+        ProviderCapacityPermit, TtsDiagnosticOperation, TtsWorkerRuntime, VadWorkerRuntime,
+        VisionRuntime,
     },
 };
 
@@ -43,6 +44,14 @@ pub enum DiagnosticRuntimeError {
     NotLoaded,
     #[error("provider diagnostic capacity is exhausted")]
     Capacity,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TtsDiagnosticValidationError {
+    #[error("provider runtime is not loaded")]
+    NotLoaded,
+    #[error("TTS diagnostic input is not supported by the loaded runtime")]
+    InvalidInput,
 }
 
 /// One loaded VAD instance. Segmentation timing belongs to the provider that produced it, so a
@@ -120,6 +129,27 @@ impl RuntimeCatalog {
             .get(key)
             .map(|runtime| runtime.diagnostic(request, max_text_bytes))
             .ok_or(DiagnosticRuntimeError::NotLoaded)
+    }
+    pub fn tts_diagnostic(
+        &self,
+        key: &str,
+        request: crate::providers::TtsDiagnosticRequest,
+    ) -> Result<TtsDiagnosticOperation, DiagnosticRuntimeError> {
+        self.tts
+            .get(key)
+            .map(|runtime| runtime.diagnostic(request))
+            .ok_or(DiagnosticRuntimeError::NotLoaded)
+    }
+    pub fn validate_tts_diagnostic(
+        &self,
+        key: &str,
+        request: &crate::providers::TtsDiagnosticRequest,
+    ) -> Result<(), TtsDiagnosticValidationError> {
+        self.tts
+            .get(key)
+            .ok_or(TtsDiagnosticValidationError::NotLoaded)?
+            .validate_diagnostic(request)
+            .map_err(|_| TtsDiagnosticValidationError::InvalidInput)
     }
     pub fn vision(&self, id: &str) -> Result<Arc<VisionRuntime>, RuntimeResolveError> {
         self.vision

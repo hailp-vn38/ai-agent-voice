@@ -7,16 +7,42 @@ use std::{
 use reqwest::{Client, StatusCode};
 use voice_agent_server::{
     app::{AppState, bootstrap_with_providers, router_with_state},
+    audio::PcmF32Mono,
     config::AppConfig,
     database::Database,
     providers::{
-        LlmError, LlmProvider, ProviderSet,
+        LlmError, LlmProvider, ProviderSet, TtsDiagnosticRequest, TtsError, TtsProvider,
         llm::{ChatMessage, LlmRequest},
     },
+    workers::WorkerRuntimeConfig,
 };
 
 struct DiagnosticLlm {
     requests: Arc<Mutex<Vec<LlmRequest>>>,
+}
+
+struct DiagnosticTts {
+    requests: Arc<Mutex<Vec<TtsDiagnosticRequest>>>,
+}
+
+impl TtsProvider for DiagnosticTts {
+    fn adapter(&self) -> &'static str {
+        "diagnostic-tts"
+    }
+
+    fn validate_diagnostic(&self, _: &TtsDiagnosticRequest) -> Result<(), TtsError> {
+        Ok(())
+    }
+
+    fn synthesize_diagnostic(
+        &self,
+        request: &TtsDiagnosticRequest,
+        _: &std::sync::atomic::AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        self.requests.lock().unwrap().push(request.clone());
+        on_pcm(PcmF32Mono::new(vec![0.0, 0.5, -0.5], 48_000))
+    }
 }
 
 impl LlmProvider for DiagnosticLlm {
@@ -140,6 +166,72 @@ allowed_hosts = ["mcp.example.test"]
     (format!("http://{address}"), requests, task)
 }
 
+async fn server_with_loaded_tts() -> (
+    String,
+    Arc<Mutex<Vec<TtsDiagnosticRequest>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let config_path = std::env::temp_dir().join(format!(
+        "voice-agent-admin-tts-diagnostic-{}.toml",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+enabled = true
+url = "{}"
+[api]
+enabled = true
+admin_token = "admin-test-token"
+[mcp.external.network]
+allowed_hosts = ["mcp.example.test"]
+"#,
+            database_url()
+        ),
+    )
+    .unwrap();
+    let config = AppConfig::parse_and_resolve(&config_path).unwrap();
+    fs::remove_file(config_path).unwrap();
+    let database = Database::connect_if_enabled(&config.database)
+        .await
+        .unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        database,
+    )
+    .with_database_tts_runtime_for_test(
+        "tts_loaded",
+        Arc::new(DiagnosticTts {
+            requests: Arc::clone(&requests),
+        }),
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            voice_reserved_capacity: 1,
+            command_capacity: 4,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_millis(100),
+        },
+        1,
+    );
+    let router = router_with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), requests, task)
+}
+
 #[tokio::test]
 async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request() {
     let (base, requests, task) = server_with_loaded_llm().await;
@@ -224,6 +316,43 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
     assert_eq!(
         invalid.json::<serde_json::Value>().await.unwrap()["error"]["code"],
         "invalid_test_input"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_provider_wav() {
+    let (base, requests, task) = server_with_loaded_tts().await;
+    let client = Client::new();
+    let providers = format!("{base}/api/admin/providers");
+    assert_eq!(client.post(&providers).bearer_auth("admin-test-token").json(&serde_json::json!({
+        "key":"tts_loaded", "name":"Loaded TTS", "type":"tts", "adapter":"zerotts_onnx",
+        "config_json":{"model":"zerotts_default","num_threads":1,"voice":"maichi","language":"vi-VN"}
+    })).send().await.unwrap().status(), StatusCode::CREATED);
+    let response = client
+        .post(format!("{providers}/tts_loaded/test/tts"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"text":"xin chao","voice":"maichi","language":"vi-VN"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "audio/wav");
+    assert_eq!(
+        response.headers()["x-provider-runtime-matches-desired"],
+        "true"
+    );
+    let wav = response.bytes().await.unwrap();
+    assert_eq!(&wav[..4], b"RIFF");
+    assert_eq!(&wav[8..12], b"WAVE");
+    assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 48_000);
+    assert_eq!(
+        requests.lock().unwrap().as_slice(),
+        &[TtsDiagnosticRequest {
+            text: "xin chao".into(),
+            voice: Some("maichi".into()),
+            language: Some("vi-VN".into()),
+        }]
     );
     task.abort();
 }

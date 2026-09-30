@@ -15,7 +15,10 @@ pub use admission::{
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
 pub use llm::{LlmDiagnosticOperation, LlmRuntime, LlmRuntimeEvent};
 pub use supervisor::WorkerSupervisor;
-pub use tts::{TtsLease, TtsStreamId, TtsWorkerError, TtsWorkerEvent, TtsWorkerRuntime};
+pub use tts::{
+    TtsDiagnosticOperation, TtsDiagnosticOutput, TtsLease, TtsStreamId, TtsWorkerError,
+    TtsWorkerEvent, TtsWorkerRuntime,
+};
 pub use vad::{
     VadCaptureCycleId, VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime,
 };

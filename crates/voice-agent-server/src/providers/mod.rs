@@ -38,10 +38,10 @@ pub use registry::{
 };
 pub use runtime_catalog::{
     DiagnosticRuntimeError, DiagnosticRuntimeKind, LoadedVad, ResolvedAgentRuntimes,
-    RuntimeCatalog, RuntimeResolveError,
+    RuntimeCatalog, RuntimeResolveError, TtsDiagnosticValidationError,
 };
 pub use set::ProviderSet;
-pub use tts::{TtsError, TtsProvider, TtsStream, TtsWorker};
+pub use tts::{TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsWorker};
 pub use vad::{VadInput, VadProbability, VadProvider, VadSession};
 pub use vision::{
     OpenAiVisionProvider, VisionError, VisionProvider, VisionRequest, VisionResponse,

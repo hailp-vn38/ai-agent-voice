@@ -1,6 +1,7 @@
 //! TTS provider boundary.
 
 use crate::{audio::PcmF32Mono, config::ZeroTtsDeliveryMode};
+use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 
 pub mod chillaudio_ws;
@@ -54,6 +55,34 @@ pub trait TtsProvider: Send + Sync {
         on_pcm(self.synthesize(text)?)
     }
 
+    /// Runs a bounded, provider-boundary diagnostic without changing the loaded runtime.
+    /// Adapters must opt in to voice or language overrides explicitly; the compatibility default
+    /// only accepts the already-materialized selection.
+    fn synthesize_diagnostic(
+        &self,
+        request: &TtsDiagnosticRequest,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        if request.voice.is_some() || request.language.is_some() {
+            return Err(TtsError::DiagnosticOverrideUnsupported);
+        }
+        self.synthesize_stream(&request.text, &mut |pcm| {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(TtsError::Failed);
+            }
+            on_pcm(pcm)
+        })
+    }
+
+    fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
+        if request.voice.is_some() || request.language.is_some() {
+            Err(TtsError::DiagnosticOverrideUnsupported)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Opens state that is private to one SpeechOutput delivery. Providers that have no
     /// cross-segment state use the runtime's stateless compatibility stream instead.
     fn open_stream(&self) -> Option<Box<dyn TtsStream>> {
@@ -83,6 +112,23 @@ pub trait TtsWorker: Send {
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError>;
     fn reset(&mut self) -> Result<(), TtsError>;
+
+    fn synthesize_diagnostic(
+        &mut self,
+        _: &TtsDiagnosticRequest,
+        _: &AtomicBool,
+        _: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        Err(TtsError::DiagnosticOverrideUnsupported)
+    }
+}
+
+/// A typed, temporary TTS selection. It never represents desired configuration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TtsDiagnosticRequest {
+    pub text: String,
+    pub voice: Option<String>,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -103,6 +149,10 @@ pub enum TtsError {
     RemoteTimeout,
     #[error("TTS audio decode failed")]
     AudioDecode,
+    #[error("TTS diagnostic override is not available in the loaded runtime")]
+    DiagnosticOverrideUnsupported,
+    #[error("TTS diagnostic response is invalid")]
+    InvalidDiagnosticResponse,
 }
 
 pub struct UnavailableTts;
@@ -204,6 +254,47 @@ impl TtsProvider for ConfiguredZeroTts {
         }
     }
 
+    fn synthesize_diagnostic(
+        &self,
+        request: &TtsDiagnosticRequest,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        if request
+            .voice
+            .as_deref()
+            .is_some_and(|voice| voice != "maichi")
+            || request
+                .language
+                .as_deref()
+                .is_some_and(|language| language != "vi-VN")
+        {
+            return Err(TtsError::DiagnosticOverrideUnsupported);
+        }
+        self.synthesize_stream(&request.text, &mut |pcm| {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(TtsError::Failed);
+            }
+            on_pcm(pcm)
+        })
+    }
+
+    fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
+        if request
+            .voice
+            .as_deref()
+            .is_some_and(|voice| voice != "maichi")
+            || request
+                .language
+                .as_deref()
+                .is_some_and(|language| language != "vi-VN")
+        {
+            Err(TtsError::DiagnosticOverrideUnsupported)
+        } else {
+            Ok(())
+        }
+    }
+
     fn open_stream(&self) -> Option<Box<dyn TtsStream>> {
         if self.delivery_mode == ZeroTtsDeliveryMode::File {
             return None;
@@ -281,5 +372,25 @@ impl TtsWorker for ZeroTtsNativeWorker {
                 Ok(())
             }
         }
+    }
+
+    fn synthesize_diagnostic(
+        &mut self,
+        request: &TtsDiagnosticRequest,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        if request
+            .voice
+            .as_deref()
+            .is_some_and(|voice| voice != "maichi")
+            || request
+                .language
+                .as_deref()
+                .is_some_and(|language| language != "vi-VN")
+        {
+            return Err(TtsError::DiagnosticOverrideUnsupported);
+        }
+        self.synthesize(&request.text, cancelled, on_pcm)
     }
 }

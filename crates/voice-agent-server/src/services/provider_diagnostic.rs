@@ -15,7 +15,8 @@ use crate::{
     database::Database,
     providers::{
         DatabaseRuntimeSnapshot, DatabaseRuntimeStatus, DiagnosticRuntimeError,
-        DiagnosticRuntimeKind, ProviderType, RuntimeCatalog, llm::LlmRequest,
+        DiagnosticRuntimeKind, ProviderType, RuntimeCatalog, TtsDiagnosticRequest,
+        TtsDiagnosticValidationError, llm::LlmRequest,
     },
     workers::ProviderCapacityPermit,
 };
@@ -56,6 +57,8 @@ pub enum ProviderDiagnosticRequestError {
     DatabaseUnavailable,
     #[error("provider type does not support this diagnostic")]
     TypeMismatch,
+    #[error("provider diagnostic input is invalid")]
+    InvalidInput,
     #[error(transparent)]
     Diagnostic(#[from] ProviderDiagnosticError),
 }
@@ -63,6 +66,12 @@ pub enum ProviderDiagnosticRequestError {
 pub struct LlmDiagnosticResult {
     pub provider_key: String,
     pub text: String,
+    pub runtime: ProviderDiagnosticRuntimeMetadata,
+}
+
+pub struct TtsDiagnosticResult {
+    pub provider_key: String,
+    pub wav: Vec<u8>,
     pub runtime: ProviderDiagnosticRuntimeMetadata,
 }
 
@@ -213,6 +222,65 @@ impl ProviderDiagnosticService {
         })
     }
 
+    pub async fn execute_tts(
+        &self,
+        key: &str,
+        request: TtsDiagnosticRequest,
+    ) -> Result<TtsDiagnosticResult, ProviderDiagnosticRequestError> {
+        let database = self
+            .database
+            .as_ref()
+            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
+        let row: (String, String, i64, i64) =
+            sqlx::query_as("SELECT key,type,enabled,revision FROM providers WHERE key=?")
+                .bind(key)
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| match error {
+                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
+                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
+                })?;
+        let (provider_key, provider_type, enabled, revision) = row;
+        if enabled == 0 {
+            return Err(ProviderDiagnosticRequestError::Disabled);
+        }
+        if provider_type != "tts" {
+            return Err(ProviderDiagnosticRequestError::TypeMismatch);
+        }
+        self.registry
+            .validate_tts_diagnostic(&provider_key, &request)
+            .map_err(|error| match error {
+                TtsDiagnosticValidationError::NotLoaded => {
+                    ProviderDiagnosticRequestError::Diagnostic(
+                        ProviderDiagnosticError::RuntimeNotLoaded,
+                    )
+                }
+                TtsDiagnosticValidationError::InvalidInput => {
+                    ProviderDiagnosticRequestError::InvalidInput
+                }
+            })?;
+        let operation = self
+            .registry
+            .tts_diagnostic(&provider_key, request)
+            .map_err(|_| ProviderDiagnosticError::RuntimeNotLoaded)?;
+        let (output, runtime) = self
+            .execute(
+                ProviderDiagnosticTarget {
+                    key: provider_key.clone(),
+                    provider_type: ProviderType::Tts,
+                    desired_revision: revision,
+                },
+                operation,
+                Duration::from_millis(100),
+            )
+            .await?;
+        Ok(TtsDiagnosticResult {
+            provider_key,
+            wav: output.wav,
+            runtime,
+        })
+    }
+
     /// Owns a diagnostic from execution through terminal acknowledgement. A timeout never drops
     /// runtime capacity early: it first cancels the exact operation, then waits the caller's
     /// worker-specific grace window, and only then quarantines that exact operation/slot.
@@ -239,7 +307,20 @@ impl ProviderDiagnosticService {
                 Ok((output, metadata))
             }
             Ok(Err(error)) => {
-                lease.acknowledge_terminal();
+                // An operation-level error can be raised while its exact native worker is still
+                // producing output (for example after a diagnostic output cap). Treat it like a
+                // timeout: cancellation must be acknowledged before capacity is reusable.
+                operation.cancel_exact();
+                let acknowledged =
+                    tokio::time::timeout(cleanup_grace, operation.await_terminal_acknowledgement())
+                        .await
+                        .unwrap_or(false);
+                if acknowledged {
+                    lease.acknowledge_terminal();
+                } else {
+                    operation.quarantine_exact();
+                    lease.quarantine();
+                }
                 Err(map_operation_error(error))
             }
             Err(_) => {
