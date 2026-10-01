@@ -5,3 +5,4 @@ reference/
 !/models/manifest.toml
 .DS_Store
 /output/
+/data/
