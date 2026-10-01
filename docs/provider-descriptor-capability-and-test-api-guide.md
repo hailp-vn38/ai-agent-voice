@@ -201,7 +201,9 @@ pub struct CapabilityDiscoveryMode {
 pub enum DiscoverySource {
     Unsupported,
     Static,
+    Bootstrap,
     Runtime,
+    BootstrapAndRuntime,
     Remote,
 }
 ```
@@ -211,7 +213,7 @@ Ví dụ:
 ```text
 ZeroTTS
 models     = Static
-voices     = Runtime
+voices     = BootstrapAndRuntime
 languages  = Static
 
 OpenAI-compatible LLM
@@ -238,6 +240,7 @@ pub struct ProviderConfigField {
     pub required: bool,
     pub nullable: bool,
     pub enum_source: Option<CapabilitySource>,
+    pub enum_values: Option<Vec<&'static str>>,
     pub minimum: Option<i64>,
     pub maximum: Option<i64>,
     pub max_length: Option<usize>,
@@ -294,9 +297,22 @@ Ví dụ response cho ZeroTTS:
         "key": "num_threads",
         "label": "Threads",
         "type": "integer",
-        "required": false,
+        "required": true,
         "minimum": 1,
-        "maximum": 16
+        "maximum": 128
+      },
+      {
+        "key": "preload",
+        "label": "Preload",
+        "type": "boolean",
+        "required": false
+      },
+      {
+        "key": "delivery_mode",
+        "label": "Delivery mode",
+        "type": "select",
+        "required": false,
+        "enum_values": ["stream", "file"]
       }
     ]
   }
@@ -313,6 +329,31 @@ string     -> text input
 ```
 
 Không để backend phụ thuộc React/Vue/Svelte.
+
+Descriptor field keys, required/default semantics và bounds phải khớp typed config mà
+`ProviderConfigValidator` cùng runtime factory thực sự chấp nhận. Không được publish một field
+descriptor-only rồi hy vọng runtime bỏ qua nó.
+
+Typed config được mở rộng trên cơ sở config hiện có:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZeroTtsConfig {
+    pub model: String,
+    pub num_threads: i32,
+    pub voice: String,
+    pub language: String,
+    #[serde(default)]
+    pub preload: bool,
+    #[serde(default)]
+    pub delivery_mode: ZeroTtsDeliveryMode,
+}
+```
+
+`language` phải được thêm đồng thời vào desired-config validator, runtime config, adapter semantic
+validation và descriptor. `voice` là field hiện có và tiếp tục là typed config, không phải metadata
+UI riêng.
 
 ---
 
@@ -377,11 +418,18 @@ Typed provider instance config có thể là:
 pub struct GipformerConfig {
     pub model: String,
     pub language: String,
-    pub num_threads: usize,
+    pub num_threads: i32,
+    pub decoding_method: String,
+    pub max_active_paths: i32,
 }
 ```
 
 Adapter validation phải kiểm tra model/language instance chọn có hợp lệ với adapter capability hiện tại.
+
+Việc thêm `language` cho ZeroTTS/Gipformer là migration bắt buộc. Migration phải backfill giá trị
+tương thích cho row cũ hoặc cung cấp default deserialize/canonicalization tương đương trước khi bật
+validator mới; không được khiến desired provider đang hợp lệ trở thành `provider_config_invalid` sau
+nâng cấp.
 
 ---
 
@@ -393,7 +441,8 @@ pub struct TtsCapabilities {
     pub voices: Vec<VoiceOption>,
     pub languages: Vec<LanguageOption>,
     pub streaming: bool,
-    pub output_sample_rates: Vec<u32>,
+    pub provider_output_sample_rates: Vec<u32>,
+    pub voice_delivery_sample_rates: Vec<u32>,
 }
 ```
 
@@ -434,10 +483,24 @@ Ví dụ:
       }
     ],
     "streaming": true,
-    "output_sample_rates": [24000]
+    "provider_output_sample_rates": [48000],
+    "voice_delivery_sample_rates": [24000]
   }
 }
 ```
+
+Hai sample-rate có semantics khác nhau:
+
+```text
+provider_output_sample_rates
+    = PCM tại provider seam; Provider Test API ghi WAV trực tiếp từ PCM này
+
+voice_delivery_sample_rates
+    = sample rate sau canonical Voice delivery conversion
+```
+
+Với ZeroTTS, provider-boundary PCM và diagnostic WAV là mono 48 kHz. 24 kHz chỉ thuộc Voice
+delivery sau resampling; descriptor không được quảng cáo 24 kHz như provider output.
 
 Provider instance:
 
@@ -585,9 +648,9 @@ Endpoint này không resolve secret.
 
 ---
 
-# 11. Static capability và dynamic capability phải tách riêng
+# 11. Static, bootstrap và loaded-runtime capability phải tách riêng
 
-Có hai nguồn capability.
+Có ba nguồn capability.
 
 ## Static
 
@@ -601,7 +664,57 @@ offline/remote
 known language/model set
 ```
 
-## Runtime / Remote discovery
+## Bootstrap discovery trước khi tạo provider
+
+UI phải lấy được model/voice/language cần cho create form trước khi provider instance và loaded
+runtime tồn tại. Dùng adapter-keyed pre-instance discovery:
+
+```http
+POST /api/admin/provider-adapters/{adapter}/capabilities/discover
+Content-Type: application/json
+Authorization: Bearer <admin_token>
+```
+
+Request chứa partial typed selection đã có, ví dụ:
+
+```json
+{
+  "selection": {
+    "model": "zerotts"
+  }
+}
+```
+
+Response trả bounded bootstrap options cho bước tiếp theo, ví dụ voices/languages tương thích với
+model đã chọn. Bootstrap discovery:
+
+```text
+không cần provider key
+không cần loaded provider runtime
+không persist DB
+không resolve secret
+không gọi remote bằng credential
+không hot-load runtime/model/voice
+chỉ đọc adapter metadata, deployment manifest hoặc artifact metadata an toàn
+bounded input, timeout và result count/size
+```
+
+Interface:
+
+```rust
+#[async_trait]
+pub trait ProviderBootstrapInspector: Send + Sync {
+    async fn discover(
+        &self,
+        selection: &BootstrapSelection,
+    ) -> Result<DiscoveredCapabilities, ProviderInspectError>;
+}
+```
+
+`BootstrapSelection` phải được typed/validated theo adapter descriptor; không nhận một JSON bag tùy
+ý và không cho phép credential fields.
+
+## Loaded runtime / Remote discovery
 
 Phụ thuộc provider instance/runtime:
 
@@ -624,7 +737,8 @@ pub trait ProviderInspector: Send + Sync {
 }
 ```
 
-Không bắt buộc mọi adapter implement runtime discovery trong V1.
+Loaded-runtime discovery dùng để xác minh runtime sau restart, không được dùng làm con đường duy nhất
+để bootstrap create form. Không bắt buộc mọi adapter implement loaded-runtime discovery trong V1.
 
 ---
 
@@ -642,6 +756,8 @@ Authority vẫn là:
 
 ```text
 Adapter Descriptor
++
+Fresh bootstrap discovery cho create flow
 +
 Current Loaded Runtime
 +
@@ -709,10 +825,16 @@ validate provider type
 lookup currently loaded runtime
 check runtime metadata/revision
 acquire diagnostic permit
+acquire provider capacity với workload class Diagnostic
 apply timeout
 execute bounded diagnostic
+cancel và xác nhận terminal cleanup khi timeout
 sanitize response/error
 ```
+
+Public identity của provider là immutable `key`. Mọi lookup, route, request state và qualification
+artifact phải dùng `key`; numeric database ID chỉ được phép xuất hiện như diagnostic metadata và
+không được dùng để gọi API hoặc khôi phục `ScenarioState` qua restart.
 
 Handler chỉ:
 
@@ -772,7 +894,7 @@ Không update `RuntimeCatalog`.
 Endpoint:
 
 ```http
-POST /api/admin/providers/{id}/test/llm
+POST /api/admin/providers/{key}/test/llm
 Content-Type: application/json
 Authorization: Bearer <admin_token>
 ```
@@ -808,7 +930,7 @@ Response:
 
 ```json
 {
-  "provider_id": 12,
+  "provider_key": "openai_primary",
   "type": "llm",
   "status": "success",
   "result": {
@@ -842,7 +964,7 @@ Không truncate.
 Endpoint:
 
 ```http
-POST /api/admin/providers/{id}/test/tts
+POST /api/admin/providers/{key}/test/tts
 Content-Type: application/json
 ```
 
@@ -876,6 +998,35 @@ không increment revision
 không mutate runtime config
 ```
 
+Override không dừng ở HTTP DTO. Interface diagnostic phải mang typed request xuyên suốt runtime và
+adapter seam:
+
+```rust
+pub struct TtsDiagnosticRequest {
+    pub text: String,
+    pub voice: Option<String>,
+    pub language: Option<String>,
+}
+
+pub trait TtsDiagnostic {
+    fn synthesize_diagnostic(
+        &self,
+        request: &TtsDiagnosticRequest,
+        cancellation: &CancellationToken,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<TtsDiagnosticTerminal, TtsError>;
+}
+```
+
+Runtime chỉ chấp nhận override khi tài nguyên voice/language tương ứng đã được materialize trong
+loaded runtime. Test API không được hot-load model/voice, mutate runtime hoặc âm thầm bỏ qua field.
+Adapter không hỗ trợ override phải trả typed `invalid_test_input` hoặc `provider_unavailable` theo
+nguyên nhân, thay vì synthesize bằng voice khác.
+
+Giá trị trùng với voice/language của loaded provider instance luôn là request hợp lệ. Giá trị khác
+chỉ hợp lệ khi adapter đã materialize sẵn biến thể đó và descriptor/runtime capability công bố hỗ trợ
+diagnostic override.
+
 Text bound đề xuất:
 
 ```text
@@ -902,6 +1053,10 @@ fetch
 
 Không encode WAV base64 vào JSON.
 
+WAV là provider-boundary mono PCM với sample rate do chunk provider báo. ZeroTTS V1 phải trả WAV
+48 kHz và ghi header 48 kHz. Diagnostic này không chạy qua `CanonicalDownlinkPipeline`, không
+resample 48 -> 24 kHz và không encode/decode Opus.
+
 Output audio hard cap đề xuất:
 
 ```text
@@ -919,7 +1074,7 @@ ASR cần media body, nên đây là exception explicit khỏi rule Admin JSON b
 Endpoint:
 
 ```http
-POST /api/admin/providers/{id}/test/asr
+POST /api/admin/providers/{key}/test/asr
 Content-Type: audio/wav
 Authorization: Bearer <admin_token>
 ```
@@ -952,7 +1107,7 @@ Response:
 
 ```json
 {
-  "provider_id": 15,
+  "provider_key": "gipformer_primary",
   "type": "asr",
   "status": "success",
   "result": {
@@ -1047,7 +1202,46 @@ Nếu không lấy được permit theo policy immediate/non-blocking:
 
 Không queue vô hạn.
 
-Diagnostic permit không thay thế provider worker capacity; nó là lớp cap ngoài để admin test không tạo burst lớn.
+Diagnostic permit không thay thế provider worker capacity; nó chỉ là lớp cap ngoài để admin test
+không tạo burst lớn.
+
+Provider runtime phải có workload-aware admission tại chính runtime seam:
+
+```rust
+pub enum ProviderWorkloadClass {
+    Voice,
+    Diagnostic,
+}
+
+pub trait ProviderRuntimeAdmission {
+    fn try_admit(
+        &self,
+        workload: ProviderWorkloadClass,
+    ) -> Result<ProviderCapacityPermit, ProviderAdmissionError>;
+}
+```
+
+Invariants:
+
+```text
+Voice có reserved capacity.
+Diagnostic không được lấy slot cuối cùng dành cho Voice.
+Admission và cấp worker permit là một atomic runtime operation.
+HTTP handler không check active-count rồi start sau vì có TOCTOU.
+Diagnostic không queue vô hạn và không preempt Voice operation đang chạy.
+```
+
+Mỗi shared runtime phải cấu hình hoặc cố định `voice_reserved_capacity >= 1` và không lớn hơn total
+capacity. Effective diagnostic capacity là phần capacity còn lại sau reservation; reservation áp dụng
+trên cùng permit/worker pool thật, không phải một counter song song.
+
+Với pool chỉ có một worker và reserve một slot cho Voice, shared-runtime diagnostic không có capacity
+hợp lệ và phải trả `429 provider_test_busy`. Muốn diagnostic chạy, deployment phải cấp thêm capacity;
+không được giảm reservation ngầm hoặc để diagnostic làm Voice nhận capacity error.
+
+Mandatory RC-DB5 qualification phải cấu hình total capacity tối thiểu bằng
+`voice_reserved_capacity + 1` cho provider type được test. Thiếu capacity là lỗi qualification setup,
+không phải lý do để tắt Voice reservation trong binary production được qualification.
 
 ---
 
@@ -1074,6 +1268,33 @@ provider_test_timeout
 ```
 
 Không retry diagnostic request ở server.
+
+Timeout HTTP không đồng nghĩa worker đã dừng hoặc capacity đã được giải phóng. Terminal cleanup là
+một phần bắt buộc của contract:
+
+```text
+execution timeout
+    -> request cancellation on the exact lease/operation
+    -> wait bounded cleanup grace
+    -> terminal acknowledgement
+        -> release exact provider capacity permit once
+    -> no terminal acknowledgement
+        -> quarantine exact worker/slot
+        -> mark effective provider capacity degraded/unavailable
+```
+
+`ProviderDiagnosticService` giữ ownership của diagnostic permit cho đến khi nhận terminal
+acknowledgement hoặc đã ghi nhận quyết định quarantine. Provider capacity chỉ được trả lại sau
+terminal acknowledgement; không được release sớm khi chỉ mới gửi cancellation.
+
+HTTP route có total bound:
+
+```text
+route_deadline <= execution_timeout + cleanup_grace
+```
+
+Nếu cleanup thất bại, response vẫn giữ primary error `provider_test_timeout` và telemetry ghi một
+cleanup outcome riêng, không đổi timeout thành success và không tái sử dụng worker chưa xác nhận dừng.
 
 ---
 
@@ -1135,7 +1356,7 @@ Mutation audit chỉ áp dụng khi có mutation DB.
 Provider test read/execute operation có thể telemetry:
 
 ```text
-provider_id
+provider_key
 provider_type
 adapter
 status
@@ -1230,7 +1451,15 @@ user chọn zerotts_onnx
         ↓
 GET /api/admin/provider-adapters/zerotts_onnx
         ↓
-UI render model/voice/language/thread fields
+UI render model/thread fields
+        ↓
+user chọn model
+        ↓
+POST /api/admin/provider-adapters/zerotts_onnx/capabilities/discover
+        ↓
+UI render voice/language options tương thích
+        ↓
+user chọn voice/language
         ↓
 POST /api/admin/providers
         ↓
@@ -1240,9 +1469,9 @@ response runtime_status / requires_restart
         ↓
 restart nếu cần
         ↓
-POST /api/admin/providers/{id}/test/tts
+POST /api/admin/providers/{key}/test/tts với text/voice/language
         ↓
-play WAV
+play provider-boundary WAV 48 kHz
         ↓
 bind provider vào Template
 ```
@@ -1252,7 +1481,11 @@ bind provider vào Template
 ```text
 GET descriptor
         ↓
-select model/language
+select model
+        ↓
+bootstrap discover language options nếu adapter yêu cầu
+        ↓
+select language
         ↓
 create provider
         ↓
@@ -1326,12 +1559,23 @@ Optional provider -> unavailable/excluded.
 
 ---
 
-# 28. Dynamic discovery API — optional phase
+# 28. Capability discovery APIs
 
-Nếu cần Web UI hỏi runtime hiện tại có voice/model gì, có thể thêm:
+## Pre-instance bootstrap discovery — bắt buộc cho adapter có dynamic create options
 
 ```http
-GET /api/admin/providers/{id}/capabilities
+POST /api/admin/provider-adapters/{adapter}/capabilities/discover
+```
+
+Endpoint này cho phép Web UI chọn model rồi lấy voice/language trước khi `POST /providers`. Nó tuân
+theo bootstrap contract tại phần 11 và không phụ thuộc provider instance/runtime đã load.
+
+## Loaded-runtime discovery — optional verification
+
+Nếu cần Web UI xác minh runtime hiện tại có voice/model gì sau restart, có thể thêm:
+
+```http
+GET /api/admin/providers/{key}/capabilities
 ```
 
 Contract V1 nếu implement:
@@ -1395,8 +1639,12 @@ Không nhất thiết introspect Rust struct tự động; có thể dùng repre
 ```text
 GET provider-adapters requires admin auth
 GET descriptor returns bounded metadata
+bootstrap discovery works before provider instance exists
+bootstrap discovery rejects credential/unknown selection fields
+all provider instance routes use immutable key
 LLM test does not expose tools
-TTS test returns WAV
+TTS test returns correctly tagged provider-boundary WAV 48 kHz for ZeroTTS
+TTS override reaches adapter seam and unsupported override fails typed
 ASR test rejects MP3
 ASR test rejects >5 MiB
 ASR test rejects >30 s
@@ -1405,6 +1653,9 @@ runtime stale -> test allowed + runtime_matches_desired=false
 provider test does not write history
 provider test does not mutate revision
 provider test concurrency cap -> 429
+diagnostic cannot consume the Voice-reserved last slot
+diagnostic timeout waits for terminal cleanup acknowledgement
+missing cleanup acknowledgement quarantines exact worker without releasing its capacity
 ```
 
 ## Privacy tests
@@ -1421,6 +1672,18 @@ test output text/raw audio
 ---
 
 # 30. Implementation phases
+
+## PD-0 — Typed provider config migration
+
+- Thêm `language` vào ZeroTTS và Gipformer desired/runtime config.
+- Giữ đầy đủ field hiện có: ZeroTTS `model`, `num_threads`, `voice`, `preload`, `delivery_mode`;
+  Gipformer `model`, `num_threads`, `decoding_method`, `max_active_paths`.
+- Backfill/default row cũ trước khi validator mới trở thành authority.
+- Đồng bộ `ProviderConfigValidator`, runtime config, factory và semantic validation.
+- Regression tests chứng minh config cũ migrate được và unknown fields vẫn fail closed.
+
+PD-1 không được bắt đầu bằng descriptor giả định schema mới khi PD-0 chưa có typed config contract và
+migration tương ứng.
 
 ## PD-1 — Descriptor core
 
@@ -1448,21 +1711,24 @@ Không thay Voice semantics.
 
 Không DB mutation.
 
-## PD-3 — Runtime capability inspection
+## PD-3 — Bootstrap và loaded-runtime capability inspection
 
-- Optional `ProviderInspector`.
-- Implement cho ASR/TTS adapter cần voice/model discovery.
+- Bắt buộc `ProviderBootstrapInspector` cho adapter có dynamic create options.
+- `POST /api/admin/provider-adapters/{adapter}/capabilities/discover` với partial typed selection.
+- Optional loaded-runtime `ProviderInspector` để verification sau restart.
 - Bound result size/count.
-- Optional `GET /providers/{id}/capabilities`.
+- Optional `GET /providers/{key}/capabilities`.
 
-Không hot-load.
+Không persist, resolve secret hoặc hot-load.
 
 ## PD-4 — ProviderDiagnosticService
 
 - Diagnostic limiter.
+- Workload-aware runtime admission với Voice reservation.
 - Runtime lookup.
 - runtime stale metadata.
-- common timeout/error mapping.
+- Common timeout/error mapping.
+- Cancellation, bounded cleanup acknowledgement và exact-worker quarantine.
 
 Không HTTP endpoint trước khi service tests pass.
 
@@ -1476,8 +1742,9 @@ Không HTTP endpoint trước khi service tests pass.
 ## PD-6 — TTS test
 
 - JSON input.
-- temporary voice/language override validation.
-- WAV output.
+- Typed `TtsDiagnosticRequest` đi xuyên HTTP/runtime/adapter seam.
+- Temporary voice/language override chỉ dùng tài nguyên đã materialize trong loaded runtime.
+- Provider-boundary mono WAV; ZeroTTS là 48 kHz, không qua Voice delivery pipeline.
 - output size bound.
 
 ## PD-7 — ASR test
@@ -1500,19 +1767,26 @@ Không HTTP endpoint trước khi service tests pass.
 Feature hoàn thành khi:
 
 - Mọi ASR/TTS/LLM adapter active có `ProviderDescriptor`.
+- ZeroTTS/Gipformer typed config, validator, runtime factory và descriptor cùng chấp nhận `language`.
+- Existing desired provider rows migrate/default an toàn trước khi schema mới được enforce.
 - ASR descriptor expose model/language/audio capability phù hợp.
-- TTS descriptor expose model/voice/language/output capability phù hợp.
+- TTS descriptor phân biệt provider output và Voice delivery sample rate.
 - Web UI có thể dựng create/edit form từ descriptor metadata.
+- Web UI lấy được dynamic voice/language options qua pre-instance bootstrap discovery.
 - Provider DB rows vẫn chỉ lưu typed desired config, không duplicate capability catalog.
 - Dynamic discovery không trở thành DB authority.
+- Mọi Provider Test/instance-capability route dùng immutable provider key.
 - Test APIs chỉ dùng runtime đã load.
 - Test API không hot-load provider.
 - Test API không resolve/test secret trực tiếp.
 - Test API không ghi conversation history.
 - LLM diagnostic không expose tool calls.
-- TTS test trả WAV bounded.
+- TTS override đi qua typed diagnostic seam và không hot-load tài nguyên.
+- ZeroTTS test trả bounded provider-boundary WAV với header 48 kHz chính xác.
 - ASR test chỉ nhận bounded WAV PCM V1.
 - Dedicated diagnostic concurrency limiter hoạt động.
+- Runtime admission dành capacity cho Voice; diagnostic không lấy slot Voice cuối cùng.
+- Timeout chỉ release capacity sau terminal acknowledgement; cleanup failure quarantine exact worker.
 - Runtime stale state được phản ánh trong response.
 - Errors/logs không leak config/secret/input/output nội dung.
 - Existing Voice Session behavior không đổi.
@@ -1531,6 +1805,9 @@ ProviderAdapterRegistry
         │      ├── languages
         │      └── capabilities
         │
+        ├── ProviderBootstrapInspector
+        │      └── pre-instance model/voice/language options
+        │
         └── Adapter implementation
                ├── typed config
                ├── validation
@@ -1543,6 +1820,10 @@ SQLite providers
 RuntimeCatalog
         │
         └── loaded provider runtime
+               │
+               ├── workload-aware admission
+               │      ├── Voice reserved capacity
+               │      └── Diagnostic capacity
                │
                └── ProviderDiagnosticService
                        ├── ASR test
@@ -1557,6 +1838,10 @@ Discover adapter
     ↓
 Render typed form
     ↓
+Bootstrap-discover options from partial typed selection
+    ↓
+Select model/voice/language
+    ↓
 Create/update desired provider
     ↓
 Observe runtime_status/requires_restart
@@ -1568,10 +1853,11 @@ Test loaded provider
 Bind provider to Template
 ```
 
-Đây là boundary cần giữ xuyên suốt implementation:
+Đây là interface contract cần giữ xuyên suốt implementation:
 
 ```text
 Descriptor tells UI what an adapter can configure.
+Bootstrap discovery tells UI which create-time options are currently selectable.
 DB stores what the operator wants.
 RuntimeCatalog tells what is actually running.
 Diagnostic API tests only what is actually running.
