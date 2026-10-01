@@ -100,6 +100,18 @@ pub(crate) fn default_tts_model() -> String {
 pub(crate) fn default_tts_voice() -> String {
     "maichi".into()
 }
+pub(crate) fn default_kokoro_vi_model() -> String {
+    "kokoro_vi_contextbox".into()
+}
+pub(crate) fn default_kokoro_vi_voice() -> String {
+    "diem_trinh".into()
+}
+pub(crate) fn default_kokoro_vi_speed_percent() -> u16 {
+    100
+}
+pub(super) fn default_kokoro_vi_g2p_executable() -> PathBuf {
+    PathBuf::from("runtime/kokoro-vi/kokoro_vi_g2p")
+}
 pub(crate) fn default_vietnamese_language() -> String {
     "vi-VN".into()
 }
@@ -245,4 +257,5 @@ pub(super) fn default_external_max_pages_per_server() -> usize {
     32
 }
 use super::SecretString;
+use std::path::PathBuf;
 use url::Url;

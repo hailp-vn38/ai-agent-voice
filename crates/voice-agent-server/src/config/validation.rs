@@ -499,6 +499,17 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                     "ChillAudio instance `{id}` has invalid URL, credential, voice, or timeout"
                 )));
             }
+            TtsInstanceConfig::KokoroViOnnx(tts)
+                if tts.model.trim().is_empty()
+                    || tts.voice.trim().is_empty()
+                    || tts.language != "vi-VN"
+                    || tts.num_threads <= 0
+                    || !(50..=200).contains(&tts.speed_percent) =>
+            {
+                return Err(ConfigError::Validation(format!(
+                    "Kokoro Vietnamese instance `{id}` has invalid model, voice, language, threads, or speed"
+                )));
+            }
             _ => {}
         }
     }

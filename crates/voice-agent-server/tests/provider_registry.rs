@@ -36,6 +36,10 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         registry.tts_factory("chillaudio_ws").unwrap().adapter(),
         "chillaudio_ws"
     );
+    assert_eq!(
+        registry.tts_factory("kokoro_vi_onnx").unwrap().adapter(),
+        "kokoro_vi_onnx"
+    );
     assert!(registry.tts_factory("http_tts").is_err());
 }
 
@@ -83,6 +87,7 @@ fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapter
     assert_eq!(adapters.len(), descriptors.len());
     assert!(adapters.contains("zerotts_onnx"));
     assert!(adapters.contains("chillaudio_ws"));
+    assert!(adapters.contains("kokoro_vi_onnx"));
     let factory_adapters: HashSet<_> = compiled_provider_registry()
         .admin_adapters()
         .map(|(_, adapter)| adapter)

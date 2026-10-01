@@ -3,6 +3,7 @@ reference/
 /config.toml
 /models/**
 !/models/manifest.toml
+/runtime/**
 .DS_Store
 /output/
 /data/

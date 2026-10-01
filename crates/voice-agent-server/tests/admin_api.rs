@@ -945,6 +945,11 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
                 "adapter": "chillaudio_ws",
                 "type": "tts",
                 "display_name": "ChillAudio WebSocket"
+            },
+            {
+                "adapter": "kokoro_vi_onnx",
+                "type": "tts",
+                "display_name": "Kokoro Vietnamese ONNX"
             }
         ])
     );

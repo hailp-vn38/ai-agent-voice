@@ -18,7 +18,10 @@ use crate::{
         VisionProvider,
         asr::{GipformerAsrProvider, ZipformerAsrProvider},
         llm::openai::provider::ConfiguredOpenAiLlm,
-        tts::{ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts},
+        tts::{
+            ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts,
+            kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts},
+        },
         vad::LoadedSileroVad,
         vision::OpenAiVisionProvider,
     },
@@ -332,6 +335,89 @@ impl TtsFactory for ZeroTtsOnnxFactory {
 }
 
 struct ChillAudioWsFactory;
+struct KokoroViOnnxFactory;
+
+impl TtsFactory for KokoroViOnnxFactory {
+    fn adapter(&self) -> &'static str {
+        "kokoro_vi_onnx"
+    }
+    fn model_identity<'a>(
+        &self,
+        config: &'a TtsInstanceConfig,
+    ) -> Result<Option<&'a str>, ProviderLoadError> {
+        match config {
+            TtsInstanceConfig::KokoroViOnnx(options) => Ok(Some(&options.model)),
+            _ => Err(ProviderLoadError::Configuration(
+                "kokoro_vi_onnx factory received another adapter config".into(),
+            )),
+        }
+    }
+    fn build(
+        &self,
+        config: &TtsInstanceConfig,
+        runtime: &RuntimeConfig,
+        model: Option<&ResolvedModel>,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        let TtsInstanceConfig::KokoroViOnnx(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "kokoro_vi_onnx factory received another adapter config".into(),
+            ));
+        };
+        let model = model.ok_or_else(|| {
+            ProviderLoadError::Configuration("kokoro_vi_onnx requires a local model".into())
+        })?;
+        validate_model_adapter(model, self.adapter())?;
+        if options.model != "kokoro_vi_contextbox"
+            || options.language != "vi-VN"
+            || options.num_threads <= 0
+            || !(50..=200).contains(&options.speed_percent)
+            || !KOKORO_VI_VOICES.contains(&options.voice.as_str())
+        {
+            return Err(ProviderLoadError::Configuration("Kokoro Vietnamese requires its pinned model, vi-VN, a supported voice, positive threads, and speed_percent 50..=200".into()));
+        }
+        if model.identity() != options.model {
+            return Err(ProviderLoadError::Configuration(
+                "Kokoro Vietnamese resolved model does not match configured logical model".into(),
+            ));
+        }
+        for role in KOKORO_VI_REQUIRED_ARTIFACT_ROLES {
+            required(model, role)?;
+        }
+        let voicepack_role = format!("voicepack_{}", options.voice);
+        required(model, &voicepack_role)?;
+        Ok(Arc::new(
+            ConfiguredKokoroVi::load(
+                options,
+                runtime,
+                KokoroViArtifacts {
+                    model: model.artifact("model").expect("required above"),
+                    config: model.artifact("config").expect("required above"),
+                    voicepack: model.artifact(&voicepack_role).expect("required above"),
+                },
+            )
+            .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
+        ))
+    }
+}
+
+const KOKORO_VI_REQUIRED_ARTIFACT_ROLES: &[&str] = &["model", "config"];
+const KOKORO_VI_VOICES: &[&str] = &[
+    "diem_trinh",
+    "hung_thinh",
+    "mai_linh",
+    "mai_loan",
+    "manh_dung",
+    "my_yen",
+    "ngoc_huyen",
+    "phat_tai",
+    "thanh_dat",
+    "thuc_trinh",
+    "tuan_ngoc",
+    "storyvert",
+    "duc_an",
+    "duc_duy",
+];
+
 impl TtsFactory for ChillAudioWsFactory {
     fn adapter(&self) -> &'static str {
         "chillaudio_ws"
@@ -498,11 +584,16 @@ static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
+static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
 static VAD_FACTORIES: [&dyn VadFactory; 1] = [&SILERO_ONNX_FACTORY];
 static ASR_FACTORIES: [&dyn AsrFactory; 2] =
     [&ZIPFORMER_SHERPA_FACTORY, &GIPFORMER_SHERPA_OFFLINE_FACTORY];
 static LLM_FACTORIES: [&dyn LlmFactory; 1] = [&OPENAI_FACTORY];
-static TTS_FACTORIES: [&dyn TtsFactory; 2] = [&ZEROTTS_ONNX_FACTORY, &CHILLAUDIO_WS_FACTORY];
+static TTS_FACTORIES: [&dyn TtsFactory; 3] = [
+    &ZEROTTS_ONNX_FACTORY,
+    &CHILLAUDIO_WS_FACTORY,
+    &KOKORO_VI_ONNX_FACTORY,
+];
 static VISION_FACTORIES: [&dyn VisionFactory; 1] = [&OPENAI_VISION_FACTORY];
 static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
     vad: &VAD_FACTORIES,

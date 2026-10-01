@@ -125,6 +125,20 @@ token = "set-deployment-token-here"
 # voice = "BV421_vivn_streaming"
 # timeout_ms = 12000
 
+# Local Vietnamese Kokoro. Install the pinned model, its prepared voicepack,
+# and the deployment-owned G2P sidecar before selecting this instance.
+# [providers.tts.instances.kokoro_vi]
+# adapter = "kokoro_vi_onnx"
+# model = "kokoro_vi_contextbox"
+# num_threads = 1
+# voice = "diem_trinh"
+# language = "vi-VN"
+# speed_percent = 100
+# preload = false
+
+# [runtime.kokoro_vi]
+# g2p_executable = "runtime/kokoro-vi/kokoro_vi_g2p"
+
 [tts]
 timeout_ms = 15000
 

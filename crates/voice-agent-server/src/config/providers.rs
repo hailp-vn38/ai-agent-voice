@@ -10,6 +10,7 @@ pub use crate::providers::{
     llm::openai::config::OpenAiConfig,
     tts::{
         chillaudio::config::ChillAudioWsConfig,
+        kokoro_vi::config::KokoroViOnnxConfig,
         zerotts::config::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig},
     },
 };
@@ -126,6 +127,8 @@ pub enum TtsInstanceConfig {
     ZeroTtsOnnx(ZeroTtsOnnxConfig),
     #[serde(rename = "chillaudio_ws")]
     ChillAudioWs(ChillAudioWsConfig),
+    #[serde(rename = "kokoro_vi_onnx")]
+    KokoroViOnnx(KokoroViOnnxConfig),
 }
 
 impl TtsInstanceConfig {
@@ -133,12 +136,14 @@ impl TtsInstanceConfig {
         match self {
             Self::ZeroTtsOnnx(_) => "zerotts_onnx",
             Self::ChillAudioWs(_) => "chillaudio_ws",
+            Self::KokoroViOnnx(_) => "kokoro_vi_onnx",
         }
     }
     pub const fn preload(&self) -> bool {
         match self {
             Self::ZeroTtsOnnx(config) => config.preload,
             Self::ChillAudioWs(config) => config.preload,
+            Self::KokoroViOnnx(config) => config.preload,
         }
     }
 }

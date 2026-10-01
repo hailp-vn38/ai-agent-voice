@@ -6,6 +6,7 @@ use thiserror::Error;
 
 pub(crate) mod chillaudio;
 mod file_delivery;
+pub(crate) mod kokoro_vi;
 pub(crate) mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
 /// Compatibility exports for native ZeroTTS tooling.

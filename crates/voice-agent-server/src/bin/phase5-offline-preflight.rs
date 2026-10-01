@@ -90,11 +90,12 @@ fn run() -> Result<()> {
         &config.deployment.models.root,
         match tts_instance {
             voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(options) => &options.model,
-            _ => {
-                anyhow::bail!("Phase 5 offline preflight requires a ZeroTTS effective TTS instance")
-            }
+            voice_agent_server::config::TtsInstanceConfig::KokoroViOnnx(options) => &options.model,
+            voice_agent_server::config::TtsInstanceConfig::ChillAudioWs(_) => anyhow::bail!(
+                "Phase 5 offline preflight requires a local-model effective TTS instance"
+            ),
         },
-        "zerotts_onnx",
+        tts_instance.adapter(),
         &config.deployment,
     )?;
     let registry = compiled_provider_registry();
