@@ -16,7 +16,7 @@ pub use generation_gate::GenerationGate;
 pub use profile::{
     ActiveTemplateProfile, AdmittedSessionProfile, EffectiveSessionProfile, ProfileSource,
     ProfileUnavailable, ResolvedTemplateProfile, TemplateSwitchCatalog,
-    resolve_effective_session_profile,
+    resolve_effective_session_profile, resolve_effective_session_profile_with_override,
 };
 pub use state::SessionPhase;
 pub use turn::{ActiveTurnLimiter, TurnId};

@@ -1,6 +1,7 @@
 //! Admin templates resources.
 use super::agents::get_agent_by;
 use super::*;
+use sqlx::QueryBuilder;
 
 mod relationships;
 
@@ -134,7 +135,7 @@ pub(super) async fn get_template(
 
 pub(super) async fn list_templates(
     State(state): State<AppState>,
-    Query(query): Query<PageQuery>,
+    Query(query): Query<TemplateListQuery>,
     request: Request,
 ) -> Response {
     let (page, size) = match page_bounds(query.page, query.page_size) {
@@ -145,7 +146,111 @@ pub(super) async fn list_templates(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match sqlx::query_as::<_, Template>("SELECT id,key,name,description,language,prompt,enabled,revision,created_at,updated_at FROM agent_templates ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page - 1) * size)).fetch_all(pool).await { Ok(items) => Json(serde_json::json!({"items":items,"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(), Err(e) => sql_error(&request, &e) }
+    let order = match query.sort.as_deref().unwrap_or("key") {
+        "key" => "key ASC",
+        "-key" => "key DESC",
+        "name" => "name ASC, key ASC",
+        "-name" => "name DESC, key ASC",
+        "language" => "language ASC, key ASC",
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
+    };
+    let filters = match TemplateFilters::from_query(&query) {
+        Ok(value) => value,
+        Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
+    };
+    let total = match template_count(pool, &filters).await {
+        Ok(value) => value,
+        Err(value) => return sql_error(&request, &value),
+    };
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "SELECT id,key,name,description,language,prompt,enabled,revision,created_at,updated_at FROM agent_templates",
+    );
+    append_template_filters(&mut builder, &filters);
+    builder
+        .push(" ORDER BY ")
+        .push(order)
+        .push(" LIMIT ")
+        .push_bind(i64::from(size))
+        .push(" OFFSET ")
+        .push_bind(i64::from((page - 1) * size));
+    match builder.build_query_as::<Template>().fetch_all(pool).await { Ok(items) => Json(serde_json::json!({"items":items,"page":page,"page_size":size,"max_page_size":PAGE_MAX,"total":total,"total_pages":template_total_pages(total, size)})).into_response(), Err(value) => sql_error(&request, &value) }
+}
+
+#[derive(Deserialize)]
+pub(super) struct TemplateListQuery {
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    sort: Option<String>,
+}
+struct TemplateFilters {
+    enabled: Option<bool>,
+    q: Option<String>,
+    language: Option<String>,
+}
+impl TemplateFilters {
+    fn from_query(query: &TemplateListQuery) -> Result<Self, ()> {
+        let q = query.q.clone().filter(|value| !value.is_empty());
+        let language = query.language.clone().filter(|value| !value.is_empty());
+        if q.as_ref().is_some_and(|value| value.len() > 128)
+            || language.as_ref().is_some_and(|value| value.len() > 32)
+        {
+            return Err(());
+        }
+        Ok(Self {
+            enabled: query.enabled,
+            q,
+            language,
+        })
+    }
+}
+fn append_template_filters(builder: &mut QueryBuilder<Sqlite>, filters: &TemplateFilters) {
+    let mut first = true;
+    let mut clause = |builder: &mut QueryBuilder<Sqlite>| {
+        builder.push(if first { " WHERE " } else { " AND " });
+        first = false;
+    };
+    if let Some(enabled) = filters.enabled {
+        clause(builder);
+        builder.push("enabled=").push_bind(i64::from(enabled));
+    }
+    if let Some(language) = &filters.language {
+        clause(builder);
+        builder.push("language=").push_bind(language.clone());
+    }
+    if let Some(q) = &filters.q {
+        clause(builder);
+        let q = format!(
+            "%{}%",
+            q.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        builder
+            .push("(key LIKE ")
+            .push_bind(q.clone())
+            .push(" ESCAPE '\\' OR name LIKE ")
+            .push_bind(q.clone())
+            .push(" ESCAPE '\\' OR description LIKE ")
+            .push_bind(q)
+            .push(" ESCAPE '\\')");
+    }
+}
+async fn template_count(pool: &SqlitePool, filters: &TemplateFilters) -> Result<i64, sqlx::Error> {
+    let mut builder = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM agent_templates");
+    append_template_filters(&mut builder, filters);
+    builder.build_query_scalar().fetch_one(pool).await
+}
+fn template_total_pages(total: i64, page_size: u32) -> i64 {
+    (total + i64::from(page_size) - 1) / i64::from(page_size)
 }
 pub(super) async fn patch_template(
     State(state): State<AppState>,

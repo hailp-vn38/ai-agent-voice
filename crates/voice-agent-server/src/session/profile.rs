@@ -255,6 +255,27 @@ pub fn resolve_effective_session_profile(
     config: &AppConfig,
     runtimes: &RuntimeCatalog,
 ) -> Result<EffectiveSessionProfile, ProfileUnavailable> {
+    resolve_effective_session_profile_with_override(
+        device_db_id,
+        None,
+        agent_id,
+        agent_key,
+        assignments,
+        config,
+        runtimes,
+    )
+}
+
+/// Same immutable resolution seam with the admitted Device's optional Template selection.
+pub fn resolve_effective_session_profile_with_override(
+    device_db_id: i64,
+    template_override_id: Option<i64>,
+    agent_id: i64,
+    agent_key: &str,
+    assignments: &[AdmittedAssignment],
+    config: &AppConfig,
+    runtimes: &RuntimeCatalog,
+) -> Result<EffectiveSessionProfile, ProfileUnavailable> {
     if assignments.is_empty() {
         let mut profile = EffectiveSessionProfile::server_default(config)?;
         profile.device_db_id = device_db_id;
@@ -263,10 +284,15 @@ pub fn resolve_effective_session_profile(
         return Ok(profile);
     }
 
-    let default = assignments
-        .iter()
-        .find(|assignment| assignment.is_default && assignment.assignment_enabled)
-        .ok_or(ProfileUnavailable)?;
+    let default = match template_override_id {
+        Some(template_id) => assignments.iter().find(|assignment| {
+            assignment.template_id == template_id && assignment.assignment_enabled
+        }),
+        None => assignments
+            .iter()
+            .find(|assignment| assignment.is_default && assignment.assignment_enabled),
+    }
+    .ok_or(ProfileUnavailable)?;
     let active = resolve_template(default, runtimes).map_err(|error| {
         warn!(
             agent_key,

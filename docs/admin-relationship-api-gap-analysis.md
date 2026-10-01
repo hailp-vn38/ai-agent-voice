@@ -1,6 +1,8 @@
 # Đánh giá gap Admin API và kế hoạch Web Admin
 
-**Trạng thái:** P0 relationship read/unlink hoàn thành tại commit `22d500b` (2026-10-01).
+**Trạng thái:** P0 relationship read/unlink hoàn thành tại commit `22d500b` (2026-10-01). P1
+control-plane đã hoàn thành phần có contract cụ thể; Vision Provider vẫn cần một quyết định kiến
+trúc riêng.
 
 Tài liệu lưu đánh giá ban đầu đối chiếu **Postman collection đang làm việc** với router thật của branch `dev-test` tại commit `4a2a5f932bff181de0cf3e8da7686ddbdcf6bad7`. Collection hiện nằm ở `docs/api/` nhưng chưa được Git track, vì vậy không nên gọi nó là artifact đã thuộc commit/branch. Admin API chỉ mount khi `database.enabled=true && api.enabled=true`, dùng Bearer admin token và PATCH/PUT mutation dùng optimistic concurrency qua `If-Match`.
 
@@ -15,6 +17,25 @@ Tài liệu lưu đánh giá ban đầu đối chiếu **Postman collection đan
 
 Mọi GET relationship trả revision của owner; inverse usage có pagination và `total` được đếm trước `LIMIT/OFFSET`. Test bao phủ `If-Match` thiếu/stale, revision conflict và relationship không đổi sau conflict.
 
+## Cập nhật thực thi P1
+
+Đã triển khai với desired-state semantics; thay đổi không materialize Provider và không làm thay
+đổi Voice Session đã admit:
+
+- `Device.template_key` là nullable override. Create/get/list/patch đều hiển thị field này; chỉ
+  nhận Template enabled có assignment enabled tới Agent enabled của Device. `null` quay về
+  default Template của Agent. Admission chọn override trong profile snapshot và fail-closed nếu
+  graph không còn hợp lệ.
+- `GET /api/admin/system` trả version, uptime monotonic, DB reachability, số Provider theo trạng
+  thái runtime và số session active; không trả path, config hay secret.
+- `GET /api/admin/providers` hỗ trợ `q`, `type`, `enabled`, `page`, `page_size`, `sort`; response
+  giữ tương thích cũ và thêm `total`, `total_pages`, `facets` (`vad`, `asr`, `llm`, `tts`).
+- `GET /api/admin/templates` hỗ trợ `q`, `language`, `enabled`, `page`, `page_size`, `sort`; thêm
+  `total` và `total_pages`. `q` khớp key/name/description, còn language là exact filter.
+
+Vision Provider chưa được đánh dấu hoàn thành: contract hiện chưa quy định ProviderType, adapter,
+validation DB, materialization runtime và Template binding cho Vision.
+
 ## Đánh giá ban đầu
 
 Với UI Agents → Templates → Providers mà ta vừa thiết kế, các API còn thiếu đáng chú ý là:
@@ -28,12 +49,12 @@ Với UI Agents → Templates → Providers mà ta vừa thiết kế, các API 
 | **P0 hoàn thành** | `GET /api/admin/templates/{template_key}/agents` | Biết những Agent nào đang dùng Template |
 | **P0 hoàn thành** | `GET /api/admin/providers/{provider_key}/templates` | Hiển thị `Used by N templates` trên Provider Catalog |
 | **Cần chốt policy** | DELETE Agent/Device/Template/Provider | Hiện chưa có route, nhưng không phải CRUD đơn giản vì foreign key, history, revision và Runtime Catalog |
-| **P1** | Device Template Override API | Cho một Device dùng Template khác default của Agent |
-| **P1** | `GET /api/admin/system` hoặc `/api/admin/system/status` | System page: version, DB, runtime, uptime, provider state... |
-| **P1** | Provider list filter/search | Search/type/status filter server-side |
-| **P1** | Template list filter/search | Search theo name/language/usage |
-| **P1** | Pagination totals/facets | `total`, counts theo provider type, số trang |
-| **P1** | Vision Provider APIs | Vision hiện chưa nằm trong DB Provider/Template Provider Binding |
+| **P1 hoàn thành** | Device Template Override API | Device dùng Template khác default của Agent, snapshot ở admission |
+| **P1 hoàn thành** | `GET /api/admin/system` | System page: version, DB, runtime, uptime, provider state |
+| **P1 hoàn thành** | Provider list filter/search | Search/type/enabled filter server-side, total/facets |
+| **P1 hoàn thành** | Template list filter/search | Search key/name/description, language/enabled filter, total |
+| **P1 hoàn thành** | Pagination totals/facets | `total`, `total_pages`, counts theo Provider type |
+| **Cần chốt contract** | Vision Provider APIs | Vision hiện chưa nằm trong DB Provider/Template Provider Binding |
 | **P2** | `POST /api/admin/providers/{key}/test/vad` | Test VAD từ Provider Detail |
 | **P2** | `POST /api/admin/providers/{key}/test/vision` | Test Vision nếu Vision trở thành Provider Instance |
 | **P2** | DELETE MCP Server / unlink MCP binding | Bổ sung sau khi chốt policy deletion và revision của Agent |

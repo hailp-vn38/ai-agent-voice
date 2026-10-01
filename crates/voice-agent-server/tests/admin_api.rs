@@ -138,6 +138,56 @@ allowed_hosts = ["mcp.example.test"]
     (format!("http://{address}"), task)
 }
 
+/// Keeps the Admin router mounted while making the already-configured database unavailable.
+/// This exercises the public status route's degradation response rather than a startup failure.
+async fn server_with_closed_database() -> (String, tokio::task::JoinHandle<()>) {
+    let config_path = std::env::temp_dir().join(format!(
+        "voice-agent-admin-closed-{}.toml",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+enabled = true
+url = "{}"
+[api]
+enabled = true
+admin_token = "admin-test-token"
+"#,
+            database_url()
+        ),
+    )
+    .unwrap();
+    let config = AppConfig::parse_and_resolve(&config_path).unwrap();
+    fs::remove_file(config_path).unwrap();
+    let state = AppState::from_provider_set_with_database(
+        config.clone(),
+        Arc::new(ProviderSet::unavailable()),
+        Database::connect_if_enabled(&config.database)
+            .await
+            .unwrap(),
+    );
+    state.database.as_ref().unwrap().pool().close().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state))
+            .await
+            .unwrap()
+    });
+    (format!("http://{address}"), task)
+}
+
 async fn server_with_loaded_llm() -> (
     String,
     Arc<Mutex<Vec<LlmRequest>>>,
@@ -431,6 +481,190 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
         invalid.json::<serde_json::Value>().await.unwrap()["error"]["code"],
         "invalid_test_input"
     );
+    task.abort();
+}
+
+#[tokio::test]
+async fn admin_p1_read_models_and_device_template_override_are_public_contracts() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let auth = "admin-test-token";
+    let agents = format!("{base}/api/admin/agents");
+    let templates = format!("{base}/api/admin/templates");
+    assert_eq!(
+        client
+            .post(&agents)
+            .bearer_auth(auth)
+            .json(&serde_json::json!({"key":"kitchen","name":"Kitchen"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    for (key, name, language) in [
+        ("default", "Default assistant", "vi-VN"),
+        ("kids", "Kids assistant", "en-US"),
+    ] {
+        assert_eq!(client.post(&templates).bearer_auth(auth).json(&serde_json::json!({"key":key,"name":name,"language":language,"prompt":"A bounded prompt"})).send().await.unwrap().status(), StatusCode::CREATED);
+    }
+    let assigned = client
+        .put(format!("{base}/api/admin/agents/kitchen/templates/default"))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(assigned.status(), StatusCode::OK);
+    assert_eq!(
+        client
+            .put(format!("{base}/api/admin/agents/kitchen/templates/kids"))
+            .bearer_auth(auth)
+            .header("if-match", "\"2\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+
+    let filtered: serde_json::Value = client
+        .get(format!(
+            "{templates}?q=Kids&language=en-US&page_size=1&sort=name"
+        ))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(filtered["total"], 1);
+    assert_eq!(filtered["total_pages"], 1);
+    assert_eq!(filtered["items"][0]["key"], "kids");
+    assert_eq!(
+        client
+            .get(format!("{templates}?sort=unsafe"))
+            .bearer_auth(auth)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let providers = format!("{base}/api/admin/providers");
+    for (key, name, kind, adapter, config_json) in [
+        (
+            "vad_kids",
+            "Kids VAD",
+            "vad",
+            "silero_onnx",
+            serde_json::json!({"model":"silero","num_threads":1}),
+        ),
+        (
+            "llm_main",
+            "Main LLM",
+            "llm",
+            "openai",
+            serde_json::json!({"base_url":"https://example.test/v1","model":"test","max_tokens":8}),
+        ),
+    ] {
+        assert_eq!(
+            client
+                .post(&providers)
+                .bearer_auth(auth)
+                .json(&serde_json::json!({"key":key,"name":name,"type":kind,"adapter":adapter,"config_json":config_json}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+    }
+    let provider_page: serde_json::Value = client
+        .get(format!("{providers}?type=vad&q=Kids&page_size=1&sort=name"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(provider_page["total"], 1);
+    assert_eq!(provider_page["facets"]["vad"], 1);
+    assert_eq!(provider_page["facets"]["llm"], 0);
+    assert_eq!(provider_page["items"][0]["key"], "vad_kids");
+
+    let device_url = format!("{base}/api/admin/devices");
+    let device: serde_json::Value = client.post(&device_url).bearer_auth(auth).json(&serde_json::json!({"device_id":"kitchen-speaker","agent_key":"kitchen","template_key":"kids"})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(device["template_key"], "kids");
+    let cleared: serde_json::Value = client
+        .patch(format!("{device_url}/kitchen-speaker"))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"template_key":null}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(cleared["template_key"].is_null());
+    assert_eq!(
+        client
+            .patch(format!("{device_url}/kitchen-speaker"))
+            .bearer_auth(auth)
+            .header("if-match", "\"2\"")
+            .json(&serde_json::json!({"template_key":"default"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .patch(format!("{device_url}/kitchen-speaker"))
+            .bearer_auth(auth)
+            .header("if-match", "\"3\"")
+            .json(&serde_json::json!({"template_key":"missing"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let system: serde_json::Value = client
+        .get(format!("{base}/api/admin/system"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(system["database"]["enabled"], true);
+    assert!(system["uptime_seconds"].is_u64());
+    task.abort();
+}
+
+#[tokio::test]
+async fn admin_system_reports_database_unavailable_without_leaking_runtime_details() {
+    let (base, task) = server_with_closed_database().await;
+    let response = Client::new()
+        .get(format!("{base}/api/admin/system"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["database"]["status"], "unavailable");
+    assert!(body["providers"]["configured"].is_null());
+    assert!(body["providers"]["loaded"].is_null());
+    assert!(!body.to_string().contains("sqlite"));
     task.abort();
 }
 

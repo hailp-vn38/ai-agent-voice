@@ -1,5 +1,6 @@
 //! Admin providers resources.
 use super::*;
+use sqlx::QueryBuilder;
 
 #[derive(Serialize, FromRow)]
 struct Provider {
@@ -180,7 +181,7 @@ pub(super) async fn get_provider(
 }
 pub(super) async fn list_providers(
     State(state): State<AppState>,
-    Query(query): Query<PageQuery>,
+    Query(query): Query<ProviderListQuery>,
     request: Request,
 ) -> Response {
     let (page, size) = match page_bounds(query.page, query.page_size) {
@@ -191,7 +192,149 @@ pub(super) async fn list_providers(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match sqlx::query_as::<_,Provider>("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await{Ok(items)=>Json(serde_json::json!({"items":items.into_iter().map(|item| provider_response(item, state.database_runtime_snapshot.as_deref())).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
+    let order = match query.sort.as_deref().unwrap_or("key") {
+        "key" => "key ASC",
+        "-key" => "key DESC",
+        "name" => "name ASC, key ASC",
+        "-name" => "name DESC, key ASC",
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
+    };
+    let filters = match ProviderFilters::from_query(&query) {
+        Ok(value) => value,
+        Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
+    };
+    let total = match provider_count(pool, &filters, true).await {
+        Ok(value) => value,
+        Err(value) => return sql_error(&request, &value),
+    };
+    let facets = match provider_facets(pool, &filters).await {
+        Ok(value) => value,
+        Err(value) => return sql_error(&request, &value),
+    };
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers",
+    );
+    append_provider_filters(&mut builder, &filters, true);
+    builder
+        .push(" ORDER BY ")
+        .push(order)
+        .push(" LIMIT ")
+        .push_bind(i64::from(size))
+        .push(" OFFSET ")
+        .push_bind(i64::from((page - 1) * size));
+    match builder.build_query_as::<Provider>().fetch_all(pool).await { Ok(items) => Json(serde_json::json!({"items":items.into_iter().map(|item| provider_response(item, state.database_runtime_snapshot.as_deref())).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX,"total":total,"total_pages":provider_total_pages(total, size),"facets":facets})).into_response(), Err(value) => sql_error(&request, &value) }
+}
+
+#[derive(Deserialize)]
+pub(super) struct ProviderListQuery {
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
+    #[serde(default)]
+    sort: Option<String>,
+}
+struct ProviderFilters {
+    enabled: Option<bool>,
+    q: Option<String>,
+    kind: Option<String>,
+}
+impl ProviderFilters {
+    fn from_query(query: &ProviderListQuery) -> Result<Self, ()> {
+        let kind = query.kind.clone();
+        if kind
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts"))
+        {
+            return Err(());
+        }
+        let q = query.q.clone().filter(|value| !value.is_empty());
+        if q.as_ref().is_some_and(|value| value.len() > 128) {
+            return Err(());
+        }
+        Ok(Self {
+            enabled: query.enabled,
+            q,
+            kind,
+        })
+    }
+}
+fn append_provider_filters(
+    builder: &mut QueryBuilder<Sqlite>,
+    filters: &ProviderFilters,
+    include_kind: bool,
+) {
+    let mut first = true;
+    let mut clause = |builder: &mut QueryBuilder<Sqlite>| {
+        builder.push(if first { " WHERE " } else { " AND " });
+        first = false;
+    };
+    if let Some(enabled) = filters.enabled {
+        clause(builder);
+        builder.push("enabled=").push_bind(i64::from(enabled));
+    }
+    if include_kind {
+        if let Some(kind) = &filters.kind {
+            clause(builder);
+            builder.push("type=").push_bind(kind.clone());
+        }
+    }
+    if let Some(q) = &filters.q {
+        clause(builder);
+        let q = format!(
+            "%{}%",
+            q.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        builder
+            .push("(key LIKE ")
+            .push_bind(q.clone())
+            .push(" ESCAPE '\\' OR name LIKE ")
+            .push_bind(q)
+            .push(" ESCAPE '\\')");
+    }
+}
+async fn provider_count(
+    pool: &SqlitePool,
+    filters: &ProviderFilters,
+    include_kind: bool,
+) -> Result<i64, sqlx::Error> {
+    let mut builder = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM providers");
+    append_provider_filters(&mut builder, filters, include_kind);
+    builder.build_query_scalar().fetch_one(pool).await
+}
+async fn provider_facets(
+    pool: &SqlitePool,
+    filters: &ProviderFilters,
+) -> Result<Value, sqlx::Error> {
+    let mut builder = QueryBuilder::<Sqlite>::new("SELECT type, COUNT(*) FROM providers");
+    append_provider_filters(&mut builder, filters, false);
+    builder.push(" GROUP BY type");
+    let counts: Vec<(String, i64)> = builder.build_query_as().fetch_all(pool).await?;
+    let mut facets = serde_json::Map::new();
+    for kind in ["vad", "asr", "llm", "tts"] {
+        facets.insert(
+            kind.into(),
+            Value::from(
+                counts
+                    .iter()
+                    .find(|(value, _)| value == kind)
+                    .map(|(_, count)| *count)
+                    .unwrap_or(0),
+            ),
+        );
+    }
+    Ok(Value::Object(facets))
+}
+fn provider_total_pages(total: i64, page_size: u32) -> i64 {
+    (total + i64::from(page_size) - 1) / i64::from(page_size)
 }
 
 pub(super) async fn list_provider_templates(

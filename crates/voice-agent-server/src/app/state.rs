@@ -12,7 +12,7 @@ use crate::{
     services::provider_diagnostic::{ProviderDiagnosticLimiter, ProviderDiagnosticService},
     session::{
         ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable, WriterOutcomeProbe,
-        resolve_effective_session_profile,
+        resolve_effective_session_profile_with_override,
     },
     telemetry::TracingTelemetry,
     tools::external_mcp::{ExternalMcpManager, ExternalMcpSnapshot, SessionExternalMcp},
@@ -21,11 +21,17 @@ use crate::{
         WorkerSupervisor,
     },
 };
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// Application-owned state. Production sessions resolve a fixed runtime snapshot from catalogs.
 #[derive(Clone)]
 pub struct AppState {
+    /// Monotonic process-local start marker used only by the safe Admin system summary.
+    pub started_at: Instant,
     pub config: Arc<AppConfig>,
     pub providers: Arc<ProviderCatalog>,
     pub runtimes: Arc<RuntimeCatalog>,
@@ -306,8 +312,9 @@ impl AppState {
                     SessionProfileAdmissionError::AdmissionUnavailable
                 }
             })?;
-        let profile = resolve_effective_session_profile(
+        let profile = resolve_effective_session_profile_with_override(
             graph.device_db_id,
+            graph.template_override_id,
             graph.agent.id,
             &graph.agent.key,
             &graph.assignments,
@@ -428,6 +435,7 @@ impl AppState {
             Duration::from_millis(config.api.provider_tests.timeout_ms),
         ));
         let state = Self {
+            started_at: Instant::now(),
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
             config,
             providers: Arc::new(loaded.providers),

@@ -25,6 +25,7 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route("/system", get(get_system))
         .route("/agents", get(list_agents).post(create_agent))
         .route("/agents/{key}", get(get_agent).patch(patch_agent))
         .route(
@@ -102,6 +103,7 @@ mod mcp_servers;
 mod provider_adapters;
 mod provider_tests;
 mod providers;
+mod system;
 mod templates;
 
 use agents::{create_agent, get_agent, list_agents, patch_agent};
@@ -119,6 +121,7 @@ use provider_tests::{test_asr_provider, test_llm_provider, test_tts_provider};
 use providers::{
     create_provider, get_provider, list_provider_templates, list_providers, patch_provider,
 };
+use system::get_system;
 use templates::{
     assign_template, bind_template_provider, create_template, get_template, list_agent_templates,
     list_template_agents, list_template_providers, list_templates, patch_template,

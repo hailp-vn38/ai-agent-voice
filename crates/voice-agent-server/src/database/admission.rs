@@ -16,6 +16,7 @@ use super::{Database, DatabaseError, map_sqlx_error};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceAdmissionGraph {
     pub device_db_id: i64,
+    pub template_override_id: Option<i64>,
     pub agent: AdmittedAgent,
     /// Every assignment row the Agent has, including disabled ones.  A non-empty list means the
     /// Agent entered the Template mechanism and can never fall back to server defaults.
@@ -82,15 +83,23 @@ impl Database {
         &self,
         device_id: &str,
     ) -> Result<Option<DeviceAdmissionGraph>, DeviceAdmissionError> {
-        let row = sqlx::query_as::<_, (i64, i64, i64, i64, String)>(
-            "SELECT d.id, a.id, d.enabled, a.enabled, a.key \
+        let row = sqlx::query_as::<_, (i64, Option<i64>, i64, i64, i64, String)>(
+            "SELECT d.id, d.template_id, a.id, d.enabled, a.enabled, a.key \
              FROM devices d JOIN agents a ON a.id = d.agent_id WHERE d.device_id = ?",
         )
         .bind(device_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
-        let Some((device_db_id, agent_id, device_enabled, agent_enabled, key)) = row else {
+        let Some((
+            device_db_id,
+            template_override_id,
+            agent_id,
+            device_enabled,
+            agent_enabled,
+            key,
+        )) = row
+        else {
             return Ok(None);
         };
 
@@ -100,6 +109,7 @@ impl Database {
         let assignments = self.assignment_graph(agent_id).await?;
         Ok(Some(DeviceAdmissionGraph {
             device_db_id,
+            template_override_id,
             agent: AdmittedAgent { id: agent_id, key },
             assignments,
         }))

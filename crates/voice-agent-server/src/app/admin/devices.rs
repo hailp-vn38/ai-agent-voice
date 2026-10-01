@@ -1,5 +1,4 @@
 //! Admin devices resources.
-use super::agents::get_agent_by;
 use super::*;
 
 #[derive(Serialize, FromRow)]
@@ -7,6 +6,7 @@ struct Device {
     id: i64,
     device_id: String,
     agent_key: String,
+    template_key: Option<String>,
     name: Option<String>,
     description: Option<String>,
     enabled: i64,
@@ -25,6 +25,8 @@ struct CreateDevice {
     description: Option<String>,
     #[serde(default)]
     metadata_json: Option<Value>,
+    #[serde(default)]
+    template_key: Option<String>,
 }
 #[derive(Deserialize)]
 struct PatchDevice {
@@ -40,6 +42,8 @@ struct PatchDevice {
     metadata_json: Patch<Value>,
     #[serde(default)]
     enabled: Patch<bool>,
+    #[serde(default)]
+    template_key: Patch<String>,
 }
 pub(super) async fn create_device(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (_, CreateDevice) = match json(request).await {
@@ -72,10 +76,6 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
             );
         }
     };
-    let agent = match get_agent_by(pool, &body.agent_key).await {
-        Ok(v) if v.enabled == 1 => v,
-        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_agent"),
-    };
     let metadata = body.metadata_json.map(|v| v.to_string());
     let mut tx = match pool.begin().await {
         Ok(v) => v,
@@ -87,8 +87,27 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
             );
         }
     };
+    let agent: Result<(i64, i64), _> = sqlx::query_as("SELECT id, enabled FROM agents WHERE key=?")
+        .bind(&body.agent_key)
+        .fetch_one(&mut *tx)
+        .await;
+    let (agent_id, _) = match agent {
+        Ok(value) if value.1 == 1 => value,
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_agent"),
+    };
+    let template_id =
+        match template_override_id(&mut tx, agent_id, body.template_key.as_deref()).await {
+            Ok(value) => value,
+            Err(()) => {
+                return error(
+                    &request,
+                    StatusCode::BAD_REQUEST,
+                    "invalid_template_override",
+                );
+            }
+        };
     let time = now();
-    let result=sqlx::query("INSERT INTO devices (device_id,agent_id,name,description,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(&body.device_id).bind(agent.id).bind(&body.name).bind(&body.description).bind(metadata).bind(time).bind(time).execute(&mut *tx).await;
+    let result=sqlx::query("INSERT INTO devices (device_id,agent_id,template_id,name,description,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(&body.device_id).bind(agent_id).bind(template_id).bind(&body.name).bind(&body.description).bind(metadata).bind(time).bind(time).execute(&mut *tx).await;
     let device_id = match result {
         Ok(v) => v.last_insert_rowid(),
         Err(error_value) => return mutation_sql_error(&request, &error_value),
@@ -147,7 +166,7 @@ pub(super) async fn get_device(
     }
 }
 async fn get_device_by(pool: &SqlitePool, device_id: &str) -> Result<Device, sqlx::Error> {
-    sqlx::query_as("SELECT d.id,d.device_id,a.key AS agent_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id WHERE d.device_id=?").bind(device_id).fetch_one(pool).await
+    sqlx::query_as("SELECT d.id,d.device_id,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.device_id=?").bind(device_id).fetch_one(pool).await
 }
 pub(super) async fn list_devices(
     State(state): State<AppState>,
@@ -183,7 +202,7 @@ pub(super) async fn list_devices(
         _ => "d.device_id ASC",
     };
     let sql = format!(
-        "SELECT d.id,d.device_id,a.key AS agent_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id WHERE (? IS NULL OR d.enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
+        "SELECT d.id,d.device_id,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE (? IS NULL OR d.enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
     );
     let rows = sqlx::query_as::<_, Device>(&sql)
         .bind(enabled)
@@ -238,9 +257,10 @@ pub(super) async fn patch_device(
         Some(Some(value)) => value,
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "immutable_field"),
     };
-    let agent = match get_agent_by(pool, &agent_key).await {
-        Ok(v) if v.enabled == 1 => v,
-        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_agent"),
+    let requested_template_key = match body.template_key.value() {
+        None => old.template_key.clone(),
+        Some(Some(value)) => Some(value),
+        Some(None) => None,
     };
     let name = body.name.value().unwrap_or(old.name.clone());
     let description = body.description.value().unwrap_or(old.description.clone());
@@ -272,7 +292,26 @@ pub(super) async fn patch_device(
             );
         }
     };
-    let update = sqlx::query("UPDATE devices SET agent_id=?,name=?,description=?,metadata_json=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(agent.id).bind(name).bind(description).bind(metadata).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await;
+    let agent: Result<(i64, i64), _> = sqlx::query_as("SELECT id, enabled FROM agents WHERE key=?")
+        .bind(&agent_key)
+        .fetch_one(&mut *tx)
+        .await;
+    let (agent_id, _) = match agent {
+        Ok(value) if value.1 == 1 => value,
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_agent"),
+    };
+    let template_id =
+        match template_override_id(&mut tx, agent_id, requested_template_key.as_deref()).await {
+            Ok(value) => value,
+            Err(()) => {
+                return error(
+                    &request,
+                    StatusCode::BAD_REQUEST,
+                    "invalid_template_override",
+                );
+            }
+        };
+    let update = sqlx::query("UPDATE devices SET agent_id=?,template_id=?,name=?,description=?,metadata_json=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(agent_id).bind(template_id).bind(name).bind(description).bind(metadata).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await;
     let update = match update {
         Ok(result) if result.rows_affected() == 1 => Ok(()),
         Ok(_) => Err(()),
@@ -314,4 +353,18 @@ pub(super) async fn patch_device(
                 "database_unavailable",
             )
         })
+}
+
+/// Returns the selected Template only when it is enabled and has an enabled assignment to the
+/// resulting Device Agent.  This is duplicated at admission as a fail-closed integrity check.
+async fn template_override_id(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    agent_id: i64,
+    key: Option<&str>,
+) -> Result<Option<i64>, ()> {
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    sqlx::query_scalar("SELECT t.id FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id WHERE ata.agent_id=? AND t.key=? AND ata.enabled=1 AND t.enabled=1")
+        .bind(agent_id).bind(key).fetch_optional(&mut **tx).await.map_err(|_| ())?.ok_or(()).map(Some)
 }
