@@ -6,7 +6,7 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use voice_agent_server::{
-    config::{DeploymentConfig, ModelAcknowledgement, ZeroTtsOnnxConfig},
+    config::{DeploymentConfig, ModelAcknowledgement, TtsProviderConfig, ZeroTtsOnnxConfig},
     models::{ModelAcquirer, ModelError, ModelPreparation, ModelPreparationConfig, prepare},
     providers::compiled_provider_registry,
     providers::tts::{WarmupPcm, validate_warmup_pcm},
@@ -123,11 +123,15 @@ fn factory_rejects_a_prepared_zerotts_pack_missing_a_required_role() {
         .tts_factory("zerotts_onnx")
         .unwrap();
     let error = match factory.build(
-        &ZeroTtsOnnxConfig {
-            model: "zerotts_default".into(),
-            num_threads: 2,
-            voice: "maichi".into(),
-            delivery_mode: Default::default(),
+        &TtsProviderConfig {
+            adapter: "zerotts_onnx".into(),
+            zerotts_onnx: Some(ZeroTtsOnnxConfig {
+                model: "zerotts_default".into(),
+                num_threads: 2,
+                voice: "maichi".into(),
+                delivery_mode: Default::default(),
+            }),
+            kokoro_vi_onnx: None,
         },
         &voice_agent_server::config::RuntimeConfig::default(),
         &model,

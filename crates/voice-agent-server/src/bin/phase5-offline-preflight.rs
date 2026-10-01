@@ -94,20 +94,15 @@ fn run() -> Result<()> {
         "zipformer_sherpa",
         &config.deployment,
     )?;
+    let registry = compiled_provider_registry();
+    let tts_factory = registry.tts_factory(&config.providers.tts.adapter)?;
     let tts_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &config
-            .providers
-            .tts
-            .zerotts_onnx
-            .as_ref()
-            .context("zerotts_onnx options are required")?
-            .model,
-        "zerotts_onnx",
+        tts_factory.model_identity(&config.providers.tts)?,
+        tts_factory.adapter(),
         &config.deployment,
     )?;
-    let registry = compiled_provider_registry();
     registry.vad_factory(&config.providers.vad.adapter)?.build(
         &config.providers.vad,
         &config.runtime,
@@ -116,16 +111,7 @@ fn run() -> Result<()> {
     registry
         .asr_factory(&config.providers.asr.adapter)?
         .build(&config.providers.asr, &asr_model)?;
-    registry.tts_factory(&config.providers.tts.adapter)?.build(
-        config
-            .providers
-            .tts
-            .zerotts_onnx
-            .as_ref()
-            .context("zerotts_onnx options are required")?,
-        &config.runtime,
-        &tts_model,
-    )?;
+    tts_factory.build(&config.providers.tts, &config.runtime, &tts_model)?;
     verify_fixture()?;
     Ok(())
 }

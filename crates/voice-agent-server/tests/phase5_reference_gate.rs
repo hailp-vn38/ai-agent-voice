@@ -167,20 +167,25 @@ fn real_tts() -> Arc<dyn TtsProvider> {
             phase5_zerotts_config(),
             &RuntimeConfig {
                 onnx: OnnxRuntimeConfig { library: runtime },
+                ..Default::default()
             },
             &model,
         )
         .unwrap()
 }
 
-fn phase5_zerotts_config() -> &'static voice_agent_server::config::ZeroTtsOnnxConfig {
-    static CONFIG: std::sync::OnceLock<voice_agent_server::config::ZeroTtsOnnxConfig> =
+fn phase5_zerotts_config() -> &'static voice_agent_server::config::TtsProviderConfig {
+    static CONFIG: std::sync::OnceLock<voice_agent_server::config::TtsProviderConfig> =
         std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| voice_agent_server::config::ZeroTtsOnnxConfig {
-        model: "zerotts_default".into(),
-        num_threads: 1,
-        voice: "maichi".into(),
-        delivery_mode: Default::default(),
+    CONFIG.get_or_init(|| voice_agent_server::config::TtsProviderConfig {
+        adapter: "zerotts_onnx".into(),
+        zerotts_onnx: Some(voice_agent_server::config::ZeroTtsOnnxConfig {
+            model: "zerotts_default".into(),
+            num_threads: 1,
+            voice: "maichi".into(),
+            delivery_mode: Default::default(),
+        }),
+        kokoro_vi_onnx: None,
     })
 }
 

@@ -64,6 +64,18 @@ pub(super) fn default_tts_model() -> String {
 pub(super) fn default_tts_voice() -> String {
     "maichi".into()
 }
+pub(super) fn default_kokoro_vi_model() -> String {
+    "kokoro_vi_contextbox".into()
+}
+pub(super) fn default_kokoro_vi_voice() -> String {
+    "diem_trinh".into()
+}
+pub(super) fn default_kokoro_vi_language() -> String {
+    "vi-VN".into()
+}
+pub(super) fn default_kokoro_vi_speed_percent() -> u16 {
+    100
+}
 pub(super) fn default_provider_threads() -> i32 {
     1
 }
@@ -102,6 +114,9 @@ pub(super) fn default_models_root() -> std::path::PathBuf {
 }
 pub(super) fn default_onnx_runtime_library() -> std::path::PathBuf {
     "runtime/onnxruntime/libonnxruntime.dylib".into()
+}
+pub(super) fn default_kokoro_vi_g2p_executable() -> std::path::PathBuf {
+    "runtime/kokoro-vi/kokoro_vi_g2p".into()
 }
 pub(super) fn default_worker_queue_capacity() -> usize {
     32

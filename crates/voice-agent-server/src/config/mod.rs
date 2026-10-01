@@ -376,6 +376,25 @@ impl Default for ModelStoreConfig {
 pub struct RuntimeConfig {
     #[serde(default)]
     pub onnx: OnnxRuntimeConfig,
+    #[serde(default)]
+    pub kokoro_vi: KokoroViRuntimeConfig,
+}
+
+/// Deployment-owned executable for Vietnamese grapheme-to-phoneme conversion.
+/// It is outside mutable provider configuration because it is an execution boundary.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KokoroViRuntimeConfig {
+    #[serde(default = "default_kokoro_vi_g2p_executable")]
+    pub g2p_executable: std::path::PathBuf,
+}
+
+impl Default for KokoroViRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            g2p_executable: default_kokoro_vi_g2p_executable(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

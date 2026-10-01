@@ -4,6 +4,7 @@ use crate::{audio::PcmF32Mono, config::ZeroTtsDeliveryMode};
 use thiserror::Error;
 
 mod file_delivery;
+pub mod kokoro_vi;
 pub mod zerotts_onnx;
 
 /// Terminal output produced by startup-only ZeroTTS warmup.

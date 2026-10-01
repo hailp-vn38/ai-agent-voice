@@ -61,6 +61,23 @@ num_threads = 2
 voice = "maichi"
 delivery_mode = "stream"
 
+# Vietnamese Kokoro uses a deployment-owned JSONL vig2p sidecar and a prepared
+# KOVI_VOICEPACK_V1 binary. Select this block instead of `zerotts_onnx` only
+# after the pinned assets and sidecar have been installed.
+#
+# [providers.tts]
+# adapter = "kokoro_vi_onnx"
+#
+# [providers.tts.kokoro_vi_onnx]
+# model = "kokoro_vi_contextbox"
+# num_threads = 1
+# voice = "diem_trinh"
+# language = "vi-VN"
+# speed_percent = 100
+#
+# [runtime.kokoro_vi]
+# g2p_executable = "runtime/kokoro-vi/kokoro_vi_g2p"
+
 [tts]
 timeout_ms = 15000
 

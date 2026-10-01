@@ -6,15 +6,18 @@ use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig};
 
 use crate::{
     config::{
-        AsrProviderConfig, LlmProviderConfig, RuntimeConfig, TtsProviderConfig, VadProviderConfig,
-        ZeroTtsOnnxConfig,
+        AsrProviderConfig, KokoroViOnnxConfig, LlmProviderConfig, RuntimeConfig, TtsProviderConfig,
+        VadProviderConfig,
     },
     models::ResolvedModel,
     providers::{
         AsrProvider, LlmProvider, ProviderLoadError, TtsProvider, VadProvider,
         asr::ZipformerAsrProvider,
         llm::ConfiguredOpenAiLlm,
-        tts::{ConfiguredZeroTts, ZeroTtsArtifacts},
+        tts::{
+            ConfiguredZeroTts, ZeroTtsArtifacts,
+            kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts},
+        },
         vad::LoadedSileroVad,
     },
 };
@@ -59,7 +62,7 @@ pub trait TtsFactory: Send + Sync {
     ) -> Result<&'a str, ProviderLoadError>;
     fn build(
         &self,
-        config: &ZeroTtsOnnxConfig,
+        config: &TtsProviderConfig,
         runtime: &RuntimeConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError>;
@@ -214,11 +217,14 @@ impl TtsFactory for ZeroTtsOnnxFactory {
 
     fn build(
         &self,
-        config: &ZeroTtsOnnxConfig,
+        config: &TtsProviderConfig,
         runtime: &RuntimeConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
         validate_model_adapter(model, self.adapter())?;
+        let config = config.zerotts_onnx.as_ref().ok_or_else(|| {
+            ProviderLoadError::Configuration("zerotts_onnx options are required".into())
+        })?;
         if config.model != "zerotts_default" || config.voice != "maichi" || config.num_threads <= 0
         {
             return Err(ProviderLoadError::Configuration(
@@ -277,6 +283,89 @@ const ZEROTTS_REQUIRED_ARTIFACT_ROLES: &[&str] = &[
     "silence_frame",
 ];
 
+struct KokoroViOnnxFactory;
+
+impl TtsFactory for KokoroViOnnxFactory {
+    fn adapter(&self) -> &'static str {
+        "kokoro_vi_onnx"
+    }
+
+    fn model_identity<'a>(
+        &self,
+        config: &'a TtsProviderConfig,
+    ) -> Result<&'a str, ProviderLoadError> {
+        Ok(&config
+            .kokoro_vi_onnx
+            .as_ref()
+            .ok_or_else(|| {
+                ProviderLoadError::Configuration("kokoro_vi_onnx options are required".into())
+            })?
+            .model)
+    }
+
+    fn build(
+        &self,
+        config: &TtsProviderConfig,
+        runtime: &RuntimeConfig,
+        model: &ResolvedModel,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        validate_model_adapter(model, self.adapter())?;
+        let options: &KokoroViOnnxConfig = config.kokoro_vi_onnx.as_ref().ok_or_else(|| {
+            ProviderLoadError::Configuration("kokoro_vi_onnx options are required".into())
+        })?;
+        if options.model != "kokoro_vi_contextbox"
+            || options.language != "vi-VN"
+            || options.num_threads <= 0
+            || !(50..=200).contains(&options.speed_percent)
+            || !KOKORO_VI_VOICES.contains(&options.voice.as_str())
+        {
+            return Err(ProviderLoadError::Configuration(
+                "Kokoro Vietnamese requires its pinned model, vi-VN, a supported voice, positive threads, and speed_percent 50..=200".into(),
+            ));
+        }
+        if model.identity() != options.model {
+            return Err(ProviderLoadError::Configuration(
+                "Kokoro Vietnamese resolved model does not match configured logical model".into(),
+            ));
+        }
+        for role in KOKORO_VI_REQUIRED_ARTIFACT_ROLES {
+            required(model, role)?;
+        }
+        let voicepack_role = format!("voicepack_{}", options.voice);
+        required(model, &voicepack_role)?;
+        Ok(Arc::new(
+            ConfiguredKokoroVi::load(
+                options,
+                runtime,
+                KokoroViArtifacts {
+                    model: model.artifact("model").expect("required above"),
+                    config: model.artifact("config").expect("required above"),
+                    voicepack: model.artifact(&voicepack_role).expect("required above"),
+                },
+            )
+            .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
+        ))
+    }
+}
+
+const KOKORO_VI_REQUIRED_ARTIFACT_ROLES: &[&str] = &["model", "config"];
+const KOKORO_VI_VOICES: &[&str] = &[
+    "diem_trinh",
+    "hung_thinh",
+    "mai_linh",
+    "mai_loan",
+    "manh_dung",
+    "my_yen",
+    "ngoc_huyen",
+    "phat_tai",
+    "thanh_dat",
+    "thuc_trinh",
+    "tuan_ngoc",
+    "storyvert",
+    "duc_an",
+    "duc_duy",
+];
+
 impl AsrFactory for ZipformerSherpaFactory {
     fn adapter(&self) -> &'static str {
         "zipformer_sherpa"
@@ -326,10 +415,11 @@ static SILERO_ONNX_FACTORY: SileroOnnxFactory = SileroOnnxFactory;
 static ZIPFORMER_SHERPA_FACTORY: ZipformerSherpaFactory = ZipformerSherpaFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
+static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
 static VAD_FACTORIES: [&dyn VadFactory; 1] = [&SILERO_ONNX_FACTORY];
 static ASR_FACTORIES: [&dyn AsrFactory; 1] = [&ZIPFORMER_SHERPA_FACTORY];
 static LLM_FACTORIES: [&dyn LlmFactory; 1] = [&OPENAI_FACTORY];
-static TTS_FACTORIES: [&dyn TtsFactory; 1] = [&ZEROTTS_ONNX_FACTORY];
+static TTS_FACTORIES: [&dyn TtsFactory; 2] = [&ZEROTTS_ONNX_FACTORY, &KOKORO_VI_ONNX_FACTORY];
 static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
     vad: &VAD_FACTORIES,
     asr: &ASR_FACTORIES,

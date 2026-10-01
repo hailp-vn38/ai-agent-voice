@@ -3,9 +3,9 @@ use std::net::SocketAddr;
 use url::Url;
 use voice_agent_server::{
     config::{
-        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
-        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
-        WebsocketConfig, WorkersConfig,
+        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, KokoroViOnnxConfig,
+        LimitsConfig, LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig,
+        TtsConfig, WebsocketConfig, WorkersConfig,
     },
     providers::compiled_provider_registry,
 };
@@ -52,10 +52,33 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         registry.tts_factory("zerotts_onnx").unwrap().adapter(),
         "zerotts_onnx"
     );
+    assert_eq!(
+        registry.tts_factory("kokoro_vi_onnx").unwrap().adapter(),
+        "kokoro_vi_onnx"
+    );
     assert!(registry.vad_factory("http_vad").is_err());
     assert!(registry.asr_factory("python_sidecar").is_err());
     assert!(registry.llm_factory("python_llm").is_err());
     assert!(registry.tts_factory("http_tts").is_err());
+}
+
+#[test]
+fn kokoro_typed_config_keeps_the_g2p_execution_boundary_outside_provider_data() {
+    let mut config = valid_config();
+    config.providers.tts.adapter = "kokoro_vi_onnx".into();
+    config.providers.tts.zerotts_onnx = None;
+    config.providers.tts.kokoro_vi_onnx = Some(KokoroViOnnxConfig {
+        model: "kokoro_vi_contextbox".into(),
+        voice: "diem_trinh".into(),
+        language: "vi-VN".into(),
+        num_threads: 1,
+        speed_percent: 100,
+    });
+
+    config.validate().unwrap();
+    let kokoro = config.providers.tts.kokoro_vi_onnx.unwrap();
+    assert_eq!(kokoro.voice, "diem_trinh");
+    assert_eq!(kokoro.speed_percent, 100);
 }
 
 #[test]

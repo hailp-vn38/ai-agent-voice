@@ -260,16 +260,40 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 config.providers.tts.adapter
             ))
         })?;
-    let tts = config.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
-        ConfigError::Validation(format!(
-            "providers.tts.{} options are required",
-            config.providers.tts.adapter
-        ))
-    })?;
-    if tts.model.trim().is_empty() || tts.voice.trim().is_empty() || tts.num_threads <= 0 {
-        return Err(ConfigError::Validation(
-            "ZeroTTS model, voice, and thread count must be valid".into(),
-        ));
+    match config.providers.tts.adapter.as_str() {
+        "zerotts_onnx" => {
+            let tts = config.providers.tts.zerotts_onnx.as_ref().ok_or_else(|| {
+                ConfigError::Validation("providers.tts.zerotts_onnx options are required".into())
+            })?;
+            if tts.model.trim().is_empty() || tts.voice.trim().is_empty() || tts.num_threads <= 0 {
+                return Err(ConfigError::Validation(
+                    "ZeroTTS model, voice, and thread count must be valid".into(),
+                ));
+            }
+        }
+        "kokoro_vi_onnx" => {
+            let tts = config
+                .providers
+                .tts
+                .kokoro_vi_onnx
+                .as_ref()
+                .ok_or_else(|| {
+                    ConfigError::Validation(
+                        "providers.tts.kokoro_vi_onnx options are required".into(),
+                    )
+                })?;
+            if tts.model.trim().is_empty()
+                || tts.voice.trim().is_empty()
+                || tts.language != "vi-VN"
+                || tts.num_threads <= 0
+                || !(50..=200).contains(&tts.speed_percent)
+            {
+                return Err(ConfigError::Validation(
+                    "Kokoro Vietnamese model, voice, vi-VN language, thread count, and speed_percent must be valid".into(),
+                ));
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

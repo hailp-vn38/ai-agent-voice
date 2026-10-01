@@ -75,6 +75,37 @@ pub struct TtsProviderConfig {
     pub adapter: String,
     #[serde(default)]
     pub zerotts_onnx: Option<ZeroTtsOnnxConfig>,
+    #[serde(default)]
+    pub kokoro_vi_onnx: Option<KokoroViOnnxConfig>,
+}
+
+/// Typed selection for the Vietnamese Kokoro ONNX adapter. The G2P executable is
+/// deliberately deployment-owned under `runtime.kokoro_vi`, never provider data.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KokoroViOnnxConfig {
+    #[serde(default = "default_kokoro_vi_model")]
+    pub model: String,
+    #[serde(default = "default_asr_threads")]
+    pub num_threads: i32,
+    #[serde(default = "default_kokoro_vi_voice")]
+    pub voice: String,
+    #[serde(default = "default_kokoro_vi_language")]
+    pub language: String,
+    #[serde(default = "default_kokoro_vi_speed_percent")]
+    pub speed_percent: u16,
+}
+
+impl Default for KokoroViOnnxConfig {
+    fn default() -> Self {
+        Self {
+            model: default_kokoro_vi_model(),
+            num_threads: default_asr_threads(),
+            voice: default_kokoro_vi_voice(),
+            language: default_kokoro_vi_language(),
+            speed_percent: default_kokoro_vi_speed_percent(),
+        }
+    }
 }
 
 impl Default for TtsProviderConfig {
@@ -82,6 +113,7 @@ impl Default for TtsProviderConfig {
         Self {
             adapter: default_tts_adapter(),
             zerotts_onnx: Some(ZeroTtsOnnxConfig::default()),
+            kokoro_vi_onnx: None,
         }
     }
 }
