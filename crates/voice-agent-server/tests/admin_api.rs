@@ -12,7 +12,8 @@ use voice_agent_server::{
     database::Database,
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmProvider, ProviderSet,
-        TtsDiagnosticRequest, TtsError, TtsProvider,
+        TtsDiagnosticRequest, TtsError, TtsProvider, VadError, VadInput, VadProbability,
+        VadProvider, VadSession,
         llm::{ChatMessage, LlmRequest},
     },
     workers::WorkerRuntimeConfig,
@@ -33,6 +34,41 @@ struct DiagnosticAsr {
 struct DiagnosticAsrSession {
     received_samples: Arc<Mutex<Vec<usize>>>,
     samples: usize,
+}
+
+struct DiagnosticVad {
+    inputs: Arc<Mutex<Vec<VadInput>>>,
+}
+
+struct DiagnosticVadSession {
+    inputs: Arc<Mutex<Vec<VadInput>>>,
+}
+
+impl VadProvider for DiagnosticVad {
+    fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
+        Ok(Box::new(DiagnosticVadSession {
+            inputs: Arc::clone(&self.inputs),
+        }))
+    }
+
+    fn adapter(&self) -> &'static str {
+        "diagnostic-vad"
+    }
+}
+
+impl VadSession for DiagnosticVadSession {
+    fn push(&mut self, input: VadInput) -> Result<VadProbability, VadError> {
+        self.inputs.lock().unwrap().push(input.clone());
+        Ok(VadProbability {
+            start_sample: input.start_sample,
+            end_sample: input.start_sample + 512,
+            probability: 0.25,
+        })
+    }
+
+    fn reset(&mut self) -> Result<(), VadError> {
+        Ok(())
+    }
 }
 
 impl AsrProvider for DiagnosticAsr {
@@ -377,6 +413,73 @@ allowed_hosts = ["mcp.example.test"]
     (format!("http://{address}"), received_samples, task)
 }
 
+async fn server_with_loaded_vad() -> (
+    String,
+    Arc<Mutex<Vec<VadInput>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let config_path = std::env::temp_dir().join(format!(
+        "voice-agent-admin-vad-diagnostic-{}.toml",
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+enabled = true
+url = "{}"
+[api]
+enabled = true
+admin_token = "admin-test-token"
+"#,
+            database_url()
+        ),
+    )
+    .unwrap();
+    let config = AppConfig::parse_and_resolve(&config_path).unwrap();
+    fs::remove_file(config_path).unwrap();
+    let database = Database::connect_if_enabled(&config.database)
+        .await
+        .unwrap();
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        database,
+    )
+    .with_database_vad_runtime_for_test(
+        "vad_loaded",
+        Arc::new(DiagnosticVad {
+            inputs: Arc::clone(&inputs),
+        }),
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            voice_reserved_capacity: 1,
+            command_capacity: 4,
+            final_timeout: Duration::from_secs(1),
+            cleanup_grace: Duration::from_millis(100),
+        },
+        1,
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state))
+            .await
+            .unwrap()
+    });
+    (format!("http://{address}"), inputs, task)
+}
+
 fn wav_pcm16_mono(sample_rate: u32, samples: usize) -> Vec<u8> {
     let data_bytes = u32::try_from(samples.checked_mul(2).unwrap()).unwrap();
     let mut wav = Vec::with_capacity(44 + data_bytes as usize);
@@ -394,6 +497,95 @@ fn wav_pcm16_mono(sample_rate: u32, samples: usize) -> Vec<u8> {
     wav.extend_from_slice(&data_bytes.to_le_bytes());
     wav.resize(44 + data_bytes as usize, 0);
     wav
+}
+
+#[tokio::test]
+async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runtime() {
+    let (base, inputs, task) = server_with_loaded_vad().await;
+    let client = Client::new();
+    let providers = format!("{base}/api/admin/providers");
+    assert_eq!(
+        client
+            .post(&providers)
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({
+                "key":"vad_loaded", "name":"Loaded VAD", "type":"vad", "adapter":"silero_onnx",
+                "config_json":{"model":"silero","num_threads":1}
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    let response = client
+        .post(format!("{providers}/vad_loaded/test/vad"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(response["provider_key"], "vad_loaded");
+    assert_eq!(response["type"], "vad");
+    assert_eq!(response["result"]["probability"], 0.25);
+    assert_eq!(response["result"]["start_sample"], 0);
+    assert_eq!(response["result"]["end_sample"], 512);
+    assert_eq!(
+        inputs.lock().unwrap().as_slice(),
+        &[VadInput {
+            pcm: vec![0.0; 512],
+            start_sample: 0
+        }]
+    );
+    let nonempty = client
+        .post(format!("{providers}/vad_loaded/test/vad"))
+        .bearer_auth("admin-test-token")
+        .body("caller pcm is not accepted")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(nonempty.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        nonempty.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "invalid_test_input"
+    );
+    assert_eq!(
+        client
+            .post(&providers)
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({
+                "key":"asr_other", "name":"Other ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
+                "config_json":{"model":"gipformer15_vi_int8","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    let wrong_type = client
+        .post(format!("{providers}/asr_other/test/vad"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_type.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        wrong_type.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "provider_type_mismatch"
+    );
+    assert_eq!(
+        client
+            .post(format!("{providers}/missing/test/vad"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    task.abort();
 }
 
 #[tokio::test]

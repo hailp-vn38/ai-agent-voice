@@ -7,7 +7,8 @@ use crate::{
     },
     lifecycle::{AdmissionGate, Readiness, RuntimeLifecycle},
     providers::{
-        DatabaseRuntimeSnapshot, LoadedProviders, ProviderCatalog, ProviderSet, RuntimeCatalog,
+        DatabaseRuntimeSnapshot, LoadedProviders, LoadedVad, ProviderCatalog, ProviderSet,
+        RuntimeCatalog,
     },
     services::provider_diagnostic::{ProviderDiagnosticLimiter, ProviderDiagnosticService},
     session::{
@@ -258,6 +259,48 @@ impl AppState {
         Arc::make_mut(&mut self.runtimes).asr.insert(
             instance_id.clone(),
             Arc::new(AsrWorkerRuntime::new(provider, worker_config)),
+        );
+        self.database_runtime_snapshot = Some(Arc::new(DatabaseRuntimeSnapshot::from_states([(
+            instance_id,
+            crate::providers::DatabaseRuntimeState {
+                provider_id: 0,
+                desired_revision,
+                status: crate::providers::DatabaseRuntimeStatus::Loaded,
+                failure: None,
+            },
+        )])));
+        self.provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
+            Arc::clone(&self.runtimes),
+            self.database_runtime_snapshot.clone(),
+            self.database.clone(),
+            ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+            Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+        ));
+        self
+    }
+
+    /// Deterministic public-HTTP seam for VAD diagnostics. The runtime exists before router
+    /// construction; Admin only tests it and cannot configure or materialize it.
+    pub fn with_database_vad_runtime_for_test(
+        mut self,
+        instance_id: impl Into<String>,
+        provider: Arc<dyn crate::providers::VadProvider>,
+        worker_config: WorkerRuntimeConfig,
+        desired_revision: i64,
+    ) -> Self {
+        let instance_id = instance_id.into();
+        let runtime = Arc::new(crate::workers::VadWorkerRuntime::new(
+            provider,
+            worker_config,
+        ));
+        self.worker_supervisor.observe_vad(Arc::clone(&runtime));
+        Arc::make_mut(&mut self.runtimes).vad.insert(
+            instance_id.clone(),
+            LoadedVad {
+                runtime,
+                segmenter: crate::audio::VadSegmenterConfig::default(),
+                pre_roll_samples: 0,
+            },
         );
         self.database_runtime_snapshot = Some(Arc::new(DatabaseRuntimeSnapshot::from_states([(
             instance_id,

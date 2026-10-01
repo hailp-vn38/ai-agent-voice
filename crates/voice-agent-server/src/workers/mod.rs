@@ -8,6 +8,9 @@ mod llm;
 mod supervisor;
 mod tts;
 mod vad;
+mod vad_diagnostic;
+#[cfg(test)]
+mod vad_tests;
 mod vision_runtime;
 
 pub use admission::{
@@ -24,6 +27,7 @@ pub use tts::{
 pub use vad::{
     VadCaptureCycleId, VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime,
 };
+pub use vad_diagnostic::VadDiagnosticOperation;
 pub use vision_runtime::VisionRuntime;
 
 use std::time::Duration;

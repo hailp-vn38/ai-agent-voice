@@ -36,6 +36,15 @@ Mọi GET relationship trả revision của owner; inverse usage có pagination 
 Vision Provider chưa được đánh dấu hoàn thành: contract hiện chưa quy định ProviderType, adapter,
 validation DB, materialization runtime và Template binding cho Vision.
 
+## Cập nhật thực thi P2
+
+- `POST /api/admin/providers/{key}/test/vad` không nhận body; chạy đúng một frame silence 512
+  samples ở 16 kHz trên VAD runtime đã load khi startup. Response trả probability/range, elapsed
+  time và runtime provenance. Diagnostic chỉ dùng capacity không reserved cho Voice, không đọc
+  secret, không materialize Provider và không thay đổi capture cycle/Voice Session.
+- `POST /api/admin/providers/{key}/test/vision` vẫn deferred: Vision chưa là Database Provider
+  Instance nên route này chưa có contract đúng để triển khai.
+
 ## Đánh giá ban đầu
 
 Với UI Agents → Templates → Providers mà ta vừa thiết kế, các API còn thiếu đáng chú ý là:
@@ -55,7 +64,7 @@ Với UI Agents → Templates → Providers mà ta vừa thiết kế, các API 
 | **P1 hoàn thành** | Template list filter/search | Search key/name/description, language/enabled filter, total |
 | **P1 hoàn thành** | Pagination totals/facets | `total`, `total_pages`, counts theo Provider type |
 | **Cần chốt contract** | Vision Provider APIs | Vision hiện chưa nằm trong DB Provider/Template Provider Binding |
-| **P2** | `POST /api/admin/providers/{key}/test/vad` | Test VAD từ Provider Detail |
+| **P2 hoàn thành** | `POST /api/admin/providers/{key}/test/vad` | Test one canonical silence frame từ Provider Detail |
 | **P2** | `POST /api/admin/providers/{key}/test/vision` | Test Vision nếu Vision trở thành Provider Instance |
 | **P2** | DELETE MCP Server / unlink MCP binding | Bổ sung sau khi chốt policy deletion và revision của Agent |
 
@@ -546,9 +555,14 @@ Server hiện có:
 POST /api/admin/providers/{key}/test/llm
 POST /api/admin/providers/{key}/test/tts
 POST /api/admin/providers/{key}/test/asr
+POST /api/admin/providers/{key}/test/vad
 ```
 
 TTS trả WAV và ASR nhận WAV mono 16 kHz ≤30s.
+
+VAD không nhận caller PCM: một request rỗng chạy một silence frame canonical 512 samples/16 kHz
+trên runtime đã load, trả probability/range và provenance. Do đó đây là readiness/inference probe
+bounded, không phải endpoint VAD segmentation cho audio người dùng.
 
 Nếu Provider Detail muốn `Test` cho mọi card, còn thiếu:
 
@@ -747,7 +761,7 @@ Nếu mục tiêu là đưa Web Admin ra khỏi mock/localStorage, trạng thái
 
 7. **Vision DB Provider integration**
 
-8. **VAD/Vision provider diagnostics**
+8. **VAD diagnostic — hoàn thành; Vision diagnostic cần Vision Provider contract**
 
 P0 read-model đã hoàn thành: phần **Agents + Template Switcher + AI Pipeline + Templates Page + Provider Catalog** có thể hoạt động bằng server API mà không cần frontend tự giữ relational state. Đây là desired configuration: UI phải hiển thị `requires_restart`/runtime status khi mutation chưa effective, và không được hứa hot-reload session đang chạy.
 

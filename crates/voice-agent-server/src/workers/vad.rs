@@ -11,7 +11,10 @@ use crate::{
     providers::{VadInput, VadProvider},
 };
 
-use super::{WorkerIdentity, WorkerRuntimeConfig};
+use super::{
+    ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission,
+    ProviderWorkloadClass, WorkerIdentity, WorkerRuntimeConfig,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VadWorkerLease(u64);
@@ -93,6 +96,7 @@ pub struct VadWorkerRuntime {
     events_rx: Mutex<mpsc::Receiver<VadWorkerEvent>>,
     events_tx: mpsc::Sender<VadWorkerEvent>,
     routes: Mutex<HashMap<String, session_mpsc::Sender<VadWorkerEvent>>>,
+    admission: ProviderRuntimeAdmission,
 }
 struct State {
     next_lease: u64,
@@ -102,6 +106,7 @@ struct Slot {
     identity: WorkerIdentity,
     command_tx: mpsc::SyncSender<VadCommand>,
     state: SlotState,
+    _permit: Option<ProviderCapacityPermit>,
 }
 enum SlotState {
     Active,
@@ -114,6 +119,8 @@ impl VadWorkerRuntime {
     pub fn new(provider: Arc<dyn VadProvider>, config: WorkerRuntimeConfig) -> Self {
         config.validate().expect("invalid worker runtime config");
         let (events_tx, events_rx) = mpsc::channel();
+        let admission =
+            ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
         Self {
             provider,
             config,
@@ -124,6 +131,7 @@ impl VadWorkerRuntime {
             events_rx: Mutex::new(events_rx),
             events_tx,
             routes: Mutex::new(HashMap::new()),
+            admission,
         }
     }
 
@@ -149,6 +157,27 @@ impl VadWorkerRuntime {
             .remove(session);
     }
     pub fn open(&self, identity: WorkerIdentity) -> Result<VadWorkerLease, VadWorkerError> {
+        let permit = self
+            .admission
+            .try_admit(ProviderWorkloadClass::Voice)
+            .map_err(|_| VadWorkerError::Capacity)?;
+        self.open_with_permit(identity, Some(permit))
+    }
+
+    /// Opens the worker side of an Admin diagnostic after `ProviderDiagnosticService` has
+    /// already admitted its exact Diagnostic permit. It must never take a second Voice permit.
+    pub(super) fn open_diagnostic(
+        &self,
+        identity: WorkerIdentity,
+    ) -> Result<VadWorkerLease, VadWorkerError> {
+        self.open_with_permit(identity, None)
+    }
+
+    fn open_with_permit(
+        &self,
+        identity: WorkerIdentity,
+        permit: Option<ProviderCapacityPermit>,
+    ) -> Result<VadWorkerLease, VadWorkerError> {
         let mut state = self.state.lock().expect("VAD worker state poisoned");
         if state.slots.len() >= self.config.max_workers {
             return Err(VadWorkerError::Capacity);
@@ -162,12 +191,36 @@ impl VadWorkerRuntime {
                 identity: identity.clone(),
                 command_tx,
                 state: SlotState::Active,
+                _permit: permit,
             },
         );
         let provider = Arc::clone(&self.provider);
         let events = self.events_tx.clone();
         thread::spawn(move || run_worker(provider, identity, command_rx, events));
         Ok(lease)
+    }
+
+    /// Acquires only capacity not reserved for Voice work.
+    pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
+    }
+
+    /// Builds a standalone diagnostic against this already-materialized VAD provider. Admission
+    /// remains owned by `ProviderDiagnosticService`; this never changes capture-cycle state.
+    pub fn diagnostic(self: &Arc<Self>) -> super::VadDiagnosticOperation {
+        super::VadDiagnosticOperation::new(Arc::clone(self))
+    }
+
+    pub(super) fn quarantine_diagnostic(&self, lease: VadWorkerLease) {
+        if let Some(slot) = self
+            .state
+            .lock()
+            .expect("VAD worker state poisoned")
+            .slots
+            .get_mut(&lease)
+        {
+            slot.state = SlotState::Quarantined;
+        }
     }
     pub fn send(&self, lease: VadWorkerLease, command: VadCommand) -> Result<(), VadWorkerError> {
         let mut state = self.state.lock().expect("VAD worker state poisoned");

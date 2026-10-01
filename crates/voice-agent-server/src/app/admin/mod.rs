@@ -61,6 +61,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             axum::routing::post(test_asr_provider),
         )
         .route(
+            "/providers/{key}/test/vad",
+            axum::routing::post(test_vad_provider),
+        )
+        .route(
             "/providers/{key}/capabilities",
             get(get_provider_capabilities),
         )
@@ -117,7 +121,7 @@ use provider_adapters::{
     discover_provider_capabilities, get_provider_adapter, get_provider_capabilities,
     list_provider_adapters,
 };
-use provider_tests::{test_asr_provider, test_llm_provider, test_tts_provider};
+use provider_tests::{test_asr_provider, test_llm_provider, test_tts_provider, test_vad_provider};
 use providers::{
     create_provider, get_provider, list_provider_templates, list_providers, patch_provider,
 };

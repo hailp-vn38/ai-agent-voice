@@ -83,6 +83,14 @@ pub struct AsrDiagnosticResult {
     pub runtime: ProviderDiagnosticRuntimeMetadata,
 }
 
+pub struct VadDiagnosticResult {
+    pub provider_key: String,
+    pub probability: f32,
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub runtime: ProviderDiagnosticRuntimeMetadata,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderDiagnosticOperationError {
     Unavailable,
@@ -285,6 +293,55 @@ impl ProviderDiagnosticService {
         Ok(TtsDiagnosticResult {
             provider_key,
             wav: output.wav,
+            runtime,
+        })
+    }
+
+    /// Executes exactly one canonical silence frame against the VAD runtime loaded at startup.
+    pub async fn execute_vad(
+        &self,
+        key: &str,
+    ) -> Result<VadDiagnosticResult, ProviderDiagnosticRequestError> {
+        let database = self
+            .database
+            .as_ref()
+            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
+        let row: (String, String, i64, i64) =
+            sqlx::query_as("SELECT key,type,enabled,revision FROM providers WHERE key=?")
+                .bind(key)
+                .fetch_one(database.pool())
+                .await
+                .map_err(|error| match error {
+                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
+                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
+                })?;
+        let (provider_key, provider_type, enabled, revision) = row;
+        if enabled == 0 {
+            return Err(ProviderDiagnosticRequestError::Disabled);
+        }
+        if provider_type != "vad" {
+            return Err(ProviderDiagnosticRequestError::TypeMismatch);
+        }
+        let operation = self
+            .registry
+            .vad_diagnostic(&provider_key)
+            .map_err(|_| ProviderDiagnosticError::RuntimeNotLoaded)?;
+        let (probability, runtime) = self
+            .execute(
+                ProviderDiagnosticTarget {
+                    key: provider_key.clone(),
+                    provider_type: ProviderType::Vad,
+                    desired_revision: revision,
+                },
+                operation,
+                Duration::from_millis(100),
+            )
+            .await?;
+        Ok(VadDiagnosticResult {
+            provider_key,
+            probability: probability.probability,
+            start_sample: probability.start_sample,
+            end_sample: probability.end_sample,
             runtime,
         })
     }

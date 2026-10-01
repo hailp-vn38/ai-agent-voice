@@ -7,7 +7,7 @@ use crate::{
     workers::{
         AsrDiagnosticOperation, AsrWorkerRuntime, LlmDiagnosticOperation, LlmRuntime,
         ProviderAdmissionError, ProviderCapacityPermit, TtsDiagnosticOperation, TtsWorkerRuntime,
-        VadWorkerRuntime, VisionRuntime,
+        VadDiagnosticOperation, VadWorkerRuntime, VisionRuntime,
     },
 };
 
@@ -20,6 +20,7 @@ pub enum RuntimeResolveError {
 /// A diagnostic can only target runtime classes that own bounded provider capacity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiagnosticRuntimeKind {
+    Vad,
     Asr,
     Llm,
     Tts,
@@ -30,10 +31,10 @@ impl TryFrom<ProviderType> for DiagnosticRuntimeKind {
 
     fn try_from(value: ProviderType) -> Result<Self, Self::Error> {
         match value {
+            ProviderType::Vad => Ok(Self::Vad),
             ProviderType::Asr => Ok(Self::Asr),
             ProviderType::Llm => Ok(Self::Llm),
             ProviderType::Tts => Ok(Self::Tts),
-            ProviderType::Vad => Err(()),
         }
     }
 }
@@ -91,6 +92,16 @@ impl RuntimeCatalog {
         key: &str,
     ) -> Result<ProviderCapacityPermit, DiagnosticRuntimeError> {
         match kind {
+            DiagnosticRuntimeKind::Vad => self
+                .vad
+                .get(key)
+                .ok_or(DiagnosticRuntimeError::NotLoaded)
+                .and_then(|loaded| {
+                    loaded
+                        .runtime
+                        .admit_diagnostic()
+                        .map_err(map_admission_error)
+                }),
             DiagnosticRuntimeKind::Asr => self
                 .asr
                 .get(key)
@@ -138,6 +149,15 @@ impl RuntimeCatalog {
         self.asr
             .get(key)
             .map(|runtime| runtime.diagnostic(pcm))
+            .ok_or(DiagnosticRuntimeError::NotLoaded)
+    }
+    pub fn vad_diagnostic(
+        &self,
+        key: &str,
+    ) -> Result<VadDiagnosticOperation, DiagnosticRuntimeError> {
+        self.vad
+            .get(key)
+            .map(|loaded| loaded.runtime.diagnostic())
             .ok_or(DiagnosticRuntimeError::NotLoaded)
     }
     pub fn tts_diagnostic(

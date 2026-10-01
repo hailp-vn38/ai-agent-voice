@@ -11,6 +11,32 @@ const MAX_LLM_INPUT_BYTES: usize = 8 * 1024;
 const MAX_TTS_INPUT_BYTES: usize = 4 * 1024;
 const MAX_ASR_DURATION_SECONDS: u32 = 30;
 
+pub(super) async fn test_vad_provider(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let (parts, body) = request.into_parts();
+    let request = Request::from_parts(parts, Body::empty());
+    match to_bytes(body, 1).await {
+        Ok(body) if body.is_empty() => {}
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_test_input"),
+    }
+    let started = Instant::now();
+    let diagnostic = match state.provider_diagnostics.execute_vad(&key).await {
+        Ok(value) => value,
+        Err(value) => return request_error_response(&request, value),
+    };
+    Json(serde_json::json!({
+        "provider_key": diagnostic.provider_key,
+        "type": "vad",
+        "status": "success",
+        "result": { "probability": diagnostic.probability, "start_sample": diagnostic.start_sample, "end_sample": diagnostic.end_sample },
+        "metrics": { "elapsed_ms": started.elapsed().as_millis() },
+        "runtime": { "runtime_status": "loaded", "tested_runtime": "loaded", "runtime_matches_desired": diagnostic.runtime.runtime_matches_desired, "requires_restart": diagnostic.runtime.requires_restart }
+    })).into_response()
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LlmTestRequest {
