@@ -31,18 +31,22 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/agents/{key}/default-template/{template_key}",
             put(set_default_template),
         )
+        .route("/agents/{key}/templates", get(list_agent_templates))
         .route(
             "/agents/{key}/templates/{template_key}",
-            put(assign_template),
+            put(assign_template).delete(unlink_agent_template),
         )
         .route("/templates", get(list_templates).post(create_template))
         .route("/templates/{key}", get(get_template).patch(patch_template))
+        .route("/templates/{key}/agents", get(list_template_agents))
+        .route("/templates/{key}/providers", get(list_template_providers))
         .route(
             "/templates/{key}/providers/{provider_type}",
-            put(bind_template_provider),
+            put(bind_template_provider).delete(unlink_template_provider),
         )
         .route("/providers", get(list_providers).post(create_provider))
         .route("/providers/{key}", get(get_provider).patch(patch_provider))
+        .route("/providers/{key}/templates", get(list_provider_templates))
         .route(
             "/providers/{key}/test/llm",
             axum::routing::post(test_llm_provider),
@@ -112,10 +116,13 @@ use provider_adapters::{
     list_provider_adapters,
 };
 use provider_tests::{test_asr_provider, test_llm_provider, test_tts_provider};
-use providers::{create_provider, get_provider, list_providers, patch_provider};
+use providers::{
+    create_provider, get_provider, list_provider_templates, list_providers, patch_provider,
+};
 use templates::{
-    assign_template, bind_template_provider, create_template, get_template, list_templates,
-    patch_template, set_default_template,
+    assign_template, bind_template_provider, create_template, get_template, list_agent_templates,
+    list_template_agents, list_template_providers, list_templates, patch_template,
+    set_default_template, unlink_agent_template, unlink_template_provider,
 };
 
 async fn transport(request: Request, next: Next) -> Response {

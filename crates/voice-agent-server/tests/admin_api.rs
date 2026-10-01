@@ -1005,6 +1005,290 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
 }
 
 #[tokio::test]
+async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let auth = "admin-test-token";
+    let agents = format!("{base}/api/admin/agents");
+    let templates = format!("{base}/api/admin/templates");
+    let providers = format!("{base}/api/admin/providers");
+
+    assert_eq!(
+        client
+            .post(&agents)
+            .bearer_auth(auth)
+            .json(&serde_json::json!({"key":"kitchen","name":"Kitchen"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        client
+            .post(&templates)
+            .bearer_auth(auth)
+            .json(&serde_json::json!({
+                "key":"quiet","name":"Quiet","language":"vi-VN","prompt":"Nói ngắn gọn"
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+
+    for (key, kind, adapter, config_json) in [
+        (
+            "vad_main",
+            "vad",
+            "silero_onnx",
+            serde_json::json!({"model":"silero","num_threads":1}),
+        ),
+        (
+            "asr_main",
+            "asr",
+            "zipformer_sherpa",
+            serde_json::json!({"model":"zipformer","num_threads":1,"decoding_method":"greedy_search"}),
+        ),
+        (
+            "llm_main",
+            "llm",
+            "openai",
+            serde_json::json!({"base_url":"https://example.test/v1","model":"test","max_tokens":8}),
+        ),
+        (
+            "tts_main",
+            "tts",
+            "zerotts_onnx",
+            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
+        ),
+    ] {
+        assert_eq!(
+            client
+                .post(&providers)
+                .bearer_auth(auth)
+                .json(&serde_json::json!({
+                    "key":key,"name":key,"type":kind,"adapter":adapter,"config_json":config_json
+                }))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    let mut template_revision = 1;
+    for (kind, provider_key) in [
+        ("vad", "vad_main"),
+        ("asr", "asr_main"),
+        ("llm", "llm_main"),
+        ("tts", "tts_main"),
+    ] {
+        let response = client
+            .put(format!("{templates}/quiet/providers/{kind}"))
+            .bearer_auth(auth)
+            .header("if-match", format!("\"{template_revision}\""))
+            .json(&serde_json::json!({"provider_key":provider_key}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        template_revision += 1;
+    }
+
+    let assigned = client
+        .put(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(assigned.status(), StatusCode::OK);
+
+    let agent_templates = client
+        .get(format!("{agents}/kitchen/templates"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(agent_templates["items"][0]["key"], "quiet");
+    assert_eq!(agent_templates["items"][0]["is_default"], false);
+    assert_eq!(agent_templates["revision"], 2);
+
+    let template_agents = client
+        .get(format!("{templates}/quiet/agents"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(template_agents["items"][0]["key"], "kitchen");
+    assert_eq!(template_agents["items"][0]["is_default"], false);
+    assert_eq!(template_agents["revision"], 5);
+    assert_eq!(template_agents["total"], 1);
+
+    let bindings = client
+        .get(format!("{templates}/quiet/providers"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(bindings["template_key"], "quiet");
+    assert_eq!(bindings["revision"], 5);
+    assert_eq!(bindings["bindings"]["llm"]["provider_key"], "llm_main");
+
+    let provider_templates = client
+        .get(format!("{providers}/llm_main/templates"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(provider_templates["items"][0]["key"], "quiet");
+    assert_eq!(provider_templates["revision"], 1);
+    assert_eq!(provider_templates["total"], 1);
+
+    let missing_if_match = client
+        .delete(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_if_match.status(), StatusCode::BAD_REQUEST);
+
+    let unlinked = client
+        .delete(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"2\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unlinked.status(), StatusCode::OK);
+    assert_eq!(
+        client
+            .get(format!("{agents}/kitchen/templates"))
+            .bearer_auth(auth)
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let reassigned = client
+        .put(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"3\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reassigned.status(), StatusCode::OK);
+    let stale_unlink = client
+        .delete(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"3\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale_unlink.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale_unlink.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+    let defaulted = client
+        .put(format!("{agents}/kitchen/default-template/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"4\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(defaulted.status(), StatusCode::OK);
+    let default_conflict = client
+        .delete(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"5\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(default_conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        default_conflict.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "default_template_conflict"
+    );
+
+    let missing_binding_if_match = client
+        .delete(format!("{templates}/quiet/providers/llm"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_binding_if_match.status(), StatusCode::BAD_REQUEST);
+
+    let removed_binding = client
+        .delete(format!("{templates}/quiet/providers/llm"))
+        .bearer_auth(auth)
+        .header("if-match", "\"5\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed_binding.status(), StatusCode::OK);
+    let bindings = client
+        .get(format!("{templates}/quiet/providers"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert!(bindings["bindings"].get("llm").is_none());
+    let stale_binding_unlink = client
+        .delete(format!("{templates}/quiet/providers/tts"))
+        .bearer_auth(auth)
+        .header("if-match", "\"5\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale_binding_unlink.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale_binding_unlink
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+    let bindings = client
+        .get(format!("{templates}/quiet/providers"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(bindings["bindings"]["tts"]["provider_key"], "tts_main");
+
+    task.abort();
+}
+
+#[tokio::test]
 async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
     let (base, task) = server(true).await;
     let client = Client::new();

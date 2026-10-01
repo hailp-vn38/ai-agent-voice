@@ -193,6 +193,66 @@ pub(super) async fn list_providers(
     };
     match sqlx::query_as::<_,Provider>("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await{Ok(items)=>Json(serde_json::json!({"items":items.into_iter().map(|item| provider_response(item, state.database_runtime_snapshot.as_deref())).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
 }
+
+pub(super) async fn list_provider_templates(
+    State(state): State<AppState>,
+    Path(provider_key): Path<String>,
+    Query(query): Query<PageQuery>,
+    request: Request,
+) -> Response {
+    let (page, page_size) = match page_bounds(query.page, query.page_size) {
+        Ok(value) if query.enabled.is_none() && query.sort.is_none() => value,
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
+    };
+    let pool = match db(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let provider = match provider_by(pool, &provider_key).await {
+        Ok(v) => v,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
+        Err(e) => return sql_error(&request, &e),
+    };
+    let total: i64 = match sqlx::query_scalar(
+        "SELECT COUNT(*) FROM template_provider_bindings WHERE provider_id=?",
+    )
+    .bind(provider.id)
+    .fetch_one(pool)
+    .await
+    {
+        Ok(value) => value,
+        Err(e) => return sql_error(&request, &e),
+    };
+    let rows: Result<Vec<(String, String, String, i64)>, _> = sqlx::query_as(
+        "SELECT t.key,t.name,b.provider_type,t.enabled FROM template_provider_bindings b \
+         JOIN agent_templates t ON t.id=b.template_id WHERE b.provider_id=? ORDER BY t.key LIMIT ? OFFSET ?",
+    )
+    .bind(provider.id)
+    .bind(i64::from(page_size))
+    .bind(i64::from((page - 1) * page_size))
+    .fetch_all(pool)
+    .await;
+    match rows {
+        Ok(rows) => Json(serde_json::json!({
+            "provider_key": provider_key,
+            "revision": provider.revision,
+            "page": page,
+            "page_size": page_size,
+            "max_page_size": PAGE_MAX,
+            "total": total,
+            "items": rows.into_iter().map(|(key, name, provider_type, enabled)| serde_json::json!({
+                "key": key,
+                "name": name,
+                "provider_type": provider_type,
+                "enabled": enabled != 0,
+            })).collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(e) => sql_error(&request, &e),
+    }
+}
 pub(super) async fn patch_provider(
     State(state): State<AppState>,
     Path(key): Path<String>,

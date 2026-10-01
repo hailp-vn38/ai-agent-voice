@@ -2,6 +2,13 @@
 use super::agents::get_agent_by;
 use super::*;
 
+mod relationships;
+
+pub(super) use relationships::{
+    list_agent_templates, list_template_agents, list_template_providers, unlink_agent_template,
+    unlink_template_provider,
+};
+
 #[derive(Serialize, FromRow)]
 struct Template {
     id: i64,
@@ -124,6 +131,7 @@ pub(super) async fn get_template(
         Err(e) => sql_error(&request, &e),
     }
 }
+
 pub(super) async fn list_templates(
     State(state): State<AppState>,
     Query(query): Query<PageQuery>,
@@ -294,6 +302,7 @@ pub(super) async fn bind_template_provider(
         Err(e) => sql_error(&request, &e),
     }
 }
+
 pub(super) async fn set_default_template(
     State(state): State<AppState>,
     Path((agent_key, template_key)): Path<(String, String)>,
