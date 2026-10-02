@@ -197,3 +197,34 @@ remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac4
 install_path = "tts/zerotts/onnx/codec/LICENSE-Apache-2.0.txt"
 source_sha256 = "38ab08051cc3a06dd39507b77d7e8b928b563c49288eb7263339712652d41c6d"
 sha256 = "38ab08051cc3a06dd39507b77d7e8b928b563c49288eb7263339712652d41c6d"
+
+# The ONNX graph and tokenizer are pinned upstream. The voicepack is a prepared
+# deployment artifact: the Rust server deliberately never deserializes PyTorch
+# `.pt` files or invokes a converter during startup.
+[[model]]
+identity = "kokoro_vi_contextbox"
+adapter = "kokoro_vi_onnx"
+source = "https://huggingface.co/contextboxai/Kokoro-Vietnamese"
+revision = "9f210d622209fcc216fe2ac6159fed2ff381cb8a"
+license = "Apache-2.0"
+
+[[model.artifacts]]
+role = "model"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/kokoro_vi.onnx"
+install_path = "tts/kokoro-vi/kokoro_vi.onnx"
+source_sha256 = "da191277f58633649a9c0d2ae8012e80ef57ea8e2a56e30323c0f7df1ca29087"
+sha256 = "da191277f58633649a9c0d2ae8012e80ef57ea8e2a56e30323c0f7df1ca29087"
+
+[[model.artifacts]]
+role = "config"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/config.json"
+install_path = "tts/kokoro-vi/config.json"
+source_sha256 = "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f"
+sha256 = "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f"
+
+[[model.artifacts]]
+role = "voicepack_diem_trinh"
+remote = "prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin"
+install_path = "tts/kokoro-vi/voicepacks/diem_trinh.bin"
+source_sha256 = "fc90e370d4011fbc273a8b5a7c1e27e472579e99ab70f92163b7b193614ce35a"
+sha256 = "fc90e370d4011fbc273a8b5a7c1e27e472579e99ab70f92163b7b193614ce35a"
