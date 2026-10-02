@@ -15,6 +15,10 @@ use crate::{
 
 use super::{g2p::G2pSidecar, tokenizer::Tokenizer, voicepack::Voicepack};
 
+const KOKORO_SAMPLE_RATE_HZ: u32 = 24_000;
+const PCM_CHUNK_DURATION_MS: usize = 60;
+const PCM_CHUNK_SAMPLES: usize = KOKORO_SAMPLE_RATE_HZ as usize * PCM_CHUNK_DURATION_MS / 1_000;
+
 pub(super) struct KokoroViWorker {
     session: Session,
     tokenizer: Tokenizer,
@@ -102,15 +106,33 @@ impl TtsWorker for KokoroViWorker {
         let samples = waveform["waveform"]
             .try_extract_tensor::<f32>()
             .map_err(|_| TtsError::Failed)?
-            .1
-            .to_vec();
-        if samples.is_empty() || samples.iter().any(|sample| !sample.is_finite()) {
-            return Err(TtsError::Failed);
-        }
-        on_pcm(PcmF32Mono::new(samples, 24_000))
+            .1;
+        emit_pcm_chunks(samples, cancelled, on_pcm)
     }
 
     fn reset(&mut self) -> Result<(), TtsError> {
         Ok(())
     }
 }
+
+/// The exported graph returns one complete waveform. Emit bounded PCM only after inference so
+/// `SpeechOutput` can preserve its audio high-water mark without claiming model-level streaming.
+fn emit_pcm_chunks(
+    samples: &[f32],
+    cancelled: &AtomicBool,
+    on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+) -> Result<(), TtsError> {
+    if samples.is_empty() || samples.iter().any(|sample| !sample.is_finite()) {
+        return Err(TtsError::Failed);
+    }
+    for chunk in samples.chunks(PCM_CHUNK_SAMPLES) {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
+        on_pcm(PcmF32Mono::new(chunk.to_vec(), KOKORO_SAMPLE_RATE_HZ))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

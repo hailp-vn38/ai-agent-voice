@@ -78,12 +78,28 @@ impl TtsProvider for ConfiguredKokoroVi {
     fn synthesize(&self, text: &str) -> Result<PcmF32Mono, TtsError> {
         let mut worker = self.open_worker()?;
         let cancelled = std::sync::atomic::AtomicBool::new(false);
-        let mut output = None;
+        let mut samples = Vec::new();
         worker.synthesize(text, &cancelled, &mut |pcm| {
-            output = Some(pcm);
+            if pcm.sample_rate_hz() != 24_000 {
+                return Err(TtsError::Failed);
+            }
+            samples.extend_from_slice(pcm.samples());
             Ok(())
         })?;
-        output.ok_or(TtsError::Failed)
+        if samples.is_empty() {
+            return Err(TtsError::Failed);
+        }
+        Ok(PcmF32Mono::new(samples, 24_000))
+    }
+
+    fn synthesize_stream(
+        &self,
+        text: &str,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        let mut worker = self.open_worker()?;
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        worker.synthesize(text, &cancelled, on_pcm)
     }
 
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
@@ -133,11 +149,25 @@ mod real_model_tests {
         )
         .expect("load prepared local Kokoro Vietnamese provider");
 
-        let pcm = provider
-            .synthesize("Tường nhà khách.")
+        let mut chunks = Vec::new();
+        provider
+            .synthesize_stream("Tường nhà khách.", &mut |pcm| {
+                chunks.push(pcm);
+                Ok(())
+            })
             .expect("synthesize a Vietnamese smoke utterance");
-        assert_eq!(pcm.sample_rate_hz(), 24_000);
-        assert!(!pcm.samples().is_empty());
-        assert!(pcm.samples().iter().all(|sample| sample.is_finite()));
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|pcm| pcm.sample_rate_hz() == 24_000));
+        assert!(
+            chunks
+                .iter()
+                .all(|pcm| !pcm.samples().is_empty() && pcm.samples().len() <= 1_440)
+        );
+        assert!(
+            chunks
+                .iter()
+                .flat_map(|pcm| pcm.samples())
+                .all(|sample| sample.is_finite())
+        );
     }
 }
