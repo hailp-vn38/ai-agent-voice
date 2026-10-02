@@ -1824,5 +1824,249 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
             .status(),
         StatusCode::BAD_REQUEST
     );
+
+    let mcp_in_use = client
+        .delete(format!("{base}/api/admin/mcp-servers/weather"))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mcp_in_use.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        mcp_in_use.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "mcp_server_in_use"
+    );
+    let missing_unlink_match = client
+        .delete(format!(
+            "{base}/api/admin/agents/kitchen/mcp-bindings/weather"
+        ))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_unlink_match.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        client
+            .delete(format!(
+                "{base}/api/admin/agents/kitchen/mcp-bindings/weather"
+            ))
+            .bearer_auth(auth)
+            .header("if-match", "\"2\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        client
+            .delete(format!("{base}/api/admin/mcp-servers/weather"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let auth = "admin-test-token";
+    let agents = format!("{base}/api/admin/agents");
+    let templates = format!("{base}/api/admin/templates");
+    let providers = format!("{base}/api/admin/providers");
+
+    for (url, body) in [
+        (
+            agents.as_str(),
+            serde_json::json!({"key":"kitchen","name":"Kitchen"}),
+        ),
+        (
+            templates.as_str(),
+            serde_json::json!({"key":"quiet","name":"Quiet","language":"vi-VN","prompt":"Be concise"}),
+        ),
+        (
+            providers.as_str(),
+            serde_json::json!({"key":"llm_main","name":"LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}}),
+        ),
+    ] {
+        assert_eq!(
+            client
+                .post(url)
+                .bearer_auth(auth)
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    let missing_match = client
+        .delete(format!("{agents}/kitchen"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_match.status(), StatusCode::BAD_REQUEST);
+    let stale = client
+        .delete(format!("{agents}/kitchen"))
+        .bearer_auth(auth)
+        .header("if-match", "\"2\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+
+    assert_eq!(
+        client
+            .put(format!("{templates}/quiet/providers/llm"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"provider_key":"llm_main"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let provider_in_use = client
+        .delete(format!("{providers}/llm_main"))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(provider_in_use.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        provider_in_use.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "provider_in_use"
+    );
+    assert_eq!(
+        client
+            .delete(format!("{templates}/quiet/providers/llm"))
+            .bearer_auth(auth)
+            .header("if-match", "\"2\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .delete(format!("{providers}/llm_main"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+
+    assert_eq!(
+        client
+            .put(format!("{agents}/kitchen/templates/quiet"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let template_in_use = client
+        .delete(format!("{templates}/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"3\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(template_in_use.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        template_in_use.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "template_in_use"
+    );
+    assert_eq!(
+        client
+            .delete(format!("{agents}/kitchen/templates/quiet"))
+            .bearer_auth(auth)
+            .header("if-match", "\"2\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    // P0 unlink retains an inert assignment row, but it is no longer an active relationship.
+    assert_eq!(
+        client
+            .delete(format!("{templates}/quiet"))
+            .bearer_auth(auth)
+            .header("if-match", "\"3\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    let devices = format!("{base}/api/admin/devices");
+    assert_eq!(
+        client
+            .post(&devices)
+            .bearer_auth(auth)
+            .json(&serde_json::json!({"device_id":"kitchen-speaker","agent_key":"kitchen"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    let agent_in_use = client
+        .delete(format!("{agents}/kitchen"))
+        .bearer_auth(auth)
+        .header("if-match", "\"3\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_in_use.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        agent_in_use.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "agent_in_use"
+    );
+    assert_eq!(
+        client
+            .delete(format!("{devices}/kitchen-speaker"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        client
+            .delete(format!("{agents}/kitchen"))
+            .bearer_auth(auth)
+            .header("if-match", "\"3\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
     task.abort();
 }

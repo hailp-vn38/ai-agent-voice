@@ -27,7 +27,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/system", get(get_system))
         .route("/agents", get(list_agents).post(create_agent))
-        .route("/agents/{key}", get(get_agent).patch(patch_agent))
+        .route(
+            "/agents/{key}",
+            get(get_agent).patch(patch_agent).delete(delete_agent),
+        )
         .route(
             "/agents/{key}/default-template/{template_key}",
             put(set_default_template),
@@ -38,7 +41,12 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             put(assign_template).delete(unlink_agent_template),
         )
         .route("/templates", get(list_templates).post(create_template))
-        .route("/templates/{key}", get(get_template).patch(patch_template))
+        .route(
+            "/templates/{key}",
+            get(get_template)
+                .patch(patch_template)
+                .delete(delete_template),
+        )
         .route("/templates/{key}/agents", get(list_template_agents))
         .route("/templates/{key}/providers", get(list_template_providers))
         .route(
@@ -46,7 +54,12 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             put(bind_template_provider).delete(unlink_template_provider),
         )
         .route("/providers", get(list_providers).post(create_provider))
-        .route("/providers/{key}", get(get_provider).patch(patch_provider))
+        .route(
+            "/providers/{key}",
+            get(get_provider)
+                .patch(patch_provider)
+                .delete(delete_provider),
+        )
         .route("/providers/{key}/templates", get(list_provider_templates))
         .route(
             "/providers/{key}/test/llm",
@@ -80,15 +93,20 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route(
             "/mcp-servers/{key}",
-            get(get_mcp_server).patch(patch_mcp_server),
+            get(get_mcp_server)
+                .patch(patch_mcp_server)
+                .delete(delete_mcp_server),
         )
         .route("/agents/{key}/mcp-bindings", get(list_agent_mcp_bindings))
         .route(
             "/agents/{key}/mcp-bindings/{server_key}",
-            put(put_agent_mcp_binding),
+            put(put_agent_mcp_binding).delete(unlink_agent_mcp_binding),
         )
         .route("/devices", get(list_devices).post(create_device))
-        .route("/devices/{device_id}", get(get_device).patch(patch_device))
+        .route(
+            "/devices/{device_id}",
+            get(get_device).patch(patch_device).delete(delete_device),
+        )
         .route("/history", get(list_history))
         .route("/history/purge", axum::routing::post(purge_history))
         .layer(axum::middleware::from_fn_with_state(
@@ -101,6 +119,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
 }
 
 mod agents;
+mod deletion;
 mod devices;
 mod history;
 mod mcp_servers;
@@ -111,11 +130,12 @@ mod system;
 mod templates;
 
 use agents::{create_agent, get_agent, list_agents, patch_agent};
+use deletion::{delete_agent, delete_device, delete_mcp_server, delete_provider, delete_template};
 use devices::{create_device, get_device, list_devices, patch_device};
 use history::{list_history, purge_history};
 use mcp_servers::{
     create_mcp_server, get_mcp_server, list_agent_mcp_bindings, list_mcp_servers, patch_mcp_server,
-    put_agent_mcp_binding,
+    put_agent_mcp_binding, unlink_agent_mcp_binding,
 };
 use provider_adapters::{
     discover_provider_capabilities, get_provider_adapter, get_provider_capabilities,
@@ -477,12 +497,23 @@ async fn audit_conflict(
     resource_id: i64,
     expected: i64,
 ) {
+    audit_conflict_action(pool, request_id, resource, resource_id, expected, "update").await;
+}
+
+async fn audit_conflict_action(
+    pool: &SqlitePool,
+    request_id: String,
+    resource: &str,
+    resource_id: i64,
+    expected: i64,
+    action: &str,
+) {
     let _ = audit(
         pool,
         &request_id,
         resource,
         Some(resource_id),
-        "update",
+        action,
         Some(expected),
         None,
         AuditOutcome::RevisionConflict,

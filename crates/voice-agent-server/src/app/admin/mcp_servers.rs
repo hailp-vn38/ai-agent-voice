@@ -455,3 +455,99 @@ pub(super) async fn put_agent_mcp_binding(
         Err(e) => sql_error(&request, &e),
     }
 }
+
+pub(super) async fn unlink_agent_mcp_binding(
+    State(state): State<AppState>,
+    Path((key, server_key)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let expected = match expected(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    let pool = match db(&state) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let agent = match get_agent_by(pool, &key).await {
+        Ok(value) => value,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if agent.revision != expected {
+        audit_conflict(pool, id(&request).into(), "agent", agent.id, expected).await;
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    let mut tx = match pool.begin().await {
+        Ok(value) => value,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let deleted = match sqlx::query(
+        "DELETE FROM agent_mcp_bindings WHERE agent_id=? AND mcp_server_id=(SELECT id FROM mcp_servers WHERE key=?)",
+    )
+    .bind(agent.id)
+    .bind(&server_key)
+    .execute(&mut *tx)
+    .await
+    {
+        Ok(result) => result.rows_affected() == 1,
+        Err(error_value) => {
+            let _ = tx.rollback().await;
+            return sql_error(&request, &error_value);
+        }
+    };
+    if !deleted {
+        let _ = tx.rollback().await;
+        return error(&request, StatusCode::NOT_FOUND, "not_found");
+    }
+    let updated = match sqlx::query(
+        "UPDATE agents SET revision=revision+1,updated_at=? WHERE id=? AND revision=?",
+    )
+    .bind(now())
+    .bind(agent.id)
+    .bind(expected)
+    .execute(&mut *tx)
+    .await
+    {
+        Ok(result) => result.rows_affected() == 1,
+        Err(error_value) => {
+            let _ = tx.rollback().await;
+            return sql_error(&request, &error_value);
+        }
+    };
+    if !updated {
+        let _ = tx.rollback().await;
+        audit_conflict(pool, id(&request).into(), "agent", agent.id, expected).await;
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    if audit(
+        &mut *tx,
+        id(&request),
+        "agent",
+        Some(agent.id),
+        "unlink_mcp_binding",
+        Some(expected),
+        Some(expected + 1),
+        AuditOutcome::Success,
+        1,
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
+    StatusCode::NO_CONTENT.into_response()
+}

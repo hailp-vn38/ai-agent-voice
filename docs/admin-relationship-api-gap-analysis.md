@@ -1,8 +1,9 @@
 # Đánh giá gap Admin API và kế hoạch Web Admin
 
 **Trạng thái:** P0 relationship read/unlink hoàn thành tại commit `22d500b` (2026-10-01). P1
-control-plane đã hoàn thành phần có contract cụ thể; Vision Provider vẫn cần một quyết định kiến
-trúc riêng.
+control-plane đã hoàn thành phần có contract cụ thể. P3 deletion đã hoàn thành theo ADR-0070;
+Vision Provider sẽ trở thành Database Provider Instance nhưng còn cần contract chọn runtime theo
+Device/Template trước khi implementation.
 
 Tài liệu lưu đánh giá ban đầu đối chiếu **Postman collection đang làm việc** với router thật của branch `dev-test` tại commit `4a2a5f932bff181de0cf3e8da7686ddbdcf6bad7`. Collection hiện nằm ở `docs/api/` nhưng chưa được Git track, vì vậy không nên gọi nó là artifact đã thuộc commit/branch. Admin API chỉ mount khi `database.enabled=true && api.enabled=true`, dùng Bearer admin token và PATCH/PUT mutation dùng optimistic concurrency qua `If-Match`.
 
@@ -57,16 +58,16 @@ Với UI Agents → Templates → Providers mà ta vừa thiết kế, các API 
 | **P0 hoàn thành** | `DELETE /api/admin/templates/{template_key}/providers/{provider_type}` | Unlink Provider khỏi Template |
 | **P0 hoàn thành** | `GET /api/admin/templates/{template_key}/agents` | Biết những Agent nào đang dùng Template |
 | **P0 hoàn thành** | `GET /api/admin/providers/{provider_key}/templates` | Hiển thị `Used by N templates` trên Provider Catalog |
-| **Cần chốt policy** | DELETE Agent/Device/Template/Provider | Hiện chưa có route, nhưng không phải CRUD đơn giản vì foreign key, history, revision và Runtime Catalog |
+| **P3 hoàn thành** | DELETE Agent/Device/Template/Provider/MCP Server | Conditional hard-delete, `If-Match`, `409 *_in_use`, explicit unlink và không cascade/purge active relationship/history (ADR-0070) |
 | **P1 hoàn thành** | Device Template Override API | Device dùng Template khác default của Agent, snapshot ở admission |
 | **P1 hoàn thành** | `GET /api/admin/system` | System page: version, DB, runtime, uptime, provider state |
 | **P1 hoàn thành** | Provider list filter/search | Search/type/enabled filter server-side, total/facets |
 | **P1 hoàn thành** | Template list filter/search | Search key/name/description, language/enabled filter, total |
 | **P1 hoàn thành** | Pagination totals/facets | `total`, `total_pages`, counts theo Provider type |
-| **Cần chốt contract** | Vision Provider APIs | Vision hiện chưa nằm trong DB Provider/Template Provider Binding |
+| **Cần chốt selection seam** | Vision Provider APIs | Vision sẽ là DB Provider/Template binding, nhưng Vision HTTP hiện chưa chọn runtime theo Device/Template |
 | **P2 hoàn thành** | `POST /api/admin/providers/{key}/test/vad` | Test one canonical silence frame từ Provider Detail |
 | **P2** | `POST /api/admin/providers/{key}/test/vision` | Test Vision nếu Vision trở thành Provider Instance |
-| **P2** | DELETE MCP Server / unlink MCP binding | Bổ sung sau khi chốt policy deletion và revision của Agent |
+| **P3 hoàn thành** | DELETE MCP Server / unlink MCP binding | Conditional delete và explicit unlink, cùng revision của Agent (ADR-0070) |
 
 ### 1. Thiếu API đọc Template bindings — đây là blocker lớn nhất
 
@@ -402,9 +403,12 @@ Device bị xóa                      →  history của Device ON DELETE CASCAD
 Template bị xóa                    →  assignment/binding CASCADE, history.template_id SET NULL
 ```
 
-Vì vậy, Provider DELETE mặc định nên trả `409 provider_in_use`; người dùng unlink tường minh trước. Nếu sản phẩm chọn cascade-unlink, backend phải làm trong một transaction, bump revision của mọi Template ảnh hưởng, audit đầy đủ, và định nghĩa rõ Template/default Agent trở nên incomplete sẽ ứng xử thế nào. Agent/Device delete cũng phải chọn giữa `409 resource_in_use`, archive/disable, hoặc một purge history tường minh; không được vô tình biến resource delete thành history purge.
+Quyết định đã chốt tại ADR-0070: DELETE là conditional hard-delete có `If-Match`.
+Resource còn active relationship hoặc history reference trả `409 *_in_use`; người dùng unlink
+tường minh hoặc purge history scoped trước. Không có cascade-unlink, revision bump ngầm hay
+history purge ngầm.
 
-Provider hiện có create/get/patch nhưng collection không expose DELETE.
+Collection phải được cập nhật sau khi P3 hoàn thành để expose DELETE và MCP unlink.
 
 ---
 
@@ -747,10 +751,9 @@ Nếu mục tiêu là đưa Web Admin ra khỏi mock/localStorage, trạng thái
    - GET Agents using Template
    - GET Templates using Provider / hoặc expand usage vào Provider list
 
-3. **Chốt deletion/archive policy trước khi thêm DELETE**
-   - Provider đang bind: mặc định `409 provider_in_use` hay cascade-unlink có revision/audit?
-   - Agent/Device/Template: xử lý foreign key, history và retention ra sao?
-   - MCP Server binding: có bump Agent revision hay không?
+3. **Conditional deletion — hoàn thành**
+   - `409 *_in_use`, `If-Match`, audit cùng transaction và explicit unlink theo ADR-0070.
+   - MCP unlink bump Agent revision; history chỉ purge qua endpoint scoped.
 
 4. **Device Template Override**
    - Migration + admission/session-profile, không chỉ thêm field PATCH.
@@ -765,4 +768,4 @@ Nếu mục tiêu là đưa Web Admin ra khỏi mock/localStorage, trạng thái
 
 P0 read-model đã hoàn thành: phần **Agents + Template Switcher + AI Pipeline + Templates Page + Provider Catalog** có thể hoạt động bằng server API mà không cần frontend tự giữ relational state. Đây là desired configuration: UI phải hiển thị `requires_restart`/runtime status khi mutation chưa effective, và không được hứa hot-reload session đang chạy.
 
-Bản Postman đang làm việc đã có nền tảng create/update và P0 relationship đầy đủ cho Agent/Device, Template và Provider; phần còn lại chủ yếu là **Device→Template override**, filter/facet, Vision và một **deletion/archive policy** đã chốt.
+Bản Postman đang làm việc đã có nền tảng create/update và P0 relationship đầy đủ cho Agent/Device, Template và Provider; phần còn lại chủ yếu là **Vision Database Provider integration**. Postman collection cần được đồng bộ riêng theo P3 deletion contract.
