@@ -32,11 +32,11 @@ async fn main() -> anyhow::Result<()> {
         .map_or(config.server.bind, StartupHandshake::bind_address);
     let listener = tokio::net::TcpListener::bind(bind_address).await?;
     let address = listener.local_addr()?;
-    if let Some(handshake) = &handshake {
-        if let Err(error) = handshake.publish(address) {
-            drop(listener);
-            return Err(error);
-        }
+    if let Some(handshake) = &handshake
+        && let Err(error) = handshake.publish(address)
+    {
+        drop(listener);
+        return Err(error);
     }
     tracing::info!(address = %address, "voice protocol server listening");
     let listening = lifecycle.listening().clone();

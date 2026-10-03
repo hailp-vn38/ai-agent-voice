@@ -634,16 +634,17 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
     assert_eq!(stale["runtime"]["runtime_matches_desired"], false);
     assert_eq!(stale["runtime"]["requires_restart"], true);
 
-    let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 2);
-    assert!(requests[0].tools.is_empty());
-    assert_eq!(
-        requests[0].messages,
-        vec![ChatMessage::User {
-            content: "xin chao".into()
-        }]
-    );
-    drop(requests);
+    {
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].tools.is_empty());
+        assert_eq!(
+            requests[0].messages,
+            vec![ChatMessage::User {
+                content: "xin chao".into()
+            }]
+        );
+    }
 
     let invalid = client
         .post(format!("{providers}/llm_loaded/test/llm"))
@@ -1494,13 +1495,12 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         );
     }
 
-    let mut template_revision = 1;
-    for (kind, provider_key) in [
+    for (template_revision, (kind, provider_key)) in (1..).zip([
         ("vad", "vad_main"),
         ("asr", "asr_main"),
         ("llm", "llm_main"),
         ("tts", "tts_main"),
-    ] {
+    ]) {
         let response = client
             .put(format!("{templates}/quiet/providers/{kind}"))
             .bearer_auth(auth)
@@ -1510,7 +1510,6 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        template_revision += 1;
     }
 
     let assigned = client

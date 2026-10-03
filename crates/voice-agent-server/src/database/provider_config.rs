@@ -20,7 +20,7 @@ pub fn validate(adapter: &str, value: &Value) -> Result<String, ProviderConfigEr
 
 /// This is the startup seam: raw persisted text is bounded before parsing or allocating its tree.
 pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigError> {
-    if raw.as_bytes().len() > MAX_PROVIDER_CONFIG_BYTES {
+    if raw.len() > MAX_PROVIDER_CONFIG_BYTES {
         return Err(ProviderConfigError::Invalid);
     }
     let value: Value = serde_json::from_str(raw).map_err(|_| ProviderConfigError::Invalid)?;
@@ -37,7 +37,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
             config.valid_selection()
         }),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
-        _ => return Err(ProviderConfigError::Invalid),
+        _ => Err(ProviderConfigError::Invalid),
     }
 }
 fn canonical<T, F>(value: &Value, valid: F) -> Result<String, ProviderConfigError>

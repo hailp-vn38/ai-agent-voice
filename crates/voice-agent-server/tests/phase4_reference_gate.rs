@@ -57,15 +57,8 @@ impl AsrSession for FinalAsrSession {
     fn cancel(&mut self) {}
 }
 
-#[derive(Clone, Copy)]
-enum Terminal {
-    Finished,
-    UnexpectedToolCall,
-}
-
 struct ControlledLlm {
     release: Arc<Notify>,
-    terminal: Terminal,
 }
 #[async_trait::async_trait]
 impl LlmProvider for ControlledLlm {
@@ -74,16 +67,12 @@ impl LlmProvider for ControlledLlm {
     }
     async fn stream(
         &self,
-        _: String,
+        _: voice_agent_server::providers::llm::LlmRequest,
     ) -> Result<
         voice_agent_server::providers::llm::LlmEventStream,
         voice_agent_server::providers::LlmError,
     > {
         let release = Arc::clone(&self.release);
-        let terminal = match self.terminal {
-            Terminal::Finished => LlmEvent::Finished,
-            Terminal::UnexpectedToolCall => LlmEvent::UnexpectedToolCall,
-        };
         Ok(Box::pin(
             futures_util::stream::once(async {
                 Ok(LlmEvent::TextDelta(
@@ -92,7 +81,7 @@ impl LlmProvider for ControlledLlm {
             })
             .chain(futures_util::stream::once(async move {
                 release.notified().await;
-                Ok(terminal)
+                Ok(LlmEvent::Finished)
             })),
         ))
     }
@@ -153,21 +142,27 @@ fn real_tts() -> Arc<dyn TtsProvider> {
             deployment_placeholder_tts_config(),
             &RuntimeConfig {
                 onnx: OnnxRuntimeConfig { library: runtime },
+                ..RuntimeConfig::default()
             },
-            &model,
+            Some(&model),
         )
         .unwrap()
 }
 
-fn deployment_placeholder_tts_config() -> &'static voice_agent_server::config::ZeroTtsOnnxConfig {
-    static CONFIG: std::sync::OnceLock<voice_agent_server::config::ZeroTtsOnnxConfig> =
+fn deployment_placeholder_tts_config() -> &'static voice_agent_server::config::TtsInstanceConfig {
+    static CONFIG: std::sync::OnceLock<voice_agent_server::config::TtsInstanceConfig> =
         std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| voice_agent_server::config::ZeroTtsOnnxConfig {
-        model: "zerotts_default".into(),
-        num_threads: 1,
-        voice: "maichi".into(),
-        language: "vi-VN".into(),
-        delivery_mode: Default::default(),
+    CONFIG.get_or_init(|| {
+        voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(
+            voice_agent_server::config::ZeroTtsOnnxConfig {
+                model: "zerotts_default".into(),
+                num_threads: 1,
+                voice: "maichi".into(),
+                language: "vi-VN".into(),
+                delivery_mode: Default::default(),
+                preload: false,
+            },
+        )
     })
 }
 
@@ -297,61 +292,42 @@ fn tts_state(message: &Message, state: &str) -> bool {
 #[tokio::test]
 async fn real_zerotts_reference_client_gate_preserves_delivery_and_blocks_invalidated_audio() {
     let tts = real_tts();
-    for terminal in [Terminal::Finished, Terminal::UnexpectedToolCall] {
-        let release = Arc::new(Notify::new());
-        let (base, task) = start(
-            Arc::new(ControlledLlm {
-                release: Arc::clone(&release),
-                terminal,
-            }),
-            Arc::clone(&tts),
-        )
-        .await;
-        let mut socket = connect_and_start(&base).await;
-        let observed = await_first_audio(&mut socket).await;
-        assert!(
-            observed.iter().any(|message| tts_state(message, "start")),
-            "tts:start must precede real audio"
-        );
-        release.notify_one();
-        let mut after = Vec::new();
-        while after.iter().all(|message| !tts_state(message, "stop")) {
-            after.push(
-                timeout(Duration::from_secs(10), socket.next())
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .unwrap(),
-            );
-        }
-        assert_eq!(
-            after
-                .iter()
-                .filter(|message| tts_state(message, "stop"))
-                .count(),
-            1
-        );
-        if matches!(terminal, Terminal::UnexpectedToolCall) {
-            assert!(
-                after
-                    .iter()
-                    .skip_while(|message| !tts_state(message, "stop"))
-                    .skip(1)
-                    .all(|message| !matches!(message, Message::Binary(_)))
-            );
-        }
-        task.abort();
-    }
-
     let release = Arc::new(Notify::new());
     let (base, task) = start(
         Arc::new(ControlledLlm {
-            release,
-            terminal: Terminal::Finished,
+            release: Arc::clone(&release),
         }),
-        tts,
+        Arc::clone(&tts),
     )
     .await;
+    let mut socket = connect_and_start(&base).await;
+    let observed = await_first_audio(&mut socket).await;
+    assert!(
+        observed.iter().any(|message| tts_state(message, "start")),
+        "tts:start must precede real audio"
+    );
+    release.notify_one();
+    let mut after = Vec::new();
+    while after.iter().all(|message| !tts_state(message, "stop")) {
+        after.push(
+            timeout(Duration::from_secs(10), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    assert_eq!(
+        after
+            .iter()
+            .filter(|message| tts_state(message, "stop"))
+            .count(),
+        1
+    );
+    task.abort();
+
+    let release = Arc::new(Notify::new());
+    let (base, task) = start(Arc::new(ControlledLlm { release }), tts).await;
     let mut socket = connect_and_start(&base).await;
     let observed = await_first_audio(&mut socket).await;
     assert!(observed.iter().any(|message| tts_state(message, "start")));

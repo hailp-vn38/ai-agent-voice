@@ -189,10 +189,9 @@ async fn transport(request: Request, next: Next) -> Response {
             .get(header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<usize>().ok())
+            && length > max_body
         {
-            if length > max_body {
-                return error(&request, StatusCode::PAYLOAD_TOO_LARGE, "request_too_large");
-            }
+            return error(&request, StatusCode::PAYLOAD_TOO_LARGE, "request_too_large");
         }
     }
     next.run(request).await
@@ -256,6 +255,7 @@ fn error(request: &Request, status: StatusCode, code: &'static str) -> Response 
     )
         .into_response()
 }
+#[allow(clippy::result_large_err)] // Axum handlers return the response directly on this boundary.
 fn db(state: &AppState) -> Result<&SqlitePool, Response> {
     state.database.as_ref().map(|db| db.pool()).ok_or_else(|| {
         (
@@ -300,6 +300,7 @@ fn mutation_sql_error(request: &Request, sql_error_value: &sqlx::Error) -> Respo
     }
 }
 
+#[allow(clippy::result_large_err)] // Preserves the request so callers can attach its request ID.
 async fn json<T: DeserializeOwned>(request: Request) -> Result<(Request, T), Response> {
     if request
         .headers()
@@ -470,6 +471,7 @@ impl AuditOutcome {
 /// History Purge names a scope rather than a resource and has no revision pair, so its `action` and
 /// `affected_rows` are the only thing that identifies it.  Nothing about the text a purge deleted
 /// does: a purge must leave a countable trace, not a second copy of what it removed.
+#[allow(clippy::too_many_arguments)] // Each argument maps one-to-one to the immutable audit schema.
 async fn audit<'e, E>(
     executor: E,
     request_id: &str,

@@ -141,9 +141,11 @@ mod tests {
 
     #[test]
     fn template_is_strict_and_single_pass() {
-        let mut agent = EffectiveAgentConfig::default();
-        agent.prompt_template = "{{persona}} {{agent_name}}".into();
-        agent.persona = "{{language}}".into();
+        let mut agent = EffectiveAgentConfig {
+            prompt_template: "{{persona}} {{agent_name}}".into(),
+            persona: "{{language}}".into(),
+            ..Default::default()
+        };
         assert_eq!(render_system(&agent).unwrap(), "{{language}} Mây");
         agent.prompt_template = "{{ persona }}".into();
         assert_eq!(render_system(&agent), Err(PromptError::InvalidTemplate));

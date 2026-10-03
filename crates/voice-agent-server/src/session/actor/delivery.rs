@@ -161,12 +161,8 @@ impl SessionActor {
         }
         match event {
             LlmRuntimeEvent::TextDelta { text, .. } => {
-                if self.llm_round.is_some() {
-                    self.llm_round
-                        .as_mut()
-                        .expect("checked")
-                        .prose
-                        .push_str(&text);
+                if let Some(round) = &mut self.llm_round {
+                    round.prose.push_str(&text);
                     return;
                 }
                 self.generated_response.push_str(&text);

@@ -908,7 +908,7 @@ pub struct DatabaseConfig {
 }
 
 /// Provisioning controls for mandatory database-backed Voice Protocol Client admission.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseDevicesConfig {
     #[serde(default)]
@@ -969,16 +969,6 @@ impl Default for EnrollmentConfig {
             ws_poll_interval_ms: default_enrollment_ws_poll_interval_ms(),
             ws_prompt_repeat_seconds: default_enrollment_ws_prompt_repeat_seconds(),
             prompt_assets_dir: default_enrollment_prompt_assets_dir(),
-        }
-    }
-}
-
-impl Default for DatabaseDevicesConfig {
-    fn default() -> Self {
-        Self {
-            auto_register: false,
-            auto_register_agent_key: String::new(),
-            enrollment: EnrollmentConfig::default(),
         }
     }
 }

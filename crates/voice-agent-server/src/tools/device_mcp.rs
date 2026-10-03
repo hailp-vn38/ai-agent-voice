@@ -167,7 +167,7 @@ pub fn visible_tools(
         .drain(..)
         .filter_map(|tool| {
             let llm_name = sanitize_tool_name(&tool.original_name);
-            (names[&llm_name] == 1).then(|| LlmVisibleTool {
+            (names[&llm_name] == 1).then_some(LlmVisibleTool {
                 llm_name,
                 original_name: tool.original_name,
                 description: tool.description,

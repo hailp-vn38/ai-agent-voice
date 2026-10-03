@@ -100,6 +100,7 @@ impl From<&'static ProviderDescriptor> for AdapterSummary {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Const adapter descriptors are clearer as a flat declaration.
 pub(crate) const fn field(
     key: &'static str,
     label: &'static str,

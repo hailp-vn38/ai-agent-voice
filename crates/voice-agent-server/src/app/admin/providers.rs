@@ -293,11 +293,9 @@ fn append_provider_filters(
         clause(builder);
         builder.push("enabled=").push_bind(i64::from(enabled));
     }
-    if include_kind {
-        if let Some(kind) = &filters.kind {
-            clause(builder);
-            builder.push("type=").push_bind(kind.clone());
-        }
+    if include_kind && let Some(kind) = &filters.kind {
+        clause(builder);
+        builder.push("type=").push_bind(kind.clone());
     }
     if let Some(q) = &filters.q {
         clause(builder);
@@ -430,7 +428,17 @@ pub(super) async fn patch_provider(
         Ok(v) => v,
         Err(e) => return e,
     };
-    let old: Result<(i64, String, String, String, String, Option<String>, i64, i64), _> =
+    type ProviderRow = (
+        i64,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        i64,
+        i64,
+    );
+    let old: Result<ProviderRow, _> =
         sqlx::query_as("SELECT id,name,type,adapter,config_json,secret_ref,enabled,revision FROM providers WHERE key=?")
             .bind(&key).fetch_one(pool).await;
     let (provider_id, old_name, kind, old_adapter, old_config, old_secret, old_enabled, revision) =

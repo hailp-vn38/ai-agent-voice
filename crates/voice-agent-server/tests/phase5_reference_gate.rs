@@ -72,7 +72,19 @@ impl LlmProvider for DeterministicLlm {
         "phase5-deterministic-llm"
     }
 
-    fn complete(&self, prompt: &str) -> Result<String, LlmError> {
+    fn complete(
+        &self,
+        request: &voice_agent_server::providers::llm::LlmRequest,
+    ) -> Result<String, LlmError> {
+        let prompt = request
+            .messages
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                voice_agent_server::providers::llm::ChatMessage::User { content } => Some(content),
+                _ => None,
+            })
+            .ok_or(LlmError::Failed)?;
         Ok(format!("Phase 5 response for {prompt}."))
     }
 }
@@ -168,31 +180,33 @@ fn real_tts() -> Arc<dyn TtsProvider> {
             phase5_zerotts_config(),
             &RuntimeConfig {
                 onnx: OnnxRuntimeConfig { library: runtime },
+                ..RuntimeConfig::default()
             },
-            &model,
+            Some(&model),
         )
         .unwrap()
 }
 
-fn phase5_zerotts_config() -> &'static voice_agent_server::config::ZeroTtsOnnxConfig {
-    static CONFIG: std::sync::OnceLock<voice_agent_server::config::ZeroTtsOnnxConfig> =
+fn phase5_zerotts_config() -> &'static voice_agent_server::config::TtsInstanceConfig {
+    static CONFIG: std::sync::OnceLock<voice_agent_server::config::TtsInstanceConfig> =
         std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| voice_agent_server::config::ZeroTtsOnnxConfig {
-        model: "zerotts_default".into(),
-        num_threads: 1,
-        voice: "maichi".into(),
-        language: "vi-VN".into(),
-        delivery_mode: Default::default(),
+    CONFIG.get_or_init(|| {
+        voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(
+            voice_agent_server::config::ZeroTtsOnnxConfig {
+                model: "zerotts_default".into(),
+                num_threads: 1,
+                voice: "maichi".into(),
+                language: "vi-VN".into(),
+                delivery_mode: Default::default(),
+                preload: false,
+            },
+        )
     })
 }
 
 async fn start(tts: Arc<dyn TtsProvider>) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let mut providers_config = ProvidersConfig::default();
-    let vad = providers_config.vad.silero_onnx.as_mut().unwrap();
-    vad.min_speech_ms = 32;
-    vad.end_silence_ms = 32;
     let config = AppConfig {
         server: ServerConfig {
             bind: address,
@@ -210,7 +224,7 @@ async fn start(tts: Arc<dyn TtsProvider>) -> (String, JoinHandle<()>) {
             tts: "test".into(),
             vision: None,
         },
-        providers: providers_config,
+        providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),

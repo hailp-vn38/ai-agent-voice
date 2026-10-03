@@ -106,6 +106,8 @@ async fn aborting_the_goodbye_cancels_the_pending_normal_close() {
     let (base, task) = start(tool_was_advertised).await;
     let ota: serde_json::Value = reqwest::Client::new()
         .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "exit-abort")
+        .header("Client-Id", "exit-abort")
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -254,6 +256,8 @@ async fn exit_builtin_without_mcp_sends_final_audio_then_stop_then_normal_close(
     let (base, task) = start(Arc::clone(&tool_was_advertised)).await;
     let ota: serde_json::Value = reqwest::Client::new()
         .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "exit-gate")
+        .header("Client-Id", "exit-gate")
         .json(&serde_json::json!({}))
         .send()
         .await

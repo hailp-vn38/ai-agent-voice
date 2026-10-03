@@ -234,7 +234,7 @@ impl SessionActor {
             .iter()
             .filter_map(|result| match result {
                 ChatMessage::ToolResult { content, .. } => {
-                    serde_json::from_str::<serde_json::Value>(&content)
+                    serde_json::from_str::<serde_json::Value>(content)
                         .ok()
                         .filter(|result| result["ok"].as_bool() == Some(true))
                         .and_then(|result| {

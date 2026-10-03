@@ -88,10 +88,7 @@ impl SentenceSegmenter {
     pub(super) fn push(&mut self, delta: &str) -> Vec<String> {
         self.buffer.push_str(delta);
         let mut segments = Vec::new();
-        loop {
-            let Some(split) = self.next_split() else {
-                break;
-            };
+        while let Some(split) = self.next_split() {
             let segment = self.buffer[..split].trim().to_owned();
             self.buffer.drain(..split);
             if !segment.is_empty() {

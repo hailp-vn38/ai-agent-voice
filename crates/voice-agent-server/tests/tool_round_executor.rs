@@ -675,6 +675,8 @@ impl Peer {
     async fn open(base: &str) -> Self {
         let ota: serde_json::Value = reqwest::Client::new()
             .post(format!("{base}/voice/ota/"))
+            .header("Device-Id", "device")
+            .header("Client-Id", "tool-round")
             .json(&serde_json::json!({}))
             .send()
             .await

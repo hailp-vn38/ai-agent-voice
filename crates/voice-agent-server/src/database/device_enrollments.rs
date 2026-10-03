@@ -102,10 +102,9 @@ impl EnrollmentCleaner {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
                     _ = schedule.tick() => {
-                        if let Some(now) = super::unix_seconds() {
-                            if let Err(error) = database.purge_enrollments(now, retention_seconds, 256).await {
-                                tracing::warn!(event = "enrollment_cleanup_skipped", reason = %error, "Enrollment cleanup pass was skipped");
-                            }
+                        if let Some(now) = super::unix_seconds()
+                            && let Err(error) = database.purge_enrollments(now, retention_seconds, 256).await {
+                            tracing::warn!(event = "enrollment_cleanup_skipped", reason = %error, "Enrollment cleanup pass was skipped");
                         }
                     }
                 }

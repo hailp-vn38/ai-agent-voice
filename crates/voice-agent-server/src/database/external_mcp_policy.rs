@@ -74,6 +74,7 @@ pub fn valid_resolved_destination(
 }
 
 /// Runtime seam: resolves once per outbound attempt and rejects mixed DNS answers.
+#[allow(clippy::result_unit_err)] // Callers deliberately expose no network-policy detail.
 pub async fn resolve_and_validate(
     url: &Url,
     network: &ExternalMcpNetworkConfig,

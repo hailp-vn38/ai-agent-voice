@@ -311,6 +311,8 @@ impl ReferenceClient {
         );
         let ota: serde_json::Value = reqwest::Client::new()
             .post(&options.ota_url)
+            .header("Device-Id", &options.device_id)
+            .header("Client-Id", &options.client_id)
             .json(&json!({}))
             .send()
             .await?
@@ -686,6 +688,8 @@ pub async fn run_text_turn(request: TextTurnRequest) -> anyhow::Result<TextTurnR
     debug_step(request.config.debug_steps, "ota_request");
     let ota: serde_json::Value = reqwest::Client::new()
         .post(&request.ota_url)
+        .header("Device-Id", &request.device_id)
+        .header("Client-Id", &request.client_id)
         .json(&json!({}))
         .send()
         .await?
@@ -860,6 +864,8 @@ pub async fn run_audio_turn(request: AudioTurnRequest) -> anyhow::Result<AudioTu
 
     let ota: serde_json::Value = reqwest::Client::new()
         .post(&request.ota_url)
+        .header("Device-Id", &request.device_id)
+        .header("Client-Id", &request.client_id)
         .json(&json!({}))
         .send()
         .await?

@@ -205,6 +205,7 @@ struct Identity {
     device_id: String,
     client_id: String,
 }
+#[allow(clippy::result_large_err)] // The OTA handler returns protocol errors without translation.
 fn identity(headers: &HeaderMap) -> Result<Identity, Response> {
     fn single(headers: &HeaderMap, name: &str) -> Option<String> {
         let values: Vec<_> = headers.get_all(name).iter().collect();
@@ -228,6 +229,7 @@ fn identity(headers: &HeaderMap) -> Result<Identity, Response> {
 fn valid_identity(value: &str) -> bool {
     !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte > 0x1f && byte != 0x7f)
 }
+#[allow(clippy::result_large_err)] // The OTA handler returns protocol errors without translation.
 async fn ota_metadata(request: Request, client_id: &str) -> Result<String, Response> {
     let content_type = request
         .headers()
@@ -289,6 +291,7 @@ fn metadata(client_id: &str, firmware: Option<String>, board: Option<(String, St
     }
     Value::Object(output)
 }
+#[allow(clippy::result_large_err)] // The activation handler returns protocol errors without translation.
 async fn compatible_activate_body(request: Request) -> Result<(), Response> {
     let bytes = to_bytes(request.into_body(), ACTIVATE_BODY_MAX)
         .await

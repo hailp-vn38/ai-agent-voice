@@ -38,9 +38,11 @@ impl Voicepack {
                 "Kokoro voicepack has a truncated payload".into(),
             ));
         }
-        let values = bytes[header..]
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")))
+        let (chunks, remainder) = bytes[header..].as_chunks::<4>();
+        debug_assert!(remainder.is_empty());
+        let values = chunks
+            .iter()
+            .map(|chunk| f32::from_le_bytes(*chunk))
             .collect::<Vec<_>>();
         if values.iter().any(|sample| !sample.is_finite()) {
             return Err(TtsError::IncompatibleContract(

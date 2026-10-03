@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[allow(clippy::result_large_err)] // Handler callers return this HTTP response unchanged.
 fn relationship_page(query: PageQuery, request: &Request) -> Result<(u32, u32), Response> {
     match page_bounds(query.page, query.page_size) {
         Ok(value) if query.enabled.is_none() && query.sort.is_none() => Ok(value),
@@ -30,7 +31,8 @@ pub(in crate::app::admin) async fn list_agent_templates(
         }
         Err(error_value) => return sql_error(&request, &error_value),
     };
-    let rows: Result<Vec<(String, String, String, i64, i64)>, _> = sqlx::query_as(
+    type AgentTemplateRow = (String, String, String, i64, i64);
+    let rows: Result<Vec<AgentTemplateRow>, _> = sqlx::query_as(
         "SELECT t.key,t.name,t.language,t.enabled,a.is_default \
          FROM agent_template_assignments a JOIN agent_templates t ON t.id=a.template_id \
          WHERE a.agent_id=? AND a.enabled=1 ORDER BY t.key LIMIT ? OFFSET ?",
