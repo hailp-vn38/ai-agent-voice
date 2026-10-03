@@ -28,9 +28,11 @@ async fn main() -> anyhow::Result<()> {
         args.voice
     );
 
-    let mut config = ChillAudioConfig::default();
-    config.voice = args.voice;
-    config.timeout = Duration::from_millis(args.timeout_ms);
+    let config = ChillAudioConfig {
+        voice: args.voice,
+        timeout: Duration::from_millis(args.timeout_ms),
+        ..Default::default()
+    };
 
     if let Some(parent) = args
         .out
