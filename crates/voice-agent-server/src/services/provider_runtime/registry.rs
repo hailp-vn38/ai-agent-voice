@@ -557,8 +557,8 @@ impl ProviderRuntimeManager {
         version: &ProviderVersion,
         generation: u64,
         outcome: Result<Arc<dyn RuntimeResource>, RuntimeError>,
-        load: Option<OwnedSemaphorePermit>,
-        attempt: Option<OwnedSemaphorePermit>,
+        mut load: Option<OwnedSemaphorePermit>,
+        mut attempt: Option<OwnedSemaphorePermit>,
     ) {
         let metadata = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             outcome.as_ref().ok().map(|resource| {
@@ -615,8 +615,8 @@ impl ProviderRuntimeManager {
                 self.metrics.increment(super::RuntimeCounter::BuildFailure);
                 entry.state = RuntimeState::Quarantined;
                 entry.error = Some(RuntimeError::Quarantined);
-                entry.quarantined_load = load;
-                entry.quarantined_attempt = attempt;
+                entry.quarantined_load = load.take();
+                entry.quarantined_attempt = attempt.take();
             }
             Err(error) => {
                 self.metrics.increment(super::RuntimeCounter::BuildFailure);
@@ -628,6 +628,12 @@ impl ProviderRuntimeManager {
                 entry.bytes = 0;
             }
         }
+        // Return completed native-attempt capacity before publishing its terminal state.
+        // A woken admission may immediately acquire the next cold provider with no queue.
+        // Keep this inside the registry lock so Ready cannot be observed before release.
+        // Quarantined attempts retain their permits in the entry until cleanup acknowledges.
+        drop(load);
+        drop(attempt);
         entry.changed.send_replace(entry.state);
         let metadata = (
             entry.state,
