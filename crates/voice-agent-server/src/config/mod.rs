@@ -599,6 +599,9 @@ pub struct ModelStoreConfig {
     pub root: std::path::PathBuf,
     #[serde(default)]
     pub offline: bool,
+    /// Download locations for deployment-prepared artifacts; manifest checksums still apply.
+    #[serde(default)]
+    pub sources: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for ModelStoreConfig {
@@ -606,6 +609,7 @@ impl Default for ModelStoreConfig {
         Self {
             root: default_models_root(),
             offline: false,
+            sources: Default::default(),
         }
     }
 }

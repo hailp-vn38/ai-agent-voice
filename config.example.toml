@@ -6,7 +6,7 @@ hello_timeout_ms = 5000
 [auth]
 token = ""
 
-# SQLite is required. Create the parent directory before starting the server.
+# SQLite is required. The server creates its parent directory before opening the DB.
 # V1 supports one Voice Agent process owning one local filesystem path;
 # NFS/SMB, active-active, and multi-process writers are unsupported.
 [database]
@@ -192,6 +192,12 @@ profile = "development-noncommercial"
 [deployment.models]
 root = "models"
 offline = false
+
+# Startup verifies/downloads local models before constructing provider runtimes.
+# Existing verified artifacts are reused without contacting the source.
+# Deployment-prepared artifacts need a checksum-matching binary at an HTTP(S) URL:
+# [deployment.models.sources]
+# "prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin" = "https://your-artifact-host/diem_trinh.bin"
 
 [runtime.onnx]
 library = "runtime/onnxruntime/libonnxruntime.dylib"

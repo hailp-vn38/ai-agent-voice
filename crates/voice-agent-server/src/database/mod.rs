@@ -97,6 +97,13 @@ impl Database {
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_millis(config.busy_timeout_ms));
+        if let Some(parent) = options.get_filename().parent()
+            && !parent.as_os_str().is_empty()
+        {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|_| DatabaseError::Unavailable)?;
+        }
         let pool = SqlitePoolOptions::new()
             .max_connections(config.max_connections)
             .connect_with(options)
