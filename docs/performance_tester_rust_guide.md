@@ -2354,11 +2354,7 @@ Nhưng remote provider variability vẫn phải được ghi chú.
 
 Không đặt E2E implementation trong `Provider Benchmark`.
 
-Khuyến nghị thêm binary ở:
-
-```text
-crates/voice-reference-client/src/bin/voice-load.rs
-```
+Nếu cần E2E load test, hãy đặt nó trong một harness qualification độc lập; không ghép nó vào Provider Benchmark hoặc binary vận hành của server.
 
 Virtual client:
 

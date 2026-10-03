@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/voice-agent-server", "crates/voice-reference-client"]
+members = ["crates/voice-agent-server"]
 resolver = "2"
 
 [workspace.package]

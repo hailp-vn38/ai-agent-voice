@@ -86,6 +86,36 @@ async fn concurrent_exact_version_acquisition_coalesces_and_retains_provenance()
     assert_eq!(count.load(Ordering::SeqCst), 2);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sequential_cold_acquisitions_release_the_only_load_slot_before_ready() {
+    // Admission loads each required provider in sequence. With no pending queue, Ready
+    // must mean the preceding native attempt has returned its capacity as well.
+    for _ in 0..128 {
+        let count = Arc::new(AtomicUsize::new(0));
+        let manager = ProviderRuntimeManager::new(
+            RuntimeLimits {
+                max_parallel_loads: 1,
+                max_pending_loads: 0,
+                max_waiters: 16,
+                max_resident_bytes: 40,
+                max_resources: 4,
+                max_version_entries: 8,
+                admission_timeout_ms: 2000,
+                failure_cooldown_ms: 100,
+                idle_ttl_ms: 1000,
+            },
+            Arc::new(Builder(count.clone())),
+            AdmissionGate::open(),
+        )
+        .unwrap();
+        let mut leases = Vec::new();
+        for revision in 1..=4 {
+            leases.push(manager.acquire(snapshot(revision)).await.unwrap());
+        }
+        assert_eq!(count.load(Ordering::SeqCst), 4);
+    }
+}
+
 struct BlockingBuilder {
     entered: tokio::sync::mpsc::UnboundedSender<()>,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,

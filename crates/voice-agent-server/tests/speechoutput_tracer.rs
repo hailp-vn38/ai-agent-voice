@@ -1309,25 +1309,3 @@ async fn auto_listening_accepts_digital_human_detect_as_a_text_turn() {
 
     task.abort();
 }
-
-#[tokio::test]
-async fn reference_client_send_text_runs_a_complete_public_text_turn() {
-    let (base, task) = start_router().await;
-    let result = voice_reference_client::run_text_turn(voice_reference_client::TextTurnRequest {
-        ota_url: format!("{base}/voice/ota/"),
-        device_id: "text-turn-device".into(),
-        client_id: "reference-client".into(),
-        text: "  Xin chao  ".into(),
-        config: voice_reference_client::TextTurnConfig {
-            tts_start_timeout: Duration::from_secs(1),
-            turn_timeout: Duration::from_secs(5),
-            post_stop_quiet_period: Duration::from_millis(50),
-            debug_audio_file: None,
-            debug_steps: false,
-        },
-    })
-    .await;
-    task.abort();
-    assert!(result.is_ok(), "{result:?}");
-    assert!(result.unwrap().binary_packets > 0);
-}

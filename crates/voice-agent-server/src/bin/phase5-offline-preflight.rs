@@ -11,37 +11,27 @@ use voice_agent_server::{
 const FIXTURES: [(&str, &[u8], bool); 5] = [
     (
         "silence A",
-        include_bytes!(
-            "../../../voice-reference-client/tests/fixtures/phase5-uplink-01-silence.opus"
-        ),
+        include_bytes!("../../tests/fixtures/phase5-uplink-01-silence.opus"),
         false,
     ),
     (
         "speech A",
-        include_bytes!(
-            "../../../voice-reference-client/tests/fixtures/phase5-uplink-02-speech-a.opus"
-        ),
+        include_bytes!("../../tests/fixtures/phase5-uplink-02-speech-a.opus"),
         true,
     ),
     (
         "silence B",
-        include_bytes!(
-            "../../../voice-reference-client/tests/fixtures/phase5-uplink-03-silence.opus"
-        ),
+        include_bytes!("../../tests/fixtures/phase5-uplink-03-silence.opus"),
         false,
     ),
     (
         "speech B",
-        include_bytes!(
-            "../../../voice-reference-client/tests/fixtures/phase5-uplink-04-speech-b.opus"
-        ),
+        include_bytes!("../../tests/fixtures/phase5-uplink-04-speech-b.opus"),
         true,
     ),
     (
         "silence C",
-        include_bytes!(
-            "../../../voice-reference-client/tests/fixtures/phase5-uplink-05-silence.opus"
-        ),
+        include_bytes!("../../tests/fixtures/phase5-uplink-05-silence.opus"),
         false,
     ),
 ];
