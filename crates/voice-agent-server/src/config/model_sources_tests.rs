@@ -31,13 +31,26 @@ fn prepared_sources_default_to_empty_and_accept_http_mirrors() {
 #[test]
 fn invalid_prepared_sources_are_rejected_before_download() {
     for (source, remote) in [
-        ("https://original.example/model", "https://mirror.example/model"),
+        (
+            "https://original.example/model",
+            "https://mirror.example/model",
+        ),
         ("prepared://deployment/voice.bin", "file:///tmp/voice.bin"),
-        ("prepared://deployment/voice.bin", "https://user:secret@example.com/model"),
-        ("prepared://deployment/voice.bin", "https://example.com/model#fragment"),
+        (
+            "prepared://deployment/voice.bin",
+            "https://user:secret@example.com/model",
+        ),
+        (
+            "prepared://deployment/voice.bin",
+            "https://example.com/model#fragment",
+        ),
     ] {
         let mut config = config();
-        config.deployment.models.sources.insert(source.into(), remote.into());
+        config
+            .deployment
+            .models
+            .sources
+            .insert(source.into(), remote.into());
         assert!(validate_deployment(&config).is_err());
     }
 }

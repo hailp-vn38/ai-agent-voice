@@ -694,18 +694,23 @@ fn validate_speech_output(config: &AppConfig) -> Result<(), ConfigError> {
 
 fn validate_deployment(config: &AppConfig) -> Result<(), ConfigError> {
     if config.deployment.models.sources.len() > 64
-        || config.deployment.models.sources.iter().any(|(source, remote)| {
-            !source.starts_with("prepared://")
-                || source.len() > 512
-                || remote.len() > 2048
-                || !url::Url::parse(remote).is_ok_and(|url| {
-                    matches!(url.scheme(), "http" | "https")
-                        && url.host_str().is_some()
-                        && url.username().is_empty()
-                        && url.password().is_none()
-                        && url.fragment().is_none()
-                })
-        })
+        || config
+            .deployment
+            .models
+            .sources
+            .iter()
+            .any(|(source, remote)| {
+                !source.starts_with("prepared://")
+                    || source.len() > 512
+                    || remote.len() > 2048
+                    || !url::Url::parse(remote).is_ok_and(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            && url.host_str().is_some()
+                            && url.username().is_empty()
+                            && url.password().is_none()
+                            && url.fragment().is_none()
+                    })
+            })
     {
         return Err(ConfigError::Validation(
             "deployment.models.sources requires at most 64 prepared:// keys and HTTP(S) URLs without credentials or fragments".into(),

@@ -52,10 +52,17 @@ fn prepared_artifact_uses_deployment_source_and_preserves_manifest_checksum() {
     let manifest = manifest(&root, "voice.bin", b"voicepack", b"voicepack", "identity");
     let prepared_source = "prepared://deployment/voice.bin";
     let raw = fs::read_to_string(&manifest).unwrap();
-    fs::write(&manifest, raw.replace("https://example.invalid/model", prepared_source)).unwrap();
-    let sources = [(prepared_source.into(), "https://artifacts.example.invalid/voice.bin".into())]
-        .into_iter()
-        .collect();
+    fs::write(
+        &manifest,
+        raw.replace("https://example.invalid/model", prepared_source),
+    )
+    .unwrap();
+    let sources = [(
+        prepared_source.into(),
+        "https://artifacts.example.invalid/voice.bin".into(),
+    )]
+    .into_iter()
+    .collect();
     let result = ModelPreparation::with_acquirer(
         ModelPreparationConfig {
             manifest_path: manifest,
@@ -67,14 +74,23 @@ fn prepared_artifact_uses_deployment_source_and_preserves_manifest_checksum() {
     .with_sources(&sources)
     .prepare("test-vad", "silero_onnx")
     .unwrap();
-    assert_eq!(fs::read(result.artifact("vad").unwrap()).unwrap(), b"voicepack");
+    assert_eq!(
+        fs::read(result.artifact("vad").unwrap()).unwrap(),
+        b"voicepack"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn checksum_failure_keeps_existing_file_and_removes_temporary_files() {
     let root = temp_dir("checksum-failure");
-    let manifest = manifest(&root, "vad/model.onnx", b"expected", b"expected", "identity");
+    let manifest = manifest(
+        &root,
+        "vad/model.onnx",
+        b"expected",
+        b"expected",
+        "identity",
+    );
     let installed = root.join("vad/model.onnx");
     fs::create_dir_all(installed.parent().unwrap()).unwrap();
     fs::write(&installed, b"existing").unwrap();
@@ -101,7 +117,10 @@ fn prepared_source_mapping_is_needed_only_when_artifact_is_missing() {
     let raw = fs::read_to_string(&manifest).unwrap();
     fs::write(
         &manifest,
-        raw.replace("https://example.invalid/model", "prepared://deployment/voice.bin"),
+        raw.replace(
+            "https://example.invalid/model",
+            "prepared://deployment/voice.bin",
+        ),
     )
     .unwrap();
     let preparation = ModelPreparation::with_acquirer(

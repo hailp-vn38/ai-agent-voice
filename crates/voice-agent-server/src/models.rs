@@ -45,7 +45,9 @@ pub enum ModelError {
     UnsupportedTransform(String),
     #[error("model artifact acquisition failed: {0}")]
     Acquire(String),
-    #[error("prepared model artifact `{0}` needs an installed file or a deployment.models.sources URL")]
+    #[error(
+        "prepared model artifact `{0}` needs an installed file or a deployment.models.sources URL"
+    )]
     PreparedSourceRequired(String),
     #[error("provider `{0}` has invalid Model Preparation configuration")]
     ProviderConfiguration(String),
@@ -320,7 +322,15 @@ pub fn prepare_immutable(
     adapter: &str,
     deployment: &DeploymentConfig,
 ) -> Result<ResolvedModel, ModelError> {
-    prepare_immutable_inner(manifest_path, root, offline, identity, adapter, deployment, false)
+    prepare_immutable_inner(
+        manifest_path,
+        root,
+        offline,
+        identity,
+        adapter,
+        deployment,
+        false,
+    )
 }
 
 /// Only startup may repair an existing immutable file: no live runtime has mapped it yet.
@@ -356,8 +366,8 @@ fn prepare_immutable_inner(
             .join(&artifact.install_path);
         // Never nest stripe locks: mutable and pinned paths can hash to the same stripe.
         let existing = root.join(&relative);
-        let reuse = existing.exists()
-            && (!repair_existing || verifies(&existing, &artifact.sha256)?);
+        let reuse =
+            existing.exists() && (!repair_existing || verifies(&existing, &artifact.sha256)?);
         let source = if reuse {
             None
         } else {

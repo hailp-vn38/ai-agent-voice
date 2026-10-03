@@ -18,7 +18,9 @@ fn server(responses: Vec<Vec<u8>>) -> (String, JoinHandle<()>) {
     let task = thread::spawn(move || {
         for response in responses {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             let mut request = Vec::new();
             let mut byte = [0_u8; 1];
             while !request.ends_with(b"\r\n\r\n") {

@@ -24,7 +24,9 @@ impl ModelAcquirer for HttpModelAcquirer {
         let url = reqwest::Url::parse(remote)
             .map_err(|_| ModelError::Acquire("invalid artifact URL".into()))?;
         if !matches!(url.scheme(), "http" | "https") {
-            return Err(ModelError::Acquire("artifact source must use HTTP(S)".into()));
+            return Err(ModelError::Acquire(
+                "artifact source must use HTTP(S)".into(),
+            ));
         }
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
@@ -39,7 +41,11 @@ impl ModelAcquirer for HttpModelAcquirer {
                     if !failure.retryable || attempt == ATTEMPTS {
                         return Err(failure.error);
                     }
-                    tracing::warn!(attempt, max_attempts = ATTEMPTS, "model artifact download interrupted; retrying");
+                    tracing::warn!(
+                        attempt,
+                        max_attempts = ATTEMPTS,
+                        "model artifact download interrupted; retrying"
+                    );
                     std::thread::sleep(Duration::from_secs(u64::from(attempt)));
                 }
             }
@@ -53,10 +59,13 @@ fn acquire_once(
     url: &reqwest::Url,
     destination: &Path,
 ) -> Result<(), AttemptError> {
-    let mut response = client.get(url.clone()).send().map_err(|error| AttemptError {
-        retryable: error.is_timeout() || error.is_connect() || error.is_body(),
-        error: ModelError::Acquire(error.without_url().to_string()),
-    })?;
+    let mut response = client
+        .get(url.clone())
+        .send()
+        .map_err(|error| AttemptError {
+            retryable: error.is_timeout() || error.is_connect() || error.is_body(),
+            error: ModelError::Acquire(error.without_url().to_string()),
+        })?;
     let status = response.status();
     if !status.is_success() {
         return Err(AttemptError {
@@ -80,7 +89,11 @@ fn acquire_once(
         file.write_all(&buffer[..count]).map_err(file_error)?;
         downloaded_bytes += count as u64;
         if progress.elapsed() >= Duration::from_secs(5) {
-            tracing::info!(downloaded_bytes, expected_bytes, "model artifact download progress");
+            tracing::info!(
+                downloaded_bytes,
+                expected_bytes,
+                "model artifact download progress"
+            );
             progress = Instant::now();
         }
     }

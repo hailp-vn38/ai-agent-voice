@@ -156,7 +156,9 @@ fn fresh_startup_downloads_into_missing_model_directory_and_reuses_it_without_ne
     config.deployment.models.offline = false;
     let server = thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
-        socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         let mut request = Vec::new();
         let mut byte = [0_u8; 1];
         while !request.ends_with(b"\r\n\r\n") {
@@ -164,7 +166,11 @@ fn fresh_startup_downloads_into_missing_model_directory_and_reuses_it_without_ne
             request.push(byte[0]);
             assert!(request.len() <= 16 * 1024);
         }
-        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nfixture-model").unwrap();
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nfixture-model",
+            )
+            .unwrap();
     });
     let plan = ProviderLoadPlan::from_server_defaults(&config.provider_defaults);
     assert!(!config.deployment.models.root.exists());

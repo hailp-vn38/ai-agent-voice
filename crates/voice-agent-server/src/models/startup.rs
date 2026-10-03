@@ -112,7 +112,12 @@ fn model_plan(
             .then(|| provider_config::validate_raw(&row.adapter, &row.config_json).ok())
             .flatten()
             .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-            .and_then(|value| value.get("model").and_then(|v| v.as_str()).map(str::to_owned));
+            .and_then(|value| {
+                value
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            });
         let Some(model) = model else {
             if requirement == ProviderLoadRequirement::Required {
                 return Err(ModelError::ProviderConfiguration(row.key.clone()));
@@ -132,7 +137,9 @@ fn model_plan(
 }
 
 fn add_model(plan: &mut ModelPlan, adapter: &str, model: &str, required: bool, immutable: bool) {
-    let entry = plan.entry((adapter.to_owned(), model.to_owned())).or_default();
+    let entry = plan
+        .entry((adapter.to_owned(), model.to_owned()))
+        .or_default();
     entry.required |= required;
     entry.immutable |= immutable;
 }
