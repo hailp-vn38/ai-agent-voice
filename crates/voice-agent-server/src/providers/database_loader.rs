@@ -13,13 +13,14 @@ use crate::{
         DesiredProvider, ProviderLoadPlan, ProviderLoadRequirement, provider_config,
         secrets::{SecretRef, SecretResolver},
     },
-    models::prepare,
+    models::prepare_immutable as prepare,
     providers::{
         LoadedVad, ProviderCatalog, RuntimeCatalog, compiled_provider_registry,
         loader::LoadedProviders, loader::vad_timing,
     },
     workers::{
-        AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, WorkerRuntimeConfig,
+        AsrWorkerRuntime, LlmRuntime, ProviderRuntimeAdmission, TtsWorkerRuntime, VadWorkerRuntime,
+        WorkerRuntimeConfig,
     },
 };
 
@@ -36,6 +37,7 @@ pub enum DatabaseRuntimeFailure {
     Configuration,
     Secret,
     Runtime,
+    Quarantined,
 }
 
 impl From<()> for DatabaseRuntimeFailure {
@@ -161,7 +163,7 @@ fn load_one(
         ),
         ProviderLoadRequirement::Required | ProviderLoadRequirement::Optional => (
             DatabaseRuntimeStatus::Loaded,
-            materialize_one(config, row, secrets, loaded),
+            materialize_one(config, row, secrets, loaded, None, None),
         ),
     };
     match outcome {
@@ -208,11 +210,97 @@ fn empty_loaded() -> LoadedProviders {
     }
 }
 
+/// Builds exactly one owned desired version using the same factories as startup.
+/// The caller owns bounded blocking execution, memory reservation and publication.
+/// Admission uses installed artifacts only: missing artifacts must be prepared explicitly.
+pub fn materialize_provider(
+    config: &AppConfig,
+    row: &DesiredProvider,
+    secrets: &dyn SecretResolver,
+) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
+    let capacity = match row.kind.as_str() {
+        "vad" => config.workers.vad.max_workers,
+        "asr" => config.workers.asr.max_workers,
+        "llm" => config.limits.llm_concurrency,
+        "tts" => config.workers.tts.max_workers,
+        _ => return Err(DatabaseRuntimeFailure::Configuration),
+    };
+    if capacity == 0 {
+        return Err(DatabaseRuntimeFailure::Configuration);
+    }
+    materialize_provider_with_admission(
+        config,
+        row,
+        secrets,
+        ProviderRuntimeAdmission::new(capacity, 1),
+    )
+}
+
+pub fn materialize_provider_with_admission(
+    config: &AppConfig,
+    row: &DesiredProvider,
+    secrets: &dyn SecretResolver,
+    quota: ProviderRuntimeAdmission,
+) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
+    for worker in [
+        vad_worker_config(config),
+        asr_worker_config(config),
+        tts_worker_config(config),
+    ] {
+        worker
+            .validate()
+            .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
+    }
+    let mut config = config.clone();
+    config.deployment.models.offline = true;
+    let mut loaded = empty_loaded();
+    materialize_one(&config, row, secrets, &mut loaded, Some(quota), None)?;
+    Ok(loaded.runtimes)
+}
+
+pub(crate) fn materialize_provider_from_artifacts(
+    config: &AppConfig,
+    row: &DesiredProvider,
+    secrets: &dyn SecretResolver,
+    quota: ProviderRuntimeAdmission,
+    model: Option<&crate::models::ResolvedModel>,
+) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
+    let mut config = config.clone();
+    config.deployment.models.offline = true;
+    let mut loaded = empty_loaded();
+    materialize_one(&config, row, secrets, &mut loaded, Some(quota), model)?;
+    Ok(loaded.runtimes)
+}
+
+fn selected_model(
+    config: &AppConfig,
+    identity: &str,
+    adapter: &str,
+    prepared: Option<&crate::models::ResolvedModel>,
+) -> Result<crate::models::ResolvedModel, crate::models::ModelError> {
+    if let Some(model) = prepared {
+        if model.identity() != identity || model.adapter() != adapter {
+            return Err(crate::models::ModelError::UnknownModel(identity.into()));
+        }
+        return Ok(model.clone());
+    }
+    prepare(
+        &config.deployment.model_manifest,
+        &config.deployment.models.root,
+        config.deployment.models.offline,
+        identity,
+        adapter,
+        &config.deployment,
+    )
+}
+
 fn materialize_one(
     config: &AppConfig,
     row: &DesiredProvider,
     secrets: &dyn SecretResolver,
     loaded: &mut LoadedProviders,
+    quota: Option<ProviderRuntimeAdmission>,
+    prepared_model: Option<&crate::models::ResolvedModel>,
 ) -> Result<(), DatabaseRuntimeFailure> {
     let mut value = desired_value(row)?;
     let secret = match &row.secret_ref {
@@ -230,15 +318,23 @@ fn materialize_one(
     match row.kind.as_str() {
         "vad" => {
             reject_secret(row, secret.as_ref())?;
-            let instance: VadInstanceConfig = typed_instance(&mut value, &row.adapter, None)?;
+            let instance: VadInstanceConfig = if row.id == 0 {
+                config
+                    .providers
+                    .vad
+                    .instances
+                    .get(&row.key)
+                    .cloned()
+                    .ok_or(())?
+            } else {
+                typed_instance(&mut value, &row.adapter, None)?
+            };
             let factory = registry.vad_factory(instance.adapter()).map_err(|_| ())?;
-            let model = prepare(
-                &config.deployment.model_manifest,
-                &config.deployment.models.root,
-                config.deployment.models.offline,
+            let model = selected_model(
+                config,
                 factory.model_identity(&instance).map_err(|_| ())?,
                 factory.adapter(),
-                &config.deployment,
+                prepared_model,
             )
             .map_err(|_| ())?;
             let provider = factory
@@ -248,10 +344,16 @@ fn materialize_one(
             loaded.runtimes.vad.insert(
                 row.key.clone(),
                 LoadedVad {
-                    runtime: Arc::new(VadWorkerRuntime::new(
-                        Arc::clone(&provider),
-                        vad_worker_config(config),
-                    )),
+                    runtime: Arc::new(
+                        VadWorkerRuntime::try_new_with_admission(
+                            Arc::clone(&provider),
+                            vad_worker_config(config),
+                            quota.unwrap_or_else(|| {
+                                ProviderRuntimeAdmission::new(config.workers.vad.max_workers, 1)
+                            }),
+                        )
+                        .map_err(|_| DatabaseRuntimeFailure::Runtime)?,
+                    ),
                     segmenter,
                     pre_roll_samples,
                 },
@@ -262,13 +364,11 @@ fn materialize_one(
             reject_secret(row, secret.as_ref())?;
             let instance: AsrInstanceConfig = typed_instance(&mut value, &row.adapter, None)?;
             let factory = registry.asr_factory(instance.adapter()).map_err(|_| ())?;
-            let model = prepare(
-                &config.deployment.model_manifest,
-                &config.deployment.models.root,
-                config.deployment.models.offline,
+            let model = selected_model(
+                config,
                 factory.model_identity(&instance).map_err(|_| ())?,
                 factory.adapter(),
-                &config.deployment,
+                prepared_model,
             )
             .map_err(|_| ())?;
             let samples = usize::try_from(config.audio.max_utterance_ms)
@@ -278,19 +378,35 @@ fn materialize_one(
             let provider = factory.build(&instance, &model, samples).map_err(|_| ())?;
             loaded.runtimes.asr.insert(
                 row.key.clone(),
-                Arc::new(AsrWorkerRuntime::new(
-                    Arc::clone(&provider),
-                    asr_worker_config(config),
-                )),
+                Arc::new(
+                    AsrWorkerRuntime::try_new_with_admission(
+                        Arc::clone(&provider),
+                        asr_worker_config(config),
+                        quota.unwrap_or_else(|| {
+                            ProviderRuntimeAdmission::new(config.workers.asr.max_workers, 1)
+                        }),
+                    )
+                    .map_err(|_| ())?,
+                ),
             );
             loaded.providers.asr.insert(row.key.clone(), provider);
         }
         "llm" => {
-            let instance: LlmInstanceConfig = typed_instance(
-                &mut value,
-                &row.adapter,
-                secret.as_ref().map(|value| value.expose()),
-            )?;
+            let instance: LlmInstanceConfig = if row.id == 0 {
+                config
+                    .providers
+                    .llm
+                    .instances
+                    .get(&row.key)
+                    .cloned()
+                    .ok_or(())?
+            } else {
+                typed_instance(
+                    &mut value,
+                    &row.adapter,
+                    secret.as_ref().map(|value| value.expose()),
+                )?
+            };
             let timeout = Duration::from_millis(instance.openai().timeout_ms);
             let provider = registry
                 .llm_factory(instance.adapter())
@@ -299,30 +415,33 @@ fn materialize_one(
                 .map_err(|_| ())?;
             loaded.runtimes.llm.insert(
                 row.key.clone(),
-                Arc::new(LlmRuntime::new(
+                Arc::new(LlmRuntime::new_with_admission(
                     Arc::clone(&provider),
-                    config.limits.llm_concurrency,
+                    quota.unwrap_or_else(|| {
+                        ProviderRuntimeAdmission::new(config.limits.llm_concurrency, 1)
+                    }),
                     timeout,
                 )),
             );
             loaded.providers.llm.insert(row.key.clone(), provider);
         }
         "tts" => {
-            let instance = typed_tts_instance(&mut value, &row.adapter, secret.as_ref())?;
+            let instance = if row.id == 0 {
+                config
+                    .providers
+                    .tts
+                    .instances
+                    .get(&row.key)
+                    .cloned()
+                    .ok_or(())?
+            } else {
+                typed_tts_instance(&mut value, &row.adapter, secret.as_ref())?
+            };
             let factory = registry.tts_factory(instance.adapter()).map_err(|_| ())?;
             let model = factory
                 .model_identity(&instance)
                 .map_err(|_| ())?
-                .map(|identity| {
-                    prepare(
-                        &config.deployment.model_manifest,
-                        &config.deployment.models.root,
-                        config.deployment.models.offline,
-                        identity,
-                        factory.adapter(),
-                        &config.deployment,
-                    )
-                })
+                .map(|identity| selected_model(config, identity, factory.adapter(), prepared_model))
                 .transpose()
                 .map_err(|_| ())?;
             let provider = factory
@@ -330,10 +449,22 @@ fn materialize_one(
                 .map_err(|_| ())?;
             loaded.runtimes.tts.insert(
                 row.key.clone(),
-                Arc::new(TtsWorkerRuntime::new(
-                    Arc::clone(&provider),
-                    tts_worker_config(config),
-                )),
+                Arc::new(
+                    TtsWorkerRuntime::try_new_with_admission(
+                        Arc::clone(&provider),
+                        tts_worker_config(config),
+                        quota.unwrap_or_else(|| {
+                            ProviderRuntimeAdmission::new(config.workers.tts.max_workers, 1)
+                        }),
+                    )
+                    .map_err(|error| {
+                        if matches!(error, crate::workers::TtsWorkerError::Quarantined) {
+                            DatabaseRuntimeFailure::Quarantined
+                        } else {
+                            DatabaseRuntimeFailure::Runtime
+                        }
+                    })?,
+                ),
             );
             loaded.providers.tts.insert(row.key.clone(), provider);
         }
@@ -343,6 +474,19 @@ fn materialize_one(
 }
 
 fn desired_value(row: &DesiredProvider) -> Result<Value, DatabaseRuntimeFailure> {
+    if !crate::providers::compiled_provider_adapter_registry()
+        .get(&row.adapter)
+        .is_some_and(|descriptor| descriptor.provider_type.as_str() == row.kind)
+    {
+        return Err(DatabaseRuntimeFailure::Configuration);
+    }
+    if row.id == 0 {
+        if row.config_json.len() > provider_config::MAX_PROVIDER_CONFIG_BYTES {
+            return Err(DatabaseRuntimeFailure::Configuration);
+        }
+        return serde_json::from_str(&row.config_json)
+            .map_err(|_| DatabaseRuntimeFailure::Configuration);
+    }
     let raw = provider_config::validate_raw(&row.adapter, &row.config_json)
         .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
     serde_json::from_str(&raw).map_err(|_| DatabaseRuntimeFailure::Configuration)

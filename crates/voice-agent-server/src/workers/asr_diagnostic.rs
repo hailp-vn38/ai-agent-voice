@@ -116,26 +116,21 @@ fn run_diagnostic(
         let _ = events.blocking_send(AsrDiagnosticEvent::Failed);
         return;
     };
-    if matches!(commands.try_recv(), Ok(AsrCommand::Cancel)) {
+    let terminal = if matches!(commands.try_recv(), Ok(AsrCommand::Cancel)) {
         session.cancel();
-        let _ = events.blocking_send(AsrDiagnosticEvent::Cancelled);
-        return;
-    }
-    if session.push_pcm(&pcm).is_err() {
-        let _ = events.blocking_send(AsrDiagnosticEvent::Failed);
-        return;
-    }
-    if matches!(commands.try_recv(), Ok(AsrCommand::Cancel)) {
+        AsrDiagnosticEvent::Cancelled
+    } else if session.push_pcm(&pcm).is_err() {
+        AsrDiagnosticEvent::Failed
+    } else if matches!(commands.try_recv(), Ok(AsrCommand::Cancel)) {
         session.cancel();
-        let _ = events.blocking_send(AsrDiagnosticEvent::Cancelled);
-        return;
-    }
-    match session.finish() {
-        Ok(result) => {
-            let _ = events.blocking_send(AsrDiagnosticEvent::Final(result.text().to_owned()));
+        AsrDiagnosticEvent::Cancelled
+    } else {
+        match session.finish() {
+            Ok(result) => AsrDiagnosticEvent::Final(result.text().to_owned()),
+            Err(_) => AsrDiagnosticEvent::Failed,
         }
-        Err(_) => {
-            let _ = events.blocking_send(AsrDiagnosticEvent::Failed);
-        }
-    }
+    };
+    // Returning retained state/reset or native destruction must precede terminal ack.
+    drop(session);
+    let _ = events.blocking_send(terminal);
 }

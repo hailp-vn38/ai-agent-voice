@@ -4,7 +4,10 @@
 //! before a WebSocket is upgraded.  Turning that snapshot into an Effective Session Profile is a
 //! service responsibility and never re-queries SQLite.
 
+use std::{collections::HashMap, sync::Arc};
+
 use crate::config::DatabaseDevicesConfig;
+use sqlx::{Sqlite, Transaction};
 use thiserror::Error;
 
 use super::{Database, DatabaseError, map_sqlx_error};
@@ -48,6 +51,9 @@ pub struct AdmittedProviderBinding {
     pub provider_type: String,
     pub provider_key: String,
     pub provider_enabled: bool,
+    /// Canonical credential-free config. None means invalid persisted config or a manually
+    /// constructed legacy test graph; manager-backed admission refuses to acquire such a binding.
+    pub snapshot: Option<Arc<super::DesiredProvider>>,
 }
 
 #[derive(Debug, Error)]
@@ -83,12 +89,13 @@ impl Database {
         &self,
         device_id: &str,
     ) -> Result<Option<DeviceAdmissionGraph>, DeviceAdmissionError> {
+        let mut transaction = self.pool.begin().await.map_err(map_sqlx_error)?;
         let row = sqlx::query_as::<_, (i64, Option<i64>, i64, i64, i64, String)>(
             "SELECT d.id, d.template_id, a.id, d.enabled, a.enabled, a.key \
              FROM devices d JOIN agents a ON a.id = d.agent_id WHERE d.device_id = ?",
         )
         .bind(device_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *transaction)
         .await
         .map_err(map_sqlx_error)?;
         let Some((
@@ -106,7 +113,8 @@ impl Database {
         if device_enabled == 0 || agent_enabled == 0 {
             return Err(DeviceAdmissionError::Denied);
         }
-        let assignments = self.assignment_graph(agent_id).await?;
+        let assignments = self.assignment_graph(agent_id, &mut transaction).await?;
+        transaction.commit().await.map_err(map_sqlx_error)?;
         Ok(Some(DeviceAdmissionGraph {
             device_db_id,
             template_override_id,
@@ -115,36 +123,74 @@ impl Database {
         }))
     }
 
-    /// Two bounded reads cover the whole Template graph.  Bindings are read for every assigned
+    /// Bounded metadata/size checks and two graph reads cover the Template graph.  Bindings are read for every assigned
     /// Template in one statement so admission never scales with the number of assignments.
     async fn assignment_graph(
         &self,
         agent_id: i64,
+        transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<Vec<AdmittedAssignment>, DeviceAdmissionError> {
+        let assignment_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM (SELECT template_id FROM agent_template_assignments WHERE agent_id=? LIMIT 65)",
+        ).bind(agent_id).fetch_one(&mut **transaction).await.map_err(map_sqlx_error)?;
+        if assignment_count > 64 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
+        // Check byte cost inside the same read transaction before copying potentially large
+        // TEXT values. Counting duplicate bindings is conservative and keeps query allocation bounded.
+        let bytes: i64 = sqlx::query_scalar(
+            "SELECT COALESCE((SELECT SUM(length(CAST(t.key AS BLOB)) + length(CAST(t.name AS BLOB)) + \
+                    length(CAST(t.language AS BLOB)) + length(CAST(t.prompt AS BLOB))) \
+                FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id \
+                WHERE ata.agent_id=?),0) + COALESCE((SELECT SUM(length(CAST(p.key AS BLOB)) + \
+                    length(CAST(p.type AS BLOB)) + length(CAST(p.adapter AS BLOB)) + \
+                    length(CAST(p.config_json AS BLOB)) + COALESCE(length(CAST(p.secret_ref AS BLOB)),0)) \
+                FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id \
+                WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=?)),0)",
+        )
+        .bind(agent_id)
+        .bind(agent_id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(map_sqlx_error)?;
+        if bytes > 2 * 1024 * 1024 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
         let rows = sqlx::query_as::<_, (i64, String, String, String, String, i64, i64, i64, i64)>(
             "SELECT t.id, t.key, t.name, t.language, t.prompt, t.enabled, t.revision, \
                     ata.is_default, ata.enabled \
              FROM agent_template_assignments ata \
              JOIN agent_templates t ON t.id = ata.template_id \
-             WHERE ata.agent_id = ? ORDER BY t.id",
+             WHERE ata.agent_id = ? ORDER BY t.id LIMIT 65",
         )
         .bind(agent_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **transaction)
         .await
         .map_err(map_sqlx_error)?;
-        let bindings = sqlx::query_as::<_, (i64, String, String, i64)>(
-            "SELECT b.template_id, b.provider_type, p.key, p.enabled \
+        if rows.len() > 64 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
+        let bindings = sqlx::query_as::<_, (i64, String, i64, String, i64, String, String, String, Option<String>, i64)>(
+            "SELECT b.template_id, b.provider_type, p.id, p.key, p.enabled, p.type, p.adapter, p.config_json, p.secret_ref, p.revision \
              FROM template_provider_bindings b \
              JOIN providers p ON p.id = b.provider_id \
              WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments \
                                      WHERE agent_id = ?) \
-             ORDER BY b.template_id, b.provider_type",
+             ORDER BY b.template_id, b.provider_type LIMIT 257",
         )
         .bind(agent_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **transaction)
         .await
         .map_err(map_sqlx_error)?;
 
+        if bindings.len() > 256 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
+        let mut snapshot_bytes = rows
+            .iter()
+            .map(|row| row.1.len() + row.2.len() + row.3.len() + row.4.len())
+            .sum::<usize>();
+        let mut snapshots: HashMap<i64, Option<Arc<super::DesiredProvider>>> = HashMap::new();
         let mut assignments: Vec<AdmittedAssignment> = rows
             .into_iter()
             .map(
@@ -172,7 +218,52 @@ impl Database {
                 },
             )
             .collect();
-        for (template_id, provider_type, provider_key, provider_enabled) in bindings {
+        for (
+            template_id,
+            provider_type,
+            id,
+            provider_key,
+            provider_enabled,
+            kind,
+            adapter,
+            config_json,
+            secret_ref,
+            revision,
+        ) in bindings
+        {
+            let snapshot = match snapshots.entry(id) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    snapshot_bytes = snapshot_bytes.saturating_add(
+                        provider_key.len()
+                            + kind.len()
+                            + adapter.len()
+                            + config_json.len()
+                            + secret_ref.as_ref().map_or(0, String::len),
+                    );
+                    if snapshot_bytes > 2 * 1024 * 1024 {
+                        return Err(DeviceAdmissionError::Unavailable);
+                    }
+                    let validated =
+                        super::provider_config::validate_raw(&adapter, &config_json).ok();
+                    let valid_secret = secret_ref.as_ref().is_none_or(|reference| {
+                        super::secrets::SecretRef::parse(reference.clone()).is_ok()
+                    });
+                    entry
+                        .insert(validated.filter(|_| valid_secret).map(|config_json| {
+                            Arc::new(super::DesiredProvider {
+                                id,
+                                key: provider_key.clone(),
+                                kind,
+                                adapter,
+                                config_json,
+                                secret_ref,
+                                revision,
+                            })
+                        }))
+                        .clone()
+                }
+            };
             let Some(assignment) = assignments
                 .iter_mut()
                 .find(|assignment| assignment.template_id == template_id)
@@ -183,6 +274,7 @@ impl Database {
                 provider_type,
                 provider_key,
                 provider_enabled: provider_enabled == 1,
+                snapshot,
             });
         }
         Ok(assignments)

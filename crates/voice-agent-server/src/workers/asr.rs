@@ -49,6 +49,8 @@ pub enum AsrWorkerEvent {
 pub enum AsrWorkerError {
     #[error("worker runtime configuration is invalid: {0}")]
     InvalidConfig(&'static str),
+    #[error("ASR worker initialization failed")]
+    Initialization,
     #[error("ASR worker capacity is exhausted")]
     Capacity,
     #[error("ASR stream lease is not active")]
@@ -57,17 +59,21 @@ pub enum AsrWorkerError {
     QueueFull,
 }
 
+#[derive(Clone)]
 pub struct AsrWorkerRuntime {
     provider: Arc<dyn AsrProvider>,
     config: WorkerRuntimeConfig,
-    state: Mutex<State>,
-    events_rx: Mutex<mpsc::Receiver<AsrWorkerEvent>>,
+    state: Arc<Mutex<State>>,
+    events_rx: Arc<Mutex<mpsc::Receiver<AsrWorkerEvent>>>,
     events_tx: mpsc::Sender<AsrWorkerEvent>,
-    routes: Mutex<HashMap<String, session_mpsc::Sender<AsrWorkerEvent>>>,
+    routes: Arc<Mutex<HashMap<String, session_mpsc::Sender<AsrWorkerEvent>>>>,
     admission: ProviderRuntimeAdmission,
+    pool: Option<Arc<super::asr_pool::AsrSessionPool>>,
+    unload: Arc<Mutex<()>>,
 }
 
 struct State {
+    threads: super::native_threads::NativeThreads,
     next_lease: u64,
     slots: HashMap<AsrStreamLease, Slot>,
 }
@@ -76,7 +82,7 @@ struct Slot {
     identity: WorkerIdentity,
     command_tx: mpsc::SyncSender<AsrCommand>,
     state: SlotState,
-    _permit: ProviderCapacityPermit,
+    _permit: Arc<ProviderCapacityPermit>,
 }
 
 enum SlotState {
@@ -89,23 +95,88 @@ enum SlotState {
 impl AsrWorkerRuntime {
     pub fn new(provider: Arc<dyn AsrProvider>, config: WorkerRuntimeConfig) -> Self {
         config.validate().expect("invalid worker runtime config");
-        let (events_tx, events_rx) = mpsc::channel();
         let admission =
             ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
+        Self::new_with_admission(provider, config, admission)
+    }
+
+    pub(crate) fn new_with_admission(
+        provider: Arc<dyn AsrProvider>,
+        config: WorkerRuntimeConfig,
+        admission: ProviderRuntimeAdmission,
+    ) -> Self {
+        let (events_tx, events_rx) = mpsc::channel();
         Self {
             provider,
             config,
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 next_lease: 1,
+                threads: Default::default(),
                 slots: HashMap::new(),
-            }),
-            events_rx: Mutex::new(events_rx),
+            })),
+            events_rx: Arc::new(Mutex::new(events_rx)),
             events_tx,
-            routes: Mutex::new(HashMap::new()),
+            routes: Arc::new(Mutex::new(HashMap::new())),
             admission,
+            pool: None,
+            unload: Arc::new(Mutex::new(())),
         }
     }
 
+    pub fn try_new(
+        provider: Arc<dyn AsrProvider>,
+        config: WorkerRuntimeConfig,
+    ) -> Result<Self, AsrWorkerError> {
+        config
+            .validate()
+            .map_err(|_| AsrWorkerError::Initialization)?;
+        let admission =
+            ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
+        Self::try_new_with_admission(provider, config, admission)
+    }
+    pub(crate) fn try_new_with_admission(
+        provider: Arc<dyn AsrProvider>,
+        config: WorkerRuntimeConfig,
+        admission: ProviderRuntimeAdmission,
+    ) -> Result<Self, AsrWorkerError> {
+        config
+            .validate()
+            .map_err(|_| AsrWorkerError::Initialization)?;
+        let pool =
+            super::asr_pool::AsrSessionPool::initialize(provider.as_ref(), config.max_workers)
+                .map_err(|_| AsrWorkerError::Initialization)?;
+        let mut runtime = Self::new_with_admission(provider, config, admission);
+        runtime.pool = Some(pool);
+        Ok(runtime)
+    }
+    /// Closes admission. A terminal event alone cannot acknowledge native destruction.
+    pub fn shutdown_acknowledged(&self) -> bool {
+        let _unload = self.unload.lock().expect("ASR unload poisoned");
+        let acknowledged = {
+            let mut state = self.state.lock().expect("ASR worker state poisoned");
+            state.threads.close() && state.slots.is_empty() && self.admission.active_work() == 0
+        };
+        if acknowledged && let Some(pool) = &self.pool {
+            pool.shutdown();
+        }
+        acknowledged
+    }
+
+    pub(crate) fn readiness(&self) -> super::NativeReadiness {
+        self.pool
+            .as_ref()
+            .map(|pool| pool.readiness())
+            .unwrap_or_default()
+    }
+    pub(crate) fn health_flags(&self) -> Vec<Arc<std::sync::atomic::AtomicBool>> {
+        self.pool.iter().map(|pool| pool.health_flag()).collect()
+    }
+
+    pub(crate) fn logical_view(&self, quota: ProviderRuntimeAdmission) -> Self {
+        let mut view = self.clone();
+        view.admission = quota.composed(&self.admission);
+        view
+    }
     pub fn runtime_config(&self) -> WorkerRuntimeConfig {
         self.config.clone()
     }
@@ -134,9 +205,17 @@ impl AsrWorkerRuntime {
             .try_admit(ProviderWorkloadClass::Voice)
             .map_err(|_| AsrWorkerError::Capacity)?;
         let mut state = self.state.lock().expect("ASR worker state poisoned");
-        if state.slots.len() >= self.config.max_workers {
+        if state.slots.len() >= self.config.max_workers
+            || !state.threads.can_spawn(self.config.max_workers)
+        {
             return Err(AsrWorkerError::Capacity);
         }
+        let retained = match &self.pool {
+            Some(pool) => Some(pool.take().ok_or(AsrWorkerError::Capacity)?),
+            None => None,
+        };
+        let permit = Arc::new(permit);
+        let thread_permit = Arc::clone(&permit);
         let lease = AsrStreamLease(state.next_lease);
         state.next_lease += 1;
         let (command_tx, command_rx) = mpsc::sync_channel(self.config.command_capacity);
@@ -151,19 +230,43 @@ impl AsrWorkerRuntime {
         );
         let provider = Arc::clone(&self.provider);
         let events_tx = self.events_tx.clone();
-        thread::spawn(move || run_worker(provider, identity, command_rx, events_tx));
+        let spawn = thread::Builder::new()
+            .name("asr-native".into())
+            .spawn(move || {
+                let terminal =
+                    run_worker(provider, retained, identity, command_rx, events_tx.clone());
+                drop(thread_permit);
+                if let Some(event) = terminal {
+                    let _ = events_tx.send(event);
+                }
+            });
+        match spawn {
+            Ok(handle) => state.threads.retain(handle),
+            Err(_) => {
+                state.slots.remove(&lease);
+                return Err(AsrWorkerError::Capacity);
+            }
+        }
         Ok(lease)
     }
 
     /// Acquires capacity for a bounded diagnostic operation.
     pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        let state = self.state.lock().expect("ASR worker state poisoned");
+        if state.threads.is_closed() {
+            return Err(ProviderAdmissionError::Capacity);
+        }
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 
     /// Builds a standalone diagnostic operation without loading or reconfiguring the provider.
     /// Admission remains owned by `ProviderDiagnosticService`.
     pub fn diagnostic(&self, pcm: PcmF32Mono) -> super::AsrDiagnosticOperation {
-        super::AsrDiagnosticOperation::new(Arc::clone(&self.provider), pcm)
+        let provider: Arc<dyn AsrProvider> = match &self.pool {
+            Some(pool) => Arc::new(Arc::clone(pool)),
+            None => Arc::clone(&self.provider),
+        };
+        super::AsrDiagnosticOperation::new(provider, pcm)
     }
 
     pub fn send(&self, lease: AsrStreamLease, command: AsrCommand) -> Result<(), AsrWorkerError> {
@@ -316,13 +419,18 @@ impl AsrWorkerRuntime {
 
 fn run_worker(
     provider: Arc<dyn AsrProvider>,
+    retained: Option<Box<dyn crate::providers::AsrSession>>,
     identity: WorkerIdentity,
     commands: mpsc::Receiver<AsrCommand>,
     events: mpsc::Sender<AsrWorkerEvent>,
-) {
-    let Ok(mut session) = provider.open() else {
-        let _ = events.send(AsrWorkerEvent::Failed { identity });
-        return;
+) -> Option<AsrWorkerEvent> {
+    let retained_worker = retained.is_some();
+    let Ok(mut session) = retained.map(Ok).unwrap_or_else(|| provider.open()) else {
+        return publish_terminal(
+            &events,
+            AsrWorkerEvent::Failed { identity },
+            retained_worker,
+        );
     };
     if events
         .send(AsrWorkerEvent::Opened {
@@ -330,7 +438,7 @@ fn run_worker(
         })
         .is_err()
     {
-        return;
+        return None;
     }
     while let Ok(command) = commands.recv() {
         match command {
@@ -339,28 +447,54 @@ fn run_worker(
                     let _ = events_from_provider;
                 }
                 Err(_) => {
-                    let _ = events.send(AsrWorkerEvent::Failed { identity });
-                    return;
+                    return publish_terminal(
+                        &events,
+                        AsrWorkerEvent::Failed { identity },
+                        retained_worker,
+                    );
                 }
             },
             AsrCommand::Finish => match session.finish() {
                 Ok(result) => {
-                    let _ = events.send(AsrWorkerEvent::Final {
-                        identity,
-                        text: result.text().to_owned(),
-                    });
-                    return;
+                    return publish_terminal(
+                        &events,
+                        AsrWorkerEvent::Final {
+                            identity,
+                            text: result.text().to_owned(),
+                        },
+                        retained_worker,
+                    );
                 }
                 Err(_) => {
-                    let _ = events.send(AsrWorkerEvent::Failed { identity });
-                    return;
+                    return publish_terminal(
+                        &events,
+                        AsrWorkerEvent::Failed { identity },
+                        retained_worker,
+                    );
                 }
             },
             AsrCommand::Cancel => {
                 session.cancel();
-                let _ = events.send(AsrWorkerEvent::Cancelled { identity });
-                return;
+                return publish_terminal(
+                    &events,
+                    AsrWorkerEvent::Cancelled { identity },
+                    retained_worker,
+                );
             }
         }
+    }
+    None
+}
+
+fn publish_terminal(
+    events: &mpsc::Sender<AsrWorkerEvent>,
+    event: AsrWorkerEvent,
+    retained: bool,
+) -> Option<AsrWorkerEvent> {
+    if retained {
+        Some(event)
+    } else {
+        let _ = events.send(event);
+        None
     }
 }

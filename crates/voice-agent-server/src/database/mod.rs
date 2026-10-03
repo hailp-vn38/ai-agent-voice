@@ -36,7 +36,7 @@ pub struct Database {
 
 /// Desired provider copied out of SQLite before runtime construction.  It contains no resolved
 /// credential and is deliberately independent from the read-only runtime catalog.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DesiredProvider {
     pub id: i64,
     pub key: String,
@@ -45,6 +45,17 @@ pub struct DesiredProvider {
     pub config_json: String,
     pub secret_ref: Option<String>,
     pub revision: i64,
+}
+
+impl std::fmt::Debug for DesiredProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DesiredProvider")
+            .field("id", &self.id)
+            .field("revision", &self.revision)
+            .field("kind", &self.kind)
+            .field("adapter", &self.adapter)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Error)]

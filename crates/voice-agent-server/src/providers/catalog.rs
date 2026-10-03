@@ -9,6 +9,7 @@ pub enum ProviderLookupError {
 }
 
 /// Read-only configured provider instances loaded at application startup.
+#[derive(Default)]
 pub struct ProviderCatalog {
     pub(crate) vad: HashMap<String, Arc<dyn VadProvider>>,
     pub(crate) asr: HashMap<String, Arc<dyn AsrProvider>>,

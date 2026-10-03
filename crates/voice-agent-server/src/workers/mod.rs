@@ -4,11 +4,14 @@
 mod admission;
 mod asr;
 mod asr_diagnostic;
+mod asr_pool;
 mod llm;
+mod native_threads;
 mod supervisor;
 mod tts;
 mod vad;
 mod vad_diagnostic;
+mod vad_pool;
 #[cfg(test)]
 mod vad_tests;
 mod vision_runtime;
@@ -31,6 +34,19 @@ pub use vad_diagnostic::VadDiagnosticOperation;
 pub use vision_runtime::VisionRuntime;
 
 use std::time::Duration;
+
+/// Durations for the retained workers only; constructor verification is not warmup.
+#[derive(Clone, Copy, Default)]
+pub struct NativeReadiness {
+    pub initialization: Duration,
+    pub warmup: Duration,
+}
+impl NativeReadiness {
+    pub(crate) fn add(&mut self, other: Self) {
+        self.initialization += other.initialization;
+        self.warmup += other.warmup;
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WorkerIdentity {

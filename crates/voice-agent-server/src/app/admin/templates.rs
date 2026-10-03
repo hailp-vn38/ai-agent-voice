@@ -402,6 +402,9 @@ pub(super) async fn bind_template_provider(
         }
     };
     if sqlx::query("INSERT INTO template_provider_bindings (template_id,provider_type,provider_id,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(template_id,provider_type) DO UPDATE SET provider_id=excluded.provider_id,updated_at=excluded.updated_at").bind(template.id).bind(&provider_type).bind(provider_id).bind(now()).bind(now()).execute(&mut *tx).await.is_err() || sqlx::query("UPDATE agent_templates SET revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(now()).bind(template.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()!=1).unwrap_or(true) || audit(&mut *tx,id(&request),"template",Some(template.id),"bind_provider",Some(expected),Some(expected+1),AuditOutcome::Success, 1).await.is_err() || tx.commit().await.is_err(){return error(&request,StatusCode::SERVICE_UNAVAILABLE,"database_unavailable")};
+    if let Some(prewarm) = &state.provider_prewarm {
+        prewarm.template(template.id).await;
+    }
     match template_by(pool, &key).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => sql_error(&request, &e),
@@ -451,6 +454,9 @@ pub(super) async fn set_default_template(
     };
     let time = now();
     if sqlx::query("UPDATE agent_template_assignments SET is_default=0 WHERE agent_id=? AND enabled=1").bind(agent.id).execute(&mut *tx).await.is_err()||sqlx::query("INSERT INTO agent_template_assignments(agent_id,template_id,is_default,enabled,created_at) VALUES (?,?,1,1,?) ON CONFLICT(agent_id,template_id) DO UPDATE SET is_default=1,enabled=1").bind(agent.id).bind(template.id).bind(time).execute(&mut *tx).await.is_err()||sqlx::query("UPDATE agents SET revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(time).bind(agent.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()!=1).unwrap_or(true)||audit(&mut *tx,id(&request),"agent",Some(agent.id),"set_default_template",Some(expected),Some(expected+1),AuditOutcome::Success, 1).await.is_err()||tx.commit().await.is_err(){return error(&request,StatusCode::SERVICE_UNAVAILABLE,"database_unavailable")};
+    if let Some(prewarm) = &state.provider_prewarm {
+        prewarm.template(template.id).await;
+    }
     match get_agent_by(pool, &agent_key).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => sql_error(&request, &e),

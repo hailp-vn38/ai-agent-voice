@@ -77,12 +77,16 @@ fn identity_transform() -> String {
 /// Provider-facing, verified artifact paths addressed by manifest role.
 #[derive(Debug, Clone)]
 pub struct ResolvedModel {
+    fingerprint: String,
     identity: String,
     adapter: String,
     artifacts: Vec<(String, PathBuf)>,
 }
 
 impl ResolvedModel {
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
+    }
     pub fn artifact(&self, role: &str) -> Option<&Path> {
         self.artifacts
             .iter()
@@ -105,6 +109,7 @@ impl ResolvedModel {
         artifacts: [(&str, PathBuf); N],
     ) -> Self {
         Self {
+            fingerprint: "test-fixture".into(),
             identity: identity.into(),
             adapter: adapter.into(),
             artifacts: artifacts
@@ -172,6 +177,7 @@ impl<A: ModelAcquirer> ModelPreparation<A> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ResolvedModel {
+            fingerprint: fingerprint_model(&model),
             identity: model.identity,
             adapter: model.adapter,
             artifacts,
@@ -180,6 +186,7 @@ impl<A: ModelAcquirer> ModelPreparation<A> {
 
     fn prepare_artifact(&self, artifact: &Artifact) -> Result<PathBuf, ModelError> {
         validate_relative_path(&artifact.install_path)?;
+        let _install = artifact_lock(&self.config.root.join(&artifact.install_path));
         let installed = safe_install_path(&self.config.root, &artifact.install_path)?;
         if verifies(&installed, &artifact.sha256)? {
             return Ok(installed);
@@ -205,6 +212,137 @@ impl<A: ModelAcquirer> ModelPreparation<A> {
         let _ = fs::remove_file(&part);
         Ok(installed)
     }
+}
+
+fn artifact_lock(path: &Path) -> std::sync::MutexGuard<'static, ()> {
+    use std::{
+        hash::{Hash, Hasher},
+        sync::{Mutex, OnceLock},
+    };
+    static LOCKS: OnceLock<[Mutex<()>; 64]> = OnceLock::new();
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    let mut existing = path;
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        if let Some(name) = existing.file_name() {
+            missing.push(name.to_owned());
+        } else {
+            break;
+        }
+        let Some(parent) = existing.parent() else {
+            break;
+        };
+        existing = parent;
+    }
+    let mut normalized = fs::canonicalize(existing).unwrap_or_else(|_| existing.to_owned());
+    for name in missing.into_iter().rev() {
+        normalized.push(name);
+    }
+    normalized.hash(&mut hash);
+    LOCKS.get_or_init(|| std::array::from_fn(|_| Mutex::new(())))[hash.finish() as usize % 64]
+        .lock()
+        .expect("artifact installer poisoned")
+}
+
+/// Manifest content identity, independent of JSON order and mutable installation paths.
+pub fn model_fingerprint(
+    manifest: &Path,
+    identity: &str,
+    adapter: &str,
+) -> Result<String, ModelError> {
+    let model = load_manifest(manifest, identity, adapter)?;
+    Ok(fingerprint_model(&model))
+}
+fn fingerprint_model(model: &Model) -> String {
+    let mut artifacts: Vec<_> = model
+        .artifacts
+        .iter()
+        .map(|a| (&a.role, &a.install_path, &a.sha256, &a.transform))
+        .collect();
+    artifacts.sort();
+    let mut digest = Sha256::new();
+    for value in [
+        model.identity.as_bytes(),
+        model.adapter.as_bytes(),
+        model.revision.as_bytes(),
+    ] {
+        digest.update((value.len() as u64).to_le_bytes());
+        digest.update(value);
+    }
+    for (role, path, hash, transform) in artifacts {
+        for value in [
+            role.as_bytes(),
+            path.as_os_str().as_encoded_bytes(),
+            hash.as_bytes(),
+            transform.as_bytes(),
+        ] {
+            digest.update((value.len() as u64).to_le_bytes());
+            digest.update(value);
+        }
+    }
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Copies verified artifacts into a content-addressed model tree. Relative paths are preserved
+/// so ONNX external-data siblings remain valid. A live resource never observes a mutable alias.
+pub fn prepare_immutable(
+    manifest_path: &Path,
+    root: &Path,
+    offline: bool,
+    identity: &str,
+    adapter: &str,
+    deployment: &DeploymentConfig,
+) -> Result<ResolvedModel, ModelError> {
+    let model = load_manifest(manifest_path, identity, adapter)?;
+    let fingerprint = fingerprint_model(&model);
+    if deployment.profile == "commercial" && model.license.contains("NC") {
+        return Err(ModelError::LicenseDenied {
+            model: model.identity,
+            profile: deployment.profile.clone(),
+        });
+    }
+    require_acknowledgement(&model, &deployment.model_acknowledgements)?;
+    let preparation = ModelPreparation::new(ModelPreparationConfig {
+        manifest_path: manifest_path.into(),
+        root: root.into(),
+        offline,
+    });
+    let mut artifacts = Vec::with_capacity(model.artifacts.len());
+    for artifact in &model.artifacts {
+        validate_relative_path(&artifact.install_path)?;
+        let relative = PathBuf::from(".installed")
+            .join(&fingerprint)
+            .join(&artifact.install_path);
+        // Never nest stripe locks: mutable and pinned paths can hash to the same stripe.
+        let source = if root.join(&relative).exists() {
+            None
+        } else {
+            Some(preparation.prepare_artifact(artifact)?)
+        };
+        let _install = artifact_lock(&root.join(&relative));
+        let pinned = safe_install_path(root, &relative)?;
+        if pinned.exists() {
+            verify_path(&pinned, &artifact.sha256)?;
+        } else {
+            let source =
+                source.ok_or_else(|| ModelError::MissingArtifact(artifact.role.clone()))?;
+            let temporary = pinned.with_extension("pin-part");
+            fs::copy(source, &temporary)?;
+            verify_path(&temporary, &artifact.sha256)?;
+            fs::rename(temporary, &pinned)?;
+        }
+        artifacts.push((artifact.role.clone(), pinned));
+    }
+    Ok(ResolvedModel {
+        fingerprint: fingerprint_model(&model),
+        identity: model.identity,
+        adapter: model.adapter,
+        artifacts,
+    })
 }
 
 pub fn prepare(
@@ -258,6 +396,7 @@ pub fn verify_installed(
         })
         .collect::<Result<Vec<_>, ModelError>>()?;
     Ok(ResolvedModel {
+        fingerprint: fingerprint_model(&model),
         identity: model.identity,
         adapter: model.adapter,
         artifacts,
@@ -278,6 +417,11 @@ fn safe_existing_install_path(root: &Path, relative: &Path) -> Result<PathBuf, M
 }
 
 fn load_manifest(manifest_path: &Path, identity: &str, adapter: &str) -> Result<Model, ModelError> {
+    if fs::metadata(manifest_path)?.len() > 2 * 1024 * 1024 {
+        return Err(ModelError::UnsafePath(
+            "manifest exceeds metadata limit".into(),
+        ));
+    }
     let manifest: Manifest = toml::from_str(&fs::read_to_string(manifest_path)?)?;
     let model = manifest
         .model

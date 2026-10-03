@@ -8,7 +8,7 @@ use tokio::sync::mpsc as session_mpsc;
 
 use crate::{
     audio::PcmF32Mono,
-    providers::{VadInput, VadProvider},
+    providers::{VadInput, VadProvider, VadSession},
 };
 
 use super::{
@@ -81,6 +81,8 @@ pub enum VadWorkerEvent {
 
 #[derive(Debug, thiserror::Error)]
 pub enum VadWorkerError {
+    #[error("VAD native readiness failed")]
+    Initialization,
     #[error("VAD worker capacity is exhausted")]
     Capacity,
     #[error("VAD worker lease is not active")]
@@ -89,16 +91,20 @@ pub enum VadWorkerError {
     QueueFull,
 }
 
+#[derive(Clone)]
 pub struct VadWorkerRuntime {
+    pool: Option<Arc<super::vad_pool::VadSessionPool>>,
+    unload: Arc<Mutex<()>>,
     provider: Arc<dyn VadProvider>,
     config: WorkerRuntimeConfig,
-    state: Mutex<State>,
-    events_rx: Mutex<mpsc::Receiver<VadWorkerEvent>>,
+    state: Arc<Mutex<State>>,
+    events_rx: Arc<Mutex<mpsc::Receiver<VadWorkerEvent>>>,
     events_tx: mpsc::Sender<VadWorkerEvent>,
-    routes: Mutex<HashMap<String, session_mpsc::Sender<VadWorkerEvent>>>,
+    routes: Arc<Mutex<HashMap<String, session_mpsc::Sender<VadWorkerEvent>>>>,
     admission: ProviderRuntimeAdmission,
 }
 struct State {
+    threads: super::native_threads::NativeThreads,
     next_lease: u64,
     slots: HashMap<VadWorkerLease, Slot>,
 }
@@ -106,7 +112,7 @@ struct Slot {
     identity: WorkerIdentity,
     command_tx: mpsc::SyncSender<VadCommand>,
     state: SlotState,
-    _permit: Option<ProviderCapacityPermit>,
+    _permit: Option<Arc<ProviderCapacityPermit>>,
 }
 enum SlotState {
     Active,
@@ -118,23 +124,89 @@ enum SlotState {
 impl VadWorkerRuntime {
     pub fn new(provider: Arc<dyn VadProvider>, config: WorkerRuntimeConfig) -> Self {
         config.validate().expect("invalid worker runtime config");
-        let (events_tx, events_rx) = mpsc::channel();
         let admission =
             ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
+        Self::new_with_admission(provider, config, admission)
+    }
+
+    pub(crate) fn new_with_admission(
+        provider: Arc<dyn VadProvider>,
+        config: WorkerRuntimeConfig,
+        admission: ProviderRuntimeAdmission,
+    ) -> Self {
+        let (events_tx, events_rx) = mpsc::channel();
         Self {
+            pool: None,
+            unload: Arc::new(Mutex::new(())),
             provider,
             config,
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 next_lease: 1,
+                threads: Default::default(),
                 slots: HashMap::new(),
-            }),
-            events_rx: Mutex::new(events_rx),
+            })),
+            events_rx: Arc::new(Mutex::new(events_rx)),
             events_tx,
-            routes: Mutex::new(HashMap::new()),
+            routes: Arc::new(Mutex::new(HashMap::new())),
             admission,
         }
     }
 
+    pub fn try_new(
+        provider: Arc<dyn VadProvider>,
+        config: WorkerRuntimeConfig,
+    ) -> Result<Self, VadWorkerError> {
+        config
+            .validate()
+            .map_err(|_| VadWorkerError::Initialization)?;
+        let admission =
+            ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
+        Self::try_new_with_admission(provider, config, admission)
+    }
+    pub(crate) fn try_new_with_admission(
+        provider: Arc<dyn VadProvider>,
+        config: WorkerRuntimeConfig,
+        admission: ProviderRuntimeAdmission,
+    ) -> Result<Self, VadWorkerError> {
+        config
+            .validate()
+            .map_err(|_| VadWorkerError::Initialization)?;
+        let pool =
+            super::vad_pool::VadSessionPool::initialize(provider.as_ref(), config.max_workers)
+                .map_err(|_| VadWorkerError::Initialization)?;
+        let mut runtime = Self::new_with_admission(provider, config, admission);
+        runtime.pool = Some(pool);
+        Ok(runtime)
+    }
+
+    /// Closes admission. A terminal event alone cannot acknowledge native destruction.
+    pub fn shutdown_acknowledged(&self) -> bool {
+        let _unload = self.unload.lock().expect("VAD unload poisoned");
+        let acknowledged = {
+            let mut state = self.state.lock().expect("VAD worker state poisoned");
+            state.threads.close() && state.slots.is_empty() && self.admission.active_work() == 0
+        };
+        if acknowledged && let Some(pool) = &self.pool {
+            pool.shutdown();
+        }
+        acknowledged
+    }
+
+    pub(crate) fn readiness(&self) -> super::NativeReadiness {
+        self.pool
+            .as_ref()
+            .map(|pool| pool.readiness())
+            .unwrap_or_default()
+    }
+    pub(crate) fn health_flags(&self) -> Vec<Arc<std::sync::atomic::AtomicBool>> {
+        self.pool.iter().map(|pool| pool.health_flag()).collect()
+    }
+
+    pub(crate) fn logical_view(&self, quota: ProviderRuntimeAdmission) -> Self {
+        let mut view = self.clone();
+        view.admission = quota.composed(&self.admission);
+        view
+    }
     pub fn runtime_config(&self) -> WorkerRuntimeConfig {
         self.config.clone()
     }
@@ -179,9 +251,17 @@ impl VadWorkerRuntime {
         permit: Option<ProviderCapacityPermit>,
     ) -> Result<VadWorkerLease, VadWorkerError> {
         let mut state = self.state.lock().expect("VAD worker state poisoned");
-        if state.slots.len() >= self.config.max_workers {
+        if state.slots.len() >= self.config.max_workers
+            || !state.threads.can_spawn(self.config.max_workers)
+        {
             return Err(VadWorkerError::Capacity);
         }
+        let retained = match &self.pool {
+            Some(pool) => Some(pool.take().ok_or(VadWorkerError::Capacity)?),
+            None => None,
+        };
+        let permit = permit.map(Arc::new);
+        let thread_permit = permit.clone();
         let lease = VadWorkerLease(state.next_lease);
         state.next_lease += 1;
         let (command_tx, command_rx) = mpsc::sync_channel(self.config.command_capacity);
@@ -196,12 +276,31 @@ impl VadWorkerRuntime {
         );
         let provider = Arc::clone(&self.provider);
         let events = self.events_tx.clone();
-        thread::spawn(move || run_worker(provider, identity, command_rx, events));
+        let spawn = thread::Builder::new()
+            .name("vad-native".into())
+            .spawn(move || {
+                let terminal = run_worker(provider, retained, identity, command_rx, events.clone());
+                drop(thread_permit);
+                if let Some(event) = terminal {
+                    let _ = events.send(event);
+                }
+            });
+        match spawn {
+            Ok(handle) => state.threads.retain(handle),
+            Err(_) => {
+                state.slots.remove(&lease);
+                return Err(VadWorkerError::Capacity);
+            }
+        }
         Ok(lease)
     }
 
     /// Acquires only capacity not reserved for Voice work.
     pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        let state = self.state.lock().expect("VAD worker state poisoned");
+        if state.threads.is_closed() {
+            return Err(ProviderAdmissionError::Capacity);
+        }
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 
@@ -370,13 +469,18 @@ impl VadWorkerRuntime {
 
 fn run_worker(
     provider: Arc<dyn VadProvider>,
+    retained: Option<Box<dyn VadSession>>,
     identity: WorkerIdentity,
     commands: mpsc::Receiver<VadCommand>,
     events: mpsc::Sender<VadWorkerEvent>,
-) {
-    let Ok(mut session) = provider.open() else {
-        let _ = events.send(VadWorkerEvent::Failed { identity });
-        return;
+) -> Option<VadWorkerEvent> {
+    let retained_worker = retained.is_some();
+    let Ok(mut session) = retained.map(Ok).unwrap_or_else(|| provider.open()) else {
+        return publish_terminal(
+            &events,
+            VadWorkerEvent::Failed { identity },
+            retained_worker,
+        );
     };
     if events
         .send(VadWorkerEvent::Opened {
@@ -384,7 +488,7 @@ fn run_worker(
         })
         .is_err()
     {
-        return;
+        return None;
     }
     let mut rechunker = VadRechunker::default();
     while let Ok(command) = commands.recv() {
@@ -393,8 +497,11 @@ fn run_worker(
                 let inputs = match rechunker.push(pcm) {
                     Ok(inputs) => inputs,
                     Err(()) => {
-                        let _ = events.send(VadWorkerEvent::Failed { identity });
-                        return;
+                        return publish_terminal(
+                            &events,
+                            VadWorkerEvent::Failed { identity },
+                            retained_worker,
+                        );
                     }
                 };
                 for input in inputs {
@@ -402,15 +509,21 @@ fn run_worker(
                     let probability = match session.push(input) {
                         Ok(probability) => probability,
                         Err(_) => {
-                            let _ = events.send(VadWorkerEvent::Failed { identity });
-                            return;
+                            return publish_terminal(
+                                &events,
+                                VadWorkerEvent::Failed { identity },
+                                retained_worker,
+                            );
                         }
                     };
                     if probability.start_sample != start_sample
                         || probability.end_sample != start_sample + 512
                     {
-                        let _ = events.send(VadWorkerEvent::Failed { identity });
-                        return;
+                        return publish_terminal(
+                            &events,
+                            VadWorkerEvent::Failed { identity },
+                            retained_worker,
+                        );
                     }
                     if events
                         .send(VadWorkerEvent::Probability {
@@ -420,7 +533,7 @@ fn run_worker(
                         })
                         .is_err()
                     {
-                        return;
+                        return None;
                     }
                 }
             }
@@ -433,21 +546,44 @@ fn run_worker(
                     });
                 }
                 Err(_) => {
-                    let _ = events.send(VadWorkerEvent::Failed { identity });
-                    return;
+                    return publish_terminal(
+                        &events,
+                        VadWorkerEvent::Failed { identity },
+                        retained_worker,
+                    );
                 }
             },
             VadCommand::Close => match session.close() {
                 Ok(()) => {
-                    let _ = events.send(VadWorkerEvent::Closed { identity });
-                    return;
+                    return publish_terminal(
+                        &events,
+                        VadWorkerEvent::Closed { identity },
+                        retained_worker,
+                    );
                 }
                 Err(_) => {
-                    let _ = events.send(VadWorkerEvent::Failed { identity });
-                    return;
+                    return publish_terminal(
+                        &events,
+                        VadWorkerEvent::Failed { identity },
+                        retained_worker,
+                    );
                 }
             },
         }
+    }
+    None
+}
+
+fn publish_terminal(
+    events: &mpsc::Sender<VadWorkerEvent>,
+    event: VadWorkerEvent,
+    retained: bool,
+) -> Option<VadWorkerEvent> {
+    if retained {
+        Some(event)
+    } else {
+        let _ = events.send(event);
+        None
     }
 }
 

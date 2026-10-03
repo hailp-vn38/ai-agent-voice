@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "samples_per_adapter": 1,
+  "origin": "Recorded tool observations before removing temporary graphs; no original raw time output retained",
+  "providers": {
+    "kokoro_vi": {
+      "ready_ms": 5185.817,
+      "rss_bytes": 1466548224,
+      "peak_footprint_bytes": 1500711000
+    },
+    "gipformer_vi": {
+      "ready_ms": 1027.018,
+      "rss_bytes": 355336192,
+      "peak_footprint_bytes": 333660976
+    },
+    "silero_default": {
+      "ready_ms": 337.005,
+      "rss_bytes": 94699520,
+      "peak_footprint_bytes": 66650928
+    },
+    "zerotts_maichi": {
+      "ready_ms": 23577.741,
+      "rss_bytes": 1948483584,
+      "peak_footprint_bytes": 2472250560
+    }
+  }
+}

@@ -532,6 +532,7 @@ fn config_with_external(
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig {
             tools,
             ..LlmConfig::default()

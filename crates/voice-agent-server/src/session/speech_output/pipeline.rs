@@ -40,7 +40,6 @@ impl SpeechOutput {
             return Ok(());
         }
         tracing::info!(
-            tts_input = %text,
             chars = text.chars().count(),
             delivery = "direct",
             "TTS synthesis input"

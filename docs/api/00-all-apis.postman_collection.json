@@ -959,7 +959,8 @@
                       "type": "string"
                     }
                   ]
-                }
+                },
+                "description": " Runtime metadata reads do not build models or refresh cache TTL."
               },
               "response": []
             },
@@ -989,7 +990,7 @@
                     }
                   }
                 },
-                "description": "key is immutable; type is not patchable. Changing desired state may require restart before loaded runtime matches desired state.",
+                "description": "key is immutable; type is not patchable. Managed runtimes acquire the exact desired revision for new sessions and diagnostics. Existing admitted sessions retain their snapshot and lease. Inspect runtime.desired_state, ready_revisions and can_prepare; requires_restart is explicit only for unsupported changes.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1004,6 +1005,45 @@
               "response": []
             },
             {
+              "name": "Prepare Provider Runtime",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{provider_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/prepare",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Idempotently acquire the current desired revision without user inference. Strict empty JSON body. 200 ready; 202 queued/loading; 409 disabled/conflict; 429 bounded capacity; 503 infrastructure failure; 504 acquisition deadline. Response identifies provider key, desired revision and safe runtime state. Poll GET metadata; a desired revision change starts a new view.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
               "name": "Delete provider",
               "request": {
                 "method": "DELETE",
@@ -1015,7 +1055,7 @@
                   }
                 ],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}",
-                "description": "Conditional hard-delete. Returns 204 only when no Template Provider Binding remains; otherwise 409 provider_in_use. The loaded runtime remains immutable until process restart.",
+                "description": "Conditional hard-delete. Returns 204 only when no Template Provider Binding remains; otherwise 409 provider_in_use. Existing sessions retain their exact runtime lease until cleanup; deleting desired state does not invalidate admitted sessions.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1035,7 +1075,7 @@
                 "method": "GET",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}/templates?page=1&page_size=50",
-                "description": "Lists persisted Template usage for this Provider, including binding type and Template enabled state. Pagination: page 1..10000, page_size 1..200.",
+                "description": "Lists persisted Template usage for this Provider, including binding type and Template enabled state. Pagination: page 1..10000, page_size 1..200. Runtime metadata reads do not build models or refresh cache TTL.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1095,7 +1135,7 @@
                     }
                   }
                 },
-                "description": "Tests the loaded LLM runtime only. JSON body rejects unknown fields.",
+                "description": "Tests the loaded LLM runtime only. JSON body rejects unknown fields. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1130,7 +1170,7 @@
                     }
                   }
                 },
-                "description": "Returns audio/wav on success. voice and language are optional typed overrides.",
+                "description": "Returns audio/wav on success. voice and language are optional typed overrides. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1162,7 +1202,7 @@
                     "src": []
                   }
                 },
-                "description": "Upload PCM WAV. Expected: mono 16 kHz PCM, duration <= 30 s, request body <= 5 MiB.",
+                "description": "Upload PCM WAV. Expected: mono 16 kHz PCM, duration <= 30 s, request body <= 5 MiB. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1182,7 +1222,7 @@
                 "method": "POST",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/vad",
-                "description": "No request body. Tests exactly one canonical silent VAD inference frame on the already-loaded runtime. Returns probability, sample range, elapsed time and runtime provenance; provider_key must identify a VAD Provider Instance.",
+                "description": "No request body. Tests exactly one canonical silent VAD inference frame on the already-loaded runtime. Returns probability, sample range, elapsed time and runtime provenance; provider_key must identify a VAD Provider Instance. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [

@@ -46,6 +46,12 @@ impl TtsWorkerEvent {
 pub enum TtsWorkerError {
     #[error("TTS worker capacity is exhausted")]
     Capacity,
+    #[error("TTS worker initialization failed")]
+    Initialization,
+    #[error("TTS native cleanup has not acknowledged completion")]
+    Quarantined,
+    #[error("TTS worker configuration is invalid")]
+    InvalidConfig,
     #[error("TTS worker lease is not active")]
     UnknownLease,
 }
@@ -69,6 +75,8 @@ struct WorkerRecord {
     busy: bool,
     stream: Option<TtsStreamId>,
     quarantined: bool,
+    healthy: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 struct Slot {
     worker: usize,
@@ -82,6 +90,9 @@ struct Slot {
     _permit: Option<ProviderCapacityPermit>,
 }
 struct State {
+    closed: bool,
+    unloading: bool,
+    unloaded: bool,
     next: u64,
     next_stream: u64,
     slots: HashMap<TtsLease, Slot>,
@@ -92,7 +103,10 @@ struct State {
 
 /// Fixed native pool: a thread (and native sessions supplied by `TtsWorker`) is created once per
 /// configured slot, never once per sentence.
+#[derive(Clone)]
 pub struct TtsWorkerRuntime {
+    _owner: Arc<TtsPoolOwner>,
+    readiness: super::NativeReadiness,
     provider: Arc<dyn TtsProvider>,
     config: WorkerRuntimeConfig,
     state: Arc<Mutex<State>>,
@@ -114,48 +128,148 @@ pub struct TtsDiagnosticOperation {
 
 impl TtsWorkerRuntime {
     pub fn new(provider: Arc<dyn TtsProvider>, config: WorkerRuntimeConfig) -> Self {
+        Self::try_new(provider, config).expect("cannot initialize TTS runtime")
+    }
+
+    /// Blocking construction seam. Ready means every retained native worker acknowledged init.
+    /// Materialization calls this on its bounded blocking executor, never on the audio actor.
+    pub fn try_new(
+        provider: Arc<dyn TtsProvider>,
+        config: WorkerRuntimeConfig,
+    ) -> Result<Self, TtsWorkerError> {
         config
             .validate()
-            .expect("invalid TTS worker runtime config");
-        let mut workers = Vec::with_capacity(config.max_workers);
-        for index in 0..config.max_workers {
-            let (command_tx, command_rx) = mpsc::sync_channel(config.command_capacity);
-            let provider = Arc::clone(&provider);
-            thread::Builder::new()
-                .name(format!("tts-native-{index}"))
-                .spawn(move || worker_loop(provider, command_rx))
-                .expect("cannot start TTS native worker");
-            workers.push(WorkerRecord {
-                command_tx,
-                busy: false,
-                stream: None,
-                quarantined: false,
-            });
-        }
+            .map_err(|_| TtsWorkerError::InvalidConfig)?;
         let admission =
             ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
-        Self {
+        Self::try_new_with_admission(provider, config, admission)
+    }
+
+    pub(crate) fn try_new_with_admission(
+        provider: Arc<dyn TtsProvider>,
+        config: WorkerRuntimeConfig,
+        admission: ProviderRuntimeAdmission,
+    ) -> Result<Self, TtsWorkerError> {
+        config
+            .validate()
+            .map_err(|_| TtsWorkerError::InvalidConfig)?;
+        let mut readiness = super::NativeReadiness::default();
+        let mut workers: Vec<WorkerRecord> = Vec::with_capacity(config.max_workers);
+        for index in 0..config.max_workers {
+            let (command_tx, command_rx) = mpsc::sync_channel(config.command_capacity);
+            let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+            let worker_provider = Arc::clone(&provider);
+            let healthy = Arc::new(AtomicBool::new(true));
+            let worker_healthy = Arc::clone(&healthy);
+            let spawn = thread::Builder::new()
+                .name(format!("tts-native-{index}"))
+                .spawn(move || worker_loop(worker_provider, command_rx, ready_tx, worker_healthy));
+            let thread = match spawn {
+                Ok(thread) => thread,
+                Err(_) => {
+                    return Err(if stop_and_join(&mut workers) {
+                        TtsWorkerError::Initialization
+                    } else {
+                        TtsWorkerError::Quarantined
+                    });
+                }
+            };
+            if let Ok(Some(worker_readiness)) = ready_rx.recv() {
+                readiness.add(worker_readiness);
+                workers.push(WorkerRecord {
+                    command_tx,
+                    busy: false,
+                    stream: None,
+                    quarantined: false,
+                    healthy,
+                    thread: Some(thread),
+                });
+            } else {
+                let exited = thread.join().is_ok();
+                let pool_exited = stop_and_join(&mut workers);
+                return Err(if exited && pool_exited {
+                    TtsWorkerError::Initialization
+                } else {
+                    TtsWorkerError::Quarantined
+                });
+            }
+        }
+        let state = Arc::new(Mutex::new(State {
+            closed: false,
+            unloading: false,
+            unloaded: false,
+            next: 1,
+            next_stream: 1,
+            slots: HashMap::new(),
+            streams: HashMap::new(),
+            closed_streams: HashSet::new(),
+            workers,
+        }));
+        Ok(Self {
+            _owner: Arc::new(TtsPoolOwner(Arc::clone(&state))),
+            readiness,
             provider,
             config,
-            state: Arc::new(Mutex::new(State {
-                next: 1,
-                next_stream: 1,
-                slots: HashMap::new(),
-                streams: HashMap::new(),
-                closed_streams: HashSet::new(),
-                workers,
-            })),
+            state,
             admission,
-        }
+        })
     }
     pub fn provider(&self) -> Arc<dyn TtsProvider> {
         Arc::clone(&self.provider)
+    }
+    /// Closes admission and joins retained workers. Call only on the manager's native
+    /// unload thread: native destruction may block. An active stream or operation keeps
+    /// ownership and accounting with the caller until its cleanup is acknowledged.
+    pub(crate) fn readiness(&self) -> super::NativeReadiness {
+        self.readiness
+    }
+    pub(crate) fn health_flags(&self) -> Vec<Arc<AtomicBool>> {
+        self.state
+            .lock()
+            .expect("TTS worker state poisoned")
+            .workers
+            .iter()
+            .map(|worker| Arc::clone(&worker.healthy))
+            .collect()
+    }
+
+    pub(crate) fn logical_view(&self, quota: ProviderRuntimeAdmission) -> Self {
+        let mut view = self.clone();
+        view.admission = quota.composed(&self.admission);
+        view
+    }
+    pub fn shutdown_acknowledged(&self) -> bool {
+        let mut workers = {
+            let mut state = self.state.lock().expect("TTS worker state poisoned");
+            state.closed = true;
+            if state.unloaded {
+                return true;
+            }
+            if state.unloading
+                || !state.slots.is_empty()
+                || !state.streams.is_empty()
+                || self.admission.active_work() != 0
+            {
+                return false;
+            }
+            state.unloading = true;
+            std::mem::take(&mut state.workers)
+        };
+        let acknowledged = stop_and_join(&mut workers);
+        let mut state = self.state.lock().expect("TTS worker state poisoned");
+        state.unloaded = acknowledged;
+        // A panicked destructor has no trustworthy cleanup acknowledgement. Do not retry
+        // with an empty pool and accidentally report success.
+        state.unloading = !acknowledged;
+        acknowledged
     }
     pub fn begin_stream(&self) -> TtsStreamId {
         let mut state = self.state.lock().expect("TTS worker state poisoned");
         let stream = TtsStreamId(state.next_stream);
         state.next_stream += 1;
-        state.streams.insert(stream, None);
+        if !state.closed {
+            state.streams.insert(stream, None);
+        }
         stream
     }
     pub fn close_stream(&self, stream: TtsStreamId) {
@@ -193,6 +307,9 @@ impl TtsWorkerRuntime {
             .transpose()
             .map_err(|_| TtsWorkerError::Capacity)?;
         let mut state = self.state.lock().expect("TTS worker state poisoned");
+        if state.closed {
+            return Err(TtsWorkerError::Capacity);
+        }
         let worker = match stream {
             Some(stream) => match state
                 .streams
@@ -200,18 +317,31 @@ impl TtsWorkerRuntime {
                 .copied()
                 .ok_or(TtsWorkerError::UnknownLease)?
             {
-                Some(worker) if !state.workers[worker].busy => worker,
+                Some(worker)
+                    if !state.workers[worker].busy
+                        && !state.workers[worker].quarantined
+                        && state.workers[worker].healthy.load(Ordering::Acquire) =>
+                {
+                    worker
+                }
                 Some(_) => return Err(TtsWorkerError::Capacity),
                 None => state
                     .workers
                     .iter()
-                    .position(|entry| !entry.busy && !entry.quarantined)
+                    .position(|entry| {
+                        !entry.busy && !entry.quarantined && entry.healthy.load(Ordering::Acquire)
+                    })
                     .ok_or(TtsWorkerError::Capacity)?,
             },
             None => state
                 .workers
                 .iter()
-                .position(|entry| !entry.busy && entry.stream.is_none() && !entry.quarantined)
+                .position(|entry| {
+                    !entry.busy
+                        && entry.stream.is_none()
+                        && !entry.quarantined
+                        && entry.healthy.load(Ordering::Acquire)
+                })
                 .ok_or(TtsWorkerError::Capacity)?,
         };
         let lease = TtsLease(state.next);
@@ -350,6 +480,10 @@ impl TtsWorkerRuntime {
 
     /// Acquires capacity for a bounded diagnostic operation.
     pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        let state = self.state.lock().expect("TTS worker state poisoned");
+        if state.closed {
+            return Err(ProviderAdmissionError::Capacity);
+        }
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 
@@ -386,11 +520,10 @@ impl TtsWorkerRuntime {
         }
     }
 }
-impl Drop for TtsWorkerRuntime {
+struct TtsPoolOwner(Arc<Mutex<State>>);
+impl Drop for TtsPoolOwner {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.state) == 1
-            && let Ok(state) = self.state.lock()
-        {
+        if let Ok(state) = self.0.lock() {
             for worker in &state.workers {
                 let _ = worker.command_tx.try_send(WorkerCommand::Shutdown);
             }
@@ -412,15 +545,57 @@ fn release_terminal(state: &mut State, lease: TtsLease) {
         let _ = worker.command_tx.try_send(WorkerCommand::Reset);
     }
 }
-fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCommand>) {
-    let mut worker = provider
-        .open_worker()
-        .unwrap_or_else(|_| Box::new(ProviderWorker::new(provider)));
+fn stop_and_join(workers: &mut [WorkerRecord]) -> bool {
+    for worker in workers.iter() {
+        let _ = worker.command_tx.send(WorkerCommand::Shutdown);
+    }
+    let mut acknowledged = true;
+    for worker in workers.iter_mut() {
+        if let Some(thread) = worker.thread.take() {
+            acknowledged &= thread.join().is_ok();
+        }
+    }
+    acknowledged
+}
+
+fn worker_loop(
+    provider: Arc<dyn TtsProvider>,
+    commands: mpsc::Receiver<WorkerCommand>,
+    ready: mpsc::SyncSender<Option<super::NativeReadiness>>,
+    healthy: Arc<AtomicBool>,
+) {
+    let started = Instant::now();
+    let mut worker = match provider.open_worker() {
+        Ok(worker) => worker,
+        Err(TtsError::WorkerUnsupported) => Box::new(ProviderWorker::new(provider)),
+        Err(_) => {
+            let _ = ready.send(None);
+            return;
+        }
+    };
+    let initialization = started.elapsed();
+    let started = Instant::now();
+    if worker.warmup().is_err() {
+        let _ = ready.send(None);
+        return;
+    }
+    if ready
+        .send(Some(super::NativeReadiness {
+            initialization,
+            warmup: started.elapsed(),
+        }))
+        .is_err()
+    {
+        return;
+    }
     while let Ok(command) = commands.recv() {
         match command {
             WorkerCommand::Shutdown => break,
             WorkerCommand::Reset => {
-                let _ = worker.reset();
+                if worker.reset().is_err() {
+                    healthy.store(false, Ordering::Release);
+                    break;
+                }
             }
             WorkerCommand::Start {
                 request,
@@ -430,7 +605,6 @@ fn worker_loop(provider: Arc<dyn TtsProvider>, commands: mpsc::Receiver<WorkerCo
                 let diagnostic = matches!(&request, TtsWorkRequest::Diagnostic(_));
                 if let TtsWorkRequest::Voice(text) = &request {
                     tracing::info!(
-                        tts_input = %text,
                         chars = text.chars().count(),
                         delivery = "worker",
                         "TTS synthesis input"

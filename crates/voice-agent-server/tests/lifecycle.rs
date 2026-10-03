@@ -71,6 +71,7 @@ fn config(url: String, admission_enabled: bool) -> AppConfig {
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
@@ -849,4 +850,65 @@ async fn shutdown_within(lifecycle: Arc<RuntimeLifecycle>, limit: Duration) -> S
     timeout(limit, lifecycle.shutdown())
         .await
         .expect("the ordered shutdown returns within its bound")
+}
+
+#[tokio::test]
+async fn application_shutdown_uses_its_existing_deadline_for_managed_resources() {
+    use std::collections::HashMap;
+    use voice_agent_server::{
+        database::{DesiredProvider, secrets::EnvSecretResolver},
+        services::provider_runtime::{FactoryMaterializer, ProviderRuntimeManager, RuntimeLimits},
+        workers::WorkerSupervisor,
+    };
+    let mut app_config = config("sqlite::memory:".into(), false);
+    app_config.shutdown.grace_ms = 30;
+    let state =
+        AppState::from_provider_set(app_config.clone(), Arc::new(ProviderSet::unavailable()));
+    let builder = FactoryMaterializer::new(
+        Arc::new(app_config),
+        Arc::new(EnvSecretResolver),
+        HashMap::from([("openai".into(), 4096)]),
+        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
+    )
+    .unwrap();
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 1,
+            max_waiters: 2,
+            max_resident_bytes: 8192,
+            max_resources: 2,
+            max_version_entries: 4,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 10,
+            idle_ttl_ms: 10,
+        },
+        Arc::new(builder),
+        state.admission_gate().clone(),
+    )
+    .unwrap();
+    let state = state.with_runtime_manager(manager.clone());
+    let lease = manager
+        .acquire(DesiredProvider {
+            id: 1,
+            key: "remote".into(),
+            kind: "llm".into(),
+            adapter: "openai".into(),
+            revision: 1,
+            config_json: r#"{"base_url":"https://example.test/v1","model":"fixture"}"#.into(),
+            secret_ref: None,
+        })
+        .await
+        .unwrap();
+    let started = tokio::time::Instant::now();
+    let report = state.lifecycle.shutdown().await;
+    assert_eq!(report.provider_resources_drained, Some(false));
+    assert!(started.elapsed() < Duration::from_millis(300));
+    assert_eq!(manager.accounting().reserved_bytes, 4096);
+    drop(lease);
+    assert!(
+        manager
+            .shutdown_until(tokio::time::Instant::now() + Duration::from_secs(1))
+            .await
+    );
 }

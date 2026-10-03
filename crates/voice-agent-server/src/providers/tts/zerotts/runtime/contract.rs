@@ -116,42 +116,12 @@ impl ZeroTtsContract {
                 "ZeroTTS thread count must be positive".into(),
             ));
         }
-        load_graph(
-            text_encoder_path,
-            threads,
-            TEXT_ENCODER_INPUTS,
-            TEXT_ENCODER_OUTPUTS,
-        )?;
-        load_graph(
-            prefix_step_path,
-            threads,
-            PREFIX_STEP_INPUTS,
-            PREFIX_STEP_OUTPUTS,
-        )?;
-        load_graph(
-            local_frame_decode_path,
-            threads,
-            LOCAL_FRAME_INPUTS,
-            LOCAL_FRAME_OUTPUTS,
-        )?;
         let metadata = load_codec_metadata(
             codec_metadata_path,
             codec_decode_full_path,
             codec_decode_step_path,
             codec_shared_data_path,
             config.num_codebooks,
-        )?;
-        load_codec_graph(
-            codec_decode_full_path,
-            threads,
-            &metadata.onnx.decode_input_names,
-            &metadata.onnx.decode_output_names,
-        )?;
-        load_codec_graph(
-            codec_decode_step_path,
-            threads,
-            &metadata.onnx.decode_step_input_names,
-            &metadata.onnx.decode_step_output_names,
         )?;
         Ok(Self {
             tokenizer,
@@ -195,14 +165,6 @@ impl ZeroTtsContract {
 
     pub fn synthesize_codes(&self, text: &str, max_frames: usize) -> Result<CodeFrames, TtsError> {
         ZeroTtsOperation::new(self)?.synthesize(text, max_frames)
-    }
-
-    pub(crate) fn validate_full_decode(&self, frames: &[Vec<i32>]) -> Result<(), TtsError> {
-        let pcm = validate_full_decode(self, frames)?;
-        if pcm.samples().is_empty() || pcm.sample_rate_hz() != self.config.sample_rate {
-            return Err(TtsError::InvalidWarmupPcm);
-        }
-        Ok(())
     }
 
     /// Produces the provider boundary PCM. Codec layout and profile are validated at startup.

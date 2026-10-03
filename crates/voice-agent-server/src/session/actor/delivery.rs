@@ -421,6 +421,11 @@ impl SessionActor {
         // It must precede every producer cancellation, including cancellation before TTS starts:
         // `llm` or `tts:start` may already be waiting at the writer.
         self.generation_gate.invalidate(self.generation);
+        // A turn without playback can be released below. Cancel its preparation token
+        // before losing the turn owner, so a cold switch cannot continue building targets.
+        if let Some(turn) = &self.turn {
+            turn.cancellation.cancel();
+        }
         self.pending_llm_delta = None;
         self.llm_finish_pending = false;
         self.speech_output.cancel();

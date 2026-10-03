@@ -9,7 +9,7 @@ pub enum ZeroTtsDeliveryMode {
     #[default]
     Stream,
 }
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ZeroTtsOnnxConfig {
     #[serde(default = "default_tts_model")]

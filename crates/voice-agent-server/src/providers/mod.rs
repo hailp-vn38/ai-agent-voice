@@ -23,6 +23,7 @@ pub use catalog::{ProviderCatalog, ProviderLookupError};
 pub use database_loader::{
     DatabaseMaterialization, DatabaseRuntimeFailure, DatabaseRuntimeSnapshot, DatabaseRuntimeState,
     DatabaseRuntimeStatus, RequiredProviderUnavailable, materialize_database_providers,
+    materialize_provider, materialize_provider_with_admission,
 };
 pub use descriptor::{AdapterSummary, ProviderDescriptor, ProviderType};
 pub use inspector::{DiscoveredCapabilities, ProviderInspectError};
@@ -48,3 +49,8 @@ pub use vad::{VadInput, VadProbability, VadProvider, VadSession};
 pub use vision::{
     OpenAiVisionProvider, VisionError, VisionProvider, VisionRequest, VisionResponse,
 };
+
+mod deployment_snapshot;
+pub use deployment_snapshot::deployment_provider_snapshot;
+
+pub(crate) use database_loader::materialize_provider_from_artifacts;

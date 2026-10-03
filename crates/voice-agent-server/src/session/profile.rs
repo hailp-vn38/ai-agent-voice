@@ -4,7 +4,9 @@
 //! the process-wide Loaded Runtime catalog.  Nothing here keeps a repository, a pool or a row, so
 //! Admin mutation and database degradation cannot live-reconfigure an open session.
 
-use std::collections::BTreeMap;
+use super::ConfiguredTemplateProfile;
+use crate::services::provider_runtime::{ProviderRuntimeManager, ResourceLease, RuntimeError};
+use std::{collections::BTreeMap, sync::Arc};
 
 use tracing::warn;
 
@@ -78,12 +80,18 @@ impl std::fmt::Debug for ResolvedTemplateProfile {
 }
 
 /// Immutable candidate list for this session only.  It is a snapshot, never a query.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
 pub struct TemplateSwitchCatalog {
     candidates: Vec<ResolvedTemplateProfile>,
+    pub(super) cold: Vec<ConfiguredTemplateProfile>,
+    pub(super) manager: Option<Arc<ProviderRuntimeManager>>,
+    pub(super) active_leases: Vec<ResourceLease>,
 }
 
 impl TemplateSwitchCatalog {
+    pub(crate) fn hold_runtime_leases(&mut self, leases: Vec<ResourceLease>) {
+        self.active_leases = leases;
+    }
     pub fn candidates(&self) -> &[ResolvedTemplateProfile] {
         &self.candidates
     }
@@ -107,7 +115,7 @@ impl TemplateSwitchCatalog {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.candidates.is_empty()
+        self.candidates.is_empty() && self.cold.is_empty()
     }
 
     /// The switch tool is advertised only when this session can actually honor it, so the model
@@ -116,6 +124,11 @@ impl TemplateSwitchCatalog {
         self.candidates
             .iter()
             .map(|candidate| candidate.template_key.as_str())
+            .chain(
+                self.cold
+                    .iter()
+                    .map(ConfiguredTemplateProfile::template_key),
+            )
             .collect()
     }
 }
@@ -163,6 +176,7 @@ impl ActiveTemplateProfile {
 
 #[derive(Clone)]
 pub struct EffectiveSessionProfile {
+    pub selected_runtimes: Option<ResolvedAgentRuntimes>,
     pub device_db_id: i64,
     pub agent_id: i64,
     pub agent_key: String,
@@ -189,6 +203,7 @@ impl EffectiveSessionProfile {
     pub fn server_default(config: &AppConfig) -> Result<Self, ProfileUnavailable> {
         let agent = config.effective_agent();
         Ok(Self {
+            selected_runtimes: None,
             device_db_id: 0,
             agent_id: 0,
             agent_key: String::new(),
@@ -317,6 +332,7 @@ pub fn resolve_effective_session_profile_with_override(
     }
 
     Ok(EffectiveSessionProfile {
+        selected_runtimes: None,
         device_db_id,
         agent_id,
         agent_key: agent_key.to_owned(),
@@ -410,6 +426,7 @@ enum TemplateCandidateError {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::{audio::VadSegmenterConfig, database::AdmittedProviderBinding};
@@ -448,6 +465,7 @@ mod tests {
                     provider_type: provider_type.into(),
                     provider_key: provider_key.into(),
                     provider_enabled: true,
+                    snapshot: None,
                 })
                 .collect(),
         }
@@ -615,6 +633,7 @@ mod tests {
             provider_type: "llm".into(),
             provider_key: "never-loaded".into(),
             provider_enabled: true,
+            snapshot: None,
         });
         let mut incomplete = named(3, "incomplete", false, true);
         incomplete
@@ -739,4 +758,68 @@ mod tests {
             }
         );
     }
+}
+
+impl std::fmt::Debug for TemplateSwitchCatalog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TemplateSwitchCatalog")
+            .field("ready_candidates", &self.candidates.len())
+            .field("cold_candidates", &self.cold.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Acquires only the selected template; all switch candidates retain immutable configuration.
+pub async fn resolve_managed_session_profile(
+    device_db_id: i64,
+    template_override_id: Option<i64>,
+    agent_id: i64,
+    agent_key: &str,
+    assignments: &[AdmittedAssignment],
+    config: &AppConfig,
+    manager: &Arc<ProviderRuntimeManager>,
+) -> Result<EffectiveSessionProfile, RuntimeError> {
+    if assignments.is_empty() {
+        let mut profile = EffectiveSessionProfile::server_default(config)
+            .map_err(|_| RuntimeError::Configuration)?;
+        profile.device_db_id = device_db_id;
+        profile.agent_id = agent_id;
+        profile.agent_key = agent_key.to_owned();
+        return Ok(profile);
+    }
+    let selected = assignments
+        .iter()
+        .find(|assignment| {
+            assignment.assignment_enabled
+                && template_override_id
+                    .map_or(assignment.is_default, |id| assignment.template_id == id)
+        })
+        .ok_or(RuntimeError::Configuration)?;
+    let configuration = ConfiguredTemplateProfile::from_assignment(selected)
+        .map_err(|_| RuntimeError::Configuration)?;
+    let prepared = configuration
+        .prepare(manager, manager.admission_deadline())
+        .await?;
+    let cold = assignments
+        .iter()
+        .filter_map(|assignment| ConfiguredTemplateProfile::from_assignment(assignment).ok())
+        .collect();
+    Ok(EffectiveSessionProfile {
+        selected_runtimes: Some(prepared.runtimes),
+        device_db_id,
+        agent_id,
+        agent_key: agent_key.to_owned(),
+        source: configuration.source,
+        language: configuration.language,
+        system_prompt: configuration.system_prompt,
+        providers: configuration.providers,
+        revision: 1,
+        switch_catalog: TemplateSwitchCatalog {
+            candidates: vec![],
+            cold,
+            manager: Some(Arc::clone(manager)),
+            active_leases: prepared.leases,
+        },
+        external_mcp: SessionExternalMcp::default(),
+    })
 }

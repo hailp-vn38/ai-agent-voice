@@ -367,12 +367,7 @@ impl TtsFactory for KokoroViOnnxFactory {
             ProviderLoadError::Configuration("kokoro_vi_onnx requires a local model".into())
         })?;
         validate_model_adapter(model, self.adapter())?;
-        if options.model != "kokoro_vi_contextbox"
-            || options.language != "vi-VN"
-            || options.num_threads <= 0
-            || !(50..=200).contains(&options.speed_percent)
-            || !KOKORO_VI_VOICES.contains(&options.voice.as_str())
-        {
+        if !options.valid_selection() {
             return Err(ProviderLoadError::Configuration("Kokoro Vietnamese requires its pinned model, vi-VN, a supported voice, positive threads, and speed_percent 50..=200".into()));
         }
         if model.identity() != options.model {
@@ -401,22 +396,6 @@ impl TtsFactory for KokoroViOnnxFactory {
 }
 
 const KOKORO_VI_REQUIRED_ARTIFACT_ROLES: &[&str] = &["model", "config"];
-const KOKORO_VI_VOICES: &[&str] = &[
-    "diem_trinh",
-    "hung_thinh",
-    "mai_linh",
-    "mai_loan",
-    "manh_dung",
-    "my_yen",
-    "ngoc_huyen",
-    "phat_tai",
-    "thanh_dat",
-    "thuc_trinh",
-    "tuan_ngoc",
-    "storyvert",
-    "duc_an",
-    "duc_duy",
-];
 
 impl TtsFactory for ChillAudioWsFactory {
     fn adapter(&self) -> &'static str {

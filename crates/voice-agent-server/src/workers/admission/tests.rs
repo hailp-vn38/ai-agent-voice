@@ -20,3 +20,20 @@ fn diagnostic_cannot_take_the_last_slot_after_voice_started() {
         Err(ProviderAdmissionError::Capacity)
     ));
 }
+
+#[test]
+fn logical_views_have_independent_quotas_and_one_physical_limit() {
+    let physical = ProviderRuntimeAdmission::new(3, 1);
+    let first = ProviderRuntimeAdmission::new(2, 1).composed(&physical);
+    let second = ProviderRuntimeAdmission::new(2, 1).composed(&physical);
+    let a = first.try_admit(ProviderWorkloadClass::Voice).unwrap();
+    let b = first.try_admit(ProviderWorkloadClass::Voice).unwrap();
+    assert!(first.try_admit(ProviderWorkloadClass::Voice).is_err());
+    let c = second.try_admit(ProviderWorkloadClass::Voice).unwrap();
+    assert!(second.try_admit(ProviderWorkloadClass::Voice).is_err());
+    drop(a);
+    let d = second.try_admit(ProviderWorkloadClass::Voice).unwrap();
+    assert!(second.try_admit(ProviderWorkloadClass::Voice).is_err());
+    drop((b, c, d));
+    assert_eq!(physical.active_work(), 0);
+}

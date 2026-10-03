@@ -62,6 +62,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/providers/{key}/templates", get(list_provider_templates))
         .route(
+            "/providers/{key}/prepare",
+            axum::routing::post(provider_tests::prepare_provider),
+        )
+        .route(
             "/providers/{key}/test/llm",
             axum::routing::post(test_llm_provider),
         )

@@ -267,6 +267,7 @@ fn config(address: std::net::SocketAddr, url: String) -> AppConfig {
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
@@ -1403,5 +1404,442 @@ async fn an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_s
     );
     assert_eq!(after_abort.transcript.as_deref(), Some("utterance"));
     boundary.hold.store(false, Ordering::SeqCst);
+    task.abort();
+}
+
+struct ManagedFixtureBuilder {
+    config: AppConfig,
+    builds: Arc<Mutex<Vec<(i64, i64, String)>>>,
+    supervisor: Arc<voice_agent_server::workers::WorkerSupervisor>,
+}
+struct ManagedFixtureResource(voice_agent_server::providers::RuntimeCatalog);
+impl voice_agent_server::services::provider_runtime::RuntimeResource for ManagedFixtureResource {
+    fn unload(&self) -> bool {
+        true
+    }
+    fn runtimes(&self) -> Option<voice_agent_server::providers::RuntimeCatalog> {
+        Some(self.0.clone())
+    }
+}
+impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for ManagedFixtureBuilder {
+    fn estimated_peak_bytes(
+        &self,
+        _: &voice_agent_server::database::DesiredProvider,
+    ) -> Result<u64, voice_agent_server::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn logical_capacity(
+        &self,
+        _: &voice_agent_server::database::DesiredProvider,
+    ) -> Result<usize, voice_agent_server::services::provider_runtime::RuntimeError> {
+        Ok(8)
+    }
+    fn build(
+        &self,
+        row: &voice_agent_server::database::DesiredProvider,
+        _: voice_agent_server::workers::ProviderRuntimeAdmission,
+    ) -> Result<
+        Arc<dyn voice_agent_server::services::provider_runtime::RuntimeResource>,
+        voice_agent_server::services::provider_runtime::RuntimeError,
+    > {
+        self.builds
+            .lock()
+            .unwrap()
+            .push((row.id, row.revision, row.kind.clone()));
+        let state = AppState::from_provider_set(
+            self.config.clone(),
+            Arc::new(ProviderSet::with_all(
+                Arc::new(SilentVad),
+                Arc::new(FinalAsr),
+                Arc::new(EchoLlm {
+                    label: if row.revision == 1 {
+                        "managed-v1"
+                    } else {
+                        "managed-v2"
+                    },
+                }),
+                Arc::new(ShortTts),
+            )),
+        );
+        let runtimes = state
+            .runtimes
+            .resolve(&state.config.effective_agent.providers)
+            .unwrap();
+        self.supervisor.observe_asr(runtimes.asr.clone());
+        self.supervisor.observe_vad(runtimes.vad.clone());
+        let kind = match row.kind.as_str() {
+            "vad" => voice_agent_server::providers::DiagnosticRuntimeKind::Vad,
+            "asr" => voice_agent_server::providers::DiagnosticRuntimeKind::Asr,
+            "llm" => voice_agent_server::providers::DiagnosticRuntimeKind::Llm,
+            "tts" => voice_agent_server::providers::DiagnosticRuntimeKind::Tts,
+            _ => unreachable!(),
+        };
+        Ok(Arc::new(ManagedFixtureResource(
+            voice_agent_server::providers::RuntimeCatalog::single_provider(
+                kind,
+                row.key.clone(),
+                &runtimes,
+            ),
+        )))
+    }
+}
+
+#[tokio::test]
+async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_session_version() {
+    use voice_agent_server::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits};
+    let url = database_url();
+    let mut app_config = config("127.0.0.1:0".parse().unwrap(), url);
+    app_config.api.enabled = true;
+    app_config.api.admin_token = "managed-test-token".into();
+    let builds = Arc::new(Mutex::new(Vec::new()));
+    let recorded = builds.clone();
+    let (base, url, task) = start_with_state(app_config, |state| {
+        let manager = ProviderRuntimeManager::new(
+            RuntimeLimits {
+                max_parallel_loads: 1,
+                max_pending_loads: 0,
+                max_waiters: 32,
+                max_resident_bytes: 16,
+                max_resources: 16,
+                max_version_entries: 32,
+                admission_timeout_ms: 2000,
+                failure_cooldown_ms: 10,
+                idle_ttl_ms: 1000,
+            },
+            Arc::new(ManagedFixtureBuilder {
+                config: state.config.as_ref().clone(),
+                builds: recorded,
+                supervisor: state.worker_supervisor.clone(),
+            }),
+            state.admission_gate().clone(),
+        )
+        .unwrap();
+        state.with_runtime_manager(manager)
+    })
+    .await;
+    let _pool = seed(&url).await;
+    let client = reqwest::Client::new();
+    let auth = "managed-test-token";
+    let providers = format!("{base}/api/admin/providers");
+    for (kind, adapter, config_json) in [
+        (
+            "vad",
+            "silero_onnx",
+            serde_json::json!({"model":"silero","num_threads":1}),
+        ),
+        (
+            "asr",
+            "gipformer_sherpa_offline",
+            serde_json::json!({"model":"gipformer15_vi_int8","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}),
+        ),
+        (
+            "llm",
+            "openai",
+            serde_json::json!({"base_url":"https://example.test/v1","model":"version-one"}),
+        ),
+        (
+            "tts",
+            "zerotts_onnx",
+            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
+        ),
+    ] {
+        let response = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"key":format!("managed_{kind}"),"name":kind,"type":kind,"adapter":adapter,"config_json":config_json})).send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::CREATED,
+            "{}",
+            response.text().await.unwrap()
+        );
+    }
+    let response = client.post(format!("{base}/api/admin/templates")).bearer_auth(auth).json(&serde_json::json!({"key":"managed","name":"Managed","language":"vi-VN","prompt":"MANAGED-PROMPT"})).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    let mut template: serde_json::Value = response.json().await.unwrap();
+    for kind in ["vad", "asr", "llm", "tts"] {
+        let response = client
+            .put(format!(
+                "{base}/api/admin/templates/managed/providers/{kind}"
+            ))
+            .bearer_auth(auth)
+            .header("if-match", format!("\"{}\"", template["revision"]))
+            .json(&serde_json::json!({"provider_key":format!("managed_{kind}")}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        template = response.json().await.unwrap();
+    }
+    let response = client
+        .put(format!(
+            "{base}/api/admin/agents/agent/default-template/managed"
+        ))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert!(
+        builds.lock().unwrap().is_empty(),
+        "CRUD must not build runtimes"
+    );
+    let cold: serde_json::Value = client
+        .get(format!("{providers}/managed_llm"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cold["requires_restart"], false);
+    assert_eq!(cold["runtime"]["desired_state"], "cold");
+    assert!(builds.lock().unwrap().is_empty());
+    let mut first = admit(&base).await;
+    assert!(
+        speak_and_observe(&mut first)
+            .await
+            .answer
+            .starts_with("managed-v1[MANAGED-PROMPT]")
+    );
+    assert_eq!(builds.lock().unwrap().len(), 4);
+    let response = client.patch(format!("{providers}/managed_llm")).bearer_auth(auth).header("if-match", "\"1\"").json(&serde_json::json!({"config_json":{"base_url":"https://example.test/v1","model":"version-two"}})).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let changed: serde_json::Value = client
+        .get(format!("{providers}/managed_llm"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(changed["runtime"]["desired_revision"], 2);
+    assert_eq!(changed["runtime"]["desired_state"], "cold");
+    assert_eq!(
+        changed["runtime"]["ready_revisions"],
+        serde_json::json!([1])
+    );
+    assert_eq!(builds.lock().unwrap().len(), 4);
+    let mut second = admit(&base).await;
+    assert!(
+        speak_and_observe(&mut second)
+            .await
+            .answer
+            .starts_with("managed-v2[MANAGED-PROMPT]")
+    );
+    assert!(
+        speak_and_observe(&mut first)
+            .await
+            .answer
+            .starts_with("managed-v1[MANAGED-PROMPT]")
+    );
+    assert_eq!(
+        builds.lock().unwrap().len(),
+        5,
+        "only changed exact version is built"
+    );
+    let created = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"key":"unbound_llm","name":"Unbound","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"unbound"}})).send().await.unwrap();
+    assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let prepared = client
+        .post(format!("{providers}/unbound_llm/prepare"))
+        .bearer_auth(auth)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        [reqwest::StatusCode::OK, reqwest::StatusCode::ACCEPTED].contains(&prepared.status()),
+        "{}",
+        prepared.text().await.unwrap()
+    );
+    let prepared: serde_json::Value = prepared.json().await.unwrap();
+    assert_eq!(prepared["provider_key"], "unbound_llm");
+    assert_eq!(prepared["desired_revision"], 1);
+    let invalid = client
+        .post(format!("{providers}/unbound_llm/prepare"))
+        .bearer_auth(auth)
+        .json(&serde_json::json!({"config_json":{"model":"override"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+    let ready = client
+        .post(format!("{providers}/unbound_llm/prepare"))
+        .bearer_auth(auth)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ready.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        builds.lock().unwrap().len(),
+        6,
+        "repeated prepare is idempotent"
+    );
+    let tested = client
+        .post(format!("{providers}/unbound_llm/test/llm"))
+        .bearer_auth(auth)
+        .json(&serde_json::json!({"input":"fixture"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        tested.status(),
+        reqwest::StatusCode::OK,
+        "{}",
+        tested.text().await.unwrap()
+    );
+    let diagnostic: serde_json::Value = tested.json().await.unwrap();
+    assert_eq!(diagnostic["runtime"]["tested_revision"], 1);
+    assert_eq!(diagnostic["runtime"]["requires_restart"], false);
+    assert!(
+        diagnostic["result"]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("managed-v1")
+    );
+    assert_eq!(builds.lock().unwrap().len(), 6);
+    let disabled = client
+        .patch(format!("{providers}/unbound_llm"))
+        .bearer_auth(auth)
+        .header("If-Match", "\"1\"")
+        .json(&serde_json::json!({"enabled":false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), reqwest::StatusCode::OK);
+    let denied = client
+        .post(format!("{providers}/unbound_llm/prepare"))
+        .bearer_auth(auth)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(builds.lock().unwrap().len(), 6);
+    first.close(None).await.unwrap();
+    second.close(None).await.unwrap();
+    task.abort();
+}
+
+struct PrepareGateBuilder {
+    inner: ManagedFixtureBuilder,
+    entered: tokio::sync::mpsc::UnboundedSender<()>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for PrepareGateBuilder {
+    fn estimated_peak_bytes(
+        &self,
+        _: &voice_agent_server::database::DesiredProvider,
+    ) -> Result<u64, voice_agent_server::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn logical_capacity(
+        &self,
+        _: &voice_agent_server::database::DesiredProvider,
+    ) -> Result<usize, voice_agent_server::services::provider_runtime::RuntimeError> {
+        Ok(2)
+    }
+    fn build(
+        &self,
+        row: &voice_agent_server::database::DesiredProvider,
+        quota: voice_agent_server::workers::ProviderRuntimeAdmission,
+    ) -> Result<
+        Arc<dyn voice_agent_server::services::provider_runtime::RuntimeResource>,
+        voice_agent_server::services::provider_runtime::RuntimeError,
+    > {
+        self.entered.send(()).unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+        self.inner.build(row, quota)
+    }
+}
+#[tokio::test]
+async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood() {
+    use voice_agent_server::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits};
+    let mut cfg = config("127.0.0.1:0".parse().unwrap(), database_url());
+    cfg.api.enabled = true;
+    cfg.api.admin_token = "prepare-test-token".into();
+    let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let (base, _, task) = start_with_state(cfg, |state| {
+        let manager = ProviderRuntimeManager::new(
+            RuntimeLimits {
+                max_parallel_loads: 1,
+                max_pending_loads: 0,
+                max_waiters: 4,
+                max_resident_bytes: 4,
+                max_resources: 4,
+                max_version_entries: 8,
+                admission_timeout_ms: 2000,
+                failure_cooldown_ms: 10,
+                idle_ttl_ms: 1000,
+            },
+            Arc::new(PrepareGateBuilder {
+                inner: ManagedFixtureBuilder {
+                    config: state.config.as_ref().clone(),
+                    builds: Arc::new(Mutex::new(vec![])),
+                    supervisor: state.worker_supervisor.clone(),
+                },
+                entered,
+                release: Mutex::new(release_rx),
+            }),
+            state.lifecycle.gate().clone(),
+        )
+        .unwrap();
+        state.with_runtime_manager(manager)
+    })
+    .await;
+    let client = reqwest::Client::new();
+    let providers = format!("{base}/api/admin/providers");
+    for key in ["first", "second"] {
+        let created = client.post(&providers).bearer_auth("prepare-test-token")
+            .json(&serde_json::json!({"key":key,"name":key,"type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"fixture"}}))
+            .send().await.unwrap();
+        assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    }
+    let first = client
+        .post(format!("{providers}/first/prepare"))
+        .bearer_auth("prepare-test-token")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), reqwest::StatusCode::ACCEPTED);
+    let accepted: serde_json::Value = first.json().await.unwrap();
+    assert_eq!(accepted["provider_key"], "first");
+    assert_eq!(accepted["desired_revision"], 1);
+    entered_rx.recv().await.unwrap();
+    let blocked = client
+        .post(format!("{providers}/second/prepare"))
+        .bearer_auth("prepare-test-token")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+    release.send(()).unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        let response = client
+            .get(format!("{providers}/first"))
+            .bearer_auth("prepare-test-token")
+            .send()
+            .await
+            .unwrap();
+        let row: serde_json::Value = response.json().await.unwrap();
+        if row["runtime"]["desired_state"] == "ready" {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::task::yield_now().await;
+    }
+    let ready = client
+        .post(format!("{providers}/first/prepare"))
+        .bearer_auth("prepare-test-token")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ready.status(), reqwest::StatusCode::OK);
     task.abort();
 }

@@ -222,7 +222,7 @@ Trạng thái tạm dừng đọc LLM delta khi hard-bounded pending Speech Segm
 _Avoid_: skipped sentence, best-effort speech queue
 
 **Provider Adapter**:
-Implementation compile-time của một provider trait, được chọn một lần tại startup bằng typed provider configuration; adapter không biết Voice Session, WebSocket hoặc worker runtime.
+Implementation compile-time của một provider trait, được chọn bằng typed provider configuration khi materialize runtime. Legacy deployment mode chọn adapter tại startup; managed runtime mode có thể materialize adapter tại acquisition. Adapter không biết Voice Session, WebSocket hoặc worker runtime.
 _Avoid_: dynamic plugin, provider platform, service locator
 
 **Provider Instance**:
@@ -230,7 +230,7 @@ Một cấu hình có ID ổn định của đúng một Provider Adapter; ID l�
 _Avoid_: adapter name, active provider
 
 **Provider Catalog**:
-Tập read-only các Provider Instance đã được build khi startup, được index theo Provider Instance ID và không thuộc Voice Session.
+Tập read-only các Provider Instance đã materialize, được index theo Provider Instance ID và không thuộc Voice Session. Legacy deployment mode build catalog tại startup; managed runtime mode giữ catalog deployment rỗng và resolve exact Provider Version qua Provider Runtime Manager.
 _Avoid_: adapter registry, session provider map
 
 **Effective Provider Bindings**:
@@ -338,7 +338,7 @@ Cấu hình persistent mà admin đã yêu cầu cho provider/template, có th�
 _Avoid_: loaded runtime, active runtime configuration
 
 **Loaded Runtime**:
-Provider runtime bất biến đã được validate, prepare và load vào Runtime Catalog cho lifetime của process.
+Backing resource đã hoàn tất validation, native readiness và warmup. Provider Runtime Manager giữ resource theo generation và RAM budget; lease giữ resource usable cho admitted snapshot. Legacy deployment mode vẫn dùng process-lifetime Runtime Catalog.
 _Avoid_: database desired configuration, hot-reloaded provider
 
 **Effective Session Profile**:
@@ -346,7 +346,7 @@ Snapshot immutable của Device, Agent, Template tùy chọn, Provider bindings,
 _Avoid_: per-frame database lookup, mutable agent configuration
 
 **Template Switch Catalog**:
-Tập immutable các Resolved Template Profile enabled, hợp lệ và đã có Loaded Runtime khi một Voice Session được admit; chỉ nguồn cho switch template trong session đó.
+Tập immutable các configured Template Profile enabled, hợp lệ và exact desired provider snapshots khi admit. Chỉ selected profile được acquire trước upgrade; switch prepare acquire cold candidate ngoài actor rồi commit sau writer/history/native cleanup barrier. Legacy injected catalog có thể chứa resolved profiles.
 _Avoid_: live template query, pending restart candidate, mutable assignment list
 
 **Session Profile Revision**:
@@ -386,7 +386,7 @@ Wrapper runtime chỉ expose credential cho request/provider construction và re
 _Avoid_: ordinary debug string, clone/display implementation, telemetry label, persisted configuration
 
 **Secret Rotation Snapshot**:
-Credential lifecycle snapshot: Provider Runtime giữ secret đến process restart, còn External MCP Client giữ secret đến Voice Session disconnect.
+Credential lifecycle snapshot: backing Provider Runtime giữ resolved secret trong resource lifetime; admitted session giữ resource lease, External MCP Client giữ secret đến disconnect. Resolver hiện chưa cung cấp credential generation nên remote/authenticated resources không share giữa desired versions; không silently rotate secret của resource đang dùng.
 _Avoid_: per-request secret resolution, silent credential replacement, runtime failure refresh
 
 **Credential-free Provider Config**:
@@ -500,3 +500,19 @@ _Avoid_: Voice API, trusted-LAN anonymous endpoint, shared OTA token
 **Exchange Atom**:
 Đơn vị Dialogue History không thể tách khi dựng prompt hoặc eviction: một user turn với các Completed Tool Round theo thứ tự, mỗi round gồm các cặp assistant tool call/tool result đã terminal, và Delivered Assistant Response nếu writer đóng turn Normal. Tool call chưa có terminal result không thuộc atom; turn lỗi trước tool đầu tiên là user-only atom.
 _Avoid_: message, partial exchange
+
+**ProviderVersion**:
+Identity của một Database Desired Configuration của Provider Instance tại đúng desired revision, phân biệt source và không tái sử dụng sau delete/recreate. Voice Session sử dụng version đã snapshot tại admission.
+_Avoid_: provider key alone, latest mutable provider, Session Profile Revision
+
+**Runtime Resource Key**:
+Opaque identity của backing runtime resource có resource specification tương đương theo hợp đồng Provider Adapter, bao gồm immutable artifact identity, execution settings và credential scope khi cần. Khác Resource Key public của Admin resource.
+_Avoid_: public provider key, raw JSON digest, path as model identity
+
+**Resource Lease**:
+Quyền sử dụng backing runtime resource được Provider Runtime Manager cấp cho Voice Session hoặc operation. Resource không thể unload khi quyền này hay cleanup obligation tương ứng còn tồn tại.
+_Avoid_: inference permit, best-effort Arc count, runtime lookup without ownership
+
+**Provider Runtime Manager**:
+Application owner cấp runtime đúng ProviderVersion và giữ lifecycle/backing resources dùng chung trong các budget rõ ràng. Không sở hữu session history, stream state hay mutate Database Desired Configuration.
+_Avoid_: runtime plugin registry, per-frame provider factory, automatic provider retry

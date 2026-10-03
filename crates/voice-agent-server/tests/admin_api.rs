@@ -2070,3 +2070,21 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn kokoro_desired_configuration_accepts_catalog_selection_and_rejects_factory_incompatible_voice()
+ {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    for (key, voice, status) in [
+        ("kokoro_valid", "diem_trinh", StatusCode::CREATED),
+        ("kokoro_invalid", "unknown", StatusCode::BAD_REQUEST),
+    ] {
+        let response = client.post(format!("{base}/api/admin/providers"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"key":key,"name":key,"type":"tts","adapter":"kokoro_vi_onnx","config_json":{"model":"kokoro_vi_contextbox","voice":voice,"num_threads":1,"language":"vi-VN","speed_percent":100}}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), status);
+    }
+    task.abort();
+}

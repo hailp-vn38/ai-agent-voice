@@ -61,18 +61,32 @@ pub(super) async fn get_provider_capabilities(
         Ok(pool) => pool,
         Err(response) => return response,
     };
-    let provider: Result<(String, String, i64), _> =
-        sqlx::query_as("SELECT adapter,type,revision FROM providers WHERE key=?")
+    let provider: Result<(i64, String, String, i64), _> =
+        sqlx::query_as("SELECT id,adapter,type,revision FROM providers WHERE key=?")
             .bind(&key)
             .fetch_one(pool)
             .await;
-    let (adapter, kind, revision) = match provider {
+    let (provider_id, adapter, kind, revision) = match provider {
         Ok(provider) => provider,
         Err(sqlx::Error::RowNotFound) => {
             return error(&request, StatusCode::NOT_FOUND, "not_found");
         }
         Err(error_value) => return sql_error(&request, &error_value),
     };
+    if let Some(manager) = &state.provider_runtime_manager {
+        let Some(capabilities) = manager.ready_capabilities(provider_id, revision) else {
+            return error(
+                &request,
+                StatusCode::CONFLICT,
+                "provider_runtime_not_loaded",
+            );
+        };
+        return Json(serde_json::json!({
+            "provider_key": key, "capabilities": capabilities,
+            "runtime": { "runtime_status":"loaded", "tested_provider_id":provider_id,
+                "tested_revision":revision, "runtime_matches_desired":true, "requires_restart":false }
+        })).into_response();
+    }
     let Some(snapshot) = state.database_runtime_snapshot.as_deref() else {
         return error(
             &request,

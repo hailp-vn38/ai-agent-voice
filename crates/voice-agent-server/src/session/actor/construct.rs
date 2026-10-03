@@ -232,6 +232,12 @@ impl SessionActor {
             external_calls_tx,
             external_calls,
             max_tool_result_chars: 4_096,
+            template_prepare: None,
+            managed_switch_boundary: None,
+            managed_switch_started: None,
+            deferred_switch_ingress: VecDeque::new(),
+            switch_ingress_capacity: crate::config::LimitsConfig::default().session_event_queue,
+            switch_max_frame_bytes: crate::config::WebsocketConfig::default().max_frame_bytes,
             profile: ActiveTemplateProfile::server_default(),
             // A session that never received an admission profile keeps no switch capability.
             switch_catalog: TemplateSwitchCatalog::default(),
@@ -253,6 +259,12 @@ impl SessionActor {
     /// the database identity its records are attributed to.  The actor keeps no database handle
     /// either way: with a capture it holds the archive's one-way hand-off, and without one there
     /// is nothing to call.
+    pub fn with_switch_ingress_limits(mut self, capacity: usize, max_frame_bytes: usize) -> Self {
+        self.switch_ingress_capacity = capacity;
+        self.switch_max_frame_bytes = max_frame_bytes;
+        self
+    }
+
     pub fn with_transcript(mut self, transcript: Option<TranscriptCapture>) -> Self {
         self.transcript = transcript;
         self

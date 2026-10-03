@@ -3,6 +3,9 @@ use super::*;
 impl SessionActor {
     pub(super) fn complete_recognition(&mut self) {
         self.release_active_turn();
+        if self.managed_switch_boundary.is_some() {
+            return;
+        }
         if matches!(
             self.listening_mode,
             Some(ListenMode::Auto | ListenMode::Realtime)
@@ -57,6 +60,8 @@ impl SessionActor {
         self.close_vad();
         self.auto_reset_pending = false;
         self.asr_stream = None;
+        self.managed_switch_boundary = None;
+        self.deferred_switch_ingress.clear();
         self.phase = SessionPhase::Closed;
         let _ = self.urgent_tx.try_send(OutboundMessage::Close(1011));
     }
@@ -73,6 +78,8 @@ impl SessionActor {
         );
         self.close_vad();
         self.auto_reset_pending = false;
+        self.managed_switch_boundary = None;
+        self.deferred_switch_ingress.clear();
         self.phase = SessionPhase::Closed;
         let _ = self.urgent_tx.try_send(OutboundMessage::Close(1000));
     }
@@ -85,6 +92,8 @@ impl SessionActor {
         let _ = self.advance_generation();
         self.close_vad();
         self.auto_reset_pending = false;
+        self.managed_switch_boundary = None;
+        self.deferred_switch_ingress.clear();
         self.phase = SessionPhase::Closed;
     }
 

@@ -48,7 +48,10 @@ impl SpeechOutput {
             let segment = self.pending.front_mut().expect("checked non-empty");
             if !segment.announced {
                 segment.announced = true;
-                tracing::info!(text = %segment.display_text, "Speech segment ready");
+                tracing::info!(
+                    chars = segment.display_text.chars().count(),
+                    "Speech segment ready"
+                );
                 return Ok(Some(SpeechOutputEvent::SegmentReady {
                     text: segment.display_text.clone(),
                 }));

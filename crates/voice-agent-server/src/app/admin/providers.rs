@@ -53,6 +53,27 @@ fn provider_response(
     object.insert("requires_restart".into(), Value::Bool(!matches_desired));
     response
 }
+fn managed_provider_response(provider: Provider, state: &AppState) -> Value {
+    let Some(manager) = &state.provider_runtime_manager else {
+        return provider_response(provider, state.database_runtime_snapshot.as_deref());
+    };
+    let mut runtime = manager.inspect(provider.id, provider.revision);
+    runtime.can_prepare &= provider.enabled != 0;
+    use crate::services::provider_runtime::RuntimeState;
+    let ready = runtime.desired_state == RuntimeState::Ready;
+    let status = match runtime.desired_state {
+        RuntimeState::Ready => "loaded",
+        RuntimeState::Failed | RuntimeState::Quarantined => "unavailable",
+        _ => "not_loaded",
+    };
+    let mut response = serde_json::to_value(provider).expect("Provider is serializable");
+    response["runtime_status"] = Value::String(status.into());
+    response["runtime_matches_desired"] = Value::Bool(ready);
+    response["requires_restart"] = Value::Bool(false);
+    response["runtime"] =
+        serde_json::to_value(runtime).expect("runtime inspection is serializable");
+    response
+}
 #[derive(Deserialize)]
 struct CreateProvider {
     key: String,
@@ -151,10 +172,7 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
     match provider_by(pool, &body.key).await {
         Ok(v) => (
             StatusCode::CREATED,
-            Json(provider_response(
-                v,
-                state.database_runtime_snapshot.as_deref(),
-            )),
+            Json(managed_provider_response(v, &state)),
         )
             .into_response(),
         Err(e) => sql_error(&request, &e),
@@ -170,11 +188,7 @@ pub(super) async fn get_provider(
         Err(e) => return e,
     };
     match provider_by(pool, &key).await {
-        Ok(v) => Json(provider_response(
-            v,
-            state.database_runtime_snapshot.as_deref(),
-        ))
-        .into_response(),
+        Ok(v) => Json(managed_provider_response(v, &state)).into_response(),
         Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
         Err(e) => sql_error(&request, &e),
     }
@@ -222,7 +236,7 @@ pub(super) async fn list_providers(
         .push_bind(i64::from(size))
         .push(" OFFSET ")
         .push_bind(i64::from((page - 1) * size));
-    match builder.build_query_as::<Provider>().fetch_all(pool).await { Ok(items) => Json(serde_json::json!({"items":items.into_iter().map(|item| provider_response(item, state.database_runtime_snapshot.as_deref())).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX,"total":total,"total_pages":provider_total_pages(total, size),"facets":facets})).into_response(), Err(value) => sql_error(&request, &value) }
+    match builder.build_query_as::<Provider>().fetch_all(pool).await { Ok(items) => Json(serde_json::json!({"items":items.into_iter().map(|item| managed_provider_response(item, &state)).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX,"total":total,"total_pages":provider_total_pages(total, size),"facets":facets})).into_response(), Err(value) => sql_error(&request, &value) }
 }
 
 #[derive(Deserialize)]
@@ -505,13 +519,12 @@ pub(super) async fn patch_provider(
             "database_unavailable",
         );
     }
+    if let Some(prewarm) = &state.provider_prewarm {
+        prewarm.provider(provider_id, expected + 1).await;
+    }
     let _ = kind; // type is immutable and retained for the provider instance.
     match provider_by(pool, &key).await {
-        Ok(v) => Json(provider_response(
-            v,
-            state.database_runtime_snapshot.as_deref(),
-        ))
-        .into_response(),
+        Ok(v) => Json(managed_provider_response(v, &state)).into_response(),
         Err(e) => sql_error(&request, &e),
     }
 }

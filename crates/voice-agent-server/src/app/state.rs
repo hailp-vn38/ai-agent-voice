@@ -1,7 +1,7 @@
 use crate::{
     config::{AppConfig, SileroOnnxConfig, VadInstanceConfig},
     database::{
-        Database, DeviceAdmissionError,
+        Database, DesiredProvider, DeviceAdmissionError,
         history::{HistoryArchive, HistoryWriter, HistoryWriterMetrics, TranscriptCapture},
         secrets::{EnvSecretResolver, SecretResolver},
     },
@@ -33,9 +33,13 @@ use std::{
 pub struct AppState {
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
+    pub(crate) deployment_snapshots: Vec<DesiredProvider>,
+    pub(crate) provider_prewarm: Option<Arc<crate::services::provider_prewarm::ProviderPrewarm>>,
     pub config: Arc<AppConfig>,
     pub providers: Arc<ProviderCatalog>,
     pub runtimes: Arc<RuntimeCatalog>,
+    pub provider_runtime_manager:
+        Option<Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
     /// One process-wide diagnostic boundary shared by all future Admin provider-test routes.
     pub provider_diagnostics: Arc<ProviderDiagnosticService>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
@@ -130,6 +134,18 @@ impl AppState {
     /// way.
     fn required_runtime_missing(&self) -> bool {
         let providers = &self.config.effective_agent.providers;
+        if let Some(manager) = &self.provider_runtime_manager
+            && !self.deployment_snapshots.is_empty()
+        {
+            return [
+                ("vad", &providers.vad),
+                ("asr", &providers.asr),
+                ("llm", &providers.llm),
+                ("tts", &providers.tts),
+            ]
+            .into_iter()
+            .any(|(kind, key)| !manager.deployment_ready(kind, key));
+        }
         self.runtimes.resolve(providers).is_err()
     }
 
@@ -332,6 +348,11 @@ impl AppState {
         &self,
         device_id: &str,
     ) -> Result<EffectiveSessionProfile, SessionProfileAdmissionError> {
+        let _admission_timer = self.provider_runtime_manager.as_ref().map(|manager| {
+            manager
+                .metrics()
+                .timer(crate::services::provider_runtime::RuntimePhase::WsAdmission)
+        });
         if !self.lifecycle.gate().is_open() {
             // The application has stopped accepting work.  This is checked here rather than only
             // at the WebSocket boundary so that no caller can start a database admission after
@@ -339,13 +360,19 @@ impl AppState {
             return Err(SessionProfileAdmissionError::ShuttingDown);
         }
         if !self.config.database.devices.admission_enabled {
-            return EffectiveSessionProfile::server_default(&self.config)
-                .map_err(|_| SessionProfileAdmissionError::ProfileUnavailable);
+            let profile = EffectiveSessionProfile::server_default(&self.config)
+                .map_err(|_| SessionProfileAdmissionError::ProfileUnavailable)?;
+            return self.prepare_server_default(profile).await;
         }
         let database = self
             .database
             .as_ref()
             .ok_or(SessionProfileAdmissionError::AdmissionUnavailable)?;
+        let snapshot_timer = self.provider_runtime_manager.as_ref().map(|manager| {
+            manager
+                .metrics()
+                .timer(crate::services::provider_runtime::RuntimePhase::Snapshot)
+        });
         let graph = database
             .admit_device(device_id, &self.config.database.devices)
             .await
@@ -355,17 +382,82 @@ impl AppState {
                     SessionProfileAdmissionError::AdmissionUnavailable
                 }
             })?;
-        let profile = resolve_effective_session_profile_with_override(
-            graph.device_db_id,
-            graph.template_override_id,
-            graph.agent.id,
-            &graph.agent.key,
-            &graph.assignments,
-            &self.config,
-            &self.runtimes,
-        )
-        .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)?;
+        drop(snapshot_timer);
+        let profile = if let Some(manager) = &self.provider_runtime_manager {
+            crate::session::resolve_managed_session_profile(
+                graph.device_db_id,
+                graph.template_override_id,
+                graph.agent.id,
+                &graph.agent.key,
+                &graph.assignments,
+                &self.config,
+                manager,
+            )
+            .await
+            .map_err(SessionProfileAdmissionError::Runtime)?
+        } else {
+            resolve_effective_session_profile_with_override(
+                graph.device_db_id,
+                graph.template_override_id,
+                graph.agent.id,
+                &graph.agent.key,
+                &graph.assignments,
+                &self.config,
+                &self.runtimes,
+            )
+            .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)?
+        };
+        let profile = self.prepare_server_default(profile).await?;
         Ok(profile.with_external_mcp(self.resolve_external_mcp(graph.agent.id).await))
+    }
+
+    async fn prepare_server_default(
+        &self,
+        mut profile: EffectiveSessionProfile,
+    ) -> Result<EffectiveSessionProfile, SessionProfileAdmissionError> {
+        if !matches!(profile.source, crate::session::ProfileSource::ServerDefault)
+            || self.deployment_snapshots.is_empty()
+        {
+            return Ok(profile);
+        }
+        let manager = self
+            .provider_runtime_manager
+            .as_ref()
+            .ok_or(SessionProfileAdmissionError::ProfileUnavailable)?;
+        let deadline = manager.admission_deadline();
+        let mut catalog = RuntimeCatalog::default();
+        let mut leases = Vec::with_capacity(4);
+        for (kind, key) in [
+            ("vad", &profile.providers.vad),
+            ("asr", &profile.providers.asr),
+            ("llm", &profile.providers.llm),
+            ("tts", &profile.providers.tts),
+        ] {
+            let snapshot = self
+                .deployment_snapshots
+                .iter()
+                .find(|row| row.kind == kind && row.key == *key)
+                .ok_or(SessionProfileAdmissionError::ProfileUnavailable)?;
+            let lease = manager
+                .acquire_deployment_until(snapshot.clone(), deadline)
+                .await
+                .map_err(SessionProfileAdmissionError::Runtime)?;
+            let resident = lease
+                .runtimes()
+                .ok_or(SessionProfileAdmissionError::ProfileUnavailable)?;
+            catalog.vad.extend(resident.vad);
+            catalog.asr.extend(resident.asr);
+            catalog.llm.extend(resident.llm);
+            catalog.tts.extend(resident.tts);
+            leases.push(lease);
+        }
+        profile.selected_runtimes = Some(
+            catalog
+                .resolve(&profile.providers)
+                .map_err(|_| SessionProfileAdmissionError::ProfileUnavailable)?,
+        );
+        profile.switch_catalog.hold_runtime_leases(leases);
+        Ok(profile)
     }
 
     /// The fresh External MCP snapshot for one Agent, or an empty one.
@@ -395,6 +487,29 @@ impl AppState {
             .resolve_snapshot(&servers, self.secret_resolver.as_ref())
             .await;
         SessionExternalMcp::new(servers)
+    }
+
+    /// Injects the bounded materializer seam before public router/WS admission begins.
+    pub fn with_runtime_manager(
+        mut self,
+        manager: Arc<crate::services::provider_runtime::ProviderRuntimeManager>,
+    ) -> Self {
+        self.lifecycle.observe_provider_runtime(&manager);
+        self.provider_diagnostics = Arc::new(
+            ProviderDiagnosticService::new(
+                Arc::clone(&self.runtimes),
+                self.database_runtime_snapshot.clone(),
+                self.database.clone(),
+                ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+                Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+            )
+            .with_runtime_manager(Arc::clone(&manager)),
+        );
+        self.provider_prewarm = self.database.as_ref().and_then(|database| {
+            crate::services::provider_prewarm::ProviderPrewarm::start(database.clone(), &manager)
+        });
+        self.provider_runtime_manager = Some(manager);
+        self
     }
 
     pub fn new(config: AppConfig, loaded: LoadedProviders) -> Self {
@@ -479,10 +594,13 @@ impl AppState {
         ));
         let state = Self {
             started_at: Instant::now(),
+            deployment_snapshots: Vec::new(),
+            provider_prewarm: None,
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
             config,
             providers: Arc::new(loaded.providers),
             runtimes,
+            provider_runtime_manager: None,
             provider_diagnostics,
             worker_supervisor: supervisor,
             database: database.map(Arc::new),
@@ -599,6 +717,8 @@ impl AppState {
 /// internal diagnostics: a broken database versus an unresolvable Agent profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SessionProfileAdmissionError {
+    #[error(transparent)]
+    Runtime(crate::services::provider_runtime::RuntimeError),
     #[error("device_not_admitted")]
     Denied,
     #[error("device_resolution_failed")]

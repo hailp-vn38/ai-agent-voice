@@ -229,6 +229,31 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # tts = "chillaudio_default"
 # asr = "gipformer_vi"
 
+# Optional bounded hot-runtime manager. Enable only after measuring every adapter/model/worker
+# envelope on the deployment host. The manifest receipt prevents reusing stale measurements after
+# artifact metadata changes. See docs/provider-runtime-manager-qualification.md for the development
+# host example and the qualification boundary.
+# [provider_runtime]
+# max_parallel_loads = 1
+# max_pending_loads = 8
+# max_waiters = 64
+# max_resident_bytes = 8589934592
+# max_resources = 16
+# max_version_entries = 128
+# admission_timeout_ms = 5000
+# startup_timeout_ms = 60000
+# failure_cooldown_ms = 1000
+# idle_ttl_ms = 600000
+# measured_manifest_sha256 = "replace-with-measured-manifest-sha256"
+#
+# [provider_runtime.estimated_peak_bytes]
+# silero_onnx = 134217728
+# gipformer_sherpa_offline = 536870912
+# kokoro_vi_onnx = 3221225472
+# zerotts_onnx = 4294967296
+# openai = 67108864
+# chillaudio_ws = 67108864
+
 [mcp]
 enabled = true
 call_timeout_ms = 30000

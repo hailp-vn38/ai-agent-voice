@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use url::Url;
 
@@ -66,7 +66,7 @@ impl std::fmt::Debug for SecretString {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum LlmInstanceConfig {
     Openai(OpenAiConfig),
@@ -120,7 +120,7 @@ pub struct OpenAiVisionConfig {
     pub top_p: f32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum TtsInstanceConfig {
     #[serde(rename = "zerotts_onnx")]
@@ -148,7 +148,7 @@ impl TtsInstanceConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum VadInstanceConfig {
     #[serde(rename = "silero_onnx")]
@@ -166,7 +166,7 @@ impl VadInstanceConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SileroOnnxConfig {
     #[serde(default = "default_vad_model")]
@@ -199,7 +199,7 @@ impl Default for SileroOnnxConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum AsrInstanceConfig {
     #[serde(rename = "zipformer_sherpa")]

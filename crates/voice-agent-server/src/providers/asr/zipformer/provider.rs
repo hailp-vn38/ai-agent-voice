@@ -81,5 +81,10 @@ impl AsrSession for ZipformerAsrSession {
             .ok_or_else(|| AsrError::Failed("Zipformer returned no final result".into()))
     }
 
+    fn reset(&mut self) -> Result<(), AsrError> {
+        self.stream = self.recognizer.create_stream();
+        Ok(())
+    }
+
     fn cancel(&mut self) {}
 }

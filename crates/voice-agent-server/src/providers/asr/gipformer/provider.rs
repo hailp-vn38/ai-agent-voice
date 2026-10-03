@@ -64,13 +64,32 @@ impl AsrSession for GipformerAsrSession {
         }
 
         let stream = self.recognizer.create_stream();
-        stream.accept_waveform(16_000, &self.samples);
+        // The offline encoder's convolution cannot decode a single Voice frame. Pad only
+        // the inference input with bounded silence; the utterance buffer keeps its limit.
+        let padded;
+        let samples = if self.samples.len() < 16_000 {
+            padded = {
+                let mut input = self.samples.clone();
+                input.resize(16_000, 0.0);
+                input
+            };
+            &padded
+        } else {
+            &self.samples
+        };
+        stream.accept_waveform(16_000, samples);
         self.recognizer.decode(&stream);
         let result = stream
             .get_result()
             .ok_or_else(|| AsrError::Failed("Gipformer returned no final result".into()))?;
         self.samples.clear();
         Ok(AsrResult::new(result.text.trim().to_owned()))
+    }
+
+    fn reset(&mut self) -> Result<(), AsrError> {
+        self.samples.clear();
+        self.cancelled = false;
+        Ok(())
     }
 
     fn cancel(&mut self) {

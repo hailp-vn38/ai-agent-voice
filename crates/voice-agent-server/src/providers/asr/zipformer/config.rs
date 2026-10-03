@@ -1,6 +1,6 @@
 use crate::config::defaults::{default_asr_model, default_asr_threads, default_decoding_method};
-use serde::Deserialize;
-#[derive(Clone, Debug, Deserialize)]
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ZipformerSherpaConfig {
     #[serde(default = "default_asr_model")]

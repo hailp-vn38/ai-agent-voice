@@ -67,6 +67,33 @@ impl AppConfig {
         validate_database(self)?;
         validate_admin_api(self)?;
         validate_shutdown(self)?;
+        if let Some(runtime) = &self.provider_runtime {
+            if !(1000..=120_000).contains(&runtime.startup_timeout_ms) {
+                return Err(ConfigError::Validation(
+                    "invalid provider startup timeout".into(),
+                ));
+            }
+            runtime
+                .limits
+                .validate()
+                .map_err(|_| ConfigError::Validation("invalid provider runtime limits".into()))?;
+            if runtime.estimated_peak_bytes.is_empty()
+                || runtime.estimated_peak_bytes.len() > 64
+                || runtime
+                    .estimated_peak_bytes
+                    .values()
+                    .any(|bytes| *bytes == 0 || *bytes > runtime.limits.max_resident_bytes)
+            {
+                return Err(ConfigError::Validation(
+                    "invalid provider runtime measured estimates".into(),
+                ));
+            }
+            if self.vision.enabled {
+                return Err(ConfigError::Validation(
+                    "managed provider startup does not support Vision".into(),
+                ));
+            }
+        }
         Ok(())
     }
 

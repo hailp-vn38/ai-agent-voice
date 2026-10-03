@@ -74,6 +74,7 @@ fn run_once(
     let started = Instant::now();
     let mut chunks = 0;
     let mut samples = 0;
+    let mut sample_rate = None;
     let mut first_pcm = None;
     let mut first_packet = None;
     let mut packets = 0;
@@ -85,10 +86,11 @@ fn run_once(
         .map_err(|_| BenchmarkErrorCategory::OpusInit)?;
     worker
         .synthesize(TTS_WORKLOAD, &AtomicBool::new(false), &mut |pcm| {
-            if invalid(&pcm) {
+            if invalid(&pcm) || sample_rate.is_some_and(|rate| rate != pcm.sample_rate_hz()) {
                 callback_error = Some(BenchmarkErrorCategory::InvalidPcm);
                 return Err(TtsError::Failed);
             }
+            sample_rate = Some(pcm.sample_rate_hz());
             chunks += 1;
             samples += pcm.samples().len() as u64;
             first_pcm.get_or_insert_with(|| ms(started));
@@ -119,7 +121,8 @@ fn run_once(
         }
     }
     let total = ms(started);
-    let duration = samples as f64 * 1000.0 / 48000.0;
+    let duration =
+        samples as f64 * 1000.0 / f64::from(sample_rate.expect("nonempty PCM validated"));
     Ok(TtsRunMetrics {
         processing_ms: total,
         pcm_chunks: chunks,
@@ -136,7 +139,7 @@ fn run_once(
     })
 }
 fn invalid(pcm: &PcmF32Mono) -> bool {
-    pcm.sample_rate_hz() != 48000
+    !matches!(pcm.sample_rate_hz(), 24_000 | 48_000)
         || pcm.samples().is_empty()
         || pcm.samples().iter().any(|s| !s.is_finite())
 }

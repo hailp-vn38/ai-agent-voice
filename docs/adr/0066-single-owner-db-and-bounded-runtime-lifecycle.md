@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; affected runtime clauses superseded by [ADR-0071](0071-versioned-provider-runtime-manager.md). Implementation/gates are tracked separately in `.scratch/provider-runtime-manager/`.
 
 V1 chỉ hỗ trợ một Voice Agent process owner trên mỗi local SQLite path; không NFS/SMB, active-active hoặc multi-process writer. Migration chỉ tạo schema/index, không implicit seed; provision là explicit. Shutdown dừng listener/admission/tool call mới, drain session tối đa `shutdown.grace_ms` (default 15.000, range 1.000..=60.000), rồi controlled-close; HistoryWriter chỉ flush best-effort trong cùng deadline.
 

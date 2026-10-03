@@ -30,12 +30,14 @@ impl SessionActor {
         // else: applying one can start the next call of the round, or the next round's LLM request,
         // and both belong in this same drain rather than in the next tick.
         self.drain_external_call_completions();
+        self.drain_template_preparation();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
         }
         while let Ok(event) = self.vad_events.try_recv() {
             self.on_vad_event(event);
         }
+        self.drain_managed_switch_boundary();
         self.flush_pending_llm_text();
         while self.pending_llm_delta.is_none() && !self.llm_finish_pending {
             let Ok(event) = self.llm_events.try_recv() else {
@@ -113,7 +115,11 @@ impl SessionActor {
                 self.release_active_turn();
                 if matches!(outcome, WriterTurnOutcome::Normal) {
                     if let Some(switch) = actions.switch_template_after_turn {
-                        self.apply_template_switch(&switch.template_key);
+                        if let Some(prepared) = switch.prepared {
+                            self.begin_managed_switch_boundary(prepared);
+                        } else {
+                            self.apply_template_switch(&switch.template_key);
+                        }
                     }
                     if actions.close_after_turn.is_some() {
                         self.close_voice_session_normally(turn_id);
@@ -184,6 +190,19 @@ impl SessionActor {
     }
 
     pub fn on_client_message(&mut self, message: ClientMessage) {
+        if self.managed_switch_boundary.is_some() {
+            if let ClientMessage::Listen { session_id, .. } = &message
+                && self.inbound_session_matches(session_id.as_deref())
+            {
+                self.defer_switch_ingress(SessionEvent::ClientMessage(message));
+                return;
+            }
+            if let ClientMessage::Abort { session_id } = &message
+                && self.inbound_session_matches(session_id.as_deref())
+            {
+                self.deferred_switch_ingress.clear();
+            }
+        }
         match message {
             ClientMessage::Listen {
                 session_id,
@@ -208,6 +227,30 @@ impl SessionActor {
                 }
             }
             ClientMessage::Hello(_) | ClientMessage::Unknown => {}
+        }
+    }
+
+    fn defer_switch_ingress(&mut self, event: SessionEvent) -> bool {
+        if self.deferred_switch_ingress.len() >= self.switch_ingress_capacity {
+            self.fail_closed();
+            return false;
+        }
+        self.deferred_switch_ingress.push_back(event);
+        true
+    }
+    pub(super) fn replay_switch_ingress(&mut self) {
+        let queued = std::mem::take(&mut self.deferred_switch_ingress);
+        for event in queued {
+            if self.phase == SessionPhase::Closed {
+                break;
+            }
+            match event {
+                SessionEvent::ClientMessage(message) => self.on_client_message(message),
+                SessionEvent::ClientAudio(payload) => {
+                    self.on_binary(payload);
+                }
+                _ => unreachable!("only bounded client ingress is deferred"),
+            }
         }
     }
 
@@ -236,6 +279,13 @@ impl SessionActor {
 
 impl SessionActor {
     pub fn on_binary(&mut self, payload: Vec<u8>) -> bool {
+        if self.managed_switch_boundary.is_some() {
+            if payload.len() > self.switch_max_frame_bytes {
+                self.fail_closed();
+                return false;
+            }
+            return self.defer_switch_ingress(SessionEvent::ClientAudio(payload));
+        }
         let armed_vad_capture = self.vad_session.is_some()
             && !self.auto_reset_pending
             && self.phase == SessionPhase::Speaking

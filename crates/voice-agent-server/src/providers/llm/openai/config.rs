@@ -2,12 +2,13 @@ use crate::config::{
     SecretString,
     defaults::{default_llm_timeout_ms, default_openai_base_url, default_openai_model},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenAiConfig {
     #[serde(default)]
+    #[serde(skip_serializing)]
     pub api_key: SecretString,
     #[serde(default = "default_openai_base_url")]
     pub base_url: Url,

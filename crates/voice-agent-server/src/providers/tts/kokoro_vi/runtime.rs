@@ -51,16 +51,6 @@ impl KokoroViWorker {
     }
 }
 
-/// Validate the graph while providers are loading, before the server binds a listener.
-pub(super) fn verify_model(
-    model: &Path,
-    runtime_library: &Path,
-    num_threads: i32,
-) -> Result<(), TtsError> {
-    drop(build_session(model, runtime_library, num_threads)?);
-    Ok(())
-}
-
 fn build_session(
     model: &Path,
     runtime_library: &Path,
@@ -81,6 +71,10 @@ fn build_session(
 }
 
 impl TtsWorker for KokoroViWorker {
+    fn warmup(&mut self) -> Result<(), TtsError> {
+        crate::providers::tts::warmup_retained_worker(self, "Xin chào.", KOKORO_SAMPLE_RATE_HZ)
+    }
+
     fn synthesize(
         &mut self,
         text: &str,

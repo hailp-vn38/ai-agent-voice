@@ -218,6 +218,7 @@ async fn start(tool_was_advertised: Arc<AtomicBool>) -> (String, JoinHandle<()>)
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),

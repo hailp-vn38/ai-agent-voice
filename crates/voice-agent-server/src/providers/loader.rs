@@ -121,16 +121,23 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         vad_runtimes.insert(
             id.clone(),
             LoadedVad {
-                runtime: Arc::new(VadWorkerRuntime::new(
-                    Arc::clone(&provider),
-                    WorkerRuntimeConfig {
-                        max_workers: config.workers.vad.max_workers,
-                        voice_reserved_capacity: 1,
-                        command_capacity: config.workers.vad.command_queue_capacity,
-                        final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
-                        cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
-                    },
-                )),
+                runtime: Arc::new(
+                    VadWorkerRuntime::try_new(
+                        Arc::clone(&provider),
+                        WorkerRuntimeConfig {
+                            max_workers: config.workers.vad.max_workers,
+                            voice_reserved_capacity: 1,
+                            command_capacity: config.workers.vad.command_queue_capacity,
+                            final_timeout: Duration::from_millis(
+                                config.workers.vad.reset_timeout_ms,
+                            ),
+                            cleanup_grace: Duration::from_millis(
+                                config.workers.vad.cleanup_grace_ms,
+                            ),
+                        },
+                    )
+                    .map_err(|_| ProviderLoadError::Initialize("VAD"))?,
+                ),
                 segmenter,
                 pre_roll_samples,
             },
@@ -165,16 +172,19 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         let provider = factory.build(instance, &model, max_buffered_samples)?;
         asr_runtimes.insert(
             id.clone(),
-            Arc::new(AsrWorkerRuntime::new(
-                Arc::clone(&provider),
-                WorkerRuntimeConfig {
-                    max_workers: config.workers.asr.max_workers,
-                    voice_reserved_capacity: 1,
-                    command_capacity: config.workers.asr.command_queue_capacity,
-                    final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
-                    cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
-                },
-            )),
+            Arc::new(
+                AsrWorkerRuntime::try_new(
+                    Arc::clone(&provider),
+                    WorkerRuntimeConfig {
+                        max_workers: config.workers.asr.max_workers,
+                        voice_reserved_capacity: 1,
+                        command_capacity: config.workers.asr.command_queue_capacity,
+                        final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
+                        cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
+                    },
+                )
+                .map_err(|_| ProviderLoadError::Initialize("ASR"))?,
+            ),
         );
         tracing::info!(provider_kind = "asr", provider_instance = %id, adapter = instance.adapter(), model = %model.identity(), "provider runtime loaded");
         asr_providers.insert(id.clone(), provider);
@@ -222,16 +232,19 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         let provider = factory.build(instance, &config.runtime, model.as_ref())?;
         tts_runtimes.insert(
             id.clone(),
-            Arc::new(TtsWorkerRuntime::new(
-                Arc::clone(&provider),
-                WorkerRuntimeConfig {
-                    max_workers: config.workers.tts.max_workers,
-                    voice_reserved_capacity: 1,
-                    command_capacity: config.workers.tts.command_queue_capacity,
-                    final_timeout: Duration::from_millis(config.tts.timeout_ms),
-                    cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
-                },
-            )),
+            Arc::new(
+                TtsWorkerRuntime::try_new(
+                    Arc::clone(&provider),
+                    WorkerRuntimeConfig {
+                        max_workers: config.workers.tts.max_workers,
+                        voice_reserved_capacity: 1,
+                        command_capacity: config.workers.tts.command_queue_capacity,
+                        final_timeout: Duration::from_millis(config.tts.timeout_ms),
+                        cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
+                    },
+                )
+                .map_err(|_| ProviderLoadError::Initialize("TTS"))?,
+            ),
         );
         tracing::info!(provider_kind = "tts", provider_instance = %id, adapter = instance.adapter(), "provider runtime loaded");
         tts_providers.insert(id.clone(), provider);

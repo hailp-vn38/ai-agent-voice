@@ -118,6 +118,7 @@ fn candidate(
                 provider_type: provider_type.to_owned(),
                 provider_key: provider_key.to_owned(),
                 provider_enabled: true,
+                snapshot: None,
             })
             .collect(),
     }
@@ -937,4 +938,304 @@ async fn an_interrupted_turn_drops_its_in_flight_call_without_producing_a_result
         tool_round(&actor).is_empty(),
         "a dropped call produces no ToolResult, so no continuation can be built on one"
     );
+}
+
+struct SwitchBuilder(RuntimeCatalog);
+struct SwitchResource(RuntimeCatalog);
+impl crate::services::provider_runtime::RuntimeResource for SwitchResource {
+    fn unload(&self) -> bool {
+        true
+    }
+    fn runtimes(&self) -> Option<RuntimeCatalog> {
+        Some(self.0.clone())
+    }
+}
+impl crate::services::provider_runtime::RuntimeMaterializer for SwitchBuilder {
+    fn estimated_peak_bytes(
+        &self,
+        _: &crate::database::DesiredProvider,
+    ) -> Result<u64, crate::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn logical_capacity(
+        &self,
+        _: &crate::database::DesiredProvider,
+    ) -> Result<usize, crate::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn build(
+        &self,
+        _: &crate::database::DesiredProvider,
+        _: crate::workers::ProviderRuntimeAdmission,
+    ) -> Result<
+        Arc<dyn crate::services::provider_runtime::RuntimeResource>,
+        crate::services::provider_runtime::RuntimeError,
+    > {
+        Ok(Arc::new(SwitchResource(self.0.clone())))
+    }
+}
+fn managed_switch_actor() -> (
+    SessionActor,
+    Arc<crate::services::provider_runtime::ProviderRuntimeManager>,
+) {
+    use crate::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits};
+    let catalog = catalog();
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 4,
+            max_waiters: 8,
+            max_resident_bytes: 8,
+            max_resources: 8,
+            max_version_entries: 16,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 10,
+            idle_ttl_ms: 100,
+        },
+        Arc::new(SwitchBuilder(catalog.clone())),
+        AdmissionGate::open(),
+    )
+    .unwrap();
+    let mut actor = admitted_actor(&catalog);
+    let mut assignment = candidate(7, "cold", "cold prompt", "alternate", "alternate-vad");
+    for (index, binding) in assignment.bindings.iter_mut().enumerate() {
+        binding.snapshot = Some(Arc::new(crate::database::DesiredProvider {
+            id: index as i64 + 1,
+            key: binding.provider_key.clone(),
+            kind: binding.provider_type.clone(),
+            adapter: "fixture".into(),
+            revision: 2,
+            config_json: "{}".into(),
+            secret_ref: None,
+        }));
+    }
+    actor
+        .switch_catalog
+        .cold
+        .push(crate::session::ConfiguredTemplateProfile::from_assignment(&assignment).unwrap());
+    actor.switch_catalog.manager = Some(manager.clone());
+    (actor, manager)
+}
+#[tokio::test]
+async fn a_cold_switch_prepares_outside_actor_and_commits_only_at_normal_writer_boundary() {
+    let (mut actor, manager) = managed_switch_actor();
+    let turn_id = actor.begin_active_turn().unwrap();
+    actor.execute_template_switch(ToolCall {
+        id: "cold-switch".into(),
+        name: SWITCH_TEMPLATE_TOOL_NAME.into(),
+        arguments: serde_json::json!({"template":"cold"}),
+    });
+    assert_eq!(actor.profile_revision(), 1);
+    assert!(actor.template_prepare.is_some());
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+    while actor.pending_actions.switch_template_after_turn.is_none() {
+        actor.drain_template_preparation();
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(actor.profile_revision(), 1);
+    actor.on_writer_event(WriterEvent::TurnClosed {
+        turn_id,
+        outcome: WriterTurnOutcome::Normal,
+    });
+    actor.drain_managed_switch_boundary();
+    assert_eq!(actor.profile_revision(), 2);
+    assert_eq!(actor.profile.system_prompt, "cold prompt");
+    assert_eq!(manager.accounting().active_leases, 4);
+    drop(actor);
+    assert_eq!(manager.accounting().active_leases, 0);
+}
+#[tokio::test]
+async fn abort_discards_cold_switch_preparation_and_every_late_lease() {
+    let (mut actor, manager) = managed_switch_actor();
+    actor.begin_active_turn().unwrap();
+    actor.execute_template_switch(ToolCall {
+        id: "cold-switch".into(),
+        name: SWITCH_TEMPLATE_TOOL_NAME.into(),
+        arguments: serde_json::json!({"template":"cold"}),
+    });
+    actor.interrupt_active_turn();
+    actor.drain_template_preparation();
+    assert_eq!(actor.profile_revision(), 1);
+    assert!(actor.template_prepare.is_none());
+    assert!(actor.pending_actions.switch_template_after_turn.is_none());
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    assert_eq!(manager.accounting().active_leases, 0);
+}
+
+struct CloseGateVad {
+    entered: std::sync::mpsc::Sender<()>,
+    release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+struct CloseGateVadSession {
+    entered: std::sync::mpsc::Sender<()>,
+    release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+impl crate::providers::VadProvider for CloseGateVad {
+    fn adapter(&self) -> &'static str {
+        "close-gate"
+    }
+    fn open(&self) -> Result<Box<dyn crate::providers::VadSession>, crate::providers::VadError> {
+        Ok(Box::new(CloseGateVadSession {
+            entered: self.entered.clone(),
+            release: self.release.clone(),
+        }))
+    }
+}
+impl crate::providers::VadSession for CloseGateVadSession {
+    fn push(
+        &mut self,
+        _: crate::providers::VadInput,
+    ) -> Result<crate::providers::VadProbability, crate::providers::VadError> {
+        unreachable!()
+    }
+    fn reset(&mut self) -> Result<(), crate::providers::VadError> {
+        Ok(())
+    }
+    fn close(&mut self) -> Result<(), crate::providers::VadError> {
+        self.entered.send(()).unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+        Ok(())
+    }
+}
+#[tokio::test]
+async fn managed_switch_keeps_old_profile_until_exact_vad_cleanup_acknowledgement() {
+    let (mut actor, _) = managed_switch_actor();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    actor.vad_runtime = Arc::new(VadWorkerRuntime::new(
+        Arc::new(CloseGateVad {
+            entered: entered_tx,
+            release: Arc::new(std::sync::Mutex::new(release_rx)),
+        }),
+        worker(),
+    ));
+    actor.vad_events = actor.vad_runtime.register_session(&actor.session_id);
+    let identity = WorkerIdentity::new(actor.session_id.clone(), actor.generation, 1);
+    let lease = actor.vad_runtime.open(identity.clone()).unwrap();
+    actor.vad_session = Some((lease, identity));
+    let turn_id = actor.begin_active_turn().unwrap();
+    actor.execute_template_switch(ToolCall {
+        id: "close-gate-switch".into(),
+        name: SWITCH_TEMPLATE_TOOL_NAME.into(),
+        arguments: serde_json::json!({"template":"cold"}),
+    });
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+    while actor.pending_actions.switch_template_after_turn.is_none() {
+        actor.drain_template_preparation();
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::task::yield_now().await;
+    }
+    actor.on_writer_event(WriterEvent::TurnClosed {
+        turn_id,
+        outcome: WriterTurnOutcome::Normal,
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    actor.pump_workers();
+    assert_eq!(actor.profile_revision(), 1);
+    assert!(actor.managed_switch_boundary.is_some());
+    actor.on_client_message(ClientMessage::Abort { session_id: None });
+    assert!(
+        actor.managed_switch_boundary.is_some(),
+        "a sealed Normal outcome cannot be undone by a later abort while native cleanup finishes"
+    );
+    actor.on_client_message(ClientMessage::Listen {
+        session_id: None,
+        command: ListenCommand::Start {
+            mode: ListenMode::Manual,
+        },
+    });
+    release_tx.send(()).unwrap();
+    while actor.profile_revision() == 1 {
+        actor.pump_workers();
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(actor.profile.system_prompt, "cold prompt");
+    assert!(actor.deferred_switch_ingress.is_empty());
+    assert_eq!(actor.listening_mode, Some(ListenMode::Manual));
+    assert_eq!(actor.phase, SessionPhase::Listening);
+}
+
+struct HeldSwitchBuilder {
+    catalog: RuntimeCatalog,
+    entered: tokio::sync::mpsc::UnboundedSender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+impl crate::services::provider_runtime::RuntimeMaterializer for HeldSwitchBuilder {
+    fn estimated_peak_bytes(
+        &self,
+        _: &crate::database::DesiredProvider,
+    ) -> Result<u64, crate::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn logical_capacity(
+        &self,
+        _: &crate::database::DesiredProvider,
+    ) -> Result<usize, crate::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn build(
+        &self,
+        _: &crate::database::DesiredProvider,
+        _: crate::workers::ProviderRuntimeAdmission,
+    ) -> Result<
+        Arc<dyn crate::services::provider_runtime::RuntimeResource>,
+        crate::services::provider_runtime::RuntimeError,
+    > {
+        self.entered.send(()).unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+        Ok(Arc::new(SwitchResource(self.catalog.clone())))
+    }
+}
+#[tokio::test]
+async fn abort_while_native_switch_build_is_blocked_cannot_commit_late_completion() {
+    use crate::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits, RuntimeState};
+    let (mut actor, _) = managed_switch_actor();
+    let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 0,
+            max_waiters: 8,
+            max_resident_bytes: 8,
+            max_resources: 8,
+            max_version_entries: 16,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 10,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(HeldSwitchBuilder {
+            catalog: catalog(),
+            entered,
+            release: std::sync::Mutex::new(release_rx),
+        }),
+        AdmissionGate::open(),
+    )
+    .unwrap();
+    actor.switch_catalog.manager = Some(manager.clone());
+    actor.begin_active_turn().unwrap();
+    actor.execute_template_switch(ToolCall {
+        id: "held-switch".into(),
+        name: SWITCH_TEMPLATE_TOOL_NAME.into(),
+        arguments: serde_json::json!({"template":"cold"}),
+    });
+    entered_rx.recv().await.unwrap();
+    actor.interrupt_active_turn();
+    assert!(actor.template_prepare.is_none());
+    assert_eq!(actor.profile_revision(), 1);
+    release.send(()).unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+    while manager.inspect(2, 2).desired_state != RuntimeState::Ready {
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::task::yield_now().await;
+    }
+    actor.drain_template_preparation();
+    assert_eq!(actor.profile_revision(), 1);
+    assert!(actor.pending_actions.switch_template_after_turn.is_none());
+    assert_eq!(manager.accounting().active_leases, 0);
+    assert_eq!(manager.accounting().build_attempts, 1);
 }

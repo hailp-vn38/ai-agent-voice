@@ -186,3 +186,34 @@ async fn llm_runner_uses_first_non_empty_text_delta_for_ttft() {
     assert_eq!(report.output_chars, 11);
     assert_eq!(report.tool_call_count, 1);
 }
+
+#[test]
+fn kokoro_24khz_delivery_measures_real_duration_and_canonical_packets() {
+    struct KokoroWorker;
+    impl TtsWorker for KokoroWorker {
+        fn synthesize(
+            &mut self,
+            _: &str,
+            _: &AtomicBool,
+            callback: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+        ) -> Result<(), TtsError> {
+            callback(PcmF32Mono::new(vec![0.25; 1440], 24000))
+        }
+        fn reset(&mut self) -> Result<(), TtsError> {
+            Ok(())
+        }
+    }
+    let report = run_tts_benchmark(&mut KokoroWorker, TtsBenchmarkMode::Delivery, 1, 2).unwrap();
+    assert!(
+        report
+            .samples
+            .iter()
+            .all(|sample| sample.provider_audio_duration_ms == 60.0)
+    );
+    assert!(
+        report
+            .samples
+            .iter()
+            .all(|sample| sample.packet_count.is_some_and(|count| count > 0))
+    );
+}

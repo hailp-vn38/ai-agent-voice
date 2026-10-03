@@ -18,7 +18,7 @@ use crate::{
     providers::tts::{TtsError, TtsProvider, TtsWorker},
 };
 
-use runtime::{KokoroViWorker, verify_model};
+use runtime::KokoroViWorker;
 use tokenizer::Tokenizer;
 use voicepack::Voicepack;
 
@@ -57,7 +57,7 @@ impl ConfiguredKokoroVi {
         }
         let tokenizer = Tokenizer::load(artifacts.config)?;
         let voicepack = Voicepack::load(artifacts.voicepack)?;
-        verify_model(artifacts.model, &runtime.onnx.library, options.num_threads)?;
+        // Graph validation and warmup belong to the exact retained workers.
         Ok(Self {
             model: artifacts.model.into(),
             tokenizer,

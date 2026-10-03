@@ -2,8 +2,8 @@ use crate::config::defaults::{
     default_gipformer_decoding_method, default_gipformer_max_active_paths,
     default_gipformer_threads, default_vietnamese_language,
 };
-use serde::Deserialize;
-#[derive(Clone, Debug, Deserialize)]
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GipformerSherpaOfflineConfig {
     pub model: String,

@@ -13,12 +13,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     audio::PcmF32Mono,
-    database::Database,
+    database::{Database, DesiredProvider},
     providers::{
         DatabaseRuntimeSnapshot, DatabaseRuntimeStatus, DiagnosticRuntimeError,
         DiagnosticRuntimeKind, ProviderType, RuntimeCatalog, TtsDiagnosticRequest,
         TtsDiagnosticValidationError, llm::LlmRequest,
     },
+    services::provider_runtime::{ProviderRuntimeManager, ResourceLease, RuntimeError},
     workers::ProviderCapacityPermit,
 };
 
@@ -50,6 +51,8 @@ pub enum ProviderDiagnosticError {
 /// Coarse, privacy-safe result for a public Admin provider diagnostic request.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderDiagnosticRequestError {
+    #[error(transparent)]
+    Runtime(#[from] RuntimeError),
     #[error("provider was not found")]
     NotFound,
     #[error("provider is disabled")]
@@ -91,6 +94,13 @@ pub struct VadDiagnosticResult {
     pub runtime: ProviderDiagnosticRuntimeMetadata,
 }
 
+#[derive(serde::Serialize)]
+pub struct ProviderPrepareResult {
+    pub provider_key: String,
+    pub desired_revision: i64,
+    pub runtime: crate::services::provider_runtime::RuntimeInspection,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderDiagnosticOperationError {
     Unavailable,
@@ -123,6 +133,8 @@ pub struct ProviderDiagnosticTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderDiagnosticRuntimeMetadata {
+    pub tested_provider_id: Option<i64>,
+    pub tested_revision: Option<i64>,
     pub tested_runtime: DatabaseRuntimeStatus,
     pub runtime_matches_desired: bool,
     pub requires_restart: bool,
@@ -154,13 +166,23 @@ pub struct ProviderDiagnosticService {
     /// Quarantined permits intentionally stay owned until process teardown. This makes degraded
     /// capacity observable by admission rather than accidentally reusing a worker that has not
     /// acknowledged cancellation.
-    quarantined_capacity: Arc<Mutex<Vec<ProviderCapacityPermit>>>,
+    quarantined_capacity: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
+    manager: Option<Arc<ProviderRuntimeManager>>,
+    managed_target: Option<DesiredProvider>,
+    managed_admission: Mutex<Option<ProviderDiagnosticPermit>>,
+    _managed_lease: Option<ResourceLease>,
+}
+
+struct QuarantinedDiagnosticCapacity {
+    _capacity: ProviderCapacityPermit,
+    _resource: Option<ResourceLease>,
 }
 
 pub struct ProviderDiagnosticLease {
     _diagnostic: ProviderDiagnosticPermit,
     capacity: Option<ProviderCapacityPermit>,
-    quarantine: Arc<Mutex<Vec<ProviderCapacityPermit>>>,
+    quarantine: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
+    resource_lease: Option<ResourceLease>,
     pub metadata: ProviderDiagnosticRuntimeMetadata,
 }
 
@@ -180,7 +202,120 @@ impl ProviderDiagnosticService {
             runtime_snapshot,
             database,
             quarantined_capacity: Arc::new(Mutex::new(Vec::new())),
+            manager: None,
+            managed_target: None,
+            managed_admission: Mutex::new(None),
+            _managed_lease: None,
         }
+    }
+
+    pub fn with_runtime_manager(mut self, manager: Arc<ProviderRuntimeManager>) -> Self {
+        self.manager = Some(manager);
+        self
+    }
+
+    async fn request_snapshot(
+        &self,
+        key: &str,
+        kind: &str,
+    ) -> Result<DesiredProvider, ProviderDiagnosticRequestError> {
+        if let Some(snapshot) = &self.managed_target {
+            return Ok(snapshot.clone());
+        }
+        let database = self
+            .database
+            .as_ref()
+            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
+        let (id, provider_key, provider_type, adapter, config, secret_ref, revision, enabled):
+            (i64, String, String, String, Option<String>, Option<String>, i64, i64) = sqlx::query_as(
+            "SELECT id,key,type,adapter,CASE WHEN length(CAST(config_json AS BLOB))<=65536 THEN config_json ELSE NULL END,CASE WHEN length(CAST(secret_ref AS BLOB))<=256 THEN secret_ref ELSE NULL END,revision,enabled FROM providers WHERE key=? AND length(CAST(key AS BLOB))<=128 AND length(CAST(type AS BLOB))<=16 AND length(CAST(adapter AS BLOB))<=64 AND (secret_ref IS NULL OR length(CAST(secret_ref AS BLOB))<=256)"
+        ).bind(key).fetch_one(database.pool()).await.map_err(|error| match error {
+            sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
+            _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
+        })?;
+        if enabled == 0 {
+            return Err(ProviderDiagnosticRequestError::Disabled);
+        }
+        if !kind.is_empty() && provider_type != kind {
+            return Err(ProviderDiagnosticRequestError::TypeMismatch);
+        }
+        Ok(DesiredProvider {
+            id,
+            key: provider_key,
+            kind: provider_type,
+            adapter,
+            config_json: config.ok_or(RuntimeError::Configuration)?,
+            secret_ref,
+            revision,
+        })
+    }
+
+    async fn managed_request(
+        &self,
+        key: &str,
+        kind: &str,
+    ) -> Result<Self, ProviderDiagnosticRequestError> {
+        let snapshot = self.request_snapshot(key, kind).await?;
+        let admission = self.limiter.try_acquire()?;
+        let manager = self.manager.as_ref().expect("managed path checked");
+        let lease = manager.acquire(snapshot.clone()).await?;
+        let registry = lease.runtimes().ok_or(RuntimeError::Unavailable)?;
+        let runtime_snapshot = DatabaseRuntimeSnapshot::from_states([(
+            snapshot.key.clone(),
+            crate::providers::DatabaseRuntimeState {
+                provider_id: snapshot.id,
+                desired_revision: snapshot.revision,
+                status: DatabaseRuntimeStatus::Loaded,
+                failure: None,
+            },
+        )]);
+        Ok(Self {
+            limiter: self.limiter.clone(),
+            execution_timeout: self.execution_timeout,
+            registry: Arc::new(registry),
+            runtime_snapshot: Some(Arc::new(runtime_snapshot)),
+            database: self.database.clone(),
+            quarantined_capacity: Arc::clone(&self.quarantined_capacity),
+            manager: None,
+            managed_target: Some(snapshot),
+            managed_admission: Mutex::new(Some(admission)),
+            _managed_lease: Some(lease),
+        })
+    }
+
+    /// Idempotent explicit preparation. A short response wait never cancels the manager's
+    /// accepted native attempt. The exact snapshot is retained by that bounded attempt.
+    pub async fn prepare(
+        &self,
+        key: &str,
+    ) -> Result<ProviderPrepareResult, ProviderDiagnosticRequestError> {
+        let manager = self
+            .manager
+            .as_ref()
+            .ok_or(ProviderDiagnosticError::RuntimeNotLoaded)?;
+        let snapshot = self.request_snapshot(key, "").await?;
+        let _admission = self.limiter.try_acquire()?;
+        let deadline = manager
+            .admission_deadline()
+            .min(tokio::time::Instant::now() + Duration::from_millis(25));
+        let result = manager.acquire_until(snapshot.clone(), deadline).await;
+        let runtime = manager.inspect(snapshot.id, snapshot.revision);
+        match result {
+            Ok(lease) => drop(lease),
+            Err(RuntimeError::Timeout)
+                if matches!(
+                    runtime.desired_state,
+                    crate::services::provider_runtime::RuntimeState::Queued
+                        | crate::services::provider_runtime::RuntimeState::Loading
+                        | crate::services::provider_runtime::RuntimeState::Ready
+                ) => {}
+            Err(error) => return Err(error.into()),
+        }
+        Ok(ProviderPrepareResult {
+            provider_key: snapshot.key,
+            desired_revision: snapshot.revision,
+            runtime,
+        })
     }
 
     /// Shared execution bound used by every provider-specific diagnostic runner.
@@ -196,26 +331,13 @@ impl ProviderDiagnosticService {
         key: &str,
         input: String,
     ) -> Result<LlmDiagnosticResult, ProviderDiagnosticRequestError> {
-        let database = self
-            .database
-            .as_ref()
-            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-        let row: (String, String, i64, i64) =
-            sqlx::query_as("SELECT key,type,enabled,revision FROM providers WHERE key=?")
-                .bind(key)
-                .fetch_one(database.pool())
-                .await
-                .map_err(|error| match error {
-                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
-                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
-                })?;
-        let (provider_key, provider_type, enabled, revision) = row;
-        if enabled == 0 {
-            return Err(ProviderDiagnosticRequestError::Disabled);
+        if self.manager.is_some() {
+            let service = self.managed_request(key, "llm").await?;
+            return Box::pin(service.execute_llm(key, input)).await;
         }
-        if provider_type != "llm" {
-            return Err(ProviderDiagnosticRequestError::TypeMismatch);
-        }
+        let snapshot = self.request_snapshot(key, "llm").await?;
+        let provider_key = snapshot.key.clone();
+        let revision = snapshot.revision;
         let operation = self
             .registry
             .llm_diagnostic(&provider_key, LlmRequest::text_turn(input), 32 * 1024)
@@ -243,26 +365,13 @@ impl ProviderDiagnosticService {
         key: &str,
         request: TtsDiagnosticRequest,
     ) -> Result<TtsDiagnosticResult, ProviderDiagnosticRequestError> {
-        let database = self
-            .database
-            .as_ref()
-            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-        let row: (String, String, i64, i64) =
-            sqlx::query_as("SELECT key,type,enabled,revision FROM providers WHERE key=?")
-                .bind(key)
-                .fetch_one(database.pool())
-                .await
-                .map_err(|error| match error {
-                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
-                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
-                })?;
-        let (provider_key, provider_type, enabled, revision) = row;
-        if enabled == 0 {
-            return Err(ProviderDiagnosticRequestError::Disabled);
+        if self.manager.is_some() {
+            let service = self.managed_request(key, "tts").await?;
+            return Box::pin(service.execute_tts(key, request)).await;
         }
-        if provider_type != "tts" {
-            return Err(ProviderDiagnosticRequestError::TypeMismatch);
-        }
+        let snapshot = self.request_snapshot(key, "tts").await?;
+        let provider_key = snapshot.key.clone();
+        let revision = snapshot.revision;
         self.registry
             .validate_tts_diagnostic(&provider_key, &request)
             .map_err(|error| match error {
@@ -302,26 +411,13 @@ impl ProviderDiagnosticService {
         &self,
         key: &str,
     ) -> Result<VadDiagnosticResult, ProviderDiagnosticRequestError> {
-        let database = self
-            .database
-            .as_ref()
-            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-        let row: (String, String, i64, i64) =
-            sqlx::query_as("SELECT key,type,enabled,revision FROM providers WHERE key=?")
-                .bind(key)
-                .fetch_one(database.pool())
-                .await
-                .map_err(|error| match error {
-                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
-                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
-                })?;
-        let (provider_key, provider_type, enabled, revision) = row;
-        if enabled == 0 {
-            return Err(ProviderDiagnosticRequestError::Disabled);
+        if self.manager.is_some() {
+            let service = self.managed_request(key, "vad").await?;
+            return Box::pin(service.execute_vad(key)).await;
         }
-        if provider_type != "vad" {
-            return Err(ProviderDiagnosticRequestError::TypeMismatch);
-        }
+        let snapshot = self.request_snapshot(key, "vad").await?;
+        let provider_key = snapshot.key.clone();
+        let revision = snapshot.revision;
         let operation = self
             .registry
             .vad_diagnostic(&provider_key)
@@ -352,27 +448,15 @@ impl ProviderDiagnosticService {
         key: &str,
         pcm: PcmF32Mono,
     ) -> Result<AsrDiagnosticResult, ProviderDiagnosticRequestError> {
-        let database = self
-            .database
-            .as_ref()
-            .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-        let row: (String, String, String, i64, i64, String) = sqlx::query_as(
-            "SELECT key,type,adapter,enabled,revision,config_json FROM providers WHERE key=?",
-        )
-        .bind(key)
-        .fetch_one(database.pool())
-        .await
-        .map_err(|error| match error {
-            sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
-            _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
-        })?;
-        let (provider_key, provider_type, adapter, enabled, revision, config_json) = row;
-        if enabled == 0 {
-            return Err(ProviderDiagnosticRequestError::Disabled);
+        if self.manager.is_some() {
+            let service = self.managed_request(key, "asr").await?;
+            return Box::pin(service.execute_asr(key, pcm)).await;
         }
-        if provider_type != "asr" {
-            return Err(ProviderDiagnosticRequestError::TypeMismatch);
-        }
+        let snapshot = self.request_snapshot(key, "asr").await?;
+        let provider_key = snapshot.key.clone();
+        let revision = snapshot.revision;
+        let adapter = snapshot.adapter;
+        let config_json = snapshot.config_json;
         let accepts_sample_rate = crate::providers::compiled_provider_adapter_registry()
             .get(&adapter)
             .filter(|descriptor| descriptor.provider_type == ProviderType::Asr)
@@ -481,7 +565,13 @@ impl ProviderDiagnosticService {
         if !matches!(metadata.tested_runtime, DatabaseRuntimeStatus::Loaded) {
             return Err(ProviderDiagnosticError::RuntimeNotLoaded);
         }
-        let diagnostic = self.limiter.try_acquire()?;
+        let diagnostic = self
+            .managed_admission
+            .lock()
+            .expect("diagnostic admission poisoned")
+            .take()
+            .map(Ok)
+            .unwrap_or_else(|| self.limiter.try_acquire())?;
         let capacity = self
             .registry
             .admit_diagnostic(kind, &target.key)
@@ -489,6 +579,7 @@ impl ProviderDiagnosticService {
         Ok(ProviderDiagnosticLease {
             _diagnostic: diagnostic,
             capacity: Some(capacity),
+            resource_lease: self._managed_lease.clone(),
             quarantine: Arc::clone(&self.quarantined_capacity),
             metadata,
         })
@@ -510,13 +601,25 @@ impl ProviderDiagnosticService {
                 .as_ref()
                 .is_some_and(|state| state.desired_revision == target.desired_revision);
         ProviderDiagnosticRuntimeMetadata {
+            tested_provider_id: state
+                .as_ref()
+                .filter(|state| state.provider_id > 0)
+                .map(|state| state.provider_id),
+            tested_revision: state
+                .as_ref()
+                .filter(|_| loaded)
+                .map(|state| state.desired_revision),
             tested_runtime: if loaded {
                 DatabaseRuntimeStatus::Loaded
             } else {
                 DatabaseRuntimeStatus::NotLoaded
             },
             runtime_matches_desired: matches_desired,
-            requires_restart: !matches_desired,
+            requires_restart: if self.managed_target.is_some() {
+                false
+            } else {
+                !matches_desired
+            },
         }
     }
 }
@@ -532,7 +635,10 @@ impl ProviderDiagnosticLease {
             self.quarantine
                 .lock()
                 .expect("provider diagnostic quarantine poisoned")
-                .push(capacity);
+                .push(QuarantinedDiagnosticCapacity {
+                    _capacity: capacity,
+                    _resource: self.resource_lease.take(),
+                });
         }
     }
 }

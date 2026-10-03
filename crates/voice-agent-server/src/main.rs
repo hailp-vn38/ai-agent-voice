@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         outcome = ?report.outcome,
         controlled_closes = report.controlled_closes,
         history_flushed = report.history_flushed,
+        provider_resources_drained = ?report.provider_resources_drained,
         "Voice Sessions drained"
     );
     // Every session has been asked to close, so this only waits for the closes to land. It is

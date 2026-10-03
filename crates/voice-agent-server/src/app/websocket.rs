@@ -48,6 +48,9 @@ pub(super) async fn handler(
     // downgraded to the deployment's server defaults.
     let profile = match state.resolve_session_profile(device_id).await {
         Ok(profile) => profile,
+        Err(SessionProfileAdmissionError::Runtime(error)) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
+        }
         Err(SessionProfileAdmissionError::Denied) => {
             return (StatusCode::FORBIDDEN, "device not admitted").into_response();
         }
@@ -69,7 +72,12 @@ pub(super) async fn handler(
             return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
         }
     };
-    let resolved_runtimes = match state.runtimes.resolve(&profile.providers) {
+    let resolved_runtimes = match profile
+        .selected_runtimes
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| state.runtimes.resolve(&profile.providers))
+    {
         Ok(runtimes) => runtimes,
         Err(error) => {
             debug!(%error, "configured provider runtime is unavailable");
@@ -344,6 +352,10 @@ async fn handle_socket(
             return;
         }
     };
+    let actor = actor.with_switch_ingress_limits(
+        config.limits.session_event_queue,
+        config.websocket.max_frame_bytes,
+    );
     let actor = match actor.with_delivery_runtime_config(config.speech_output.clone()) {
         Ok(actor) => actor,
         Err(error) => {

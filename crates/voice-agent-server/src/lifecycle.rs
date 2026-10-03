@@ -248,6 +248,8 @@ pub enum DrainOutcome {
 /// What one ordered shutdown observed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShutdownReport {
+    /// None for legacy runtimes; false preserves truthful pending native accounting.
+    pub provider_resources_drained: Option<bool>,
     pub outcome: DrainOutcome,
     /// Sessions that were issued a controlled close at the deadline.
     pub controlled_closes: usize,
@@ -262,6 +264,9 @@ pub struct ShutdownReport {
 /// same view of the gate and the registry that those components do.
 #[derive(Debug)]
 pub struct RuntimeLifecycle {
+    provider_runtime: std::sync::OnceLock<
+        std::sync::Weak<crate::services::provider_runtime::ProviderRuntimeManager>,
+    >,
     gate: Arc<AdmissionGate>,
     drain: Arc<DrainRegistry>,
     /// Stops the listener from accepting new connections.
@@ -278,6 +283,7 @@ impl RuntimeLifecycle {
     /// A lifecycle with its own signals, for a deployment that has nothing outside it to stop.
     pub fn new(grace: Duration) -> Arc<Self> {
         Arc::new(Self {
+            provider_runtime: std::sync::OnceLock::new(),
             gate: AdmissionGate::open(),
             drain: DrainRegistry::new(),
             listening: CancellationToken::new(),
@@ -325,13 +331,28 @@ impl RuntimeLifecycle {
         let _ = self.history.set(metrics);
     }
 
+    pub fn observe_provider_runtime(
+        &self,
+        manager: &Arc<crate::services::provider_runtime::ProviderRuntimeManager>,
+    ) {
+        let _ = self.provider_runtime.set(Arc::downgrade(manager));
+    }
+
     /// The one transition every ordered shutdown starts from: no new work, no new connections.
     ///
     /// Returns whether this call closed the gate.  It is safe to call more than once, so a signal
     /// and a test may both drive it without either having to know about the other.
     pub fn begin_shutdown(&self) -> bool {
         self.listening.cancel();
-        self.gate.close()
+        let closed_gate = self.gate.close();
+        if let Some(manager) = self
+            .provider_runtime
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+        {
+            manager.close();
+        }
+        closed_gate
     }
 
     /// The whole ordered shutdown: close the gate, drain to one shared deadline, controlled-close
@@ -367,8 +388,17 @@ impl RuntimeLifecycle {
         // issued rather than beside the drain, because a session that is still draining is still
         // enqueueing records and a writer measured against a moving target settles by accident.
         let history_flushed = self.flush_until(deadline).await;
+        let provider_resources_drained = match self
+            .provider_runtime
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+        {
+            Some(manager) => Some(manager.shutdown_until(deadline).await),
+            None => None,
+        };
         self.stopping.cancel();
         ShutdownReport {
+            provider_resources_drained,
             outcome,
             controlled_closes,
             history_flushed,

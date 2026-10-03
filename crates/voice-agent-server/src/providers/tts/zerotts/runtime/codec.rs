@@ -346,13 +346,6 @@ impl FullCodecOperation {
     }
 }
 
-pub(super) fn validate_full_decode(
-    contract: &ZeroTtsContract,
-    frames: &[Vec<i32>],
-) -> Result<PcmF32Mono, TtsError> {
-    FullCodecOperation::new(contract)?.decode(frames)
-}
-
 pub(super) fn load_codec_metadata(
     path: &Path,
     full: &Path,

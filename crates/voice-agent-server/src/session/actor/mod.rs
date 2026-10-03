@@ -31,7 +31,7 @@ use crate::{
     },
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -103,6 +103,12 @@ pub struct SessionActor {
     tts_started: bool,
     pending_delivery: Option<PendingDelivery>,
     pending_actions: PendingSessionActions,
+    template_prepare: Option<TemplatePreparation>,
+    managed_switch_boundary: Option<crate::session::PreparedTemplateProfile>,
+    managed_switch_started: Option<Instant>,
+    deferred_switch_ingress: VecDeque<SessionEvent>,
+    switch_ingress_capacity: usize,
+    switch_max_frame_bytes: usize,
     control_tx: mpsc::Sender<OutboundMessage>,
     urgent_tx: mpsc::Sender<OutboundMessage>,
     shutdown_tx: watch::Sender<bool>,
@@ -225,6 +231,19 @@ impl PendingSessionActions {
 struct PendingTemplateSwitch {
     turn_id: TurnId,
     template_key: String,
+    prepared: Option<crate::session::PreparedTemplateProfile>,
+}
+struct TemplatePreparation {
+    turn_id: TurnId,
+    generation: u64,
+    profile_revision: u64,
+    call: ToolCall,
+    completion: tokio::sync::oneshot::Receiver<
+        Result<
+            crate::session::PreparedTemplateProfile,
+            crate::services::provider_runtime::RuntimeError,
+        >,
+    >,
 }
 
 #[derive(Clone, Copy, Debug)]

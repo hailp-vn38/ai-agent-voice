@@ -171,6 +171,9 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect_if_enabled(&config.database).await?;
+    if config.provider_runtime.is_some() {
+        return managed_startup(config, database, secret_resolver, lifecycle).await;
+    }
     // The plan and the desired rows are read before any runtime exists, so a required provider is
     // known to be required before the first model is prepared.
     let (plan, rows) = read_load_plan(&config, database.as_ref()).await?;
@@ -200,6 +203,88 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
             lifecycle,
         ),
     ))
+}
+
+async fn managed_startup(
+    config: AppConfig,
+    database: Option<Database>,
+    secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
+    lifecycle: Arc<RuntimeLifecycle>,
+) -> Result<Router, BootstrapError> {
+    use crate::services::provider_runtime::{FactoryMaterializer, ProviderRuntimeManager};
+    let runtime_config = config
+        .provider_runtime
+        .as_ref()
+        .ok_or(BootstrapError::Provider)?;
+    // No catalog or provider set pins graphs beside the manager on this path.
+    let loaded = LoadedProviders {
+        providers: Default::default(),
+        runtimes: Default::default(),
+    };
+    let mut state = AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
+        config.clone(),
+        loaded,
+        database,
+        None,
+        secret_resolver.clone(),
+        lifecycle.clone(),
+    );
+    let builder = FactoryMaterializer::new(
+        Arc::new(config.clone()),
+        secret_resolver,
+        runtime_config.estimated_peak_bytes.clone(),
+        state.worker_supervisor.clone(),
+    )
+    .map_err(|_| BootstrapError::Provider)?;
+    let manager = ProviderRuntimeManager::new(
+        runtime_config.limits.clone(),
+        Arc::new(builder),
+        lifecycle.gate().clone(),
+    )
+    .map_err(|_| BootstrapError::Provider)?;
+    state = state.with_runtime_manager(manager.clone());
+    let effective = &config.effective_agent.providers;
+    let defaults = &config.provider_defaults;
+    let startup_deadline =
+        tokio::time::Instant::now() + Duration::from_millis(runtime_config.startup_timeout_ms);
+    let mut required = std::collections::BTreeSet::new();
+    for (kind, key) in [
+        ("vad", &effective.vad),
+        ("asr", &effective.asr),
+        ("llm", &effective.llm),
+        ("tts", &effective.tts),
+        ("vad", &defaults.vad),
+        ("asr", &defaults.asr),
+        ("llm", &defaults.llm),
+        ("tts", &defaults.tts),
+    ] {
+        required.insert((kind.to_owned(), key.clone()));
+    }
+    for (key, instance) in &config.providers.tts.instances {
+        if instance.preload() {
+            required.insert(("tts".into(), key.clone()));
+        }
+    }
+    for (kind, key) in required {
+        let snapshot = crate::providers::deployment_provider_snapshot(&config, &kind, &key)
+            .map_err(|_| BootstrapError::Provider)?;
+        let lease = manager
+            .acquire_deployment_until(snapshot.clone(), startup_deadline)
+            .await
+            .map_err(|_| BootstrapError::Provider)?;
+        manager
+            .retain_deployment(lease.version())
+            .map_err(|_| BootstrapError::Provider)?;
+        state.deployment_snapshots.push(snapshot);
+        drop(lease);
+    }
+    if let (Some(database), Some(prewarm)) = (&state.database, &state.provider_prewarm) {
+        let defaults: Vec<(i64,)> = sqlx::query_as("SELECT DISTINCT t.id FROM agent_templates t JOIN agent_template_assignments a ON a.template_id=t.id JOIN agents g ON g.id=a.agent_id WHERE a.enabled=1 AND a.is_default=1 AND t.enabled=1 AND g.enabled=1 LIMIT 256").fetch_all(database.pool()).await.map_err(|_| BootstrapError::Provider)?;
+        for (id,) in defaults {
+            prewarm.template(id).await;
+        }
+    }
+    Ok(router_with_state(state))
 }
 
 /// Derives the Provider Load Plan from the persisted graph plus the deployment's server provider

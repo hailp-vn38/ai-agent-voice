@@ -352,3 +352,28 @@ fn vad_reset_timeout_quarantines_the_worker_and_routes_the_fatal_event() {
     }
     panic!("VAD reset timeout did not quarantine its worker");
 }
+
+#[test]
+fn supervisor_observation_does_not_pin_an_idle_runtime() {
+    let asr = Arc::new(AsrWorkerRuntime::new(
+        Arc::new(FinalAsr),
+        WorkerRuntimeConfig::default(),
+    ));
+    let vad = Arc::new(VadWorkerRuntime::new(
+        Arc::new(QuietVad),
+        WorkerRuntimeConfig::default(),
+    ));
+    let weak_asr = Arc::downgrade(&asr);
+    let weak_vad = Arc::downgrade(&vad);
+    let supervisor = voice_agent_server::workers::WorkerSupervisor::start(asr.clone(), vad.clone());
+    supervisor.observe_asr(asr.clone());
+    supervisor.observe_vad(vad.clone());
+    drop(asr);
+    drop(vad);
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while weak_asr.upgrade().is_some() || weak_vad.upgrade().is_some() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    drop(supervisor);
+}

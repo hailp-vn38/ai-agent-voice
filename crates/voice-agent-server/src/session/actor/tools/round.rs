@@ -254,6 +254,9 @@ impl SessionActor {
     }
 
     pub(in super::super) fn cancel_tool_turn(&mut self) {
+        self.template_prepare = None;
+        // A Normal writer outcome has sealed a managed boundary; later abort cancels
+        // only new interaction/preparation, not that accepted boundary.
         self.cancel_pending_mcp_turn();
         if let Some(batch) = self.tool_batch.take() {
             self.commit_tool_exchange(&batch);

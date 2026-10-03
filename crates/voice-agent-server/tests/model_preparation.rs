@@ -342,3 +342,63 @@ fn rejects_an_install_path_that_escapes_the_root_through_a_symlink() {
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(outside).unwrap();
 }
+
+#[test]
+fn immutable_artifact_tree_preserves_old_resources_after_mutable_alias_changes() {
+    use voice_agent_server::models::prepare_immutable;
+    let root = temp_dir("immutable-model");
+    let installed = root.join("vad/model.onnx");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    fs::write(&installed, b"old-model").unwrap();
+    let manifest_path = manifest(
+        &root,
+        "vad/model.onnx",
+        b"old-model",
+        b"old-model",
+        "identity",
+    );
+    let deployment = DeploymentConfig {
+        model_acknowledgements: vec![ModelAcknowledgement {
+            model: "test-vad".into(),
+            revision: "v1".into(),
+            license: "MIT".into(),
+        }],
+        ..Default::default()
+    };
+    let old = prepare_immutable(
+        &manifest_path,
+        &root,
+        true,
+        "test-vad",
+        "silero_onnx",
+        &deployment,
+    )
+    .unwrap();
+    fs::write(&installed, b"new-model").unwrap();
+    manifest(
+        &root,
+        "vad/model.onnx",
+        b"new-model",
+        b"new-model",
+        "identity",
+    );
+    let new = prepare_immutable(
+        &manifest_path,
+        &root,
+        true,
+        "test-vad",
+        "silero_onnx",
+        &deployment,
+    )
+    .unwrap();
+    assert_ne!(old.artifact("vad"), new.artifact("vad"));
+    assert_eq!(
+        fs::read(old.artifact("vad").unwrap()).unwrap(),
+        b"old-model"
+    );
+    assert_eq!(
+        fs::read(new.artifact("vad").unwrap()).unwrap(),
+        b"new-model"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

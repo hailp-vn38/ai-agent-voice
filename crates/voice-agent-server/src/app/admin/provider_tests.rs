@@ -33,7 +33,7 @@ pub(super) async fn test_vad_provider(
         "status": "success",
         "result": { "probability": diagnostic.probability, "start_sample": diagnostic.start_sample, "end_sample": diagnostic.end_sample },
         "metrics": { "elapsed_ms": started.elapsed().as_millis() },
-        "runtime": { "runtime_status": "loaded", "tested_runtime": "loaded", "runtime_matches_desired": diagnostic.runtime.runtime_matches_desired, "requires_restart": diagnostic.runtime.requires_restart }
+        "runtime": { "runtime_status": "loaded", "tested_runtime": "loaded", "runtime_matches_desired": diagnostic.runtime.runtime_matches_desired, "tested_provider_id": diagnostic.runtime.tested_provider_id, "tested_revision": diagnostic.runtime.tested_revision, "requires_restart": diagnostic.runtime.requires_restart }
     })).into_response()
 }
 
@@ -82,7 +82,7 @@ pub(super) async fn test_llm_provider(
             "runtime_status": "loaded",
             "tested_runtime": "loaded",
             "runtime_matches_desired": diagnostic.runtime.runtime_matches_desired,
-            "requires_restart": diagnostic.runtime.requires_restart,
+            "tested_provider_id": diagnostic.runtime.tested_provider_id, "tested_revision": diagnostic.runtime.tested_revision, "requires_restart": diagnostic.runtime.requires_restart,
         }
     }))
     .into_response()
@@ -148,6 +148,18 @@ pub(super) async fn test_tts_provider(
             "false"
         }),
     );
+    if let Some(revision) = diagnostic.runtime.tested_revision {
+        headers.insert(
+            "x-provider-tested-revision",
+            HeaderValue::from_str(&revision.to_string()).expect("revision header"),
+        );
+    }
+    if let Some(provider_id) = diagnostic.runtime.tested_provider_id {
+        headers.insert(
+            "x-provider-tested-id",
+            HeaderValue::from_str(&provider_id.to_string()).expect("provider id header"),
+        );
+    }
     headers.insert(
         "x-provider-key",
         HeaderValue::from_str(&diagnostic.provider_key)
@@ -203,7 +215,7 @@ pub(super) async fn test_asr_provider(
             "runtime_status": "loaded",
             "tested_runtime": "loaded",
             "runtime_matches_desired": diagnostic.runtime.runtime_matches_desired,
-            "requires_restart": diagnostic.runtime.requires_restart,
+            "tested_provider_id": diagnostic.runtime.tested_provider_id, "tested_revision": diagnostic.runtime.tested_revision, "requires_restart": diagnostic.runtime.requires_restart,
         }
     }))
     .into_response()
@@ -244,6 +256,21 @@ fn request_error_response(
     error_value: ProviderDiagnosticRequestError,
 ) -> Response {
     match error_value {
+        ProviderDiagnosticRequestError::Runtime(runtime_error) => {
+            let status = match runtime_error {
+                crate::services::provider_runtime::RuntimeError::Busy => {
+                    StatusCode::TOO_MANY_REQUESTS
+                }
+                crate::services::provider_runtime::RuntimeError::Timeout => {
+                    StatusCode::GATEWAY_TIMEOUT
+                }
+                crate::services::provider_runtime::RuntimeError::ArtifactsNotReady => {
+                    StatusCode::CONFLICT
+                }
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            error(request, status, runtime_error.code())
+        }
         ProviderDiagnosticRequestError::NotFound => {
             error(request, StatusCode::NOT_FOUND, "provider_not_found")
         }
@@ -286,4 +313,37 @@ fn diagnostic_error_response(request: &Request, error_value: ProviderDiagnosticE
         ProviderDiagnosticError::Failed => (StatusCode::BAD_GATEWAY, "provider_test_failed"),
     };
     error(request, status, code)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareRequest {}
+
+pub(super) async fn prepare_provider(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let (request, _body): (_, PrepareRequest) = match json(request).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    match state.provider_diagnostics.prepare(&key).await {
+        Ok(prepared) => {
+            let status = if prepared.runtime.desired_state
+                == crate::services::provider_runtime::RuntimeState::Ready
+            {
+                StatusCode::OK
+            } else {
+                StatusCode::ACCEPTED
+            };
+            (status, Json(prepared)).into_response()
+        }
+        Err(ProviderDiagnosticRequestError::Diagnostic(ProviderDiagnosticError::Busy)) => error(
+            &request,
+            StatusCode::TOO_MANY_REQUESTS,
+            "provider_runtime_busy",
+        ),
+        Err(error_value) => request_error_response(&request, error_value),
+    }
 }

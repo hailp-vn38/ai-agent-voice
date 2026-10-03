@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -54,7 +57,9 @@ pub enum LlmRuntimeEvent {
 }
 
 /// Application-owned bounded runtime for remote LLM operations.
+#[derive(Clone)]
 pub struct LlmRuntime {
+    closed: Arc<AtomicBool>,
     provider: Arc<dyn LlmProvider>,
     admission: ProviderRuntimeAdmission,
     timeout: Duration,
@@ -84,9 +89,22 @@ impl LlmRuntime {
         assert!(capacity > 0);
         assert!(voice_reserved_capacity > 0 && voice_reserved_capacity <= capacity);
         assert!(!timeout.is_zero());
-        Self {
+        Self::new_with_admission(
             provider,
-            admission: ProviderRuntimeAdmission::new(capacity, voice_reserved_capacity),
+            ProviderRuntimeAdmission::new(capacity, voice_reserved_capacity),
+            timeout,
+        )
+    }
+
+    pub(crate) fn new_with_admission(
+        provider: Arc<dyn LlmProvider>,
+        admission: ProviderRuntimeAdmission,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            closed: Arc::new(AtomicBool::new(false)),
+            provider,
+            admission,
             timeout,
             routes: Arc::new(Mutex::new(HashMap::new())),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
@@ -104,6 +122,17 @@ impl LlmRuntime {
             .expect("LLM routes lock")
             .insert(session.into(), sender);
         receiver
+    }
+
+    pub(crate) fn logical_view(&self, quota: ProviderRuntimeAdmission) -> Self {
+        let mut view = self.clone();
+        view.admission = quota.composed(&self.admission);
+        view
+    }
+    pub fn shutdown_acknowledged(&self) -> bool {
+        let cancellations = self.cancellations.lock().expect("LLM cancellations lock");
+        self.closed.store(true, Ordering::Release);
+        cancellations.is_empty() && self.admission.active_work() == 0
     }
 
     pub fn unregister_session(&self, session: &str) {
@@ -125,10 +154,13 @@ impl LlmRuntime {
             .admission
             .try_admit(ProviderWorkloadClass::Voice)
             .map_err(|_| LlmStartError::Capacity)?;
-        self.cancellations
-            .lock()
-            .expect("LLM cancellations lock")
-            .insert(identity.clone(), cancellation.clone());
+        {
+            let mut cancellations = self.cancellations.lock().expect("LLM cancellations lock");
+            if self.closed.load(Ordering::Acquire) {
+                return Err(LlmStartError::Capacity);
+            }
+            cancellations.insert(identity.clone(), cancellation.clone());
+        }
         let provider = Arc::clone(&self.provider);
         let routes = Arc::clone(&self.routes);
         let cancellations = Arc::clone(&self.cancellations);
@@ -187,6 +219,10 @@ impl LlmRuntime {
     /// Acquires capacity for a bounded diagnostic. The returned permit must live until the
     /// provider operation has acknowledged terminal completion or has been quarantined.
     pub fn admit_diagnostic(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        let _state = self.cancellations.lock().expect("LLM cancellations lock");
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ProviderAdmissionError::Capacity);
+        }
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 

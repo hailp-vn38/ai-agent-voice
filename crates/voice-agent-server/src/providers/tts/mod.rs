@@ -98,7 +98,7 @@ pub trait TtsProvider: Send + Sync {
 
     /// Production providers override this to build native sessions once per runtime worker.
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
-        Err(TtsError::Failed)
+        Err(TtsError::WorkerUnsupported)
     }
 }
 
@@ -112,6 +112,12 @@ pub trait TtsStream: Send {
 
 /// Mutable native state owned by one long-lived worker thread.
 pub trait TtsWorker: Send {
+    /// Native adapters validate inference on the worker retained in the pool. Remote/stateless
+    /// workers intentionally perform no network request here. Warmup must reset operation state.
+    fn warmup(&mut self) -> Result<(), TtsError> {
+        Ok(())
+    }
+
     fn synthesize(
         &mut self,
         text: &str,
@@ -130,6 +136,35 @@ pub trait TtsWorker: Send {
     }
 }
 
+/// Bounded PCM validation on the retained worker, followed by an acknowledged independent-
+/// operation reset. No warmup audio becomes user delivery or cross-segment state.
+pub(crate) fn warmup_retained_worker(
+    worker: &mut dyn TtsWorker,
+    text: &str,
+    sample_rate: u32,
+) -> Result<(), TtsError> {
+    let cancelled = AtomicBool::new(false);
+    let mut samples = 0usize;
+    worker.synthesize(text, &cancelled, &mut |pcm| {
+        if pcm.sample_rate_hz() != sample_rate
+            || pcm.samples().iter().any(|sample| !sample.is_finite())
+        {
+            return Err(TtsError::Failed);
+        }
+        samples = samples
+            .checked_add(pcm.samples().len())
+            .ok_or(TtsError::Failed)?;
+        if samples > sample_rate as usize * 30 {
+            return Err(TtsError::Failed);
+        }
+        Ok(())
+    })?;
+    if samples == 0 {
+        return Err(TtsError::Failed);
+    }
+    worker.reset()
+}
+
 /// A typed, temporary TTS selection. It never represents desired configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TtsDiagnosticRequest {
@@ -140,6 +175,8 @@ pub struct TtsDiagnosticRequest {
 
 #[derive(Debug, Error)]
 pub enum TtsError {
+    #[error("adapter uses the explicit compatibility worker")]
+    WorkerUnsupported,
     #[error("TTS synthesis failed")]
     Failed,
     #[error("ZeroTTS warmup must produce finite, non-empty 48 kHz mono PCM")]
@@ -212,18 +249,7 @@ impl ConfiguredZeroTts {
             runtime_library,
             num_threads,
         )?;
-        // This content is startup-only and never becomes a Voice Session or user lease.
-        let pcm = contract.synthesize_pcm("ZeroTTS startup readiness.", 256)?;
-        validate_warmup_pcm(WarmupPcm::new(
-            pcm.sample_rate_hz(),
-            1,
-            pcm.samples().to_vec(),
-        ))?;
-        let codes = contract.synthesize_codes("ZeroTTS startup readiness.", 256)?;
-        if codes.eoa.is_none() {
-            return Err(TtsError::InvalidWarmupPcm);
-        }
-        contract.validate_full_decode(&codes.frames)?;
+        // Readiness executes on each retained worker, avoiding temporary native engines.
         Ok(Self {
             contract,
             delivery_mode,
@@ -348,6 +374,10 @@ enum ZeroTtsNativeDelivery {
 }
 
 impl TtsWorker for ZeroTtsNativeWorker {
+    fn warmup(&mut self) -> Result<(), TtsError> {
+        warmup_retained_worker(self, "ZeroTTS startup readiness.", 48_000)
+    }
+
     fn synthesize(
         &mut self,
         text: &str,

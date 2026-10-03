@@ -85,6 +85,55 @@ pub struct RuntimeCatalog {
 }
 
 impl RuntimeCatalog {
+    /// Publishes one materializer-owned slot under its immutable provider key.
+    /// The caller must retain the resource lease alongside every resolved handle.
+    pub fn single_provider(
+        kind: DiagnosticRuntimeKind,
+        key: String,
+        runtime: &ResolvedAgentRuntimes,
+    ) -> Self {
+        let mut catalog = Self::default();
+        match kind {
+            DiagnosticRuntimeKind::Vad => {
+                catalog.vad.insert(
+                    key,
+                    LoadedVad {
+                        runtime: Arc::clone(&runtime.vad),
+                        segmenter: runtime.vad_segmenter,
+                        pre_roll_samples: runtime.vad_pre_roll_samples,
+                    },
+                );
+            }
+            DiagnosticRuntimeKind::Asr => {
+                catalog.asr.insert(key, Arc::clone(&runtime.asr));
+            }
+            DiagnosticRuntimeKind::Llm => {
+                catalog.llm.insert(key, Arc::clone(&runtime.llm));
+            }
+            DiagnosticRuntimeKind::Tts => {
+                catalog.tts.insert(key, Arc::clone(&runtime.tts));
+            }
+        }
+        catalog
+    }
+    /// Called outside the manager lock after lease admission has closed. Every worker
+    /// owns its native exit acknowledgement; no Arc reference-count heuristic is used.
+    pub(crate) fn shutdown_acknowledged(&self) -> bool {
+        let mut acknowledged = self.vision.is_empty();
+        for runtime in self.vad.values() {
+            acknowledged &= runtime.runtime.shutdown_acknowledged();
+        }
+        for runtime in self.asr.values() {
+            acknowledged &= runtime.shutdown_acknowledged();
+        }
+        for runtime in self.llm.values() {
+            acknowledged &= runtime.shutdown_acknowledged();
+        }
+        for runtime in self.tts.values() {
+            acknowledged &= runtime.shutdown_acknowledged();
+        }
+        acknowledged
+    }
     /// Atomically admits diagnostic work at the runtime materialized during startup.
     pub fn admit_diagnostic(
         &self,

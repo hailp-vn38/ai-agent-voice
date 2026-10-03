@@ -33,6 +33,9 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "zipformer_sherpa" => canonical::<Zipformer, _>(&value, Zipformer::valid),
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
+        "kokoro_vi_onnx" => canonical::<crate::config::KokoroViOnnxConfig, _>(&value, |config| {
+            config.valid_selection()
+        }),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
         _ => return Err(ProviderConfigError::Invalid),
     }

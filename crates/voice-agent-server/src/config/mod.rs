@@ -30,6 +30,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub runtime: RuntimeConfig,
     #[serde(default)]
+    pub provider_runtime: Option<ProviderRuntimeConfig>,
+    #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
     pub tts: TtsConfig,
@@ -1112,4 +1114,20 @@ impl Default for VisionConfig {
             advertise_via_mcp: false,
         }
     }
+}
+
+/// Explicit deployment measurements: no fabricated default for native resident memory.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderRuntimeConfig {
+    #[serde(flatten)]
+    pub limits: crate::services::provider_runtime::RuntimeLimits,
+    pub estimated_peak_bytes: std::collections::HashMap<String, u64>,
+    pub measured_manifest_sha256: String,
+    #[serde(default = "default_provider_startup_timeout_ms")]
+    pub startup_timeout_ms: u64,
+}
+
+fn default_provider_startup_timeout_ms() -> u64 {
+    60_000
 }

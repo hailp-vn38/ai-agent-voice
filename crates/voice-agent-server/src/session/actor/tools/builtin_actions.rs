@@ -47,7 +47,7 @@ impl SessionActor {
         }
     }
 
-    fn execute_template_switch(&mut self, call: ToolCall) {
+    pub(in super::super) fn execute_template_switch(&mut self, call: ToolCall) {
         let Ok(args) = parse_switch_template_args(&call.arguments) else {
             self.complete_tool_call(call, Err("invalid_arguments"));
             return;
@@ -56,6 +56,53 @@ impl SessionActor {
             self.complete_tool_call(call, Err("no_active_turn"));
             return;
         };
+        if let Some(configuration) = self
+            .switch_catalog
+            .cold
+            .iter()
+            .find(|candidate| candidate.template_key() == args.template)
+            .cloned()
+        {
+            let Some(manager) = self.switch_catalog.manager.clone() else {
+                self.complete_tool_call(call, Err("template_switch_unavailable"));
+                return;
+            };
+            if self.template_prepare.is_some() || self.managed_switch_boundary.is_some() {
+                self.complete_tool_call(call, Err("provider_runtime_busy"));
+                return;
+            }
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                self.complete_tool_call(call, Err("template_switch_unavailable"));
+                return;
+            };
+            let cancellation = self
+                .turn
+                .as_ref()
+                .expect("active turn checked above")
+                .cancellation
+                .clone();
+            let (sender, completion) = tokio::sync::oneshot::channel();
+            let deadline = manager.admission_deadline();
+            runtime.spawn(async move {
+                let _timer = manager
+                    .metrics()
+                    .timer(crate::services::provider_runtime::RuntimePhase::SwitchPrepare);
+                let result = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return,
+                    result = configuration.prepare(&manager, deadline) => result,
+                };
+                let _ = sender.send(result);
+            });
+            self.template_prepare = Some(TemplatePreparation {
+                turn_id,
+                generation: self.generation,
+                profile_revision: self.profile.revision,
+                call,
+                completion,
+            });
+            return;
+        }
         if self.switch_catalog.find(&args.template).is_none() {
             tracing::warn!(
                 event = "session_profile_switch_rejected",
@@ -75,6 +122,7 @@ impl SessionActor {
         self.pending_actions.switch_template_after_turn = Some(PendingTemplateSwitch {
             turn_id,
             template_key: args.template.clone(),
+            prepared: None,
         });
         self.complete_tool_call(
             call,
@@ -85,6 +133,110 @@ impl SessionActor {
                 "truncated": false,
             })),
         );
+    }
+
+    pub(in super::super) fn drain_template_preparation(&mut self) {
+        let current_turn_id = self.current_turn_id();
+        let Some(pending) = self.template_prepare.as_mut() else {
+            return;
+        };
+        if current_turn_id != Some(pending.turn_id)
+            || self.generation != pending.generation
+            || self.profile.revision != pending.profile_revision
+        {
+            self.template_prepare = None;
+            return;
+        }
+        let result = match pending.completion.try_recv() {
+            Ok(result) => result,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => return,
+            Err(_) => Err(crate::services::provider_runtime::RuntimeError::Unavailable),
+        };
+        if result.is_err()
+            && let Some(manager) = &self.switch_catalog.manager
+        {
+            manager
+                .metrics()
+                .increment(crate::services::provider_runtime::RuntimeCounter::SwitchFailure);
+        }
+        let pending = self
+            .template_prepare
+            .take()
+            .expect("one pending preparation");
+        match result {
+            Ok(prepared) => {
+                self.pending_actions.switch_template_after_turn = Some(PendingTemplateSwitch {
+                    turn_id: pending.turn_id,
+                    template_key: prepared.configuration.template_key().to_owned(),
+                    prepared: Some(prepared),
+                });
+                self.complete_tool_call(pending.call, Ok(serde_json::json!({"ok":true,"code":null,"content":"template_switch_scheduled","truncated":false})));
+            }
+            Err(error) => self.complete_tool_call(
+                pending.call,
+                Err(match error {
+                    crate::services::provider_runtime::RuntimeError::Busy => {
+                        "provider_runtime_busy"
+                    }
+                    crate::services::provider_runtime::RuntimeError::MemoryPressure => {
+                        "provider_runtime_memory_pressure"
+                    }
+                    crate::services::provider_runtime::RuntimeError::Timeout => {
+                        "provider_runtime_timeout"
+                    }
+                    _ => "template_switch_unavailable",
+                }),
+            ),
+        }
+    }
+
+    pub(in super::super) fn begin_managed_switch_boundary(
+        &mut self,
+        prepared: crate::session::PreparedTemplateProfile,
+    ) {
+        // Keep the original runtime routes and leases until their exact cleanup events arrive.
+        self.cancel_asr();
+        self.close_vad();
+        self.speech_output.release();
+        self.managed_switch_started = Some(Instant::now());
+        self.managed_switch_boundary = Some(prepared);
+        self.drain_managed_switch_boundary();
+    }
+
+    pub(in super::super) fn drain_managed_switch_boundary(&mut self) {
+        if self.managed_switch_boundary.is_none()
+            || !self.asr_cleanup_pending.is_empty()
+            || self.asr_stream.is_some()
+            || self.vad_session.is_some()
+        {
+            return;
+        }
+        let prepared = self
+            .managed_switch_boundary
+            .take()
+            .expect("prepared boundary checked");
+        if install_candidate_runtimes(self, &prepared.runtimes).is_err() {
+            self.complete_recognition();
+            return;
+        }
+        if let (Some(started), Some(manager)) = (
+            self.managed_switch_started.take(),
+            self.switch_catalog.manager.as_ref(),
+        ) {
+            manager.metrics().observe(
+                crate::services::provider_runtime::RuntimePhase::SwitchCommit,
+                started.elapsed(),
+            );
+        }
+        let configuration = prepared.configuration;
+        self.profile.source = configuration.source;
+        self.profile.language = configuration.language;
+        self.profile.system_prompt = configuration.system_prompt;
+        self.profile.providers = configuration.providers;
+        self.profile.revision = self.profile.revision.saturating_add(1);
+        self.switch_catalog.active_leases = prepared.leases;
+        self.complete_recognition();
+        self.replay_switch_ingress();
     }
 
     /// The only place a Template change becomes effective.
