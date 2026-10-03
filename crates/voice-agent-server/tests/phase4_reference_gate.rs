@@ -117,6 +117,7 @@ fn real_tts() -> Arc<dyn TtsProvider> {
         models: ModelStoreConfig {
             root,
             offline: true,
+            ..ModelStoreConfig::default()
         },
         model_acknowledgements: vec![ModelAcknowledgement {
             model: "zerotts_default".into(),

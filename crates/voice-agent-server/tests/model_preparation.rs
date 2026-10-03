@@ -36,6 +36,110 @@ impl ModelAcquirer for FixtureAcquirer {
     }
 }
 
+struct ExpectedSourceAcquirer;
+
+impl ModelAcquirer for ExpectedSourceAcquirer {
+    fn acquire(&self, remote: &str, destination: &std::path::Path) -> Result<(), ModelError> {
+        assert_eq!(remote, "https://artifacts.example.invalid/voice.bin");
+        fs::write(destination, b"voicepack")?;
+        Ok(())
+    }
+}
+
+#[test]
+fn prepared_artifact_uses_deployment_source_and_preserves_manifest_checksum() {
+    let root = temp_dir("prepared-source");
+    let manifest = manifest(&root, "voice.bin", b"voicepack", b"voicepack", "identity");
+    let prepared_source = "prepared://deployment/voice.bin";
+    let raw = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        raw.replace("https://example.invalid/model", prepared_source),
+    )
+    .unwrap();
+    let sources = [(
+        prepared_source.into(),
+        "https://artifacts.example.invalid/voice.bin".into(),
+    )]
+    .into_iter()
+    .collect();
+    let result = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: manifest,
+            root: root.clone(),
+            offline: false,
+        },
+        ExpectedSourceAcquirer,
+    )
+    .with_sources(&sources)
+    .prepare("test-vad", "silero_onnx")
+    .unwrap();
+    assert_eq!(
+        fs::read(result.artifact("vad").unwrap()).unwrap(),
+        b"voicepack"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn checksum_failure_keeps_existing_file_and_removes_temporary_files() {
+    let root = temp_dir("checksum-failure");
+    let manifest = manifest(
+        &root,
+        "vad/model.onnx",
+        b"expected",
+        b"expected",
+        "identity",
+    );
+    let installed = root.join("vad/model.onnx");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    fs::write(&installed, b"existing").unwrap();
+    let result = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: manifest,
+            root: root.clone(),
+            offline: false,
+        },
+        FixtureAcquirer(b"incorrect".to_vec()),
+    )
+    .prepare("test-vad", "silero_onnx");
+    assert!(matches!(result, Err(ModelError::HashMismatch { .. })));
+    assert_eq!(fs::read(&installed).unwrap(), b"existing");
+    assert!(!root.join("vad/model.onnx.part").exists());
+    assert!(!root.join("vad/model.onnx.transform").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn prepared_source_mapping_is_needed_only_when_artifact_is_missing() {
+    let root = temp_dir("prepared-source-required");
+    let manifest = manifest(&root, "voice.bin", b"voicepack", b"voicepack", "identity");
+    let raw = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        raw.replace(
+            "https://example.invalid/model",
+            "prepared://deployment/voice.bin",
+        ),
+    )
+    .unwrap();
+    let preparation = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: manifest,
+            root: root.clone(),
+            offline: false,
+        },
+        ExpectedSourceAcquirer,
+    );
+    assert!(matches!(
+        preparation.prepare("test-vad", "silero_onnx"),
+        Err(ModelError::PreparedSourceRequired(_))
+    ));
+    fs::write(root.join("voice.bin"), b"voicepack").unwrap();
+    preparation.prepare("test-vad", "silero_onnx").unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn manifest(
     root: &std::path::Path,
     install_path: &str,

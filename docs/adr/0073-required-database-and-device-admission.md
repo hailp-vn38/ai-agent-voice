@@ -37,7 +37,7 @@ chỉ là chế độ dev/migration đã có, không phải cơ chế bỏ qua D
 
 ## Consequences
 
-Operator xóa hai key cũ, tạo parent directory cho SQLite và provision Device/Agent
+Operator xóa hai key cũ và provision Device/Agent; server tự tạo parent directory cho SQLite
 trước voice session. DB trống vẫn khởi động được, không provision application rows
 ngầm. Không cần schema migration mới vì đây là thay đổi policy/config, không đổi
 bảng hoặc checksum SQLx. Test protocol dùng file-backed DB có Agent/Device thay

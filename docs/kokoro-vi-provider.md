@@ -35,6 +35,19 @@ file outside the server startup workflow, then publish it through the
 deployment's artifact source and manifest. The current upstream repository
 only publishes `.pt` voicepacks; it does not publish this production binary.
 
+For automatic first-start acquisition, map the prepared manifest source to an
+HTTP(S) URL serving that exact binary. Its SHA-256 must match the manifest; a
+source URL does not change model identity or bypass verification.
+
+```toml
+[deployment.models.sources]
+"prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin" = "https://your-artifact-host/diem_trinh.bin"
+```
+
+No mapping is needed when the checksum-matching voicepack is already installed.
+Offline Model Preparation never contacts the URL. The server does not download
+or execute G2P programs or deserialize upstream `.pt` voicepacks.
+
 ## G2P sidecar
 
 Vietnamese text is converted by a persistent deployment-owned JSONL program,

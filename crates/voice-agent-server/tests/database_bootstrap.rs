@@ -245,8 +245,35 @@ async fn schema_newer_than_binary_is_rejected_before_listener_bind() {
 }
 
 #[tokio::test]
-async fn unavailable_database_always_fails_before_boot() {
-    let path = std::env::temp_dir().join(format!("voice-agent-missing-{}", uuid::Uuid::new_v4()));
+async fn missing_database_parent_is_created_and_existing_rows_survive_restart() {
+    let root = std::env::temp_dir().join(format!("voice-agent-parent-{}", uuid::Uuid::new_v4()));
+    let path = root.join("data/nested/voice.db");
+    let config = database_config(format!("sqlite://{}", path.display()));
+    let database = Database::connect(&config).await.unwrap();
+    assert!(path.is_file());
+    sqlx::query("CREATE TABLE startup_marker (value TEXT NOT NULL)")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO startup_marker VALUES ('preserved')")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    database.pool().close().await;
+    let reopened = Database::connect(&config).await.unwrap();
+    let value: (String,) = sqlx::query_as("SELECT value FROM startup_marker")
+        .fetch_one(reopened.pool())
+        .await
+        .unwrap();
+    assert_eq!(value.0, "preserved");
+    reopened.pool().close().await;
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn database_parent_that_is_a_file_fails_before_boot() {
+    let path = std::env::temp_dir().join(format!("voice-agent-blocked-{}", uuid::Uuid::new_v4()));
+    fs::write(&path, b"not a directory").unwrap();
     let config = database_config(format!("sqlite://{}/voice.db", path.display()));
     let error = bootstrap_with_providers(
         config_for_database(config),
@@ -258,4 +285,6 @@ async fn unavailable_database_always_fails_before_boot() {
         error,
         voice_agent_server::app::BootstrapError::Database(_)
     ));
+    assert_eq!(fs::read(&path).unwrap(), b"not a directory");
+    fs::remove_file(path).unwrap();
 }

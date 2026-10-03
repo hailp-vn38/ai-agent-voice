@@ -29,7 +29,6 @@ Không nằm trong V1: manager web/mobile, multi-user, MQTT/UDP gateway, RAG, vo
 Khởi động server với cấu hình mẫu:
 
 ```bash
-mkdir -p data
 VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server --bin voice-agent-server
 VOICE_AGENT_CONFIG=config.toml cargo run -p voice-agent-server --bin voice-agent-server
 ```
@@ -39,6 +38,21 @@ qua Admin API trước khi chạy client, hoặc bật enrollment và claim mã 
 Admin API vẫn cần `api.enabled=true` và admin token riêng. Không có Device thì OTA/WS
 trả 403 khi enrollment tắt. Xem [flow database và enrollment](docs/flows/08-database-device-enrollment.md)
 để chuyển cấu hình cũ và chuẩn bị dữ liệu.
+
+Server tự tạo thư mục cha của SQLite (mặc định `data/`) trước khi mở database và
+chạy migration. Sau đó Model Preparation kiểm tra checksum và tự tải model local
+thiếu/hỏng vào `deployment.models.root` (mặc định `models/`) khi `offline=false`.
+File hợp lệ được dùng lại mà không gọi mạng. Bước này hoàn tất trước khi dựng
+provider runtime, nên thời gian tải không tính vào `provider_runtime.startup_timeout_ms`.
+Các instance local trong TOML được chuẩn bị xuống đĩa; provider trong DB chỉ được
+chuẩn bị khi đang được Template sử dụng. Model trùng nhau được gộp. Model bắt buộc
+lỗi sẽ chặn startup; model tùy chọn lỗi được ghi log mà không chặn server.
+
+Downloader dùng buffer 64 KiB, timeout kết nối 15 giây, timeout 15 phút cho mỗi
+lần tải và tối đa 3 lần thử cho lỗi mạng/HTTP tạm thời. File tạm chỉ được publish
+sau khi checksum và transform hợp lệ. ONNX Runtime và Kokoro G2P vẫn cần cài riêng.
+Voicepack Kokoro đã chuyển đổi có thể tải tự động bằng `deployment.models.sources`;
+xem [hướng dẫn Kokoro](docs/kokoro-vi-provider.md).
 
 Sau đó xác nhận một text turn OTA → WebSocket → TTS bằng Voice Reference Client độc lập:
 
