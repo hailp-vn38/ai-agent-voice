@@ -197,7 +197,7 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
         kind: "asr".into(),
         adapter: "gipformer_sherpa_offline".into(),
         revision: 1,
-        config_json: r#"{"model":"gipformer15_vi_int8"}"#.into(),
+        config_json: r#"{}"#.into(),
         secret_ref: None,
     };
     let first = builder.resource_key(&row).unwrap().unwrap();
@@ -264,7 +264,7 @@ fn native_resource_identity_uses_execution_content_not_only_its_path() {
         kind: "asr".into(),
         adapter: "gipformer_sherpa_offline".into(),
         revision: 1,
-        config_json: r#"{"model":"gipformer15_vi_int8"}"#.into(),
+        config_json: r#"{}"#.into(),
         secret_ref: None,
     };
     let build = |cfg: AppConfig| {

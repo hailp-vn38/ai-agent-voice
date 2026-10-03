@@ -140,7 +140,6 @@ impl Zipformer {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Gipformer {
-    model: String,
     #[serde(default = "default_vietnamese_language")]
     language: String,
     #[serde(default = "default_decode")]
@@ -150,9 +149,7 @@ struct Gipformer {
 }
 impl Gipformer {
     fn valid(&self) -> bool {
-        self.model == "gipformer15_vi_int8"
-            && self.language == "vi-VN"
-            && (1..=10_000).contains(&self.max_active_paths)
+        self.language == "vi-VN" && (1..=10_000).contains(&self.max_active_paths)
     }
 }
 #[derive(Deserialize, Serialize)]

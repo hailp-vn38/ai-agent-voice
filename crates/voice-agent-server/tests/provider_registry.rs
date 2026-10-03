@@ -162,7 +162,11 @@ fn descriptors_expose_only_user_configuration_and_typed_decoding_choices() {
         )));
         if matches!(
             descriptor.adapter,
-            "silero_onnx" | "zerotts_onnx" | "kokoro_vi_onnx" | "zipformer_sherpa"
+            "silero_onnx"
+                | "zerotts_onnx"
+                | "kokoro_vi_onnx"
+                | "zipformer_sherpa"
+                | "gipformer_sherpa_offline"
         ) {
             assert!(fields.iter().all(|field| field["key"] != "model"));
         }

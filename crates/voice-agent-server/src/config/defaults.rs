@@ -286,3 +286,9 @@ pub(super) fn default_enrollment_ws_prompt_repeat_seconds() -> u64 {
 pub(super) fn default_enrollment_prompt_assets_dir() -> std::path::PathBuf {
     "assets/enrollment/vi-VN".into()
 }
+
+pub(crate) fn default_gipformer_model() -> String {
+    crate::providers::local_model_identity("gipformer_sherpa_offline")
+        .expect("compiled local adapter")
+        .into()
+}

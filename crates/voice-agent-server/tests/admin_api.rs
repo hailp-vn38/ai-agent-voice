@@ -545,7 +545,7 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
             .bearer_auth("admin-test-token")
             .json(&serde_json::json!({
                 "key":"asr_other", "name":"Other ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
-                "config_json":{"model":"gipformer15_vi_int8","decoding_method":"greedy_search","max_active_paths":4}
+                "config_json":{"decoding_method":"greedy_search","max_active_paths":4}
             }))
             .send()
             .await
@@ -904,7 +904,7 @@ async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
     let providers = format!("{base}/api/admin/providers");
     assert_eq!(client.post(&providers).bearer_auth("admin-test-token").json(&serde_json::json!({
         "key":"asr_loaded", "name":"Loaded ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
-        "config_json":{"model":"gipformer15_vi_int8","language":"vi-VN","decoding_method":"greedy_search","max_active_paths":4}
+        "config_json":{"language":"vi-VN","decoding_method":"greedy_search","max_active_paths":4}
     })).send().await.unwrap().status(), StatusCode::CREATED);
     let url = format!("{providers}/asr_loaded/test/asr");
 
@@ -2106,9 +2106,10 @@ async fn provider_mutations_reject_server_owned_configuration() {
         (
             "asr",
             "gipformer_sherpa_offline",
-            serde_json::json!({"model":"gipformer15_vi_int8"}),
+            serde_json::json!({}),
             vec![
                 ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("gipformer15_vi_int8")),
                 ("decoding_method", serde_json::json!("arbitrary")),
                 ("max_active_paths", serde_json::json!(10001)),
             ],
@@ -2224,7 +2225,7 @@ async fn legacy_provider_runtime_fields_are_removed_by_migration_before_admin_re
             "asr",
             "gipformer_sherpa_offline",
             serde_json::json!({"model":"gipformer15_vi_int8","num_threads":128}),
-            serde_json::json!({"model":"gipformer15_vi_int8"}),
+            serde_json::json!({}),
         ),
         (
             "legacy_zero",

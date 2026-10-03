@@ -22,16 +22,6 @@ const VIETNAMESE: &[LanguageOption] = &[LanguageOption {
 }];
 const FIELDS: &[crate::providers::descriptor::ProviderConfigField] = &[
     field(
-        "model",
-        "Model",
-        ConfigFieldType::Select,
-        true,
-        Some(CapabilitySource::Models),
-        None,
-        None,
-        Some(128),
-    ),
-    field(
         "language",
         "Language",
         ConfigFieldType::Select,

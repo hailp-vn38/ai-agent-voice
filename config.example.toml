@@ -115,7 +115,6 @@ decoding_method = "greedy_search"
 # until a local qualification benchmark supports changing it.
 [providers.asr.instances.gipformer_vi]
 adapter = "gipformer_sherpa_offline"
-model = "gipformer15_vi_int8"
 decoding_method = "modified_beam_search"
 max_active_paths = 4
 

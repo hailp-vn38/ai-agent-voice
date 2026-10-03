@@ -183,7 +183,9 @@ impl VadFactory for SileroOnnxFactory {
         config: &'a VadInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
         match config {
-            VadInstanceConfig::SileroOnnx(_) => Ok("silero_vad_v5"),
+            VadInstanceConfig::SileroOnnx(_) => {
+                Ok(local_model_identity(self.adapter()).expect("compiled local adapter"))
+            }
         }
     }
 
@@ -269,7 +271,7 @@ impl TtsFactory for ZeroTtsOnnxFactory {
         config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
         match config {
-            TtsInstanceConfig::ZeroTtsOnnx(_) => Ok(Some("zerotts_default")),
+            TtsInstanceConfig::ZeroTtsOnnx(_) => Ok(local_model_identity(self.adapter())),
             _ => Err(ProviderLoadError::Configuration(
                 "zerotts_onnx factory received another adapter config".into(),
             )),
@@ -288,17 +290,18 @@ impl TtsFactory for ZeroTtsOnnxFactory {
             ));
         };
         let mut config = config.clone();
-        config.model = "zerotts_default".into();
+        config.model = local_model_identity(self.adapter())
+            .expect("compiled local adapter")
+            .into();
         config.num_threads = runtime.onnx.threads_for(self.adapter());
         let model = model.ok_or_else(|| {
             ProviderLoadError::Configuration("zerotts_onnx requires a local model".into())
         })?;
         validate_model_adapter(model, self.adapter(), runtime)?;
-        if config.model != "zerotts_default"
-            || !super::tts::zerotts::descriptor::DESCRIPTOR
-                .capabilities
-                .voices
-                .is_some_and(|voices| voices.iter().any(|voice| voice.id == config.voice))
+        if !super::tts::zerotts::descriptor::DESCRIPTOR
+            .capabilities
+            .voices
+            .is_some_and(|voices| voices.iter().any(|voice| voice.id == config.voice))
             || config.language != "vi-VN"
             || config.num_threads <= 0
         {
@@ -356,7 +359,7 @@ impl TtsFactory for KokoroViOnnxFactory {
         config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
         match config {
-            TtsInstanceConfig::KokoroViOnnx(_) => Ok(Some("kokoro_vi_contextbox")),
+            TtsInstanceConfig::KokoroViOnnx(_) => Ok(local_model_identity(self.adapter())),
             _ => Err(ProviderLoadError::Configuration(
                 "kokoro_vi_onnx factory received another adapter config".into(),
             )),
@@ -374,7 +377,9 @@ impl TtsFactory for KokoroViOnnxFactory {
             ));
         };
         let mut options = options.clone();
-        options.model = "kokoro_vi_contextbox".into();
+        options.model = local_model_identity(self.adapter())
+            .expect("compiled local adapter")
+            .into();
         options.num_threads = runtime.onnx.threads_for(self.adapter());
         let model = model.ok_or_else(|| {
             ProviderLoadError::Configuration("kokoro_vi_onnx requires a local model".into())
@@ -482,7 +487,9 @@ impl AsrFactory for ZipformerSherpaFactory {
         config: &'a AsrInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
         match config {
-            AsrInstanceConfig::ZipformerSherpa(_) => Ok("zipformer_vi_streaming"),
+            AsrInstanceConfig::ZipformerSherpa(_) => {
+                Ok(local_model_identity(self.adapter()).expect("compiled local adapter"))
+            }
             _ => Err(ProviderLoadError::Configuration(
                 "zipformer_sherpa factory received another adapter config".into(),
             )),
@@ -530,10 +537,8 @@ impl AsrFactory for GipformerSherpaOfflineFactory {
         config: &'a AsrInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
         match config {
-            AsrInstanceConfig::GipformerSherpaOffline(options)
-                if options.model == "gipformer15_vi_int8" =>
-            {
-                Ok("gipformer15_vi_int8")
+            AsrInstanceConfig::GipformerSherpaOffline(_) => {
+                Ok(local_model_identity(self.adapter()).expect("compiled local adapter"))
             }
             _ => Err(ProviderLoadError::Configuration(
                 "gipformer_sherpa_offline factory received another adapter config".into(),

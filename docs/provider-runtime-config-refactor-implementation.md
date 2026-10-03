@@ -6,6 +6,7 @@ Triển khai theo `Provider Descriptor, Runtime Config & Voice Model Preparation
 Theo xác nhận ngày 2026-10-03, Gipformer chỉ có model từ
 `g-group-ai-lab/gipformer1.5-68M-rnnt`; giữ identity `gipformer15_vi_int8`
 và revision hiện tại, không thêm hai identity FP32/INT8 của phase 4 trong guide.
+Vì chỉ có một model, descriptor/JSON Gipformer cũng không chứa `model`; server tự resolve identity.
 
 ## Cấu hình server
 
@@ -40,7 +41,7 @@ Admin POST/PATCH reject từng field internal với `400 provider_config_invalid
 
 - Silero: `{}`.
 - Zipformer: `{"decoding_method":"greedy_search"}`.
-- Gipformer: `{"model":"gipformer15_vi_int8","decoding_method":"modified_beam_search","max_active_paths":4}`.
+- Gipformer: `{"decoding_method":"modified_beam_search","max_active_paths":4}`.
 - ZeroTTS: `{"voice":"maichi","language":"vi-VN","delivery_mode":"stream"}`.
 - Kokoro: `{"voice":"duc_an","language":"vi-VN","speed_percent":100}`.
 - ChillAudio: `{"voice":"BV421_vivn_streaming","language":"vi"}`.

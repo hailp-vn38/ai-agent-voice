@@ -1522,7 +1522,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         (
             "asr",
             "gipformer_sherpa_offline",
-            serde_json::json!({"model":"gipformer15_vi_int8","decoding_method":"greedy_search","max_active_paths":4}),
+            serde_json::json!({"decoding_method":"greedy_search","max_active_paths":4}),
         ),
         (
             "llm",
