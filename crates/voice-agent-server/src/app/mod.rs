@@ -107,6 +107,23 @@ pub fn router_with_state(state: AppState) -> Router {
             get(ota::handler).post(ota::handler).options(ota::options),
         )
         .route("/voice/v1/", get(websocket::handler));
+    let router = if state.config.database.devices.enrollment.enabled {
+        router
+            .route(
+                "/voice/ota",
+                get(ota::handler).post(ota::handler).options(ota::options),
+            )
+            .route(
+                "/voice/ota/activate",
+                axum::routing::post(ota::activate).options(ota::options),
+            )
+            .route(
+                "/voice/ota/activate/",
+                axum::routing::post(ota::activate).options(ota::options),
+            )
+    } else {
+        router
+    };
     let router = if vision_enabled {
         router.route(
             "/mcp/vision/explain",

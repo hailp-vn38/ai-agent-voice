@@ -199,6 +199,14 @@ allowed_cidrs = []
 enabled = false
 retention_days = 30
 queue_capacity = 256
+
+# Unknown-device enrollment requires database-backed admission, Admin API, and auto_register=false.
+[database.devices.enrollment]
+enabled = false
+code_ttl_seconds = 600
+retention_seconds = 86400
+cleanup_interval_seconds = 60
+max_pending = 1000
 ```
 
 ## 3. Environment override
@@ -238,6 +246,7 @@ VOICE_AGENT_LLM_API_KEY
 - `[agent]` là optional. Field bị omit dùng built-in default; field đã khai báo nhưng rỗng/whitespace fail startup. Built-in template compile vào binary; custom `agent.prompt_template` được resolve một lần theo thư mục config và phải chứa exact `{{persona}}`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
 - `[database.history]` là policy của optional Persistent Transcript, validate trước khi bind listener: `database.history.enabled` yêu cầu `database.enabled`; `retention_days ∈ 1..=365`; `queue_capacity ∈ 1..=65_536`. `enabled` quyết định có khởi động `HistoryWriter` hay không, nên khi tắt process không có archival queue hay task nào; `retention_days` được bound bất kể capture đang bật hay tắt vì `RetentionCleaner` sống lâu hơn capture — retention thuộc về archive chứ không thuộc về capture, và tắt capture mới không được biến dữ liệu đã có thành retention vô hạn. `0` bị từ chối như giá trị vượt range, vì một retention không có cửa sổ không phải retention policy. Default lần lượt là `false`, `30`, `256`.
+- `[database.devices.enrollment]` mặc định tắt. Khi bật, `database.enabled`, `database.devices.admission_enabled` và `api.enabled` đều bắt buộc true, còn `auto_register` bắt buộc false. V1 giới hạn TTL `60..=3600` giây, retention `TTL..=604800` giây, cleanup interval `10..=3600` giây và pending capacity `1..=10000`; OTA cấp mã không bao giờ gia hạn TTL khi thiết bị poll lại.
 - mỗi instance OpenAI phải có `base_url`, `model`, timeout hợp lệ; API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry. Nhiều instance có thể cùng adapter `openai` với endpoint/model khác nhau.
 - mỗi instance ZeroTTS phải có Logical Model Identity, `voice` và thread count hợp lệ; Model Preparation inject `ResolvedModel`, không direct path. Remote ChillAudio không có fake model identity. `[workers.tts]` là template capacity/timeout/cleanup cho từng runtime được load.
 - `gipformer_sherpa_offline` dùng `OfflineRecognizer`: `push_pcm()` chỉ tích luỹ PCM 16 kHz canonical, không phát partial; `finish()` mới decode toàn utterance. `model`, `num_threads`, `decoding_method` (`greedy_search` hoặc `modified_beam_search`) và `max_active_paths > 0` là các option duy nhất của instance. Precision và artifact paths thuộc Model Artifact Manifest, không thuộc TOML provider. Offline decode hiện không hard-cancel được sau khi native decode bắt đầu, nên giữ `workers.asr.final_timeout_ms` theo benchmark target CPU.

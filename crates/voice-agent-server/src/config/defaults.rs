@@ -28,6 +28,18 @@ pub(super) fn default_history_retention_days() -> u32 {
 pub(super) fn default_history_queue_capacity() -> usize {
     256
 }
+pub(super) fn default_enrollment_code_ttl_seconds() -> u64 {
+    600
+}
+pub(super) fn default_enrollment_retention_seconds() -> u64 {
+    86_400
+}
+pub(super) fn default_enrollment_cleanup_interval_seconds() -> u64 {
+    60
+}
+pub(super) fn default_enrollment_max_pending() -> u32 {
+    1_000
+}
 pub(super) fn default_input_rate() -> u32 {
     16_000
 }

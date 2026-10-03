@@ -71,7 +71,7 @@ const MAX_PROMPT_TEMPLATE_BYTES: usize = 64 * 1024;
 /// template or from a stored Template row.
 pub const MAX_RENDERED_SYSTEM_PROMPT_BYTES: usize = 96 * 1024;
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub name: Option<String>,
@@ -911,7 +911,7 @@ pub struct DatabaseConfig {
 }
 
 /// Explicit controls for database-backed Voice Protocol Client admission.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseDevicesConfig {
     #[serde(default)]
@@ -920,6 +920,47 @@ pub struct DatabaseDevicesConfig {
     pub auto_register: bool,
     #[serde(default)]
     pub auto_register_agent_key: String,
+    #[serde(default)]
+    pub enrollment: EnrollmentConfig,
+}
+
+/// Optional control-plane enrollment for an unknown Voice Protocol Client.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnrollmentConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_enrollment_code_ttl_seconds")]
+    pub code_ttl_seconds: u64,
+    #[serde(default = "default_enrollment_retention_seconds")]
+    pub retention_seconds: u64,
+    #[serde(default = "default_enrollment_cleanup_interval_seconds")]
+    pub cleanup_interval_seconds: u64,
+    #[serde(default = "default_enrollment_max_pending")]
+    pub max_pending: u32,
+}
+
+impl Default for EnrollmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            code_ttl_seconds: default_enrollment_code_ttl_seconds(),
+            retention_seconds: default_enrollment_retention_seconds(),
+            cleanup_interval_seconds: default_enrollment_cleanup_interval_seconds(),
+            max_pending: default_enrollment_max_pending(),
+        }
+    }
+}
+
+impl Default for DatabaseDevicesConfig {
+    fn default() -> Self {
+        Self {
+            admission_enabled: false,
+            auto_register: false,
+            auto_register_agent_key: String::new(),
+            enrollment: EnrollmentConfig::default(),
+        }
+    }
 }
 
 /// Optional Persistent Transcript capture and the retention of the archive it writes.

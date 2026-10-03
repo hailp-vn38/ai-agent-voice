@@ -1,7 +1,7 @@
 use crate::{
     config::{AppConfig, SileroOnnxConfig, VadInstanceConfig},
     database::{
-        Database, DesiredProvider, DeviceAdmissionError,
+        Database, DesiredProvider, DeviceAdmissionError, EnrollmentCleaner,
         history::{HistoryArchive, HistoryWriter, HistoryWriterMetrics, TranscriptCapture},
         secrets::{EnvSecretResolver, SecretResolver},
     },
@@ -54,6 +54,9 @@ pub struct AppState {
     /// The optional Persistent Transcript: the one archival writer every session shares plus the
     /// retention job.  `None` only when the database is off, in which case no session can archive.
     pub history: Option<Arc<HistoryArchive>>,
+    /// Independent from transcript capture: pending enrollment correctness never depends on this
+    /// task, but terminal retention must remain bounded when enrollment is enabled.
+    pub enrollment_cleaner: Option<Arc<EnrollmentCleaner>>,
     /// The application-owned lifecycle: one admission/work gate, the drain registry, and the
     /// ordered shutdown that uses them.  A session holds nothing of it but its own registration.
     pub lifecycle: Arc<RuntimeLifecycle>,
@@ -582,6 +585,15 @@ impl AppState {
                 lifecycle.stopping().clone(),
             ))
         });
+        let enrollment_cleaner = database.as_ref().and_then(|database| {
+            config.database.devices.enrollment.enabled.then(|| {
+                Arc::new(EnrollmentCleaner::start(
+                    database,
+                    &config.database.devices.enrollment,
+                    lifecycle.stopping().clone(),
+                ))
+            })
+        });
         let config = Arc::new(config);
         let runtimes = Arc::new(loaded.runtimes);
         let database_runtime_snapshot = database_runtime_snapshot.map(Arc::new);
@@ -608,6 +620,7 @@ impl AppState {
             secret_resolver,
             external_mcp,
             history,
+            enrollment_cleaner,
             lifecycle,
             writer_outcome_probe: None,
         };

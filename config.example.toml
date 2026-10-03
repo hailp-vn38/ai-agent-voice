@@ -15,6 +15,19 @@ max_connections = 5
 busy_timeout_ms = 5000
 migrate_on_start = true
 
+# Enrollment is opt-in and deliberately couples unknown-device onboarding to the existing
+# fail-closed admission policy. It must not be enabled with auto_register.
+[database.devices]
+admission_enabled = false
+auto_register = false
+
+[database.devices.enrollment]
+enabled = false
+code_ttl_seconds = 600
+retention_seconds = 86400
+cleanup_interval_seconds = 60
+max_pending = 1000
+
 # Persistent Transcript. Capture is off by default: with it off no archival writer, queue or task is
 # started at all, while the retention of an already-captured archive, the Admin API read and the
 # scoped purge all keep working. Retention is a property of the archive, not of capture, so turning

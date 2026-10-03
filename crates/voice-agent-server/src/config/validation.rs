@@ -139,6 +139,29 @@ fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
             "database.devices.auto_register requires admission_enabled and a non-empty auto_register_agent_key".into(),
         ));
     }
+    let enrollment = &database.devices.enrollment;
+    if enrollment.enabled {
+        if !database.enabled || !database.devices.admission_enabled || !config.api.enabled {
+            return Err(ConfigError::Validation(
+                "database.devices.enrollment.enabled requires database.enabled, database.devices.admission_enabled, and api.enabled".into(),
+            ));
+        }
+        if database.devices.auto_register {
+            return Err(ConfigError::Validation(
+                "database.devices.enrollment.enabled requires database.devices.auto_register=false"
+                    .into(),
+            ));
+        }
+        if !(60..=3_600).contains(&enrollment.code_ttl_seconds)
+            || !(enrollment.code_ttl_seconds..=604_800).contains(&enrollment.retention_seconds)
+            || !(10..=3_600).contains(&enrollment.cleanup_interval_seconds)
+            || !(1..=10_000).contains(&enrollment.max_pending)
+        {
+            return Err(ConfigError::Validation(
+                "database.devices.enrollment bounds are invalid".into(),
+            ));
+        }
+    }
     if !database.enabled {
         return Ok(());
     }

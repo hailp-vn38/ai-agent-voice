@@ -108,6 +108,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/devices", get(list_devices).post(create_device))
         .route(
+            "/device-enrollments/claim",
+            axum::routing::post(claim_enrollment),
+        )
+        .route(
             "/devices/{device_id}",
             get(get_device).patch(patch_device).delete(delete_device),
         )
@@ -125,6 +129,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
 mod agents;
 mod deletion;
 mod devices;
+mod enrollments;
 mod history;
 mod mcp_servers;
 mod provider_adapters;
@@ -136,6 +141,7 @@ mod templates;
 use agents::{create_agent, get_agent, list_agents, patch_agent};
 use deletion::{delete_agent, delete_device, delete_mcp_server, delete_provider, delete_template};
 use devices::{create_device, get_device, list_devices, patch_device};
+use enrollments::claim as claim_enrollment;
 use history::{list_history, purge_history};
 use mcp_servers::{
     create_mcp_server, get_mcp_server, list_agent_mcp_bindings, list_mcp_servers, patch_mcp_server,

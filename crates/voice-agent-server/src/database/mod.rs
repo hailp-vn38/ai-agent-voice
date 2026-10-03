@@ -8,6 +8,7 @@ use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
 pub mod admission;
+pub mod device_enrollments;
 pub mod external_mcp;
 pub mod external_mcp_policy;
 pub mod history;
@@ -23,6 +24,10 @@ pub use history::{
 pub use admission::{
     AdmittedAgent, AdmittedAssignment, AdmittedProviderBinding, DeviceAdmissionError,
     DeviceAdmissionGraph,
+};
+pub use device_enrollments::{
+    DeviceRegistration, EnrollmentClaim, EnrollmentClaimError, EnrollmentCleaner,
+    EnrollmentCreateError, EnrollmentPending, EnrollmentPurge, EnrollmentRequest,
 };
 pub use external_mcp::{AdmittedMcpServer, McpAdmissionError};
 pub use load_plan::{ProviderLoadPlan, ProviderLoadRequirement};

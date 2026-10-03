@@ -2,7 +2,7 @@
 use super::*;
 
 #[derive(Serialize, FromRow)]
-struct Device {
+pub(super) struct Device {
     id: i64,
     device_id: String,
     agent_key: String,
@@ -98,13 +98,14 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
     let template_id =
         match template_override_id(&mut tx, agent_id, body.template_key.as_deref()).await {
             Ok(value) => value,
-            Err(()) => {
+            Err(sqlx::Error::RowNotFound) => {
                 return error(
                     &request,
                     StatusCode::BAD_REQUEST,
                     "invalid_template_override",
                 );
             }
+            Err(error_value) => return sql_error(&request, &error_value),
         };
     let time = now();
     let result=sqlx::query("INSERT INTO devices (device_id,agent_id,template_id,name,description,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(&body.device_id).bind(agent_id).bind(template_id).bind(&body.name).bind(&body.description).bind(metadata).bind(time).bind(time).execute(&mut *tx).await;
@@ -112,6 +113,18 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
         Ok(v) => v.last_insert_rowid(),
         Err(error_value) => return mutation_sql_error(&request, &error_value),
     };
+    if let Some(database) = state.database.as_ref()
+        && database
+            .cancel_pending_enrollment(&mut tx, &body.device_id, time)
+            .await
+            .is_err()
+    {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
     if audit(
         &mut *tx,
         id(&request),
@@ -165,7 +178,10 @@ pub(super) async fn get_device(
         Err(error_value) => sql_error(&request, &error_value),
     }
 }
-async fn get_device_by(pool: &SqlitePool, device_id: &str) -> Result<Device, sqlx::Error> {
+pub(super) async fn get_device_by(
+    pool: &SqlitePool,
+    device_id: &str,
+) -> Result<Device, sqlx::Error> {
     sqlx::query_as("SELECT d.id,d.device_id,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.device_id=?").bind(device_id).fetch_one(pool).await
 }
 pub(super) async fn list_devices(
@@ -303,13 +319,14 @@ pub(super) async fn patch_device(
     let template_id =
         match template_override_id(&mut tx, agent_id, requested_template_key.as_deref()).await {
             Ok(value) => value,
-            Err(()) => {
+            Err(sqlx::Error::RowNotFound) => {
                 return error(
                     &request,
                     StatusCode::BAD_REQUEST,
                     "invalid_template_override",
                 );
             }
+            Err(error_value) => return sql_error(&request, &error_value),
         };
     let update = sqlx::query("UPDATE devices SET agent_id=?,template_id=?,name=?,description=?,metadata_json=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(agent_id).bind(template_id).bind(name).bind(description).bind(metadata).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await;
     let update = match update {
@@ -357,14 +374,14 @@ pub(super) async fn patch_device(
 
 /// Returns the selected Template only when it is enabled and has an enabled assignment to the
 /// resulting Device Agent.  This is duplicated at admission as a fail-closed integrity check.
-async fn template_override_id(
+pub(super) async fn template_override_id(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     agent_id: i64,
     key: Option<&str>,
-) -> Result<Option<i64>, ()> {
+) -> Result<Option<i64>, sqlx::Error> {
     let Some(key) = key else {
         return Ok(None);
     };
     sqlx::query_scalar("SELECT t.id FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id WHERE ata.agent_id=? AND t.key=? AND ata.enabled=1 AND t.enabled=1")
-        .bind(agent_id).bind(key).fetch_optional(&mut **tx).await.map_err(|_| ())?.ok_or(()).map(Some)
+        .bind(agent_id).bind(key).fetch_optional(&mut **tx).await?.ok_or(sqlx::Error::RowNotFound).map(Some)
 }

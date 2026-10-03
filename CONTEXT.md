@@ -449,6 +449,18 @@ _Avoid_: mutable display name, runtime-generated identifier, case-insensitive al
 Identity opaque và immutable do Voice Protocol Client cung cấp để provision Device, được so sánh byte-preserving tại database boundary.
 _Avoid_: normalized MAC address, display name, Client ID
 
+**Device Enrollment**:
+Bản ghi control-plane SQLite ngắn hạn liên kết một Protocol Device Identity chưa đăng ký với một Activation Code và metadata đã scrub; không phải credential, Voice Session hoặc audio state.
+_Avoid_: device authentication, session record, audio-pipeline cache
+
+**Activation Code**:
+Chuỗi 6 chữ số ASCII sinh CSPRNG, TTL-bound và chỉ được dùng tối đa một lần để Admin claim Device.
+_Avoid_: device token, password, Device ID
+
+**Enrollment Claim**:
+Transaction Admin tạo Device enabled, consume đúng một Device Enrollment và ghi audit tối thiểu; không tải provider/runtime hoặc xác nhận thiết bị đang online.
+_Avoid_: WebSocket admission, runtime warmup, online presence
+
 **External MCP Network Policy**:
 Allowlist hostname/CIDR và scheme policy kiểm soát destination outbound của External MCP sau DNS resolution.
 _Avoid_: arbitrary admin URL, hostname-only validation, redirect destination trust

@@ -96,6 +96,31 @@ async fn start(
     (format!("http://{address}"), database_url, task)
 }
 
+async fn start_enrollment() -> (String, String, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let database_url = database_url();
+    let mut app_config = config(address, database_url.clone(), true);
+    app_config.database.devices = voice_agent_server::config::DatabaseDevicesConfig {
+        admission_enabled: true,
+        enrollment: voice_agent_server::config::EnrollmentConfig {
+            enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app_config.api = voice_agent_server::config::AdminApiConfig {
+        enabled: true,
+        admin_token: "enrollment-admin".into(),
+        ..Default::default()
+    };
+    let router = bootstrap_with_providers(app_config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), database_url, task)
+}
+
 fn admission_config() -> voice_agent_server::config::DatabaseDevicesConfig {
     voice_agent_server::config::DatabaseDevicesConfig {
         admission_enabled: true,
@@ -166,6 +191,78 @@ async fn enabled_admission_rejects_unknown_and_disabled_devices_before_upgrade()
         .await
         .unwrap_err();
     assert_eq!(rejected_status(disabled), StatusCode::FORBIDDEN);
+    task.abort();
+}
+
+#[tokio::test]
+async fn ota_enrollment_claim_and_activate_create_exactly_one_admitted_device() {
+    let (base, database_url, task) = start_enrollment().await;
+    let pool = SqlitePool::connect(&database_url).await.unwrap();
+    sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) VALUES ('agent', 'Agent', 1, 1, 1)")
+        .execute(&pool).await.unwrap();
+    let client = reqwest::Client::new();
+    let ota = client
+        .get(format!("{base}/voice/ota/"))
+        .header("Device-Id", "opaque:Device-A")
+        .header("Client-Id", "firmware-A")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ota.status(), reqwest::StatusCode::OK);
+    let activation: serde_json::Value = ota.json().await.unwrap();
+    let code = activation["activation"]["code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(code.len(), 6);
+    assert!(
+        activation.get("websocket").is_none(),
+        "pending OTA must not leak a token"
+    );
+    let pending = client
+        .post(format!("{base}/voice/ota/activate"))
+        .header("Device-Id", "opaque:Device-A")
+        .header("Client-Id", "firmware-A")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pending.status(), reqwest::StatusCode::ACCEPTED);
+    let claimed = client
+        .post(format!("{base}/api/admin/device-enrollments/claim"))
+        .bearer_auth("enrollment-admin")
+        .json(&serde_json::json!({"code":code,"agent_key":"agent","name":"Loa"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(claimed.status(), reqwest::StatusCode::CREATED);
+    let active = client
+        .post(format!("{base}/voice/ota/activate"))
+        .header("Device-Id", "opaque:Device-A")
+        .header("Client-Id", "firmware-A")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(active.status(), reqwest::StatusCode::OK);
+    let registered: serde_json::Value = client
+        .get(format!("{base}/voice/ota/"))
+        .header("Device-Id", "opaque:Device-A")
+        .header("Client-Id", "firmware-A")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(registered.get("activation").is_none());
+    assert!(registered.get("websocket").is_some());
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE device_id='opaque:Device-A'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
     task.abort();
 }
 
@@ -272,6 +369,7 @@ async fn auto_registration_is_atomic_for_racing_connections_and_stores_only_safe
         admission_enabled: true,
         auto_register: true,
         auto_register_agent_key: "agent".into(),
+        ..Default::default()
     })
     .await;
     let pool = SqlitePool::connect(&database_url).await.unwrap();

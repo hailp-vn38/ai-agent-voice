@@ -56,9 +56,12 @@
               "name": "OTA - GET",
               "request": {
                 "method": "GET",
-                "header": [],
+                "header": [
+                  {"key":"Device-Id","value":"{{device_id}}","type":"text"},
+                  {"key":"Client-Id","value":"{{client_id}}","type":"text"}
+                ],
                 "url": "{{base_url}}/voice/ota/",
-                "description": "Returns server time, firmware fields, WebSocket URL and configured voice bearer token."
+                "description": "When enrollment is enabled, an unknown device gets activation (code/challenge) without websocket/token; a registered device gets websocket."
               },
               "response": []
             },
@@ -69,6 +72,21 @@
                 "header": [],
                 "url": "{{base_url}}/voice/ota/",
                 "description": "Same handler/response as GET; kept for Xiaozhi compatibility."
+              },
+              "response": []
+            },
+            {
+              "name": "OTA - activate poll",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key":"Device-Id","value":"{{device_id}}","type":"text"},
+                  {"key":"Client-Id","value":"{{client_id}}","type":"text"},
+                  {"key":"Content-Type","value":"application/json","type":"text"}
+                ],
+                "url": "{{base_url}}/voice/ota/activate",
+                "body": {"mode":"raw","raw":"{}","options":{"raw":{"language":"json"}}},
+                "description": "202 while an enrollment is pending; 200 once a Device and enabled Agent exist."
               },
               "response": []
             },
@@ -454,6 +472,18 @@
                     }
                   ]
                 }
+              },
+              "response": []
+            },
+            {
+              "name": "Claim activation code",
+              "request": {
+                "method": "POST",
+                "header": [{"key":"Content-Type","value":"application/json","type":"text"}],
+                "url": "{{base_url}}/api/admin/device-enrollments/claim",
+                "body": {"mode":"raw","raw":"{\n  \"code\": \"{{activation_code}}\",\n  \"agent_key\": \"{{agent_key}}\",\n  \"name\": \"Kitchen Device\",\n  \"template_key\": null\n}","options":{"raw":{"language":"json"}}},
+                "description": "Consumes one six-digit activation code and returns the created Device. The code is a string to preserve leading zeroes.",
+                "auth": {"type":"bearer","bearer":[{"key":"token","value":"{{admin_token}}","type":"string"}]}
               },
               "response": []
             },
@@ -1787,6 +1817,11 @@
     {
       "key": "device_revision",
       "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "activation_code",
+      "value": "000001",
       "type": "string"
     },
     {
