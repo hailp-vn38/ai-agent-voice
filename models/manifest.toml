@@ -136,7 +136,7 @@ source_sha256 = "13637f10cb361ee90d67ef0932126e8bf835b4b1ee6e038b9a769d62284456d
 sha256 = "13637f10cb361ee90d67ef0932126e8bf835b4b1ee6e038b9a769d62284456db"
 
 [[model.artifacts]]
-role = "voice"
+role = "voice_maichi"
 remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/maichi/voice.npz"
 install_path = "tts/zerotts/voices/maichi/voice.npz"
 source_sha256 = "d49e0a406d3a005e95f0a19476426973946c4a97e0087eefd638de222913ae3c"
@@ -198,9 +198,64 @@ install_path = "tts/zerotts/onnx/codec/LICENSE-Apache-2.0.txt"
 source_sha256 = "38ab08051cc3a06dd39507b77d7e8b928b563c49288eb7263339712652d41c6d"
 sha256 = "38ab08051cc3a06dd39507b77d7e8b928b563c49288eb7263339712652d41c6d"
 
-# The ONNX graph and tokenizer are pinned upstream. The voicepack is a prepared
-# deployment artifact: the Rust server deliberately never deserializes PyTorch
-# `.pt` files or invokes a converter during startup.
+
+[[model.artifacts]]
+role = "voice_baotrang"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/baotrang/voice.npz"
+install_path = "tts/zerotts/voices/baotrang/voice.npz"
+source_sha256 = "abbc5807cc4767e7c62cc59f7b7cd04b4b7e0dba176086447a0c114578cf695a"
+sha256 = "abbc5807cc4767e7c62cc59f7b7cd04b4b7e0dba176086447a0c114578cf695a"
+transform = "identity"
+
+[[model.artifacts]]
+role = "voice_giahuy"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/giahuy/voice.npz"
+install_path = "tts/zerotts/voices/giahuy/voice.npz"
+source_sha256 = "3979a8369000eaaee1130801c1cacdadddc12e8d9a4a604be7430c4bcc6df32e"
+sha256 = "3979a8369000eaaee1130801c1cacdadddc12e8d9a4a604be7430c4bcc6df32e"
+transform = "identity"
+
+[[model.artifacts]]
+role = "voice_hamy"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/hamy/voice.npz"
+install_path = "tts/zerotts/voices/hamy/voice.npz"
+source_sha256 = "a864c127386f74976154c840875f6ad615d74c377768bc6edcb75e3278f228b7"
+sha256 = "a864c127386f74976154c840875f6ad615d74c377768bc6edcb75e3278f228b7"
+transform = "identity"
+
+[[model.artifacts]]
+role = "voice_huuduc"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/huuduc/voice.npz"
+install_path = "tts/zerotts/voices/huuduc/voice.npz"
+source_sha256 = "d7a6370180263093eb9dd009661ba24b5309f0ba94ec18d8ff2323c80616a7eb"
+sha256 = "d7a6370180263093eb9dd009661ba24b5309f0ba94ec18d8ff2323c80616a7eb"
+transform = "identity"
+
+[[model.artifacts]]
+role = "voice_kimoanh"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/kimoanh/voice.npz"
+install_path = "tts/zerotts/voices/kimoanh/voice.npz"
+source_sha256 = "0aee413f25eae30123f930bd525d31a3b5a20c0803b4899305c2ff4a69466946"
+sha256 = "0aee413f25eae30123f930bd525d31a3b5a20c0803b4899305c2ff4a69466946"
+transform = "identity"
+
+[[model.artifacts]]
+role = "voice_quangminh"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/quangminh/voice.npz"
+install_path = "tts/zerotts/voices/quangminh/voice.npz"
+source_sha256 = "4d2acb18f831ade23ed2d02e7b749fa745c95e9ee305795c5ddeb75f93d35fdb"
+sha256 = "4d2acb18f831ade23ed2d02e7b749fa745c95e9ee305795c5ddeb75f93d35fdb"
+transform = "identity"
+
+[[model.artifacts]]
+role = "voice_tiendat"
+remote = "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/voices/tiendat/voice.npz"
+install_path = "tts/zerotts/voices/tiendat/voice.npz"
+source_sha256 = "a076fe7b938ad057652ffc4614678395edad90ab5cdc74546f3977636de15d0a"
+sha256 = "a076fe7b938ad057652ffc4614678395edad90ab5cdc74546f3977636de15d0a"
+transform = "identity"
+
+# All voicepacks are converted by Model Preparation before runtime loading.
 [[model]]
 identity = "kokoro_vi_contextbox"
 adapter = "kokoro_vi_onnx"
@@ -224,7 +279,112 @@ sha256 = "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f"
 
 [[model.artifacts]]
 role = "voicepack_diem_trinh"
-remote = "prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/diem_trinh.pt"
 install_path = "tts/kokoro-vi/voicepacks/diem_trinh.bin"
-source_sha256 = "fc90e370d4011fbc273a8b5a7c1e27e472579e99ab70f92163b7b193614ce35a"
+source_sha256 = "19ac1ed49f46256a8d04e434541d4836818216fe07a3a00dc0db9f3adec01fa3"
 sha256 = "fc90e370d4011fbc273a8b5a7c1e27e472579e99ab70f92163b7b193614ce35a"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_duc_an"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/duc_an.pt"
+install_path = "tts/kokoro-vi/voicepacks/duc_an.bin"
+source_sha256 = "2618daa25e964ad903419cddbe9f510054e0e480b58413e026e888cbe00f076f"
+sha256 = "8602154fc88ce5e8e3559553e448406aab3812252c38bc37d7263053693babdb"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_duc_duy"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/duc_duy.pt"
+install_path = "tts/kokoro-vi/voicepacks/duc_duy.bin"
+source_sha256 = "25573ca0caaecb9389ce63c4e2396d499ca6333a74eb75a1adbd05e1645fcdb1"
+sha256 = "f951f65d01a29cb2b8b5afe39dfb919a69ee4ae9e0461859b81946939b5d22ab"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_hung_thinh"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/hung_thinh.pt"
+install_path = "tts/kokoro-vi/voicepacks/hung_thinh.bin"
+source_sha256 = "875025a725e4ae5835add735c08b2b9729bcf414ea67f327f0343bb5dbf81f6d"
+sha256 = "818f3510ad393c99bf9324aeb3910286fbfa31dab7ac458adf77b118c24f92f0"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_mai_linh"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/mai_linh.pt"
+install_path = "tts/kokoro-vi/voicepacks/mai_linh.bin"
+source_sha256 = "d8f12f7931618f884705486663951f486001e65aa4ee48633ab086995b57292d"
+sha256 = "82ffc3e82c065028b7fdbab30b298e6db2aecb30f5d81ff2e9de15f5965e1da4"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_mai_loan"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/mai_loan.pt"
+install_path = "tts/kokoro-vi/voicepacks/mai_loan.bin"
+source_sha256 = "1c355dcea9c5018afda12e671710deb083b4e832f5a0ce04f96c54f474b65c11"
+sha256 = "8b9dd7efe0b42bfdcaf7902f9e63e588c1c0fa164046b497104c5f86f2db2c7b"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_manh_dung"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/manh_dung.pt"
+install_path = "tts/kokoro-vi/voicepacks/manh_dung.bin"
+source_sha256 = "f08d32366e78455171667112ec8f84d139f86233b5819e26fd68b35b1cf9f3f0"
+sha256 = "66214a38c70cd9520754e1e64f443c3a02f4cf16facd525140c07384a504a3be"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_my_yen"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/my_yen.pt"
+install_path = "tts/kokoro-vi/voicepacks/my_yen.bin"
+source_sha256 = "3edb2f25286b94de9053e123dc45278834925c60b5d2779dde32424a836fd1d7"
+sha256 = "d91d1c55ac4c46b8135f6abc457302290f20e691a3294cdbfaa3f720dffdfc68"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_ngoc_huyen"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/ngoc_huyen.pt"
+install_path = "tts/kokoro-vi/voicepacks/ngoc_huyen.bin"
+source_sha256 = "2ae069207dedfd62700957d84d9dec12268a0f115adca63129faf58a6196812a"
+sha256 = "f82153314a31923a1944e20f5c9e06bbb200795ae98aa8bac252cc67c8afc862"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_phat_tai"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/phat_tai.pt"
+install_path = "tts/kokoro-vi/voicepacks/phat_tai.bin"
+source_sha256 = "64c9e5dcb74d841b61f1f482494dadeef92cec0114fd2fa12aa174ffc6b8369a"
+sha256 = "6f7ff82f8e9b1aee96c69ccb6b1a30d98b57a59f3cb828a607f205541922a8a6"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_storyvert"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/storyvert.pt"
+install_path = "tts/kokoro-vi/voicepacks/storyvert.bin"
+source_sha256 = "abb72c3ab157fc31131a338e14ab7b7df32a03f1e5bddd3ad7496423abfff746"
+sha256 = "dd4ff2aa2e18a0533e43acee765994139ef26d7c9b1ebe388f72a7b59203e74f"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_thanh_dat"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/thanh_dat.pt"
+install_path = "tts/kokoro-vi/voicepacks/thanh_dat.bin"
+source_sha256 = "4d30926a819d95a19c7677feee5164314a96c8635ec6ff806398faf0395d6418"
+sha256 = "841b86d10fbdd370a6fa4e5770b2e1ee7f66c7e79460f9868672a743f20d51c0"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_thuc_trinh"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/thuc_trinh.pt"
+install_path = "tts/kokoro-vi/voicepacks/thuc_trinh.bin"
+source_sha256 = "f46502d421b61c091a4f6e99aa9eb4e4e13e5e72e4082fdfab6630f401b63f14"
+sha256 = "86966777779584ea12522ec929340822545a4e5d9535b22e4b276b4f5683aa68"
+transform = "kokoro_voicepack_v1"
+
+[[model.artifacts]]
+role = "voicepack_tuan_ngoc"
+remote = "https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/9f210d622209fcc216fe2ac6159fed2ff381cb8a/voicepacks/tuan_ngoc.pt"
+install_path = "tts/kokoro-vi/voicepacks/tuan_ngoc.bin"
+source_sha256 = "febd1b6e1e159dfe08a5f40fbd317c93f323c7f1ed12792126e7522ddec4aea5"
+sha256 = "fe5ca8277bc77641491d26031ffd9454c50b62eb627c200a09738bb1ba3ff96e"
+transform = "kokoro_voicepack_v1"

@@ -208,6 +208,7 @@ impl TtsProvider for UnavailableTts {
 }
 
 pub(crate) struct ConfiguredZeroTts {
+    voice: String,
     #[allow(dead_code)]
     contract: zerotts_onnx::ZeroTtsContract,
     delivery_mode: ZeroTtsDeliveryMode,
@@ -233,6 +234,7 @@ impl ConfiguredZeroTts {
         runtime_library: &std::path::Path,
         num_threads: i32,
         delivery_mode: ZeroTtsDeliveryMode,
+        voice: &str,
     ) -> Result<Self, TtsError> {
         let contract = zerotts_onnx::ZeroTtsContract::load_engine(
             artifacts.config,
@@ -252,6 +254,7 @@ impl ConfiguredZeroTts {
         // Readiness executes on each retained worker, avoiding temporary native engines.
         Ok(Self {
             contract,
+            voice: voice.into(),
             delivery_mode,
         })
     }
@@ -296,7 +299,7 @@ impl TtsProvider for ConfiguredZeroTts {
         if request
             .voice
             .as_deref()
-            .is_some_and(|voice| voice != "maichi")
+            .is_some_and(|voice| voice != self.voice)
             || request
                 .language
                 .as_deref()
@@ -316,7 +319,7 @@ impl TtsProvider for ConfiguredZeroTts {
         if request
             .voice
             .as_deref()
-            .is_some_and(|voice| voice != "maichi")
+            .is_some_and(|voice| voice != self.voice)
             || request
                 .language
                 .as_deref()
@@ -346,7 +349,10 @@ impl TtsProvider for ConfiguredZeroTts {
                 zerotts_onnx::ZeroTtsFullPcm::new(&self.contract)?,
             )),
         };
-        Ok(Box::new(ZeroTtsNativeWorker { delivery }))
+        Ok(Box::new(ZeroTtsNativeWorker {
+            delivery,
+            voice: self.voice.clone(),
+        }))
     }
 }
 
@@ -365,6 +371,7 @@ impl TtsStream for ZeroTtsStream {
 }
 
 struct ZeroTtsNativeWorker {
+    voice: String,
     delivery: ZeroTtsNativeDelivery,
 }
 
@@ -420,7 +427,7 @@ impl TtsWorker for ZeroTtsNativeWorker {
         if request
             .voice
             .as_deref()
-            .is_some_and(|voice| voice != "maichi")
+            .is_some_and(|voice| voice != self.voice)
             || request
                 .language
                 .as_deref()

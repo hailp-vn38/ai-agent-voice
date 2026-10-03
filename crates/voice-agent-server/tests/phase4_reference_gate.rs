@@ -142,7 +142,10 @@ fn real_tts() -> Arc<dyn TtsProvider> {
         .build(
             deployment_placeholder_tts_config(),
             &RuntimeConfig {
-                onnx: OnnxRuntimeConfig { library: runtime },
+                onnx: OnnxRuntimeConfig {
+                    library: runtime,
+                    ..Default::default()
+                },
                 ..RuntimeConfig::default()
             },
             Some(&model),

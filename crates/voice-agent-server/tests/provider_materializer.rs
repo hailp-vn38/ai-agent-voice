@@ -185,7 +185,7 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/onnxruntime/libonnxruntime.dylib");
     let builder = FactoryMaterializer::new(
-        Arc::new(cfg),
+        Arc::new(cfg.clone()),
         Arc::new(Secrets(AtomicUsize::new(0))),
         HashMap::from([("gipformer_sherpa_offline".into(), 1024)]),
         Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
@@ -201,13 +201,9 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
         secret_ref: None,
     };
     let first = builder.resource_key(&row).unwrap().unwrap();
-    row.config_json = serde_json::to_string(
-        &serde_json::from_str::<voice_agent_server::config::GipformerSherpaOfflineConfig>(
-            &row.config_json,
-        )
-        .unwrap(),
-    )
-    .unwrap();
+    row.config_json =
+        voice_agent_server::database::provider_config::validate_raw(&row.adapter, &row.config_json)
+            .unwrap();
     row.id = 2;
     row.key = "b".into();
     row.revision = 99;
@@ -215,7 +211,29 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
     let mut value: serde_json::Value = serde_json::from_str(&row.config_json).unwrap();
     value["num_threads"] = serde_json::json!(2);
     row.config_json = value.to_string();
-    assert_ne!(builder.resource_key(&row).unwrap(), Some(first));
+    assert!(
+        builder.resource_key(&row).is_err(),
+        "DB thread override must be rejected"
+    );
+    value.as_object_mut().unwrap().remove("num_threads");
+    row.config_json = value.to_string();
+    assert_eq!(builder.resource_key(&row).unwrap(), Some(first));
+    cfg.runtime
+        .onnx
+        .threads
+        .insert("gipformer_sherpa_offline".into(), 2);
+    let other = FactoryMaterializer::new(
+        Arc::new(cfg),
+        Arc::new(Secrets(AtomicUsize::new(0))),
+        HashMap::from([("gipformer_sherpa_offline".into(), 1024)]),
+        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
+    )
+    .unwrap();
+    assert_ne!(
+        other.resource_key(&row).unwrap(),
+        builder.resource_key(&row).unwrap(),
+        "server execution settings must isolate backing resources"
+    );
     row.secret_ref = Some("CREDENTIAL".into());
     assert!(builder.resource_key(&row).unwrap().is_none());
 }

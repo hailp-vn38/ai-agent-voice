@@ -170,8 +170,10 @@ impl VadInstanceConfig {
 #[serde(deny_unknown_fields)]
 pub struct SileroOnnxConfig {
     #[serde(default = "default_vad_model")]
+    #[serde(skip_serializing)]
     pub model: String,
     #[serde(default = "default_provider_threads")]
+    #[serde(skip_serializing)]
     pub num_threads: i32,
     #[serde(default = "default_min_speech_ms")]
     pub min_speech_ms: u64,
@@ -235,5 +237,22 @@ mod zerotts_delivery_tests {
         );
         let selected: ZeroTtsOnnxConfig = toml::from_str("delivery_mode = 'file'").unwrap();
         assert_eq!(selected.delivery_mode, ZeroTtsDeliveryMode::File);
+    }
+}
+
+/// Sherpa transducer modes supported by this deployment.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransducerDecodingMethod {
+    #[default]
+    GreedySearch,
+    ModifiedBeamSearch,
+}
+impl TransducerDecodingMethod {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GreedySearch => "greedy_search",
+            Self::ModifiedBeamSearch => "modified_beam_search",
+        }
     }
 }

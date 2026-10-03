@@ -1,9 +1,6 @@
 use crate::providers::{
-    capabilities::{
-        CapabilityDiscoveryMode, CapabilitySource, DiscoverySource, ModelOption,
-        ProviderCapabilities,
-    },
-    descriptor::{ConfigFieldType, ProviderConfigSchema, ProviderDescriptor, ProviderType, field},
+    capabilities::{CapabilityDiscoveryMode, DiscoverySource, ModelOption, ProviderCapabilities},
+    descriptor::{ProviderConfigSchema, ProviderDescriptor, ProviderType},
     registry::ProviderAdapterRegistration,
 };
 
@@ -12,28 +9,7 @@ const MODELS: &[ModelOption] = &[ModelOption {
     name: "Silero VAD v5",
     description: None,
 }];
-const FIELDS: &[crate::providers::descriptor::ProviderConfigField] = &[
-    field(
-        "model",
-        "Model",
-        ConfigFieldType::Select,
-        true,
-        Some(CapabilitySource::Models),
-        None,
-        None,
-        Some(128),
-    ),
-    field(
-        "num_threads",
-        "Threads",
-        ConfigFieldType::Integer,
-        true,
-        None,
-        Some(1),
-        Some(128),
-        None,
-    ),
-];
+const FIELDS: &[crate::providers::descriptor::ProviderConfigField] = &[];
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     adapter: "silero_onnx",
     provider_type: ProviderType::Vad,

@@ -169,7 +169,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             .ok_or_else(|| {
                 ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
             })?;
-        let provider = factory.build(instance, &model, max_buffered_samples)?;
+        let provider = factory.build(instance, &config.runtime, &model, max_buffered_samples)?;
         asr_runtimes.insert(
             id.clone(),
             Arc::new(

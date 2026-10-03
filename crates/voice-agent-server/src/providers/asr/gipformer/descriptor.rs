@@ -41,25 +41,10 @@ const FIELDS: &[crate::providers::descriptor::ProviderConfigField] = &[
         None,
         Some(32),
     ),
-    field(
-        "num_threads",
-        "Threads",
-        ConfigFieldType::Integer,
-        true,
-        None,
-        Some(1),
-        Some(128),
-        None,
-    ),
-    field(
+    crate::providers::descriptor::select_field(
         "decoding_method",
         "Decoding method",
-        ConfigFieldType::String,
-        true,
-        None,
-        None,
-        None,
-        Some(64),
+        &["greedy_search", "modified_beam_search"],
     ),
     field(
         "max_active_paths",

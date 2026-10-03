@@ -13,8 +13,10 @@ pub enum ZeroTtsDeliveryMode {
 #[serde(deny_unknown_fields)]
 pub struct ZeroTtsOnnxConfig {
     #[serde(default = "default_tts_model")]
+    #[serde(skip_serializing)]
     pub model: String,
     #[serde(default = "default_asr_threads")]
+    #[serde(skip_serializing)]
     pub num_threads: i32,
     #[serde(default = "default_tts_voice")]
     pub voice: String,

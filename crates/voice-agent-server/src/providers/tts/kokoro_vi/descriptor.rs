@@ -112,16 +112,6 @@ const VOICES: &[VoiceOption] = &[
 ];
 const FIELDS: &[ProviderConfigField] = &[
     field(
-        "model",
-        "Model",
-        ConfigFieldType::Select,
-        true,
-        Some(CapabilitySource::Models),
-        None,
-        None,
-        Some(128),
-    ),
-    field(
         "voice",
         "Voice",
         ConfigFieldType::Select,
@@ -140,16 +130,6 @@ const FIELDS: &[ProviderConfigField] = &[
         None,
         None,
         Some(32),
-    ),
-    field(
-        "num_threads",
-        "Threads",
-        ConfigFieldType::Integer,
-        true,
-        None,
-        Some(1),
-        Some(128),
-        None,
     ),
     field(
         "speed_percent",

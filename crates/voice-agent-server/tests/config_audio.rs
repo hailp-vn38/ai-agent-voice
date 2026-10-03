@@ -365,7 +365,7 @@ fn gipformer_config_defaults_are_qualification_defaults() {
     let config: GipformerSherpaOfflineConfig = toml::from_str("model = 'gipformer15_vi_int8'")
         .expect("Gipformer configuration should parse");
     assert_eq!(config.num_threads, 4);
-    assert_eq!(config.decoding_method, "modified_beam_search");
+    assert_eq!(config.decoding_method.as_str(), "modified_beam_search");
     assert_eq!(config.max_active_paths, 4);
 }
 

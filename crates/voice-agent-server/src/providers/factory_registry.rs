@@ -50,6 +50,7 @@ pub trait AsrFactory: Send + Sync {
     fn build(
         &self,
         config: &AsrInstanceConfig,
+        runtime: &RuntimeConfig,
         model: &ResolvedModel,
         max_buffered_samples: usize,
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError>;
@@ -182,7 +183,7 @@ impl VadFactory for SileroOnnxFactory {
         config: &'a VadInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
         match config {
-            VadInstanceConfig::SileroOnnx(options) => Ok(&options.model),
+            VadInstanceConfig::SileroOnnx(_) => Ok("silero_vad_v5"),
         }
     }
 
@@ -192,13 +193,13 @@ impl VadFactory for SileroOnnxFactory {
         runtime: &RuntimeConfig,
         model: &ResolvedModel,
     ) -> Result<Arc<dyn VadProvider>, ProviderLoadError> {
-        validate_model_adapter(model, self.adapter())?;
-        let VadInstanceConfig::SileroOnnx(options) = config;
+        validate_model_adapter(model, self.adapter(), runtime)?;
+        let VadInstanceConfig::SileroOnnx(_) = config;
         Ok(Arc::new(
             LoadedSileroVad::load(
                 required(model, "vad")?,
                 runtime.onnx.library.clone(),
-                options.num_threads,
+                runtime.onnx.threads_for(self.adapter()),
             )
             .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
         ))
@@ -268,7 +269,7 @@ impl TtsFactory for ZeroTtsOnnxFactory {
         config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
         match config {
-            TtsInstanceConfig::ZeroTtsOnnx(options) => Ok(Some(&options.model)),
+            TtsInstanceConfig::ZeroTtsOnnx(_) => Ok(Some("zerotts_default")),
             _ => Err(ProviderLoadError::Configuration(
                 "zerotts_onnx factory received another adapter config".into(),
             )),
@@ -286,17 +287,23 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                 "zerotts_onnx factory received another adapter config".into(),
             ));
         };
+        let mut config = config.clone();
+        config.model = "zerotts_default".into();
+        config.num_threads = runtime.onnx.threads_for(self.adapter());
         let model = model.ok_or_else(|| {
             ProviderLoadError::Configuration("zerotts_onnx requires a local model".into())
         })?;
-        validate_model_adapter(model, self.adapter())?;
+        validate_model_adapter(model, self.adapter(), runtime)?;
         if config.model != "zerotts_default"
-            || config.voice != "maichi"
+            || !super::tts::zerotts::descriptor::DESCRIPTOR
+                .capabilities
+                .voices
+                .is_some_and(|voices| voices.iter().any(|voice| voice.id == config.voice))
             || config.language != "vi-VN"
             || config.num_threads <= 0
         {
             return Err(ProviderLoadError::Configuration(
-                "ZeroTTS requires model `zerotts_default`, voice `maichi`, language `vi-VN`, and positive thread count"
+                "ZeroTTS requires its fixed model, a supported voice, vi-VN, and positive threads"
                     .into(),
             ));
         }
@@ -305,6 +312,8 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                 "ZeroTTS resolved model does not match configured logical model".into(),
             ));
         }
+        let voice_role = format!("voice_{}", config.voice);
+        required(model, &voice_role)?;
         for role in ZEROTTS_REQUIRED_ARTIFACT_ROLES {
             required(model, role)?;
         }
@@ -313,7 +322,7 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                 ZeroTtsArtifacts {
                     config: model.artifact("config").expect("required above"),
                     tokenizer: model.artifact("tokenizer").expect("required above"),
-                    voice: model.artifact("voice").expect("required above"),
+                    voice: model.artifact(&voice_role).expect("required above"),
                     text_encoder: model.artifact("text_encoder").expect("required above"),
                     prefix_step: model.artifact("prefix_step").expect("required above"),
                     local_frame_decode: model
@@ -328,6 +337,7 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                 &runtime.onnx.library,
                 config.num_threads,
                 config.delivery_mode,
+                &config.voice,
             )
             .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
         ))
@@ -346,7 +356,7 @@ impl TtsFactory for KokoroViOnnxFactory {
         config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
         match config {
-            TtsInstanceConfig::KokoroViOnnx(options) => Ok(Some(&options.model)),
+            TtsInstanceConfig::KokoroViOnnx(_) => Ok(Some("kokoro_vi_contextbox")),
             _ => Err(ProviderLoadError::Configuration(
                 "kokoro_vi_onnx factory received another adapter config".into(),
             )),
@@ -363,10 +373,13 @@ impl TtsFactory for KokoroViOnnxFactory {
                 "kokoro_vi_onnx factory received another adapter config".into(),
             ));
         };
+        let mut options = options.clone();
+        options.model = "kokoro_vi_contextbox".into();
+        options.num_threads = runtime.onnx.threads_for(self.adapter());
         let model = model.ok_or_else(|| {
             ProviderLoadError::Configuration("kokoro_vi_onnx requires a local model".into())
         })?;
-        validate_model_adapter(model, self.adapter())?;
+        validate_model_adapter(model, self.adapter(), runtime)?;
         if !options.valid_selection() {
             return Err(ProviderLoadError::Configuration("Kokoro Vietnamese requires its pinned model, vi-VN, a supported voice, positive threads, and speed_percent 50..=200".into()));
         }
@@ -382,7 +395,7 @@ impl TtsFactory for KokoroViOnnxFactory {
         required(model, &voicepack_role)?;
         Ok(Arc::new(
             ConfiguredKokoroVi::load(
-                options,
+                &options,
                 runtime,
                 KokoroViArtifacts {
                     model: model.artifact("model").expect("required above"),
@@ -410,7 +423,7 @@ impl TtsFactory for ChillAudioWsFactory {
     fn build(
         &self,
         config: &TtsInstanceConfig,
-        _: &RuntimeConfig,
+        runtime: &RuntimeConfig,
         model: Option<&ResolvedModel>,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
         if model.is_some() {
@@ -423,7 +436,23 @@ impl TtsFactory for ChillAudioWsFactory {
                 "chillaudio_ws factory received another adapter config".into(),
             ));
         };
-        Ok(Arc::new(ChillAudioWsProvider::new(options.clone())))
+        if !super::tts::chillaudio::descriptor::DESCRIPTOR
+            .capabilities
+            .voices
+            .is_some_and(|voices| voices.iter().any(|voice| voice.id == options.voice))
+            || options.language != "vi"
+            || runtime.chillaudio.ws_url.scheme() != "wss"
+            || runtime.chillaudio.ws_url.host_str().is_none()
+            || !(1..=120_000).contains(&runtime.chillaudio.timeout_ms)
+        {
+            return Err(ProviderLoadError::Configuration(
+                "invalid ChillAudio selection or server runtime".into(),
+            ));
+        }
+        let mut options = options.clone();
+        options.ws_url = runtime.chillaudio.ws_url.clone();
+        options.timeout_ms = runtime.chillaudio.timeout_ms;
+        Ok(Arc::new(ChillAudioWsProvider::new(options)))
     }
 }
 
@@ -432,7 +461,6 @@ const ZEROTTS_REQUIRED_ARTIFACT_ROLES: &[&str] = &[
     "tokenizer",
     "null_voice",
     "voices_index",
-    "voice",
     "text_encoder",
     "prefix_step",
     "local_frame_decode",
@@ -454,7 +482,7 @@ impl AsrFactory for ZipformerSherpaFactory {
         config: &'a AsrInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
         match config {
-            AsrInstanceConfig::ZipformerSherpa(options) => Ok(&options.model),
+            AsrInstanceConfig::ZipformerSherpa(_) => Ok("zipformer_vi_streaming"),
             _ => Err(ProviderLoadError::Configuration(
                 "zipformer_sherpa factory received another adapter config".into(),
             )),
@@ -464,10 +492,11 @@ impl AsrFactory for ZipformerSherpaFactory {
     fn build(
         &self,
         config: &AsrInstanceConfig,
+        runtime: &RuntimeConfig,
         model: &ResolvedModel,
         _: usize,
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError> {
-        validate_model_adapter(model, self.adapter())?;
+        validate_model_adapter(model, self.adapter(), runtime)?;
         let AsrInstanceConfig::ZipformerSherpa(options) = config else {
             return Err(ProviderLoadError::Configuration(
                 "zipformer_sherpa factory received another adapter config".into(),
@@ -478,9 +507,9 @@ impl AsrFactory for ZipformerSherpaFactory {
         recognizer_config.model_config.transducer.decoder = Some(required(model, "decoder")?);
         recognizer_config.model_config.transducer.joiner = Some(required(model, "joiner")?);
         recognizer_config.model_config.tokens = Some(required(model, "tokens")?);
-        recognizer_config.model_config.num_threads = options.num_threads;
+        recognizer_config.model_config.num_threads = runtime.onnx.threads_for(self.adapter());
         recognizer_config.model_config.provider = Some("cpu".into());
-        recognizer_config.decoding_method = Some(options.decoding_method.clone());
+        recognizer_config.decoding_method = Some(options.decoding_method.as_str().into());
         recognizer_config.enable_endpoint = false;
         let recognizer = Arc::new(
             OnlineRecognizer::create(&recognizer_config)
@@ -501,7 +530,11 @@ impl AsrFactory for GipformerSherpaOfflineFactory {
         config: &'a AsrInstanceConfig,
     ) -> Result<&'a str, ProviderLoadError> {
         match config {
-            AsrInstanceConfig::GipformerSherpaOffline(options) => Ok(&options.model),
+            AsrInstanceConfig::GipformerSherpaOffline(options)
+                if options.model == "gipformer15_vi_int8" =>
+            {
+                Ok("gipformer15_vi_int8")
+            }
             _ => Err(ProviderLoadError::Configuration(
                 "gipformer_sherpa_offline factory received another adapter config".into(),
             )),
@@ -511,6 +544,7 @@ impl AsrFactory for GipformerSherpaOfflineFactory {
     fn build(
         &self,
         config: &AsrInstanceConfig,
+        runtime: &RuntimeConfig,
         model: &ResolvedModel,
         max_buffered_samples: usize,
     ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError> {
@@ -519,8 +553,10 @@ impl AsrFactory for GipformerSherpaOfflineFactory {
                 "gipformer_sherpa_offline factory received another adapter config".into(),
             ));
         };
-        validate_model_adapter(model, self.adapter())?;
-        let recognizer = build_gipformer_recognizer(options, model)?;
+        validate_model_adapter(model, self.adapter(), runtime)?;
+        let mut options = options.clone();
+        options.num_threads = runtime.onnx.threads_for(self.adapter());
+        let recognizer = build_gipformer_recognizer(&options, model)?;
         drop(recognizer.create_stream());
         Ok(Arc::new(GipformerAsrProvider {
             recognizer: Arc::new(recognizer),
@@ -533,9 +569,9 @@ fn build_gipformer_recognizer(
     options: &GipformerSherpaOfflineConfig,
     model: &ResolvedModel,
 ) -> Result<OfflineRecognizer, ProviderLoadError> {
-    if options.language != "vi-VN" {
+    if options.language != "vi-VN" || !(1..=10_000).contains(&options.max_active_paths) {
         return Err(ProviderLoadError::Configuration(
-            "Gipformer requires language `vi-VN`".into(),
+            "Gipformer requires vi-VN and max_active_paths in 1..=10000".into(),
         ));
     }
     let mut config = OfflineRecognizerConfig::default();
@@ -550,7 +586,7 @@ fn build_gipformer_recognizer(
     config.model_config.model_type = Some("transducer".into());
     config.feat_config.sample_rate = 16_000;
     config.feat_config.feature_dim = 80;
-    config.decoding_method = Some(options.decoding_method.clone());
+    config.decoding_method = Some(options.decoding_method.as_str().into());
     config.max_active_paths = options.max_active_paths;
     OfflineRecognizer::create(&config).ok_or(ProviderLoadError::Initialize("Gipformer ASR"))
 }
@@ -589,8 +625,16 @@ pub fn compiled_provider_registry() -> &'static ProviderRegistry {
 fn validate_model_adapter(
     model: &ResolvedModel,
     expected: &'static str,
+    runtime: &RuntimeConfig,
 ) -> Result<(), ProviderLoadError> {
     if model.adapter() == expected {
+        if local_model_identity(expected) != Some(model.identity())
+            || !(1..=128).contains(&runtime.onnx.threads_for(expected))
+        {
+            return Err(ProviderLoadError::Configuration(
+                "local provider requires its pinned model and server threads in 1..=128".into(),
+            ));
+        }
         Ok(())
     } else {
         Err(ProviderLoadError::ModelAdapterMismatch {
@@ -632,6 +676,7 @@ mod tests {
             .unwrap()
             .build(
                 &AsrInstanceConfig::ZipformerSherpa(ZipformerSherpaConfig::default()),
+                &crate::config::RuntimeConfig::default(),
                 &model,
                 480_000,
             );
@@ -650,6 +695,7 @@ mod tests {
             .unwrap()
             .build(
                 &AsrInstanceConfig::ZipformerSherpa(ZipformerSherpaConfig::default()),
+                &crate::config::RuntimeConfig::default(),
                 &model,
                 480_000,
             );
@@ -709,6 +755,7 @@ mod tests {
                         model: "gipformer15_vi_int8".into(),
                         ..Default::default()
                     }),
+                    &crate::config::RuntimeConfig::default(),
                     &model,
                     480_000,
                 );
@@ -731,6 +778,7 @@ mod tests {
                     model: "gipformer15_vi_int8".into(),
                     ..Default::default()
                 }),
+                &crate::config::RuntimeConfig::default(),
                 &model,
                 480_000,
             );
@@ -740,4 +788,38 @@ mod tests {
             Err(crate::providers::ProviderLoadError::ModelAdapterMismatch { .. })
         ));
     }
+}
+
+/// Logical requirements come from the compiled adapter contract, never DB internal fields.
+pub fn local_model_identity(adapter: &str) -> Option<&'static str> {
+    match adapter {
+        "silero_onnx" => Some("silero_vad_v5"),
+        "zipformer_sherpa" => Some("zipformer_vi_streaming"),
+        "gipformer_sherpa_offline" => Some("gipformer15_vi_int8"),
+        "zerotts_onnx" => Some("zerotts_default"),
+        "kokoro_vi_onnx" => Some("kokoro_vi_contextbox"),
+        _ => None,
+    }
+}
+/// Internal effective configuration is distinct from canonical Admin desired configuration.
+pub(crate) fn effective_local_config(
+    adapter: &str,
+    mut value: serde_json::Value,
+    runtime: &RuntimeConfig,
+) -> Result<serde_json::Value, ProviderLoadError> {
+    let object = value.as_object_mut().ok_or_else(|| {
+        ProviderLoadError::Configuration("provider config must be an object".into())
+    })?;
+    if let Some(model) = local_model_identity(adapter) {
+        object.insert("model".into(), model.into());
+        object.insert(
+            "num_threads".into(),
+            runtime.onnx.threads_for(adapter).into(),
+        );
+    }
+    if adapter == "chillaudio_ws" {
+        object.insert("ws_url".into(), runtime.chillaudio.ws_url.as_str().into());
+        object.insert("timeout_ms".into(), runtime.chillaudio.timeout_ms.into());
+    }
+    Ok(value)
 }

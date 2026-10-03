@@ -38,6 +38,7 @@ pub(crate) use loader::{LoadedProviders, load_local, vad_timing};
 
 pub use factory_registry::{
     AsrFactory, LlmFactory, ProviderRegistry, TtsFactory, VadFactory, compiled_provider_registry,
+    local_model_identity,
 };
 pub use runtime_catalog::{
     DiagnosticRuntimeError, DiagnosticRuntimeKind, LoadedVad, ResolvedAgentRuntimes,
@@ -54,3 +55,5 @@ mod deployment_snapshot;
 pub use deployment_snapshot::deployment_provider_snapshot;
 
 pub(crate) use database_loader::materialize_provider_from_artifacts;
+
+pub(crate) use factory_registry::effective_local_config;

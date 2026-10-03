@@ -135,6 +135,12 @@ fn database_url() -> String {
 }
 
 async fn server(api_enabled: bool) -> (String, tokio::task::JoinHandle<()>) {
+    server_with_database(api_enabled, &database_url()).await
+}
+async fn server_with_database(
+    api_enabled: bool,
+    database_uri: &str,
+) -> (String, tokio::task::JoinHandle<()>) {
     let config_path =
         std::env::temp_dir().join(format!("voice-agent-admin-{}.toml", uuid::Uuid::new_v4()));
     fs::write(
@@ -157,8 +163,7 @@ admin_token = "admin-test-token"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
-            database_url(),
-            api_enabled
+            database_uri, api_enabled
         ),
     )
     .unwrap();
@@ -494,7 +499,7 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
             .bearer_auth("admin-test-token")
             .json(&serde_json::json!({
                 "key":"vad_loaded", "name":"Loaded VAD", "type":"vad", "adapter":"silero_onnx",
-                "config_json":{"model":"silero","num_threads":1}
+                "config_json":{}
             }))
             .send()
             .await
@@ -540,7 +545,7 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
             .bearer_auth("admin-test-token")
             .json(&serde_json::json!({
                 "key":"asr_other", "name":"Other ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
-                "config_json":{"model":"gipformer15_vi_int8","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}
+                "config_json":{"model":"gipformer15_vi_int8","decoding_method":"greedy_search","max_active_paths":4}
             }))
             .send()
             .await
@@ -737,7 +742,7 @@ async fn admin_p1_read_models_and_device_template_override_are_public_contracts(
             "Kids VAD",
             "vad",
             "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
+            serde_json::json!({}),
         ),
         (
             "llm_main",
@@ -850,10 +855,20 @@ async fn tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_p
     let (base, requests, task) = server_with_loaded_tts().await;
     let client = Client::new();
     let providers = format!("{base}/api/admin/providers");
-    assert_eq!(client.post(&providers).bearer_auth("admin-test-token").json(&serde_json::json!({
-        "key":"tts_loaded", "name":"Loaded TTS", "type":"tts", "adapter":"zerotts_onnx",
-        "config_json":{"model":"zerotts_default","num_threads":1,"voice":"maichi","language":"vi-VN"}
-    })).send().await.unwrap().status(), StatusCode::CREATED);
+    assert_eq!(
+        client
+            .post(&providers)
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({
+                "key":"tts_loaded", "name":"Loaded TTS", "type":"tts", "adapter":"zerotts_onnx",
+                "config_json":{"voice":"maichi","language":"vi-VN"}
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
     let response = client
         .post(format!("{providers}/tts_loaded/test/tts"))
         .bearer_auth("admin-test-token")
@@ -889,7 +904,7 @@ async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
     let providers = format!("{base}/api/admin/providers");
     assert_eq!(client.post(&providers).bearer_auth("admin-test-token").json(&serde_json::json!({
         "key":"asr_loaded", "name":"Loaded ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
-        "config_json":{"model":"gipformer15_vi_int8","language":"vi-VN","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}
+        "config_json":{"model":"gipformer15_vi_int8","language":"vi-VN","decoding_method":"greedy_search","max_active_paths":4}
     })).send().await.unwrap().status(), StatusCode::CREATED);
     let url = format!("{providers}/asr_loaded/test/asr");
 
@@ -1165,7 +1180,7 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
             .iter()
             .any(|field| field["key"] == "language")
     );
-    assert_eq!(descriptor["discovery"]["voices"], "bootstrap_and_runtime");
+    assert_eq!(descriptor["discovery"]["voices"], "static");
     assert_eq!(
         descriptor["config_schema"]["fields"]
             .as_array()
@@ -1185,7 +1200,14 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
         .unwrap();
     assert_eq!(discovered.status(), StatusCode::OK);
     let discovered = discovered.json::<serde_json::Value>().await.unwrap();
-    assert_eq!(discovered["voices"][0]["id"], "maichi");
+    assert_eq!(discovered["voices"].as_array().unwrap().len(), 8);
+    assert!(
+        discovered["voices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|voice| voice["id"] == "maichi")
+    );
     assert_eq!(discovered["languages"][0]["id"], "vi-VN");
 
     let invalid = client
@@ -1219,9 +1241,7 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
             "type": "tts",
             "adapter": "zerotts_onnx",
             "config_json": {
-                "model": "zerotts_default",
-                "voice": "maichi",
-                "num_threads": 1
+                "voice": "maichi"
             }
         }))
         .send()
@@ -1231,7 +1251,7 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
     let legacy = legacy.json::<serde_json::Value>().await.unwrap();
     assert_eq!(
         legacy["config_json"],
-        "{\"model\":\"zerotts_default\",\"num_threads\":1,\"voice\":\"maichi\",\"language\":\"vi-VN\",\"preload\":false,\"delivery_mode\":\"stream\"}"
+        "{\"voice\":\"maichi\",\"language\":\"vi-VN\",\"preload\":false,\"delivery_mode\":\"stream\"}"
     );
     let mut canonical: serde_json::Value =
         serde_json::from_str(legacy["config_json"].as_str().unwrap()).unwrap();
@@ -1252,10 +1272,8 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
             "type": "tts",
             "adapter": "zerotts_onnx",
             "config_json": {
-                "model": "zerotts_default",
                 "voice": "maichi",
-                "language": "en-US",
-                "num_threads": 1
+                "language": "en-US"
             }
         }))
         .send()
@@ -1276,7 +1294,6 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
             "type": "tts",
             "adapter": "chillaudio_ws",
             "config_json": {
-                "ws_url": "wss://tts.example.test/socket",
                 "voice": "BV421_vivn_streaming"
             }
         }))
@@ -1343,23 +1360,18 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
     assert_eq!(llm["requires_restart"], true);
 
     for (key, kind, adapter, config_json) in [
-        (
-            "vad_main",
-            "vad",
-            "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
-        ),
+        ("vad_main", "vad", "silero_onnx", serde_json::json!({})),
         (
             "asr_main",
             "asr",
             "zipformer_sherpa",
-            serde_json::json!({"model":"zipformer","num_threads":1,"decoding_method":"greedy_search"}),
+            serde_json::json!({"decoding_method":"greedy_search"}),
         ),
         (
             "tts_main",
             "tts",
             "zerotts_onnx",
-            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
+            serde_json::json!({"voice":"maichi"}),
         ),
     ] {
         assert_eq!(
@@ -1455,17 +1467,12 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
     );
 
     for (key, kind, adapter, config_json) in [
-        (
-            "vad_main",
-            "vad",
-            "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
-        ),
+        ("vad_main", "vad", "silero_onnx", serde_json::json!({})),
         (
             "asr_main",
             "asr",
             "zipformer_sherpa",
-            serde_json::json!({"model":"zipformer","num_threads":1,"decoding_method":"greedy_search"}),
+            serde_json::json!({"decoding_method":"greedy_search"}),
         ),
         (
             "llm_main",
@@ -1477,7 +1484,7 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
             "tts_main",
             "tts",
             "zerotts_onnx",
-            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
+            serde_json::json!({"voice":"maichi"}),
         ),
     ] {
         assert_eq!(
@@ -2065,9 +2072,210 @@ async fn kokoro_desired_configuration_accepts_catalog_selection_and_rejects_fact
     ] {
         let response = client.post(format!("{base}/api/admin/providers"))
             .bearer_auth("admin-test-token")
-            .json(&serde_json::json!({"key":key,"name":key,"type":"tts","adapter":"kokoro_vi_onnx","config_json":{"model":"kokoro_vi_contextbox","voice":voice,"num_threads":1,"language":"vi-VN","speed_percent":100}}))
+            .json(&serde_json::json!({"key":key,"name":key,"type":"tts","adapter":"kokoro_vi_onnx","config_json":{"voice":voice,"language":"vi-VN","speed_percent":100}}))
             .send().await.unwrap();
         assert_eq!(response.status(), status);
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn provider_mutations_reject_server_owned_configuration() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    for (index, (kind, adapter, valid, overrides)) in [
+        (
+            "vad",
+            "silero_onnx",
+            serde_json::json!({}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("silero_vad_v5")),
+            ],
+        ),
+        (
+            "asr",
+            "zipformer_sherpa",
+            serde_json::json!({"decoding_method":"greedy_search"}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("zipformer_vi_streaming")),
+                ("decoding_method", serde_json::json!("arbitrary")),
+            ],
+        ),
+        (
+            "asr",
+            "gipformer_sherpa_offline",
+            serde_json::json!({"model":"gipformer15_vi_int8"}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("decoding_method", serde_json::json!("arbitrary")),
+                ("max_active_paths", serde_json::json!(10001)),
+            ],
+        ),
+        (
+            "tts",
+            "zerotts_onnx",
+            serde_json::json!({"voice":"maichi"}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("zerotts_default")),
+                ("voice", serde_json::json!("unknown")),
+            ],
+        ),
+        (
+            "tts",
+            "kokoro_vi_onnx",
+            serde_json::json!({"voice":"diem_trinh"}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("kokoro_vi_contextbox")),
+            ],
+        ),
+        (
+            "tts",
+            "chillaudio_ws",
+            serde_json::json!({"voice":"BV421_vivn_streaming"}),
+            vec![
+                ("ws_url", serde_json::json!("wss://attacker.example/socket")),
+                ("timeout_ms", serde_json::json!(1)),
+                ("voice", serde_json::json!("unknown")),
+            ],
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let key = format!("protected_{index}");
+        let response = client.post(format!("{base}/api/admin/providers"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"key":key,"name":"Valid","type":kind,"adapter":adapter,"config_json":valid}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED, "{adapter}");
+        for (field, value) in overrides {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            for update in [false, true] {
+                let request = if update {
+                    client
+                        .patch(format!("{base}/api/admin/providers/{key}"))
+                        .header("if-match", "\"1\"")
+                        .json(&serde_json::json!({"config_json":invalid}))
+                } else {
+                    client.post(format!("{base}/api/admin/providers"))
+                        .json(&serde_json::json!({"key":"invalid_override","name":"Invalid","type":kind,"adapter":adapter,"config_json":invalid}))
+                };
+                let response = request
+                    .bearer_auth("admin-test-token")
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::BAD_REQUEST,
+                    "{adapter}.{field}, update={update}"
+                );
+                assert_eq!(
+                    response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+                    "provider_config_invalid"
+                );
+            }
+        }
+        let row = client
+            .get(format!("{base}/api/admin/providers/{key}"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        assert_eq!(row["revision"], 1);
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn legacy_provider_runtime_fields_are_removed_by_migration_before_admin_reads() {
+    use voice_agent_server::config::DatabaseConfig;
+    let database_uri = database_url();
+    let config = DatabaseConfig {
+        url: database_uri.clone(),
+        ..Default::default()
+    };
+    let database = Database::connect(&config).await.unwrap();
+    let cases = [
+        (
+            "legacy_vad",
+            "vad",
+            "silero_onnx",
+            serde_json::json!({"model":"silero_vad_v5","num_threads":128}),
+            serde_json::json!({}),
+        ),
+        (
+            "legacy_asr",
+            "asr",
+            "zipformer_sherpa",
+            serde_json::json!({"model":"zipformer_vi_streaming","num_threads":128,"decoding_method":"greedy_search"}),
+            serde_json::json!({"decoding_method":"greedy_search"}),
+        ),
+        (
+            "legacy_gip",
+            "asr",
+            "gipformer_sherpa_offline",
+            serde_json::json!({"model":"gipformer15_vi_int8","num_threads":128}),
+            serde_json::json!({"model":"gipformer15_vi_int8"}),
+        ),
+        (
+            "legacy_zero",
+            "tts",
+            "zerotts_onnx",
+            serde_json::json!({"model":"zerotts_default","num_threads":128,"voice":"maichi"}),
+            serde_json::json!({"voice":"maichi"}),
+        ),
+        (
+            "legacy_kokoro",
+            "tts",
+            "kokoro_vi_onnx",
+            serde_json::json!({"model":"kokoro_vi_contextbox","num_threads":128,"voice":"duc_an"}),
+            serde_json::json!({"voice":"duc_an"}),
+        ),
+        (
+            "legacy_chill",
+            "tts",
+            "chillaudio_ws",
+            serde_json::json!({"ws_url":"wss://attacker.example/ws","timeout_ms":1,"voice":"BV421_vivn_streaming"}),
+            serde_json::json!({"voice":"BV421_vivn_streaming"}),
+        ),
+    ];
+    for (key, kind, adapter, legacy, _) in &cases {
+        sqlx::query("INSERT INTO providers (key,name,type,adapter,config_json,revision,created_at,updated_at) VALUES (?,?,?,?,?,1,1,1)")
+            .bind(*key).bind(*key).bind(*kind).bind(*adapter).bind(legacy.to_string())
+            .execute(database.pool()).await.unwrap();
+    }
+    // Fixture represents the previous version: migration 0006 changes data only.
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 6")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    database.pool().close().await;
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let client = Client::new();
+    for (key, _, _, _, expected) in &cases {
+        let response = client
+            .get(format!("{base}/api/admin/providers/{key}"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let row = response.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(row["config_json"].as_str().unwrap())
+                .unwrap(),
+            *expected
+        );
+        assert_eq!(row["revision"], 2);
     }
     task.abort();
 }

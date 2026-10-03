@@ -310,7 +310,7 @@ pub(super) fn load_voice(path: &Path, config: &Config) -> Result<Array3<f32>, Tt
         || voice.iter().any(|sample| !sample.is_finite())
     {
         return Err(TtsError::IncompatibleContract(
-            "maichi voice latent shape does not match the pinned model".into(),
+            "selected voice latent shape does not match the pinned model".into(),
         ));
     }
     Ok(voice)

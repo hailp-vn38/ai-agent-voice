@@ -16,25 +16,25 @@ llm = "remote"
 tts = "remote"
 [providers.vad.instances.primary]
 adapter = "silero_onnx"
-model = "test-vad"
+model = "silero_vad_v5"
 [providers.vad.instances.same_model]
 adapter = "silero_onnx"
-model = "test-vad"
+model = "silero_vad_v5"
 [providers.vad.instances.optional]
 adapter = "silero_onnx"
-model = "optional-vad"
+model = "silero_vad_v5"
 "#,
     )
     .unwrap()
 }
 
-fn row(key: &str, model: &str) -> DesiredProvider {
+fn row(key: &str) -> DesiredProvider {
     DesiredProvider {
         id: 1,
         key: key.into(),
         kind: "vad".into(),
         adapter: "silero_onnx".into(),
-        config_json: serde_json::json!({"model":model,"num_threads":1}).to_string(),
+        config_json: "{}".into(),
         secret_ref: None,
         revision: 1,
     }
@@ -42,25 +42,21 @@ fn row(key: &str, model: &str) -> DesiredProvider {
 
 #[test]
 fn startup_plan_merges_shared_models_and_skips_unbound_database_providers() {
-    let rows = vec![
-        row("db_required", "test-vad"),
-        row("db_optional", "another-vad"),
-        row("unbound", "unused-model"),
-    ];
+    let rows = vec![row("db_required"), row("db_optional"), row("unbound")];
     let load_plan = ProviderLoadPlan::new(["db_required".into()], ["db_optional".into()]);
     let plan = model_plan(&config(), &rows, &load_plan).unwrap();
-    assert_eq!(plan.len(), 3);
-    let shared = &plan[&("silero_onnx".into(), "test-vad".into())];
+    assert_eq!(plan.len(), 1);
+    let shared = &plan[&("silero_onnx".into(), "silero_vad_v5".into())];
     assert!(shared.required);
     assert!(shared.immutable);
-    assert!(!plan[&("silero_onnx".into(), "another-vad".into())].required);
+    assert!(!plan.contains_key(&("silero_onnx".into(), "another-vad".into())));
     assert!(!plan.contains_key(&("silero_onnx".into(), "unused-model".into())));
 }
 
 #[test]
 fn required_database_configuration_is_validated_before_acquisition() {
-    let mut invalid = row("broken", "test-vad");
-    invalid.config_json = r#"{"model":"test-vad","num_threads":1,"token":"secret"}"#.into();
+    let mut invalid = row("broken");
+    invalid.config_json = r#"{"model":"silero_vad_v5","num_threads":1,"token":"secret"}"#.into();
     let required = ProviderLoadPlan::new(["broken".into()], []);
     assert!(matches!(
         model_plan(&config(), &[invalid.clone()], &required),
@@ -79,7 +75,7 @@ fn fixture() -> (AppConfig, PathBuf) {
     config.deployment.model_manifest = root.join("manifest.toml");
     config.runtime.onnx.library = root.join("uninstalled-onnx-library");
     config.deployment.model_acknowledgements = vec![ModelAcknowledgement {
-        model: "test-vad".into(),
+        model: "silero_vad_v5".into(),
         revision: "test".into(),
         license: "MIT".into(),
     }];
@@ -92,7 +88,7 @@ fn fixture() -> (AppConfig, PathBuf) {
         format!(
             r#"
 [[model]]
-identity = "test-vad"
+identity = "silero_vad_v5"
 adapter = "silero_onnx"
 source = "fixture"
 revision = "test"
@@ -190,14 +186,14 @@ fn startup_repairs_corrupt_immutable_copy_but_hot_preparation_refuses_to_replace
     let installed = config.deployment.models.root.join("vad/model.onnx");
     fs::create_dir_all(installed.parent().unwrap()).unwrap();
     fs::write(&installed, b"fixture-model").unwrap();
-    let rows = [row("db_required", "test-vad")];
+    let rows = [row("db_required")];
     let plan = ProviderLoadPlan::new(["db_required".into()], []);
     prepare_startup(&config, &rows, &plan).unwrap();
     let pinned = crate::models::prepare_immutable(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
         true,
-        "test-vad",
+        "silero_vad_v5",
         "silero_onnx",
         &config.deployment,
     )
@@ -209,7 +205,7 @@ fn startup_repairs_corrupt_immutable_copy_but_hot_preparation_refuses_to_replace
             &config.deployment.model_manifest,
             &config.deployment.models.root,
             true,
-            "test-vad",
+            "silero_vad_v5",
             "silero_onnx",
             &config.deployment,
         ),

@@ -1518,26 +1518,18 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     let auth = "managed-test-token";
     let providers = format!("{base}/api/admin/providers");
     for (kind, adapter, config_json) in [
-        (
-            "vad",
-            "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
-        ),
+        ("vad", "silero_onnx", serde_json::json!({})),
         (
             "asr",
             "gipformer_sherpa_offline",
-            serde_json::json!({"model":"gipformer15_vi_int8","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}),
+            serde_json::json!({"model":"gipformer15_vi_int8","decoding_method":"greedy_search","max_active_paths":4}),
         ),
         (
             "llm",
             "openai",
             serde_json::json!({"base_url":"https://example.test/v1","model":"version-one"}),
         ),
-        (
-            "tts",
-            "zerotts_onnx",
-            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
-        ),
+        ("tts", "zerotts_onnx", serde_json::json!({"voice":"maichi"})),
     ] {
         let response = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"key":format!("managed_{kind}"),"name":kind,"type":kind,"adapter":adapter,"config_json":config_json})).send().await.unwrap();
         assert_eq!(

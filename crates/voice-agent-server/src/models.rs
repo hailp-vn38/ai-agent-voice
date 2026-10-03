@@ -1,4 +1,4 @@
-//! Startup-only Model Preparation for pinned, provider-facing artifacts.
+//! Pinned artifact preparation before provider runtime construction.
 
 use std::{
     collections::BTreeMap,
@@ -14,6 +14,7 @@ use thiserror::Error;
 use crate::config::{DeploymentConfig, ModelAcknowledgement};
 
 mod acquisition;
+mod kokoro;
 mod startup;
 
 pub use acquisition::HttpModelAcquirer;
@@ -589,6 +590,7 @@ fn transform(source: &Path, destination: &Path, declared: &str) -> Result<(), Mo
     let input = fs::read(source)?;
     let output = match declared {
         "sentencepiece_tokens_v1" => sentencepiece_tokens(&input)?,
+        "kokoro_voicepack_v1" => kokoro::voicepack_v1(&input)?,
         declared if declared.starts_with("strip_prefix:") => {
             let length = declared["strip_prefix:".len()..]
                 .parse::<usize>()

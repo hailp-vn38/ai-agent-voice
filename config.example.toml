@@ -100,8 +100,6 @@ advertise_via_mcp = false
 
 [providers.vad.instances.silero_default]
 adapter = "silero_onnx"
-model = "silero_vad_v5"
-num_threads = 1
 min_speech_ms = 180
 end_silence_ms = 600
 pre_roll_ms = 300
@@ -110,8 +108,6 @@ exit_threshold = 0.35
 
 [providers.asr.instances.zipformer_vi]
 adapter = "zipformer_sherpa"
-model = "zipformer_vi_streaming"
-num_threads = 2
 decoding_method = "greedy_search"
 
 # Gipformer is an offline ASR candidate: PCM is buffered during capture and
@@ -120,7 +116,6 @@ decoding_method = "greedy_search"
 [providers.asr.instances.gipformer_vi]
 adapter = "gipformer_sherpa_offline"
 model = "gipformer15_vi_int8"
-num_threads = 4
 decoding_method = "modified_beam_search"
 max_active_paths = 4
 
@@ -132,8 +127,6 @@ model = "model-name"
 
 [providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"
-model = "zerotts_default"
-num_threads = 2
 voice = "maichi"
 delivery_mode = "stream"
 
@@ -143,14 +136,11 @@ delivery_mode = "stream"
 adapter = "chillaudio_ws"
 token = "set-deployment-token-here"
 # voice = "BV421_vivn_streaming"
-# timeout_ms = 12000
 
-# Local Vietnamese Kokoro. Install the pinned model, its prepared voicepack,
-# and the deployment-owned G2P sidecar before selecting this instance.
+# Local Vietnamese Kokoro. Model Preparation acquires and converts all pinned
+# voicepacks. Install the deployment-owned G2P sidecar before selecting it.
 # [providers.tts.instances.kokoro_vi]
 # adapter = "kokoro_vi_onnx"
-# model = "kokoro_vi_contextbox"
-# num_threads = 1
 # voice = "diem_trinh"
 # language = "vi-VN"
 # speed_percent = 100
@@ -195,12 +185,20 @@ offline = false
 
 # Startup verifies/downloads local models before constructing provider runtimes.
 # Existing verified artifacts are reused without contacting the source.
-# Deployment-prepared artifacts need a checksum-matching binary at an HTTP(S) URL:
-# [deployment.models.sources]
-# "prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin" = "https://your-artifact-host/diem_trinh.bin"
-
 [runtime.onnx]
 library = "runtime/onnxruntime/libonnxruntime.dylib"
+
+# Server-owned execution settings. Admin provider JSON cannot override these.
+[runtime.onnx.threads]
+silero_onnx = 1
+zipformer_sherpa = 2
+gipformer_sherpa_offline = 4
+zerotts_onnx = 2
+kokoro_vi_onnx = 2
+
+[runtime.chillaudio]
+# ws_url = "wss://your-deployment-chillaudio-endpoint.example/ws"
+timeout_ms = 12000
 
 [[deployment.model_acknowledgements]]
 model = "silero_vad_v5"

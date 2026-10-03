@@ -1,7 +1,7 @@
 //! Native ONNX adapter for the ContextBox Vietnamese Kokoro model.
 //!
 //! The provider receives already-prepared `KOVI_VOICEPACK_V1` assets.  It never
-//! imports PyTorch or executes an asset converter in the server process.
+//! imports PyTorch or converts assets during synthesis; Model Preparation owns conversion.
 
 pub(crate) mod config;
 pub(crate) mod descriptor;
@@ -136,10 +136,12 @@ mod real_model_tests {
             &RuntimeConfig {
                 onnx: OnnxRuntimeConfig {
                     library: runtime_root.join("onnxruntime/libonnxruntime.dylib"),
+                    ..Default::default()
                 },
                 kokoro_vi: KokoroViRuntimeConfig {
                     g2p_executable: runtime_root.join("kokoro-vi/kokoro_vi_g2p"),
                 },
+                ..Default::default()
             },
             KokoroViArtifacts {
                 model: &root.join("kokoro_vi.onnx"),

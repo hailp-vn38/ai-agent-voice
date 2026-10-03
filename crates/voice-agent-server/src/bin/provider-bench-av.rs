@@ -180,6 +180,7 @@ fn run_asr(
     )?;
     let provider = factory.build(
         instance,
+        &config.runtime,
         &model,
         usize::try_from(config.audio.max_utterance_ms)? * 16,
     )?;

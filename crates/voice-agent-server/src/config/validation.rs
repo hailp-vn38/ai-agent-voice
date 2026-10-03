@@ -450,6 +450,23 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             )));
         }
     }
+    if config
+        .runtime
+        .onnx
+        .threads
+        .iter()
+        .any(|(adapter, threads)| {
+            crate::providers::local_model_identity(adapter).is_none()
+                || !(1..=128).contains(threads)
+        })
+        || config.runtime.chillaudio.ws_url.scheme() != "wss"
+        || config.runtime.chillaudio.ws_url.host_str().is_none()
+        || !(1..=120_000).contains(&config.runtime.chillaudio.timeout_ms)
+    {
+        return Err(ConfigError::Validation(
+            "invalid server-owned provider runtime configuration".into(),
+        ));
+    }
     for (id, instance) in &config.providers.asr.instances {
         validate_instance_id(id)?;
         registry.asr_factory(instance.adapter()).map_err(|_| {
@@ -460,9 +477,7 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
         })?;
         match instance {
             crate::config::AsrInstanceConfig::ZipformerSherpa(asr)
-                if asr.num_threads <= 0
-                    || asr.decoding_method.trim().is_empty()
-                    || asr.model.trim().is_empty() =>
+                if asr.num_threads <= 0 || asr.model.trim().is_empty() =>
             {
                 return Err(ConfigError::Validation(format!(
                     "ASR instance `{id}` has invalid runtime options or model identity"

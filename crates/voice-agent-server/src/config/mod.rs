@@ -621,6 +621,8 @@ pub struct RuntimeConfig {
     pub onnx: OnnxRuntimeConfig,
     #[serde(default)]
     pub kokoro_vi: KokoroViRuntimeConfig,
+    #[serde(default)]
+    pub chillaudio: ChillAudioRuntimeConfig,
 }
 
 /// Deployment-owned executable for Vietnamese grapheme-to-phoneme conversion.
@@ -645,12 +647,15 @@ impl Default for KokoroViRuntimeConfig {
 pub struct OnnxRuntimeConfig {
     #[serde(default = "default_onnx_runtime_library")]
     pub library: std::path::PathBuf,
+    #[serde(default = "default_runtime_threads")]
+    pub threads: std::collections::BTreeMap<String, i32>,
 }
 
 impl Default for OnnxRuntimeConfig {
     fn default() -> Self {
         Self {
             library: default_onnx_runtime_library(),
+            threads: default_runtime_threads(),
         }
     }
 }
@@ -1184,4 +1189,49 @@ pub struct ProviderRuntimeConfig {
 
 fn default_provider_startup_timeout_ms() -> u64 {
     60_000
+}
+
+fn default_runtime_threads() -> std::collections::BTreeMap<String, i32> {
+    [
+        ("silero_onnx", 1),
+        ("zipformer_sherpa", 2),
+        ("gipformer_sherpa_offline", 4),
+        ("zerotts_onnx", 2),
+        ("kokoro_vi_onnx", 2),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.into(), value))
+    .collect()
+}
+impl OnnxRuntimeConfig {
+    pub fn threads_for(&self, adapter: &str) -> i32 {
+        self.threads
+            .get(adapter)
+            .copied()
+            .unwrap_or_else(|| default_runtime_threads().get(adapter).copied().unwrap_or(1))
+    }
+}
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChillAudioRuntimeConfig {
+    #[serde(default = "default_chillaudio_ws_url")]
+    pub ws_url: url::Url,
+    #[serde(default = "default_chillaudio_timeout_ms")]
+    pub timeout_ms: u64,
+}
+impl Default for ChillAudioRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            ws_url: default_chillaudio_ws_url(),
+            timeout_ms: default_chillaudio_timeout_ms(),
+        }
+    }
+}
+impl std::fmt::Debug for ChillAudioRuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChillAudioRuntimeConfig")
+            .field("ws_url", &"[REDACTED]")
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
 }

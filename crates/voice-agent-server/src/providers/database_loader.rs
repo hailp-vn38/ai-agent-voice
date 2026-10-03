@@ -302,7 +302,12 @@ fn materialize_one(
     quota: Option<ProviderRuntimeAdmission>,
     prepared_model: Option<&crate::models::ResolvedModel>,
 ) -> Result<(), DatabaseRuntimeFailure> {
-    let mut value = desired_value(row)?;
+    let mut value = super::factory_registry::effective_local_config(
+        &row.adapter,
+        desired_value(row)?,
+        &config.runtime,
+    )
+    .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
     let secret = match &row.secret_ref {
         Some(reference) => Some(
             secrets
@@ -375,7 +380,9 @@ fn materialize_one(
                 .map_err(|_| ())?
                 .checked_mul(16)
                 .ok_or(())?;
-            let provider = factory.build(&instance, &model, samples).map_err(|_| ())?;
+            let provider = factory
+                .build(&instance, &config.runtime, &model, samples)
+                .map_err(|_| ())?;
             loaded.runtimes.asr.insert(
                 row.key.clone(),
                 Arc::new(

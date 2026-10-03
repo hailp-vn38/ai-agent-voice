@@ -506,3 +506,256 @@ fn immutable_artifact_tree_preserves_old_resources_after_mutable_alias_changes()
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+fn kokoro_tensor_archive(metadata: &[u8]) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, bytes) in [
+        ("voice/data.pkl", metadata.to_vec()),
+        ("voice/byteorder", b"little".to_vec()),
+        ("voice/data/0", vec![0; 510 * 256 * 4]),
+    ] {
+        archive.start_file(name, options).unwrap();
+        archive.write_all(&bytes).unwrap();
+    }
+    archive.finish().unwrap().into_inner()
+}
+
+#[test]
+fn kokoro_voicepack_is_transformed_deterministically_before_atomic_install() {
+    let root = temp_dir("kokoro-transform");
+    let source = kokoro_tensor_archive(include_bytes!("../src/models/kokoro_tensor_v1.pkl"));
+    // Independent specification: magic, LE shape 510 x 1 x 256, then LE float32 storage.
+    let mut output = b"KOVI_VOICEPACK_V1".to_vec();
+    output.extend_from_slice(&510u32.to_le_bytes());
+    output.extend_from_slice(&1u32.to_le_bytes());
+    output.extend_from_slice(&256u32.to_le_bytes());
+    output.resize(output.len() + 510 * 256 * 4, 0);
+    let manifest_path = manifest(&root, "voice.bin", &source, &output, "kokoro_voicepack_v1");
+    let preparation = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path,
+            root: root.clone(),
+            offline: false,
+        },
+        FixtureAcquirer(source),
+    );
+    let model = preparation.prepare("test-vad", "silero_onnx").unwrap();
+    assert_eq!(fs::read(model.artifact("vad").unwrap()).unwrap(), output);
+    // Reuse must bypass both network and conversion after verification.
+    let verified = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: root.join("manifest.toml"),
+            root: root.clone(),
+            offline: true,
+        },
+        FixtureAcquirer(b"must not be used".to_vec()),
+    )
+    .prepare("test-vad", "silero_onnx")
+    .unwrap();
+    assert_eq!(fs::read(verified.artifact("vad").unwrap()).unwrap(), output);
+    fs::remove_file(model.artifact("vad").unwrap()).unwrap();
+    let again = preparation.prepare("test-vad", "silero_onnx").unwrap();
+    assert_eq!(fs::read(again.artifact("vad").unwrap()).unwrap(), output);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn kokoro_transform_rejects_unrecognized_pickle_without_installing_or_executing_it() {
+    let root = temp_dir("kokoro-invalid-transform");
+    let source = kokoro_tensor_archive(b"unrecognized pickle payload");
+    let path = manifest(
+        &root,
+        "voice.bin",
+        &source,
+        b"expected",
+        "kokoro_voicepack_v1",
+    );
+    fs::write(root.join("voice.bin"), b"previous artifact").unwrap();
+    let result = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: path,
+            root: root.clone(),
+            offline: false,
+        },
+        FixtureAcquirer(source),
+    )
+    .prepare("test-vad", "silero_onnx");
+    assert!(matches!(result, Err(ModelError::UnsupportedTransform(_))));
+    assert_eq!(
+        fs::read(root.join("voice.bin")).unwrap(),
+        b"previous artifact"
+    );
+    assert!(!root.join("voice.bin.part").exists());
+    assert!(!root.join("voice.bin.transform").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "requires pinned voices and installed base artifacts; set KOKORO_PREPARATION_FIXTURE_DIR and PROVIDER_QUALIFICATION_CONFIG"]
+fn pinned_kokoro_sources_prepare_every_voice_with_verified_output_checksums() {
+    struct LocalVoices(PathBuf);
+    impl ModelAcquirer for LocalVoices {
+        fn acquire(&self, remote: &str, destination: &std::path::Path) -> Result<(), ModelError> {
+            let filename = remote.rsplit('/').next().unwrap();
+            fs::copy(self.0.join("voicepacks").join(filename), destination)?;
+            Ok(())
+        }
+    }
+    let source_root = PathBuf::from(
+        std::env::var("KOKORO_PREPARATION_FIXTURE_DIR").expect("pinned source fixture directory"),
+    );
+    let root = temp_dir("real-kokoro-preparation");
+    let manifest: toml::Value =
+        toml::from_str(include_str!("../../../models/manifest.toml")).unwrap();
+    let model = manifest["model"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["identity"].as_str() == Some("kokoro_vi_contextbox"))
+        .unwrap()
+        .clone();
+    let artifacts = model["artifacts"].as_array().unwrap().clone();
+    assert_eq!(
+        artifacts
+            .iter()
+            .filter(|artifact| artifact["role"].as_str().unwrap().starts_with("voicepack_"))
+            .count(),
+        14
+    );
+    let config_path = std::env::var("PROVIDER_QUALIFICATION_CONFIG").expect("deployment config");
+    let mut config =
+        voice_agent_server::config::AppConfig::parse_and_resolve(&config_path).unwrap();
+    let base = std::path::Path::new(&config_path).parent().unwrap();
+    for value in [
+        &mut config.deployment.models.root,
+        &mut config.runtime.onnx.library,
+        &mut config.runtime.kokoro_vi.g2p_executable,
+    ] {
+        if value.is_relative() {
+            *value = base.join(&*value);
+        }
+    }
+    for artifact in &artifacts {
+        if artifact["role"].as_str().unwrap().starts_with("voicepack_") {
+            continue;
+        }
+        let relative = artifact["install_path"].as_str().unwrap();
+        let destination = root.join(relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::hard_link(config.deployment.models.root.join(relative), destination).unwrap();
+    }
+    let manifest_path = root.join("manifest.toml");
+    let table = toml::Value::Table(
+        [("model".into(), toml::Value::Array(vec![model]))]
+            .into_iter()
+            .collect(),
+    );
+    fs::write(&manifest_path, toml::to_string(&table).unwrap()).unwrap();
+    let preparation = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path,
+            root: root.clone(),
+            offline: false,
+        },
+        LocalVoices(source_root),
+    );
+    let resolved = preparation
+        .prepare("kokoro_vi_contextbox", "kokoro_vi_onnx")
+        .unwrap();
+    let factory = voice_agent_server::providers::compiled_provider_registry()
+        .tts_factory("kokoro_vi_onnx")
+        .unwrap();
+    for artifact in artifacts {
+        let role = artifact["role"].as_str().unwrap();
+        let Some(voice) = role.strip_prefix("voicepack_") else {
+            continue;
+        };
+        let selection = voice_agent_server::config::TtsInstanceConfig::KokoroViOnnx(
+            voice_agent_server::config::KokoroViOnnxConfig {
+                voice: voice.into(),
+                ..Default::default()
+            },
+        );
+        assert!(
+            factory
+                .build(&selection, &config.runtime, Some(&resolved))
+                .is_ok(),
+            "{voice}"
+        );
+        let role = artifact["role"].as_str().unwrap();
+        let output = fs::read(resolved.artifact(role).unwrap()).unwrap();
+        assert_eq!(
+            sha256(&output),
+            artifact["sha256"].as_str().unwrap(),
+            "{role}"
+        );
+        assert!(output.starts_with(b"KOVI_VOICEPACK_V1"));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn concurrent_provider_preparation_acquires_each_shared_voice_once() {
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct CountAcquisitions(Arc<AtomicUsize>);
+    impl ModelAcquirer for CountAcquisitions {
+        fn acquire(&self, _: &str, destination: &std::path::Path) -> Result<(), ModelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            std::thread::yield_now();
+            fs::write(destination, b"verified voice")?;
+            Ok(())
+        }
+    }
+    let root = temp_dir("concurrent-voice-preparation");
+    let path = manifest(
+        &root,
+        "voices/maichi.bin",
+        b"verified voice",
+        b"verified voice",
+        "identity",
+    );
+    let raw = fs::read_to_string(&path)
+        .unwrap()
+        .replace("role = \"vad\"", "role = \"voice_maichi\"");
+    let hash = sha256(b"verified voice");
+    fs::write(&path, format!("{raw}\n[[model.artifacts]]\nrole = \"voice_baotrang\"\nremote = \"https://example.invalid/baotrang\"\ninstall_path = \"voices/baotrang.bin\"\nsource_sha256 = \"{hash}\"\nsha256 = \"{hash}\"\n")).unwrap();
+    let acquired = Arc::new(AtomicUsize::new(0));
+    let preparation = Arc::new(ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: path,
+            root: root.clone(),
+            offline: false,
+        },
+        CountAcquisitions(Arc::clone(&acquired)),
+    ));
+    let start = Arc::new(Barrier::new(5));
+    let providers: Vec<_> = (0..4)
+        .map(|_| {
+            let start = Arc::clone(&start);
+            let preparation = Arc::clone(&preparation);
+            std::thread::spawn(move || {
+                start.wait();
+                preparation.prepare("test-vad", "silero_onnx").unwrap()
+            })
+        })
+        .collect();
+    start.wait();
+    for provider in providers {
+        let model = provider.join().unwrap();
+        for role in ["voice_maichi", "voice_baotrang"] {
+            assert_eq!(
+                fs::read(model.artifact(role).unwrap()).unwrap(),
+                b"verified voice"
+            );
+        }
+    }
+    assert_eq!(acquired.load(Ordering::SeqCst), 2);
+    assert!(!root.join("voices/maichi.bin.part").exists());
+    assert!(!root.join("voices/baotrang.bin.transform").exists());
+    fs::remove_dir_all(root).unwrap();
+}

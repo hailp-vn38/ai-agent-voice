@@ -17,7 +17,7 @@ const ROLES: &[&str] = &[
     "tokenizer",
     "null_voice",
     "voices_index",
-    "voice",
+    "voice_maichi",
     "text_encoder",
     "prefix_step",
     "local_frame_decode",
@@ -183,4 +183,156 @@ fn warmup_pcm_requires_terminal_finite_non_empty_48khz_mono_audio() {
     }
 
     validate_warmup_pcm(WarmupPcm::new(48_000, 1, vec![0.0, 0.25, -0.25])).unwrap();
+}
+
+#[test]
+fn selected_zerotts_voice_requires_its_own_artifact_without_fallback() {
+    let root = temp_dir("zerotts-selected-voice");
+    let model = prepared_pack(&root, None);
+    let factory = compiled_provider_registry()
+        .tts_factory("zerotts_onnx")
+        .unwrap();
+    for voice in [
+        "baotrang",
+        "giahuy",
+        "hamy",
+        "huuduc",
+        "kimoanh",
+        "quangminh",
+        "tiendat",
+    ] {
+        let config =
+            voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig {
+                voice: voice.into(),
+                ..Default::default()
+            });
+        let error = match factory.build(&config, &Default::default(), Some(&model)) {
+            Ok(_) => panic!("accepted missing selected voice"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, voice_agent_server::providers::ProviderLoadError::MissingArtifact(role) if role == format!("voice_{voice}"))
+        );
+    }
+    let config = voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig {
+        voice: "unknown".into(),
+        ..Default::default()
+    });
+    assert!(matches!(
+        factory.build(&config, &Default::default(), Some(&model)),
+        Err(voice_agent_server::providers::ProviderLoadError::Configuration(_))
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "requires installed base artifacts and pinned voices; set PROVIDER_QUALIFICATION_CONFIG and ZEROTTS_PREPARATION_FIXTURE_DIR"]
+fn every_pinned_zerotts_voice_prepares_and_loads_its_selected_factory_contract() {
+    use voice_agent_server::config::{AppConfig, TtsInstanceConfig};
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        model: Vec<voice_agent_server::models::Model>,
+    }
+    struct LocalVoices(PathBuf);
+    impl ModelAcquirer for LocalVoices {
+        fn acquire(&self, remote: &str, destination: &Path) -> Result<(), ModelError> {
+            let relative = remote
+                .split_once("/resolve/c2bfbd67dc648cac455077333f7cf5c18a2e3bb4/")
+                .expect("pinned ZeroTTS revision")
+                .1;
+            fs::copy(self.0.join(relative), destination)?;
+            Ok(())
+        }
+    }
+    let config_path = std::env::var("PROVIDER_QUALIFICATION_CONFIG").expect("deployment config");
+    let mut config = AppConfig::parse_and_resolve(&config_path).unwrap();
+    let base = Path::new(&config_path).parent().unwrap();
+    for value in [
+        &mut config.deployment.models.root,
+        &mut config.runtime.onnx.library,
+    ] {
+        if value.is_relative() {
+            *value = base.join(&*value);
+        }
+    }
+    let manifest: Manifest = toml::from_str(include_str!("../../../models/manifest.toml")).unwrap();
+    let model = manifest
+        .model
+        .into_iter()
+        .find(|model| model.identity == "zerotts_default")
+        .unwrap();
+    let root = temp_dir("actual-zerotts-voices");
+    for artifact in &model.artifacts {
+        if artifact.role.starts_with("voice_") {
+            continue;
+        }
+        let destination = root.join(&artifact.install_path);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::hard_link(
+            config.deployment.models.root.join(&artifact.install_path),
+            destination,
+        )
+        .unwrap();
+    }
+    let manifest_path = root.join("manifest.toml");
+    fs::write(
+        &manifest_path,
+        include_str!("../../../models/manifest.toml"),
+    )
+    .unwrap();
+    let resolved = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path,
+            root: root.clone(),
+            offline: false,
+        },
+        LocalVoices(
+            std::env::var("ZEROTTS_PREPARATION_FIXTURE_DIR")
+                .expect("pinned voices directory")
+                .into(),
+        ),
+    )
+    .prepare("zerotts_default", "zerotts_onnx")
+    .unwrap();
+    let factory = compiled_provider_registry()
+        .tts_factory("zerotts_onnx")
+        .unwrap();
+    for voice in [
+        "baotrang",
+        "giahuy",
+        "hamy",
+        "huuduc",
+        "kimoanh",
+        "maichi",
+        "quangminh",
+        "tiendat",
+    ] {
+        assert!(
+            resolved
+                .artifact(&format!("voice_{voice}"))
+                .unwrap()
+                .is_file()
+        );
+        let selection = TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig {
+            voice: voice.into(),
+            ..Default::default()
+        });
+        let provider = factory
+            .build(&selection, &config.runtime, Some(&resolved))
+            .expect("selected voice has the pinned runtime contract");
+        let request = voice_agent_server::providers::TtsDiagnosticRequest {
+            text: "test".into(),
+            voice: Some(voice.into()),
+            language: Some("vi-VN".into()),
+        };
+        provider.validate_diagnostic(&request).unwrap();
+        if voice != "maichi" {
+            let wrong = voice_agent_server::providers::TtsDiagnosticRequest {
+                voice: Some("maichi".into()),
+                ..request
+            };
+            assert!(provider.validate_diagnostic(&wrong).is_err());
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
 }

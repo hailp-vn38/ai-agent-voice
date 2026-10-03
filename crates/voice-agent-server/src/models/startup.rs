@@ -2,7 +2,7 @@
 
 use super::{ModelError, prepare, prepare_immutable_inner};
 use crate::{
-    config::{AppConfig, TtsInstanceConfig},
+    config::AppConfig,
     database::{DesiredProvider, ProviderLoadPlan, ProviderLoadRequirement, provider_config},
 };
 use std::collections::BTreeMap;
@@ -73,7 +73,8 @@ fn model_plan(
         add_model(
             &mut plan,
             instance.adapter(),
-            &instance.silero_onnx().model,
+            crate::providers::local_model_identity(instance.adapter())
+                .expect("compiled local adapter"),
             key == &effective.vad || key == &defaults.vad,
             managed,
         );
@@ -82,16 +83,15 @@ fn model_plan(
         add_model(
             &mut plan,
             instance.adapter(),
-            instance.model(),
+            crate::providers::local_model_identity(instance.adapter())
+                .expect("compiled local adapter"),
             key == &effective.asr || key == &defaults.asr,
             managed,
         );
     }
     for (key, instance) in &config.providers.tts.instances {
-        let model = match instance {
-            TtsInstanceConfig::ZeroTtsOnnx(config) => &config.model,
-            TtsInstanceConfig::KokoroViOnnx(config) => &config.model,
-            TtsInstanceConfig::ChillAudioWs(_) => continue,
+        let Some(model) = crate::providers::local_model_identity(instance.adapter()) else {
+            continue;
         };
         add_model(
             &mut plan,
@@ -111,13 +111,7 @@ fn model_plan(
         let model = crate::providers::admin_provider_adapter_matches_kind(&row.kind, &row.adapter)
             .then(|| provider_config::validate_raw(&row.adapter, &row.config_json).ok())
             .flatten()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-            .and_then(|value| {
-                value
-                    .get("model")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned)
-            });
+            .and_then(|_| crate::providers::local_model_identity(&row.adapter).map(str::to_owned));
         let Some(model) = model else {
             if requirement == ProviderLoadRequirement::Required {
                 return Err(ModelError::ProviderConfiguration(row.key.clone()));

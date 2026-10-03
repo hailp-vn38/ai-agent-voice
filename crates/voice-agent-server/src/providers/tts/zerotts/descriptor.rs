@@ -23,23 +23,57 @@ const VIETNAMESE: &[LanguageOption] = &[LanguageOption {
     id: "vi-VN",
     name: "Vietnamese",
 }];
-const MAICHI: &[VoiceOption] = &[VoiceOption {
-    id: "maichi",
-    name: "Mai Chi",
-    languages: &["vi-VN"],
-    model: Some("zerotts_default"),
-}];
+const VOICES: &[VoiceOption] = &[
+    VoiceOption {
+        id: "baotrang",
+        name: "Bao Trang",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+    VoiceOption {
+        id: "giahuy",
+        name: "Gia Huy",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+    VoiceOption {
+        id: "hamy",
+        name: "Ha My",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+    VoiceOption {
+        id: "huuduc",
+        name: "Huu Duc",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+    VoiceOption {
+        id: "kimoanh",
+        name: "Kim Oanh",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+    VoiceOption {
+        id: "maichi",
+        name: "Mai Chi",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+    VoiceOption {
+        id: "quangminh",
+        name: "Quang Minh",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+    VoiceOption {
+        id: "tiendat",
+        name: "Tien Dat",
+        languages: &["vi-VN"],
+        model: Some("zerotts_default"),
+    },
+];
 const FIELDS: &[ProviderConfigField] = &[
-    field(
-        "model",
-        "Model",
-        ConfigFieldType::Select,
-        true,
-        Some(CapabilitySource::Models),
-        None,
-        None,
-        Some(128),
-    ),
     field(
         "voice",
         "Voice",
@@ -59,16 +93,6 @@ const FIELDS: &[ProviderConfigField] = &[
         None,
         None,
         Some(32),
-    ),
-    field(
-        "num_threads",
-        "Threads",
-        ConfigFieldType::Integer,
-        true,
-        None,
-        Some(1),
-        Some(128),
-        None,
     ),
     field(
         "preload",
@@ -102,7 +126,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     config_schema: ProviderConfigSchema { fields: FIELDS },
     capabilities: ProviderCapabilities {
         models: Some(MODELS),
-        voices: Some(MAICHI),
+        voices: Some(VOICES),
         languages: Some(VIETNAMESE),
         streaming: Some(true),
         offline: Some(true),
@@ -115,7 +139,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     },
     discovery: CapabilityDiscoveryMode {
         models: DiscoverySource::Static,
-        voices: DiscoverySource::BootstrapAndRuntime,
+        voices: DiscoverySource::Static,
         languages: DiscoverySource::Static,
     },
 };
@@ -125,7 +149,7 @@ impl BootstrapCapabilityInspector for Inspector {
         validate_model_selection(selection, "zerotts_default")?;
         Ok(DiscoveredCapabilities {
             models: MODELS,
-            voices: MAICHI,
+            voices: VOICES,
             languages: VIETNAMESE,
         })
     }

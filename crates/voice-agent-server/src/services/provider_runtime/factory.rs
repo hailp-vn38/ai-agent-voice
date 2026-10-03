@@ -83,8 +83,9 @@ impl RuntimeMaterializer for FactoryMaterializer {
         if matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
             return Ok(());
         }
-        let value: serde_json::Value =
-            serde_json::from_str(&snapshot.config_json).map_err(|_| RuntimeError::Configuration)?;
+        let value: serde_json::Value = self
+            .effective_config(snapshot)
+            .map_err(|_| RuntimeError::Configuration)?;
         let model = value
             .get("model")
             .and_then(|v| v.as_str())
@@ -102,18 +103,10 @@ impl RuntimeMaterializer for FactoryMaterializer {
     }
     fn estimated_peak_bytes(&self, snapshot: &DesiredProvider) -> Result<u64, RuntimeError> {
         self.verify_qualified_manifest()?;
-        // Dynamic native requests stay inside the measured deployment's model/thread envelope.
+        // Local requests use exactly the deployment-owned execution settings that were
+        // qualified. DB configuration cannot widen a model or thread envelope.
         if !matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
-            let value: serde_json::Value = serde_json::from_str(&snapshot.config_json)
-                .map_err(|_| RuntimeError::Configuration)?;
-            let model = value
-                .get("model")
-                .and_then(|v| v.as_str())
-                .ok_or(RuntimeError::Configuration)?;
-            let threads = value
-                .get("num_threads")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(1);
+            self.effective_config(snapshot)?;
             let allowed = match snapshot.kind.as_str() {
                 "vad" => self
                     .config
@@ -121,53 +114,26 @@ impl RuntimeMaterializer for FactoryMaterializer {
                     .vad
                     .instances
                     .values()
-                    .any(|instance| {
-                        instance.adapter() == snapshot.adapter
-                            && instance.silero_onnx().model == model
-                            && i64::from(instance.silero_onnx().num_threads) >= threads
-                    }),
+                    .any(|instance| instance.adapter() == snapshot.adapter),
                 "asr" => self
                     .config
                     .providers
                     .asr
                     .instances
                     .values()
-                    .any(|instance| {
-                        let max_threads = match instance {
-                            crate::config::AsrInstanceConfig::ZipformerSherpa(value) => {
-                                value.num_threads
-                            }
-                            crate::config::AsrInstanceConfig::GipformerSherpaOffline(value) => {
-                                value.num_threads
-                            }
-                        };
-                        instance.adapter() == snapshot.adapter
-                            && instance.model() == model
-                            && i64::from(max_threads) >= threads
-                    }),
+                    .any(|instance| instance.adapter() == snapshot.adapter),
                 "tts" => self
                     .config
                     .providers
                     .tts
                     .instances
                     .values()
-                    .any(|instance| {
-                        let (configured_model, max_threads) = match instance {
-                            crate::config::TtsInstanceConfig::ZeroTtsOnnx(value) => {
-                                (&value.model, value.num_threads)
-                            }
-                            crate::config::TtsInstanceConfig::KokoroViOnnx(value) => {
-                                (&value.model, value.num_threads)
-                            }
-                            _ => return false,
-                        };
-                        instance.adapter() == snapshot.adapter
-                            && configured_model == model
-                            && i64::from(max_threads) >= threads
-                    }),
+                    .any(|instance| instance.adapter() == snapshot.adapter),
                 _ => false,
             };
-            if !allowed || threads <= 0 {
+            if !allowed
+                || !(1..=128).contains(&self.config.runtime.onnx.threads_for(&snapshot.adapter))
+            {
                 return Err(RuntimeError::Configuration);
             }
         }
@@ -219,7 +185,8 @@ impl RuntimeMaterializer for FactoryMaterializer {
         let prepared_model = if matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
             None
         } else {
-            let value: serde_json::Value = serde_json::from_str(&snapshot.config_json)
+            let value: serde_json::Value = self
+                .effective_config(snapshot)
                 .map_err(|_| RuntimeError::Configuration)?;
             let model = value
                 .get("model")
@@ -229,7 +196,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
                 crate::models::prepare_immutable(
                     &self.config.deployment.model_manifest,
                     &self.config.deployment.models.root,
-                    true,
+                    self.config.deployment.models.offline,
                     model,
                     &snapshot.adapter,
                     &self.config.deployment,
@@ -368,6 +335,20 @@ impl RuntimeResource for OwnedRuntimeResource {
 }
 
 impl FactoryMaterializer {
+    fn effective_config(
+        &self,
+        snapshot: &DesiredProvider,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let raw = if snapshot.id == 0 {
+            snapshot.config_json.clone()
+        } else {
+            crate::database::provider_config::validate_raw(&snapshot.adapter, &snapshot.config_json)
+                .map_err(|_| RuntimeError::Configuration)?
+        };
+        let value = serde_json::from_str(&raw).map_err(|_| RuntimeError::Configuration)?;
+        crate::providers::effective_local_config(&snapshot.adapter, value, &self.config.runtime)
+            .map_err(|_| RuntimeError::Configuration)
+    }
     fn verify_qualified_manifest(&self) -> Result<(), RuntimeError> {
         if let Some(expected) = self.qualified_manifest_fingerprint
             && manifest_fingerprint(&self.config.deployment.model_manifest)? != expected
@@ -388,8 +369,9 @@ impl FactoryMaterializer {
         {
             return Ok(None);
         }
-        let value: serde_json::Value =
-            serde_json::from_str(&snapshot.config_json).map_err(|_| RuntimeError::Configuration)?;
+        let value: serde_json::Value = self
+            .effective_config(snapshot)
+            .map_err(|_| RuntimeError::Configuration)?;
         let model = value
             .get("model")
             .and_then(|v| v.as_str())
@@ -452,7 +434,7 @@ impl FactoryMaterializer {
         };
         let onnx = onnx.ok_or(RuntimeError::Configuration)?;
         let mut digest = Sha256::new();
-        digest.update(serde_json::to_vec(&serde_json::json!({"adapter":snapshot.adapter,"specification":specification,"artifacts":fingerprint,"capacity":self.logical_capacity(snapshot)?,"onnx_execution":onnx,"g2p_execution":g2p})).map_err(|_| RuntimeError::Configuration)?);
+        digest.update(serde_json::to_vec(&serde_json::json!({"adapter":snapshot.adapter,"specification":specification,"execution_threads":self.config.runtime.onnx.threads_for(&snapshot.adapter),"artifacts":fingerprint,"capacity":self.logical_capacity(snapshot)?,"onnx_execution":onnx,"g2p_execution":g2p})).map_err(|_| RuntimeError::Configuration)?);
         Ok(Some(super::ResourceKey(digest.finalize().into())))
     }
 }

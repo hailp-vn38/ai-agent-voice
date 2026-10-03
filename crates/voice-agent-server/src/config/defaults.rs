@@ -166,14 +166,14 @@ pub(super) fn default_asr_worker_count() -> usize {
 pub(crate) fn default_asr_threads() -> i32 {
     2
 }
-pub(crate) fn default_decoding_method() -> String {
-    "greedy_search".into()
+pub(crate) fn default_decoding_method() -> super::TransducerDecodingMethod {
+    super::TransducerDecodingMethod::GreedySearch
 }
 pub(crate) fn default_gipformer_threads() -> i32 {
     4
 }
-pub(crate) fn default_gipformer_decoding_method() -> String {
-    "modified_beam_search".into()
+pub(crate) fn default_gipformer_decoding_method() -> super::TransducerDecodingMethod {
+    super::TransducerDecodingMethod::ModifiedBeamSearch
 }
 pub(crate) fn default_gipformer_max_active_paths() -> i32 {
     4

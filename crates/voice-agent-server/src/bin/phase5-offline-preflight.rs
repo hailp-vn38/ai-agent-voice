@@ -96,6 +96,7 @@ fn run() -> Result<()> {
     )?;
     registry.asr_factory(asr_instance.adapter())?.build(
         asr_instance,
+        &config.runtime,
         &asr_model,
         usize::try_from(config.audio.max_utterance_ms)
             .context("convert configured ASR capture bound")?

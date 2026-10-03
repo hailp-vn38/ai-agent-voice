@@ -149,3 +149,147 @@ fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapter
         }
     }
 }
+
+#[test]
+fn descriptors_expose_only_user_configuration_and_typed_decoding_choices() {
+    let registry = compiled_provider_adapter_registry();
+    for descriptor in registry.list(None) {
+        let json = serde_json::to_value(descriptor).unwrap();
+        let fields = json["config_schema"]["fields"].as_array().unwrap();
+        assert!(fields.iter().all(|field| !matches!(
+            field["key"].as_str(),
+            Some("threads" | "num_threads" | "ws_url")
+        )));
+        if matches!(
+            descriptor.adapter,
+            "silero_onnx" | "zerotts_onnx" | "kokoro_vi_onnx" | "zipformer_sherpa"
+        ) {
+            assert!(fields.iter().all(|field| field["key"] != "model"));
+        }
+        if descriptor.adapter == "silero_onnx" {
+            assert!(fields.is_empty());
+        }
+        if matches!(
+            descriptor.adapter,
+            "zipformer_sherpa" | "gipformer_sherpa_offline"
+        ) {
+            let decoding = fields
+                .iter()
+                .find(|field| field["key"] == "decoding_method")
+                .unwrap();
+            assert_eq!(decoding["type"], "select");
+            assert_eq!(
+                decoding["enum_values"],
+                serde_json::json!(["greedy_search", "modified_beam_search"])
+            );
+        }
+    }
+    let chill = registry.get("chillaudio_ws").unwrap();
+    assert_eq!(chill.capabilities.voices.unwrap().len(), 4);
+    assert_eq!(chill.capabilities.languages.unwrap()[0].id, "vi");
+}
+
+#[test]
+fn every_advertised_local_voice_has_a_pinned_preparation_artifact() {
+    let manifest: toml::Value =
+        toml::from_str(include_str!("../../../models/manifest.toml")).unwrap();
+    for (adapter, model, prefix, count) in [
+        ("zerotts_onnx", "zerotts_default", "voice_", 8),
+        ("kokoro_vi_onnx", "kokoro_vi_contextbox", "voicepack_", 14),
+    ] {
+        let descriptor = compiled_provider_adapter_registry().get(adapter).unwrap();
+        let voices = descriptor.capabilities.voices.unwrap();
+        assert_eq!(voices.len(), count, "{adapter}");
+        let entry = manifest["model"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["identity"].as_str() == Some(model))
+            .unwrap();
+        let artifacts = entry["artifacts"].as_array().unwrap();
+        let roles: HashSet<_> = artifacts
+            .iter()
+            .filter_map(|artifact| artifact["role"].as_str())
+            .filter(|role| role.starts_with(prefix))
+            .collect();
+        let expected: HashSet<_> = voices
+            .iter()
+            .map(|voice| format!("{prefix}{}", voice.id))
+            .collect();
+        assert_eq!(
+            roles,
+            expected.iter().map(String::as_str).collect(),
+            "{adapter}"
+        );
+        for artifact in artifacts {
+            let remote = artifact["remote"].as_str().unwrap();
+            assert!(remote.contains(entry["revision"].as_str().unwrap()));
+            for key in ["sha256", "source_sha256"] {
+                let hash = artifact[key].as_str().unwrap();
+                assert_eq!(hash.len(), 64);
+                assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()));
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires acknowledged installed ASR models; set PROVIDER_QUALIFICATION_CONFIG"]
+fn native_transducers_accept_every_advertised_decoding_method() {
+    use voice_agent_server::{
+        audio::PcmF32Mono,
+        config::{AsrInstanceConfig, TransducerDecodingMethod},
+        models::prepare,
+    };
+    let path = std::env::var("PROVIDER_QUALIFICATION_CONFIG").expect("qualification config");
+    let mut config = AppConfig::parse_and_resolve(&path).expect("valid deployment configuration");
+    let deployment_root = std::path::Path::new(&path).parent().unwrap();
+    for value in [
+        &mut config.deployment.model_manifest,
+        &mut config.deployment.models.root,
+        &mut config.runtime.onnx.library,
+    ] {
+        if value.is_relative() {
+            *value = deployment_root.join(&*value);
+        }
+    }
+    for adapter in ["zipformer_sherpa", "gipformer_sherpa_offline"] {
+        let instance = config
+            .providers
+            .asr
+            .instances
+            .values()
+            .find(|instance| instance.adapter() == adapter)
+            .expect("configured adapter");
+        let factory = compiled_provider_registry().asr_factory(adapter).unwrap();
+        let model = prepare(
+            &config.deployment.model_manifest,
+            &config.deployment.models.root,
+            true,
+            factory.model_identity(instance).unwrap(),
+            adapter,
+            &config.deployment,
+        )
+        .expect("acknowledged installed artifacts");
+        for method in [
+            TransducerDecodingMethod::GreedySearch,
+            TransducerDecodingMethod::ModifiedBeamSearch,
+        ] {
+            let mut selected = instance.clone();
+            match &mut selected {
+                AsrInstanceConfig::ZipformerSherpa(options) => options.decoding_method = method,
+                AsrInstanceConfig::GipformerSherpaOffline(options) => {
+                    options.decoding_method = method
+                }
+            }
+            let provider = factory
+                .build(&selected, &config.runtime, &model, 480_000)
+                .expect("native recognizer accepts decoding mode");
+            let mut session = provider.open().unwrap();
+            session
+                .push_pcm(&PcmF32Mono::new(vec![0.0; 16_000], 16_000))
+                .unwrap();
+            session.finish().unwrap();
+        }
+    }
+}
