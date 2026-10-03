@@ -207,6 +207,12 @@ code_ttl_seconds = 600
 retention_seconds = 86400
 cleanup_interval_seconds = 60
 max_pending = 1000
+transport = "websocket"
+ws_max_connections = 32
+ws_timeout_seconds = 120
+ws_poll_interval_ms = 2000
+ws_prompt_repeat_seconds = 60
+prompt_assets_dir = "assets/enrollment/vi-VN"
 ```
 
 SQLite và WS Device admission là bắt buộc theo [ADR-0073](adr/0073-required-database-and-device-admission.md).
@@ -214,6 +220,10 @@ Không còn `database.enabled` hoặc `database.devices.admission_enabled`; xóa
 vì strict parser từ chối chúng. Bỏ section database dùng defaults, không tắt DB.
 URL/pool/busy-timeout/retention luôn được validate; readiness luôn probe DB.
 Admin API/history/enrollment vẫn có cờ riêng. Xem [flow chuyển config và provisioning](flows/08-database-device-enrollment.md).
+
+Enrollment dùng SQLite, không Redis, yêu cầu api.enabled và auto_register=false. Mode websocket mặc định trả WS config cho Unknown và Registered, bỏ activation để firmware đi tới WS. Unknown WS chỉ hiển thị/đọc mã, không hội thoại hoặc acquire provider. Mode ota giữ pending activation không websocket/token. Registered bỏ activation mọi mode.
+
+WS bounds: connections 1..128, timeout 30..600 giây, poll 1000..10000 ms, repeat 30..300 giây. Timeout không reset bởi traffic và được clamp theo code expiry. Chuẩn bị 11 WAV tiếng Việt bằng `python3 scripts/prepare-enrollment-assets.py` (cần espeak-ng/ffmpeg) hoặc ghi âm riêng; PCM16 mono 24 kHz, intro ≤6 giây và digit ≤1 giây. Thiếu/sai asset fail trước bind. Xem [WS enrollment](device-enrollment-websocket.md).
 
 ## 3. Environment override
 
@@ -268,4 +278,3 @@ VOICE_AGENT_LLM_API_KEY
 - mọi limits và queue capacity > 0.
 - `[mcp.external]` toàn bộ field có default, nên bỏ hẳn section cũng là configuration hợp lệ. `per_server_resolution_timeout_ms` và `overall_resolution_budget_ms` phải dương và `overall_resolution_budget_ms >= per_server_resolution_timeout_ms`; `max_concurrent_calls_per_server` nằm trong `1..=64` và đây chính là bound của process-global semaphore per MCP server dùng chung cho mọi session. Operator chỉ cấu hình trong hard ceiling: `max_tools_per_server <= 512`, `max_tools_per_session <= 2_048`, `max_tool_schema_bytes` và `max_external_tool_result_bytes <= 65_536`, `max_tool_description_bytes <= 16_384`, `max_pages_per_server <= 256`. Mọi limit phải dương, và một tổ hợp limit mô tả một `tools/list` page lớn hơn buffer một response thì fail startup thay vì biến thành server lặng lẽ không resolve được.
 - `[mcp.external.network]` bắt buộc có ít nhất một entry trong `allowed_hosts` hoặc `allowed_cidrs`; chỉ HTTPS trừ khi `allow_http_lan = true`, và khi đó destination vẫn phải match allowlist. `allowed_hosts` chỉ nhận hostname pattern hợp lệ và `allowed_cidrs` chỉ nhận CIDR hợp lệ. URL không có userinfo, query string hay fragment; redirect tắt. Validate hostname allowlist, resolve DNS ngay trước connect, và mọi resolved IP cũng phải pass policy để chống DNS rebinding.
-

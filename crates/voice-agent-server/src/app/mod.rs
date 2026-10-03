@@ -37,6 +37,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 mod admin;
+mod enrollment;
 mod ota;
 mod state;
 mod vision;
@@ -77,16 +78,16 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
         apply_load_plan(&config, loaded, rows, &plan, secret_resolver.as_ref())
             .map_err(map_load_plan_failure)?;
     let lifecycle = new_lifecycle(&config);
-    Ok(router_with_state(
-        AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
-            config,
-            loaded,
-            Some(database),
-            Some(materialization.snapshot()),
-            secret_resolver,
-            lifecycle,
-        ),
-    ))
+    let mut state = AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
+        config,
+        loaded,
+        Some(database),
+        Some(materialization.snapshot()),
+        secret_resolver,
+        lifecycle,
+    );
+    prepare_enrollment(&mut state).await?;
+    Ok(router_with_state(state))
 }
 
 /// A lifecycle that owns its own signals, for a process that has nothing outside it to stop.
@@ -212,16 +213,16 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     })
     .await
     .map_err(|_| BootstrapError::Provider)??;
-    Ok(router_with_state(
-        AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
-            config,
-            loaded,
-            Some(database),
-            Some(materialization.snapshot()),
-            secret_resolver,
-            lifecycle,
-        ),
-    ))
+    let mut state = AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
+        config,
+        loaded,
+        Some(database),
+        Some(materialization.snapshot()),
+        secret_resolver,
+        lifecycle,
+    );
+    prepare_enrollment(&mut state).await?;
+    Ok(router_with_state(state))
 }
 
 async fn managed_startup(
@@ -303,7 +304,17 @@ async fn managed_startup(
             prewarm.template(id).await;
         }
     }
+    prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
+}
+
+async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> {
+    state.enrollment_runtime = crate::services::device_enrollment::EnrollmentRuntime::prepare(
+        &state.config.database.devices.enrollment,
+    )
+    .await
+    .map_err(|_| BootstrapError::Enrollment)?;
+    Ok(())
 }
 
 /// Derives the Provider Load Plan from the persisted graph plus the deployment's server provider
@@ -398,4 +409,6 @@ pub enum BootstrapError {
     Database(#[from] DatabaseError),
     #[error("provider_startup_failed")]
     Provider,
+    #[error("enrollment_prompt_startup_failed: prepare 24kHz mono PCM16 WAV assets")]
+    Enrollment,
 }

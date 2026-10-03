@@ -96,6 +96,7 @@ async fn start_enrollment() -> (String, String, JoinHandle<()>) {
     app_config.database.devices = voice_agent_server::config::DatabaseDevicesConfig {
         enrollment: voice_agent_server::config::EnrollmentConfig {
             enabled: true,
+            transport: voice_agent_server::config::EnrollmentTransport::Ota,
             ..Default::default()
         },
         ..Default::default()

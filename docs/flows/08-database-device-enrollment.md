@@ -23,6 +23,8 @@ code_ttl_seconds = 600
 retention_seconds = 86400
 cleanup_interval_seconds = 60
 max_pending = 1000
+transport = "websocket"
+prompt_assets_dir = "assets/enrollment/vi-VN"
 
 [database.history]
 enabled = false
@@ -49,13 +51,18 @@ và admission mới 503; session đã admit vẫn dùng immutable profile.
 
 ## Thêm Device bằng mã
 
-1. Device gửi Device-Id/Client-Id tới OTA. Unknown nhận activation/code/challenge
-   nếu enrollment bật; không có websocket/token. Disabled Device/Agent luôn 403.
-2. Web chọn Agent, nhập mã 6 số dạng string và Template tùy chọn.
-3. Admin claim dùng bearer riêng: transaction tạo Device, consume mã và audit.
+1. Chuẩn bị 11 WAV clips bằng `python3 scripts/prepare-enrollment-assets.py` hoặc
+   recording riêng. Mode websocket default khi bật enrollment; mode ota giữ flow cũ.
+2. Device gửi Device-Id/Client-Id tới OTA. Unknown mode websocket nhận URL/token
+   transport và không activation. Mở WS → hello → hiển thị/phát mã sáu digit trong
+   Enrollment Session riêng; không hội thoại/provider. Disabled Device/Agent 403.
+3. Web chọn Agent, nhập mã 6 số dạng string và Template tùy chọn.
+4. Admin claim dùng bearer riêng: transaction tạo Device, consume mã và audit.
    Runtime chưa được load ở claim. TTL/concurrent/replay behavior giữ ADR-0072.
-4. Firmware poll activate: pending 202, Registered 200; gọi lại OTA lấy WS config.
-5. WS validate identity/auth → DB Device/Agent → Template/provider snapshot →
+5. WS worker thấy Registered, gửi thông báo và close 1000; client mở lại WS khi
+   wake/bấm nút hoặc reconnect đã implement. Mode ota mới dùng vòng activate
+   pending 202 → Registered 200, gọi lại OTA lấy WS config.
+6. WS voice mới validate identity/auth → DB Device/Agent → Template/provider snapshot →
    runtime acquire → upgrade. Không có nhánh admission_disabled.
 
 ## Thêm thủ công và enrollment tắt
@@ -91,4 +98,6 @@ provision trước hoặc dùng enrollment. Không bật auto_register cùng enr
 6. Khi rollback config, dùng phiên bản cấu hình tương ứng binary; không sửa schema
    để né compatibility guard. Thay đổi này không thêm migration SQL.
 
-Xem [ADR-0073](../adr/0073-required-database-and-device-admission.md).
+Xem [ADR-0073](../adr/0073-required-database-and-device-admission.md),
+[ADR-0074](../adr/0074-websocket-enrollment-session.md) và
+[WS enrollment](../device-enrollment-websocket.md).

@@ -457,6 +457,12 @@ _Avoid_: device authentication, session record, audio-pipeline cache
 Chuỗi 6 chữ số ASCII sinh CSPRNG, TTL-bound và chỉ được dùng tối đa một lần để Admin claim Device.
 _Avoid_: device token, password, Device ID
 
+**Enrollment Session**:
+Kết nối WebSocket control-plane của Device chưa đăng ký, chỉ hiển thị/phát Activation
+Code và quan sát Enrollment Claim; không có Effective Session Profile, provider,
+transcript hoặc quyền hội thoại. Kết nối Voice Session mới thực hiện admission sau claim.
+_Avoid_: anonymous Voice Session, temporary Agent, provider fallback
+
 **Enrollment Claim**:
 Transaction Admin tạo Device enabled, consume đúng một Device Enrollment và ghi audit tối thiểu; không tải provider/runtime hoặc xác nhận thiết bị đang online.
 _Avoid_: WebSocket admission, runtime warmup, online presence

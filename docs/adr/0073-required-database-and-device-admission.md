@@ -3,7 +3,8 @@
 ## Status
 
 Accepted — theo quyết định của người dùng; supersedes các clause opt-in trong ADR-0049,
-ADR-0057 và nhánh legacy OTA trong ADR-0072.
+ADR-0057 và nhánh legacy OTA trong ADR-0072. Unknown WS/OTA được mở rộng bởi
+[ADR-0074](0074-websocket-enrollment-session.md) khi enrollment websocket bật.
 
 ## Decision
 
@@ -14,8 +15,9 @@ không đồng nghĩa tắt database. Validation URL/pool/timeout/retention luô
 
 Mọi public startup/router-building seam mở SQLite, kiểm tra schema và chạy migration
 trước provider initialization/router publication. DB lỗi fail trước bind. Mọi WS
-đi qua Database-backed Device Admission: unknown/disabled Device hoặc disabled Agent
-trả 403, DB/profile/runtime unavailable trả 503 trước upgrade; không fallback vì DB
+đi qua Database-backed Device routing/admission: disabled Device hoặc disabled Agent
+trả 403; Unknown chỉ vào Enrollment Session nếu mode websocket bật, nếu không giữ
+403. DB/profile/runtime unavailable trả 503 trước upgrade; không fallback vì DB
 lỗi. Agent đã admit mà không có Template assignment vẫn có thể dùng server defaults
 theo policy hiện tại; đó là fallback cấu hình cho một Device đã xác minh, không phải
 bỏ qua admission.
@@ -25,7 +27,7 @@ Injected AppState thiếu DB là startup_incomplete và không admit WS. Session
 giữ snapshot immutable khi DB lỗi; liveness vẫn độc lập dependency.
 
 OTA luôn kiểm tra Device trước khi trả websocket/token. Registered nhận cấu hình;
-blocked bị từ chối; unknown chỉ nhận activation nếu enrollment bật, nếu không trả
+blocked bị từ chối; unknown nhận enrollment transport theo ADR-0074 nếu feature bật, nếu không trả
 403. Poll/claim/cleaner giữ contract ADR-0072. OTA không auto-register hoặc load model.
 
 Giữ các cờ `database.devices.enrollment.enabled`, `database.history.enabled`,
