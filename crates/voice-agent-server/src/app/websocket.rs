@@ -14,7 +14,12 @@ pub(super) async fn handler(
     if !state.admission_gate().is_open() {
         return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
     }
-    for name in ["protocol-version", "device-id", "client-id", "authorization"] {
+    for name in [
+        "protocol-version",
+        "device-id",
+        "client-id",
+        "authorization",
+    ] {
         if headers.get_all(name).iter().count() > 1 {
             return (StatusCode::BAD_REQUEST, "duplicate protocol header").into_response();
         }

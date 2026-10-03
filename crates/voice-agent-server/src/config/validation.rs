@@ -120,8 +120,7 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
 
 fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
     let database = &config.database;
-    if database.devices.auto_register
-        && database.devices.auto_register_agent_key.trim().is_empty()
+    if database.devices.auto_register && database.devices.auto_register_agent_key.trim().is_empty()
     {
         return Err(ConfigError::Validation(
             "database.devices.auto_register requires a non-empty auto_register_agent_key".into(),

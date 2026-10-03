@@ -34,7 +34,12 @@ impl EnrollmentRuntime {
     }
 
     pub async fn encode(&self, code: String) -> Result<Vec<Vec<u8>>, PromptError> {
-        let permit = self.encoders.clone().acquire_owned().await.map_err(|_| PromptError)?;
+        let permit = self
+            .encoders
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| PromptError)?;
         let assets = self.assets.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;

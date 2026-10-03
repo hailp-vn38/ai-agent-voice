@@ -3,10 +3,7 @@
 
 use std::sync::Arc;
 use voice_agent_server::{
-    app::router_with_providers,
-    config::AppConfig,
-    database::Database,
-    providers::ProviderSet,
+    app::router_with_providers, config::AppConfig, database::Database, providers::ProviderSet,
 };
 
 pub async fn provision(mut config: AppConfig) -> (AppConfig, Database) {

@@ -1,6 +1,6 @@
 use crate::audio::{
-    DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame,
-    MAX_DOWNLINK_OPUS_PACKET_BYTES, Pcm16Mono,
+    DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, MAX_DOWNLINK_OPUS_PACKET_BYTES,
+    Pcm16Mono,
 };
 use std::path::Path;
 use thiserror::Error;
@@ -52,13 +52,16 @@ impl PromptAssets {
 
     pub fn encode(&self, code: &str) -> Result<Vec<Vec<u8>>, PromptError> {
         let pcm = self.assemble(code)?;
-        let mut encoder = DownlinkOpusEncoder::new(MAX_DOWNLINK_OPUS_PACKET_BYTES)
-            .map_err(|_| PromptError)?;
+        let mut encoder =
+            DownlinkOpusEncoder::new(MAX_DOWNLINK_OPUS_PACKET_BYTES).map_err(|_| PromptError)?;
         pcm.chunks_exact(DOWNLINK_FRAME_SAMPLES)
             .map(|samples| {
                 let frame = DownlinkPcmFrame::try_new(Pcm16Mono::new(samples.to_vec()))
                     .map_err(|_| PromptError)?;
-                encoder.encode(frame).map(|packet| packet.as_bytes().to_vec()).map_err(|_| PromptError)
+                encoder
+                    .encode(frame)
+                    .map(|packet| packet.as_bytes().to_vec())
+                    .map_err(|_| PromptError)
             })
             .collect()
     }
@@ -70,17 +73,27 @@ fn load_clip(path: &Path, max_samples: usize) -> Result<Vec<i16>, PromptError> {
     if !metadata.is_file() || metadata.len() > 2 * 1024 * 1024 {
         return Err(PromptError);
     }
-    let mut reader = hound::WavReader::new(std::io::BufReader::new(file)).map_err(|_| PromptError)?;
+    let mut reader =
+        hound::WavReader::new(std::io::BufReader::new(file)).map_err(|_| PromptError)?;
     let spec = reader.spec();
-    if spec.sample_rate != RATE as u32 || spec.channels != 1 || spec.bits_per_sample != 16
+    if spec.sample_rate != RATE as u32
+        || spec.channels != 1
+        || spec.bits_per_sample != 16
         || spec.sample_format != hound::SampleFormat::Int
-        || reader.duration() == 0 || reader.duration() as usize > max_samples
+        || reader.duration() == 0
+        || reader.duration() as usize > max_samples
     {
         return Err(PromptError);
     }
-    let samples = reader.samples::<i16>().take(max_samples + 1)
-        .collect::<Result<Vec<_>, _>>().map_err(|_| PromptError)?;
-    if samples.is_empty() || samples.len() > max_samples || samples.iter().all(|sample| *sample == 0) {
+    let samples = reader
+        .samples::<i16>()
+        .take(max_samples + 1)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| PromptError)?;
+    if samples.is_empty()
+        || samples.len() > max_samples
+        || samples.iter().all(|sample| *sample == 0)
+    {
         return Err(PromptError);
     }
     Ok(samples)

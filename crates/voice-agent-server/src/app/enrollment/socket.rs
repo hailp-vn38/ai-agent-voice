@@ -9,7 +9,11 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use serde_json::json;
 use std::{collections::VecDeque, sync::Arc, time::Duration};
-use tokio::{sync::watch, task::JoinHandle, time::{Instant, sleep_until, timeout}};
+use tokio::{
+    sync::watch,
+    task::JoinHandle,
+    time::{Instant, sleep_until, timeout},
+};
 use tokio_util::sync::CancellationToken;
 
 type Sender = SplitSink<WebSocket, Message>;
@@ -37,7 +41,11 @@ pub(in crate::app) async fn run(
     let stopping = state.lifecycle.stopping().clone();
     let drain = registration.close_signal();
     let config = &state.config.database.devices.enrollment;
-    let remaining = connection.pending.expires_at.saturating_sub(ota::unix_seconds()).max(0) as u64;
+    let remaining = connection
+        .pending
+        .expires_at
+        .saturating_sub(ota::unix_seconds())
+        .max(0) as u64;
     let deadline = Instant::now() + Duration::from_secs(remaining.min(config.ws_timeout_seconds));
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
@@ -56,14 +64,24 @@ pub(in crate::app) async fn run(
             close(&mut sender, 1009).await;
             return;
         }
-        Some(Ok(Message::Binary(bytes))) if bytes.len() > state.config.websocket.max_frame_bytes => {
+        Some(Ok(Message::Binary(bytes)))
+            if bytes.len() > state.config.websocket.max_frame_bytes =>
+        {
             close(&mut sender, 1009).await;
             return;
         }
         _ => false,
     };
     if !hello_valid {
-        close(&mut sender, if stopping.is_cancelled() || drain.is_cancelled() { 1001 } else { 1002 }).await;
+        close(
+            &mut sender,
+            if stopping.is_cancelled() || drain.is_cancelled() {
+                1001
+            } else {
+                1002
+            },
+        )
+        .await;
         return;
     }
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -88,8 +106,11 @@ pub(in crate::app) async fn run(
     }
     let cancel = CancellationToken::new();
     let (mut updates, worker) = status_worker(
-        database, connection.device_id.clone(), connection.pending.code.clone(),
-        Duration::from_millis(config.ws_poll_interval_ms), cancel.clone(),
+        database,
+        connection.device_id.clone(),
+        connection.pending.code.clone(),
+        Duration::from_millis(config.ws_poll_interval_ms),
+        cancel.clone(),
     );
     let mut encoding = Some(start_encoding(&connection));
     let mut packets = VecDeque::new();
@@ -172,7 +193,9 @@ pub(in crate::app) async fn run(
             }
         }
     }
-    if let Some(job) = encoding.take() { job.abort(); }
+    if let Some(job) = encoding.take() {
+        job.abort();
+    }
     cancel.cancel();
     let _ = worker.await;
     if started {
@@ -189,17 +212,23 @@ pub(in crate::app) async fn run(
 }
 
 fn scoped(id: &Option<String>, expected: &str) -> bool {
-    id.as_deref().is_none_or(|id| id.is_empty() || id == expected)
+    id.as_deref()
+        .is_none_or(|id| id.is_empty() || id == expected)
 }
 fn start_encoding(connection: &PendingConnection) -> Encoding {
     let runtime = connection.runtime.clone();
     let code = connection.pending.code.clone();
-    Encoding { job: tokio::spawn(async move { runtime.encode(code).await }) }
+    Encoding {
+        job: tokio::spawn(async move { runtime.encode(code).await }),
+    }
 }
 
 fn status_worker(
-    database: Arc<Database>, device_id: String, code: String,
-    cadence: Duration, cancel: CancellationToken,
+    database: Arc<Database>,
+    device_id: String,
+    code: String,
+    cadence: Duration,
+    cancel: CancellationToken,
 ) -> (watch::Receiver<EnrollmentStatus>, JoinHandle<()>) {
     let (sender, receiver) = watch::channel(EnrollmentStatus::Pending);
     let task = tokio::spawn(async move {
@@ -218,7 +247,9 @@ fn status_worker(
                     result.unwrap_or(EnrollmentStatus::Unavailable)
                 }
             };
-            if sender.send(status).is_err() || status != EnrollmentStatus::Pending { break; }
+            if sender.send(status).is_err() || status != EnrollmentStatus::Pending {
+                break;
+            }
         }
     });
     (receiver, task)
@@ -226,25 +257,47 @@ fn status_worker(
 
 async fn terminal(sender: &mut Sender, session_id: &str, status: EnrollmentStatus) {
     let (code, text) = match status {
-        EnrollmentStatus::Registered => (1000, "Đã liên kết thiết bị. Hãy mở lại kết nối để bắt đầu trò chuyện."),
-        EnrollmentStatus::Expired => (1000, "Mã kết nối đã hết hạn. Hãy mở lại kết nối để lấy mã mới."),
+        EnrollmentStatus::Registered => (
+            1000,
+            "Đã liên kết thiết bị. Hãy mở lại kết nối để bắt đầu trò chuyện.",
+        ),
+        EnrollmentStatus::Expired => (
+            1000,
+            "Mã kết nối đã hết hạn. Hãy mở lại kết nối để lấy mã mới.",
+        ),
         EnrollmentStatus::Blocked => (1008, "Thiết bị đang bị vô hiệu hóa."),
         _ => (1011, "Tạm thời không thể kiểm tra trạng thái liên kết."),
     };
-    let _ = control(sender, json!({"type":"stt","session_id":session_id,"text":text})).await;
+    let _ = control(
+        sender,
+        json!({"type":"stt","session_id":session_id,"text":text}),
+    )
+    .await;
     close(sender, code).await;
 }
 async fn tts(sender: &mut Sender, session_id: &str, state: &str, text: Option<&str>) -> bool {
     let mut message = json!({"type":"tts","state":state,"session_id":session_id});
-    if let Some(text) = text { message["text"] = text.into(); }
+    if let Some(text) = text {
+        message["text"] = text.into();
+    }
     control(sender, message).await
 }
 async fn control(sender: &mut Sender, value: serde_json::Value) -> bool {
     send(sender, Message::Text(value.to_string().into())).await
 }
 async fn send(sender: &mut Sender, message: Message) -> bool {
-    matches!(timeout(SEND_TIMEOUT, sender.send(message)).await, Ok(Ok(())))
+    matches!(
+        timeout(SEND_TIMEOUT, sender.send(message)).await,
+        Ok(Ok(()))
+    )
 }
 async fn close(sender: &mut Sender, code: u16) {
-    let _ = send(sender, Message::Close(Some(CloseFrame { code, reason: "".into() }))).await;
+    let _ = send(
+        sender,
+        Message::Close(Some(CloseFrame {
+            code,
+            reason: "".into(),
+        })),
+    )
+    .await;
 }
