@@ -14,6 +14,16 @@ pub(super) async fn handler(
     if !state.admission_gate().is_open() {
         return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
     }
+    for name in [
+        "protocol-version",
+        "device-id",
+        "client-id",
+        "authorization",
+    ] {
+        if headers.get_all(name).iter().count() > 1 {
+            return (StatusCode::BAD_REQUEST, "duplicate protocol header").into_response();
+        }
+    }
     if !header_or_query_is_or_absent(
         &headers,
         "protocol-version",
@@ -42,6 +52,21 @@ pub(super) async fn handler(
         .expect("validated above");
     if !valid_device_identity(device_id) {
         return (StatusCode::BAD_REQUEST, "invalid Device-Id").into_response();
+    }
+    let client_id = header_or_query_value(&headers, "client-id", query.client_id.as_deref())
+        .expect("validated above");
+    if !valid_device_identity(client_id) {
+        return (StatusCode::BAD_REQUEST, "invalid Client-Id").into_response();
+    }
+    match super::enrollment::route(&state, device_id, client_id).await {
+        Ok(super::enrollment::Route::Voice) => {}
+        Ok(super::enrollment::Route::Pending(connection)) => {
+            return upgrade
+                .max_frame_size(config.websocket.max_frame_bytes.saturating_add(1024))
+                .on_upgrade(move |socket| super::enrollment::run(socket, state, connection, drain))
+                .into_response();
+        }
+        Err(response) => return *response,
     }
     // One immutable Effective Session Profile per connection.  Resolution is fail-closed: a
     // database-backed Agent whose default Template cannot be materialized is never silently

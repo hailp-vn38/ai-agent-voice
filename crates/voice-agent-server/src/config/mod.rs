@@ -343,7 +343,6 @@ mod database_history_config_tests {
         let parsed: Wrapper = toml::from_str(
             r#"
             [database]
-            enabled = true
             url = "sqlite://data/voice-agent.db"
             "#,
         )
@@ -934,6 +933,26 @@ pub struct EnrollmentConfig {
     pub cleanup_interval_seconds: u64,
     #[serde(default = "default_enrollment_max_pending")]
     pub max_pending: u32,
+    #[serde(default)]
+    pub transport: EnrollmentTransport,
+    #[serde(default = "default_enrollment_ws_max_connections")]
+    pub ws_max_connections: usize,
+    #[serde(default = "default_enrollment_ws_timeout_seconds")]
+    pub ws_timeout_seconds: u64,
+    #[serde(default = "default_enrollment_ws_poll_interval_ms")]
+    pub ws_poll_interval_ms: u64,
+    #[serde(default = "default_enrollment_ws_prompt_repeat_seconds")]
+    pub ws_prompt_repeat_seconds: u64,
+    #[serde(default = "default_enrollment_prompt_assets_dir")]
+    pub prompt_assets_dir: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EnrollmentTransport {
+    #[default]
+    Websocket,
+    Ota,
 }
 
 impl Default for EnrollmentConfig {
@@ -944,6 +963,12 @@ impl Default for EnrollmentConfig {
             retention_seconds: default_enrollment_retention_seconds(),
             cleanup_interval_seconds: default_enrollment_cleanup_interval_seconds(),
             max_pending: default_enrollment_max_pending(),
+            transport: EnrollmentTransport::default(),
+            ws_max_connections: default_enrollment_ws_max_connections(),
+            ws_timeout_seconds: default_enrollment_ws_timeout_seconds(),
+            ws_poll_interval_ms: default_enrollment_ws_poll_interval_ms(),
+            ws_prompt_repeat_seconds: default_enrollment_ws_prompt_repeat_seconds(),
+            prompt_assets_dir: default_enrollment_prompt_assets_dir(),
         }
     }
 }

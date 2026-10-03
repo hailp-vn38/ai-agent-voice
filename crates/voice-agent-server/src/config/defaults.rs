@@ -271,3 +271,18 @@ pub(super) fn default_external_max_pages_per_server() -> usize {
 use super::SecretString;
 use std::path::PathBuf;
 use url::Url;
+pub(super) fn default_enrollment_ws_max_connections() -> usize {
+    32
+}
+pub(super) fn default_enrollment_ws_timeout_seconds() -> u64 {
+    120
+}
+pub(super) fn default_enrollment_ws_poll_interval_ms() -> u64 {
+    2_000
+}
+pub(super) fn default_enrollment_ws_prompt_repeat_seconds() -> u64 {
+    60
+}
+pub(super) fn default_enrollment_prompt_assets_dir() -> std::path::PathBuf {
+    "assets/enrollment/vi-VN".into()
+}

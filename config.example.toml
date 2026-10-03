@@ -26,6 +26,14 @@ code_ttl_seconds = 600
 retention_seconds = 86400
 cleanup_interval_seconds = 60
 max_pending = 1000
+transport = "websocket" # "ota" preserves activation/polling without WS onboarding
+ws_max_connections = 32
+ws_timeout_seconds = 120
+ws_poll_interval_ms = 2000
+ws_prompt_repeat_seconds = 60
+# Prepare the 11 WAV clips before enabling websocket enrollment:
+# python3 scripts/prepare-enrollment-assets.py
+prompt_assets_dir = "assets/enrollment/vi-VN"
 
 # Persistent Transcript. Capture is off by default: with it off no archival writer, queue or task is
 # started at all, while the retention of an already-captured archive, the Admin API read and the

@@ -8,4 +8,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Device enrollment tests
+        if: ${{ always() && !cancelled() }}
+        run: |
+          cargo test -p voice-agent-server --test device_enrollment_ws
+          cargo test -p voice-agent-server --lib services::device_enrollment
+      - name: Device admission and protocol regression tests
+        if: ${{ always() && !cancelled() }}
+        run: cargo test -p voice-agent-server --test device_admission --test database_bootstrap --test ws_protocol
       - run: cargo test --workspace
+        if: ${{ always() && !cancelled() }}

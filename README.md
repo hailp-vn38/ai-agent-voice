@@ -102,3 +102,16 @@ cargo run --release -p voice-agent-server --bin provider-bench-av -- \
 - Firmware: `78/xiaozhi-esp32`
 
 Chi tiết mapping sang code Rust đề xuất nằm tại [`docs/reference/source-map.md`](docs/reference/source-map.md).
+# Device enrollment over WebSocket
+
+Unknown devices can connect to a separate enrollment WS, display and hear their
+six-digit code, then be claimed through the existing Admin API. This connection
+has no conversational providers or transcript. Prepare Vietnamese WAV assets
+before enabling `database.devices.enrollment` with `transport="websocket"`:
+
+```bash
+python3 scripts/prepare-enrollment-assets.py
+```
+
+See [setup and wire flow](docs/device-enrollment-websocket.md). Explicit
+`transport="ota"` preserves the previous activation/polling flow.

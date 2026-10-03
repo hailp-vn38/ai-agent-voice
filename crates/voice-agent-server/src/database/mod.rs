@@ -27,7 +27,7 @@ pub use admission::{
 };
 pub use device_enrollments::{
     DeviceRegistration, EnrollmentClaim, EnrollmentClaimError, EnrollmentCleaner,
-    EnrollmentCreateError, EnrollmentPending, EnrollmentPurge, EnrollmentRequest,
+    EnrollmentCreateError, EnrollmentPending, EnrollmentPurge, EnrollmentRequest, EnrollmentStatus,
 };
 pub use external_mcp::{AdmittedMcpServer, McpAdmissionError};
 pub use load_plan::{ProviderLoadPlan, ProviderLoadRequirement};

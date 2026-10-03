@@ -16,6 +16,15 @@ pub enum DeviceRegistration {
     Blocked,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnrollmentStatus {
+    Pending,
+    Registered,
+    Blocked,
+    Expired,
+    Unavailable,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnrollmentPending {
     pub code: String,
@@ -113,6 +122,34 @@ impl Drop for EnrollmentCleaner {
 }
 
 impl Database {
+    /// One read snapshot: Device rows are authoritative after either claim or manual create.
+    pub async fn enrollment_status(
+        &self,
+        device_id: &str,
+        code: &str,
+        now: i64,
+    ) -> Result<EnrollmentStatus, DatabaseError> {
+        let row: (Option<i64>, Option<i64>, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT d.enabled,a.enabled,e.status,e.expires_at FROM (SELECT 1) seed \
+             LEFT JOIN devices d ON d.device_id=? LEFT JOIN agents a ON a.id=d.agent_id \
+             LEFT JOIN device_enrollments e ON e.device_id=? AND e.code=?",
+        )
+        .bind(device_id)
+        .bind(device_id)
+        .bind(code)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(match row {
+            (Some(1), Some(1), _, _) => EnrollmentStatus::Registered,
+            (Some(_), _, _, _) => EnrollmentStatus::Blocked,
+            (None, _, Some(status), Some(expiry)) if status == "pending" && now < expiry => {
+                EnrollmentStatus::Pending
+            }
+            _ => EnrollmentStatus::Expired,
+        })
+    }
+
     /// A deliberately small read used by OTA and activation polling.  Orphaned/corrupt rows fail
     /// closed instead of looking unknown and obtaining another enrollment code.
     pub async fn device_registration(

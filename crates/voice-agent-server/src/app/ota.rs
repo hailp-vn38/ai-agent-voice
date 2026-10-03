@@ -61,6 +61,11 @@ pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> 
                 .await
             {
                 Ok(EnrollmentClaim::Pending(pending)) => {
+                    if state.config.database.devices.enrollment.transport
+                        == crate::config::EnrollmentTransport::Websocket
+                    {
+                        return ota_response(&state, &headers, None, true);
+                    }
                     let remaining = pending.expires_at.saturating_sub(now).max(0) as u64;
                     ota_response(
                         &state,
@@ -296,7 +301,7 @@ async fn compatible_activate_body(request: Request) -> Result<(), Response> {
         .and_then(|value| value.is_object().then_some(()))
         .ok_or_else(|| ota_error(StatusCode::BAD_REQUEST, "invalid_json"))
 }
-fn unix_seconds() -> i64 {
+pub(super) fn unix_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -310,7 +315,7 @@ fn unix_millis() -> i64 {
         .as_millis()
         .min(i64::MAX as u128) as i64
 }
-fn candidate() -> (String, String) {
+pub(super) fn candidate() -> (String, String) {
     loop {
         let uuid = Uuid::new_v4();
         let bytes = uuid.as_bytes();

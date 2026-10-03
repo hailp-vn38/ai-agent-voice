@@ -58,6 +58,8 @@ pub struct AppState {
     /// Independent from transcript capture: pending enrollment correctness never depends on this
     /// task, but terminal retention must remain bounded when enrollment is enabled.
     pub enrollment_cleaner: Option<Arc<EnrollmentCleaner>>,
+    /// Static prompt assets and independent capacity for connections awaiting an Enrollment Claim.
+    pub enrollment_runtime: Option<Arc<crate::services::device_enrollment::EnrollmentRuntime>>,
     /// The application-owned lifecycle: one admission/work gate, the drain registry, and the
     /// ordered shutdown that uses them.  A session holds nothing of it but its own registration.
     pub lifecycle: Arc<RuntimeLifecycle>,
@@ -102,6 +104,13 @@ impl AppState {
             // The database is configured but this process never opened one, so nothing about the
             // schema is authoritative.  Startup refused to bind in that case; reaching here means
             // a test or an embedder constructed the state directly, and it is still not ready.
+            return Readiness::StartupIncomplete;
+        }
+        let enrollment = &self.config.database.devices.enrollment;
+        if enrollment.enabled
+            && enrollment.transport == crate::config::EnrollmentTransport::Websocket
+            && self.enrollment_runtime.is_none()
+        {
             return Readiness::StartupIncomplete;
         }
         if self.required_runtime_missing() {
@@ -602,6 +611,7 @@ impl AppState {
             external_mcp,
             history,
             enrollment_cleaner,
+            enrollment_runtime: None,
             lifecycle,
             writer_outcome_probe: None,
         };

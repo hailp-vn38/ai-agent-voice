@@ -61,7 +61,7 @@
                   {"key":"Client-Id","value":"{{client_id}}","type":"text"}
                 ],
                 "url": "{{base_url}}/voice/ota/",
-                "description": "When enrollment is enabled, an unknown device gets activation (code/challenge) without websocket/token; a registered device gets websocket."
+                "description": "Enrollment defaults to transport=websocket: unknown devices get websocket URL/transport token without activation, then WS hello/stt/tts/Opus presents the code. transport=ota preserves activation without websocket/token. Registered devices get websocket; blocked devices get 403. Prepare static WAV assets before enabling WS enrollment."
               },
               "response": []
             },
@@ -1891,4 +1891,3 @@
     }
   ]
 }
-

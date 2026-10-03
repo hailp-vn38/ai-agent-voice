@@ -120,8 +120,7 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
 
 fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
     let database = &config.database;
-    if database.devices.auto_register
-        && database.devices.auto_register_agent_key.trim().is_empty()
+    if database.devices.auto_register && database.devices.auto_register_agent_key.trim().is_empty()
     {
         return Err(ConfigError::Validation(
             "database.devices.auto_register requires a non-empty auto_register_agent_key".into(),
@@ -144,6 +143,11 @@ fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
             || !(enrollment.code_ttl_seconds..=604_800).contains(&enrollment.retention_seconds)
             || !(10..=3_600).contains(&enrollment.cleanup_interval_seconds)
             || !(1..=10_000).contains(&enrollment.max_pending)
+            || !(1..=128).contains(&enrollment.ws_max_connections)
+            || !(30..=600).contains(&enrollment.ws_timeout_seconds)
+            || !(1_000..=10_000).contains(&enrollment.ws_poll_interval_ms)
+            || !(30..=300).contains(&enrollment.ws_prompt_repeat_seconds)
+            || enrollment.prompt_assets_dir.as_os_str().is_empty()
         {
             return Err(ConfigError::Validation(
                 "database.devices.enrollment bounds are invalid".into(),

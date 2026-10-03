@@ -1,3 +1,4 @@
+pub mod device_enrollment;
 pub mod provider_diagnostic;
 
 pub mod provider_runtime;

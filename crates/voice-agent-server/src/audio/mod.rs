@@ -8,7 +8,6 @@ mod resampler;
 mod vad_segmenter;
 
 pub use canonical_downlink::CanonicalDownlinkPipeline;
-#[cfg(test)]
 pub(crate) use canonical_downlink::fade_out_tail;
 pub use opus::{
     AudioFrameDropReason, DOWNLINK_ENCODE_BUFFER_BYTES, DecodeOutcome, DownlinkOpusEncoder,

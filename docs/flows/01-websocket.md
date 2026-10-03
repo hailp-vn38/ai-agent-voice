@@ -14,7 +14,9 @@ sequenceDiagram
     HTTP->>HTTP: read Device/Agent registration
     alt Registered and enabled
         HTTP-->>CLIENT: websocket.url + token + server_time
-    else Unknown and enrollment enabled
+    else Unknown and websocket enrollment enabled
+        HTTP-->>CLIENT: websocket.url + transport token, no activation
+    else Unknown and OTA enrollment enabled
         HTTP-->>CLIENT: activation.code + challenge, no WS token
     else Unknown or blocked
         HTTP-->>CLIENT: 403
@@ -36,7 +38,13 @@ Device-Id: <mac>
 Client-Id: <uuid>
 ```
 
-Khi `auth.token` không rỗng, `Authorization` bắt buộc; thiếu hoặc sai token bị từ chối WebSocket upgrade với HTTP 401. Khi token rỗng, server không yêu cầu header. OTA chỉ trả static token cho Device/Agent được phép trong DB khi auth bật. Device-Id tự khai chưa phải device credential, nên deployment vẫn theo trusted LAN policy. Mọi WS đều resolve Device/Agent/Template/Providers từ DB trước upgrade; unknown/disabled trả 403, DB/profile/runtime unavailable trả 503.
+Khi `auth.token` không rỗng, `Authorization` bắt buộc; thiếu hoặc sai token bị từ chối WebSocket upgrade với HTTP 401. Khi token rỗng, server không yêu cầu header. Mode websocket enrollment trả static transport token cho Unknown để đi vào phiên chờ mã; quyền hội thoại vẫn do DB admission. Device-Id tự khai chưa phải credential phần cứng, nên deployment vẫn theo trusted LAN policy. Registered WS resolve Device/Agent/Template/Providers trước upgrade; Unknown chỉ vào Enrollment Session khi enabled + mode websocket, còn lại 403. Disabled 403, DB/profile/runtime unavailable 503, không đổi lỗi runtime thành enrollment.
+
+Enrollment Session handshake v1 rồi gửi stt hiển thị mã + tts/Opus đọc sáu digit.
+Nó không tạo SessionActor, acquire provider hoặc transcript. Sau claim worker thấy
+Registered, gửi thông báo và close 1000; WS mới chạy voice admission. Xem
+[flow chi tiết](../device-enrollment-websocket.md). Các phần SessionActor bên dưới
+áp dụng cho Voice Session đã admit, không áp dụng cho Enrollment Session.
 
 `session_id` được sinh ra *trước* upgrade, ngay cùng lúc Effective Session Profile được resolve, vì cùng một identity đó vừa là `session_id` của Voice Session vừa là session key của optional Persistent Transcript. Một connection có đúng một session identity, và nó thuộc về connection chứ không thuộc về database: `SessionActor` không giữ identity thứ hai.
 
@@ -173,4 +181,3 @@ Không warning từng binary frame bị drop để tránh log spam. `abort` ph�
 - state/message matrix, gồm `listen:start` ở Listening reset collector và `abort` lặp lại, được test theo từng phase.
 - một invalid application message sau handshake không terminate Voice Session khỏe.
 - abort khi audio cũ đã nằm trong outbound queue -> writer drop cả JSON/audio stale trước `tts:stop`.
-
