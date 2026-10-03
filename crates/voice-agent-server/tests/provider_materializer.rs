@@ -363,8 +363,9 @@ silero_onnx=134217728
 }
 
 #[test]
-fn checkout_runtime_profile_validates_without_resolving_or_printing_credentials() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.toml");
-    let config = AppConfig::parse_and_resolve(path).expect("checkout runtime config valid");
-    assert!(config.provider_runtime.is_some());
+fn checkout_example_configuration_parses_without_resolving_or_printing_credentials() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.example.toml");
+    let config = AppConfig::parse_and_resolve(path).expect("checkout example config valid");
+    assert!(config.provider_runtime.is_none());
 }
