@@ -43,6 +43,12 @@ impl FactoryMaterializer {
                 .map(|byte| format!("{byte:02x}"))
                 .collect();
             if hash != profile.measured_manifest_sha256 {
+                tracing::error!(
+                    reason = "manifest_receipt_mismatch",
+                    measured_manifest_sha256 = %profile.measured_manifest_sha256,
+                    current_manifest_sha256 = %hash,
+                    "provider runtime qualification receipt is stale; remeasure the model and execution settings before updating the receipt"
+                );
                 return Err(RuntimeError::Configuration);
             }
             Some(fingerprint)

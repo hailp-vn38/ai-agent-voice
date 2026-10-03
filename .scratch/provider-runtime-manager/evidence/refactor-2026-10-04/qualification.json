@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-04",
+  "manifest_sha256": "7bae52392945d9ae8cac091aada1ba32154a8f2fca4a0b0d1251784d4e0a8e36",
+  "execution_threads": {
+    "silero_onnx": 1,
+    "zipformer_sherpa": 2,
+    "gipformer_sherpa_offline": 4,
+    "zerotts_onnx": 2,
+    "kokoro_vi_onnx": 1
+  },
+  "workers": {
+    "vad": {
+      "max_workers": 4,
+      "command_queue_capacity": 32,
+      "reset_timeout_ms": 15000,
+      "cleanup_grace_ms": 5000
+    },
+    "asr": {
+      "max_workers": 2,
+      "command_queue_capacity": 32,
+      "final_timeout_ms": 15000,
+      "cleanup_grace_ms": 5000
+    },
+    "tts": {
+      "max_workers": 2,
+      "command_queue_capacity": 32,
+      "cleanup_grace_ms": 5000
+    }
+  },
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "observations": [
+    {
+      "adapter": "chillaudio_ws",
+      "client_only": true,
+      "ready_ms": 1.331084,
+      "schema_version": 1,
+      "unload_acknowledged": true,
+      "peak_rss_bytes": 16367616,
+      "peak_footprint_bytes": 4080144,
+      "provider_key": "chillaudio_default"
+    },
+    {
+      "adapter": "gipformer_sherpa_offline",
+      "client_only": false,
+      "ready_ms": 1187.426959,
+      "schema_version": 1,
+      "unload_acknowledged": true,
+      "peak_rss_bytes": 268959744,
+      "peak_footprint_bytes": 246153960,
+      "provider_key": "gipformer_vi"
+    },
+    {
+      "adapter": "kokoro_vi_onnx",
+      "client_only": false,
+      "ready_ms": 4596.912833,
+      "schema_version": 1,
+      "unload_acknowledged": true,
+      "peak_rss_bytes": 1253769216,
+      "peak_footprint_bytes": 1386317816,
+      "provider_key": "kokoro_vi"
+    },
+    {
+      "adapter": "openai",
+      "client_only": true,
+      "ready_ms": 0.121875,
+      "schema_version": 1,
+      "unload_acknowledged": true,
+      "peak_rss_bytes": 15613952,
+      "peak_footprint_bytes": 3867152,
+      "provider_key": "openai_primary"
+    },
+    {
+      "adapter": "silero_onnx",
+      "client_only": false,
+      "ready_ms": 357.92879100000005,
+      "schema_version": 1,
+      "unload_acknowledged": true,
+      "peak_rss_bytes": 95371264,
+      "peak_footprint_bytes": 66568960,
+      "provider_key": "silero_default"
+    },
+    {
+      "adapter": "zerotts_onnx",
+      "client_only": false,
+      "ready_ms": 15126.851917,
+      "schema_version": 1,
+      "unload_acknowledged": true,
+      "peak_rss_bytes": 1599832064,
+      "peak_footprint_bytes": 2439138448,
+      "provider_key": "zerotts_maichi"
+    },
+    {
+      "adapter": "zipformer_sherpa",
+      "client_only": false,
+      "ready_ms": 1862.2282089999999,
+      "schema_version": 1,
+      "unload_acknowledged": true,
+      "peak_rss_bytes": 347930624,
+      "peak_footprint_bytes": 252494544,
+      "provider_key": "zipformer_vi"
+    }
+  ],
+  "sample_count_per_provider": 1,
+  "scope": "installed artifact verification, configured retained pool warmup/readiness and acknowledged unload; remote client construction only",
+  "estimated_peak_bytes": {
+    "silero_onnx": 134217728,
+    "gipformer_sherpa_offline": 536870912,
+    "kokoro_vi_onnx": 3221225472,
+    "zerotts_onnx": 4294967296,
+    "openai": 67108864,
+    "chillaudio_ws": 67108864,
+    "zipformer_sherpa": 536870912
+  },
+  "max_resident_bytes": 8589934592
+}

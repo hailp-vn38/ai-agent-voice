@@ -1,5 +1,37 @@
 # Provider Runtime Manager qualification
 
+## Refactor requalification — 2026-10-04
+
+The provider descriptor/runtime config refactor changed the manifest to SHA-256
+`7bae52392945d9ae8cac091aada1ba32154a8f2fca4a0b0d1251784d4e0a8e36`.
+The previous receipt rejected startup. Independent measurements used a private temporary
+copy of the deployment configuration with the manager receipt omitted, installed artifacts
+only, and one fresh `provider-runtime-bench` process per provider under `/usr/bin/time -l`.
+The temporary configuration was deleted after measurement. Configured workers, server-owned
+threads and the selected voices were preserved; native warmup and unload acknowledgment
+passed for every measured provider. Remote measurements cover client construction only.
+
+| Provider | Readiness ms | Peak RSS bytes | Peak footprint bytes |
+| --- | ---: | ---: | ---: |
+| Silero | 357.929 | 95,371,264 | 66,568,960 |
+| Gipformer | 1,187.427 | 268,959,744 | 246,153,960 |
+| Zipformer | 1,862.228 | 347,930,624 | 252,494,544 |
+| Kokoro (`diem_trinh`) | 4,596.913 | 1,253,769,216 | 1,386,317,816 |
+| ZeroTTS (`maichi`) | 15,126.852 | 1,599,832,064 | 2,439,138,448 |
+
+The existing conservative adapter estimates still exceed each larger measured peak by
+at least 25%; they were retained. Zipformer now has a 512 MiB estimate. The 8 GiB
+development reservation budget remains unchanged. The deployment receipt was updated
+after these measurements. This is one observation per configured provider, not a latency
+distribution, an OS memory limit, or a measurement of every selectable voice.
+Raw observations and execution settings are in
+`.scratch/provider-runtime-manager/evidence/refactor-2026-10-04/`.
+The production startup command with the updated `config.toml` reached `/ready` = `ready`
+and `/health` = `ok`; SIGTERM shutdown exited 0 with provider resources drained.
+`startup.json` records the public probes and exit code. The validation process was stopped
+after these probes; no server is left running by this check.
+The historical observations below describe the earlier receipt and remain for comparison.
+
 Development host: Apple M1 Pro, 8 physical/logical CPUs, 16 GiB RAM; macOS 27.0 (26A428). Baseline repository commit: `b3ef953fdeb9f2a83d1513f7f01b700d3fae83a2`. These observations are from the uncommitted implementation, debug binaries, acknowledged installed models and ONNX Runtime configured in this checkout. No remote inference was exercised.
 
 ## Native readiness measurements
