@@ -24,7 +24,7 @@ def main():
             target = Path(directory) / f'{name}-24k.wav'
             subprocess.run(['espeak-ng', '-v', 'vi', '-s', '170', '-w', str(source), text], check=True, timeout=30)
             subprocess.run(['ffmpeg', '-nostdin', '-loglevel', 'error', '-y', '-i', str(source),
-                            '-af', 'silenceremove=start_periods=1:start_threshold=-50dB:stop_periods=1:stop_threshold=-50dB',
+                            '-af', 'silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse',
                             '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', str(target)], check=True, timeout=30)
             with wave.open(str(target)) as audio:
                 maximum = 6 if name == 'intro' else 1

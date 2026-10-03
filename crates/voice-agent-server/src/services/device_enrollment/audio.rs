@@ -54,7 +54,9 @@ impl PromptAssets {
         let pcm = self.assemble(code)?;
         let mut encoder =
             DownlinkOpusEncoder::new(MAX_DOWNLINK_OPUS_PACKET_BYTES).map_err(|_| PromptError)?;
-        pcm.chunks_exact(DOWNLINK_FRAME_SAMPLES)
+        pcm.as_chunks::<DOWNLINK_FRAME_SAMPLES>()
+            .0
+            .iter()
             .map(|samples| {
                 let frame = DownlinkPcmFrame::try_new(Pcm16Mono::new(samples.to_vec()))
                     .map_err(|_| PromptError)?;

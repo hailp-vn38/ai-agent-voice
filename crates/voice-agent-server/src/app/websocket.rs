@@ -66,7 +66,7 @@ pub(super) async fn handler(
                 .on_upgrade(move |socket| super::enrollment::run(socket, state, connection, drain))
                 .into_response();
         }
-        Err(response) => return response,
+        Err(response) => return *response,
     }
     // One immutable Effective Session Profile per connection.  Resolution is fail-closed: a
     // database-backed Agent whose default Template cannot be materialized is never silently

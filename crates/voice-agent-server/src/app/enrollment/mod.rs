@@ -31,7 +31,7 @@ pub(super) async fn route(
     state: &AppState,
     device_id: &str,
     client_id: &str,
-) -> Result<Route, Response> {
+) -> Result<Route, Box<Response>> {
     let config = &state.config.database.devices.enrollment;
     if !config.enabled || config.transport != EnrollmentTransport::Websocket {
         return Ok(Route::Voice);
@@ -76,15 +76,17 @@ pub(super) async fn route(
             runtime,
             _permit: permit,
         })),
-        Err(error) => Err((StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response()),
+        Err(error) => Err(Box::new(
+            (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
+        )),
     }
 }
 
-fn unavailable(reason: &'static str) -> Response {
-    (StatusCode::SERVICE_UNAVAILABLE, reason).into_response()
+fn unavailable(reason: &'static str) -> Box<Response> {
+    Box::new((StatusCode::SERVICE_UNAVAILABLE, reason).into_response())
 }
-fn denied() -> Response {
-    (StatusCode::FORBIDDEN, "device not admitted").into_response()
+fn denied() -> Box<Response> {
+    Box::new((StatusCode::FORBIDDEN, "device not admitted").into_response())
 }
 
 pub(super) use socket::run;
