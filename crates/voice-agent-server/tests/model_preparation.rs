@@ -94,6 +94,33 @@ fn checksum_failure_keeps_existing_file_and_removes_temporary_files() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn prepared_source_mapping_is_needed_only_when_artifact_is_missing() {
+    let root = temp_dir("prepared-source-required");
+    let manifest = manifest(&root, "voice.bin", b"voicepack", b"voicepack", "identity");
+    let raw = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        raw.replace("https://example.invalid/model", "prepared://deployment/voice.bin"),
+    )
+    .unwrap();
+    let preparation = ModelPreparation::with_acquirer(
+        ModelPreparationConfig {
+            manifest_path: manifest,
+            root: root.clone(),
+            offline: false,
+        },
+        ExpectedSourceAcquirer,
+    );
+    assert!(matches!(
+        preparation.prepare("test-vad", "silero_onnx"),
+        Err(ModelError::PreparedSourceRequired(_))
+    ));
+    fs::write(root.join("voice.bin"), b"voicepack").unwrap();
+    preparation.prepare("test-vad", "silero_onnx").unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn manifest(
     root: &std::path::Path,
     install_path: &str,

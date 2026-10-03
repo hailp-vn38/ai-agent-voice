@@ -136,6 +136,49 @@ fn missing_required_model_fails_preparation_in_offline_mode() {
 }
 
 #[test]
+fn fresh_startup_downloads_into_missing_model_directory_and_reuses_it_without_network() {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+        time::Duration,
+    };
+
+    let (mut config, root) = fixture();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/model", listener.local_addr().unwrap());
+    let raw = fs::read_to_string(&config.deployment.model_manifest).unwrap();
+    fs::write(
+        &config.deployment.model_manifest,
+        raw.replace("https://example.invalid/model.onnx", &url),
+    )
+    .unwrap();
+    config.deployment.models.offline = false;
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0_u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            socket.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+            assert!(request.len() <= 16 * 1024);
+        }
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nfixture-model").unwrap();
+    });
+    let plan = ProviderLoadPlan::from_server_defaults(&config.provider_defaults);
+    assert!(!config.deployment.models.root.exists());
+    prepare_startup(&config, &[], &plan).unwrap();
+    server.join().unwrap();
+    let installed = config.deployment.models.root.join("vad/model.onnx");
+    assert_eq!(fs::read(installed).unwrap(), b"fixture-model");
+    // The source listener is now closed, so any second acquisition would fail.
+    prepare_startup(&config, &[], &plan).unwrap();
+    assert!(!config.runtime.onnx.library.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn startup_repairs_corrupt_immutable_copy_but_hot_preparation_refuses_to_replace_it() {
     let (config, root) = fixture();
     let installed = config.deployment.models.root.join("vad/model.onnx");
