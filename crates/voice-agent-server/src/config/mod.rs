@@ -343,7 +343,6 @@ mod database_history_config_tests {
         let parsed: Wrapper = toml::from_str(
             r#"
             [database]
-            enabled = true
             url = "sqlite://data/voice-agent.db"
             "#,
         )

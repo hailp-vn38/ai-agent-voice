@@ -89,6 +89,10 @@ async fn start() -> Server {
         vision: Default::default(),
         database: DatabaseConfig {
             url: format!("sqlite://{}", directory.join("database.db").display()),
+            history: DatabaseHistoryConfig {
+                enabled: true,
+                ..Default::default()
+            },
             devices: DatabaseDevicesConfig {
                 enrollment: EnrollmentConfig {
                     enabled: true,
@@ -297,14 +301,14 @@ async fn ota_ws_prompt_claim_and_reconnect_preserve_database_admission() {
     assert!(
         matches!(next(&mut socket).await, Message::Close(Some(frame)) if u16::from(frame.code)==1000)
     );
-    // An admitted Device follows the actual voice path with a fresh profile, not EnrollmentSession.
-    let mut voice = connect(&server, "unknown").await;
-    voice.close(None).await.unwrap();
-    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+    let messages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM history_messages")
         .fetch_one(server.database.pool())
         .await
         .unwrap();
-    assert_eq!(sessions, 0, "onboarding has no Persistent Transcript");
+    assert_eq!(messages, 0, "onboarding has no Persistent Transcript");
+    // An admitted Device follows the actual voice path with a fresh profile, not EnrollmentSession.
+    let mut voice = connect(&server, "unknown").await;
+    voice.close(None).await.unwrap();
 }
 
 #[tokio::test]
