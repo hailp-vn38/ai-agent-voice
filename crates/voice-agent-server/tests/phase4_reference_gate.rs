@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     fs,
     path::PathBuf,
@@ -15,7 +17,6 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use voice_agent_server::{
-    app::router_with_providers,
     audio::PcmF32Mono,
     config::{
         AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
@@ -213,7 +214,7 @@ async fn start(llm: Arc<dyn LlmProvider>, tts: Arc<dyn TtsProvider>) -> (String,
         llm,
         tts,
     ));
-    let app: Router = router_with_providers(config, providers);
+    let app: Router = support::router(config, providers).await;
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://{address}"), task)
 }

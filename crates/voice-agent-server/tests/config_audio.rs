@@ -176,11 +176,10 @@ fn config_load_rejects_a_binding_to_an_unknown_instance() {
 }
 
 #[test]
-fn config_rejects_invalid_database_and_shutdown_bounds_when_database_is_enabled() {
+fn config_rejects_invalid_database_and_shutdown_bounds() {
     let error = load_catalog_config(
         r#"
 [database]
-enabled = true
 busy_timeout_ms = 0
 
 [shutdown]
@@ -197,7 +196,6 @@ grace_ms = 999
     let error = load_catalog_config(
         r#"
 [database]
-enabled = true
 url = "sqlite::memory:"
 
 [shutdown]
@@ -214,7 +212,6 @@ grace_ms = 15000
     let error = load_catalog_config(
         r#"
 [database]
-enabled = true
 url = "sqlite://?mode=memory"
 
 [shutdown]
@@ -231,7 +228,6 @@ grace_ms = 15000
     let error = load_catalog_config(
         r#"
 [database]
-enabled = true
 url = "sqlite://?mo%64e=memory"
 
 [shutdown]
@@ -244,6 +240,19 @@ grace_ms = 15000
             .to_string()
             .contains("database requires a local sqlite URL")
     );
+}
+
+#[test]
+fn removed_database_and_admission_switches_are_rejected() {
+    for extra in [
+        "[database]\nenabled = false",
+        "[database]\nenabled = true",
+        "[database.devices]\nadmission_enabled = false",
+        "[database.devices]\nadmission_enabled = true",
+    ] {
+        let error = load_catalog_config(extra).unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+    }
 }
 
 #[test]
@@ -467,7 +476,14 @@ fn application_builds_each_worker_runtime_from_its_own_config() {
     assert_eq!(vad.cleanup_grace.as_millis(), 250);
 }
 
-#[test]
-fn application_rejects_missing_local_model_artifacts_before_binding() {
-    assert!(voice_agent_server::app::application(valid_config()).is_err());
+#[tokio::test]
+async fn application_rejects_missing_local_model_artifacts_before_binding() {
+    let mut config = valid_config();
+    config.database.url = format!(
+        "sqlite://{}",
+        std::env::temp_dir()
+            .join(format!("voice-agent-model-{}.db", uuid::Uuid::new_v4()))
+            .display()
+    );
+    assert!(voice_agent_server::app::application(config).await.is_err());
 }

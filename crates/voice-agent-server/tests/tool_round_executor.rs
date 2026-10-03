@@ -45,11 +45,11 @@ use voice_agent_server::{
     app::{AppState, router_with_state},
     audio::PcmF32Mono,
     config::{
-        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig, DatabaseDevicesConfig,
-        DeploymentConfig, ExternalMcpConfig, ExternalMcpLimitsConfig, ExternalMcpNetworkConfig,
-        LimitsConfig, LlmConfig, LlmToolsConfig, McpConfig, ProviderDefaultsConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, SileroOnnxConfig, SpeechOutputConfig,
-        TtsConfig, VadInstanceConfig, VisionConfig, WebsocketConfig, WorkersConfig,
+        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig, DeploymentConfig,
+        ExternalMcpConfig, ExternalMcpLimitsConfig, ExternalMcpNetworkConfig, LimitsConfig,
+        LlmConfig, LlmToolsConfig, McpConfig, ProviderDefaultsConfig, ProvidersConfig,
+        RuntimeConfig, ServerConfig, SileroOnnxConfig, SpeechOutputConfig, TtsConfig,
+        VadInstanceConfig, VisionConfig, WebsocketConfig, WorkersConfig,
     },
     database::{
         Database,
@@ -557,12 +557,8 @@ fn config_with_external(
         },
         vision: VisionConfig::default(),
         database: DatabaseConfig {
-            enabled: true,
             url,
-            devices: DatabaseDevicesConfig {
-                admission_enabled: true,
-                ..Default::default()
-            },
+            devices: Default::default(),
             ..Default::default()
         },
         api: Default::default(),

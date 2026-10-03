@@ -28,10 +28,10 @@ use voice_agent_server::{
     app::{AppState, router_with_state},
     config::{
         AdminApiConfig, AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig,
-        DatabaseDevicesConfig, DatabaseHistoryConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-        McpConfig, ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig,
-        SileroOnnxConfig, SpeechOutputConfig, TtsConfig, VadInstanceConfig, VisionConfig,
-        WebsocketConfig, WorkersConfig,
+        DatabaseHistoryConfig, DeploymentConfig, LimitsConfig, LlmConfig, McpConfig,
+        ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SileroOnnxConfig,
+        SpeechOutputConfig, TtsConfig, VadInstanceConfig, VisionConfig, WebsocketConfig,
+        WorkersConfig,
     },
     database::{
         Database,
@@ -281,13 +281,9 @@ fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         mcp: McpConfig::default(),
         vision: VisionConfig::default(),
         database: DatabaseConfig {
-            enabled: true,
             url,
             busy_timeout_ms: 30_000,
-            devices: DatabaseDevicesConfig {
-                admission_enabled: true,
-                ..Default::default()
-            },
+            devices: Default::default(),
             history,
             ..Default::default()
         },
@@ -1451,7 +1447,7 @@ async fn the_archive_stays_readable_and_prunable_while_capture_is_off() {
 }
 
 #[tokio::test]
-async fn a_session_admitted_without_the_database_never_archives_anything() {
+async fn an_unknown_device_cannot_start_a_session_or_archive_anything() {
     let url = database_url();
     let mut app_config = config(
         url.clone(),
@@ -1460,7 +1456,6 @@ async fn a_session_admitted_without_the_database_never_archives_anything() {
             ..Default::default()
         },
     );
-    app_config.database.devices.admission_enabled = false;
     let database = Database::connect(&app_config.database).await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -1485,9 +1480,15 @@ async fn a_session_admitted_without_the_database_never_archives_anything() {
     });
     let pool = SqlitePool::connect(&url).await.unwrap();
 
-    let mut socket = admit(&format!("http://{address}")).await;
-    let turn = speak_and_observe(&mut socket).await;
-    assert_eq!(turn.answer, "no admission identity");
+    let error = connect_async(request(&format!("http://{address}")))
+        .await
+        .unwrap_err();
+    match error {
+        tokio_tungstenite::tungstenite::Error::Http(response) => {
+            assert_eq!(response.status(), 403);
+        }
+        other => panic!("expected admission rejection, got {other:?}"),
+    }
 
     assert!(
         rows(&pool).await.is_empty(),

@@ -44,6 +44,7 @@ pub struct AppState {
     pub provider_diagnostics: Arc<ProviderDiagnosticService>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
     pub active_turn_limiter: Arc<ActiveTurnLimiter>,
+    /// Required for a ready application. None represents incomplete injected state and fails closed.
     pub database: Option<Arc<Database>>,
     pub database_runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
     pub secret_resolver: Arc<dyn SecretResolver>,
@@ -52,7 +53,7 @@ pub struct AppState {
     /// not be built, which leaves every bound server fail-soft unavailable.
     pub external_mcp: Option<Arc<ExternalMcpManager>>,
     /// The optional Persistent Transcript: the one archival writer every session shares plus the
-    /// retention job.  `None` only when the database is off, in which case no session can archive.
+    /// retention job. None only in incomplete injected state without the required database.
     pub history: Option<Arc<HistoryArchive>>,
     /// Independent from transcript capture: pending enrollment correctness never depends on this
     /// task, but terminal retention must remain bounded when enrollment is enabled.
@@ -89,7 +90,7 @@ impl AppState {
     ///
     /// The checks are, in order: the application lifecycle is still accepting work, startup and
     /// schema are authoritative, the runtimes the deployment requires are present, the admission
-    /// resolver is operational, and the database answers when an active feature needs it.  The
+    /// resolver is operational, and the required database answers. The
     /// database question is one `SELECT 1` — the pool can still produce a connection and the file
     /// is still there — so a busy database or a degraded archive shows up here as reachable while
     /// an actually-unreachable one does not.
@@ -97,7 +98,7 @@ impl AppState {
         if !self.lifecycle.gate().is_open() {
             return Readiness::ShuttingDown;
         }
-        if self.database.is_none() && self.config.database.enabled {
+        if self.database.is_none() {
             // The database is configured but this process never opened one, so nothing about the
             // schema is authoritative.  Startup refused to bind in that case; reaching here means
             // a test or an embedder constructed the state directly, and it is still not ready.
@@ -106,27 +107,12 @@ impl AppState {
         if self.required_runtime_missing() {
             return Readiness::RequiredRuntimeUnavailable;
         }
-        if let Some(database) = self.admission_database()
+        if let Some(database) = &self.database
             && database.is_reachable().await.is_err()
         {
             return Readiness::DatabaseUnreachable;
         }
         Readiness::Ready
-    }
-
-    /// The database a new Voice connection's admission depends on, or `None` when admission does not
-    /// depend on one.
-    ///
-    /// Database-backed admission is the only feature whose failure refuses a *new* Voice Session, so
-    /// it is the only one this reaches for.  The Admin API and the Persistent Transcript also need
-    /// the database, but their failure is coarse for the caller rather than process-wide: an admin
-    /// request that cannot reach it is answered 503 and an archive write is dropped, neither of
-    /// which is a reason to pull the Voice listener out of an orchestrator's rotation.
-    fn admission_database(&self) -> Option<&Arc<Database>> {
-        if !self.config.database.devices.admission_enabled {
-            return None;
-        }
-        self.database.as_ref()
     }
 
     /// Whether a provider instance this deployment's own server defaults require is missing.
@@ -361,11 +347,6 @@ impl AppState {
             // at the WebSocket boundary so that no caller can start a database admission after
             // shutdown has begun, whatever route it took to reach this seam.
             return Err(SessionProfileAdmissionError::ShuttingDown);
-        }
-        if !self.config.database.devices.admission_enabled {
-            let profile = EffectiveSessionProfile::server_default(&self.config)
-                .map_err(|_| SessionProfileAdmissionError::ProfileUnavailable)?;
-            return self.prepare_server_default(profile).await;
         }
         let database = self
             .database
@@ -655,7 +636,7 @@ impl AppState {
 
     /// The archival writer this process owns, or `None`.
     ///
-    /// `None` covers both halves of the opt-in: no database, and no capture.  A session that cannot
+    /// `None` covers capture being off or incomplete injected state. A session that cannot
     /// be handed a writer has no way to enqueue a record, which is the whole boundary.
     pub fn history_writer(&self) -> Option<&HistoryWriter> {
         self.history.as_ref().and_then(|archive| archive.writer())

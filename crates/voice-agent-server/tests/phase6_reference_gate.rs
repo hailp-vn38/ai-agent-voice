@@ -1,10 +1,11 @@
+mod support;
+
 use std::{sync::Arc, time::Duration};
 
 use futures_util::stream;
 use tokio::{net::TcpListener, task::JoinHandle};
 use url::Url;
 use voice_agent_server::{
-    app::router_with_providers,
     audio::PcmF32Mono,
     config::{
         AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
@@ -172,7 +173,7 @@ async fn start() -> (String, JoinHandle<()>) {
         Arc::new(ScriptedLlm),
         Arc::new(FakeTts),
     ));
-    let app = router_with_providers(config, providers);
+    let app = support::router(config, providers).await;
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

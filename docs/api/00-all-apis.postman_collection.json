@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a8122115-1541-4b6f-a017-feb64d928bf2",
     "name": "AI Agent Voice - dev-test - All APIs",
-    "description": "Synchronized with the current Admin router. Admin routes are mounted only when both database.enabled=true and api.enabled=true. Admin requests require `Authorization: Bearer {{admin_token}}`. PATCH/PUT/DELETE mutations that use optimistic concurrency require `If-Match: \"<revision>\"`. This file groups logical API collections as folders so it can be imported once.",
+    "description": "Synchronized with the current Admin router. SQLite and WS Device admission are always required. Admin routes are mounted only when api.enabled=true. Removed database/admission config switches must not be sent. Admin requests require `Authorization: Bearer {{admin_token}}`. PATCH/PUT/DELETE mutations that use optimistic concurrency require `If-Match: \"<revision>\"`. This file groups logical API collections as folders so it can be imported once.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -1891,3 +1891,4 @@
     }
   ]
 }
+

@@ -103,10 +103,9 @@ impl AppConfig {
 }
 
 fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
-    if config.api.enabled && (!config.database.enabled || config.api.admin_token.trim().is_empty())
-    {
+    if config.api.enabled && config.api.admin_token.trim().is_empty() {
         return Err(ConfigError::Validation(
-            "api.enabled requires database.enabled and a non-empty admin_token".into(),
+            "api.enabled requires a non-empty admin_token".into(),
         ));
     }
     if !(1..=8).contains(&config.api.provider_tests.max_concurrency)
@@ -121,29 +120,18 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
 
 fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
     let database = &config.database;
-    if database.devices.admission_enabled && !database.enabled {
-        return Err(ConfigError::Validation(
-            "database.devices.admission_enabled requires database.enabled".into(),
-        ));
-    }
-    if database.history.enabled && !database.enabled {
-        return Err(ConfigError::Validation(
-            "database.history.enabled requires database.enabled".into(),
-        ));
-    }
     if database.devices.auto_register
-        && (!database.devices.admission_enabled
-            || database.devices.auto_register_agent_key.trim().is_empty())
+        && database.devices.auto_register_agent_key.trim().is_empty()
     {
         return Err(ConfigError::Validation(
-            "database.devices.auto_register requires admission_enabled and a non-empty auto_register_agent_key".into(),
+            "database.devices.auto_register requires a non-empty auto_register_agent_key".into(),
         ));
     }
     let enrollment = &database.devices.enrollment;
     if enrollment.enabled {
-        if !database.enabled || !database.devices.admission_enabled || !config.api.enabled {
+        if !config.api.enabled {
             return Err(ConfigError::Validation(
-                "database.devices.enrollment.enabled requires database.enabled, database.devices.admission_enabled, and api.enabled".into(),
+                "database.devices.enrollment.enabled requires api.enabled".into(),
             ));
         }
         if database.devices.auto_register {
@@ -161,9 +149,6 @@ fn validate_database(config: &AppConfig) -> Result<(), ConfigError> {
                 "database.devices.enrollment bounds are invalid".into(),
             ));
         }
-    }
-    if !database.enabled {
-        return Ok(());
     }
     // Retention is a property of the archive rather than of capture, so its bounds hold whether
     // capture is on or off.  `0` is refused alongside an out-of-range value: an unbounded
@@ -739,7 +724,6 @@ llm = "llm"
 tts = "tts"
 
 [database]
-enabled = true
 url = "sqlite://data/voice-agent.db"
 {extra}
 "#
@@ -789,13 +773,6 @@ queue_capacity = 0
             ))
             .is_err(),
             "a zero-capacity hand-off could only ever drop every record"
-        );
-        let mut disabled = config("");
-        disabled.database.enabled = false;
-        disabled.database.history.enabled = true;
-        assert!(
-            validate_database(&disabled).is_err(),
-            "capture needs the archive it writes to"
         );
     }
 

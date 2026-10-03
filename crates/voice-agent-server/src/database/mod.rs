@@ -112,16 +112,6 @@ impl Database {
         Ok(Self { pool })
     }
 
-    pub async fn connect_if_enabled(
-        config: &DatabaseConfig,
-    ) -> Result<Option<Self>, DatabaseError> {
-        if config.enabled {
-            Self::connect(config).await.map(Some)
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }

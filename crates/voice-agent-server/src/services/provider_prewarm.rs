@@ -181,7 +181,6 @@ mod tests {
     #[tokio::test]
     async fn obsolete_unbound_and_disabled_intents_never_produce_build_snapshots() {
         let database = Database::connect(&crate::config::DatabaseConfig {
-            enabled: true,
             url: "sqlite::memory:".into(),
             max_connections: 1,
             ..Default::default()

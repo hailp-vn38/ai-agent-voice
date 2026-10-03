@@ -6,19 +6,18 @@ hello_timeout_ms = 5000
 [auth]
 token = ""
 
-# SQLite is opt-in. V1 supports one Voice Agent process owning one local filesystem path;
+# SQLite is required. Create the parent directory before starting the server.
+# V1 supports one Voice Agent process owning one local filesystem path;
 # NFS/SMB, active-active, and multi-process writers are unsupported.
 [database]
-enabled = false
 url = "sqlite://data/voice-agent.db"
 max_connections = 5
 busy_timeout_ms = 5000
 migrate_on_start = true
 
-# Enrollment is opt-in and deliberately couples unknown-device onboarding to the existing
-# fail-closed admission policy. It must not be enabled with auto_register.
+# Every WS connection uses database-backed admission. Enrollment remains opt-in and
+# must not be enabled with auto_register.
 [database.devices]
-admission_enabled = false
 auto_register = false
 
 [database.devices.enrollment]
@@ -39,7 +38,7 @@ retention_days = 30
 # row and nothing else: never a turn, a WebSocket close, or a change to Dialogue History.
 queue_capacity = 256
 
-# The Admin API mounts only when both this and database.enabled are true.
+# The Admin API mounts only when api.enabled is true and uses its own bearer token.
 [api]
 enabled = false
 admin_token = ""

@@ -23,10 +23,10 @@ use url::Url;
 use voice_agent_server::{
     app::AppState,
     config::{
-        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig, DatabaseDevicesConfig,
-        DeploymentConfig, LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, SileroOnnxConfig, SpeechOutputConfig,
-        TtsConfig, VadInstanceConfig, VisionConfig, WebsocketConfig, WorkersConfig,
+        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig, DeploymentConfig,
+        LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig,
+        ServerConfig, SileroOnnxConfig, SpeechOutputConfig, TtsConfig, VadInstanceConfig,
+        VisionConfig, WebsocketConfig, WorkersConfig,
     },
     database::Database,
     providers::{
@@ -275,12 +275,8 @@ fn config(address: std::net::SocketAddr, url: String) -> AppConfig {
         mcp: McpConfig::default(),
         vision: VisionConfig::default(),
         database: DatabaseConfig {
-            enabled: true,
             url,
-            devices: DatabaseDevicesConfig {
-                admission_enabled: true,
-                ..Default::default()
-            },
+            devices: Default::default(),
             ..Default::default()
         },
         api: Default::default(),

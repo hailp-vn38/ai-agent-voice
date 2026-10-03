@@ -9,9 +9,9 @@ use voice_agent_server::{
     app::{BootstrapError, bootstrap_with_providers},
     config::{
         AdminApiConfig, AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig,
-        DatabaseDevicesConfig, DeploymentConfig, LimitsConfig, LlmConfig, McpConfig,
-        ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig,
-        TtsConfig, VisionConfig, WebsocketConfig, WorkersConfig,
+        DeploymentConfig, LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig,
+        ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig, VisionConfig,
+        WebsocketConfig, WorkersConfig,
     },
     database::Database,
     providers::ProviderSet,
@@ -61,12 +61,8 @@ fn config(url: String) -> AppConfig {
         mcp: McpConfig::default(),
         vision: VisionConfig::default(),
         database: DatabaseConfig {
-            enabled: true,
             url,
-            devices: DatabaseDevicesConfig {
-                admission_enabled: true,
-                ..Default::default()
-            },
+            devices: Default::default(),
             ..Default::default()
         },
         api: AdminApiConfig {

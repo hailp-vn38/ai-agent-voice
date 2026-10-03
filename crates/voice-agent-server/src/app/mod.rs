@@ -45,8 +45,11 @@ mod websocket;
 pub use state::{AppState, SessionProfileAdmissionError};
 
 /// Application seam for tests and other callers that have already initialized providers.
-pub fn router_with_providers(config: AppConfig, providers: Arc<ProviderSet>) -> Router {
-    router_with_state(AppState::from_provider_set(config, providers))
+pub async fn router_with_providers(
+    config: AppConfig,
+    providers: Arc<ProviderSet>,
+) -> Result<Router, BootstrapError> {
+    bootstrap_with_providers(config, providers).await
 }
 
 /// Public startup seam for deterministic bootstrap tests. SQLite opens, migrates and applies the
@@ -67,8 +70,8 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
     providers: Arc<ProviderSet>,
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
-    let database = Database::connect_if_enabled(&config.database).await?;
-    let (plan, rows) = read_load_plan(&config, database.as_ref()).await?;
+    let database = Database::connect(&config.database).await?;
+    let (plan, rows) = read_load_plan(&config, &database).await?;
     let (config, loaded) = state::loaded_from_provider_set(config, &providers);
     let (loaded, materialization) =
         apply_load_plan(&config, loaded, rows, &plan, secret_resolver.as_ref())
@@ -78,7 +81,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
         AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
             config,
             loaded,
-            database,
+            Some(database),
             Some(materialization.snapshot()),
             secret_resolver,
             lifecycle,
@@ -139,7 +142,7 @@ pub fn router_with_state(state: AppState) -> Router {
     } else {
         router
     };
-    let router = if state.config.database.enabled && state.config.api.enabled {
+    let router = if state.config.api.enabled {
         router.nest("/api/admin", admin::router(state.clone()))
     } else {
         router
@@ -155,9 +158,8 @@ pub fn router_with_state(state: AppState) -> Router {
 }
 
 /// Builds the public application only after local provider validation and warmup succeed.
-pub fn application(config: AppConfig) -> Result<Router, crate::providers::ProviderLoadError> {
-    let loaded = crate::providers::load_local(&config)?;
-    Ok(router_with_state(AppState::new(config, loaded)))
+pub async fn application(config: AppConfig) -> Result<Router, BootstrapError> {
+    startup(config).await
 }
 
 /// Production startup orders the database dependency before provider initialization and listener
@@ -187,13 +189,13 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     lifecycle: Arc<RuntimeLifecycle>,
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
-    let database = Database::connect_if_enabled(&config.database).await?;
+    let database = Database::connect(&config.database).await?;
     if config.provider_runtime.is_some() {
         return managed_startup(config, database, secret_resolver, lifecycle).await;
     }
     // The plan and the desired rows are read before any runtime exists, so a required provider is
     // known to be required before the first model is prepared.
-    let (plan, rows) = read_load_plan(&config, database.as_ref()).await?;
+    let (plan, rows) = read_load_plan(&config, &database).await?;
     let startup_config = config.clone();
     let startup_secret_resolver = Arc::clone(&secret_resolver);
     let (loaded, materialization) = tokio::task::spawn_blocking(move || {
@@ -214,7 +216,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
         AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
             config,
             loaded,
-            database,
+            Some(database),
             Some(materialization.snapshot()),
             secret_resolver,
             lifecycle,
@@ -224,7 +226,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
 
 async fn managed_startup(
     config: AppConfig,
-    database: Option<Database>,
+    database: Database,
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
     lifecycle: Arc<RuntimeLifecycle>,
 ) -> Result<Router, BootstrapError> {
@@ -241,7 +243,7 @@ async fn managed_startup(
     let mut state = AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
         config.clone(),
         loaded,
-        database,
+        Some(database),
         None,
         secret_resolver.clone(),
         lifecycle.clone(),
@@ -309,14 +311,8 @@ async fn managed_startup(
 /// a single process-local agent rather than database intent.
 async fn read_load_plan(
     config: &AppConfig,
-    database: Option<&Database>,
+    database: &Database,
 ) -> Result<(ProviderLoadPlan, Vec<DesiredProvider>), BootstrapError> {
-    let Some(database) = database else {
-        return Ok((
-            ProviderLoadPlan::from_server_defaults(&config.provider_defaults),
-            Vec::new(),
-        ));
-    };
     let plan = database
         .provider_load_plan(&config.provider_defaults)
         .await?;

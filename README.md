@@ -11,6 +11,7 @@ Core V1 phục vụ mọi **Voice Protocol Client** tuân thủ contract; firmwa
 Core V1:
 
 - OTA/discovery endpoint.
+- Required SQLite control plane and database-backed Device admission for every WS connection.
 - WebSocket protocol v1.
 - Opus uplink/downlink.
 - VAD + manual listen mode.
@@ -21,16 +22,23 @@ Core V1:
 - Abort/barge-in/cancellation.
 - Device MCP (`initialize`, `tools/list`, `tools/call`).
 
-Không nằm trong V1: manager web/mobile, multi-user, database bắt buộc, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory.
+Không nằm trong V1: manager web/mobile, multi-user, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory.
 
 ## Chạy nhanh Protocol V1
 
 Khởi động server với cấu hình mẫu:
 
 ```bash
+mkdir -p data
 VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server --bin voice-agent-server
 VOICE_AGENT_CONFIG=config.toml cargo run -p voice-agent-server --bin voice-agent-server
 ```
+
+Database và Device admission luôn bật. Provision Agent và Device `reference-client-01`
+qua Admin API trước khi chạy client, hoặc bật enrollment và claim mã từ thiết bị.
+Admin API vẫn cần `api.enabled=true` và admin token riêng. Không có Device thì OTA/WS
+trả 403 khi enrollment tắt. Xem [flow database và enrollment](docs/flows/08-database-device-enrollment.md)
+để chuyển cấu hình cũ và chuẩn bị dữ liệu.
 
 Sau đó xác nhận một text turn OTA → WebSocket → TTS bằng Voice Reference Client độc lập:
 

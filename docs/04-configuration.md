@@ -209,6 +209,12 @@ cleanup_interval_seconds = 60
 max_pending = 1000
 ```
 
+SQLite và WS Device admission là bắt buộc theo [ADR-0073](adr/0073-required-database-and-device-admission.md).
+Không còn `database.enabled` hoặc `database.devices.admission_enabled`; xóa hai key cũ
+vì strict parser từ chối chúng. Bỏ section database dùng defaults, không tắt DB.
+URL/pool/busy-timeout/retention luôn được validate; readiness luôn probe DB.
+Admin API/history/enrollment vẫn có cờ riêng. Xem [flow chuyển config và provisioning](flows/08-database-device-enrollment.md).
+
 ## 3. Environment override
 
 Khuyến nghị:
@@ -245,8 +251,8 @@ VOICE_AGENT_LLM_API_KEY
   round mà một Conversational Turn được tiếp tục ngoài round đầu tiên của nó.
 - `[agent]` là optional. Field bị omit dùng built-in default; field đã khai báo nhưng rỗng/whitespace fail startup. Built-in template compile vào binary; custom `agent.prompt_template` được resolve một lần theo thư mục config và phải chứa exact `{{persona}}`.
 - `llm.max_history_messages > 0`; đây là conversation-history bound, không phải provider adapter config.
-- `[database.history]` là policy của optional Persistent Transcript, validate trước khi bind listener: `database.history.enabled` yêu cầu `database.enabled`; `retention_days ∈ 1..=365`; `queue_capacity ∈ 1..=65_536`. `enabled` quyết định có khởi động `HistoryWriter` hay không, nên khi tắt process không có archival queue hay task nào; `retention_days` được bound bất kể capture đang bật hay tắt vì `RetentionCleaner` sống lâu hơn capture — retention thuộc về archive chứ không thuộc về capture, và tắt capture mới không được biến dữ liệu đã có thành retention vô hạn. `0` bị từ chối như giá trị vượt range, vì một retention không có cửa sổ không phải retention policy. Default lần lượt là `false`, `30`, `256`.
-- `[database.devices.enrollment]` mặc định tắt. Khi bật, `database.enabled`, `database.devices.admission_enabled` và `api.enabled` đều bắt buộc true, còn `auto_register` bắt buộc false. V1 giới hạn TTL `60..=3600` giây, retention `TTL..=604800` giây, cleanup interval `10..=3600` giây và pending capacity `1..=10000`; OTA cấp mã không bao giờ gia hạn TTL khi thiết bị poll lại.
+- `[database.history]` là policy của optional Persistent Transcript, validate trước khi bind listener: `retention_days ∈ 1..=365`; `queue_capacity ∈ 1..=65_536`. `enabled` quyết định có khởi động `HistoryWriter` hay không, nên khi tắt process không có archival queue hay task nào; `retention_days` được bound bất kể capture đang bật hay tắt vì `RetentionCleaner` sống lâu hơn capture — retention thuộc về archive chứ không thuộc về capture, và tắt capture mới không được biến dữ liệu đã có thành retention vô hạn. `0` bị từ chối như giá trị vượt range, vì một retention không có cửa sổ không phải retention policy. Default lần lượt là `false`, `30`, `256`.
+- `[database.devices.enrollment]` mặc định tắt. Khi bật, `api.enabled` bắt buộc true; database và Device admission luôn hoạt động, còn `auto_register` bắt buộc false. V1 giới hạn TTL `60..=3600` giây, retention `TTL..=604800` giây, cleanup interval `10..=3600` giây và pending capacity `1..=10000`; OTA cấp mã không bao giờ gia hạn TTL khi thiết bị poll lại.
 - mỗi instance OpenAI phải có `base_url`, `model`, timeout hợp lệ; API key có thể nằm TOML nhưng không xuất hiện trong `Debug`, error, log hay telemetry. Nhiều instance có thể cùng adapter `openai` với endpoint/model khác nhau.
 - mỗi instance ZeroTTS phải có Logical Model Identity, `voice` và thread count hợp lệ; Model Preparation inject `ResolvedModel`, không direct path. Remote ChillAudio không có fake model identity. `[workers.tts]` là template capacity/timeout/cleanup cho từng runtime được load.
 - `gipformer_sherpa_offline` dùng `OfflineRecognizer`: `push_pcm()` chỉ tích luỹ PCM 16 kHz canonical, không phát partial; `finish()` mới decode toàn utterance. `model`, `num_threads`, `decoding_method` (`greedy_search` hoặc `modified_beam_search`) và `max_active_paths > 0` là các option duy nhất của instance. Precision và artifact paths thuộc Model Artifact Manifest, không thuộc TOML provider. Offline decode hiện không hard-cancel được sau khi native decode bắt đầu, nên giữ `workers.asr.final_timeout_ms` theo benchmark target CPU.
@@ -256,9 +262,10 @@ VOICE_AGENT_LLM_API_KEY
 - `limits.tts_concurrency` là global admission budget; `workers.tts.max_workers` là structural capacity của từng loaded TTS runtime, nên hai giá trị không còn bắt buộc bằng nhau.
 - OpenAI startup chỉ validate local typed config/build provider; không model list, completion, health probe hay network request trước bind. Lỗi remote thuộc LLM Operation hiện tại.
 - acknowledgement của `zerotts_default` match chính xác `license = "MIT; bundled-codec=Apache-2.0"`; Phase 4 giữ license model-level, nhưng `codec_license` vẫn là required artifact.
-- public WS URL hợp lệ nếu OTA được bật.
+- public WS URL luôn phải hợp lệ vì OTA discovery luôn có.
 - `auth.token = ""` tắt authentication; token không rỗng bắt buộc Bearer token. Device-Id và Client-Id không phải credential.
-- OTA trả static token khi auth bật và không phải security boundary; Internet không nằm trong supported V1 profile.
+- OTA chỉ trả static token khi auth bật và Device/Agent được phép trong DB; Device-Id tự khai chưa phải device credential. Internet không nằm trong supported V1 profile.
 - mọi limits và queue capacity > 0.
 - `[mcp.external]` toàn bộ field có default, nên bỏ hẳn section cũng là configuration hợp lệ. `per_server_resolution_timeout_ms` và `overall_resolution_budget_ms` phải dương và `overall_resolution_budget_ms >= per_server_resolution_timeout_ms`; `max_concurrent_calls_per_server` nằm trong `1..=64` và đây chính là bound của process-global semaphore per MCP server dùng chung cho mọi session. Operator chỉ cấu hình trong hard ceiling: `max_tools_per_server <= 512`, `max_tools_per_session <= 2_048`, `max_tool_schema_bytes` và `max_external_tool_result_bytes <= 65_536`, `max_tool_description_bytes <= 16_384`, `max_pages_per_server <= 256`. Mọi limit phải dương, và một tổ hợp limit mô tả một `tools/list` page lớn hơn buffer một response thì fail startup thay vì biến thành server lặng lẽ không resolve được.
 - `[mcp.external.network]` bắt buộc có ít nhất một entry trong `allowed_hosts` hoặc `allowed_cidrs`; chỉ HTTPS trừ khi `allow_http_lan = true`, và khi đó destination vẫn phải match allowlist. `allowed_hosts` chỉ nhận hostname pattern hợp lệ và `allowed_cidrs` chỉ nhận CIDR hợp lệ. URL không có userinfo, query string hay fragment; redirect tắt. Validate hostname allowlist, resolve DNS ngay trước connect, và mọi resolved IP cũng phải pass policy để chống DNS rebinding.
+
