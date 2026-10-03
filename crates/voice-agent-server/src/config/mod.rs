@@ -890,12 +890,10 @@ pub struct ServerConfig {
     pub hello_timeout_ms: u64,
 }
 
-/// Optional local SQLite control plane. A single process owns each configured path.
+/// Required local SQLite control plane. A single process owns each configured path.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
-    #[serde(default)]
-    pub enabled: bool,
     #[serde(default = "default_database_url")]
     pub url: String,
     #[serde(default = "default_database_max_connections")]
@@ -910,12 +908,10 @@ pub struct DatabaseConfig {
     pub history: DatabaseHistoryConfig,
 }
 
-/// Explicit controls for database-backed Voice Protocol Client admission.
+/// Provisioning controls for mandatory database-backed Voice Protocol Client admission.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseDevicesConfig {
-    #[serde(default)]
-    pub admission_enabled: bool,
     #[serde(default)]
     pub auto_register: bool,
     #[serde(default)]
@@ -955,7 +951,6 @@ impl Default for EnrollmentConfig {
 impl Default for DatabaseDevicesConfig {
     fn default() -> Self {
         Self {
-            admission_enabled: false,
             auto_register: false,
             auto_register_agent_key: String::new(),
             enrollment: EnrollmentConfig::default(),
@@ -1023,7 +1018,6 @@ impl Default for ProviderTestsConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             url: default_database_url(),
             max_connections: default_database_max_connections(),
             busy_timeout_ms: default_database_busy_timeout_ms(),

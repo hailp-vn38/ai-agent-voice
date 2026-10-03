@@ -5,7 +5,6 @@ use voice_agent_server::{
 
 async fn database() -> Database {
     Database::connect(&DatabaseConfig {
-        enabled: true,
         url: "sqlite::memory:".into(),
         max_connections: 1,
         ..Default::default()

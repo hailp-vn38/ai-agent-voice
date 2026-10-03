@@ -32,11 +32,7 @@ fn database_url() -> String {
     )
 }
 
-fn config(
-    address: std::net::SocketAddr,
-    database_url: String,
-    admission_enabled: bool,
-) -> AppConfig {
+fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
     AppConfig {
         server: ServerConfig {
             bind: address,
@@ -66,12 +62,8 @@ fn config(
         mcp: voice_agent_server::config::McpConfig::default(),
         vision: voice_agent_server::config::VisionConfig::default(),
         database: DatabaseConfig {
-            enabled: true,
             url: database_url,
-            devices: voice_agent_server::config::DatabaseDevicesConfig {
-                admission_enabled,
-                ..Default::default()
-            },
+            devices: Default::default(),
             ..Default::default()
         },
         api: voice_agent_server::config::AdminApiConfig::default(),
@@ -87,7 +79,7 @@ async fn start(
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let database_url = database_url();
-    let mut app_config = config(address, database_url.clone(), false);
+    let mut app_config = config(address, database_url.clone());
     app_config.database.devices = devices;
     let router: Router = bootstrap_with_providers(app_config, Arc::new(ProviderSet::unavailable()))
         .await
@@ -100,9 +92,8 @@ async fn start_enrollment() -> (String, String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let database_url = database_url();
-    let mut app_config = config(address, database_url.clone(), true);
+    let mut app_config = config(address, database_url.clone());
     app_config.database.devices = voice_agent_server::config::DatabaseDevicesConfig {
-        admission_enabled: true,
         enrollment: voice_agent_server::config::EnrollmentConfig {
             enabled: true,
             ..Default::default()
@@ -122,10 +113,7 @@ async fn start_enrollment() -> (String, String, JoinHandle<()>) {
 }
 
 fn admission_config() -> voice_agent_server::config::DatabaseDevicesConfig {
-    voice_agent_server::config::DatabaseDevicesConfig {
-        admission_enabled: true,
-        ..Default::default()
-    }
+    Default::default()
 }
 
 fn request(
@@ -169,12 +157,59 @@ async fn insert_agent_and_device(database_url: &str, device_id: &str, enabled: b
 }
 
 #[tokio::test]
-async fn admission_disabled_preserves_legacy_websocket_upgrade() {
+async fn default_admission_rejects_unknown_devices_before_upgrade() {
     let (base, _database_url, task) = start(Default::default()).await;
-    let (_socket, response) = connect_async(request(&base, "unknown-device"))
+    let error = connect_async(request(&base, "unknown-device"))
+        .await
+        .unwrap_err();
+    assert_eq!(rejected_status(error), StatusCode::FORBIDDEN);
+    task.abort();
+}
+
+#[tokio::test]
+async fn ota_without_enrollment_only_discloses_configuration_for_registered_devices() {
+    let (base, database_url, task) = start(Default::default()).await;
+    let client = reqwest::Client::new();
+    let unknown = client
+        .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "unknown-device")
+        .header("Client-Id", "ota-test")
+        .json(&serde_json::json!({}))
+        .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    assert_eq!(unknown.status(), 403);
+    let body: serde_json::Value = unknown.json().await.unwrap();
+    assert!(body.get("websocket").is_none());
+    assert!(body.get("activation").is_none());
+
+    insert_agent_and_device(&database_url, "registered-device", true).await;
+    let registered = client
+        .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "registered-device")
+        .header("Client-Id", "ota-test")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(registered.status(), 200);
+    let body: serde_json::Value = registered.json().await.unwrap();
+    assert!(body.get("websocket").is_some());
+    assert!(body.get("activation").is_none());
+
+    sqlx::query("UPDATE devices SET enabled=0 WHERE device_id='registered-device'")
+        .execute(&SqlitePool::connect(&database_url).await.unwrap())
+        .await
+        .unwrap();
+    let blocked = client
+        .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "registered-device")
+        .header("Client-Id", "ota-test")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 403);
     task.abort();
 }
 
@@ -323,7 +358,7 @@ async fn enabled_admission_returns_coarse_503_when_its_database_is_unavailable()
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut state = voice_agent_server::app::AppState::from_provider_set(
-        config(address, database_url(), true),
+        config(address, database_url()),
         Arc::new(ProviderSet::unavailable()),
     );
     state.database = None;
@@ -342,7 +377,7 @@ async fn enabled_admission_returns_coarse_503_when_its_database_is_unavailable()
 async fn enabled_admission_returns_coarse_503_when_its_database_pool_is_closed() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let app_config = config(address, database_url(), true);
+    let app_config = config(address, database_url());
     let database = voice_agent_server::database::Database::connect(&app_config.database)
         .await
         .unwrap();
@@ -366,7 +401,6 @@ async fn enabled_admission_returns_coarse_503_when_its_database_pool_is_closed()
 #[tokio::test]
 async fn auto_registration_is_atomic_for_racing_connections_and_stores_only_safe_metadata() {
     let (base, database_url, task) = start(voice_agent_server::config::DatabaseDevicesConfig {
-        admission_enabled: true,
         auto_register: true,
         auto_register_agent_key: "agent".into(),
         ..Default::default()

@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     sync::{
         Arc,
@@ -14,7 +16,6 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use voice_agent_server::{
-    app::router_with_providers,
     audio::PcmF32Mono,
     config::{
         AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
@@ -240,7 +241,7 @@ async fn start(tool_was_advertised: Arc<AtomicBool>) -> (String, JoinHandle<()>)
         Arc::new(ExitLlm(tool_was_advertised)),
         Arc::new(FakeTts),
     ));
-    let app = router_with_providers(config, providers);
+    let app = support::router(config, providers).await;
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

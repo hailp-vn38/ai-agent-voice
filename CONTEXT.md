@@ -330,7 +330,7 @@ Bản ghi tùy chọn, có retention, của final user text và Delivered Assist
 _Avoid_: dialogue history, full conversation log, audio archive
 
 **Database-backed Device Admission**:
-Chính sách xác thực Voice Protocol Client ở WebSocket boundary bằng Device đã provision trong database, được bật tường minh; schema database tự nó không kích hoạt chính sách này.
+Chính sách bắt buộc tại WebSocket boundary: mọi Voice Protocol Client phải resolve Device đã provision trong SQLite. Database là startup dependency luôn có; không có cờ tắt Device admission hoặc đường WS bỏ qua database.
 _Avoid_: implicit device registration, migration-based admission
 
 **Database Desired Configuration**:

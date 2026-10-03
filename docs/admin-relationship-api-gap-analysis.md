@@ -1,5 +1,11 @@
 # Đánh giá gap Admin API và kế hoạch Web Admin
 
+> **Cập nhật contract:** [ADR-0073](adr/0073-required-database-and-device-admission.md)
+> thay thế mọi clause optional database/admission trong tài liệu lịch sử này.
+> Database và Device admission luôn bật; xóa hai config key cũ khỏi mọi ví dụ trước
+> khi sử dụng. [Flow 08](flows/08-database-device-enrollment.md) là hướng dẫn hiện hành.
+
+
 **Trạng thái:** P0 relationship read/unlink hoàn thành tại commit `22d500b` (2026-10-01). P1
 control-plane đã hoàn thành phần có contract cụ thể. P3 deletion đã hoàn thành theo ADR-0070;
 Vision Provider sẽ trở thành Database Provider Instance nhưng còn cần contract chọn runtime theo
@@ -769,3 +775,4 @@ Nếu mục tiêu là đưa Web Admin ra khỏi mock/localStorage, trạng thái
 P0 read-model đã hoàn thành: phần **Agents + Template Switcher + AI Pipeline + Templates Page + Provider Catalog** có thể hoạt động bằng server API mà không cần frontend tự giữ relational state. Đây là desired configuration: UI phải hiển thị `requires_restart`/runtime status khi mutation chưa effective, và không được hứa hot-reload session đang chạy.
 
 Bản Postman đang làm việc đã có nền tảng create/update và P0 relationship đầy đủ cho Agent/Device, Template và Provider; phần còn lại chủ yếu là **Vision Database Provider integration**. Postman collection cần được đồng bộ riêng theo P3 deletion contract.
+

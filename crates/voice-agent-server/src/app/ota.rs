@@ -18,9 +18,6 @@ const OTA_BODY_MAX: usize = 32 * 1024;
 const ACTIVATE_BODY_MAX: usize = 8 * 1024;
 
 pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> Response {
-    if !state.config.database.devices.enrollment.enabled {
-        return legacy(&state, request.headers());
-    }
     let headers = request.headers().clone();
     let identity = match identity(&headers) {
         Ok(value) => value,
@@ -42,6 +39,9 @@ pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> 
         Ok(DeviceRegistration::Registered) => ota_response(&state, &headers, None, true),
         Ok(DeviceRegistration::Blocked) => ota_error(StatusCode::FORBIDDEN, "device_not_admitted"),
         Ok(DeviceRegistration::Unknown) => {
+            if !state.config.database.devices.enrollment.enabled {
+                return ota_error(StatusCode::FORBIDDEN, "device_not_admitted");
+            }
             if !state.admission_gate().is_open() {
                 return ota_error(StatusCode::SERVICE_UNAVAILABLE, "server_shutting_down");
             }
@@ -149,27 +149,6 @@ pub(crate) async fn options(request_headers: HeaderMap) -> Response {
     response
 }
 
-fn legacy(state: &AppState, request_headers: &HeaderMap) -> Response {
-    let timestamp = unix_millis();
-    let mut response = axum::Json(OtaResponse {
-        server_time: ServerTime {
-            timestamp,
-            timezone_offset: 420,
-        },
-        firmware: Firmware {
-            version: "",
-            url: "",
-        },
-        websocket: Some(OtaWebsocket {
-            url: state.config.server.public_ws_url.to_string(),
-            token: state.config.auth.token.clone(),
-        }),
-        activation: None,
-    })
-    .into_response();
-    apply_cors(response.headers_mut(), request_headers);
-    response
-}
 fn ota_response(
     state: &AppState,
     request_headers: &HeaderMap,

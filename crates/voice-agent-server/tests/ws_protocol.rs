@@ -1,3 +1,5 @@
+mod support;
+
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -77,10 +79,11 @@ async fn start_with_token_and_lifecycle(
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
+    let (config, database) = support::provision(config).await;
     let state = AppState::from_provider_set_with_database_and_shutdown(
         config,
         Arc::new(ProviderSet::unavailable()),
-        None,
+        Some(database),
         lifecycle.clone().unwrap_or_else(|| {
             voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(
                 1_024,
@@ -134,6 +137,8 @@ async fn ota_advertises_ws_url_and_health_is_available() {
     );
     let ota: serde_json::Value = reqwest::Client::new()
         .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "reference-client-01")
+        .header("Client-Id", "test-client")
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -180,6 +185,8 @@ async fn ota_accepts_post_and_advertises_preflight_methods() {
     let client = reqwest::Client::new();
     let ota = client
         .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "reference-client-01")
+        .header("Client-Id", "test-client")
         .header(reqwest::header::ORIGIN, "http://localhost:3000")
         .json(&serde_json::json!({}))
         .send()

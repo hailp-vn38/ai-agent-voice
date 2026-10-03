@@ -150,7 +150,6 @@ asr = "test"
 llm = "test"
 tts = "test"
 [database]
-enabled = true
 url = "{}"
 [api]
 enabled = {}
@@ -194,7 +193,6 @@ asr = "test"
 llm = "test"
 tts = "test"
 [database]
-enabled = true
 url = "{}"
 [api]
 enabled = true
@@ -209,9 +207,7 @@ admin_token = "admin-test-token"
     let state = AppState::from_provider_set_with_database(
         config.clone(),
         Arc::new(ProviderSet::unavailable()),
-        Database::connect_if_enabled(&config.database)
-            .await
-            .unwrap(),
+        Some(Database::connect(&config.database).await.unwrap()),
     );
     state.database.as_ref().unwrap().pool().close().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -246,7 +242,6 @@ asr = "test"
 llm = "test"
 tts = "test"
 [database]
-enabled = true
 url = "{}"
 [api]
 enabled = true
@@ -260,9 +255,7 @@ allowed_hosts = ["mcp.example.test"]
     .unwrap();
     let config = AppConfig::parse_and_resolve(&config_path).unwrap();
     fs::remove_file(config_path).unwrap();
-    let database = Database::connect_if_enabled(&config.database)
-        .await
-        .unwrap();
+    let database = Some(Database::connect(&config.database).await.unwrap());
     let requests = Arc::new(Mutex::new(Vec::new()));
     let state = AppState::from_provider_set_with_database(
         config,
@@ -307,7 +300,6 @@ asr = "test"
 llm = "test"
 tts = "test"
 [database]
-enabled = true
 url = "{}"
 [api]
 enabled = true
@@ -321,9 +313,7 @@ allowed_hosts = ["mcp.example.test"]
     .unwrap();
     let config = AppConfig::parse_and_resolve(&config_path).unwrap();
     fs::remove_file(config_path).unwrap();
-    let database = Database::connect_if_enabled(&config.database)
-        .await
-        .unwrap();
+    let database = Some(Database::connect(&config.database).await.unwrap());
     let requests = Arc::new(Mutex::new(Vec::new()));
     let state = AppState::from_provider_set_with_database(
         config,
@@ -369,7 +359,6 @@ asr = "test"
 llm = "test"
 tts = "test"
 [database]
-enabled = true
 url = "{}"
 [api]
 enabled = true
@@ -383,9 +372,7 @@ allowed_hosts = ["mcp.example.test"]
     .unwrap();
     let config = AppConfig::parse_and_resolve(&config_path).unwrap();
     fs::remove_file(config_path).unwrap();
-    let database = Database::connect_if_enabled(&config.database)
-        .await
-        .unwrap();
+    let database = Some(Database::connect(&config.database).await.unwrap());
     let received_samples = Arc::new(Mutex::new(Vec::new()));
     let state = AppState::from_provider_set_with_database(
         config,
@@ -435,7 +422,6 @@ asr = "test"
 llm = "test"
 tts = "test"
 [database]
-enabled = true
 url = "{}"
 [api]
 enabled = true
@@ -447,9 +433,7 @@ admin_token = "admin-test-token"
     .unwrap();
     let config = AppConfig::parse_and_resolve(&config_path).unwrap();
     fs::remove_file(config_path).unwrap();
-    let database = Database::connect_if_enabled(&config.database)
-        .await
-        .unwrap();
+    let database = Some(Database::connect(&config.database).await.unwrap());
     let inputs = Arc::new(Mutex::new(Vec::new()));
     let state = AppState::from_provider_set_with_database(
         config,

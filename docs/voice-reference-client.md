@@ -19,9 +19,16 @@ Lenh in `init_ms`, `first_pcm_ms`, `synthesis_ms`, `audio_ms`, RTF, so chunk va 
 
 ## Chay voi server cuc bo
 
+SQLite/Device admission luon bat: tao parent directory va provision Device-Id cua
+client (mac dinh reference-client-01) vao mot Agent enabled truoc khi goi OTA.
+Co the dung Admin API them thu cong hoac claim ma tren thiet bi khi enrollment bat.
+Xem [Flow 08](flows/08-database-device-enrollment.md). Unknown Device khi enrollment
+tat tra 403; enrollment pending chua co websocket config de chay text turn.
+
 Khoi dong server o terminal khac:
 
 ```bash
+mkdir -p data
 VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server
 ```
 
@@ -81,3 +88,4 @@ Khong in token, app key, URL day du hay audio binary. Dung `--voice` voi mot tro
 voice ho tro (`BV421_vivn_streaming`, `vi_female_huong`, `BV074_streaming`,
 `BV075_streaming`) va `--timeout-ms` de qualification failure/timeout. Live smoke phu
 thuoc Internet, credential va vendor endpoint, vi vay khong phai CI gate deterministic.
+

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; nhánh legacy OTA khi enrollment tắt được supersede bởi [ADR-0073](0073-required-database-and-device-admission.md). OTA luôn kiểm tra Device; enrollment vẫn optional.
 
 ## Decision
 
@@ -13,3 +13,4 @@ Enrollment yêu cầu database-backed admission và cấm auto-register. TTL đ�
 ## Consequences
 
 Không thêm Redis, credential riêng hay database query vào SessionActor/audio path. Reverse proxy chịu rate limiting. Web UI phải gọi Admin claim qua same-origin Admin API và không suy online từ enrollment claim.
+

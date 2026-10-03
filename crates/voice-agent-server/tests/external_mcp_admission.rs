@@ -29,11 +29,11 @@ use voice_agent_server::audio::PcmF32Mono;
 use voice_agent_server::{
     app::AppState,
     config::{
-        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig, DatabaseDevicesConfig,
-        DeploymentConfig, ExternalMcpConfig, ExternalMcpLimitsConfig, ExternalMcpNetworkConfig,
-        LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig,
-        ServerConfig, SileroOnnxConfig, SpeechOutputConfig, TtsConfig, VadInstanceConfig,
-        VisionConfig, WebsocketConfig, WorkersConfig,
+        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig, DeploymentConfig,
+        ExternalMcpConfig, ExternalMcpLimitsConfig, ExternalMcpNetworkConfig, LimitsConfig,
+        LlmConfig, McpConfig, ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig,
+        SileroOnnxConfig, SpeechOutputConfig, TtsConfig, VadInstanceConfig, VisionConfig,
+        WebsocketConfig, WorkersConfig,
     },
     database::{
         Database,
@@ -524,12 +524,8 @@ fn config(url: String) -> AppConfig {
         },
         vision: VisionConfig::default(),
         database: DatabaseConfig {
-            enabled: true,
             url,
-            devices: DatabaseDevicesConfig {
-                admission_enabled: true,
-                ..Default::default()
-            },
+            devices: Default::default(),
             ..Default::default()
         },
         api: Default::default(),

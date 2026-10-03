@@ -9,3 +9,6 @@
 7. [Device MCP](07-device-mcp.md)
 
 Mỗi flow mô tả boundary, sequence, invariants và test contract. Khi hành vi runtime thay đổi, tài liệu flow tương ứng phải được cập nhật cùng PR.
+
+
+- [08 — Database bắt buộc và Device enrollment](08-database-device-enrollment.md).

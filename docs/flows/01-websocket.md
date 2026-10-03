@@ -11,8 +11,17 @@ sequenceDiagram
     participant CLIENT as Voice Protocol Client
     participant HTTP as Rust HTTP
     CLIENT->>HTTP: POST /voice/ota/\nDevice-Id, Client-Id
-    HTTP-->>CLIENT: websocket.url + token + server_time
+    HTTP->>HTTP: read Device/Agent registration
+    alt Registered and enabled
+        HTTP-->>CLIENT: websocket.url + token + server_time
+    else Unknown and enrollment enabled
+        HTTP-->>CLIENT: activation.code + challenge, no WS token
+    else Unknown or blocked
+        HTTP-->>CLIENT: 403
+    end
 ```
+
+Database-backed admission luôn có; flow claim/poll xem [Flow 08](08-database-device-enrollment.md). DB lỗi trả 503, không trả cấu hình fallback.
 
 V1 không cần firmware hosting. `firmware.url` có thể rỗng.
 
@@ -27,7 +36,7 @@ Device-Id: <mac>
 Client-Id: <uuid>
 ```
 
-Khi `auth.token` không rỗng, `Authorization` bắt buộc; thiếu hoặc sai token bị từ chối WebSocket upgrade với HTTP 401. Khi token rỗng, server không yêu cầu header. OTA trả static token khi auth bật, do đó chỉ supported trong trusted LAN và không phải security boundary.
+Khi `auth.token` không rỗng, `Authorization` bắt buộc; thiếu hoặc sai token bị từ chối WebSocket upgrade với HTTP 401. Khi token rỗng, server không yêu cầu header. OTA chỉ trả static token cho Device/Agent được phép trong DB khi auth bật. Device-Id tự khai chưa phải device credential, nên deployment vẫn theo trusted LAN policy. Mọi WS đều resolve Device/Agent/Template/Providers từ DB trước upgrade; unknown/disabled trả 403, DB/profile/runtime unavailable trả 503.
 
 `session_id` được sinh ra *trước* upgrade, ngay cùng lúc Effective Session Profile được resolve, vì cùng một identity đó vừa là `session_id` của Voice Session vừa là session key của optional Persistent Transcript. Một connection có đúng một session identity, và nó thuộc về connection chứ không thuộc về database: `SessionActor` không giữ identity thứ hai.
 
@@ -164,3 +173,4 @@ Không warning từng binary frame bị drop để tránh log spam. `abort` ph�
 - state/message matrix, gồm `listen:start` ở Listening reset collector và `abort` lặp lại, được test theo từng phase.
 - một invalid application message sau handshake không terminate Voice Session khỏe.
 - abort khi audio cũ đã nằm trong outbound queue -> writer drop cả JSON/audio stale trước `tts:stop`.
+

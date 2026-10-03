@@ -24,7 +24,6 @@ fn temp_database_url(label: &str) -> String {
 
 fn database_config(url: String) -> DatabaseConfig {
     DatabaseConfig {
-        enabled: true,
         url,
         max_connections: 2,
         busy_timeout_ms: 5_000,
@@ -55,13 +54,11 @@ llm = "test"
 tts = "test"
 
 [database]
-enabled = {}
 url = "{}"
 max_connections = {}
 busy_timeout_ms = {}
 migrate_on_start = {}
 "#,
-            database.enabled,
             database.url,
             database.max_connections,
             database.busy_timeout_ms,
@@ -248,22 +245,17 @@ async fn schema_newer_than_binary_is_rejected_before_listener_bind() {
 }
 
 #[tokio::test]
-async fn disabled_database_preserves_legacy_boot() {
-    let mut database = database_config(temp_database_url("disabled"));
-    database.enabled = false;
-    let router = bootstrap_with_providers(
-        config_for_database(database),
+async fn unavailable_database_always_fails_before_boot() {
+    let path = std::env::temp_dir().join(format!("voice-agent-missing-{}", uuid::Uuid::new_v4()));
+    let config = database_config(format!("sqlite://{}/voice.db", path.display()));
+    let error = bootstrap_with_providers(
+        config_for_database(config),
         Arc::new(ProviderSet::unavailable()),
     )
     .await
-    .unwrap();
-    let (base, task) = serve(router).await;
-    assert_eq!(
-        reqwest::get(format!("{base}/health"))
-            .await
-            .unwrap()
-            .status(),
-        200
-    );
-    task.abort();
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        voice_agent_server::app::BootstrapError::Database(_)
+    ));
 }

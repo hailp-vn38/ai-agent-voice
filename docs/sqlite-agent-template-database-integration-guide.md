@@ -1,5 +1,11 @@
 # Hướng dẫn tích hợp SQLite cho Agent / Template / Provider / MCP / Device / History
 
+> **Cập nhật contract:** [ADR-0073](adr/0073-required-database-and-device-admission.md)
+> thay thế mọi clause optional database/admission trong tài liệu lịch sử này.
+> Database và Device admission luôn bật; xóa hai config key cũ khỏi mọi ví dụ trước
+> khi sử dụng. [Flow 08](flows/08-database-device-enrollment.md) là hướng dẫn hiện hành.
+
+
 > Baseline: `hailp-vn38/ai-agent-voice`, branch `dev-test`, kiểm tra ngày 2026-09-28.
 >
 > Mục tiêu: thêm SQLite vào server Rust mà không đưa database vào audio hot path; hỗ trợ Agent ↔ Template N:N, switch Template trong cùng WebSocket session, Provider theo Template, MCP Streamable HTTP theo Agent, Device → Agent, và history text theo `session_id`.
@@ -346,7 +352,6 @@ Config mẫu:
 
 ```toml
 [database]
-enabled = true
 url = "sqlite://data/voice-agent.db"
 max_connections = 5
 busy_timeout_ms = 5000
@@ -357,7 +362,6 @@ grace_ms = 15000
 
 [database.devices]
 # Chỉ được áp dụng từ DB-4 khi database-backed admission đã được enable.
-admission_enabled = false
 auto_register = false
 auto_register_agent_key = ""
 
@@ -3411,3 +3415,4 @@ SQLite / SQLx
 ```
 
 Kiến trúc này giữ realtime voice path độc lập với DB, đồng thời chuẩn bị sẵn một data/API layer để sau này thêm manager web, CRUD hoặc query endpoint mà không phải thiết kế lại connection, pagination, filtering, error handling và database access từ đầu.
+

@@ -25,10 +25,10 @@ use voice_agent_server::{
     app::{AppState, SessionProfileAdmissionError, router_with_state},
     config::{
         AdminApiConfig, AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig,
-        DatabaseDevicesConfig, DatabaseHistoryConfig, DeploymentConfig, ExternalMcpConfig,
-        ExternalMcpNetworkConfig, LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig,
-        ProvidersConfig, RuntimeConfig, ServerConfig, ShutdownConfig, SpeechOutputConfig,
-        TtsConfig, VisionConfig, WebsocketConfig, WorkersConfig,
+        DatabaseHistoryConfig, DeploymentConfig, ExternalMcpConfig, ExternalMcpNetworkConfig,
+        LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig,
+        ServerConfig, ShutdownConfig, SpeechOutputConfig, TtsConfig, VisionConfig, WebsocketConfig,
+        WorkersConfig,
     },
     database::Database,
     lifecycle::{AdmissionGate, DrainOutcome, DrainRegistry, RuntimeLifecycle, ShutdownReport},
@@ -48,7 +48,7 @@ fn database_url() -> String {
     )
 }
 
-fn config(url: String, admission_enabled: bool) -> AppConfig {
+fn config(url: String) -> AppConfig {
     let address: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
     AppConfig {
         server: ServerConfig {
@@ -79,12 +79,8 @@ fn config(url: String, admission_enabled: bool) -> AppConfig {
         mcp: McpConfig::default(),
         vision: VisionConfig::default(),
         database: DatabaseConfig {
-            enabled: true,
             url,
-            devices: DatabaseDevicesConfig {
-                admission_enabled,
-                ..Default::default()
-            },
+            devices: Default::default(),
             ..Default::default()
         },
         api: AdminApiConfig::default(),
@@ -159,12 +155,11 @@ async fn start(config: AppConfig, grace: Duration) -> Voice {
     }
 }
 
-/// Boots without a database at all, for the deployment that never opted in.
+/// Constructs incomplete state to test fail-closed readiness and I/O-free shutdown.
 async fn start_without_database(grace: Duration) -> Voice {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let mut config = config(database_url(), false);
-    config.database.enabled = false;
+    let config = config(database_url());
     let lifecycle = RuntimeLifecycle::new(grace);
     let state = AppState::from_provider_set_with_database_and_shutdown(
         config,
@@ -243,7 +238,7 @@ async fn seed(pool: &SqlitePool) {
 /// orchestrator that reads a degraded database as a dead process kills sessions that are fine.
 #[tokio::test]
 async fn a_healthy_process_is_both_live_and_ready() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     assert_eq!(voice.status("/health").await, StatusCode::OK);
     assert_eq!(voice.status("/ready").await, StatusCode::OK);
     assert_eq!(voice.body("/ready").await, "ready");
@@ -253,7 +248,7 @@ async fn a_healthy_process_is_both_live_and_ready() {
 /// `/health` alone.
 #[tokio::test]
 async fn a_degraded_database_degrades_readiness_without_taking_the_process_down() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     voice.state.database.as_ref().unwrap().pool().close().await;
 
     assert_eq!(
@@ -277,7 +272,7 @@ async fn a_degraded_database_degrades_readiness_without_taking_the_process_down(
 /// liveness and readiness are separate routes.
 #[tokio::test]
 async fn a_session_admitted_before_a_database_outage_keeps_its_profile() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     seed(&voice.database().await).await;
     let admitted = voice
         .state
@@ -298,20 +293,23 @@ async fn a_session_admitted_before_a_database_outage_keeps_its_profile() {
     );
 }
 
-/// A deployment that never enabled the database has nothing to depend on and is ready as soon as
-/// its catalog is loaded.  This is the legacy Voice behavior preserved exactly.
+/// Directly assembled state without the required DB must never report ready.
 #[tokio::test]
-async fn a_database_free_deployment_is_ready_without_probing_anything() {
+async fn missing_database_reports_startup_incomplete() {
     let voice = start_without_database(Duration::from_secs(15)).await;
     assert_eq!(voice.status("/health").await, StatusCode::OK);
-    assert_eq!(voice.status("/ready").await, StatusCode::OK);
+    assert_eq!(
+        voice.status("/ready").await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(voice.body("/ready").await, "startup_incomplete");
 }
 
 /// A process that has begun shutdown reports so.  `/health` stays up because the process is up:
 /// it is finishing the sessions it already has, and killing it would cost their Dialogue History.
 #[tokio::test]
 async fn a_shutting_down_process_is_live_but_no_longer_ready() {
-    let voice = start(config(database_url(), true), Duration::from_millis(50)).await;
+    let voice = start(config(database_url()), Duration::from_millis(50)).await;
     seed(&voice.database().await).await;
     // Hold a session open so the drain reaches its deadline instead of completing immediately.
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
@@ -350,7 +348,7 @@ async fn a_shutting_down_process_is_live_but_no_longer_ready() {
 /// server simply gets fewer tools, so the process is still able to accept a connection.
 #[tokio::test]
 async fn an_unreachable_external_mcp_server_does_not_make_the_process_unready() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     let pool = voice.database().await;
     seed(&pool).await;
     // Bind nothing: nothing is listening on this port, so every discovery attempt fails.
@@ -400,7 +398,7 @@ async fn an_unreachable_external_mcp_server_does_not_make_the_process_unready() 
 /// whether *this* client is allowed in says nothing about whether the process can serve anyone.
 #[tokio::test]
 async fn readiness_never_resolves_a_device() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     // No Device rows at all: full admission would refuse every client.
     let refusal = voice.state.resolve_session_profile("nobody").await;
     assert!(
@@ -433,7 +431,7 @@ async fn readiness_never_discovers_external_mcp() {
         }
     });
 
-    let mut app_config = config(database_url(), true);
+    let mut app_config = config(database_url());
     app_config.mcp = McpConfig {
         external: ExternalMcpConfig {
             network: ExternalMcpNetworkConfig {
@@ -483,7 +481,7 @@ async fn readiness_never_discovers_external_mcp() {
 /// this proves it by pointing the process at a graph a full admission would reject.
 #[tokio::test]
 async fn readiness_never_runs_full_admission() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     let pool = voice.database().await;
     // An Agent whose default Template cannot be materialized: full admission fails closed for it,
     // and readiness must not notice or care.
@@ -537,7 +535,7 @@ async fn readiness_never_runs_full_admission() {
 /// after shutdown began is refused rather than admitted and immediately closed.
 #[tokio::test]
 async fn a_closed_gate_refuses_a_new_voice_connection() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     seed(&voice.database().await).await;
     assert_eq!(
         connect_async(request(&voice.base, "device"))
@@ -568,7 +566,7 @@ async fn a_closed_gate_refuses_a_new_voice_connection() {
 /// means in practice: the decision belongs to the process, not to whoever happens to call it.
 #[tokio::test]
 async fn a_closed_gate_refuses_database_admission_regardless_of_the_caller() {
-    let voice = start(config(database_url(), true), Duration::from_secs(15)).await;
+    let voice = start(config(database_url()), Duration::from_secs(15)).await;
     seed(&voice.database().await).await;
     assert!(
         voice.state.resolve_session_profile("device").await.is_ok(),
@@ -593,7 +591,7 @@ async fn a_closed_gate_refuses_database_admission_regardless_of_the_caller() {
 /// this.
 #[tokio::test]
 async fn a_session_that_finishes_on_its_own_drains_before_the_deadline() {
-    let voice = start(config(database_url(), true), Duration::from_secs(30)).await;
+    let voice = start(config(database_url()), Duration::from_secs(30)).await;
     seed(&voice.database().await).await;
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
@@ -626,7 +624,7 @@ async fn a_session_that_finishes_on_its_own_drains_before_the_deadline() {
 /// is the observable difference between the two mechanisms.
 #[tokio::test]
 async fn a_session_open_at_the_deadline_is_controlled_closed_not_aborted() {
-    let voice = start(config(database_url(), true), Duration::from_millis(50)).await;
+    let voice = start(config(database_url()), Duration::from_millis(50)).await;
     seed(&voice.database().await).await;
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
@@ -703,7 +701,7 @@ async fn shutdown_is_bounded_even_when_a_session_never_answers() {
 /// cannot settle is reported as unflushed and the shutdown still returns.
 #[tokio::test]
 async fn the_history_flush_never_decides_how_long_shutdown_takes() {
-    let mut capture_on = config(database_url(), true);
+    let mut capture_on = config(database_url());
     capture_on.database.history = DatabaseHistoryConfig {
         enabled: true,
         ..DatabaseHistoryConfig::default()
@@ -738,7 +736,7 @@ async fn the_history_flush_never_decides_how_long_shutdown_takes() {
 /// A deployment with the archive off has nothing to flush and reports so, rather than waiting.
 #[tokio::test]
 async fn a_capture_off_process_reports_nothing_left_to_flush() {
-    let voice = start(config(database_url(), true), Duration::from_millis(50)).await;
+    let voice = start(config(database_url()), Duration::from_millis(50)).await;
     seed(&voice.database().await).await;
     let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
     socket.send(Message::Text(hello().into())).await.unwrap();
@@ -765,7 +763,7 @@ async fn a_capture_off_process_reports_nothing_left_to_flush() {
 async fn the_drain_counts_and_closes_exactly_the_sessions_still_open() {
     // A short grace: this test is about which sessions are counted and signalled, not about how
     // long the process is willing to wait for them.
-    let voice = start(config(database_url(), true), Duration::from_millis(50)).await;
+    let voice = start(config(database_url()), Duration::from_millis(50)).await;
     seed(&voice.database().await).await;
     let finished = voice.state.register_session();
     let open = voice.state.register_session();
@@ -798,7 +796,7 @@ async fn the_drain_counts_and_closes_exactly_the_sessions_still_open() {
 /// is the only way to tell "bounded" from "immediately closed".
 #[tokio::test(start_paused = true)]
 async fn the_grace_deadline_comes_from_the_deployment_configuration() {
-    let mut app_config = config(database_url(), true);
+    let mut app_config = config(database_url());
     app_config.shutdown = ShutdownConfig { grace_ms: 1_500 };
     // Built exactly as production builds it: from the configuration's own grace.
     let lifecycle = RuntimeLifecycle::from_config(&app_config);
@@ -860,7 +858,7 @@ async fn application_shutdown_uses_its_existing_deadline_for_managed_resources()
         services::provider_runtime::{FactoryMaterializer, ProviderRuntimeManager, RuntimeLimits},
         workers::WorkerSupervisor,
     };
-    let mut app_config = config("sqlite::memory:".into(), false);
+    let mut app_config = config("sqlite::memory:".into());
     app_config.shutdown.grace_ms = 30;
     let state =
         AppState::from_provider_set(app_config.clone(), Arc::new(ProviderSet::unavailable()));
