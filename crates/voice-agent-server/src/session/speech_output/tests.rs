@@ -62,6 +62,7 @@ fn short_streaming_segment_waits_for_completion_before_starting_playback() {
         Arc::clone(&provider),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 4,
             final_timeout: Duration::from_secs(2),
             cleanup_grace: Duration::from_secs(1),
@@ -173,6 +174,7 @@ fn long_streaming_segment_starts_at_bounded_initial_buffer() {
         Arc::clone(&provider),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 4,
             final_timeout: Duration::from_secs(2),
             cleanup_grace: Duration::from_secs(1),
@@ -344,7 +346,7 @@ fn starvation_before_prebuffer_does_not_underflow_pacing_index() {
 
 #[test]
 fn terminal_partial_frame_fades_to_zero_before_padding() {
-    use super::pipeline::fade_out_tail;
+    use crate::audio::fade_out_tail;
 
     let mut samples = vec![12_000_i16; 400];
     fade_out_tail(&mut samples);

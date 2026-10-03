@@ -24,6 +24,10 @@ pub trait AsrSession: Send {
     fn push_pcm(&mut self, pcm: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError>;
     fn finish(&mut self) -> Result<AsrResult, AsrError>;
     fn cancel(&mut self);
+    /// Resets utterance state while retaining the initialized native engine.
+    fn reset(&mut self) -> Result<(), AsrError> {
+        Err(AsrError::Failed("ASR session reset is unsupported".into()))
+    }
 }
 
 pub trait AsrProvider: Send + Sync {

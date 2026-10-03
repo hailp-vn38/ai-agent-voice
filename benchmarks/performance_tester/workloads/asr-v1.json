@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "workload_version": "asr-v1",
+  "items": [
+    { "id": "example-16k-mono-aligned", "path": "../assets/asr/example-16k-mono-aligned.wav" }
+  ]
+}

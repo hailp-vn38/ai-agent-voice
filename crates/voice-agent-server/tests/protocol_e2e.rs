@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     sync::{
         Arc,
@@ -16,12 +18,11 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use voice_agent_server::{
-    app::router_with_providers,
     audio::PcmF32Mono,
     config::{
         AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
-        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
-        WebsocketConfig, WorkersConfig,
+        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SileroOnnxConfig,
+        SpeechOutputConfig, TtsConfig, VadInstanceConfig, WebsocketConfig, WorkersConfig,
     },
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmError, LlmProvider, ProviderSet,
@@ -179,7 +180,12 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut providers_config = ProvidersConfig::default();
-    let vad = providers_config.vad.silero_onnx.as_mut().unwrap();
+    let vad = providers_config
+        .vad
+        .instances
+        .entry("test".into())
+        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
+    let VadInstanceConfig::SileroOnnx(vad) = vad;
     vad.min_speech_ms = 32;
     vad.end_silence_ms = 32;
     let config = AppConfig {
@@ -192,15 +198,27 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+            vision: None,
+        },
         providers: providers_config,
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        api: voice_agent_server::config::AdminApiConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
@@ -208,7 +226,7 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         Arc::new(SpeechThenSilenceVad),
         Arc::new(DeterministicAsr(outcome)),
     ));
-    let app: Router = router_with_providers(config, providers);
+    let app: Router = support::router(config, providers).await;
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://{address}"), task)
 }
@@ -217,7 +235,12 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut providers_config = ProvidersConfig::default();
-    let vad = providers_config.vad.silero_onnx.as_mut().unwrap();
+    let vad = providers_config
+        .vad
+        .instances
+        .entry("test".into())
+        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
+    let VadInstanceConfig::SileroOnnx(vad) = vad;
     vad.min_speech_ms = 32;
     vad.end_silence_ms = 32;
     let config = AppConfig {
@@ -230,10 +253,18 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+            vision: None,
+        },
         providers: providers_config,
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
@@ -242,6 +273,10 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
             trust_client_aec_feature: true,
         },
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        api: voice_agent_server::config::AdminApiConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
@@ -251,7 +286,7 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
         Arc::new(DeterministicLlm),
         Arc::new(LongTts),
     ));
-    let app: Router = router_with_providers(config, providers);
+    let app: Router = support::router(config, providers).await;
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://{address}"), task)
 }

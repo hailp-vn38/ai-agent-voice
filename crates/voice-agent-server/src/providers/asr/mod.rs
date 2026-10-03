@@ -1,5 +1,7 @@
+pub(crate) mod gipformer;
 mod traits;
-mod zipformer_sherpa;
+pub(crate) mod zipformer;
 
+pub(crate) use gipformer::GipformerAsrProvider;
 pub use traits::{AsrEvent, AsrProvider, AsrResult, AsrSession};
-pub(crate) use zipformer_sherpa::{UnavailableAsr, ZipformerAsrProvider};
+pub(crate) use zipformer::{UnavailableAsr, ZipformerAsrProvider};

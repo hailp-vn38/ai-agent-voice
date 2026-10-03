@@ -516,6 +516,7 @@ fn auto_actor_for_duplicate_start(
     let (audio, _) = mpsc::channel(1);
     let config = WorkerRuntimeConfig {
         max_workers: 1,
+        voice_reserved_capacity: 1,
         command_capacity: 8,
         final_timeout: Duration::from_secs(1),
         cleanup_grace: Duration::from_secs(1),
@@ -636,6 +637,7 @@ fn repeated_auto_start_rearms_the_pinned_vad_lease_with_one_worker_slot() {
         }),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -674,6 +676,7 @@ fn repeated_realtime_start_rearms_the_pinned_vad_lease_with_one_worker_slot() {
         }),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -708,6 +711,7 @@ fn abort_in_auto_rearms_the_pinned_vad_lease_instead_of_closing_it() {
         }),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -737,6 +741,7 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
     let (audio, _) = mpsc::channel(1);
     let config = WorkerRuntimeConfig {
         max_workers: 1,
+        voice_reserved_capacity: 1,
         command_capacity: 8,
         final_timeout: Duration::from_secs(1),
         cleanup_grace: Duration::from_secs(1),
@@ -816,6 +821,7 @@ fn auto_retains_pre_roll_and_all_pcm_arrived_while_vad_events_lag() {
     let (audio, _) = mpsc::channel(1);
     let config = WorkerRuntimeConfig {
         max_workers: 1,
+        voice_reserved_capacity: 1,
         command_capacity: 8,
         final_timeout: Duration::from_secs(1),
         cleanup_grace: Duration::from_secs(1),
@@ -881,6 +887,7 @@ fn stale_vad_probability_before_reset_does_not_open_asr_for_the_new_cycle() {
     let (audio, _) = mpsc::channel(1);
     let config = WorkerRuntimeConfig {
         max_workers: 1,
+        voice_reserved_capacity: 1,
         command_capacity: 8,
         final_timeout: Duration::from_secs(1),
         cleanup_grace: Duration::from_secs(1),
@@ -942,6 +949,7 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
         Arc::new(SlowAsr),
         WorkerRuntimeConfig {
             max_workers: 2,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -1027,6 +1035,7 @@ fn replacement_invalidates_a_late_final_without_emitting_stale_stt() {
         Arc::new(SlowAsr),
         WorkerRuntimeConfig {
             max_workers: 2,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),

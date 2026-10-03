@@ -1,7 +1,9 @@
 //! Startup-only Model Preparation for pinned, provider-facing artifacts.
 
 use std::{
+    collections::BTreeMap,
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -10,6 +12,12 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::config::{DeploymentConfig, ModelAcknowledgement};
+
+mod acquisition;
+mod startup;
+
+pub use acquisition::HttpModelAcquirer;
+pub(crate) use startup::prepare_startup;
 
 #[derive(Debug, Error)]
 pub enum ModelError {
@@ -37,6 +45,12 @@ pub enum ModelError {
     UnsupportedTransform(String),
     #[error("model artifact acquisition failed: {0}")]
     Acquire(String),
+    #[error(
+        "prepared model artifact `{0}` needs an installed file or a deployment.models.sources URL"
+    )]
+    PreparedSourceRequired(String),
+    #[error("provider `{0}` has invalid Model Preparation configuration")]
+    ProviderConfiguration(String),
     #[error("SHA-256 mismatch for {path}")]
     HashMismatch { path: String },
 }
@@ -77,12 +91,16 @@ fn identity_transform() -> String {
 /// Provider-facing, verified artifact paths addressed by manifest role.
 #[derive(Debug, Clone)]
 pub struct ResolvedModel {
+    fingerprint: String,
     identity: String,
     adapter: String,
     artifacts: Vec<(String, PathBuf)>,
 }
 
 impl ResolvedModel {
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
+    }
     pub fn artifact(&self, role: &str) -> Option<&Path> {
         self.artifacts
             .iter()
@@ -105,6 +123,7 @@ impl ResolvedModel {
         artifacts: [(&str, PathBuf); N],
     ) -> Self {
         Self {
+            fingerprint: "test-fixture".into(),
             identity: identity.into(),
             adapter: adapter.into(),
             artifacts: artifacts
@@ -119,22 +138,6 @@ pub trait ModelAcquirer: Send + Sync {
     fn acquire(&self, remote: &str, destination: &Path) -> Result<(), ModelError>;
 }
 
-/// Default acquisition implementation used only during startup preparation.
-pub struct HttpModelAcquirer;
-
-impl ModelAcquirer for HttpModelAcquirer {
-    fn acquire(&self, remote: &str, destination: &Path) -> Result<(), ModelError> {
-        let response = reqwest::blocking::get(remote)
-            .map_err(|error| ModelError::Acquire(error.to_string()))?
-            .error_for_status()
-            .map_err(|error| ModelError::Acquire(error.to_string()))?;
-        let bytes = response
-            .bytes()
-            .map_err(|error| ModelError::Acquire(error.to_string()))?;
-        fs::write(destination, bytes).map_err(ModelError::Read)
-    }
-}
-
 pub struct ModelPreparationConfig {
     pub manifest_path: PathBuf,
     pub root: PathBuf,
@@ -145,6 +148,7 @@ pub struct ModelPreparationConfig {
 pub struct ModelPreparation<A = HttpModelAcquirer> {
     config: ModelPreparationConfig,
     acquirer: A,
+    sources: BTreeMap<String, String>,
 }
 
 impl ModelPreparation<HttpModelAcquirer> {
@@ -152,13 +156,23 @@ impl ModelPreparation<HttpModelAcquirer> {
         Self {
             config,
             acquirer: HttpModelAcquirer,
+            sources: BTreeMap::new(),
         }
     }
 }
 
 impl<A: ModelAcquirer> ModelPreparation<A> {
     pub fn with_acquirer(config: ModelPreparationConfig, acquirer: A) -> Self {
-        Self { config, acquirer }
+        Self {
+            config,
+            acquirer,
+            sources: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_sources(mut self, sources: &BTreeMap<String, String>) -> Self {
+        self.sources.clone_from(sources);
+        self
     }
 
     pub fn prepare(&self, identity: &str, adapter: &str) -> Result<ResolvedModel, ModelError> {
@@ -172,6 +186,7 @@ impl<A: ModelAcquirer> ModelPreparation<A> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ResolvedModel {
+            fingerprint: fingerprint_model(&model),
             identity: model.identity,
             adapter: model.adapter,
             artifacts,
@@ -180,8 +195,10 @@ impl<A: ModelAcquirer> ModelPreparation<A> {
 
     fn prepare_artifact(&self, artifact: &Artifact) -> Result<PathBuf, ModelError> {
         validate_relative_path(&artifact.install_path)?;
+        let _install = artifact_lock(&self.config.root.join(&artifact.install_path));
         let installed = safe_install_path(&self.config.root, &artifact.install_path)?;
         if verifies(&installed, &artifact.sha256)? {
+            tracing::info!(artifact_role = %artifact.role, "model artifact verified; reusing installed file");
             return Ok(installed);
         }
         if self.config.offline {
@@ -197,14 +214,190 @@ impl<A: ModelAcquirer> ModelPreparation<A> {
         let transformed = PathBuf::from(format!("{}.transform", installed.display()));
         let _ = fs::remove_file(&part);
         let _ = fs::remove_file(&transformed);
-        self.acquirer.acquire(&artifact.remote, &part)?;
-        verify_path(&part, &artifact.source_sha256)?;
-        transform(&part, &transformed, &artifact.transform)?;
-        verify_path(&transformed, &artifact.sha256)?;
-        fs::rename(&transformed, &installed)?;
+        let remote = if artifact.remote.starts_with("prepared://") {
+            self.sources
+                .get(&artifact.remote)
+                .ok_or_else(|| ModelError::PreparedSourceRequired(artifact.remote.clone()))?
+                .as_str()
+        } else {
+            &artifact.remote
+        };
+        tracing::info!(artifact_role = %artifact.role, "acquiring missing or corrupt model artifact");
+        let result = (|| {
+            self.acquirer.acquire(remote, &part)?;
+            verify_path(&part, &artifact.source_sha256)?;
+            transform(&part, &transformed, &artifact.transform)?;
+            verify_path(&transformed, &artifact.sha256)?;
+            fs::rename(&transformed, &installed)?;
+            Ok::<(), ModelError>(())
+        })();
         let _ = fs::remove_file(&part);
+        let _ = fs::remove_file(&transformed);
+        result?;
+        tracing::info!(artifact_role = %artifact.role, "model artifact installed and verified");
         Ok(installed)
     }
+}
+
+fn artifact_lock(path: &Path) -> std::sync::MutexGuard<'static, ()> {
+    use std::{
+        hash::{Hash, Hasher},
+        sync::{Mutex, OnceLock},
+    };
+    static LOCKS: OnceLock<[Mutex<()>; 64]> = OnceLock::new();
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    let mut existing = path;
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        if let Some(name) = existing.file_name() {
+            missing.push(name.to_owned());
+        } else {
+            break;
+        }
+        let Some(parent) = existing.parent() else {
+            break;
+        };
+        existing = parent;
+    }
+    let mut normalized = fs::canonicalize(existing).unwrap_or_else(|_| existing.to_owned());
+    for name in missing.into_iter().rev() {
+        normalized.push(name);
+    }
+    normalized.hash(&mut hash);
+    LOCKS.get_or_init(|| std::array::from_fn(|_| Mutex::new(())))[hash.finish() as usize % 64]
+        .lock()
+        .expect("artifact installer poisoned")
+}
+
+/// Manifest content identity, independent of JSON order and mutable installation paths.
+pub fn model_fingerprint(
+    manifest: &Path,
+    identity: &str,
+    adapter: &str,
+) -> Result<String, ModelError> {
+    let model = load_manifest(manifest, identity, adapter)?;
+    Ok(fingerprint_model(&model))
+}
+fn fingerprint_model(model: &Model) -> String {
+    let mut artifacts: Vec<_> = model
+        .artifacts
+        .iter()
+        .map(|a| (&a.role, &a.install_path, &a.sha256, &a.transform))
+        .collect();
+    artifacts.sort();
+    let mut digest = Sha256::new();
+    for value in [
+        model.identity.as_bytes(),
+        model.adapter.as_bytes(),
+        model.revision.as_bytes(),
+    ] {
+        digest.update((value.len() as u64).to_le_bytes());
+        digest.update(value);
+    }
+    for (role, path, hash, transform) in artifacts {
+        for value in [
+            role.as_bytes(),
+            path.as_os_str().as_encoded_bytes(),
+            hash.as_bytes(),
+            transform.as_bytes(),
+        ] {
+            digest.update((value.len() as u64).to_le_bytes());
+            digest.update(value);
+        }
+    }
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Copies verified artifacts into a content-addressed model tree. Relative paths are preserved
+/// so ONNX external-data siblings remain valid. A live resource never observes a mutable alias.
+pub fn prepare_immutable(
+    manifest_path: &Path,
+    root: &Path,
+    offline: bool,
+    identity: &str,
+    adapter: &str,
+    deployment: &DeploymentConfig,
+) -> Result<ResolvedModel, ModelError> {
+    prepare_immutable_inner(
+        manifest_path,
+        root,
+        offline,
+        identity,
+        adapter,
+        deployment,
+        false,
+    )
+}
+
+/// Only startup may repair an existing immutable file: no live runtime has mapped it yet.
+fn prepare_immutable_inner(
+    manifest_path: &Path,
+    root: &Path,
+    offline: bool,
+    identity: &str,
+    adapter: &str,
+    deployment: &DeploymentConfig,
+    repair_existing: bool,
+) -> Result<ResolvedModel, ModelError> {
+    let model = load_manifest(manifest_path, identity, adapter)?;
+    let fingerprint = fingerprint_model(&model);
+    if deployment.profile == "commercial" && model.license.contains("NC") {
+        return Err(ModelError::LicenseDenied {
+            model: model.identity,
+            profile: deployment.profile.clone(),
+        });
+    }
+    require_acknowledgement(&model, &deployment.model_acknowledgements)?;
+    let preparation = ModelPreparation::new(ModelPreparationConfig {
+        manifest_path: manifest_path.into(),
+        root: root.into(),
+        offline,
+    })
+    .with_sources(&deployment.models.sources);
+    let mut artifacts = Vec::with_capacity(model.artifacts.len());
+    for artifact in &model.artifacts {
+        validate_relative_path(&artifact.install_path)?;
+        let relative = PathBuf::from(".installed")
+            .join(&fingerprint)
+            .join(&artifact.install_path);
+        // Never nest stripe locks: mutable and pinned paths can hash to the same stripe.
+        let existing = root.join(&relative);
+        let reuse =
+            existing.exists() && (!repair_existing || verifies(&existing, &artifact.sha256)?);
+        let source = if reuse {
+            None
+        } else {
+            Some(preparation.prepare_artifact(artifact)?)
+        };
+        let _install = artifact_lock(&root.join(&relative));
+        let pinned = safe_install_path(root, &relative)?;
+        if pinned.exists() && (!repair_existing || verifies(&pinned, &artifact.sha256)?) {
+            verify_path(&pinned, &artifact.sha256)?;
+        } else {
+            let source =
+                source.ok_or_else(|| ModelError::MissingArtifact(artifact.role.clone()))?;
+            let temporary = pinned.with_extension("pin-part");
+            let result = (|| {
+                fs::copy(source, &temporary)?;
+                verify_path(&temporary, &artifact.sha256)?;
+                fs::rename(&temporary, &pinned)?;
+                Ok::<(), ModelError>(())
+            })();
+            let _ = fs::remove_file(&temporary);
+            result?;
+        }
+        artifacts.push((artifact.role.clone(), pinned));
+    }
+    Ok(ResolvedModel {
+        fingerprint: fingerprint_model(&model),
+        identity: model.identity,
+        adapter: model.adapter,
+        artifacts,
+    })
 }
 
 pub fn prepare(
@@ -228,6 +421,7 @@ pub fn prepare(
         root: root.into(),
         offline,
     })
+    .with_sources(&deployment.models.sources)
     .prepare(identity, adapter)
 }
 
@@ -258,6 +452,7 @@ pub fn verify_installed(
         })
         .collect::<Result<Vec<_>, ModelError>>()?;
     Ok(ResolvedModel {
+        fingerprint: fingerprint_model(&model),
         identity: model.identity,
         adapter: model.adapter,
         artifacts,
@@ -278,6 +473,11 @@ fn safe_existing_install_path(root: &Path, relative: &Path) -> Result<PathBuf, M
 }
 
 fn load_manifest(manifest_path: &Path, identity: &str, adapter: &str) -> Result<Model, ModelError> {
+    if fs::metadata(manifest_path)?.len() > 2 * 1024 * 1024 {
+        return Err(ModelError::UnsafePath(
+            "manifest exceeds metadata limit".into(),
+        ));
+    }
     let manifest: Manifest = toml::from_str(&fs::read_to_string(manifest_path)?)?;
     let model = manifest
         .model
@@ -307,30 +507,41 @@ fn require_acknowledgement(
 }
 
 fn verifies(path: &Path, expected: &str) -> Result<bool, ModelError> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(hash(&bytes) == expected),
+    match hash_file(path) {
+        Ok(actual) => Ok(actual == expected),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(ModelError::Read(error)),
     }
 }
 
 fn verify_path(path: &Path, expected: &str) -> Result<(), ModelError> {
-    let bytes = fs::read(path).map_err(|error| match error.kind() {
+    let actual = hash_file(path).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => ModelError::MissingArtifact(path.display().to_string()),
         _ => ModelError::Read(error),
     })?;
-    (hash(&bytes) == expected)
+    (actual == expected)
         .then_some(())
         .ok_or_else(|| ModelError::HashMismatch {
             path: path.display().to_string(),
         })
 }
 
-fn hash(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
+fn hash_file(path: &Path) -> Result<String, std::io::Error> {
+    let mut file = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(digest
+        .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .collect())
 }
 
 fn validate_relative_path(path: &Path) -> Result<(), ModelError> {
@@ -371,9 +582,12 @@ fn safe_install_path(root: &Path, relative: &Path) -> Result<PathBuf, ModelError
 }
 
 fn transform(source: &Path, destination: &Path, declared: &str) -> Result<(), ModelError> {
+    if declared == "identity" {
+        fs::copy(source, destination)?;
+        return Ok(());
+    }
     let input = fs::read(source)?;
     let output = match declared {
-        "identity" => input,
         "sentencepiece_tokens_v1" => sentencepiece_tokens(&input)?,
         declared if declared.starts_with("strip_prefix:") => {
             let length = declared["strip_prefix:".len()..]

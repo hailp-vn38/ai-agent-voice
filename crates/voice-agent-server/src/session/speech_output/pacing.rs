@@ -8,9 +8,8 @@ impl SpeechOutput {
             let _ = runtime.cancel_and_detach(lease);
         }
         self.pending.clear();
-        self.downlink_tail.clear();
-        self.downlink_resampler = DownlinkResampler::new_48k_to_24k();
-        self.first_pcm_chunk = true;
+        self.downlink_pipeline = CanonicalDownlinkPipeline::new(MAX_DOWNLINK_OPUS_PACKET_BYTES)
+            .expect("canonical downlink pipeline was initialized previously");
         self.packets.clear();
         self.packets_sent = 0;
         self.finish_input = false;
@@ -49,7 +48,10 @@ impl SpeechOutput {
             let segment = self.pending.front_mut().expect("checked non-empty");
             if !segment.announced {
                 segment.announced = true;
-                tracing::info!(text = %segment.display_text, "Speech segment ready");
+                tracing::info!(
+                    chars = segment.display_text.chars().count(),
+                    "Speech segment ready"
+                );
                 return Ok(Some(SpeechOutputEvent::SegmentReady {
                     text: segment.display_text.clone(),
                 }));

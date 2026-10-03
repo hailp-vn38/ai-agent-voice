@@ -11,13 +11,33 @@ impl SessionActor {
 
     pub(super) fn drain_worker_events(&mut self) {
         self.drain_writer_events();
+        self.drain_provider_events();
+    }
+
+    /// The periodic drain withholds already-reported turn outcomes while a harness is holding
+    /// them, leaving client ingress as the only path that can apply one. With no probe installed
+    /// this is always false and the tick behaves exactly as before.
+    pub(super) fn drain_reported_outcomes(&mut self) {
+        if !self.writer_outcomes_withheld() {
+            self.drain_writer_events();
+        }
+        self.drain_provider_events();
+    }
+
+    fn drain_provider_events(&mut self) {
         self.expire_mcp_requests();
+        // External Tool Calls complete out of band, so their results are collected before anything
+        // else: applying one can start the next call of the round, or the next round's LLM request,
+        // and both belong in this same drain rather than in the next tick.
+        self.drain_external_call_completions();
+        self.drain_template_preparation();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
         }
         while let Ok(event) = self.vad_events.try_recv() {
             self.on_vad_event(event);
         }
+        self.drain_managed_switch_boundary();
         self.flush_pending_llm_text();
         while self.pending_llm_delta.is_none() && !self.llm_finish_pending {
             let Ok(event) = self.llm_events.try_recv() else {
@@ -75,12 +95,37 @@ impl SessionActor {
                         return;
                     }
                     if matches!(outcome, WriterTurnOutcome::Normal) {
+                        // The Delivered Assistant Response, archived at the only boundary where it
+                        // is final: the writer closed the turn normally.  This runs before the
+                        // boundary actions below, so a switch this turn armed is still the pending
+                        // one and the record keeps the Template the turn actually ran on.
+                        if delivery.archives_as_assistant {
+                            self.record_transcript(
+                                HistoryRole::Assistant,
+                                &delivery.assistant_text,
+                                turn_id,
+                            );
+                        }
                         self.dialogue_history
                             .commit_assistant(turn_id, delivery.assistant_text);
                     }
                 }
+                let actions = self.pending_actions.take_for_turn(turn_id);
                 self.tts_started = false;
                 self.release_active_turn();
+                if matches!(outcome, WriterTurnOutcome::Normal) {
+                    if let Some(switch) = actions.switch_template_after_turn {
+                        if let Some(prepared) = switch.prepared {
+                            self.begin_managed_switch_boundary(prepared);
+                        } else {
+                            self.apply_template_switch(&switch.template_key);
+                        }
+                    }
+                    if actions.close_after_turn.is_some() {
+                        self.close_voice_session_normally(turn_id);
+                        return;
+                    }
+                }
                 self.complete_recognition();
             }
             WriterEvent::Failed { .. } => self.fail_closed(),
@@ -92,12 +137,23 @@ impl SessionActor {
         loop {
             tokio::select! {
                 _ = worker_tick.tick() => {
-                    self.drain_worker_events();
+                    self.drain_reported_outcomes();
                     self.drain_speech_output();
                 }
                 event = ingress.recv() => match event {
-                    Some(SessionEvent::ClientMessage(message)) => self.on_client_message(message),
-                    Some(SessionEvent::ClientAudio(payload)) => { self.on_binary(payload); }
+                    Some(SessionEvent::ClientMessage(message)) => {
+                        self.apply_reported_turn_outcomes();
+                        self.on_client_message(message)
+                    }
+                    Some(SessionEvent::ClientAudio(payload)) => {
+                        self.apply_reported_turn_outcomes();
+                        self.on_binary(payload);
+                    }
+                    Some(SessionEvent::Shutdown) => {
+                        self.begin_application_shutdown();
+                        let _ = self.urgent_tx.send(OutboundMessage::Close(1001)).await;
+                        break;
+                    }
                     None => break,
                 }
             }
@@ -105,7 +161,48 @@ impl SessionActor {
         self.phase = SessionPhase::Closed;
     }
 
+    /// Applies the turn outcomes the writer has already reported, before new client intent is
+    /// interpreted.
+    ///
+    /// The writer reports a turn's terminal outcome immediately after the client sees `tts:stop`,
+    /// so a client is entitled to start the next turn at once. This restores the invariant that
+    /// such an outcome is applied first: otherwise the next turn overtakes the boundary it is
+    /// supposed to follow, drops its first audio frames, and lets a boundary action such as a
+    /// Template switch land after the turn it belonged to.
+    ///
+    /// Scope is deliberately narrow, because barge-in ordering belongs to phase 5:
+    /// - only already-reported `WriterEvent`s are drained, non-blockingly, from this session's own
+    ///   writer mailbox — never ASR, VAD or LLM events, and never a wait;
+    /// - select fairness, queue capacities, the barge-in policy and the audio-drop policy in
+    ///   `on_binary` are untouched.
+    ///
+    /// The one visible consequence is timing: an `abort` or `listen` that arrives after a normal
+    /// close is now applied after that close rather than racing it. The policy it then follows is
+    /// the same one.
+    fn apply_reported_turn_outcomes(&mut self) {
+        self.drain_writer_events();
+    }
+
+    fn writer_outcomes_withheld(&self) -> bool {
+        self.writer_probe
+            .as_ref()
+            .is_some_and(|probe| probe.holds_writer_outcomes())
+    }
+
     pub fn on_client_message(&mut self, message: ClientMessage) {
+        if self.managed_switch_boundary.is_some() {
+            if let ClientMessage::Listen { session_id, .. } = &message
+                && self.inbound_session_matches(session_id.as_deref())
+            {
+                self.defer_switch_ingress(SessionEvent::ClientMessage(message));
+                return;
+            }
+            if let ClientMessage::Abort { session_id } = &message
+                && self.inbound_session_matches(session_id.as_deref())
+            {
+                self.deferred_switch_ingress.clear();
+            }
+        }
         match message {
             ClientMessage::Listen {
                 session_id,
@@ -133,13 +230,62 @@ impl SessionActor {
         }
     }
 
+    fn defer_switch_ingress(&mut self, event: SessionEvent) -> bool {
+        if self.deferred_switch_ingress.len() >= self.switch_ingress_capacity {
+            self.fail_closed();
+            return false;
+        }
+        self.deferred_switch_ingress.push_back(event);
+        true
+    }
+    pub(super) fn replay_switch_ingress(&mut self) {
+        let queued = std::mem::take(&mut self.deferred_switch_ingress);
+        for event in queued {
+            if self.phase == SessionPhase::Closed {
+                break;
+            }
+            match event {
+                SessionEvent::ClientMessage(message) => self.on_client_message(message),
+                SessionEvent::ClientAudio(payload) => {
+                    self.on_binary(payload);
+                }
+                _ => unreachable!("only bounded client ingress is deferred"),
+            }
+        }
+    }
+
     pub(super) fn inbound_session_matches(&self, session_id: Option<&str>) -> bool {
         matches!(session_id, None | Some("")) || session_id == Some(&self.session_id)
     }
 }
 
 impl SessionActor {
+    /// An interrupted turn never reaches its boundary, so nothing it armed is carried forward.
+    pub(super) fn cancel_pending_actions_for_active_turn(&mut self) {
+        let Some(turn_id) = self.current_turn_id() else {
+            return;
+        };
+        let cancelled = self.pending_actions.take_for_turn(turn_id);
+        if cancelled.is_empty() {
+            return;
+        }
+        tracing::info!(
+            event = "pending_session_action_cancelled",
+            turn_id = turn_id.get(),
+            "Pending session action cancelled by turn interruption"
+        );
+    }
+}
+
+impl SessionActor {
     pub fn on_binary(&mut self, payload: Vec<u8>) -> bool {
+        if self.managed_switch_boundary.is_some() {
+            if payload.len() > self.switch_max_frame_bytes {
+                self.fail_closed();
+                return false;
+            }
+            return self.defer_switch_ingress(SessionEvent::ClientAudio(payload));
+        }
         let armed_vad_capture = self.vad_session.is_some()
             && !self.auto_reset_pending
             && self.phase == SessionPhase::Speaking

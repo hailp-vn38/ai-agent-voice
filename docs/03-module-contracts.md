@@ -137,6 +137,87 @@ Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Start
 - Tool result chỉ đi vào LLM/history sau normalize, sanitize và cap theo Rust `char`; raw device result không được lưu.
 - `TurnOutcome` là `Completed`, `CompletedSilent`, `Cancelled` hoặc `Failed`; ASR success nhưng `trim()` rỗng là `CompletedSilent`, không tạo dialogue message.
 
+### 6.1. Tool-round Executor contract
+
+Một executor duy nhất (`SessionActor`) chạy Device MCP ToolCall, External MCP ToolCall và
+session-local built-in action. Chi tiết quyết định ở `docs/adr/0060-sequential-shared-tool-round-executor.md`.
+
+- **Tuần tự, theo model order.** Không `join_all`, `FuturesUnordered` hay spawn song song. Executor
+  chỉ re-enter từ terminal outcome của một call, nên thứ tự model = thứ tự thực thi = thứ tự
+  ToolResult/history/continuation.
+- **Index-aligned.** `calls.len() == results.len()` và `results[i]` thuộc `calls[i]`; chỉ
+  `record_tool_call` được push cả hai cùng lúc. Call chưa terminal không vào history và không
+  dangling ở continuation.
+- **Validate cả round trước call một.** `calls.len() > llm.tools.max_calls_per_round` là
+  `tool_call_limit_exceeded`: execute zero call, terminalize turn, không synthetic ToolResult.
+- **Cap round trước request kế tiếp.** `llm.tools.max_rounds_per_turn` kiểm ở nơi sẽ gửi request
+  của round kế tiếp, nên vượt cap không bắt đầu call nào mới; completed prefix vẫn giữ.
+- **Tool Execution Budget** bắt đầu ở ToolCall đầu tiên của turn. Mỗi call nhận
+  `min(per-call timeout, remaining)`; hết budget trước call mới là `tool_execution_budget_exceeded`,
+  hết khi in-flight thì drop và terminalize, không retry và không continuation.
+- **Một outbound attempt.** External ToolCall gửi đúng một request. Timeout → `external_tool_timeout`,
+  unavailable → `external_tool_unavailable`, `401`/`403` → `external_tool_auth_failed`, malformed →
+  `external_tool_invalid_response`, JSON-RPC error → `external_tool_protocol_error`. Payload synthetic
+  do server sinh, không chứa remote body, URL, arguments, secret hay internal diagnostic; failure
+  không refresh secret, không mutate catalog và không close session.
+- **Cancellation là TurnId + GenerationId boundary.** Cancel/drop in-flight External ToolCall, bỏ
+  semantic ownership của Device MCP request, cấm bắt đầu call sau. Late response bị discard: không
+  ToolResult, không continuation, không history, không TTS. Metrics bounded:
+  `external_tool_call_cancelled_total` và `external_tool_late_response_discarded_total`.
+- **Tool result không persist.** Không tool argument/result nào vào optional transcript archive hay log
+  body; chỉ bounded class đi vào log và metric label.
+- **Admission Gate là điều kiện bắt đầu, không phải cancel.** Executor hỏi application-owned gate trước
+  khi bắt đầu round và trước khi dispatch từng call, nên một round đã chạy dở không dùng được slot
+  kế tiếp trong budget của chính nó. Gate đóng là `tool_round_shutting_down`: terminalize turn,
+  execute zero call mới, giữ completed prefix, không continuation, không retry.
+
+
+### 6.2. Persistent Transcript contract
+
+Optional archive của final user text và Delivered Assistant Response. Quyết định ở
+`docs/adr/0048-opt-in-transcript-persistence-and-retention.md` và `docs/adr/0055-history-purge-is-explicit-and-scoped.md`.
+
+- **Opt-in, và là bản sao chứ không phải nguồn sự thật.** `database.history.enabled` mặc định `false`;
+  khi tắt **không có `HistoryWriter` nào được khởi động** — không queue, không task, không
+  `HistoryWrite`, không enqueue, không write. `AppState::transcript_capture` hỏi writer, nên chính
+  sự tồn tại của writer *là* policy capture chứ không phải một bản sao thứ hai của nó. Archive không
+  bao giờ được đọc ngược vào Conversational Turn: Dialogue History vẫn nằm trong RAM, nên một lần
+  drop vĩnh viễn không đổi conversational correctness.
+- **Chỉ hai text, đúng một lần mỗi loại.** `role=user` là final user text đã được accept cho turn
+  (`commit_user_text`); `role=assistant` là Delivered Assistant Response, chỉ sau
+  `WriterEvent::TurnClosed { outcome: Normal }`. ASR partial, LLM delta, system prompt, tool
+  argument, tool result và audio không có đường nào tới archive: một turn nói thẳng tool result đi
+  thẳng qua Device MCP `direct_tts` hay session-local built-in action vẫn commit Dialogue History
+  như trước, nhưng không được archive như assistant.
+- **Attribution quyết định tại chỗ text tồn tại.** Mỗi record mang identity từ Effective Session
+  Profile lúc admission (`device_id`, `agent_id`) và Template đang active tại thời điểm đó. Một
+  switch đã arm nhưng chưa apply vẫn ghi Template cũ, vì đó là Template turn đó thực sự chạy. Không
+  query DB sống và không dựng lại attribution sau này, nên admin mutation hay switch về sau không sửa
+  được một record đã lưu. `sequence` là counter monotonic của chính session, giữ
+  `UNIQUE(session_id, sequence)` mà không cần query giá trị kế tiếp.
+- **Best-effort, không bao giờ chặn.** `try_send` vào queue bounded rồi một writer task ghi SQLite.
+  Queue full, writer đã dừng, database lỗi hoặc text vượt `MAX_TRANSCRIPT_TEXT_BYTES` đều drop
+  đúng record đó với metric bounded (`history_written_total`, `history_dropped_total` với reason
+  `queue_full` / `writer_closed` / `database` / `text_out_of_bounds`) và một `debug!` cùng metric
+  name. Không await, không retry, không fail turn, không đóng WebSocket, không mutate Dialogue
+  History. Partial exchange được chấp nhận.
+- **Session không có database identity thì không archive.** `history_messages` FK tới `devices` và
+  `agents`; một session admit khi database-backed admission tắt không có identity nào để gán, nên
+  không được bind.
+- **Retention là maintenance, không phải realtime work, và sống lâu hơn capture.** `RetentionCleaner`
+  chạy mọi lúc database tồn tại; `HistoryWriter` chỉ tồn tại khi capture bật. Cutoff tuyệt đối UTC
+  `now_utc - retention_days` (Unix milliseconds), chạy một lần lúc startup rồi mỗi 24 giờ trên task
+  riêng, kể cả khi capture đang tắt — tắt capture mới không được biến dữ liệu đã có thành retention
+  vô hạn. Run bị contended thì abort run đó và chờ lịch kế tiếp; không retry loop. Cleaner là phần
+  duy nhất của archive được chạm vào record đã tồn tại, và nó chỉ có thể xóa — không có đường nào đưa
+  một record cho cleaner. Nó dừng cùng archive nhờ `Drop`.
+- **Read và purge qua Admin API đã xác thực, không phụ thuộc capture.** `GET /api/admin/history` lọc
+  bằng typed filter/sort và page có giới hạn; `POST /api/admin/history/purge` cần đúng một scope
+  Device, Voice Session hoặc `all`, và scope `all` cần `confirm: "PURGE_ALL_HISTORY"`. Purge là
+  transaction duy nhất cùng audit row của nó và không đụng Dialogue History hay profile của session
+  đang mở.
+
+
 ## 7. Error policy
 
 | Lỗi | Hành vi |
@@ -147,6 +228,11 @@ Actor giữ `tts_started`/`tts_stopped` theo generation: failure trước `Start
 | LLM timeout | cancel TTS pending + stop turn |
 | TTS timeout | gửi `tts:stop` và trở lại listening |
 | MCP timeout khi session khỏe | normalized tool error về LLM; terminal khi session/cancellation failure |
+| Tool-round cap hoặc hết Tool Execution Budget | terminalize turn (`tool_call_limit_exceeded` / `tool_round_limit_exceeded` / `tool_execution_budget_exceeded`), giữ completed prefix, không continuation |
+| Application đóng Admission Gate giữa lúc | terminalize turn (`tool_round_shutting_down`), execute zero call mới, WebSocket upgrade mới 503, DB admission mới `server_is_shutting_down` |
+| External ToolCall timeout/unavailable/auth/response | typed content-free ToolResult, sibling call trong round vẫn chạy, không retry, không close session |
+| Persistent Transcript record bị drop (queue full, writer closed, database, text ngoài bound) | drop record đó, `history_dropped_total{reason}`, turn đi tiếp bình thường |
+| Shutdown grace deadline tới khi writer còn giữ record | `history_dropped_total{reason=shutdown}`, không retry, không kéo dài deadline |
 | WS disconnect | cancel toàn session |
 
 Không `unwrap()` trên dữ liệu đến từ network hoặc provider.

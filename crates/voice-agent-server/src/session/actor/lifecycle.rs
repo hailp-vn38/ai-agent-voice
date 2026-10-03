@@ -3,20 +3,35 @@ use super::*;
 impl SessionActor {
     pub(super) fn complete_recognition(&mut self) {
         self.release_active_turn();
+        if self.managed_switch_boundary.is_some() {
+            return;
+        }
         if matches!(
             self.listening_mode,
             Some(ListenMode::Auto | ListenMode::Realtime)
-        ) && self.vad_session.is_some()
-        {
+        ) {
+            let Some(mode) = self.listening_mode.clone() else {
+                unreachable!("checked above")
+            };
+            let Some((lease, _)) = self.vad_session else {
+                // A Template switch rebased capture onto another already-loaded VAD runtime and
+                // closed the old lease. Re-arm here instead of silently dropping an Auto or
+                // Realtime client out of capture.
+                tracing::info!(
+                    event = "vad_capture_rearmed",
+                    reason = "vad_runtime_rebased",
+                    "Re-arming the VAD capture cycle on the rebound runtime"
+                );
+                self.replace_listening_mode(mode);
+                return;
+            };
             if self.auto_reset_pending {
                 return;
             }
-            if let Some((lease, _)) = self.vad_session {
-                if self.reset_vad_capture_cycle(lease).is_err() {
-                    self.fail_closed();
-                } else {
-                    self.auto_reset_pending = true;
-                }
+            if self.reset_vad_capture_cycle(lease).is_err() {
+                self.fail_closed();
+            } else {
+                self.auto_reset_pending = true;
             }
         } else {
             self.activate_pending_listen_arm();
@@ -45,8 +60,41 @@ impl SessionActor {
         self.close_vad();
         self.auto_reset_pending = false;
         self.asr_stream = None;
+        self.managed_switch_boundary = None;
+        self.deferred_switch_ingress.clear();
         self.phase = SessionPhase::Closed;
         let _ = self.urgent_tx.try_send(OutboundMessage::Close(1011));
+    }
+
+    pub(super) fn close_voice_session_normally(&mut self, turn_id: TurnId) {
+        if self.phase == SessionPhase::Closed {
+            return;
+        }
+        tracing::info!(
+            event = "session_close_after_turn_committed",
+            turn_id = turn_id.get(),
+            close_code = 1000,
+            "Closing voice session after final TTS turn"
+        );
+        self.close_vad();
+        self.auto_reset_pending = false;
+        self.managed_switch_boundary = None;
+        self.deferred_switch_ingress.clear();
+        self.phase = SessionPhase::Closed;
+        let _ = self.urgent_tx.try_send(OutboundMessage::Close(1000));
+    }
+
+    pub(super) fn begin_application_shutdown(&mut self) {
+        if self.phase == SessionPhase::Closed {
+            return;
+        }
+        self.interrupt_active_turn();
+        let _ = self.advance_generation();
+        self.close_vad();
+        self.auto_reset_pending = false;
+        self.managed_switch_boundary = None;
+        self.deferred_switch_ingress.clear();
+        self.phase = SessionPhase::Closed;
     }
 
     /// An interruption stop that cannot enter the bounded urgent lane leaves playback state

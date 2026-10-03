@@ -88,10 +88,7 @@ impl SentenceSegmenter {
     pub(super) fn push(&mut self, delta: &str) -> Vec<String> {
         self.buffer.push_str(delta);
         let mut segments = Vec::new();
-        loop {
-            let Some(split) = self.next_split() else {
-                break;
-            };
+        while let Some(split) = self.next_split() {
             let segment = self.buffer[..split].trim().to_owned();
             self.buffer.drain(..split);
             if !segment.is_empty() {
@@ -191,7 +188,4 @@ pub(super) fn sanitize_tts_text(input: &str) -> String {
         }
     }
     output.trim().to_owned()
-}
-pub(super) fn float_to_i16(sample: f32) -> i16 {
-    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }

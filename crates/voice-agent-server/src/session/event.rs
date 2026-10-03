@@ -5,4 +5,6 @@ use crate::protocol::ClientMessage;
 pub enum SessionEvent {
     ClientMessage(ClientMessage),
     ClientAudio(Vec<u8>),
+    /// Application lifecycle requests a controlled WebSocket close before the drain deadline.
+    Shutdown,
 }

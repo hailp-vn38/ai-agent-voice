@@ -37,7 +37,10 @@ impl<'a> ServerHello<'a> {
 pub struct OtaResponse {
     pub server_time: ServerTime,
     pub firmware: Firmware,
-    pub websocket: OtaWebsocket,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub websocket: Option<OtaWebsocket>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation: Option<OtaActivation>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,4 +57,11 @@ pub struct Firmware {
 pub struct OtaWebsocket {
     pub url: String,
     pub token: String,
+}
+#[derive(Debug, Serialize)]
+pub struct OtaActivation {
+    pub code: String,
+    pub message: &'static str,
+    pub challenge: String,
+    pub timeout_ms: u64,
 }

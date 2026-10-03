@@ -1,44 +1,13 @@
-use std::net::SocketAddr;
+use std::collections::HashSet;
 
-use url::Url;
 use voice_agent_server::{
-    config::{
-        AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
-        LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
-        WebsocketConfig, WorkersConfig,
-    },
-    providers::compiled_provider_registry,
+    config::AppConfig,
+    providers::{ProviderType, compiled_provider_adapter_registry, compiled_provider_registry},
 };
-
-fn valid_config() -> AppConfig {
-    AppConfig {
-        server: ServerConfig {
-            bind: "127.0.0.1:8000".parse::<SocketAddr>().unwrap(),
-            public_ws_url: Url::parse("ws://127.0.0.1:8000/voice/v1/").unwrap(),
-            hello_timeout_ms: 5_000,
-        },
-        auth: AuthConfig::default(),
-        audio: AudioConfig::default(),
-        websocket: WebsocketConfig::default(),
-        limits: LimitsConfig::default(),
-        providers: ProvidersConfig::default(),
-        workers: WorkersConfig::default(),
-        deployment: DeploymentConfig::default(),
-        runtime: RuntimeConfig::default(),
-        llm: LlmConfig::default(),
-        tts: TtsConfig::default(),
-        speech_output: SpeechOutputConfig::default(),
-        barge_in: BargeInConfig::default(),
-        mcp: voice_agent_server::config::McpConfig::default(),
-        agent: None,
-        effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
-    }
-}
 
 #[test]
 fn registry_exposes_only_adapters_compiled_into_the_binary() {
     let registry = compiled_provider_registry();
-
     assert_eq!(
         registry.vad_factory("silero_onnx").unwrap().adapter(),
         "silero_onnx"
@@ -47,142 +16,136 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         registry.asr_factory("zipformer_sherpa").unwrap().adapter(),
         "zipformer_sherpa"
     );
+    assert_eq!(
+        registry
+            .asr_factory("gipformer_sherpa_offline")
+            .unwrap()
+            .adapter(),
+        "gipformer_sherpa_offline"
+    );
     assert_eq!(registry.llm_factory("openai").unwrap().adapter(), "openai");
+    assert_eq!(
+        registry.vision_factory("openai_vision").unwrap().adapter(),
+        "openai_vision"
+    );
     assert_eq!(
         registry.tts_factory("zerotts_onnx").unwrap().adapter(),
         "zerotts_onnx"
     );
-    assert!(registry.vad_factory("http_vad").is_err());
-    assert!(registry.asr_factory("python_sidecar").is_err());
-    assert!(registry.llm_factory("python_llm").is_err());
+    assert_eq!(
+        registry.tts_factory("chillaudio_ws").unwrap().adapter(),
+        "chillaudio_ws"
+    );
+    assert_eq!(
+        registry.tts_factory("kokoro_vi_onnx").unwrap().adapter(),
+        "kokoro_vi_onnx"
+    );
     assert!(registry.tts_factory("http_tts").is_err());
 }
 
 #[test]
-fn startup_validation_rejects_an_adapter_not_compiled_into_the_binary() {
-    let mut config = valid_config();
-    config.providers.vad.adapter = "http_vad".into();
-
-    let error = config.validate().unwrap_err().to_string();
-
-    assert!(error.contains("not compiled into this binary"));
-}
-
-#[test]
-fn startup_validation_rejects_uncompiled_llm_and_tts_adapters_before_bind() {
-    let mut config = valid_config();
-    config.providers.llm.adapter = "python_llm".into();
-    assert!(
-        config
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("LLM adapter `python_llm` is not compiled")
-    );
-
-    let mut config = valid_config();
-    config.providers.tts.adapter = "http_tts".into();
-    assert!(
-        config
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("TTS adapter `http_tts` is not compiled")
-    );
-}
-
-#[test]
-fn typed_llm_and_tts_tables_redact_api_keys_and_keep_options_scoped() {
+fn catalog_config_keeps_secrets_redacted_and_options_scoped_to_each_instance() {
     let config: AppConfig = toml::from_str(
         r#"
 [server]
 bind = "127.0.0.1:8000"
 public_ws_url = "ws://127.0.0.1:8000/voice/v1/"
-
-[providers.vad]
+[provider_defaults]
+vad = "vad"
+asr = "asr"
+llm = "llm"
+tts = "tts"
+[providers.vad.instances.vad]
 adapter = "silero_onnx"
-
-[providers.asr]
+[providers.asr.instances.asr]
 adapter = "zipformer_sherpa"
-
-[providers.llm]
-type = "openai"
-
-[providers.llm.openai]
+[providers.llm.instances.llm]
+adapter = "openai"
 api_key = "secret-do-not-log"
-base_url = "https://api.openai.com/v1"
 model = "gpt-test"
-
-[providers.tts]
-adapter = "zerotts_onnx"
-
-[providers.tts.zerotts_onnx]
-model = "zerotts_default"
-num_threads = 2
-voice = "maichi"
+[providers.tts.instances.tts]
+adapter = "chillaudio_ws"
+token = "secret-do-not-log"
 "#,
     )
     .unwrap();
-
-    assert_eq!(config.providers.llm.adapter, "openai");
-    assert_eq!(config.providers.tts.adapter, "zerotts_onnx");
+    assert_eq!(config.providers.llm.instances["llm"].adapter(), "openai");
+    assert_eq!(
+        config.providers.tts.instances["tts"].adapter(),
+        "chillaudio_ws"
+    );
     assert!(!format!("{config:?}").contains("secret-do-not-log"));
 }
 
 #[test]
-fn typed_provider_tables_select_compiled_adapters_and_keep_runtime_options_scoped() {
-    let config: AppConfig = toml::from_str(
-        r#"
-[server]
-bind = "127.0.0.1:8000"
-public_ws_url = "ws://127.0.0.1:8000/voice/v1/"
+fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapters() {
+    let descriptors: Vec<_> = compiled_provider_adapter_registry().list(None).collect();
+    let adapters: HashSet<_> = descriptors
+        .iter()
+        .map(|descriptor| descriptor.adapter)
+        .collect();
+    assert_eq!(adapters.len(), descriptors.len());
+    assert!(adapters.contains("zerotts_onnx"));
+    assert!(adapters.contains("chillaudio_ws"));
+    assert!(adapters.contains("kokoro_vi_onnx"));
+    let factory_adapters: HashSet<_> = compiled_provider_registry()
+        .admin_adapters()
+        .map(|(_, adapter)| adapter)
+        .collect();
+    assert_eq!(adapters, factory_adapters);
 
-[providers.vad]
-adapter = "silero_onnx"
-
-[providers.vad.silero_onnx]
-model = "silero_vad_v5"
-num_threads = 3
-min_speech_ms = 240
-end_silence_ms = 720
-pre_roll_ms = 360
-speech_threshold = 0.6
-exit_threshold = 0.4
-
-[providers.asr]
-adapter = "zipformer_sherpa"
-
-[providers.asr.zipformer_sherpa]
-model = "zipformer_vi_streaming"
-num_threads = 4
-decoding_method = "modified_beam_search"
-"#,
-    )
-    .unwrap();
-
-    config.validate().unwrap();
-    let vad = config.providers.vad.silero_onnx.unwrap();
-    assert_eq!(vad.model, "silero_vad_v5");
-    assert_eq!(vad.num_threads, 3);
-    let asr = config.providers.asr.zipformer_sherpa.unwrap();
-    assert_eq!(asr.model, "zipformer_vi_streaming");
-    assert_eq!(asr.num_threads, 4);
-    assert_eq!(asr.decoding_method, "modified_beam_search");
-}
-
-#[test]
-fn logical_model_identity_must_be_scoped_to_the_selected_adapter_table() {
-    let result: Result<AppConfig, _> = toml::from_str(
-        r#"
-[server]
-bind = "127.0.0.1:8000"
-public_ws_url = "ws://127.0.0.1:8000/voice/v1/"
-
-[providers.vad]
-adapter = "silero_onnx"
-model = "silero_vad_v5"
-"#,
-    );
-
-    assert!(result.is_err());
+    for descriptor in descriptors {
+        assert!(descriptor.adapter.len() <= 64);
+        assert!(descriptor.display_name.len() <= 128);
+        assert!(descriptor.description.len() <= 2_048);
+        assert!(descriptor.config_schema.fields.len() <= 64);
+        let keys: HashSet<_> = descriptor
+            .config_schema
+            .fields
+            .iter()
+            .map(|field| field.key)
+            .collect();
+        assert_eq!(keys.len(), descriptor.config_schema.fields.len());
+        let models = descriptor.capabilities.models.unwrap_or(&[]);
+        assert!(models.len() <= 128);
+        for model in models {
+            assert!(model.id.len() <= 128);
+            assert!(model.name.len() <= 128);
+            assert!(
+                model
+                    .description
+                    .is_none_or(|description| description.len() <= 2_048)
+            );
+        }
+        let languages = descriptor.capabilities.languages.unwrap_or(&[]);
+        assert!(languages.len() <= 64);
+        for language in languages {
+            assert!(language.id.len() <= 32);
+            assert!(language.name.len() <= 128);
+        }
+        let voices = descriptor.capabilities.voices.unwrap_or(&[]);
+        assert!(voices.len() <= 256);
+        for voice in voices {
+            assert!(voice.id.len() <= 128);
+            assert!(voice.name.len() <= 128);
+            assert!(
+                voice
+                    .model
+                    .is_none_or(|model| models.iter().any(|item| item.id == model))
+            );
+            assert!(
+                voice
+                    .languages
+                    .iter()
+                    .all(|language| languages.iter().any(|item| item.id == *language))
+            );
+        }
+        let registry = compiled_provider_registry();
+        match descriptor.provider_type {
+            ProviderType::Vad => assert!(registry.vad_factory(descriptor.adapter).is_ok()),
+            ProviderType::Asr => assert!(registry.asr_factory(descriptor.adapter).is_ok()),
+            ProviderType::Llm => assert!(registry.llm_factory(descriptor.adapter).is_ok()),
+            ProviderType::Tts => assert!(registry.tts_factory(descriptor.adapter).is_ok()),
+        }
+    }
 }

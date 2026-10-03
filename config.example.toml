@@ -6,6 +6,54 @@ hello_timeout_ms = 5000
 [auth]
 token = ""
 
+# SQLite is required. The server creates its parent directory before opening the DB.
+# V1 supports one Voice Agent process owning one local filesystem path;
+# NFS/SMB, active-active, and multi-process writers are unsupported.
+[database]
+url = "sqlite://data/voice-agent.db"
+max_connections = 5
+busy_timeout_ms = 5000
+migrate_on_start = true
+
+# Every WS connection uses database-backed admission. Enrollment remains opt-in and
+# must not be enabled with auto_register.
+[database.devices]
+auto_register = false
+
+[database.devices.enrollment]
+enabled = false
+code_ttl_seconds = 600
+retention_seconds = 86400
+cleanup_interval_seconds = 60
+max_pending = 1000
+transport = "websocket" # "ota" preserves activation/polling without WS onboarding
+ws_max_connections = 32
+ws_timeout_seconds = 120
+ws_poll_interval_ms = 2000
+ws_prompt_repeat_seconds = 60
+# Prepare the 11 WAV clips before enabling websocket enrollment:
+# python3 scripts/prepare-enrollment-assets.py
+prompt_assets_dir = "assets/enrollment/vi-VN"
+
+# Persistent Transcript. Capture is off by default: with it off no archival writer, queue or task is
+# started at all, while the retention of an already-captured archive, the Admin API read and the
+# scoped purge all keep working. Retention is a property of the archive, not of capture, so turning
+# capture off never turns existing data into unbounded retention.
+[database.history]
+enabled = false
+retention_days = 30
+# Records the archival writer may hold before it drops one. A dropped record costs the archive that
+# row and nothing else: never a turn, a WebSocket close, or a change to Dialogue History.
+queue_capacity = 256
+
+# The Admin API mounts only when api.enabled is true and uses its own bearer token.
+[api]
+enabled = false
+admin_token = ""
+
+[shutdown]
+grace_ms = 15000
+
 [audio]
 input_sample_rate = 16000
 output_sample_rate = 24000
@@ -23,11 +71,35 @@ urgent_control_queue = 8
 outbound_audio_queue = 32
 llm_concurrency = 2
 tts_concurrency = 2
+vision_concurrency = 2
 
-[providers.vad]
+[provider_defaults]
+vad = "silero_default"
+asr = "gipformer_vi"
+llm = "openai_primary"
+tts = "chillaudio_default"
+# Set a Vision instance ID when [vision].enabled is true.
+# vision = "local_vision"
+
+[vision]
+enabled = false
+# public_url = "http://127.0.0.1:8000/mcp/vision/explain"
+max_image_bytes = 5242880
+max_question_bytes = 4096
+advertise_via_mcp = false
+
+# [providers.vision.instances.local_vision]
+# adapter = "openai_vision"
+# base_url = "http://127.0.0.1:11434/v1/"
+# api_key = ""
+# model = "your-vision-model"
+# timeout_ms = 30000
+# max_tokens = 500
+# temperature = 0.2
+# top_p = 1.0
+
+[providers.vad.instances.silero_default]
 adapter = "silero_onnx"
-
-[providers.vad.silero_onnx]
 model = "silero_vad_v5"
 num_threads = 1
 min_speech_ms = 180
@@ -36,30 +108,56 @@ pre_roll_ms = 300
 speech_threshold = 0.50
 exit_threshold = 0.35
 
-[providers.asr]
+[providers.asr.instances.zipformer_vi]
 adapter = "zipformer_sherpa"
-
-[providers.asr.zipformer_sherpa]
 model = "zipformer_vi_streaming"
 num_threads = 2
 decoding_method = "greedy_search"
 
-[providers.llm]
-type = "openai"
+# Gipformer is an offline ASR candidate: PCM is buffered during capture and
+# decoded once at utterance end. Keep Zipformer as the application default
+# until a local qualification benchmark supports changing it.
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+model = "gipformer15_vi_int8"
+num_threads = 4
+decoding_method = "modified_beam_search"
+max_active_paths = 4
 
-[providers.llm.openai]
+[providers.llm.instances.openai_primary]
+adapter = "openai"
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
 
-[providers.tts]
+[providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"
-
-[providers.tts.zerotts_onnx]
 model = "zerotts_default"
 num_threads = 2
 voice = "maichi"
 delivery_mode = "stream"
+
+# Remote ChillAudio is a separate configured instance. Agent binding selects it
+# without changing another provider block; it does not use Model Preparation.
+[providers.tts.instances.chillaudio_default]
+adapter = "chillaudio_ws"
+token = "set-deployment-token-here"
+# voice = "BV421_vivn_streaming"
+# timeout_ms = 12000
+
+# Local Vietnamese Kokoro. Install the pinned model, its prepared voicepack,
+# and the deployment-owned G2P sidecar before selecting this instance.
+# [providers.tts.instances.kokoro_vi]
+# adapter = "kokoro_vi_onnx"
+# model = "kokoro_vi_contextbox"
+# num_threads = 1
+# voice = "diem_trinh"
+# language = "vi-VN"
+# speed_percent = 100
+# preload = false
+
+# [runtime.kokoro_vi]
+# g2p_executable = "runtime/kokoro-vi/kokoro_vi_g2p"
 
 [tts]
 timeout_ms = 15000
@@ -95,6 +193,12 @@ profile = "development-noncommercial"
 root = "models"
 offline = false
 
+# Startup verifies/downloads local models before constructing provider runtimes.
+# Existing verified artifacts are reused without contacting the source.
+# Deployment-prepared artifacts need a checksum-matching binary at an HTTP(S) URL:
+# [deployment.models.sources]
+# "prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin" = "https://your-artifact-host/diem_trinh.bin"
+
 [runtime.onnx]
 library = "runtime/onnxruntime/libonnxruntime.dylib"
 
@@ -109,6 +213,11 @@ revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
 license = "CC-BY-NC-ND-4.0"
 
 [[deployment.model_acknowledgements]]
+model = "gipformer15_vi_int8"
+revision = "dd9227dcd8705c13f33bdbe59728d546ab94480f"
+license = "MIT"
+
+[[deployment.model_acknowledgements]]
 model = "zerotts_default"
 revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
 license = "MIT; bundled-codec=Apache-2.0"
@@ -117,7 +226,18 @@ license = "MIT; bundled-codec=Apache-2.0"
 max_history_messages = 20
 prompt_budget_tokens = 12000
 max_tool_result_chars = 4096
-max_tool_depth = 4
+
+# Tool-round Executor caps, applied to Device MCP, External MCP and the builtin
+# actions alike. A cap is checked before the work it bounds, and exceeding one
+# terminalizes the turn: it never produces a synthetic tool result. Every bound is
+# a hard ceiling, so `0` and an out-of-range value both fail startup.
+#   max_calls_per_round  1..=32
+#   max_rounds_per_turn  1..=8   (tool rounds a turn may continue past its first)
+#   execution_budget_ms  1..=120000 (one turn's total tool work, from its first call)
+[llm.tools]
+max_calls_per_round = 8
+max_rounds_per_turn = 4
+execution_budget_ms = 30000
 
 # Optional: omit [agent] to use the built-in Mây / vi-VN persona and template.
 [agent]
@@ -129,6 +249,36 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 Ưu tiên nội dung dễ nghe qua loa.
 """
 # prompt_template = "prompts/custom-voice-assistant.txt"
+
+# Optional agent-specific bindings override [provider_defaults].
+# [agent.providers]
+# tts = "chillaudio_default"
+# asr = "gipformer_vi"
+
+# Optional bounded hot-runtime manager. Enable only after measuring every adapter/model/worker
+# envelope on the deployment host. The manifest receipt prevents reusing stale measurements after
+# artifact metadata changes. See docs/provider-runtime-manager-qualification.md for the development
+# host example and the qualification boundary.
+# [provider_runtime]
+# max_parallel_loads = 1
+# max_pending_loads = 8
+# max_waiters = 64
+# max_resident_bytes = 8589934592
+# max_resources = 16
+# max_version_entries = 128
+# admission_timeout_ms = 5000
+# startup_timeout_ms = 60000
+# failure_cooldown_ms = 1000
+# idle_ttl_ms = 600000
+# measured_manifest_sha256 = "replace-with-measured-manifest-sha256"
+#
+# [provider_runtime.estimated_peak_bytes]
+# silero_onnx = 134217728
+# gipformer_sherpa_offline = 536870912
+# kokoro_vi_onnx = 3221225472
+# zerotts_onnx = 4294967296
+# openai = 67108864
+# chillaudio_ws = 67108864
 
 [mcp]
 enabled = true
@@ -143,3 +293,28 @@ result_delivery = "llm_then_tts"
 # [[mcp.tool_policy]]
 # name = "self.audio_speaker.set_volume"
 # result_delivery = "direct_tts"
+
+# External MCP is separate from Device MCP: these are server-side Streamable HTTP
+# servers bound to an Agent, snapshotted once at each Voice Session admission.
+[mcp.external]
+per_server_resolution_timeout_ms = 3000
+overall_resolution_budget_ms = 5000
+# Process-global outbound concurrency per MCP server, shared by every session.
+max_concurrent_calls_per_server = 16
+
+# Caps are applied at the untrusted catalog boundary and reject rather than truncate.
+[mcp.external.limits]
+max_tools_per_server = 128
+max_tools_per_session = 512
+max_tool_schema_bytes = 16384
+max_tool_description_bytes = 4096
+max_external_tool_result_bytes = 16384
+max_pages_per_server = 32
+
+# A destination must match an allowlist entry after DNS resolution. HTTPS is the
+# only scheme unless `allow_http_lan` is enabled for an explicitly LAN-scoped
+# deployment; redirects are never followed.
+[mcp.external.network]
+allow_http_lan = false
+allowed_hosts = []
+allowed_cidrs = []

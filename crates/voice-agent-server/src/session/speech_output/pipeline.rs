@@ -40,7 +40,6 @@ impl SpeechOutput {
             return Ok(());
         }
         tracing::info!(
-            tts_input = %text,
             chars = text.chars().count(),
             delivery = "direct",
             "TTS synthesis input"
@@ -52,40 +51,12 @@ impl SpeechOutput {
         self.push_provider_pcm(pcm)
     }
 
-    pub(super) fn push_provider_pcm(
-        &mut self,
-        mut pcm: PcmF32Mono,
-    ) -> Result<(), SpeechOutputError> {
-        if pcm.sample_rate_hz() != PROVIDER_SAMPLE_RATE_HZ || pcm.samples().is_empty() {
-            return Err(SpeechOutputError::Synthesis);
-        }
-        if self.first_pcm_chunk {
-            let fade_samples = FADE_IN_SAMPLES.min(pcm.samples().len());
-            for (index, sample) in pcm.samples_mut()[..fade_samples].iter_mut().enumerate() {
-                *sample *= index as f32 / fade_samples as f32;
-            }
-            self.first_pcm_chunk = false;
-        }
-        let downlink = self
-            .downlink_resampler
-            .process(pcm.samples())
+    pub(super) fn push_provider_pcm(&mut self, pcm: PcmF32Mono) -> Result<(), SpeechOutputError> {
+        for packet in self
+            .downlink_pipeline
+            .push_provider_pcm(pcm)
             .map_err(|_| SpeechOutputError::Synthesis)?
-            .into_iter()
-            .map(float_to_i16)
-            .collect::<Vec<_>>();
-        self.downlink_tail.extend(downlink);
-        while self.downlink_tail.len() >= DOWNLINK_FRAME_SAMPLES {
-            let frame = self
-                .downlink_tail
-                .drain(..DOWNLINK_FRAME_SAMPLES)
-                .collect::<Vec<_>>();
-            let packet = self
-                .encoder
-                .encode(
-                    DownlinkPcmFrame::try_new(Pcm16Mono::new(frame))
-                        .map_err(|_| SpeechOutputError::Synthesis)?,
-                )
-                .map_err(|_| SpeechOutputError::Synthesis)?;
+        {
             if !self.started && self.packets.is_empty() {
                 tracing::info!(
                     packet_bytes = packet.as_bytes().len(),
@@ -103,38 +74,13 @@ impl SpeechOutput {
     }
 
     pub(super) fn flush_downlink_tail(&mut self) -> Result<(), SpeechOutputError> {
-        if self.downlink_tail.is_empty() {
-            return Ok(());
+        for packet in self
+            .downlink_pipeline
+            .finish()
+            .map_err(|_| SpeechOutputError::Synthesis)?
+        {
+            self.packets.push_back(packet.as_bytes().to_vec());
         }
-        for sample in self.downlink_resampler.flush() {
-            self.downlink_tail.push(float_to_i16(sample));
-        }
-        fade_out_tail(&mut self.downlink_tail);
-        if self.downlink_tail.is_empty() {
-            return Ok(());
-        }
-        self.downlink_tail.resize(DOWNLINK_FRAME_SAMPLES, 0);
-        let frame = std::mem::take(&mut self.downlink_tail);
-        let packet = self
-            .encoder
-            .encode(
-                DownlinkPcmFrame::try_new(Pcm16Mono::new(frame))
-                    .map_err(|_| SpeechOutputError::Synthesis)?,
-            )
-            .map_err(|_| SpeechOutputError::Synthesis)?;
-        self.packets.push_back(packet.as_bytes().to_vec());
         Ok(())
-    }
-}
-
-pub(super) fn fade_out_tail(samples: &mut [i16]) {
-    let fade_samples = FADE_OUT_SAMPLES.min(samples.len());
-    if fade_samples <= 1 {
-        return;
-    }
-    let fade_start = samples.len() - fade_samples;
-    for (index, sample) in samples[fade_start..].iter_mut().enumerate() {
-        *sample =
-            (f32::from(*sample) * (1.0 - index as f32 / (fade_samples - 1) as f32)).round() as i16;
     }
 }

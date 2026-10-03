@@ -11,6 +11,7 @@ Core V1 phục vụ mọi **Voice Protocol Client** tuân thủ contract; firmwa
 Core V1:
 
 - OTA/discovery endpoint.
+- Required SQLite control plane and database-backed Device admission for every WS connection.
 - WebSocket protocol v1.
 - Opus uplink/downlink.
 - VAD + manual listen mode.
@@ -21,7 +22,7 @@ Core V1:
 - Abort/barge-in/cancellation.
 - Device MCP (`initialize`, `tools/list`, `tools/call`).
 
-Không nằm trong V1: manager web/mobile, multi-user, database bắt buộc, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory.
+Không nằm trong V1: manager web/mobile, multi-user, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory.
 
 ## Chạy nhanh Protocol V1
 
@@ -31,6 +32,27 @@ Khởi động server với cấu hình mẫu:
 VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server --bin voice-agent-server
 VOICE_AGENT_CONFIG=config.toml cargo run -p voice-agent-server --bin voice-agent-server
 ```
+
+Database và Device admission luôn bật. Provision Agent và Device `reference-client-01`
+qua Admin API trước khi chạy client, hoặc bật enrollment và claim mã từ thiết bị.
+Admin API vẫn cần `api.enabled=true` và admin token riêng. Không có Device thì OTA/WS
+trả 403 khi enrollment tắt. Xem [flow database và enrollment](docs/flows/08-database-device-enrollment.md)
+để chuyển cấu hình cũ và chuẩn bị dữ liệu.
+
+Server tự tạo thư mục cha của SQLite (mặc định `data/`) trước khi mở database và
+chạy migration. Sau đó Model Preparation kiểm tra checksum và tự tải model local
+thiếu/hỏng vào `deployment.models.root` (mặc định `models/`) khi `offline=false`.
+File hợp lệ được dùng lại mà không gọi mạng. Bước này hoàn tất trước khi dựng
+provider runtime, nên thời gian tải không tính vào `provider_runtime.startup_timeout_ms`.
+Các instance local trong TOML được chuẩn bị xuống đĩa; provider trong DB chỉ được
+chuẩn bị khi đang được Template sử dụng. Model trùng nhau được gộp. Model bắt buộc
+lỗi sẽ chặn startup; model tùy chọn lỗi được ghi log mà không chặn server.
+
+Downloader dùng buffer 64 KiB, timeout kết nối 15 giây, timeout 15 phút cho mỗi
+lần tải và tối đa 3 lần thử cho lỗi mạng/HTTP tạm thời. File tạm chỉ được publish
+sau khi checksum và transform hợp lệ. ONNX Runtime và Kokoro G2P vẫn cần cài riêng.
+Voicepack Kokoro đã chuyển đổi có thể tải tự động bằng `deployment.models.sources`;
+xem [hướng dẫn Kokoro](docs/kokoro-vi-provider.md).
 
 Sau đó xác nhận một text turn OTA → WebSocket → TTS bằng Voice Reference Client độc lập:
 
@@ -46,6 +68,33 @@ Chạy các gate tự động hiện có:
 
 ```bash
 ./scripts/test-all.sh
+```
+
+## Provider benchmarks
+
+`provider-bench-av` đo trực tiếp boundary provider; warmup không đi vào số liệu đo. Workload
+được version control trong `benchmarks/performance_tester/workloads/`. Report JSON bao gồm raw
+samples và summary min/mean/p50/p95/p99; không ghi API key.
+
+LLM provider benchmark đo TTFT tại `TextDelta` không rỗng đầu tiên (không tính empty delta hay
+tool call), cùng total latency, số text chunk, số ký tự và tool-call count:
+
+```bash
+cargo run --release -p voice-agent-server --bin provider-bench-av -- \
+  llm --workload benchmarks/performance_tester/workloads/llm-v1.json \
+  --warmup 1 --iterations 5 --output target/benchmarks/llm.json
+```
+
+ASR và VAD dùng cùng binary với workload fixture canonical:
+
+```bash
+cargo run --release -p voice-agent-server --bin provider-bench-av -- \
+  asr --workload benchmarks/performance_tester/workloads/asr-v1.json \
+  --feed burst --warmup 1 --iterations 5
+
+cargo run --release -p voice-agent-server --bin provider-bench-av -- \
+  vad --workload benchmarks/performance_tester/workloads/vad-v1.json \
+  --warmup 1 --iterations 5
 ```
 
 ## Thứ tự đọc
@@ -67,3 +116,16 @@ Chạy các gate tự động hiện có:
 - Firmware: `78/xiaozhi-esp32`
 
 Chi tiết mapping sang code Rust đề xuất nằm tại [`docs/reference/source-map.md`](docs/reference/source-map.md).
+# Device enrollment over WebSocket
+
+Unknown devices can connect to a separate enrollment WS, display and hear their
+six-digit code, then be claimed through the existing Admin API. This connection
+has no conversational providers or transcript. Prepare Vietnamese WAV assets
+before enabling `database.devices.enrollment` with `transport="websocket"`:
+
+```bash
+python3 scripts/prepare-enrollment-assets.py
+```
+
+See [setup and wire flow](docs/device-enrollment-websocket.md). Explicit
+`transport="ota"` preserves the previous activation/polling flow.

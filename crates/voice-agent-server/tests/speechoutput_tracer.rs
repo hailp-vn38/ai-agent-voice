@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     sync::{
         Arc, Mutex,
@@ -26,7 +28,6 @@ use voice_agent_server::config::{
     WorkersConfig,
 };
 use voice_agent_server::{
-    app::router_with_providers,
     audio::{DownlinkOpusEncoder, DownlinkPcmFrame, Pcm16Mono, PcmF32Mono},
     protocol::{ClientMessage, ListenCommand, ListenMode},
     providers::{
@@ -338,19 +339,31 @@ async fn start_router_with_limits(
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits,
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+            vision: None,
+        },
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        api: voice_agent_server::config::AdminApiConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
-    let app: Router = router_with_providers(config, providers);
+    let app: Router = support::router(config, providers).await;
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (format!("http://{address}"), task)
 }

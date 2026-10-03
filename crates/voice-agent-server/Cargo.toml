@@ -6,15 +6,21 @@ license.workspace = true
 
 [features]
 real-model-gate = []
+real-vision-gate = []
 
 [[bin]]
 name = "voice-agent-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "provider-bench"
+path = "src/bin/provider-bench.rs"
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+base64.workspace = true
 futures-util.workspace = true
 hound.workspace = true
 llm.workspace = true
@@ -24,13 +30,19 @@ http.workspace = true
 opus2.workspace = true
 ort.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 regex.workspace = true
+rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+symphonia.workspace = true
+sse-stream.workspace = true
 sha2.workspace = true
 sherpa-onnx.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 tokenizers.workspace = true
 toml.workspace = true
@@ -40,9 +52,13 @@ tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 unicode-normalization.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+# `test-util` gives the paused clock `docs/testing/00-test-strategy.md` requires for time-dependent
+# tests. It is test-only: the shipped binary keeps the real clock.
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
 voice-reference-client = { path = "../voice-reference-client" }
 
@@ -55,3 +71,8 @@ required-features = ["real-model-gate"]
 name = "phase5_reference_gate"
 path = "tests/phase5_reference_gate.rs"
 required-features = ["real-model-gate"]
+
+[[test]]
+name = "vision_real_provider_gate"
+path = "tests/vision_real_provider_gate.rs"
+required-features = ["real-vision-gate"]

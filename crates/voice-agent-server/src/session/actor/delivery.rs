@@ -1,5 +1,4 @@
 use super::*;
-use crate::providers::llm::ToolDefinition;
 
 impl SessionActor {
     pub(super) fn commit_user_text(&mut self, final_text: String) -> Option<String> {
@@ -10,6 +9,9 @@ impl SessionActor {
         let text = text.to_owned();
         let turn_id = self.current_turn_id()?;
         self.dialogue_history.commit_user(turn_id, text.clone());
+        // The final accepted user text, archived after it was accepted for this turn.  An ASR
+        // partial never reaches this seam, so it can never reach the archive either.
+        self.record_transcript(HistoryRole::User, &text, turn_id);
         let payload = serde_json::json!({
             "session_id": self.session_id,
             "type": "stt",
@@ -36,29 +38,46 @@ impl SessionActor {
         );
         self.llm_messages = Vec::with_capacity(history.len() + 1);
         self.llm_messages.push(ChatMessage::System {
-            content: self.system_prompt.clone(),
+            content: self.profile.system_prompt.clone(),
         });
         self.llm_messages.extend(history);
-        self.tool_depth = 0;
+        self.tool_rounds.begin_turn();
         self.start_llm_round(true);
     }
 
     pub(super) fn begin_tool_continuation(&mut self) {
-        if self.tool_depth >= self.max_tool_depth {
-            self.terminalize_turn_failure(TurnFailure::ToolDepthExceeded);
+        // Checked before the next round's request is sent, so a turn that has spent its whole tool
+        // allowance starts no further round and therefore no further call.
+        if self.tool_rounds.rounds >= self.tool_rounds.limits.max_rounds_per_turn {
+            self.terminalize_tool_round(ToolRoundFailure::RoundLimitExceeded);
             return;
         }
-        self.tool_depth += 1;
+        // The budget is checked here rather than per origin, so a turn that ran out of tool time
+        // ends the same way whichever transport spent it.
+        if self.tool_rounds.remaining().is_none() {
+            self.terminalize_tool_round(ToolRoundFailure::ExecutionBudgetExceeded);
+            return;
+        }
+        self.tool_rounds.rounds += 1;
         tracing::info!(
             event = "llm_tool_continuation_started",
-            tool_depth = self.tool_depth,
+            tool_round = self.tool_rounds.rounds,
+            max_rounds_per_turn = self.tool_rounds.limits.max_rounds_per_turn,
             "LLM tool continuation started"
         );
         self.start_llm_round(true);
     }
 
     pub(super) fn begin_direct_tool_speech(&mut self, text: String) {
+        tracing::info!(
+            event = "mcp_direct_response_started",
+            response_chars = text.chars().count(),
+            "Starting direct MCP response speech without LLM continuation"
+        );
         self.generated_response = text.clone();
+        // This is a tool's own result, so it is never the model's Delivered Assistant Response and
+        // never belongs in the Persistent Transcript.
+        self.generated_by_model = false;
         self.pending_llm_delta = Some((text, 0));
         self.llm_finish_pending = true;
         self.flush_pending_llm_text();
@@ -76,23 +95,23 @@ impl SessionActor {
         self.generated_response.clear();
         self.pending_llm_delta = None;
         self.llm_finish_pending = false;
+        // Whatever this round produces comes from the model, whatever the previous turn's last
+        // words were.
+        self.generated_by_model = true;
+        let tools = if allow_tools {
+            self.available_llm_tools()
+        } else {
+            Vec::new()
+        };
+        // A tool that can change the final answer forces its whole round to be buffered
+        // (ADR-0018), so the round's prose is never spoken before the tools have had their say.
+        // The builtin tools are different: a normal no-tool response must retain
+        // token-to-speech streaming merely because they are available.
         self.llm_round =
-            (allow_tools && !self.mcp.visible.is_empty()).then(LlmRoundBuffer::default);
+            (allow_tools && self.offers_answer_changing_tools()).then(LlmRoundBuffer::default);
         let request = crate::providers::llm::LlmRequest {
             messages: self.llm_messages.clone(),
-            tools: if allow_tools {
-                self.mcp
-                    .visible
-                    .iter()
-                    .map(|tool| ToolDefinition {
-                        name: tool.llm_name.clone(),
-                        description: tool.description.clone(),
-                        parameters: tool.input_schema.clone(),
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            },
+            tools,
         };
         if crate::session::prompt::llm_request_size_bytes(&request).is_err() {
             self.terminalize_turn_failure(TurnFailure::LlmRequestTooLarge);
@@ -120,7 +139,7 @@ impl SessionActor {
         self.complete_recognition();
     }
 
-    fn terminalize_turn_failure(&mut self, failure: TurnFailure) {
+    pub(super) fn terminalize_turn_failure(&mut self, failure: TurnFailure) {
         warn!(code = failure.code(), "conversational turn terminalized");
         self.terminalize_llm_failure();
     }
@@ -142,12 +161,8 @@ impl SessionActor {
         }
         match event {
             LlmRuntimeEvent::TextDelta { text, .. } => {
-                if self.llm_round.is_some() {
-                    self.llm_round
-                        .as_mut()
-                        .expect("checked")
-                        .prose
-                        .push_str(&text);
+                if let Some(round) = &mut self.llm_round {
+                    round.prose.push_str(&text);
                     return;
                 }
                 self.generated_response.push_str(&text);
@@ -173,6 +188,12 @@ impl SessionActor {
                 self.flush_pending_llm_text();
             }
             LlmRuntimeEvent::ToolCall { call, .. } => {
+                if self.llm_round.is_none()
+                    && self.generated_response.is_empty()
+                    && super::tools::is_builtin_tool_name(&call.name)
+                {
+                    self.llm_round = Some(LlmRoundBuffer::default());
+                }
                 let Some(round) = self.llm_round.as_mut() else {
                     self.fail_speech_delivery();
                     return;
@@ -339,6 +360,7 @@ impl SessionActor {
                     self.pending_delivery = Some(PendingDelivery {
                         turn_id,
                         assistant_text: std::mem::take(&mut self.generated_response),
+                        archives_as_assistant: self.generated_by_model,
                     });
                     if self.writer_events.is_none() {
                         self.on_writer_event(WriterEvent::TurnClosed {
@@ -355,9 +377,12 @@ impl SessionActor {
     pub(super) fn fail_speech_delivery(&mut self) {
         let writer_owns_terminal_outcome = self.tts_started;
         let failed_generation = self.generation;
+        if !writer_owns_terminal_outcome {
+            self.cancel_pending_actions_for_active_turn();
+        }
         self.cancel_speech_delivery();
         self.cancel_llm();
-        self.cancel_mcp_turn();
+        self.cancel_tool_turn();
         if !self.advance_generation() {
             return;
         }
@@ -375,9 +400,15 @@ impl SessionActor {
     /// Cancels a Conversational Turn in its required order. The outbound gate is
     /// invalidated before producer cancellation, and releasing the Active Turn is
     /// idempotent through its permit ownership flag.
+    ///
+    /// The tool round is cancelled here rather than by each caller, because a turn that has been
+    /// interrupted must not start another call whichever of these paths noticed — a barge-in, a
+    /// shutdown and a fail-closed are the same event to the executor.
     pub(super) fn interrupt_active_turn(&mut self) {
+        self.cancel_pending_actions_for_active_turn();
         self.cancel_speech_delivery();
         self.cancel_llm();
+        self.cancel_tool_turn();
         self.cancel_asr();
     }
 
@@ -386,6 +417,11 @@ impl SessionActor {
         // It must precede every producer cancellation, including cancellation before TTS starts:
         // `llm` or `tts:start` may already be waiting at the writer.
         self.generation_gate.invalidate(self.generation);
+        // A turn without playback can be released below. Cancel its preparation token
+        // before losing the turn owner, so a cold switch cannot continue building targets.
+        if let Some(turn) = &self.turn {
+            turn.cancellation.cancel();
+        }
         self.pending_llm_delta = None;
         self.llm_finish_pending = false;
         self.speech_output.cancel();

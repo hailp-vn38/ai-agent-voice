@@ -1,6 +1,7 @@
 use super::*;
-use crate::config::McpResultDelivery;
-use crate::tools::device_mcp::{McpIncoming, McpOutgoing, parse_tools_page, visible_tools};
+use crate::tools::device_mcp::{
+    LlmVisibleTool, McpIncoming, McpOutgoing, parse_tools_page, visible_tools,
+};
 
 impl SessionActor {
     pub(super) fn begin_mcp_discovery(&mut self) {
@@ -12,7 +13,10 @@ impl SessionActor {
             return;
         };
         self.send_mcp(
-            McpOutgoing::Initialize { id },
+            McpOutgoing::Initialize {
+                id,
+                vision: self.mcp.vision.clone(),
+            },
             None,
             PendingMcpKind::Initialize,
             self.mcp.discovery_timeout,
@@ -100,59 +104,21 @@ impl SessionActor {
             .retain(|_, pending| matches!(pending.kind, PendingMcpKind::ToolCall { .. }));
     }
 
-    pub(super) fn start_tool_batch(&mut self, calls: Vec<ToolCall>) {
-        if !self.mcp.ready || calls.is_empty() {
-            self.fail_speech_delivery();
+    /// Sends one Device MCP `tools/call` and waits for the device to correlate it.
+    ///
+    /// `budget` is what this turn has left of its Tool Execution Budget, so the per-call timeout can
+    /// only ever be made shorter by the turn and never longer: a device that stops answering
+    /// cannot hold a turn past the point where its result could still be used.
+    pub(super) fn dispatch_device_mcp_tool(
+        &mut self,
+        call: ToolCall,
+        tool: LlmVisibleTool,
+        budget: std::time::Duration,
+    ) {
+        if !self.mcp.ready {
+            self.complete_tool_call(call, Err("mcp_unavailable"));
             return;
         }
-        self.mcp.batch = Some(ToolBatchState {
-            generation: self.generation,
-            calls,
-            completed_calls: Vec::new(),
-            next: 0,
-            results: Vec::new(),
-        });
-        self.dispatch_next_tool();
-    }
-
-    fn dispatch_next_tool(&mut self) {
-        let next = self.mcp.batch.as_ref().and_then(|batch| {
-            (batch.generation == self.generation)
-                .then(|| batch.calls.get(batch.next).cloned())
-                .flatten()
-        });
-        let Some(call) = next else {
-            if let Some(batch) = self.mcp.batch.take() {
-                self.commit_tool_exchange(&batch);
-                match self.batch_result_delivery(&batch) {
-                    McpResultDelivery::LlmThenTts => self.begin_tool_continuation(),
-                    McpResultDelivery::DirectTts => {
-                        if let Some(text) = self.direct_tts_text(&batch) {
-                            self.begin_direct_tool_speech(text);
-                        } else {
-                            self.finish_tool_turn_without_speech();
-                        }
-                    }
-                    McpResultDelivery::Silent => self.finish_tool_turn_without_speech(),
-                }
-            }
-            return;
-        };
-        // This call is now terminally owned by this batch. Advance before any
-        // validation failure so an error ToolResult cannot redispatch it forever.
-        if let Some(batch) = self.mcp.batch.as_mut() {
-            batch.next += 1;
-        }
-        let Some(tool) = self
-            .mcp
-            .visible
-            .iter()
-            .find(|tool| tool.llm_name == call.name)
-            .cloned()
-        else {
-            self.complete_tool_call(call, Err("unknown_tool"));
-            return;
-        };
         let Some(arguments) = call.arguments.as_object().cloned() else {
             self.complete_tool_call(call, Err("invalid_arguments"));
             return;
@@ -169,29 +135,8 @@ impl SessionActor {
             },
             Some(self.generation),
             PendingMcpKind::ToolCall { call },
-            self.mcp.call_timeout,
+            self.mcp.call_timeout.min(budget),
         );
-    }
-
-    fn complete_tool_call(&mut self, call: ToolCall, result: Result<serde_json::Value, &str>) {
-        let content = match result {
-            Ok(value) => normalize_tool_result(value, self.max_tool_result_chars),
-            Err(code) => serde_json::json!({
-                "ok": false,
-                "code": code,
-                "content": "",
-                "truncated": false,
-            })
-            .to_string(),
-        };
-        if let Some(batch) = self.mcp.batch.as_mut() {
-            batch.completed_calls.push(call.clone());
-            batch.results.push(ChatMessage::ToolResult {
-                tool_call_id: call.id,
-                content,
-            });
-        }
-        self.dispatch_next_tool();
     }
 
     fn send_mcp(
@@ -202,7 +147,7 @@ impl SessionActor {
         timeout: std::time::Duration,
     ) {
         let id = match &outgoing {
-            McpOutgoing::Initialize { id }
+            McpOutgoing::Initialize { id, .. }
             | McpOutgoing::ToolsList { id, .. }
             | McpOutgoing::ToolsCall { id, .. } => *id,
         };
@@ -264,88 +209,14 @@ impl SessionActor {
 
     /// Drop semantic ownership of in-flight tool calls after a turn is cancelled.
     /// The device may still execute a side effect, but its late response cannot restart the LLM.
-    pub(super) fn cancel_mcp_turn(&mut self) {
+    pub(super) fn cancel_pending_mcp_turn(&mut self) {
         self.mcp
             .pending
             .retain(|_, pending| pending.generation.is_none());
-        if let Some(batch) = self.mcp.batch.take() {
-            self.commit_tool_exchange(&batch);
-        }
-        self.llm_round = None;
-    }
-
-    fn commit_tool_exchange(&mut self, batch: &ToolBatchState) {
-        if batch.completed_calls.is_empty() {
-            return;
-        }
-        let Some(turn_id) = self.current_turn_id() else {
-            return;
-        };
-        if self.dialogue_history.append_completed_round(
-            turn_id,
-            batch.completed_calls.clone(),
-            batch.results.clone(),
-        ) {
-            crate::session::prompt::append_completed_round(
-                &mut self.llm_messages,
-                batch.completed_calls.clone(),
-                batch.results.clone(),
-            );
-        }
-    }
-
-    fn batch_result_delivery(&self, batch: &ToolBatchState) -> McpResultDelivery {
-        batch
-            .calls
-            .iter()
-            .fold(McpResultDelivery::Silent, |selected, call| {
-                let delivery = self
-                    .mcp
-                    .visible
-                    .iter()
-                    .find(|tool| tool.llm_name == call.name)
-                    .and_then(|tool| self.mcp.tool_delivery.get(&tool.original_name))
-                    .copied()
-                    .unwrap_or(self.mcp.result_delivery);
-                match (selected, delivery) {
-                    (McpResultDelivery::LlmThenTts, _) | (_, McpResultDelivery::LlmThenTts) => {
-                        McpResultDelivery::LlmThenTts
-                    }
-                    (McpResultDelivery::DirectTts, _) | (_, McpResultDelivery::DirectTts) => {
-                        McpResultDelivery::DirectTts
-                    }
-                    _ => McpResultDelivery::Silent,
-                }
-            })
-    }
-
-    fn direct_tts_text(&self, batch: &ToolBatchState) -> Option<String> {
-        let text = batch
-            .results
-            .iter()
-            .filter_map(|result| match result {
-                ChatMessage::ToolResult { content, .. } => {
-                    serde_json::from_str::<serde_json::Value>(content)
-                        .ok()
-                        .filter(|result| result["ok"].as_bool() == Some(true))
-                        .and_then(|result| {
-                            result["content"].as_str().map(str::trim).map(str::to_owned)
-                        })
-                }
-                _ => None,
-            })
-            .filter(|text| !text.is_empty() && !text.starts_with('{') && !text.starts_with('['))
-            .collect::<Vec<_>>();
-        (!text.is_empty()).then(|| text.join("\n"))
-    }
-
-    fn finish_tool_turn_without_speech(&mut self) {
-        self.generated_response.clear();
-        self.complete_recognition();
     }
 }
 
-fn normalize_tool_result(result: serde_json::Value, max_chars: usize) -> String {
+pub(super) fn normalize_tool_result(result: serde_json::Value, max_chars: usize) -> String {
     let is_error = result
         .get("isError")
         .and_then(serde_json::Value::as_bool)
@@ -382,9 +253,158 @@ fn normalize_tool_result(result: serde_json::Value, max_chars: usize) -> String 
     .to_string()
 }
 
+fn parse_json_value(raw: &str) -> Option<serde_json::Value> {
+    let raw = raw.trim_start_matches('\u{feff}').trim();
+    let value = serde_json::from_str(raw).ok()?;
+    match value {
+        serde_json::Value::String(inner) => {
+            serde_json::from_str(inner.trim_start_matches('\u{feff}').trim()).ok()
+        }
+        value => Some(value),
+    }
+}
+
+fn action_response_from_object(value: &serde_json::Value) -> Option<String> {
+    let object = value.as_object()?;
+    if object.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+        return None;
+    }
+    if object.get("action").and_then(serde_json::Value::as_str) != Some("RESPONSE") {
+        return None;
+    }
+    object
+        .get("response")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|response| !response.is_empty())
+        .map(str::to_owned)
+}
+
+fn extract_xiaozhi_action_response(value: &serde_json::Value) -> Option<String> {
+    if value.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+        return None;
+    }
+    action_response_from_object(value).or_else(|| {
+        value
+            .get("vision_analysis")
+            .and_then(action_response_from_object)
+    })
+}
+
+pub(super) fn parse_xiaozhi_direct_response(result: &serde_json::Value) -> Option<String> {
+    if result.get("isError").and_then(serde_json::Value::as_bool) == Some(true) {
+        return None;
+    }
+    result.get("content")?.as_array()?.iter().find_map(|item| {
+        if item.get("type").and_then(serde_json::Value::as_str) != Some("text") {
+            return None;
+        }
+        let value = parse_json_value(item.get("text")?.as_str()?)?;
+        extract_xiaozhi_action_response(&value)
+    })
+}
+
+/// Removes the known camera image field from JSON tool text before it can enter LLM history.
+///
+/// This deliberately follows only the explicit top-level wrapper contract rather than scanning
+/// arbitrary client-provided JSON recursively.
+pub(super) fn redact_photo_data_from_tool_result(
+    mut result: serde_json::Value,
+) -> serde_json::Value {
+    let Some(content) = result
+        .get_mut("content")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return result;
+    };
+    for item in content {
+        let Some(raw) = item
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(serde_json::Value::Object(mut object)) = parse_json_value(&raw) else {
+            continue;
+        };
+        if object.remove("photo_data").is_some() {
+            item["text"] = serde_json::Value::Object(object).to_string().into();
+        }
+    }
+    result
+}
+
+pub(super) fn log_action_envelope_shape(result: &serde_json::Value, tool: &str) {
+    const MAX_LOGGED_TEXT_ENVELOPES: usize = 8;
+    let is_error = result
+        .get("isError")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let content = result.get("content").and_then(serde_json::Value::as_array);
+    let content_count = content.map_or(0, Vec::len);
+    let text_item_count = content
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                .count()
+        })
+        .unwrap_or_default();
+    let text_envelopes = content
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    (item.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                        .then(|| {
+                            item.get("text")
+                                .and_then(serde_json::Value::as_str)
+                                .map(|raw| match parse_json_value(raw) {
+                                    Some(serde_json::Value::Object(object)) => {
+                                        let vision = object.get("vision_analysis");
+                                        serde_json::json!({
+                                            "bytes": raw.len(),
+                                            "json_valid": true,
+                                            "root_type": "object",
+                                            "root_keys": object.keys().filter(|key| matches!(key.as_str(), "success" | "action" | "response" | "vision_analysis" | "photo_data" | "photo_width" | "photo_height")).collect::<Vec<_>>(),
+                                            "has_action": object.contains_key("action"),
+                                            "has_response": object.contains_key("response"),
+                                            "has_vision_analysis": vision.is_some(),
+                                            "has_photo_data": object.contains_key("photo_data"),
+                                            "nested_action": vision.and_then(|value| value.get("action")).and_then(serde_json::Value::as_str),
+                                            "nested_response_present": vision.and_then(|value| value.get("response")).and_then(serde_json::Value::as_str).is_some_and(|text| !text.trim().is_empty()),
+                                        })
+                                    }
+                                    Some(serde_json::Value::String(_)) => serde_json::json!({"bytes": raw.len(), "json_valid": true, "root_type": "string"}),
+                                    Some(serde_json::Value::Array(_)) => serde_json::json!({"bytes": raw.len(), "json_valid": true, "root_type": "array"}),
+                                    Some(_) => serde_json::json!({"bytes": raw.len(), "json_valid": true, "root_type": "other"}),
+                                    None => serde_json::json!({"bytes": raw.len(), "json_valid": false}),
+                                })
+                        })
+                        .flatten()
+                })
+                .take(MAX_LOGGED_TEXT_ENVELOPES)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    tracing::info!(
+        event = "mcp_tool_result_shape",
+        tool,
+        is_error,
+        content_count,
+        text_item_count,
+        text_items_truncated = text_item_count > text_envelopes.len(),
+        text_envelopes = ?text_envelopes,
+        "MCP tool result received for action-envelope classification"
+    );
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_tool_result;
+    use super::{
+        normalize_tool_result, parse_xiaozhi_direct_response, redact_photo_data_from_tool_result,
+    };
 
     #[test]
     fn normalizer_joins_nfc_sanitizes_and_caps_after_sanitization() {
@@ -408,5 +428,112 @@ mod tests {
             serde_json::from_str(&normalize_tool_result(result, 4)).unwrap();
         assert_eq!(normalized["content"], "abcd");
         assert_eq!(normalized["truncated"], false);
+    }
+
+    #[test]
+    fn xiaozhi_response_action_is_classified_before_generic_normalization() {
+        let result = serde_json::json!({"isError":false,"content":[{"type":"text","text":"{\"success\":true,\"action\":\"RESPONSE\",\"response\":\"Có một chiếc cốc đỏ.\"}"}]});
+        assert_eq!(
+            parse_xiaozhi_direct_response(&result).as_deref(),
+            Some("Có một chiếc cốc đỏ.")
+        );
+    }
+
+    #[test]
+    fn nested_vision_response_ignores_large_photo_data_before_generic_cap() {
+        let photo = "A".repeat(13_000);
+        let text = serde_json::json!({
+            "success": true,
+            "photo_data": format!("data:image/jpeg;base64,{photo}"),
+            "photo_width": 320,
+            "photo_height": 240,
+            "vision_analysis": {
+                "success": true,
+                "action": "RESPONSE",
+                "response": "Trên bàn có một chiếc cốc màu đỏ."
+            }
+        })
+        .to_string();
+        assert!(text.chars().count() > 4_096);
+        let result = serde_json::json!({
+            "isError": false,
+            "content": [{"type": "text", "text": text}]
+        });
+
+        assert_eq!(
+            parse_xiaozhi_direct_response(&result).as_deref(),
+            Some("Trên bàn có một chiếc cốc màu đỏ.")
+        );
+    }
+
+    #[test]
+    fn double_encoded_xiaozhi_response_is_classified() {
+        let wrapped = serde_json::json!({
+            "vision_analysis": {
+                "success": true,
+                "action": "RESPONSE",
+                "response": "Đã nhận diện hình ảnh."
+            }
+        });
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": serde_json::to_string(&wrapped.to_string()).unwrap()}]
+        });
+
+        assert_eq!(
+            parse_xiaozhi_direct_response(&result).as_deref(),
+            Some("Đã nhận diện hình ảnh.")
+        );
+    }
+
+    #[test]
+    fn unsuccessful_outer_wrapper_does_not_speak_nested_vision_response() {
+        let result = serde_json::json!({
+            "content": [{"type": "nonstandard", "text": serde_json::json!({
+                "success": false,
+                "vision_analysis": {
+                    "success": true,
+                    "action": "RESPONSE",
+                    "response": "Không được phát câu này."
+                }
+            }).to_string()}]
+        });
+
+        assert!(parse_xiaozhi_direct_response(&result).is_none());
+    }
+
+    #[test]
+    fn generic_camera_wrapper_redacts_photo_data_before_normalization() {
+        let photo = "A".repeat(13_000);
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": serde_json::json!({
+                "photo_data": format!("data:image/jpeg;base64,{photo}"),
+                "vision_analysis": {"success": false, "action": "RESPONSE"}
+            }).to_string()}]
+        });
+
+        let normalized: serde_json::Value = serde_json::from_str(&normalize_tool_result(
+            redact_photo_data_from_tool_result(result),
+            4_096,
+        ))
+        .unwrap();
+        assert!(!normalized["content"].as_str().unwrap().contains("AAAA"));
+        assert!(
+            normalized["content"]
+                .as_str()
+                .unwrap()
+                .contains("vision_analysis")
+        );
+    }
+
+    #[test]
+    fn generic_or_unsuccessful_action_is_not_a_direct_response() {
+        for result in [
+            serde_json::json!({"content":[{"type":"text","text":"{\"volume\":50}"}]}),
+            serde_json::json!({"isError":true,"content":[{"type":"text","text":"{\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
+            serde_json::json!({"content":[{"type":"text","text":"{\"success\":false,\"action\":\"RESPONSE\",\"response\":\"x\"}"}]}),
+            serde_json::json!({"content":[{"type":"text","text":"{\"unexpected\":{\"action\":\"RESPONSE\",\"response\":\"x\"}}"}]}),
+        ] {
+            assert!(parse_xiaozhi_direct_response(&result).is_none());
+        }
     }
 }

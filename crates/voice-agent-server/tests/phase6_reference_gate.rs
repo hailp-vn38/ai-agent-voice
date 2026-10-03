@@ -1,10 +1,11 @@
+mod support;
+
 use std::{sync::Arc, time::Duration};
 
 use futures_util::stream;
 use tokio::{net::TcpListener, task::JoinHandle};
 use url::Url;
 use voice_agent_server::{
-    app::router_with_providers,
     audio::PcmF32Mono,
     config::{
         AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
@@ -132,10 +133,18 @@ async fn start() -> (String, JoinHandle<()>) {
         audio: AudioConfig::default(),
         websocket: WebsocketConfig::default(),
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+            vision: None,
+        },
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
@@ -151,6 +160,10 @@ async fn start() -> (String, JoinHandle<()>) {
             ],
             ..McpConfig::default()
         },
+        vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        api: voice_agent_server::config::AdminApiConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
@@ -160,7 +173,7 @@ async fn start() -> (String, JoinHandle<()>) {
         Arc::new(ScriptedLlm),
         Arc::new(FakeTts),
     ));
-    let app = router_with_providers(config, providers);
+    let app = support::router(config, providers).await;
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

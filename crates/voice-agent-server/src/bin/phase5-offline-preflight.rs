@@ -68,63 +68,53 @@ fn run() -> Result<()> {
     config.deployment.models.offline = true;
     verify_onnx_runtime(&config.runtime.onnx.library)
         .context("load deployment-selected ONNX Runtime")?;
+    let vad_instance = &config.providers.vad.instances[&config.effective_agent().providers.vad];
+    let asr_instance = &config.providers.asr.instances[&config.effective_agent().providers.asr];
+    let tts_instance = &config.providers.tts.instances[&config.effective_agent().providers.tts];
     let vad_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &config
-            .providers
-            .vad
-            .silero_onnx
-            .as_ref()
-            .context("silero_onnx options are required")?
-            .model,
+        &vad_instance.silero_onnx().model,
         "silero_onnx",
         &config.deployment,
     )?;
     let asr_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &config
-            .providers
-            .asr
-            .zipformer_sherpa
-            .as_ref()
-            .context("zipformer_sherpa options are required")?
-            .model,
-        "zipformer_sherpa",
+        asr_instance.model(),
+        asr_instance.adapter(),
         &config.deployment,
     )?;
     let tts_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,
-        &config
-            .providers
-            .tts
-            .zerotts_onnx
-            .as_ref()
-            .context("zerotts_onnx options are required")?
-            .model,
-        "zerotts_onnx",
+        match tts_instance {
+            voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(options) => &options.model,
+            voice_agent_server::config::TtsInstanceConfig::KokoroViOnnx(options) => &options.model,
+            voice_agent_server::config::TtsInstanceConfig::ChillAudioWs(_) => anyhow::bail!(
+                "Phase 5 offline preflight requires a local-model effective TTS instance"
+            ),
+        },
+        tts_instance.adapter(),
         &config.deployment,
     )?;
     let registry = compiled_provider_registry();
-    registry.vad_factory(&config.providers.vad.adapter)?.build(
-        &config.providers.vad,
+    registry.vad_factory(vad_instance.adapter())?.build(
+        vad_instance,
         &config.runtime,
         &vad_model,
     )?;
-    registry
-        .asr_factory(&config.providers.asr.adapter)?
-        .build(&config.providers.asr, &asr_model)?;
-    registry.tts_factory(&config.providers.tts.adapter)?.build(
-        config
-            .providers
-            .tts
-            .zerotts_onnx
-            .as_ref()
-            .context("zerotts_onnx options are required")?,
+    registry.asr_factory(asr_instance.adapter())?.build(
+        asr_instance,
+        &asr_model,
+        usize::try_from(config.audio.max_utterance_ms)
+            .context("convert configured ASR capture bound")?
+            * 16,
+    )?;
+    registry.tts_factory(tts_instance.adapter())?.build(
+        tts_instance,
         &config.runtime,
-        &tts_model,
+        Some(&tts_model),
     )?;
     verify_fixture()?;
     Ok(())

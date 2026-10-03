@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "workload_version": "vad-v1",
+  "items": [
+    { "id": "vad-test-16k-mono", "path": "../assets/vad/vad-test-16k-mono.wav" }
+  ]
+}

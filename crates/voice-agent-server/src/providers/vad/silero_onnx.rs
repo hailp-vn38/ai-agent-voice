@@ -38,8 +38,7 @@ impl LoadedSileroVad {
             )));
         }
         initialize_ort(&runtime_library)?;
-        // Validate the graph during startup, before the server can bind its socket.
-        drop(build_session(&model, num_threads)?);
+        // Retained pool initialization validates the graph before Ready.
         Ok(Self { model, num_threads })
     }
 }

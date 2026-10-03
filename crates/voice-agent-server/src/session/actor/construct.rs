@@ -163,7 +163,10 @@ impl SessionActor {
         );
         let asr_events = runtimes.asr.register_session(&session_id);
         let vad_events = runtimes.vad.register_session(&session_id);
-        let llm_events = runtimes.llm.register_session(&session_id, 64);
+        let llm_events = runtimes
+            .llm
+            .register_session(&session_id, LLM_EVENT_CAPACITY);
+        let (external_calls_tx, external_calls) = mpsc::channel(EXTERNAL_CALL_CAPACITY);
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
@@ -199,6 +202,8 @@ impl SessionActor {
             pending_llm_delta: None,
             llm_finish_pending: false,
             generated_response: String::new(),
+            // Nothing has been generated yet, so no text can be the model's yet either.
+            generated_by_model: false,
             tts_runtime: std::sync::Arc::clone(&runtimes.tts),
             speech_output: SpeechOutput::with_worker(
                 std::sync::Arc::new(UnavailableTts),
@@ -207,6 +212,7 @@ impl SessionActor {
             )?,
             tts_started: false,
             pending_delivery: None,
+            pending_actions: PendingSessionActions::default(),
             control_tx,
             urgent_tx,
             shutdown_tx,
@@ -218,16 +224,50 @@ impl SessionActor {
             barge_in_enabled: false,
             trust_client_aec_feature: false,
             mcp: DeviceMcpState::default(),
+            tool_batch: None,
             llm_messages: Vec::new(),
             llm_round: None,
-            tool_depth: 0,
-            max_tool_depth: 4,
+            // The documented defaults, until a deployment installs its own validated caps.
+            tool_rounds: ToolRoundState::new(ToolRoundLimits::default()),
+            external_calls_tx,
+            external_calls,
             max_tool_result_chars: 4_096,
-            system_prompt: crate::session::prompt::render_system(
-                &crate::config::EffectiveAgentConfig::default(),
-            )
-            .expect("built-in prompt template is valid"),
+            template_prepare: None,
+            managed_switch_boundary: None,
+            managed_switch_started: None,
+            deferred_switch_ingress: VecDeque::new(),
+            switch_ingress_capacity: crate::config::LimitsConfig::default().session_event_queue,
+            switch_max_frame_bytes: crate::config::WebsocketConfig::default().max_frame_bytes,
+            profile: ActiveTemplateProfile::server_default(),
+            // A session that never received an admission profile keeps no switch capability.
+            switch_catalog: TemplateSwitchCatalog::default(),
+            // Likewise no External MCP tools: a session only ever calls what admission resolved.
+            external_mcp: SessionExternalMcp::default(),
+            speech_output_config: crate::config::SpeechOutputConfig::default(),
+            // Capture is opt-in, so an actor that is never bound archives nothing.
+            transcript: None,
+            // An actor built outside an application has nothing to ask, so it starts with a gate
+            // that stays open.  Production installs the real one before any turn can start.
+            admission_gate: AdmissionGate::open(),
+            writer_probe: None,
         })
+    }
+
+    /// Binds this Voice Session to the optional Persistent Transcript.
+    ///
+    /// Admission decides this, because a session is bound only when capture is enabled and it has
+    /// the database identity its records are attributed to.  The actor keeps no database handle
+    /// either way: with a capture it holds the archive's one-way hand-off, and without one there
+    /// is nothing to call.
+    pub fn with_switch_ingress_limits(mut self, capacity: usize, max_frame_bytes: usize) -> Self {
+        self.switch_ingress_capacity = capacity;
+        self.switch_max_frame_bytes = max_frame_bytes;
+        self
+    }
+
+    pub fn with_transcript(mut self, transcript: Option<TranscriptCapture>) -> Self {
+        self.transcript = transcript;
+        self
     }
 
     pub fn with_client_capabilities(
@@ -245,6 +285,7 @@ impl SessionActor {
         mut self,
         client_advertised: bool,
         config: &crate::config::McpConfig,
+        vision: Option<crate::tools::device_mcp::VisionCapability>,
     ) -> Self {
         self.mcp.enabled = client_advertised && config.enabled;
         self.mcp.allowed_tools = config.allowed_tools.iter().cloned().collect();
@@ -256,11 +297,27 @@ impl SessionActor {
             .collect();
         self.mcp.call_timeout = std::time::Duration::from_millis(config.call_timeout_ms);
         self.mcp.discovery_timeout = std::time::Duration::from_millis(config.discovery_timeout_ms);
+        self.mcp.vision = vision;
         self
     }
 
-    pub fn with_llm_tool_depth(mut self, max_tool_depth: usize) -> Self {
-        self.max_tool_depth = max_tool_depth;
+    /// Installs the caps the Tool-round Executor runs under.
+    ///
+    /// They arrive from a configuration the deployment already validated, so nothing here re-checks
+    /// or re-derives them: a session that holds these is a deployment that started.
+    pub fn with_tool_round_limits(mut self, limits: ToolRoundLimits) -> Self {
+        self.tool_rounds = ToolRoundState::new(limits);
+        self
+    }
+
+    /// Installs the application admission gate this session's Tool-round work asks before it
+    /// starts.
+    ///
+    /// The session cannot close it and cannot substitute its own: it holds the same gate the
+    /// listener, the admission resolver and the External MCP limiter hold, which is what makes
+    /// shutdown a single decision rather than one each component makes on its own.
+    pub fn with_admission_gate(mut self, gate: std::sync::Arc<AdmissionGate>) -> Self {
+        self.admission_gate = gate;
         self
     }
 
@@ -269,9 +326,54 @@ impl SessionActor {
         agent: &crate::config::EffectiveAgentConfig,
         max_tool_result_chars: usize,
     ) -> Result<Self, crate::session::prompt::PromptError> {
-        self.system_prompt = crate::session::prompt::render_system(agent)?;
+        self.profile.system_prompt = crate::session::prompt::render_system(agent)?;
+        self.profile.language = agent.language.clone();
+        self.profile.providers = agent.providers.clone();
         self.max_tool_result_chars = max_tool_result_chars;
         Ok(self)
+    }
+
+    /// Installs the Effective Session Profile admission already resolved, together with the
+    /// Template Switch Catalog this session may use for the rest of its life.
+    ///
+    /// The actor never re-reads any half of it, so a later Template, Agent, Provider or External
+    /// MCP mutation cannot reach this session.  The prompt bound is re-checked at the seam that
+    /// actually installs it rather than trusting the resolver.
+    pub fn with_effective_profile(
+        mut self,
+        profile: ActiveTemplateProfile,
+        switch_catalog: TemplateSwitchCatalog,
+        external_mcp: SessionExternalMcp,
+        max_tool_result_chars: usize,
+    ) -> Result<Self, crate::session::prompt::PromptError> {
+        if profile.system_prompt.len() > crate::session::profile::MAX_TEMPLATE_PROMPT_BYTES {
+            return Err(crate::session::prompt::PromptError::SystemPromptTooLarge);
+        }
+        self.profile = profile;
+        self.switch_catalog = switch_catalog;
+        self.external_mcp = external_mcp;
+        self.max_tool_result_chars = max_tool_result_chars;
+        Ok(self)
+    }
+
+    /// Installs the test-only writer outcome probe.  Production never calls this, so both the
+    /// writer's boundary and the actor's periodic drain behave exactly as they do without it.
+    pub fn with_writer_outcome_probe_opt(
+        mut self,
+        probe: Option<std::sync::Arc<dyn super::WriterOutcomeProbe>>,
+    ) -> Self {
+        self.writer_probe = probe;
+        self
+    }
+
+    pub fn profile_revision(&self) -> u64 {
+        self.profile.revision
+    }
+
+    /// The External MCP catalog this session was admitted with.  Read-only by construction: there
+    /// is no mutator, so nothing a `tools/call` does can change what this session may call.
+    pub fn session_external_mcp(&self) -> &SessionExternalMcp {
+        &self.external_mcp
     }
 
     pub fn start_mcp_discovery(&mut self) {
@@ -316,6 +418,19 @@ impl SessionActor {
         let tts_runtime = std::sync::Arc::clone(&self.tts_runtime);
         self.speech_output =
             SpeechOutput::with_worker(providers.tts_provider(), tts_runtime, config)?;
+        Ok(self)
+    }
+
+    pub fn with_delivery_runtime_config(
+        mut self,
+        config: crate::config::SpeechOutputConfig,
+    ) -> Result<Self, crate::audio::AudioError> {
+        let tts_runtime = std::sync::Arc::clone(&self.tts_runtime);
+        let speech_output =
+            SpeechOutput::with_worker(tts_runtime.provider(), tts_runtime, config.clone())?;
+        self.speech_output.release();
+        self.speech_output = speech_output;
+        self.speech_output_config = config;
         Ok(self)
     }
 

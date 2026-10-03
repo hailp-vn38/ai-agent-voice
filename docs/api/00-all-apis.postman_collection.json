@@ -1,0 +1,1893 @@
+{
+  "info": {
+    "_postman_id": "a8122115-1541-4b6f-a017-feb64d928bf2",
+    "name": "AI Agent Voice - dev-test - All APIs",
+    "description": "Synchronized with the current Admin router. SQLite and WS Device admission are always required. Admin routes are mounted only when api.enabled=true. Removed database/admission config switches must not be sent. Admin requests require `Authorization: Bearer {{admin_token}}`. PATCH/PUT/DELETE mutations that use optimistic concurrency require `If-Match: \"<revision>\"`. This file groups logical API collections as folders so it can be imported once.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 - System & Voice",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/health",
+            "description": "Process liveness. Returns `ok` while the process is running."
+          },
+          "response": []
+        },
+        {
+          "name": "Ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/ready",
+            "description": "Readiness for accepting new voice connections. Returns 200 `ready` or 503 with a bounded reason."
+          },
+          "response": []
+        },
+        {
+          "name": "Admin system status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/system",
+            "description": "Safe aggregate status: readiness, version, uptime, database, provider counts and active sessions. It never returns paths, configuration, secrets or raw runtime failures.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "OTA",
+          "item": [
+            {
+              "name": "OTA - GET",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {"key":"Device-Id","value":"{{device_id}}","type":"text"},
+                  {"key":"Client-Id","value":"{{client_id}}","type":"text"}
+                ],
+                "url": "{{base_url}}/voice/ota/",
+                "description": "Enrollment defaults to transport=websocket: unknown devices get websocket URL/transport token without activation, then WS hello/stt/tts/Opus presents the code. transport=ota preserves activation without websocket/token. Registered devices get websocket; blocked devices get 403. Prepare static WAV assets before enabling WS enrollment."
+              },
+              "response": []
+            },
+            {
+              "name": "OTA - POST",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": "{{base_url}}/voice/ota/",
+                "description": "Same handler/response as GET; kept for Xiaozhi compatibility."
+              },
+              "response": []
+            },
+            {
+              "name": "OTA - activate poll",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {"key":"Device-Id","value":"{{device_id}}","type":"text"},
+                  {"key":"Client-Id","value":"{{client_id}}","type":"text"},
+                  {"key":"Content-Type","value":"application/json","type":"text"}
+                ],
+                "url": "{{base_url}}/voice/ota/activate",
+                "body": {"mode":"raw","raw":"{}","options":{"raw":{"language":"json"}}},
+                "description": "202 while an enrollment is pending; 200 once a Device and enabled Agent exist."
+              },
+              "response": []
+            },
+            {
+              "name": "OTA - OPTIONS",
+              "request": {
+                "method": "OPTIONS",
+                "header": [],
+                "url": "{{base_url}}/voice/ota/",
+                "description": "CORS/preflight compatibility endpoint."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Voice WebSocket",
+          "item": [
+            {
+              "name": "Voice WebSocket upgrade endpoint",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Protocol-Version",
+                    "value": "1",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Device-Id",
+                    "value": "{{device_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Client-Id",
+                    "value": "{{client_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{voice_token}}",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/voice/v1/",
+                "description": "WebSocket upgrade endpoint. Postman Collection v2.1 stores this as an HTTP contract reference; open a Postman WebSocket request using `{{ws_url}}/voice/v1/` with the same headers to exercise the socket. Protocol-Version may be omitted by legacy clients; Device-Id and Client-Id are required. Authorization is required only when auth.token is non-empty."
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Vision",
+          "item": [
+            {
+              "name": "Vision - status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/mcp/vision/explain",
+                "description": "Available only when vision.enabled=true. Returns a readiness/status string."
+              },
+              "response": []
+            },
+            {
+              "name": "Vision - explain image",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{voice_token}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Device-Id",
+                    "value": "{{device_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Client-Id",
+                    "value": "{{client_id}}",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/mcp/vision/explain",
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "question",
+                      "value": "Hãy mô tả hình ảnh này.",
+                      "type": "text"
+                    },
+                    {
+                      "key": "image",
+                      "type": "file",
+                      "src": []
+                    }
+                  ]
+                },
+                "description": "Multipart request. Required fields: question and image/file. Supported image signatures: JPEG, PNG, GIF, BMP, TIFF, WebP. Authorization is required only when auth.token is non-empty."
+              },
+              "response": []
+            },
+            {
+              "name": "Vision - OPTIONS",
+              "request": {
+                "method": "OPTIONS",
+                "header": [],
+                "url": "{{base_url}}/mcp/vision/explain",
+                "description": "CORS/preflight compatibility endpoint."
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Agents & Devices",
+      "item": [
+        {
+          "name": "Agents",
+          "item": [
+            {
+              "name": "List agents",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/agents?page=1&page_size=50&enabled=true&sort=key",
+                "description": "Query: page 1..10000, page_size 1..200, optional enabled, sort in key|name|-key|-name.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create agent",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"{{agent_key}}\",\n  \"name\": \"Kitchen Agent\",\n  \"description\": \"Primary kitchen assistant\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "key: lowercase letter first, then lowercase/digit/underscore, max 64. name max 128; description max 2048.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get agent",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Patch agent",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Kitchen Agent\",\n  \"description\": \"Updated description\",\n  \"enabled\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "key is immutable. Null may clear nullable fields such as description; If-Match must contain the current quoted revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete agent",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}",
+                "description": "Conditional hard-delete. Returns 204 only when no active Device, Template assignment, MCP binding or History reference remains; otherwise 409 agent_in_use. Does not change an admitted Voice Session.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List agent templates",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/templates?page=1&page_size=50",
+                "description": "Lists active Template assignments with template enabled state and is_default. Pagination: page 1..10000, page_size 1..200.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Assign template to agent",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/templates/{{template_key}}",
+                "description": "Assigns the template to the agent and increments the agent revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Unlink template from agent",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/templates/{{template_key}}",
+                "description": "Soft-unlinks a non-default active assignment and increments the Agent revision. A default assignment returns default_template_conflict.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Set default template",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/default-template/{{template_key}}",
+                "description": "Sets an already-valid template as the agent default and increments the agent revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Devices",
+          "item": [
+            {
+              "name": "List devices",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/devices?page=1&page_size=50&enabled=true&sort=device_id",
+                "description": "Query: page 1..10000, page_size 1..200, optional enabled, sort in device_id|name|-device_id|-name.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Claim activation code",
+              "request": {
+                "method": "POST",
+                "header": [{"key":"Content-Type","value":"application/json","type":"text"}],
+                "url": "{{base_url}}/api/admin/device-enrollments/claim",
+                "body": {"mode":"raw","raw":"{\n  \"code\": \"{{activation_code}}\",\n  \"agent_key\": \"{{agent_key}}\",\n  \"name\": \"Kitchen Device\",\n  \"template_key\": null\n}","options":{"raw":{"language":"json"}}},
+                "description": "Consumes one six-digit activation code and returns the created Device. The code is a string to preserve leading zeroes.",
+                "auth": {"type":"bearer","bearer":[{"key":"token","value":"{{admin_token}}","type":"string"}]}
+              },
+              "response": []
+            },
+            {
+              "name": "Create device",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/devices",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"device_id\": \"{{device_id}}\",\n  \"agent_key\": \"{{agent_key}}\",\n  \"template_key\": \"{{template_key}}\",\n  \"name\": \"Kitchen Device\",\n  \"description\": \"Postman test device\",\n  \"metadata_json\": {\n    \"zone\": \"home\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "template_key is optional; when present it must be an enabled Template assigned to agent_key. Omit it to use the Agent default Template.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get device",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/devices/{{device_id}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Patch device",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{device_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/devices/{{device_id}}",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"agent_key\": \"{{agent_key}}\",\n  \"template_key\": \"{{template_key}}\",\n  \"name\": \"Kitchen Device\",\n  \"description\": \"Updated from Postman\",\n  \"metadata_json\": {\n    \"zone\": \"home\",\n    \"source\": \"postman\"\n  },\n  \"enabled\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "device_id is immutable. agent_key cannot be null. template_key may be null to clear the override, or must name an enabled Template assigned to agent_key. If-Match must contain the current quoted device revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete device",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{device_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/devices/{{device_id}}",
+                "description": "Conditional hard-delete. Returns 204 only when the Device has no History reference; otherwise 409 device_in_use.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Templates",
+      "item": [
+        {
+          "name": "List templates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/templates?page=1&page_size=50",
+            "description": "Query: page 1..10000, page_size 1..200, optional enabled, q (key/name/description), language and sort in key|-key|name|-name|language. Response includes total and total_pages.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/templates",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"{{template_key}}\",\n  \"name\": \"Vietnamese Assistant\",\n  \"description\": \"Default Vietnamese template\",\n  \"language\": \"vi-VN\",\n  \"prompt\": \"Bạn là trợ lý giọng nói. Trả lời ngắn gọn, rõ ràng.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get template",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/templates/{{template_key}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Patch template",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "If-Match",
+                "value": "\"{{template_revision}}\"",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/templates/{{template_key}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Vietnamese Assistant\",\n  \"description\": \"Updated template\",\n  \"language\": \"vi-VN\",\n  \"prompt\": \"Bạn là trợ lý giọng nói. Trả lời ngắn gọn và chính xác.\",\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "key is immutable. If-Match must contain the current quoted template revision.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete template",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "\"{{template_revision}}\"",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/templates/{{template_key}}",
+            "description": "Conditional hard-delete. Returns 204 only when no active Agent assignment, Provider binding, Device override or History reference remains; otherwise 409 template_in_use.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bind provider to template",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "If-Match",
+                "value": "\"{{template_revision}}\"",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/templates/{{template_key}}/providers/{{provider_type}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_key\": \"{{provider_key}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "provider_type must be one of vad|asr|llm|tts. Increments template revision.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List template agents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/templates/{{template_key}}/agents?page=1&page_size=50",
+            "description": "Lists active Agent assignments that use this Template, including Agent enabled state and is_default. Pagination: page 1..10000, page_size 1..200.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List template provider bindings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/templates/{{template_key}}/providers",
+            "description": "Returns the persisted Provider binding map for the Template. This is desired configuration and does not refresh runtime.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unlink provider from template",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "\"{{template_revision}}\"",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/templates/{{template_key}}/providers/{{provider_type}}",
+            "description": "Removes one persisted Provider binding and increments the Template revision. It does not hot-reload runtime.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Assign template to agent",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "\"{{agent_revision}}\"",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/agents/{{agent_key}}/templates/{{template_key}}",
+            "description": "Agent-side association. Uses the agent revision, not template revision.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Set agent default template",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "\"{{agent_revision}}\"",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/agents/{{agent_key}}/default-template/{{template_key}}",
+            "description": "Uses the agent revision and increments it.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 - Providers",
+      "item": [
+        {
+          "name": "Provider CRUD",
+          "item": [
+            {
+              "name": "List providers",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/providers?page=1&page_size=50",
+                "description": "Query: page 1..10000, page_size 1..200, optional enabled, q, type=vad|asr|llm|tts and sort in key|-key|name|-name. Response includes total, total_pages and facets by provider type.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create OpenAI LLM provider",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"{{provider_key}}\",\n  \"name\": \"OpenAI LLM\",\n  \"type\": \"llm\",\n  \"adapter\": \"openai\",\n  \"config_json\": {\n    \"base_url\": \"https://api.openai.com/v1\",\n    \"model\": \"model-name\",\n    \"timeout_ms\": 30000,\n    \"max_tokens\": 1024\n  },\n  \"secret_ref\": \"OPENAI_API_KEY\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "DB-backed provider configuration is credential-free: secret_ref points to an environment variable name. type must be vad|asr|llm|tts and adapter must match the type.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get provider",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": " Runtime metadata reads do not build models or refresh cache TTL."
+              },
+              "response": []
+            },
+            {
+              "name": "Patch provider",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{provider_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"OpenAI LLM\",\n  \"config_json\": {\n    \"base_url\": \"https://api.openai.com/v1\",\n    \"model\": \"model-name\",\n    \"timeout_ms\": 30000,\n    \"max_tokens\": 1024\n  },\n  \"secret_ref\": \"OPENAI_API_KEY\",\n  \"enabled\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "key is immutable; type is not patchable. Managed runtimes acquire the exact desired revision for new sessions and diagnostics. Existing admitted sessions retain their snapshot and lease. Inspect runtime.desired_state, ready_revisions and can_prepare; requires_restart is explicit only for unsupported changes.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Prepare Provider Runtime",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{provider_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/prepare",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Idempotently acquire the current desired revision without user inference. Strict empty JSON body. 200 ready; 202 queued/loading; 409 disabled/conflict; 429 bounded capacity; 503 infrastructure failure; 504 acquisition deadline. Response identifies provider key, desired revision and safe runtime state. Poll GET metadata; a desired revision change starts a new view.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Delete provider",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{provider_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}",
+                "description": "Conditional hard-delete. Returns 204 only when no Template Provider Binding remains; otherwise 409 provider_in_use. Existing sessions retain their exact runtime lease until cleanup; deleting desired state does not invalidate admitted sessions.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List templates using provider",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/templates?page=1&page_size=50",
+                "description": "Lists persisted Template usage for this Provider, including binding type and Template enabled state. Pagination: page 1..10000, page_size 1..200. Runtime metadata reads do not build models or refresh cache TTL.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get loaded provider capabilities",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/capabilities",
+                "description": "Requires the DB provider runtime to be loaded and its compiled adapter descriptor to expose capabilities.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Provider Diagnostics",
+          "item": [
+            {
+              "name": "Test LLM provider",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/llm",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"input\": \"Xin chào, hãy trả lời một câu ngắn.\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Tests the loaded LLM runtime only. JSON body rejects unknown fields. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Test TTS provider",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/tts",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Xin chào, đây là bài kiểm tra TTS.\",\n  \"voice\": \"maichi\",\n  \"language\": \"vi-VN\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Returns audio/wav on success. voice and language are optional typed overrides. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Test ASR provider",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "audio/wav",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/asr",
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": []
+                  }
+                },
+                "description": "Upload PCM WAV. Expected: mono 16 kHz PCM, duration <= 30 s, request body <= 5 MiB. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Test VAD provider",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/vad",
+                "description": "No request body. Tests exactly one canonical silent VAD inference frame on the already-loaded runtime. Returns probability, sample range, elapsed time and runtime provenance; provider_key must identify a VAD Provider Instance. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Provider Adapter Catalog",
+          "item": [
+            {
+              "name": "List provider adapters",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/provider-adapters",
+                "description": "Lists compiled provider adapter descriptors.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List provider adapters by type",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/provider-adapters?type={{provider_type}}",
+                "description": "Only query key allowed is type; value must be a supported provider type.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get provider adapter",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/provider-adapters/{{adapter}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Discover adapter capabilities",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/provider-adapters/{{adapter}}/capabilities/discover",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"selection\": {\n    \"model\": \"model-name\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Bootstrap discovery is adapter-specific. Unsupported adapters return conflict; invalid selections return 400.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 - MCP",
+      "item": [
+        {
+          "name": "MCP Servers",
+          "item": [
+            {
+              "name": "List MCP servers",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/mcp-servers?page=1&page_size=50",
+                "description": "Pagination: page 1..10000, page_size 1..200.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create MCP server",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/mcp-servers",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"{{mcp_server_key}}\",\n  \"name\": \"Weather MCP\",\n  \"url\": \"https://mcp.example.com/mcp\",\n  \"headers\": {},\n  \"auth\": {\n    \"type\": \"none\"\n  },\n  \"connect_timeout_ms\": 5000,\n  \"request_timeout_ms\": 30000\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "transport is fixed to streamable_http. auth can be {type:none}, {type:bearer,secret_ref:ENV_NAME}, or {type:header,header_name:x-api-key,secret_ref:ENV_NAME}. URL is validated by the deployment outbound network policy.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get MCP server",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/mcp-servers/{{mcp_server_key}}",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Patch MCP server",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{mcp_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/mcp-servers/{{mcp_server_key}}",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Weather MCP\",\n  \"url\": \"https://mcp.example.com/mcp\",\n  \"headers\": {},\n  \"auth\": {\n    \"type\": \"none\"\n  },\n  \"connect_timeout_ms\": 5000,\n  \"request_timeout_ms\": 30000,\n  \"enabled\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "key is immutable. If-Match must contain the current quoted MCP server revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete MCP server",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{mcp_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/mcp-servers/{{mcp_server_key}}",
+                "description": "Conditional hard-delete. Returns 204 only when no Agent MCP Binding remains; otherwise 409 mcp_server_in_use.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Agent MCP Bindings",
+          "item": [
+            {
+              "name": "List agent MCP bindings",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/mcp-bindings",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Put agent MCP binding",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/mcp-bindings/{{mcp_server_key}}",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"enabled\": true,\n  \"required\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "required=true is currently rejected as required_unsupported. Binding mutation increments the agent revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Unlink agent MCP binding",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/mcp-bindings/{{mcp_server_key}}",
+                "description": "Physically removes the Agent MCP Binding, increments the Agent revision and returns 204. Unlink this before deleting an MCP Server.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 - History",
+      "item": [
+        {
+          "name": "List history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/history?page=1&page_size=50&sort=-created_at",
+            "description": "Optional filters: session_id, device_id, agent_id, template_id, role=user|assistant. Integer IDs are database row IDs, not external device_id strings. sort: created_at|-created_at|sequence|-sequence.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List history by session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/history?session_id={{session_id}}&page=1&page_size=50&sort=sequence",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List history by DB IDs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/history?device_id={{history_device_db_id}}&agent_id={{history_agent_db_id}}&template_id={{history_template_db_id}}&page=1&page_size=50",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Purge history by session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/history/purge",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Exactly one purge scope is allowed: session_id, device_id, or all.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Purge history by device DB id",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/history/purge",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "device_id here is the positive integer database row ID.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Purge ALL history - dangerous",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/history/purge",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"all\": \"all\",\n  \"confirm\": \"PURGE_ALL_HISTORY\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Irreversible full-history purge. Both literals are required.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "ws_url",
+      "value": "ws://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "change-me",
+      "type": "string"
+    },
+    {
+      "key": "voice_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "agent_key",
+      "value": "kitchen",
+      "type": "string"
+    },
+    {
+      "key": "agent_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "device_id",
+      "value": "device-1",
+      "type": "string"
+    },
+    {
+      "key": "device_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "activation_code",
+      "value": "000001",
+      "type": "string"
+    },
+    {
+      "key": "client_id",
+      "value": "postman-client",
+      "type": "string"
+    },
+    {
+      "key": "template_key",
+      "value": "assistant_vi",
+      "type": "string"
+    },
+    {
+      "key": "template_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "provider_key",
+      "value": "llm_openai",
+      "type": "string"
+    },
+    {
+      "key": "provider_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "provider_type",
+      "value": "llm",
+      "type": "string"
+    },
+    {
+      "key": "adapter",
+      "value": "openai",
+      "type": "string"
+    },
+    {
+      "key": "mcp_server_key",
+      "value": "weather",
+      "type": "string"
+    },
+    {
+      "key": "mcp_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "history_device_db_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "history_agent_db_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "history_template_db_id",
+      "value": "1",
+      "type": "string"
+    }
+  ]
+}

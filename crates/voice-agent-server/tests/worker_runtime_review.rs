@@ -166,6 +166,7 @@ fn worker_event_is_routed_only_to_its_own_voice_session() {
         Arc::new(FinalAsr),
         WorkerRuntimeConfig {
             max_workers: 2,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -195,6 +196,7 @@ fn disconnected_session_releases_capacity_after_cancel_acknowledgement() {
         Arc::new(FinalAsr),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -223,6 +225,7 @@ fn final_timeout_fail_closes_the_affected_voice_session() {
         Arc::new(SlowAsr),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_millis(1),
             cleanup_grace: Duration::from_millis(1),
@@ -249,6 +252,7 @@ fn vad_events_are_routed_to_the_registered_session_mailbox() {
         Arc::new(QuietVad),
         WorkerRuntimeConfig {
             max_workers: 2,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -285,6 +289,7 @@ fn disconnected_vad_session_releases_capacity_after_close_acknowledgement() {
         Arc::new(QuietVad),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_secs(1),
             cleanup_grace: Duration::from_secs(1),
@@ -314,6 +319,7 @@ fn vad_reset_timeout_quarantines_the_worker_and_routes_the_fatal_event() {
         Arc::new(SlowResetVad),
         WorkerRuntimeConfig {
             max_workers: 1,
+            voice_reserved_capacity: 1,
             command_capacity: 8,
             final_timeout: Duration::from_millis(1),
             cleanup_grace: Duration::from_millis(1),
@@ -345,4 +351,29 @@ fn vad_reset_timeout_quarantines_the_worker_and_routes_the_fatal_event() {
         thread::sleep(Duration::from_millis(1));
     }
     panic!("VAD reset timeout did not quarantine its worker");
+}
+
+#[test]
+fn supervisor_observation_does_not_pin_an_idle_runtime() {
+    let asr = Arc::new(AsrWorkerRuntime::new(
+        Arc::new(FinalAsr),
+        WorkerRuntimeConfig::default(),
+    ));
+    let vad = Arc::new(VadWorkerRuntime::new(
+        Arc::new(QuietVad),
+        WorkerRuntimeConfig::default(),
+    ));
+    let weak_asr = Arc::downgrade(&asr);
+    let weak_vad = Arc::downgrade(&vad);
+    let supervisor = voice_agent_server::workers::WorkerSupervisor::start(asr.clone(), vad.clone());
+    supervisor.observe_asr(asr.clone());
+    supervisor.observe_vad(vad.clone());
+    drop(asr);
+    drop(vad);
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while weak_asr.upgrade().is_some() || weak_vad.upgrade().is_some() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    drop(supervisor);
 }

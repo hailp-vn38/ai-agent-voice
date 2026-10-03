@@ -123,14 +123,16 @@ fn factory_rejects_a_prepared_zerotts_pack_missing_a_required_role() {
         .tts_factory("zerotts_onnx")
         .unwrap();
     let error = match factory.build(
-        &ZeroTtsOnnxConfig {
+        &voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig {
             model: "zerotts_default".into(),
             num_threads: 2,
             voice: "maichi".into(),
+            language: "vi-VN".into(),
             delivery_mode: Default::default(),
-        },
+            preload: false,
+        }),
         &voice_agent_server::config::RuntimeConfig::default(),
-        &model,
+        Some(&model),
     ) {
         Ok(_) => panic!("factory accepted a missing required ZeroTTS artifact"),
         Err(error) => error.to_string(),

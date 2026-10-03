@@ -1,5 +1,42 @@
 //! Reusable wire checks owned by the independent Voice Protocol Client.
 
+pub mod admin;
+pub mod chillaudio;
+pub mod scenario;
+
+#[cfg(test)]
+mod admin_url_contract_tests {
+    #[test]
+    fn admin_url_accepts_only_explicit_local_http_origins() {
+        for accepted in [
+            "http://127.0.0.1:8080/api/admin/",
+            "http://127.99.1.2/api/admin/",
+            "http://[::1]:8080/api/admin/",
+            "http://localhost:8080/api/admin/",
+            "https://admin.example.test/api/admin/",
+        ] {
+            assert!(
+                crate::admin::AdminBaseUrl::parse(accepted).is_ok(),
+                "{accepted}"
+            );
+        }
+
+        for rejected in [
+            "http://0.0.0.0:8080/api/admin/",
+            "http://[::ffff:127.0.0.1]:8080/api/admin/",
+            "http://127.0.0.1:8080/api/admin",
+            "http://example.test/api/admin/",
+            "https://user@example.test/api/admin/",
+            "https://example.test/api/admin/?query=1",
+        ] {
+            assert!(
+                crate::admin::AdminBaseUrl::parse(rejected).is_err(),
+                "{rejected}"
+            );
+        }
+    }
+}
+
 use anyhow::{Context, bail, ensure};
 use futures_util::{SinkExt, StreamExt};
 use opus2::{Application, Channels, Decoder, Encoder};
@@ -16,6 +53,93 @@ use tokio_tungstenite::{
 };
 
 const MAX_DETECT_TEXT_SCALARS: usize = 4_096;
+
+#[derive(Debug, Clone)]
+pub struct VisionRequestOptions {
+    pub vision_url: String,
+    pub token: String,
+    pub device_id: String,
+    pub client_id: String,
+    pub question: String,
+    pub image_path: PathBuf,
+    pub timeout: Duration,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisionRequestReport {
+    pub http_status: u16,
+    pub image_bytes: usize,
+    pub response_text: String,
+}
+pub async fn run_vision_request(
+    options: VisionRequestOptions,
+) -> anyhow::Result<VisionRequestReport> {
+    ensure!(
+        !options.vision_url.trim().is_empty(),
+        "vision URL is required"
+    );
+    ensure!(
+        !options.device_id.trim().is_empty() && !options.client_id.trim().is_empty(),
+        "device and client IDs are required"
+    );
+    ensure!(
+        !options.question.trim().is_empty(),
+        "vision question is required"
+    );
+    ensure!(
+        !options.timeout.is_zero(),
+        "vision timeout must be greater than zero"
+    );
+    let image = tokio::fs::read(&options.image_path)
+        .await
+        .context("cannot read vision image")?;
+    ensure!(!image.is_empty(), "vision image is empty");
+    let filename = options
+        .image_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let form = reqwest::multipart::Form::new()
+        .text("question", options.question)
+        .part(
+            "image",
+            reqwest::multipart::Part::bytes(image.clone()).file_name(filename),
+        );
+    let client = reqwest::Client::builder()
+        .timeout(options.timeout)
+        .build()?;
+    let mut request = client
+        .post(&options.vision_url)
+        .header("Device-Id", &options.device_id)
+        .header("Client-Id", &options.client_id)
+        .multipart(form);
+    if !options.token.is_empty() {
+        request = request.bearer_auth(&options.token);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    let value: serde_json::Value = response
+        .json()
+        .await
+        .context("vision response is not JSON")?;
+    if !status.is_success()
+        || value.get("success").and_then(serde_json::Value::as_bool) != Some(true)
+    {
+        bail!("Vision API failed with HTTP {status}");
+    }
+    let response_text = value
+        .get("response")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .context("Vision API response is empty")?
+        .to_owned();
+    Ok(VisionRequestReport {
+        http_status: status.as_u16(),
+        image_bytes: image.len(),
+        response_text,
+    })
+}
 
 #[derive(Clone, Debug)]
 pub struct TextTurnConfig {
@@ -187,6 +311,8 @@ impl ReferenceClient {
         );
         let ota: serde_json::Value = reqwest::Client::new()
             .post(&options.ota_url)
+            .header("Device-Id", &options.device_id)
+            .header("Client-Id", &options.client_id)
             .json(&json!({}))
             .send()
             .await?
@@ -562,6 +688,8 @@ pub async fn run_text_turn(request: TextTurnRequest) -> anyhow::Result<TextTurnR
     debug_step(request.config.debug_steps, "ota_request");
     let ota: serde_json::Value = reqwest::Client::new()
         .post(&request.ota_url)
+        .header("Device-Id", &request.device_id)
+        .header("Client-Id", &request.client_id)
         .json(&json!({}))
         .send()
         .await?
@@ -736,6 +864,8 @@ pub async fn run_audio_turn(request: AudioTurnRequest) -> anyhow::Result<AudioTu
 
     let ota: serde_json::Value = reqwest::Client::new()
         .post(&request.ota_url)
+        .header("Device-Id", &request.device_id)
+        .header("Client-Id", &request.client_id)
         .json(&json!({}))
         .send()
         .await?

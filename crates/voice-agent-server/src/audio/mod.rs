@@ -2,13 +2,16 @@
 
 use thiserror::Error;
 
+mod canonical_downlink;
 mod opus;
 mod resampler;
 mod vad_segmenter;
 
+pub use canonical_downlink::CanonicalDownlinkPipeline;
+pub(crate) use canonical_downlink::fade_out_tail;
 pub use opus::{
     AudioFrameDropReason, DOWNLINK_ENCODE_BUFFER_BYTES, DecodeOutcome, DownlinkOpusEncoder,
-    MAX_UPLINK_OPUS_PACKET_BYTES, OpusPacket, UplinkOpusDecoder,
+    MAX_DOWNLINK_OPUS_PACKET_BYTES, MAX_UPLINK_OPUS_PACKET_BYTES, OpusPacket, UplinkOpusDecoder,
 };
 pub use resampler::DownlinkResampler;
 pub use vad_segmenter::{VadBoundary, VadSegmenter, VadSegmenterConfig, VadSegmenterError};
@@ -246,4 +249,6 @@ pub enum AudioError {
     EncodedPacketTooLarge { actual: usize, max: usize },
     #[error("downlink PCM must be finite")]
     InvalidDownlinkPcm,
+    #[error("provider PCM must be non-empty 48 kHz mono audio")]
+    InvalidProviderPcm,
 }

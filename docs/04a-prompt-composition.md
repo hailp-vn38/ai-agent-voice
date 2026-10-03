@@ -899,7 +899,7 @@ Raw MCP result chỉ tồn tại ở MCP boundary đủ để parse/normalize. B
 
 `code` của ToolResult là allowlist hữu hạn: `timeout`, `invalid_arguments`, `unknown_tool`, `request_id_exhausted`, `device_tool_error`. `request_id_exhausted` hiện là terminal ToolResult vì runtime có nhánh tạo result này. Mọi JSON-RPC/device/provider error khác map thành `device_tool_error`; không đưa raw code/message vào history hoặc LLM. `ok:false` với code allowlisted vẫn là terminal ToolResult.
 
-Khi đạt `max_tool_depth`, turn kết thúc bằng controlled terminal failure nội bộ `tool_depth_exceeded`. Không gọi continuation, không tạo synthetic ToolResult hoặc sentinel `tool_call_id`; các CompletedToolRound đã hoàn tất vẫn được giữ trong Exchange Atom.
+Khi đạt `llm.tools.max_rounds_per_turn`, turn kết thúc bằng controlled terminal failure nội bộ `tool_round_limit_exceeded`. Không gọi continuation, không tạo synthetic ToolResult hoặc sentinel `tool_call_id`; các CompletedToolRound đã hoàn tất vẫn được giữ trong Exchange Atom.
 
 ### 16.3. Bounded retention
 
@@ -1317,7 +1317,7 @@ Thêm cases:
 - `max_tool_result_chars` đếm Rust char sau sanitize; `truncated` chỉ true khi có scalar N+1 sau sanitize;
 - no text item giữ `content = ""`, `truncated = false` và metadata `ok`/`code` normalized;
 - ToolResult `ok:false` chỉ dùng code allowlist, gồm `request_id_exhausted`;
-- `tool_depth_exceeded` là internal terminal failure, không phải ToolResult;
+- `tool_round_limit_exceeded`, `tool_call_limit_exceeded` và `tool_execution_budget_exceeded` là internal terminal failure, không phải ToolResult;
 - không trim giữa Exchange Atom có tool messages;
 
 ### 24.4. LlmRuntime tests
@@ -1371,7 +1371,7 @@ Tool delivery scenarios:
 completed tool result + Silent    -> atom giữ tool prefix, không AssistantText
 completed tool result + DirectTts -> AssistantText chỉ sau TurnClosed(Normal) đúng TurnId
 writer abort/fail                 -> atom giữ tool prefix, không AssistantText
-max_tool_depth                    -> fail controlled, không continuation/sentinel; giữ completed rounds
+llm.tools.max_rounds_per_turn       -> fail controlled, không continuation/sentinel; giữ completed rounds
 ```
 
 Oversized request scenarios:

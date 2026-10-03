@@ -1,3 +1,5 @@
+mod support;
+
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -12,7 +14,7 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use voice_agent_server::{
-    app::router_with_providers,
+    app::{AppState, router_with_state},
     config::{
         AppConfig, AudioConfig, AuthConfig, BargeInConfig, DeploymentConfig, LimitsConfig,
         LlmConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig,
@@ -26,6 +28,21 @@ async fn start(max_frame_bytes: usize) -> (String, JoinHandle<()>) {
 }
 
 async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, JoinHandle<()>) {
+    let (base, task, _) = start_with_token_and_lifecycle(max_frame_bytes, token, None).await;
+    (base, task)
+}
+
+/// `lifecycle` is `None` for a router that is only ever torn down by aborting its task, and
+/// `Some` for one whose shutdown is driven through the application lifecycle.
+async fn start_with_token_and_lifecycle(
+    max_frame_bytes: usize,
+    token: String,
+    lifecycle: Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
+) -> (
+    String,
+    JoinHandle<()>,
+    Option<std::sync::Arc<voice_agent_server::lifecycle::RuntimeLifecycle>>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
@@ -38,23 +55,46 @@ async fn start_with_token(max_frame_bytes: usize, token: String) -> (String, Joi
         audio: AudioConfig::default(),
         websocket: WebsocketConfig { max_frame_bytes },
         limits: LimitsConfig::default(),
+        provider_defaults: voice_agent_server::config::ProviderDefaultsConfig {
+            vad: "test".into(),
+            asr: "test".into(),
+            llm: "test".into(),
+            tts: "test".into(),
+            vision: None,
+        },
         providers: ProvidersConfig::default(),
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),
         runtime: RuntimeConfig::default(),
+        provider_runtime: None,
         llm: LlmConfig::default(),
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        vision: voice_agent_server::config::VisionConfig::default(),
+        database: voice_agent_server::config::DatabaseConfig::default(),
+        api: voice_agent_server::config::AdminApiConfig::default(),
+        shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
         effective_agent: voice_agent_server::config::EffectiveAgentConfig::default(),
     };
-    let app: Router = router_with_providers(config, Arc::new(ProviderSet::unavailable()));
+    let (config, database) = support::provision(config).await;
+    let state = AppState::from_provider_set_with_database_and_shutdown(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        Some(database),
+        lifecycle.clone().unwrap_or_else(|| {
+            voice_agent_server::lifecycle::RuntimeLifecycle::new(std::time::Duration::from_millis(
+                1_024,
+            ))
+        }),
+    );
+    let app: Router = router_with_state(state);
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{address}"), task)
+    (format!("http://{address}"), task, lifecycle)
 }
 
 fn request(base: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
@@ -97,6 +137,8 @@ async fn ota_advertises_ws_url_and_health_is_available() {
     );
     let ota: serde_json::Value = reqwest::Client::new()
         .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "reference-client-01")
+        .header("Client-Id", "test-client")
         .json(&serde_json::json!({}))
         .send()
         .await
@@ -112,11 +154,39 @@ async fn ota_advertises_ws_url_and_health_is_available() {
 }
 
 #[tokio::test]
+async fn application_shutdown_controlled_closes_an_upgraded_voice_session() {
+    let (base, task, lifecycle) = start_with_token_and_lifecycle(
+        1_024,
+        String::new(),
+        Some(voice_agent_server::lifecycle::RuntimeLifecycle::new(
+            std::time::Duration::from_millis(50),
+        )),
+    )
+    .await;
+    let (mut socket, _) = connect_async(request(&base)).await.unwrap();
+    socket.send(Message::Text(hello().into())).await.unwrap();
+    assert!(matches!(next_message(&mut socket).await, Message::Text(_)));
+
+    lifecycle
+        .expect("this router is driven through its lifecycle")
+        .shutdown()
+        .await;
+    let close = next_message(&mut socket).await;
+    assert!(matches!(
+        close,
+        Message::Close(Some(frame)) if u16::from(frame.code) == 1001
+    ));
+    task.abort();
+}
+
+#[tokio::test]
 async fn ota_accepts_post_and_advertises_preflight_methods() {
     let (base, task) = start(1_024).await;
     let client = reqwest::Client::new();
     let ota = client
         .post(format!("{base}/voice/ota/"))
+        .header("Device-Id", "reference-client-01")
+        .header("Client-Id", "test-client")
         .header(reqwest::header::ORIGIN, "http://localhost:3000")
         .json(&serde_json::json!({}))
         .send()

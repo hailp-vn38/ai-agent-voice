@@ -7,24 +7,18 @@ use std::{
 use crate::config::SpeechOutputConfig;
 
 use crate::{
-    audio::{
-        DOWNLINK_FRAME_SAMPLES, DownlinkOpusEncoder, DownlinkPcmFrame, DownlinkResampler,
-        Pcm16Mono, PcmF32Mono,
-    },
+    audio::{CanonicalDownlinkPipeline, MAX_DOWNLINK_OPUS_PACKET_BYTES, PcmF32Mono},
     providers::TtsProvider,
     workers::{TtsLease, TtsStreamId, TtsWorkerEvent, TtsWorkerRuntime},
 };
 
-const PROVIDER_SAMPLE_RATE_HZ: u32 = 48_000;
-const FADE_IN_SAMPLES: usize = 48_000 * 8 / 1_000;
-const FADE_OUT_SAMPLES: usize = 48_000 * 10 / 1_000;
 const PACED_FRAME_DURATION: Duration = Duration::from_millis(60);
 const PREBUFFER_PACKETS: usize = 5;
 const MAX_BUFFERED_PACKETS: usize = 32;
 
 mod text;
 
-use text::{JsonFilter, SentenceSegmenter, float_to_i16, sanitize_tts_text};
+use text::{JsonFilter, SentenceSegmenter, sanitize_tts_text};
 
 /// The actor observes these events; this module never owns a WebSocket sender.
 pub enum SpeechOutputEvent {
@@ -46,11 +40,8 @@ pub struct SpeechOutput {
     tts_runtime: Option<Arc<TtsWorkerRuntime>>,
     tts_stream: Option<TtsStreamId>,
     active_worker: Option<TtsLease>,
-    encoder: DownlinkOpusEncoder,
+    downlink_pipeline: CanonicalDownlinkPipeline,
     pending: VecDeque<SpeechSegment>,
-    downlink_resampler: DownlinkResampler,
-    first_pcm_chunk: bool,
-    downlink_tail: Vec<i16>,
     packets: VecDeque<Vec<u8>>,
     packets_sent: usize,
     finish_input: bool,
@@ -89,11 +80,8 @@ impl SpeechOutput {
             tts_runtime: None,
             tts_stream: None,
             active_worker: None,
-            encoder: DownlinkOpusEncoder::new(4_000)?,
-            downlink_resampler: DownlinkResampler::new_48k_to_24k(),
-            first_pcm_chunk: true,
+            downlink_pipeline: CanonicalDownlinkPipeline::new(MAX_DOWNLINK_OPUS_PACKET_BYTES)?,
             pending: VecDeque::new(),
-            downlink_tail: Vec::new(),
             packets: VecDeque::new(),
             packets_sent: 0,
             finish_input: false,
@@ -116,6 +104,16 @@ impl SpeechOutput {
         output.tts_stream = Some(runtime.begin_stream());
         output.tts_runtime = Some(runtime);
         Ok(output)
+    }
+
+    /// Releases the worker stream this output holds, for an owner that replaces it wholesale.
+    ///
+    /// `cancel` deliberately reopens a stream for the next turn; a replaced output has no next
+    /// turn on that runtime, so its stream must be closed or the runtime registry grows per switch.
+    pub fn release(&mut self) {
+        if let (Some(runtime), Some(stream)) = (&self.tts_runtime, self.tts_stream.take()) {
+            runtime.close_stream(stream);
+        }
     }
 
     /// Accepts LLM text incrementally. Every completed segment is admitted atomically.
