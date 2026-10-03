@@ -235,6 +235,8 @@ impl AsrWorkerRuntime {
             .spawn(move || {
                 let terminal =
                     run_worker(provider, retained, identity, command_rx, events_tx.clone());
+                // Deferred acknowledgements are published only once the native worker has
+                // released its admission; `Cancel` may immediately be followed by `open`.
                 drop(thread_permit);
                 if let Some(event) = terminal {
                     let _ = events_tx.send(event);
@@ -475,11 +477,7 @@ fn run_worker(
             },
             AsrCommand::Cancel => {
                 session.cancel();
-                return publish_terminal(
-                    &events,
-                    AsrWorkerEvent::Cancelled { identity },
-                    retained_worker,
-                );
+                return Some(AsrWorkerEvent::Cancelled { identity });
             }
         }
     }
