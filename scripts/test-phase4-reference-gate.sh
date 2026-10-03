@@ -40,7 +40,5 @@ VOICE_ONNX_RUNTIME_LIB="$gate_runtime" \
 ZEROTTS_DOWNLINK_OPUS_PATH="$gate_packet" \
 cargo run -q -p voice-agent-server --bin zerotts-core-check
 
-cargo run -q -p voice-reference-client --bin decode-downlink-opus -- "$gate_packet"
-
 VOICE_ONNX_RUNTIME_LIB="$gate_runtime" \
 cargo test -q -p voice-agent-server --features real-model-gate --test phase4_reference_gate -- --nocapture

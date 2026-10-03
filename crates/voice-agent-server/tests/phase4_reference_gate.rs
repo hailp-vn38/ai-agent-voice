@@ -9,7 +9,7 @@ use std::{
 
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
-use opus2::{Application, Channels, Encoder};
+use opus2::{Application, Channels, Decoder, Encoder};
 use tokio::{net::TcpListener, sync::Notify, task::JoinHandle, time::timeout};
 use tokio_tungstenite::{
     connect_async,
@@ -275,10 +275,9 @@ async fn await_first_audio(
             .unwrap()
             .unwrap();
         if let Message::Binary(packet) = &message {
-            assert_eq!(
-                voice_reference_client::decode_canonical_downlink_opus_packet(packet).unwrap(),
-                1_440
-            );
+            let mut decoder = Decoder::new(24_000, Channels::Mono).unwrap();
+            let mut pcm = [0_i16; 1_440];
+            assert_eq!(decoder.decode(packet, &mut pcm, false).unwrap(), 1_440);
             observed.push(message);
             return observed;
         }

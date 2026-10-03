@@ -2297,20 +2297,11 @@ final response reaches TTS
 
 ---
 
-# 54. Reference Client extension
+# 54. Deterministic Device MCP client (retired)
 
-`voice-reference-client` là Device MCP Server deterministic của completion gate. Core library giữ state MCP trong cùng WebSocket để nhiều text turn có thể xác nhận persistence; CLI `--mcp` chỉ là wrapper debug.
+Client crate cũ đã bị xoá khỏi workspace. Completion gate dựa trên client này đã retire; khi cần khôi phục qualification, phải tạo một harness độc lập và chốt lại contract/gate trước khi thêm vào workspace.
 
-Ví dụ:
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ \
-  --mcp \
-  "Đặt giá trị thành 50"
-```
-
-Reference Client Device MCP Server phải:
+Harness cũ phải:
 
 - advertise `mcp=true`;
 - answer initialize;

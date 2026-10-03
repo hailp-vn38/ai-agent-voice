@@ -54,16 +54,6 @@ sau khi checksum và transform hợp lệ. ONNX Runtime và Kokoro G2P vẫn c�
 Voicepack Kokoro đã chuyển đổi có thể tải tự động bằng `deployment.models.sources`;
 xem [hướng dẫn Kokoro](docs/kokoro-vi-provider.md).
 
-Sau đó xác nhận một text turn OTA → WebSocket → TTS bằng Voice Reference Client độc lập:
-
-```bash
-cargo run -p voice-reference-client -- \
-  --ota http://127.0.0.1:8000/voice/ota/ \
-  "Xin chao"
-```
-
-CLI tự lấy WebSocket URL/token từ OTA response, thêm các header V1 cần thiết và kiểm tra lifecycle TTS của một text turn. Xem [Voice Reference Client](docs/voice-reference-client.md).
-
 Chạy các gate tự động hiện có:
 
 ```bash
@@ -108,7 +98,6 @@ cargo run --release -p voice-agent-server --bin provider-bench-av -- \
 7. Các flow trong [`docs/flows/`](docs/flows/)
 8. Chiến lược test trong [`docs/testing/`](docs/testing/)
 9. ADR trong [`docs/adr/`](docs/adr/)
-10. [Voice Reference Client](docs/voice-reference-client.md)
 
 ## Nguồn tham chiếu external
 

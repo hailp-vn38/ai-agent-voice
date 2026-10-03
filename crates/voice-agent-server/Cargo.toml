@@ -60,16 +60,10 @@ reqwest.workspace = true
 # tests. It is test-only: the shipped binary keeps the real clock.
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
-voice-reference-client = { path = "../voice-reference-client" }
 
 [[test]]
 name = "phase4_reference_gate"
 path = "tests/phase4_reference_gate.rs"
-required-features = ["real-model-gate"]
-
-[[test]]
-name = "phase5_reference_gate"
-path = "tests/phase5_reference_gate.rs"
 required-features = ["real-model-gate"]
 
 [[test]]
