@@ -1,5 +1,9 @@
 # ZeroTTS Runtime Optimization Guide
 
+> **Ghi chú:** tài liệu này ghi lại trạng thái tại thời điểm nó được viết. Cơ chế Model
+> Preparation, `ResolvedModel`, `prepare_immutable()` và `deployment.models.*` đã bị thay thế
+> bởi [ADR 0076](adr/0076-provider-owned-model-assets.md). Đọc ADR đó cho kiến trúc hiện hành.
+
 ## Mục tiêu
 
 Tài liệu này hướng dẫn refactor ZeroTTS runtime trong `ai-agent-voice` để giảm:

@@ -44,7 +44,7 @@ Exit criteria: automated Opus round-trip và manual utterance tests pass; trư�
 Deliverables:
 
 - Provider foundation: compile-time registry/factory, typed adapter config, lifecycle/load errors và contract-test harness; không dynamic plugin hoặc runtime code discovery.
-- Typed provider config chọn Logical Model Identity; Model Artifact Manifest authoritative source/revision/artifact/install path/transform/checksum. Model Preparation prepare/verify/atomic-install dưới configured root, warmup trước bind và fail-fast offline khi artifact không hợp lệ.
+- Typed provider config chọn Logical Model Identity; Provider Asset Declaration của adapter là authoritative source/revision/artifact/install path. Provider Asset Manager tải file thiếu (`.part` + atomic rename) khi runtime manager materialize provider, và warmup trước bind.
 - `VadProvider` trả `VadProbability` với `[start_sample, end_sample)`; default `silero_onnx` local Rust (`ort`) giữ recurrent state và 64-sample context, còn rechunker vẫn tạo 512-sample model input hiện thời.
 - Core-owned `VadSegmenter` chỉ giữ semantic cursor/state: hysteresis, candidate onset, `min_speech_ms`, `end_silence_ms` và `max_utterance_ms` tính theo contiguous sample timeline. Actor giữ PCM retention ring bounded cho pre-roll, confirmation horizon và bounded VAD in-flight lag; provider/segmenter không sở hữu PCM.
 - Streaming `AsrProvider`/`AsrSession`; default `zipformer_sherpa` local Rust với partial/final và `finish()` drain recognizer.
@@ -62,7 +62,7 @@ Deliverables:
 - `AsrPartial` internal-only; chỉ final current-generation, non-empty mới enqueue đúng một `type:"stt"` hiện có trước LLM. Không thêm wire message/field partial hoặc VAD mới.
 - Không có Python sidecar hoặc HTTP ASR trong Phase 3 baseline.
 
-Exit criteria: deterministic provider/worker/session tests pass; Silero chạy đúng 64-context runtime contract; fixture speech tạo `SpeechStart { start_sample }`/`SpeechEnd` theo contiguous sample timeline và không mất PCM từ `start_sample - pre_roll`; retention vẫn bounded khi VAD worker lag; startup Model Preparation, offline failure và compile-time registry/factory pass contract tests; Zipformer nhận PCM trong lúc người dùng nói, drain final gần endpoint; stale final không commit sau cancel; auto/manual giải phóng đúng cả `AsrStreamLease` và `Active Turn` permit. Gate cuối riêng bắt buộc real-model Reference Client E2E qua canonical Opus: Manual và Auto mỗi scenario phát exactly one STT. Không được suy ra gate này từ fake/provider tests.
+Exit criteria: deterministic provider/worker/session tests pass; Silero chạy đúng 64-context runtime contract; fixture speech tạo `SpeechStart { start_sample }`/`SpeechEnd` theo contiguous sample timeline và không mất PCM từ `start_sample - pre_roll`; retention vẫn bounded khi VAD worker lag; asset download atomicity và compile-time registry/factory pass contract tests; Zipformer nhận PCM trong lúc người dùng nói, drain final gần endpoint; stale final không commit sau cancel; auto/manual giải phóng đúng cả `AsrStreamLease` và `Active Turn` permit. Gate cuối riêng bắt buộc real-model Reference Client E2E qua canonical Opus: Manual và Auto mỗi scenario phát exactly one STT. Không được suy ra gate này từ fake/provider tests.
 
 ## Phase 4 — LLM + TTS streaming
 
@@ -72,7 +72,7 @@ Deliverables:
 - `type = "openai"` LLM stream qua crate Rust `llm`; bridge typed stream của crate thành domain events, không tự implement OpenAI HTTP/SSE.
 - Pin `llm = "=1.3.8"` với `default-features = false`, `openai` và `rustls-tls`; Phase 4 gọi `chat_stream_with_tools(messages, None)`. Tool call bất thường fail generation, không MCP/retry và cancel phần speech còn lại.
 - sentence segmenter.
-- TTS trait + `zerotts_onnx` native Rust/ONNX first provider qua Model Preparation/ResolvedModel; không Python, HTTP service hay HTTP fallback.
+- TTS trait + `zerotts_onnx` native Rust/ONNX first provider với provider-owned assets; không Python, HTTP service hay HTTP fallback.
 - output resample/Opus.
 - AudioPacer.
 - `SpeechOutput` command/event lifecycle (`FinishInput` / `Drained`).

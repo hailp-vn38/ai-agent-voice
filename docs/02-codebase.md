@@ -16,9 +16,9 @@ crates/voice-agent-server/
 │   ├── bin/                     # developer binaries chạy cùng server package
 │   ├── config/                  # typed config, defaults và validation
 │   ├── database/                # SQLite persistence và policy truy cập
-│   ├── models/                  # manifest, acquisition, verification, startup preparation
+│   ├── assets/                  # HTTP download cho provider asset
 │   ├── protocol/                # Voice Protocol V1 wire contract
-│   ├── providers/               # adapter/factory/catalog/runtime snapshot AI
+│   ├── providers/               # adapter/factory/catalog/asset declaration/runtime snapshot AI
 │   ├── services/                # orchestration của provider runtime và enrollment
 │   ├── session/                 # Voice Session, actor, turn, prompt, delivery
 │   ├── tools/                   # Device MCP, external MCP và tool round

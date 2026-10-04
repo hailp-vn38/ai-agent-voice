@@ -3,7 +3,30 @@
 Kế hoạch này là kế hoạch triển khai cho `docs/provider_owned_model_assets_refactor_guide.md`.
 Guide là spec; file này là bản đồ thay đổi đã đối chiếu với code hiện tại.
 
-Trạng thái: chưa bắt đầu.
+Trạng thái: **đã triển khai xong** trên nhánh `refactor`.
+
+## Ghi chú thực thi
+
+Ba quyết địch ở mục 1 đã được giải quyết như sau:
+
+1. `RuntimePhase::ArtifactVerify` — **giữ nguyên enum và key JSON** (`artifact_verify`),
+   chỉ đổi doc từ "SHA-256 verification" sang "resolve path". `MaterializationTimings.artifact_verify`
+   không còn được ghi giá trị nữa. Đổi shape sẽ phá consumer của report đã lưu.
+2. `BenchmarkErrorCategory::ModelPreparation` — **giữ**, wire value `"model_preparation"`
+   không đổi (ADR 0047 đã chốt). `comparison_qualified` bị **xoá** vì nó chỉ tồn tại để
+   diễn đạt offline mode; `model_preparation_ms` giữ và nay đo thời gian `ensure_assets()`.
+3. `measured_manifest_sha256` — **xoá** khỏi `ProviderRuntimeConfig` như guide chỉ định.
+   Test gate receipt cũ đã bị thay bằng test gate revision của asset manager.
+
+Hai điểm lệch so với kế hoạch, đều do code thật:
+
+- Guide §4 gợi ý `providers/vad/silero/assets.rs`. Repo không có thư mục `vad/silero/`, nên
+  `silero_descriptor.rs` và `silero_onnx.rs` đã được `git mv` vào `vad/silero/` theo đúng
+  layout guide mô tả, thay vì đặt `assets.rs` cạnh module cũ.
+- Guide §12 định nghĩa `ZeroTtsAssets` như struct mới. `ZeroTtsArtifacts<'a>` đã tồn tại, nên
+  struct mới thay thế nó và struct cũ bị xoá.
+- Kokoro cần một type `Voicepack` riêng thay vì dùng `VoiceAsset`, vì file nó đọc (`.bin`) là
+  file nó tạo ra (`.pt`), không phải file tải về nguyên vẹn.
 
 ---
 

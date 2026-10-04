@@ -1,5 +1,9 @@
 # Hướng dẫn xây dựng `performance_tester` cho `ai-agent-voice`
 
+> **Ghi chú:** tài liệu này ghi lại trạng thái tại thời điểm nó được viết. Cơ chế Model
+> Preparation, `ResolvedModel` và `deployment.models.*` đã bị thay thế bởi
+> [ADR 0076](adr/0076-provider-owned-model-assets.md). Đọc ADR đó cho kiến trúc hiện hành.
+
 > Tài liệu thiết kế và triển khai benchmark native Rust cho VAD / ASR / LLM / TTS, dựa trên ý tưởng của `xiaozhi-esp32-server/performance_tester` nhưng bám đúng boundary và runtime hiện tại của `voice-agent-server`.
 
 ## 0. Phạm vi và provenance

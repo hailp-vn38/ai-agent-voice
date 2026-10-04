@@ -30,23 +30,18 @@ u32 dimension = 256
 rows * 1 * 256 float32 values
 ```
 
-Select the row `min(phoneme_count - 1, rows - 1)`. Prepare and checksum this
-file outside the server startup workflow, then publish it through the
-deployment's artifact source and manifest. The current upstream repository
-only publishes `.pt` voicepacks; it does not publish this production binary.
+Select the row `min(phoneme_count - 1, rows - 1)`. The server derives this file
+itself: `providers/tts/kokoro_vi/assets.rs` declares the upstream `.pt` voicepack
+URL and converts it into the `.bin` the runtime reads, publishing the result with
+the same `.part` + atomic rename discipline as any other download. The upstream
+archive's metadata is compared byte-for-byte and never deserialized or executed.
 
-For automatic first-start acquisition, map the prepared manifest source to an
-HTTP(S) URL serving that exact binary. Its SHA-256 must match the manifest; a
-source URL does not change model identity or bypass verification.
+To use a voicepack built from a different source, publish the `.pt` at an
+HTTP(S) URL and change that one entry in `assets.rs`. Model files are not
+deployment configuration, so there is nothing to map in TOML.
 
-```toml
-[deployment.models.sources]
-"prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin" = "https://your-artifact-host/diem_trinh.bin"
-```
-
-No mapping is needed when the checksum-matching voicepack is already installed.
-Offline Model Preparation never contacts the URL. The server does not download
-or execute G2P programs or deserialize upstream `.pt` voicepacks.
+A `.bin` that is already installed is reused without contacting the network. The
+server does not download or execute G2P programs.
 
 ## G2P sidecar
 

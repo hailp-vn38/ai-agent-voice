@@ -1,5 +1,9 @@
 # Provider config và voice preparation: contract sau refactor
 
+> **Ghi chú:** tài liệu này ghi lại trạng thái tại thời điểm nó được viết. Cơ chế Model
+> Preparation, `ResolvedModel`, `prepare_immutable()` và `deployment.models.*` đã bị thay thế
+> bởi [ADR 0076](adr/0076-provider-owned-model-assets.md). Đọc ADR đó cho kiến trúc hiện hành.
+
 ## Phạm vi đã chốt
 
 Triển khai theo `Provider Descriptor, Runtime Config & Voice Model Preparation Refactor Guide.md`.

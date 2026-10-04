@@ -40,13 +40,13 @@ trả 403 khi enrollment tắt. Xem [flow database và enrollment](docs/flows/08
 để chuyển cấu hình cũ và chuẩn bị dữ liệu.
 
 Server tự tạo thư mục cha của SQLite (mặc định `data/`) trước khi mở database và
-chạy migration. Sau đó Model Preparation kiểm tra checksum và tự tải model local
-thiếu/hỏng vào `deployment.models.root` (mặc định `models/`) khi `offline=false`.
-File hợp lệ được dùng lại mà không gọi mạng. Bước này hoàn tất trước khi dựng
-provider runtime, nên thời gian tải không tính vào `provider_runtime.startup_timeout_ms`.
-Các instance local trong TOML được chuẩn bị xuống đĩa; provider trong DB chỉ được
-chuẩn bị khi đang được Template sử dụng. Model trùng nhau được gộp. Model bắt buộc
-lỗi sẽ chặn startup; model tùy chọn lỗi được ghi log mà không chặn server.
+chạy migration. Server không chạm vào model ở bước này: mỗi local provider tự tải
+model của nó vào `models/<KIND>/<provider>` khi Provider Runtime Manager materialize nó.
+File đã tồn tại và khác 0 byte thì dùng ngay, không gọi mạng và không kiểm tra checksum.
+Vì vậy server khởi động được với model directory rỗng hoặc chưa có, và thời gian tải
+nằm ngoài `provider_runtime.startup_timeout_ms`. Provider có `preload = true` được tải
+sớm; provider còn lại chỉ tải khi Template hoặc Session thực sự dùng nó. ZeroTTS tải
+**toàn bộ** voice nó hỗ trợ, không chỉ voice đang cấu hình.
 
 ## Admin Web tùy chọn
 
@@ -65,10 +65,10 @@ proxy các request `/api/admin/*` đến server tại `http://127.0.0.1:8000` th
 định; xem [hướng dẫn đầy đủ của Admin Web](apps/admin-web/README.md).
 
 Downloader dùng buffer 64 KiB, timeout kết nối 15 giây, timeout 15 phút cho mỗi
-lần tải và tối đa 3 lần thử cho lỗi mạng/HTTP tạm thời. File tạm chỉ được publish
-sau khi checksum và transform hợp lệ. ONNX Runtime và Kokoro G2P vẫn cần cài riêng.
-Voicepack Kokoro đã chuyển đổi có thể tải tự động bằng `deployment.models.sources`;
-xem [hướng dẫn Kokoro](docs/kokoro-vi-provider.md).
+lần tải và tối đa 3 lần thử cho lỗi mạng/HTTP tạm thời. Mỗi file được tải vào
+`<target>.part` rồi mới atomic rename, nên một lần tải dở không bao giờ để lại file trông
+như đã sẵn sàng. ONNX Runtime và Kokoro G2P vẫn cần cài riêng. Voicepack Kokoro được
+tải và chuyển đổi tự động bởi provider; xem [hướng dẫn Kokoro](docs/kokoro-vi-provider.md).
 
 Chạy các gate tự động hiện có:
 
