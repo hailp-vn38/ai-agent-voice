@@ -182,6 +182,30 @@ struct BackpressuredLlm {
 
 struct GreetingThenRustLlm(Arc<AtomicUsize>);
 
+struct WrappedLongLlm;
+
+#[async_trait::async_trait]
+impl LlmProvider for WrappedLongLlm {
+    fn adapter(&self) -> &'static str {
+        "wrapped_long_llm"
+    }
+
+    async fn stream(
+        &self,
+        _: voice_agent_server::providers::llm::LlmRequest,
+    ) -> Result<
+        voice_agent_server::providers::llm::LlmEventStream,
+        voice_agent_server::providers::LlmError,
+    > {
+        use voice_agent_server::providers::LlmEvent;
+        let text = format!("[{}]", "Rust là ngôn ngữ lập trình hệ thống. ".repeat(9));
+        Ok(Box::pin(futures_util::stream::iter([
+            Ok(LlmEvent::TextDelta(text)),
+            Ok(LlmEvent::Finished),
+        ])))
+    }
+}
+
 #[async_trait::async_trait]
 impl LlmProvider for GreetingThenRustLlm {
     fn adapter(&self) -> &'static str {
@@ -1070,6 +1094,55 @@ async fn auto_greeting_then_rust_response_drains_on_the_same_session() {
                 .is_some_and(|text| text.contains(r#""type":"llm""#)))
             .count(),
         13,
+    );
+}
+
+#[tokio::test]
+async fn wrapped_long_llm_text_waits_for_speech_segment_capacity() {
+    let (control_tx, mut control_rx) = mpsc::channel(64);
+    let (audio_tx, _audio_rx) = mpsc::channel(64);
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(WrappedLongLlm),
+        Arc::new(FakeTts),
+    ));
+    let mut actor =
+        SessionActor::new("session".into(), control_tx, audio_tx, 2, providers).unwrap();
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Detect {
+        text: "rust là gì".into(),
+    }));
+    for _ in 0..2_000 {
+        actor.pump_workers();
+        if actor.phase() == SessionPhase::Listening {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let controls = std::iter::from_fn(|| control_rx.try_recv().ok())
+        .filter_map(|message| message.as_text().map(str::to_owned))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|text| text.contains(r#""state":"stop""#))
+            .count(),
+        1
+    );
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|text| text.contains(r#""type":"llm""#))
+            .count(),
+        9
+    );
+    assert_eq!(actor.dialogue_history().len(), 2);
+    assert_eq!(
+        actor.dialogue_history()[1],
+        format!("[{}]", "Rust là ngôn ngữ lập trình hệ thống. ".repeat(9))
     );
 }
 

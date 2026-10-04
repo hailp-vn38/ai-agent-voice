@@ -19,6 +19,8 @@ impl SpeechOutput {
         self.playback_end_deadline = None;
         self.json_filter.reset();
         self.segmenter.reset();
+        self.pending_filtered_text.clear();
+        self.finish_requested = false;
         if let (Some(runtime), Some(stream)) = (&self.tts_runtime, self.tts_stream.take()) {
             runtime.close_stream(stream);
             self.tts_stream = Some(runtime.begin_stream());
@@ -40,6 +42,7 @@ impl SpeechOutput {
     }
 
     pub fn poll(&mut self) -> Result<Option<SpeechOutputEvent>, SpeechOutputError> {
+        self.advance_filtered_text()?;
         // Only one segment is synthesized at a time; packet pacing may overlap the next poll.
         if self.packets.len() < MAX_BUFFERED_PACKETS
             && self.active_worker.is_none()
