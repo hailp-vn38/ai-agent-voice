@@ -1,11 +1,23 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use voice_agent_server::{
     config::AppConfig,
     database::{
         DesiredProvider, provider_config,
         secrets::{SecretRef, SecretResolveError, SecretResolver, SecretValue},
     },
+    lifecycle::AdmissionGate,
     providers::{DatabaseRuntimeFailure, materialize_provider},
+    services::provider_runtime::{
+        FactoryMaterializer, ProviderRuntimeManager, ResourceKey, RuntimeError, RuntimeLimits,
+        RuntimeMaterializer, RuntimeResource,
+    },
+    workers::{ProviderRuntimeAdmission, WorkerSupervisor},
 };
 struct Secrets(AtomicUsize);
 impl SecretResolver for Secrets {
@@ -562,4 +574,178 @@ fn checkout_example_configuration_parses_without_resolving_or_printing_credentia
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config.example.toml");
     let config = AppConfig::parse_and_resolve(path).expect("checkout example config valid");
     assert!(config.provider_runtime.is_none());
+}
+
+/// Delegates production identity and estimation to `FactoryMaterializer` while counting native
+/// builds, so tests can prove physical sharing without installed ZeroTTS graphs.
+struct CountingLocalFactory {
+    inner: FactoryMaterializer,
+    builds: Arc<AtomicUsize>,
+}
+
+impl RuntimeMaterializer for CountingLocalFactory {
+    fn resource_key(
+        &self,
+        snapshot: &DesiredProvider,
+    ) -> Result<Option<ResourceKey>, RuntimeError> {
+        self.inner.resource_key(snapshot)
+    }
+    fn estimated_peak_bytes(&self, snapshot: &DesiredProvider) -> Result<u64, RuntimeError> {
+        self.inner.estimated_peak_bytes(snapshot)
+    }
+    fn logical_capacity(&self, snapshot: &DesiredProvider) -> Result<usize, RuntimeError> {
+        self.inner.logical_capacity(snapshot)
+    }
+    fn global_capacity(&self, snapshot: &DesiredProvider) -> Result<Option<usize>, RuntimeError> {
+        self.inner.global_capacity(snapshot)
+    }
+    fn build(
+        &self,
+        _: &DesiredProvider,
+        _: ProviderRuntimeAdmission,
+    ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+        self.builds.fetch_add(1, Ordering::SeqCst);
+        Ok(Arc::new(UnloadedResource))
+    }
+}
+
+struct UnloadedResource;
+
+impl RuntimeResource for UnloadedResource {
+    fn resource_key(&self) -> Option<ResourceKey> {
+        None
+    }
+    fn unload(&self) -> bool {
+        true
+    }
+}
+
+fn zerotts_factory(workers_tts: usize) -> FactoryMaterializer {
+    let mut cfg = zerotts_config();
+    cfg.workers.tts.max_workers = workers_tts;
+    FactoryMaterializer::new(
+        Arc::new(cfg),
+        Arc::new(Secrets(AtomicUsize::new(0))),
+        HashMap::from([("zerotts_onnx".into(), 1024)]),
+        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
+    )
+    .unwrap()
+}
+
+fn zerotts_config() -> AppConfig {
+    let mut cfg: AppConfig = toml::from_str(
+        r#"
+[server]
+bind="127.0.0.1:0"
+public_ws_url="ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad="vad"
+asr="asr"
+llm="llm"
+tts="tts"
+[providers.tts.instances.zerotts_maichi]
+adapter="zerotts_onnx"
+voice="maichi"
+delivery_mode="stream"
+"#,
+    )
+    .unwrap();
+    cfg.deployment.model_manifest =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
+    cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../runtime/onnxruntime/libonnxruntime.dylib");
+    cfg
+}
+
+fn zerotts_manager(
+    factory: FactoryMaterializer,
+    builds: Arc<AtomicUsize>,
+) -> Arc<ProviderRuntimeManager> {
+    ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 1,
+            max_waiters: 4,
+            max_resident_bytes: 4096,
+            max_resources: 2,
+            max_version_entries: 8,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 10,
+            idle_ttl_ms: 60_000,
+        },
+        Arc::new(CountingLocalFactory {
+            inner: factory,
+            builds,
+        }),
+        AdmissionGate::open(),
+    )
+    .unwrap()
+}
+
+fn zerotts_provider(id: i64, key: &str, voice: &str, delivery_mode: &str) -> DesiredProvider {
+    DesiredProvider {
+        id,
+        key: key.into(),
+        kind: "tts".into(),
+        adapter: "zerotts_onnx".into(),
+        revision: 1,
+        config_json: format!(
+            r#"{{"voice":"{voice}","language":"vi-VN","delivery_mode":"{delivery_mode}"}}"#
+        ),
+        secret_ref: None,
+    }
+}
+
+#[tokio::test]
+async fn switching_the_logical_voice_never_rematerializes_the_zerotts_runtime() {
+    let builds = Arc::new(AtomicUsize::new(0));
+    let manager = zerotts_manager(zerotts_factory(2), Arc::clone(&builds));
+
+    // An Agent's home binds Template A -> maichi and later switches to Template B -> hamy. The two
+    // templates differ only in the logical voice, so the switch must alias the resident runtime.
+    let template_a = manager
+        .acquire(zerotts_provider(1, "tts-maichi", "maichi", "stream"))
+        .await
+        .unwrap();
+    assert_eq!(builds.load(Ordering::SeqCst), 1);
+    drop(template_a);
+
+    let template_b = manager
+        .acquire(zerotts_provider(2, "tts-hamy", "hamy", "stream"))
+        .await
+        .unwrap();
+    assert_eq!(
+        builds.load(Ordering::SeqCst),
+        1,
+        "switching template voice must not rebuild the ZeroTTS runtime"
+    );
+    assert_eq!(manager.accounting().resources, 1);
+    drop(template_b);
+    assert_eq!(
+        manager.evict_idle().await.unwrap(),
+        1,
+        "one physical runtime stays resident until it is idle-drained"
+    );
+}
+
+#[tokio::test]
+async fn a_different_zerotts_delivery_mode_builds_a_second_physical_runtime() {
+    let builds = Arc::new(AtomicUsize::new(0));
+    let manager = zerotts_manager(zerotts_factory(2), Arc::clone(&builds));
+
+    let stream = manager
+        .acquire(zerotts_provider(1, "tts-stream", "maichi", "stream"))
+        .await
+        .unwrap();
+    let file = manager
+        .acquire(zerotts_provider(2, "tts-file", "hamy", "file"))
+        .await
+        .unwrap();
+    assert_eq!(
+        builds.load(Ordering::SeqCst),
+        2,
+        "codec session topology differs, so delivery mode must isolate the runtime"
+    );
+    assert_eq!(manager.accounting().resources, 2);
+    drop((stream, file));
 }

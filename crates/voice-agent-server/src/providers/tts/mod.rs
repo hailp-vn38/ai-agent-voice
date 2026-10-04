@@ -16,7 +16,7 @@ pub(crate) use chillaudio::ChillAudioWsProvider;
 /// Compatibility exports for native ZeroTTS tooling.
 pub mod zerotts_onnx {
     pub use super::zerotts::runtime::{
-        ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream, normalize_text,
+        ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream, normalize_text, session_constructions,
     };
 }
 

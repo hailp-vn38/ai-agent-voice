@@ -1,4 +1,4 @@
-use super::{RuntimeError, RuntimeMaterializer, RuntimeResource};
+use super::{MaterializationTimings, RuntimeError, RuntimeMaterializer, RuntimeResource};
 use crate::{
     config::AppConfig,
     database::{DesiredProvider, secrets::SecretResolver},
@@ -7,7 +7,11 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 /// Production bridge to the same installed-artifact factories used by deployment startup.
@@ -16,6 +20,17 @@ use std::{
 /// deployment schema intentionally budgets one conservative ceiling per adapter rather than an
 /// unqualified per-plan value. A missing estimate refuses allocation, without resolving
 /// credentials. This counter does not claim to enforce an OS memory limit.
+/// Cumulative, process-local materialization counters for one `FactoryMaterializer`. They expose
+/// how often native state was actually rebuilt, which is the only reliable way to prove that a
+/// logical change (voice, template, agent) did not rematerialize a shared physical runtime.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FactoryDiagnostics {
+    /// Native resources constructed by `build`.
+    pub builds: u64,
+    /// Immutable model preparations performed by `build` and `prepare_artifacts`, combined.
+    pub artifact_preparations: u64,
+}
+
 pub struct FactoryMaterializer {
     config: Arc<AppConfig>,
     secrets: Arc<dyn SecretResolver>,
@@ -24,6 +39,8 @@ pub struct FactoryMaterializer {
     qualified_manifest_fingerprint: Option<[u8; 32]>,
     onnx_fingerprint: Option<[u8; 32]>,
     kokoro_g2p_fingerprint: Option<[u8; 32]>,
+    builds: AtomicU64,
+    artifact_preparations: AtomicU64,
 }
 impl FactoryMaterializer {
     pub fn new(
@@ -75,7 +92,17 @@ impl FactoryMaterializer {
             qualified_manifest_fingerprint,
             onnx_fingerprint,
             kokoro_g2p_fingerprint,
+            builds: AtomicU64::new(0),
+            artifact_preparations: AtomicU64::new(0),
         })
+    }
+
+    /// Cumulative materialization counters for this instance. Labels are fixed-cardinality.
+    pub fn diagnostics(&self) -> FactoryDiagnostics {
+        FactoryDiagnostics {
+            builds: self.builds.load(Ordering::Relaxed),
+            artifact_preparations: self.artifact_preparations.load(Ordering::Relaxed),
+        }
     }
 }
 impl RuntimeMaterializer for FactoryMaterializer {
@@ -91,6 +118,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
         let Some(plan) = self.local_runtime_plan(snapshot)? else {
             return Ok(());
         };
+        self.artifact_preparations.fetch_add(1, Ordering::Relaxed);
         crate::models::prepare_immutable(
             &self.config.deployment.model_manifest,
             &self.config.deployment.models.root,
@@ -170,6 +198,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
         snapshot: &DesiredProvider,
         quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+        let started = Instant::now();
         self.verify_qualified_manifest()?;
         if snapshot.id == 0
             && crate::providers::deployment_provider_snapshot(
@@ -182,25 +211,29 @@ impl RuntimeMaterializer for FactoryMaterializer {
         {
             return Err(RuntimeError::Configuration);
         }
+        let mut timings = MaterializationTimings::default();
         let prepared_model = if let Some(plan) = self.local_runtime_plan(snapshot)? {
-            Some(
-                crate::models::prepare_immutable(
-                    &self.config.deployment.model_manifest,
-                    &self.config.deployment.models.root,
-                    self.config.deployment.models.offline,
-                    plan.model_identity(),
-                    &snapshot.adapter,
-                    &self.config.deployment,
-                )
-                .map_err(|_| RuntimeError::ArtifactsNotReady)?,
+            self.artifact_preparations.fetch_add(1, Ordering::Relaxed);
+            let preparation = crate::models::prepare_immutable_timed(
+                &self.config.deployment.model_manifest,
+                &self.config.deployment.models.root,
+                self.config.deployment.models.offline,
+                plan.model_identity(),
+                &snapshot.adapter,
+                &self.config.deployment,
             )
+            .map_err(|_| RuntimeError::ArtifactsNotReady)?;
+            timings.artifact_prepare = preparation.prepare;
+            timings.artifact_verify = preparation.verify;
+            Some(preparation.model)
         } else {
             None
         };
         let resource_key = self.resource_key_with_fingerprint(
             snapshot,
-            prepared_model.as_ref().map(|model| model.fingerprint()),
+            prepared_model.as_ref().map(|m| m.fingerprint()),
         )?;
+        let contract_started = Instant::now();
         let catalog = crate::providers::materialize_provider_from_artifacts(
             &self.config,
             snapshot,
@@ -215,6 +248,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
                 RuntimeError::Unavailable
             }
         })?;
+        timings.provider_contract = contract_started.elapsed();
         for runtime in catalog.asr.values() {
             self.supervisor.observe_asr(Arc::clone(runtime));
         }
@@ -241,6 +275,18 @@ impl RuntimeMaterializer for FactoryMaterializer {
             .chain(catalog.vad.values().flat_map(|r| r.runtime.health_flags()))
             .chain(catalog.tts.values().flat_map(|r| r.health_flags()))
             .collect();
+        self.builds.fetch_add(1, Ordering::Relaxed);
+        tracing::info!(
+            adapter = %snapshot.adapter,
+            kind = %snapshot.kind,
+            artifact_prepare_ms = timings.artifact_prepare.as_millis(),
+            artifact_verify_ms = timings.artifact_verify.as_millis(),
+            provider_contract_ms = timings.provider_contract.as_millis(),
+            worker_session_init_ms = readiness.initialization.as_millis(),
+            worker_warmup_ms = readiness.warmup.as_millis(),
+            runtime_total_ms = started.elapsed().as_millis(),
+            "provider runtime materialized"
+        );
         Ok(Arc::new(OwnedRuntimeResource {
             resource_key,
             physical_admission: quota,
@@ -248,6 +294,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             health_flags,
             catalog: Mutex::new(Some(catalog)),
             capabilities,
+            timings,
         }))
     }
 }
@@ -258,6 +305,7 @@ struct OwnedRuntimeResource {
     health_flags: Vec<Arc<std::sync::atomic::AtomicBool>>,
     catalog: Mutex<Option<RuntimeCatalog>>,
     capabilities: Option<serde_json::Value>,
+    timings: MaterializationTimings,
 }
 impl RuntimeResource for OwnedRuntimeResource {
     fn resource_key(&self) -> Option<super::ResourceKey> {
@@ -274,6 +322,9 @@ impl RuntimeResource for OwnedRuntimeResource {
     }
     fn capabilities(&self) -> Option<serde_json::Value> {
         self.capabilities.clone()
+    }
+    fn materialization_timings(&self) -> MaterializationTimings {
+        self.timings
     }
     fn unload(&self) -> bool {
         let mut catalog = self.catalog.lock().expect("runtime resource poisoned");
@@ -546,6 +597,7 @@ mod tests {
             health_flags: Vec::new(),
             catalog: Mutex::new(Some(catalog)),
             capabilities: None,
+            timings: Default::default(),
         };
         let snapshot = DesiredProvider {
             id: 0,

@@ -38,6 +38,7 @@ pub(crate) fn prepare_startup(
                     &config.deployment,
                     true,
                 )
+                .map(|preparation| preparation.model)
             } else {
                 prepare(
                     &config.deployment.model_manifest,

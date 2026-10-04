@@ -1,7 +1,17 @@
 use super::RuntimeError;
 use crate::workers::ProviderRuntimeAdmission;
 use crate::{database::DesiredProvider, providers::RuntimeCatalog};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+
+/// Wall-clock cost of each materialization stage, captured by the builder that retained the
+/// resource. Values carry no provider identity, revision or resource hash, so they stay safe as
+/// fixed-cardinality metrics and structured log fields.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MaterializationTimings {
+    pub artifact_prepare: Duration,
+    pub artifact_verify: Duration,
+    pub provider_contract: Duration,
+}
 
 /// Blocking/native factory seam. The manager bounds execution and reserves before build.
 /// A normal error means partial allocations have already acknowledged cleanup; uncertainty
@@ -41,6 +51,11 @@ pub trait RuntimeResource: Send + Sync {
     /// Cached capacity counters only; queried once at completion, never during GET.
     fn physical_admission(&self) -> Option<ProviderRuntimeAdmission> {
         None
+    }
+    /// Stage timings for the materialization that produced this resource. Adapters that build no
+    /// native state report zeroed timings.
+    fn materialization_timings(&self) -> MaterializationTimings {
+        MaterializationTimings::default()
     }
     fn readiness(&self) -> crate::workers::NativeReadiness {
         Default::default()

@@ -387,6 +387,7 @@ pub(super) fn load_graph(
         .map_err(contract_error)?
         .commit_from_file(path)
         .map_err(contract_error)?;
+    record_session_construction();
     validate_graph_io(session.inputs(), inputs)?;
     validate_graph_io(session.outputs(), outputs)?;
     Ok(session)

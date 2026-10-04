@@ -16,7 +16,10 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokenizers::Tokenizer;
 use unicode_normalization::UnicodeNormalization;
@@ -112,4 +115,17 @@ impl ZeroTtsVoiceRegistry {
 
 fn contract_error(error: impl std::fmt::Display) -> TtsError {
     TtsError::IncompatibleContract(error.to_string())
+}
+
+/// Process-local count of committed ONNX sessions. Regression tests use it to prove one physical
+/// replica retains each graph exactly once across many turns; the inference path never reads it.
+static SESSION_CONSTRUCTIONS: AtomicU64 = AtomicU64::new(0);
+
+/// ONNX sessions committed by this process since it started.
+pub fn session_constructions() -> u64 {
+    SESSION_CONSTRUCTIONS.load(Ordering::Acquire)
+}
+
+pub(super) fn record_session_construction() {
+    SESSION_CONSTRUCTIONS.fetch_add(1, Ordering::AcqRel);
 }

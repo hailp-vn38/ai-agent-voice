@@ -481,6 +481,7 @@ pub(super) fn load_codec_graph(
         .map_err(contract_error)?
         .commit_from_file(path)
         .map_err(contract_error)?;
+    record_session_construction();
     let actual_inputs = session
         .inputs()
         .iter()

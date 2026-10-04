@@ -483,6 +483,7 @@ impl ProviderRuntimeManager {
         attempt: OwnedSemaphorePermit,
         preclaimed_load: Option<OwnedSemaphorePermit>,
     ) {
+        let started = Instant::now();
         let speculative = preclaimed_load.is_some();
         let load = if preclaimed_load.is_some() {
             preclaimed_load
@@ -499,6 +500,7 @@ impl ProviderRuntimeManager {
                 Err(RuntimeError::ShuttingDown),
                 None,
                 Some(attempt),
+                started,
             );
             return;
         }
@@ -539,7 +541,14 @@ impl ProviderRuntimeManager {
                     builder.build(&snapshot, quota)
                 }))
                 .unwrap_or(Err(RuntimeError::Quarantined));
-                manager.complete(&native_version, generation, outcome, load, Some(attempt));
+                manager.complete(
+                    &native_version,
+                    generation,
+                    outcome,
+                    load,
+                    Some(attempt),
+                    started,
+                );
             });
         if spawn.is_err() {
             self.complete(
@@ -548,6 +557,7 @@ impl ProviderRuntimeManager {
                 Err(RuntimeError::Unavailable),
                 None,
                 None,
+                started,
             );
         }
     }
@@ -559,6 +569,7 @@ impl ProviderRuntimeManager {
         outcome: Result<Arc<dyn RuntimeResource>, RuntimeError>,
         mut load: Option<OwnedSemaphorePermit>,
         mut attempt: Option<OwnedSemaphorePermit>,
+        started: Instant,
     ) {
         let metadata = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             outcome.as_ref().ok().map(|resource| {
@@ -568,20 +579,40 @@ impl ProviderRuntimeManager {
                     resource.resource_key(),
                     resource.physical_admission(),
                     resource.readiness(),
+                    resource.materialization_timings(),
                 )
             })
         }));
         let metadata_failed = metadata.is_err();
-        let (capabilities, health_flags, actual_key, physical_admission, readiness) = metadata
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| (None, Vec::new(), None, None, Default::default()));
+        let (capabilities, health_flags, actual_key, physical_admission, readiness, timings) =
+            metadata.ok().flatten().unwrap_or_else(|| {
+                (
+                    None,
+                    Vec::new(),
+                    None,
+                    None,
+                    Default::default(),
+                    Default::default(),
+                )
+            });
         if !metadata_failed {
             self.metrics
                 .observe(super::RuntimePhase::WorkerInit, readiness.initialization);
             self.metrics
                 .observe(super::RuntimePhase::Warmup, readiness.warmup);
+            self.metrics.observe(
+                super::RuntimePhase::ArtifactPrepare,
+                timings.artifact_prepare,
+            );
+            self.metrics
+                .observe(super::RuntimePhase::ArtifactVerify, timings.artifact_verify);
+            self.metrics.observe(
+                super::RuntimePhase::ProviderContract,
+                timings.provider_contract,
+            );
         }
+        self.metrics
+            .observe(super::RuntimePhase::RuntimeTotal, started.elapsed());
         let mut registry = self.registry.lock().expect("runtime registry poisoned");
         let Some(entry) = registry.entries.get_mut(version) else {
             return;

@@ -5,6 +5,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use serde::Deserialize;
@@ -323,6 +324,27 @@ pub fn prepare_immutable(
     adapter: &str,
     deployment: &DeploymentConfig,
 ) -> Result<ResolvedModel, ModelError> {
+    prepare_immutable_timed(manifest_path, root, offline, identity, adapter, deployment)
+        .map(|preparation| preparation.model)
+}
+
+/// Immutable preparation plus the wall-clock cost of each stage, so a materialization can report
+/// which boundary dominated instead of guessing. Verification is timed separately because it is
+/// pure read I/O over already-installed bytes.
+pub struct ImmutablePreparation {
+    pub model: ResolvedModel,
+    pub prepare: Duration,
+    pub verify: Duration,
+}
+
+pub fn prepare_immutable_timed(
+    manifest_path: &Path,
+    root: &Path,
+    offline: bool,
+    identity: &str,
+    adapter: &str,
+    deployment: &DeploymentConfig,
+) -> Result<ImmutablePreparation, ModelError> {
     prepare_immutable_inner(
         manifest_path,
         root,
@@ -343,7 +365,7 @@ fn prepare_immutable_inner(
     adapter: &str,
     deployment: &DeploymentConfig,
     repair_existing: bool,
-) -> Result<ResolvedModel, ModelError> {
+) -> Result<ImmutablePreparation, ModelError> {
     let model = load_manifest(manifest_path, identity, adapter)?;
     let fingerprint = fingerprint_model(&model);
     if deployment.profile == "commercial" && model.license.contains("NC") {
@@ -360,6 +382,8 @@ fn prepare_immutable_inner(
     })
     .with_sources(&deployment.models.sources);
     let mut artifacts = Vec::with_capacity(model.artifacts.len());
+    let mut prepare = Duration::ZERO;
+    let mut verify = Duration::ZERO;
     for artifact in &model.artifacts {
         validate_relative_path(&artifact.install_path)?;
         let relative = PathBuf::from(".installed")
@@ -372,32 +396,43 @@ fn prepare_immutable_inner(
         let source = if reuse {
             None
         } else {
-            Some(preparation.prepare_artifact(artifact)?)
+            let started = Instant::now();
+            let source = preparation.prepare_artifact(artifact)?;
+            prepare += started.elapsed();
+            Some(source)
         };
         let _install = artifact_lock(&root.join(&relative));
         let pinned = safe_install_path(root, &relative)?;
         if pinned.exists() && (!repair_existing || verifies(&pinned, &artifact.sha256)?) {
+            let started = Instant::now();
             verify_path(&pinned, &artifact.sha256)?;
+            verify += started.elapsed();
         } else {
             let source =
                 source.ok_or_else(|| ModelError::MissingArtifact(artifact.role.clone()))?;
             let temporary = pinned.with_extension("pin-part");
+            let started = Instant::now();
             let result = (|| {
                 fs::copy(source, &temporary)?;
                 verify_path(&temporary, &artifact.sha256)?;
                 fs::rename(&temporary, &pinned)?;
                 Ok::<(), ModelError>(())
             })();
+            verify += started.elapsed();
             let _ = fs::remove_file(&temporary);
             result?;
         }
         artifacts.push((artifact.role.clone(), pinned));
     }
-    Ok(ResolvedModel {
-        fingerprint: fingerprint_model(&model),
-        identity: model.identity,
-        adapter: model.adapter,
-        artifacts,
+    Ok(ImmutablePreparation {
+        model: ResolvedModel {
+            fingerprint: fingerprint.clone(),
+            identity: model.identity,
+            adapter: model.adapter,
+            artifacts,
+        },
+        prepare,
+        verify,
     })
 }
 
