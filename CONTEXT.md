@@ -442,8 +442,8 @@ Thao tác destructive tường minh xóa Persistent Transcript trong scope Devic
 _Avoid_: side effect of disabling Device, implicit transcript delete, session memory reset
 
 **Resource Key**:
-Public resource identity ổn định, lowercase ASCII và immutable của Agent, Template, Provider hoặc MCP Server; database primary key chỉ là implementation detail.
-_Avoid_: mutable display name, runtime-generated identifier, case-insensitive alias, database primary key
+Public resource identity ổn định, lowercase ASCII và immutable của Agent, Template, Provider hoặc MCP Server; database primary key chỉ là implementation detail. Agent, Template và MCP Server do client chọn khi tạo; Provider Key do server sinh ở thời điểm tạo theo format `{provider_type}_{uuid32}` vì Provider name có thể trùng và đổi.
+_Avoid_: mutable display name, client-supplied Provider key, identity derived from display name, case-insensitive alias, database primary key
 
 **Protocol Device Identity**:
 Identity opaque và immutable do Voice Protocol Client cung cấp để provision Device, được so sánh byte-preserving tại database boundary.
