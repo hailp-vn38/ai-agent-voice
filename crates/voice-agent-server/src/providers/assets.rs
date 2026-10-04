@@ -90,18 +90,22 @@ pub fn ensure_asset(
 ) -> Result<PathBuf, AssetError> {
     let target = root.join(asset.path);
     if is_ready(&target) {
-        tracing::info!(asset = asset.path, destination = %target.display(), "reusing provider asset");
+        tracing::debug!(asset = asset.path, "reusing provider asset");
         return Ok(target);
     }
     let _guard = asset_lock(&target);
     // Another caller may have installed it while this one waited.
     if is_ready(&target) {
-        tracing::info!(asset = asset.path, destination = %target.display(), "reusing provider asset");
+        tracing::debug!(asset = asset.path, "reusing provider asset");
         return Ok(target);
     }
-    tracing::info!(asset = asset.path, url = asset.url, destination = %target.display(), "downloading provider asset");
+    tracing::debug!(
+        asset = asset.path,
+        url = asset.url,
+        "downloading provider asset"
+    );
     install(acquirer, asset.url, &target)?;
-    tracing::info!(asset = asset.path, destination = %target.display(), "provider asset ready");
+    tracing::debug!(asset = asset.path, "provider asset ready");
     Ok(target)
 }
 

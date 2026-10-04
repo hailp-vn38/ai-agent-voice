@@ -252,8 +252,8 @@ fn ensure_declared_assets(config: &AppConfig) -> Result<(), crate::providers::Pr
         let Some(assets) = registry.assets(adapter) else {
             continue;
         };
-        tracing::info!(adapter, "checking provider model files");
         assets.ensure_assets()?;
+        tracing::info!(provider = adapter, "provider model files ready");
     }
     Ok(())
 }

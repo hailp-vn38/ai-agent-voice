@@ -94,7 +94,7 @@ fn acquire_once(
         file.write_all(&buffer[..count]).map_err(file_error)?;
         downloaded_bytes += count as u64;
         if progress.elapsed() >= Duration::from_secs(5) {
-            tracing::info!(
+            tracing::debug!(
                 downloaded_bytes,
                 expected_bytes,
                 "provider asset download progress"
@@ -109,7 +109,9 @@ fn acquire_once(
         });
     }
     file.sync_all().map_err(file_error)?;
-    tracing::info!(downloaded_bytes, "provider asset download completed");
+    // Per-file transfer detail belongs at debug: a cold start installs dozens of files and the
+    // operator wants one line per provider, not one per file.
+    tracing::debug!(downloaded_bytes, "provider asset download completed");
     Ok(())
 }
 
