@@ -1,8 +1,10 @@
 # 02 — Cấu trúc codebase hiện tại
 
-`voice-agent-server` là crate production duy nhất của workspace. Mã production nằm trong `src/`; test integration, fixture và helper test không được trở thành public module của server.
+`voice-agent-server` là crate Rust production duy nhất của workspace. Mã production Rust nằm trong `src/`; test integration, fixture và helper test không được trở thành public module của server. Vue Admin là application độc lập tại `apps/admin-web/`, giao tiếp với server qua Admin API công khai.
 
 ```text
+apps/
+└── admin-web/                   # Vue Admin UI, npm/Vite toolchain và test frontend
 crates/voice-agent-server/
 ├── migrations/                  # SQLite schema migrations
 ├── src/
@@ -34,6 +36,7 @@ crates/voice-agent-server/
 
 ### Production modules
 
+- `apps/admin-web/` sở hữu UI Admin và state phía trình duyệt; không import mã Rust nội bộ mà chỉ gọi Admin API/contract công khai.
 - `app/` chỉ nhận HTTP/WebSocket và map chúng vào application state/session events; không quyết định dialogue policy.
 - `session/` sở hữu Voice Session state, turn ownership, writer ordering và orchestration từ ingress tới terminal outcome.
 - `providers/` định nghĩa seam adapter cho AI runtime; adapter không biết Voice Session hoặc WebSocket.
