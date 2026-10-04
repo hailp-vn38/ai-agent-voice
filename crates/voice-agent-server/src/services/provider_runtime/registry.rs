@@ -546,10 +546,12 @@ impl ProviderRuntimeManager {
                     if !manager.gate.is_open() {
                         return Err(RuntimeError::ShuttingDown);
                     }
-                    if speculative {
-                        builder.prepare_artifacts(&snapshot)?;
-                    }
-                    builder.build(&snapshot, quota)
+                    let prepared = if speculative {
+                        builder.prepare_artifacts(&snapshot)?
+                    } else {
+                        None
+                    };
+                    builder.build(&snapshot, prepared, quota)
                 }))
                 .unwrap_or(Err(RuntimeError::Quarantined));
                 manager.complete(

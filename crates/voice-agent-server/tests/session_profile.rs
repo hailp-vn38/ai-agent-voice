@@ -1440,6 +1440,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
     fn build(
         &self,
         row: &voice_agent_server::database::DesiredProvider,
+        _: Option<voice_agent_server::services::provider_runtime::PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<
         Arc<dyn voice_agent_server::services::provider_runtime::RuntimeResource>,
@@ -1849,6 +1850,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Pre
     fn build(
         &self,
         row: &voice_agent_server::database::DesiredProvider,
+        prepared: Option<voice_agent_server::services::provider_runtime::PreparedRuntime>,
         quota: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<
         Arc<dyn voice_agent_server::services::provider_runtime::RuntimeResource>,
@@ -1856,7 +1858,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Pre
     > {
         self.entered.send(()).unwrap();
         self.release.lock().unwrap().recv().unwrap();
-        self.inner.build(row, quota)
+        self.inner.build(row, prepared, quota)
     }
 }
 #[tokio::test]

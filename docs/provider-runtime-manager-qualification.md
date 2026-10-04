@@ -1,5 +1,62 @@
 # Provider Runtime Manager qualification
 
+## ZeroTTS runtime optimization requalification — 2026-10-04
+
+Baseline commit `958aa4e` (`fix(llm): use compatible template switch tool name`), branch `zerotts`.
+Scope: one physical ZeroTTS runtime serving many logical voices. See
+`docs/zerotts-runtime-optimization-guide.md`.
+
+Workload: `provider-runtime-bench CONFIG tts zerotts_maichi --hold-ms 3000`, installed artifacts
+only, one fresh process per observation, `/usr/bin/time -l` alongside the harness' own
+`ready_resident_bytes` (`ps -o rss`, sampled while the runtime is `Ready`). Release binaries, Apple
+M1 Pro, 16 GiB RAM, `zerotts_onnx` threads = 2. A and B were interleaved in one loop to share
+filesystem cache conditions. Five observations each; **these are individual observations, not a
+latency distribution, and they are not an SLA.**
+
+Case A is baseline code with `workers.tts.max_workers = 2`, which loaded two ZeroTTS replicas
+(eight ONNX sessions) and ran two full-utterance warmups. Case B is the optimized code with the
+same `workers.tts.max_workers = 2`: the adapter's declared physical replica count keeps one replica
+(four ONNX sessions) while logical width stays 2.
+
+| Metric | A: baseline, 2 replicas | B: optimized, 1 replica |
+|---|---:|---:|
+| resident runtime load ms (ready) | 8541.503 / 8546.590 / 8698.515 / 8815.583 / 9558.314 | 2632.700 / 2691.406 / 2697.477 / 2705.499 / 2729.099 |
+| artifact prepare ms (full SHA-256 pass) | included in load | 508.312 / 582.834 / 515.217 / 576.778 / 517.014 |
+| provider contract ms | not reported | 2632.394 / 2691.114 / 2697.152 / 2705.228 / 2728.802 |
+| retained worker session init ms | not reported | 2509.335 / 2571.132 / 2571.002 / 2583.916 / 2610.348 |
+| retained worker warmup ms | not reported | 99.937 / 99.127 / 101.627 / 103.065 / 105.505 |
+| total load ms | same as ready | 3149.714 / 3212.695 / 3237.411 / 3268.183 / 3288.333 |
+| resident bytes while Ready | 1073135616 / 1358659584 / 1536442368 / 1549500416 / 2108407808 | 1207386112 / 1207615488 / 1209516032 / 1219510272 / 1228914688 |
+| physical replicas / ONNX sessions | 2 / 8 | 1 / 4 |
+
+Load time improves by roughly 3.2x. Resident bytes are stable in case B around 1.21 GB; the case A
+spread reflects how much of the second replica's memory was still being faulted in when the sample
+was taken, so case A is best read as "at least as expensive as its worst observation, with load
+time roughly tripled" rather than as a single larger number. Most ZeroTTS weight memory is
+file-backed and shared between replicas of the same graph, so replica count shows up far more
+strongly in load time and in private arena growth than in instantaneous RSS.
+
+Deployment default (`config.toml`, `workers.tts.max_workers = 1`, one replica both before and after):
+baseline ready 4494.056 / 4499.809 / 4662.058 ms at 1280065536 / 1332969472 / 1317076992 resident
+bytes; optimized total load 3194.078 / 3215.726 / 3237.320 / 3246.179 ms at 1207795712 / 1207615488 /
+1207841920 / 1207042048 resident bytes. With one replica on both sides, the gain here is the
+bounded warmup and the removal of the duplicated model preparation, not the replica count.
+
+Warmup in isolation, from the real-model gate `startup_warmup_is_bounded_and_leaves_no_state_in_the_retained_runtime`:
+full-utterance warmup 1819 ms versus bounded warmup 165 ms. One real turn after warmup measured
+863 ms, so startup work is not paid back per request.
+
+Inference speed did not regress. `zerotts-core-check`, which exercises production synthesis, codec
+decode and canonical Opus, accepted identical output before and after (32 frames, EOA frame 30,
+115200 PCM samples) at 20.93 s / 20.26 s baseline and 19.83 s / 19.75 s optimized. The refactor is
+outside the production decode loop, and the measured wall time is if anything slightly lower.
+
+Case C (optimized code forced to two physical replicas) is not a supported configuration: the
+replica count is an adapter-owned constant with no operator field, so the only comparable two-replica
+measurement is case A. The earlier conservative adapter estimates (ZeroTTS 4 GiB) still exceed every
+measurement here and were retained; `[provider_runtime]` and the manifest receipt are unchanged,
+because this work altered neither the adapter envelope nor model content.
+
 ## Refactor requalification — 2026-10-04
 
 The provider descriptor/runtime config refactor changed the manifest to SHA-256

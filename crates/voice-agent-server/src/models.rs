@@ -1,10 +1,14 @@
 //! Pinned artifact preparation before provider runtime construction.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -17,6 +21,10 @@ use crate::config::{DeploymentConfig, ModelAcknowledgement};
 mod acquisition;
 mod kokoro;
 mod startup;
+
+/// Process-local immutable-model preparation counters. Labels are fixed-cardinality.
+static PREPARATIONS: AtomicU64 = AtomicU64::new(0);
+static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 
 pub use acquisition::HttpModelAcquirer;
 pub(crate) use startup::prepare_startup;
@@ -116,6 +124,12 @@ impl ResolvedModel {
 
     pub fn adapter(&self) -> &str {
         &self.adapter
+    }
+
+    /// Verified artifact paths, in manifest order. Exposed so a cached preparation can confirm its
+    /// pinned tree is still present without re-reading and re-hashing the model.
+    pub fn artifacts(&self) -> impl Iterator<Item = &Path> {
+        self.artifacts.iter().map(|(_, path)| path.as_path())
     }
 
     #[cfg(test)]
@@ -314,6 +328,110 @@ fn fingerprint_model(model: &Model) -> String {
         .collect()
 }
 
+/// Immutable preparation cost, so a materialization can report which boundary dominated instead of
+/// guessing. Verification is timed separately because it is pure read I/O over already-installed
+/// bytes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PreparationTimings {
+    pub prepare: Duration,
+    pub verify: Duration,
+}
+
+/// One resolved immutable model plus whether this call had to install and verify it.
+#[derive(Clone)]
+pub struct PreparedModel {
+    pub model: Arc<ResolvedModel>,
+    /// False when a result already trusted in this process was reused.
+    pub prepared: bool,
+    pub timings: PreparationTimings,
+}
+
+/// Application-owned cache of models this process has already installed and verified.
+///
+/// A materialization reads and SHA-256 verifies its whole model today, which for ZeroTTS means
+/// hashing gigabytes of ONNX graphs on every runtime load. The key is the manifest fingerprint, so
+/// it tracks immutable content rather than a logical provider id: editing the manifest yields a new
+/// key and a fresh preparation. Integrity is still enforced at every installation and change
+/// boundary; only the redundant re-read of an unchanged, already-trusted tree is skipped.
+#[derive(Default)]
+pub struct PreparedModelCatalog {
+    entries: Mutex<HashMap<(String, String, String), Arc<ResolvedModel>>>,
+}
+
+/// Cumulative cache counters, for diagnostics and regression tests.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PreparedModelCounters {
+    pub preparations: u64,
+    pub cache_hits: u64,
+}
+
+impl PreparedModelCatalog {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn counters(&self) -> PreparedModelCounters {
+        PreparedModelCounters {
+            preparations: PREPARATIONS.load(Ordering::Relaxed),
+            cache_hits: CACHE_HITS.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Resolves one immutable model, preparing and verifying it only when this process has not
+    /// already done so for the same manifest content. A cached entry is only reused while every
+    /// pinned artifact is still present, so a removed tree is never silently trusted.
+    pub fn resolve(
+        &self,
+        manifest_path: &Path,
+        root: &Path,
+        offline: bool,
+        identity: &str,
+        adapter: &str,
+        deployment: &DeploymentConfig,
+    ) -> Result<PreparedModel, ModelError> {
+        let fingerprint = model_fingerprint(manifest_path, identity, adapter)?;
+        let key = (identity.to_owned(), adapter.to_owned(), fingerprint);
+        if let Some(model) = self
+            .entries
+            .lock()
+            .expect("prepared model catalog poisoned")
+            .get(&key)
+            .filter(|model| model.artifacts().all(|path| path.is_file()))
+        {
+            CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+            return Ok(PreparedModel {
+                model: Arc::clone(model),
+                prepared: false,
+                timings: PreparationTimings::default(),
+            });
+        }
+        let preparation =
+            prepare_immutable_timed(manifest_path, root, offline, identity, adapter, deployment)?;
+        PREPARATIONS.fetch_add(1, Ordering::Relaxed);
+        let timings = PreparationTimings {
+            prepare: preparation.prepare,
+            verify: preparation.verify,
+        };
+        let model = Arc::new(preparation.model);
+        // Keep whichever entry won the race: both preparations installed the same content.
+        let cached = {
+            let mut entries = self
+                .entries
+                .lock()
+                .expect("prepared model catalog poisoned");
+            entries
+                .entry(key)
+                .or_insert_with(|| Arc::clone(&model))
+                .clone()
+        };
+        Ok(PreparedModel {
+            model: cached,
+            prepared: true,
+            timings,
+        })
+    }
+}
+
 /// Copies verified artifacts into a content-addressed model tree. Relative paths are preserved
 /// so ONNX external-data siblings remain valid. A live resource never observes a mutable alias.
 pub fn prepare_immutable(
@@ -328,9 +446,6 @@ pub fn prepare_immutable(
         .map(|preparation| preparation.model)
 }
 
-/// Immutable preparation plus the wall-clock cost of each stage, so a materialization can report
-/// which boundary dominated instead of guessing. Verification is timed separately because it is
-/// pure read I/O over already-installed bytes.
 pub struct ImmutablePreparation {
     pub model: ResolvedModel,
     pub prepare: Duration,

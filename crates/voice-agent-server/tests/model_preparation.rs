@@ -759,3 +759,152 @@ fn concurrent_provider_preparation_acquires_each_shared_voice_once() {
     assert!(!root.join("voices/baotrang.bin.transform").exists());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn an_immutable_model_is_prepared_once_and_reused_by_later_materializations() {
+    use sha2::{Digest, Sha256};
+    use voice_agent_server::{
+        config::{DeploymentConfig, ModelAcknowledgement, ModelStoreConfig},
+        models::{PreparedModelCatalog, model_fingerprint},
+    };
+
+    let root = temp_dir("prepared-model-catalog");
+    let bytes = b"catalog-artifact".to_vec();
+    let hash: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    std::fs::create_dir_all(root.join("catalog")).unwrap();
+    std::fs::write(root.join("catalog/artifact.bin"), &bytes).unwrap();
+    let manifest = root.join("manifest.toml");
+    std::fs::write(
+        &manifest,
+        format!(
+            r#"
+[[model]]
+identity = "catalog_default"
+adapter = "catalog_adapter"
+source = "https://example.invalid/catalog"
+revision = "rev-1"
+license = "MIT"
+
+[[model.artifacts]]
+role = "graph"
+remote = "https://example.invalid/graph"
+install_path = "catalog/artifact.bin"
+source_sha256 = "{hash}"
+sha256 = "{hash}"
+transform = "identity"
+"#
+        ),
+    )
+    .unwrap();
+    let deployment = DeploymentConfig {
+        model_manifest: manifest.clone(),
+        models: ModelStoreConfig {
+            root: root.clone(),
+            offline: true,
+            ..ModelStoreConfig::default()
+        },
+        model_acknowledgements: vec![ModelAcknowledgement {
+            model: "catalog_default".into(),
+            revision: "rev-1".into(),
+            license: "MIT".into(),
+        }],
+        ..DeploymentConfig::default()
+    };
+    let fingerprint = model_fingerprint(&manifest, "catalog_default", "catalog_adapter").unwrap();
+
+    let catalog = PreparedModelCatalog::new();
+    let first = catalog
+        .resolve(
+            &manifest,
+            &root,
+            true,
+            "catalog_default",
+            "catalog_adapter",
+            &deployment,
+        )
+        .unwrap();
+    assert!(first.prepared);
+    assert_eq!(first.model.fingerprint(), fingerprint);
+
+    let second = catalog
+        .resolve(
+            &manifest,
+            &root,
+            true,
+            "catalog_default",
+            "catalog_adapter",
+            &deployment,
+        )
+        .unwrap();
+    assert!(
+        !second.prepared,
+        "a second materialization must not re-prepare"
+    );
+    assert_eq!(second.model.fingerprint(), first.model.fingerprint());
+    assert!(
+        std::sync::Arc::ptr_eq(&first.model, &second.model),
+        "a reused preparation must be the same trusted result, not a re-verified copy"
+    );
+
+    // Editing the manifest changes immutable content, so the next resolution must prepare again.
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("revision = \"rev-1\"", "revision = \"rev-2\""),
+    )
+    .unwrap();
+    let changed = catalog
+        .resolve(
+            &manifest,
+            &root,
+            true,
+            "catalog_default",
+            "catalog_adapter",
+            &DeploymentConfig {
+                model_acknowledgements: vec![ModelAcknowledgement {
+                    model: "catalog_default".into(),
+                    revision: "rev-2".into(),
+                    license: "MIT".into(),
+                }],
+                ..deployment.clone()
+            },
+        )
+        .unwrap();
+    assert!(changed.prepared, "changed manifest content must re-prepare");
+    assert_ne!(changed.model.fingerprint(), first.model.fingerprint());
+
+    // A removed pinned tree is never served from the cache.
+    std::fs::remove_file(
+        root.join(".installed")
+            .join(changed.model.fingerprint())
+            .join("catalog/artifact.bin"),
+    )
+    .unwrap();
+    let repaired = catalog
+        .resolve(
+            &manifest,
+            &root,
+            true,
+            "catalog_default",
+            "catalog_adapter",
+            &DeploymentConfig {
+                model_acknowledgements: vec![ModelAcknowledgement {
+                    model: "catalog_default".into(),
+                    revision: "rev-2".into(),
+                    license: "MIT".into(),
+                }],
+                ..deployment.clone()
+            },
+        )
+        .unwrap();
+    assert!(
+        repaired.prepared,
+        "a missing pinned artifact must re-prepare"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}

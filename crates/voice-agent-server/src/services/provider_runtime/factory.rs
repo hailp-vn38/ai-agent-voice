@@ -1,4 +1,6 @@
-use super::{MaterializationTimings, RuntimeError, RuntimeMaterializer, RuntimeResource};
+use super::{
+    MaterializationTimings, PreparedRuntime, RuntimeError, RuntimeMaterializer, RuntimeResource,
+};
 use crate::{
     config::AppConfig,
     database::{DesiredProvider, secrets::SecretResolver},
@@ -27,8 +29,10 @@ use std::{
 pub struct FactoryDiagnostics {
     /// Native resources constructed by `build`.
     pub builds: u64,
-    /// Immutable model preparations performed by `build` and `prepare_artifacts`, combined.
-    pub artifact_preparations: u64,
+    /// Immutable models installed and SHA-verified by this materializer.
+    pub model_preparations: u64,
+    /// Resolutions served from an immutable model this process already trusted.
+    pub model_cache_hits: u64,
 }
 
 pub struct FactoryMaterializer {
@@ -39,8 +43,8 @@ pub struct FactoryMaterializer {
     qualified_manifest_fingerprint: Option<[u8; 32]>,
     onnx_fingerprint: Option<[u8; 32]>,
     kokoro_g2p_fingerprint: Option<[u8; 32]>,
+    prepared_models: crate::models::PreparedModelCatalog,
     builds: AtomicU64,
-    artifact_preparations: AtomicU64,
 }
 impl FactoryMaterializer {
     pub fn new(
@@ -92,16 +96,18 @@ impl FactoryMaterializer {
             qualified_manifest_fingerprint,
             onnx_fingerprint,
             kokoro_g2p_fingerprint,
+            prepared_models: crate::models::PreparedModelCatalog::new(),
             builds: AtomicU64::new(0),
-            artifact_preparations: AtomicU64::new(0),
         })
     }
 
     /// Cumulative materialization counters for this instance. Labels are fixed-cardinality.
     pub fn diagnostics(&self) -> FactoryDiagnostics {
+        let models = self.prepared_models.counters();
         FactoryDiagnostics {
             builds: self.builds.load(Ordering::Relaxed),
-            artifact_preparations: self.artifact_preparations.load(Ordering::Relaxed),
+            model_preparations: models.preparations,
+            model_cache_hits: models.cache_hits,
         }
     }
 }
@@ -113,22 +119,28 @@ impl RuntimeMaterializer for FactoryMaterializer {
         self.verify_qualified_manifest()?;
         self.resource_key_with_fingerprint(snapshot, None)
     }
-    fn prepare_artifacts(&self, snapshot: &DesiredProvider) -> Result<(), RuntimeError> {
+    fn prepare_artifacts(
+        &self,
+        snapshot: &DesiredProvider,
+    ) -> Result<Option<PreparedRuntime>, RuntimeError> {
         self.verify_qualified_manifest()?;
         let Some(plan) = self.local_runtime_plan(snapshot)? else {
-            return Ok(());
+            return Ok(Some(PreparedRuntime::Remote));
         };
-        self.artifact_preparations.fetch_add(1, Ordering::Relaxed);
-        crate::models::prepare_immutable(
-            &self.config.deployment.model_manifest,
-            &self.config.deployment.models.root,
-            self.config.deployment.models.offline,
-            plan.model_identity(),
-            &snapshot.adapter,
-            &self.config.deployment,
-        )
-        .map_err(|_| RuntimeError::ArtifactsNotReady)?;
-        Ok(())
+        Ok(Some(PreparedRuntime::Local {
+            model: self
+                .prepared_models
+                .resolve(
+                    &self.config.deployment.model_manifest,
+                    &self.config.deployment.models.root,
+                    self.config.deployment.models.offline,
+                    plan.model_identity(),
+                    &snapshot.adapter,
+                    &self.config.deployment,
+                )
+                .map_err(|_| RuntimeError::ArtifactsNotReady)?
+                .model,
+        }))
     }
     fn estimated_peak_bytes(&self, snapshot: &DesiredProvider) -> Result<u64, RuntimeError> {
         self.verify_qualified_manifest()?;
@@ -203,6 +215,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
     fn build(
         &self,
         snapshot: &DesiredProvider,
+        prepared: Option<PreparedRuntime>,
         quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         let started = Instant::now();
@@ -218,27 +231,36 @@ impl RuntimeMaterializer for FactoryMaterializer {
         {
             return Err(RuntimeError::Configuration);
         }
+        // Preparation hands over an already-verified model. A build that received nothing resolves
+        // through the same process-owned catalog, so no materialization ever reads and hashes the
+        // same immutable model twice.
         let mut timings = MaterializationTimings::default();
-        let prepared_model = if let Some(plan) = self.local_runtime_plan(snapshot)? {
-            self.artifact_preparations.fetch_add(1, Ordering::Relaxed);
-            let preparation = crate::models::prepare_immutable_timed(
-                &self.config.deployment.model_manifest,
-                &self.config.deployment.models.root,
-                self.config.deployment.models.offline,
-                plan.model_identity(),
-                &snapshot.adapter,
-                &self.config.deployment,
-            )
-            .map_err(|_| RuntimeError::ArtifactsNotReady)?;
-            timings.artifact_prepare = preparation.prepare;
-            timings.artifact_verify = preparation.verify;
-            Some(preparation.model)
-        } else {
-            None
+        let prepared_model = match prepared {
+            Some(PreparedRuntime::Local { model }) => Some(model),
+            Some(PreparedRuntime::Remote) => None,
+            None => match self.local_runtime_plan(snapshot)? {
+                None => None,
+                Some(plan) => {
+                    let resolved = self
+                        .prepared_models
+                        .resolve(
+                            &self.config.deployment.model_manifest,
+                            &self.config.deployment.models.root,
+                            self.config.deployment.models.offline,
+                            plan.model_identity(),
+                            &snapshot.adapter,
+                            &self.config.deployment,
+                        )
+                        .map_err(|_| RuntimeError::ArtifactsNotReady)?;
+                    timings.artifact_prepare = resolved.timings.prepare;
+                    timings.artifact_verify = resolved.timings.verify;
+                    Some(resolved.model)
+                }
+            },
         };
         let resource_key = self.resource_key_with_fingerprint(
             snapshot,
-            prepared_model.as_ref().map(|m| m.fingerprint()),
+            prepared_model.as_ref().map(|model| model.fingerprint()),
         )?;
         let contract_started = Instant::now();
         let catalog = crate::providers::materialize_provider_from_artifacts(
@@ -246,7 +268,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             snapshot,
             self.secrets.as_ref(),
             quota.clone(),
-            prepared_model.as_ref(),
+            prepared_model.as_deref(),
             self.physical_capacity(snapshot)?,
         )
         .map_err(|failure| match failure {
@@ -478,6 +500,8 @@ impl FactoryMaterializer {
         let Some(plan) = self.local_runtime_plan(snapshot)? else {
             return Ok(None);
         };
+        // Without an installed artifact the identity is predicted from the manifest; otherwise the
+        // actual verified model content decides.
         let fingerprint = match installed_fingerprint {
             Some(fingerprint) => fingerprint.to_owned(),
             None => crate::models::model_fingerprint(
@@ -487,25 +511,14 @@ impl FactoryMaterializer {
             )
             .map_err(|_| RuntimeError::ArtifactsNotReady)?,
         };
-        let (onnx, g2p) = if installed_fingerprint.is_some() {
-            (
-                Some(execution_file_fingerprint(
-                    &self.config.runtime.onnx.library,
-                    512 * 1024 * 1024,
-                )?),
-                plan.requires_kokoro_g2p()
-                    .then(|| kokoro_g2p_fingerprint(&self.config.runtime.kokoro_vi.g2p_executable))
-                    .transpose()?,
-            )
-        } else {
-            (
-                self.onnx_fingerprint,
-                plan.requires_kokoro_g2p()
-                    .then_some(self.kokoro_g2p_fingerprint)
-                    .flatten(),
-            )
-        };
-        let onnx = onnx.ok_or(RuntimeError::Configuration)?;
+        // Execution binaries are immutable for the lifetime of this process, so their fingerprints
+        // were captured once at construction. Re-hashing them per build would read the same
+        // unchanged bytes again; replacing a runtime binary requires a server restart.
+        let onnx = self.onnx_fingerprint.ok_or(RuntimeError::Configuration)?;
+        let g2p = plan
+            .requires_kokoro_g2p()
+            .then_some(self.kokoro_g2p_fingerprint)
+            .flatten();
         let threads = usize::try_from(self.config.runtime.onnx.threads_for(&snapshot.adapter))
             .map_err(|_| RuntimeError::Configuration)?;
         let capacity = self.logical_capacity(snapshot)?;

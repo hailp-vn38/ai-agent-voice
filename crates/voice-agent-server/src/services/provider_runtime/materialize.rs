@@ -13,6 +13,20 @@ pub struct MaterializationTimings {
     pub provider_contract: Duration,
 }
 
+/// Immutable inputs one materialization already resolved, handed from preparation to build.
+///
+/// Preparation used to return nothing and let `build` resolve the model again, so a single
+/// materialization read and re-hashed the same artifacts twice. Carrying the result makes that
+/// impossible rather than merely unlikely.
+#[derive(Clone)]
+pub enum PreparedRuntime {
+    /// A remote adapter has no local artifacts to prepare.
+    Remote,
+    Local {
+        model: Arc<crate::models::ResolvedModel>,
+    },
+}
+
 /// Blocking/native factory seam. The manager bounds execution and reserves before build.
 /// A normal error means partial allocations have already acknowledged cleanup; uncertainty
 /// must be reported as Quarantined so accounting and loader capacity remain reserved.
@@ -36,12 +50,20 @@ pub trait RuntimeMaterializer: Send + Sync {
         Ok(None)
     }
     /// Optional artifact preparation runs inside the same bounded, accounted speculative build.
-    fn prepare_artifacts(&self, _: &DesiredProvider) -> Result<(), RuntimeError> {
-        Ok(())
+    /// Whatever it resolves is handed to `build`, so preparation is never repeated there. `None`
+    /// means preparation did not run for this build.
+    fn prepare_artifacts(
+        &self,
+        _: &DesiredProvider,
+    ) -> Result<Option<PreparedRuntime>, RuntimeError> {
+        Ok(None)
     }
+    /// `prepared` carries whatever `prepare_artifacts` already resolved. A build that receives
+    /// `None` must resolve the model itself, but may still reuse an already-trusted process result.
     fn build(
         &self,
         snapshot: &DesiredProvider,
+        prepared: Option<PreparedRuntime>,
         quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError>;
 }

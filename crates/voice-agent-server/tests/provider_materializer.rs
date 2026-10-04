@@ -14,8 +14,8 @@ use voice_agent_server::{
     lifecycle::AdmissionGate,
     providers::{DatabaseRuntimeFailure, materialize_provider},
     services::provider_runtime::{
-        FactoryMaterializer, ProviderRuntimeManager, ResourceKey, RuntimeError, RuntimeLimits,
-        RuntimeMaterializer, RuntimeResource,
+        FactoryMaterializer, PreparedRuntime, ProviderRuntimeManager, ResourceKey, RuntimeError,
+        RuntimeLimits, RuntimeMaterializer, RuntimeResource,
     },
     workers::{ProviderRuntimeAdmission, WorkerSupervisor},
 };
@@ -606,6 +606,7 @@ impl RuntimeMaterializer for CountingLocalFactory {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         self.builds.fetch_add(1, Ordering::SeqCst);
