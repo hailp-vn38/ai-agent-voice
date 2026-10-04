@@ -24,6 +24,9 @@ pub enum PreparedRuntime {
     Remote,
     Local {
         model: Arc<crate::models::ResolvedModel>,
+        /// Cost of the preparation that produced this model. A cache hit reports zero, which is
+        /// exactly what it saved.
+        timings: crate::models::PreparationTimings,
     },
 }
 

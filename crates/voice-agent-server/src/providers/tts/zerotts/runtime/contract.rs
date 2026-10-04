@@ -218,12 +218,6 @@ impl ZeroTtsContract {
             .ok_or_else(|| TtsError::UnsupportedVoice("readiness".into()))
     }
 
-    pub fn readiness_voice_id(&self) -> Result<&str, TtsError> {
-        self.voices
-            .first_id()
-            .ok_or_else(|| TtsError::UnsupportedVoice("readiness".into()))
-    }
-
     pub fn synthesize_codes(&self, text: &str, max_frames: usize) -> Result<CodeFrames, TtsError> {
         ZeroTtsReplica::new(self)?.synthesize(text, max_frames)
     }

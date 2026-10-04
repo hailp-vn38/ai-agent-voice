@@ -658,6 +658,16 @@ delivery_mode="stream"
     .unwrap();
     cfg.deployment.model_manifest =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
+    cfg.deployment.models.root =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models");
+    // Only the catalog gate actually resolves artifacts; it overrides both paths with a synthetic
+    // pack so it never depends on a multi-gigabyte installed model.
+    cfg.deployment.model_acknowledgements =
+        vec![voice_agent_server::config::ModelAcknowledgement {
+            model: "zerotts_default".into(),
+            revision: "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4".into(),
+            license: "MIT; bundled-codec=Apache-2.0".into(),
+        }];
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/onnxruntime/libonnxruntime.dylib");
     cfg
@@ -832,4 +842,118 @@ fn deployment_startup_and_the_manager_agree_on_the_zerotts_replica_count() {
         configured_physical_replicas("chillaudio_ws", serde_json::json!({}), &cfg.runtime),
         None
     );
+}
+
+/// A minimal acknowledged ZeroTTS pack on disk. Preparation only needs a manifest whose identity
+/// the planner recognises plus one installed artifact, so this keeps the gate hermetic instead of
+/// depending on a multi-gigabyte installed model.
+fn synthetic_zerotts_root() -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("voice-agent-zerotts-catalog-{nonce}"));
+    std::fs::create_dir_all(root.join("tts/zerotts")).unwrap();
+    let bytes = b"synthetic-zerotts-artifact".to_vec();
+    let hash: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    std::fs::write(root.join("tts/zerotts/config.json"), &bytes).unwrap();
+    std::fs::write(
+        root.join("manifest.toml"),
+        format!(
+            r#"
+[[model]]
+identity = "zerotts_default"
+adapter = "zerotts_onnx"
+source = "https://example.invalid/zerotts"
+revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
+license = "MIT; bundled-codec=Apache-2.0"
+
+[[model.artifacts]]
+role = "config"
+remote = "https://example.invalid/config"
+install_path = "tts/zerotts/config.json"
+source_sha256 = "{hash}"
+sha256 = "{hash}"
+transform = "identity"
+"#
+        ),
+    )
+    .unwrap();
+    root
+}
+
+#[test]
+fn one_materialization_prepares_its_immutable_model_exactly_once() {
+    let root = synthetic_zerotts_root();
+    let mut cfg = zerotts_config();
+    cfg.deployment.model_manifest = root.join("manifest.toml");
+    cfg.deployment.models.root = root.clone();
+    let builder = FactoryMaterializer::new(
+        Arc::new(cfg),
+        Arc::new(Secrets(AtomicUsize::new(0))),
+        HashMap::from([("zerotts_onnx".into(), 1024)]),
+        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
+    )
+    .unwrap();
+    let row = zerotts_provider(1, "tts-maichi", "maichi", "stream");
+    assert_eq!(
+        builder.diagnostics().model_preparations,
+        0,
+        "nothing prepares a model before it is asked for"
+    );
+
+    let PreparedRuntime::Local { model, timings } = builder
+        .prepare_artifacts(&row)
+        .unwrap()
+        .expect("ZeroTTS has a local model to prepare")
+    else {
+        panic!("ZeroTTS is a local adapter");
+    };
+    let after_first = builder.diagnostics();
+    assert_eq!(
+        after_first.model_preparations, 1,
+        "one materialization installs and verifies its immutable model once"
+    );
+    assert!(timings.verify > std::time::Duration::ZERO);
+    assert_eq!(
+        model.fingerprint(),
+        voice_agent_server::models::model_fingerprint(
+            &root.join("manifest.toml"),
+            "zerotts_default",
+            "zerotts_onnx"
+        )
+        .unwrap(),
+        "preparation must resolve the pinned manifest identity"
+    );
+
+    // A later speculative admission of the same immutable identity reuses the trusted result, so
+    // the second stage of the same materialization never re-reads and re-hashes the model.
+    let PreparedRuntime::Local { timings, .. } = builder
+        .prepare_artifacts(&row)
+        .unwrap()
+        .expect("ZeroTTS has a local model to prepare")
+    else {
+        panic!("ZeroTTS is a local adapter");
+    };
+    let after_second = builder.diagnostics();
+    assert_eq!(
+        after_second.model_preparations, after_first.model_preparations,
+        "an unchanged immutable model must not be prepared again"
+    );
+    assert_eq!(
+        after_second.model_cache_hits,
+        after_first.model_cache_hits + 1,
+        "the second preparation must be served from the catalog"
+    );
+    assert_eq!(
+        timings,
+        Default::default(),
+        "a cache hit must report zero preparation cost rather than hiding it"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
 }

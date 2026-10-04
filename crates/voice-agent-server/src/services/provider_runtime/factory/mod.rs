@@ -16,15 +16,10 @@ use std::{
     time::Instant,
 };
 
-/// Production bridge to the same installed-artifact factories used by deployment startup.
-/// Estimates are deployment-owned worst-case peaks per adapter, including every physical plan
-/// that adapter may materialize, its configured workers, and warmup allocations. The current
-/// deployment schema intentionally budgets one conservative ceiling per adapter rather than an
-/// unqualified per-plan value. A missing estimate refuses allocation, without resolving
-/// credentials. This counter does not claim to enforce an OS memory limit.
-/// Cumulative, process-local materialization counters for one `FactoryMaterializer`. They expose
-/// how often native state was actually rebuilt, which is the only reliable way to prove that a
-/// logical change (voice, template, agent) did not rematerialize a shared physical runtime.
+/// Cumulative materialization counters for one `FactoryMaterializer`. They expose how often native
+/// state was actually rebuilt, which is the only reliable way to prove that a logical change (voice,
+/// template, agent) did not rematerialize a shared physical runtime. Labels are fixed-cardinality.
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FactoryDiagnostics {
     /// Native resources constructed by `build`.
@@ -46,6 +41,13 @@ pub struct FactoryMaterializer {
     prepared_models: crate::models::PreparedModelCatalog,
     builds: AtomicU64,
 }
+
+/// Production bridge to the same installed-artifact factories used by deployment startup.
+/// Estimates are deployment-owned worst-case peaks per adapter, including every physical plan
+/// that adapter may materialize, its configured workers, and warmup allocations. The current
+/// deployment schema intentionally budgets one conservative ceiling per adapter rather than an
+/// unqualified per-plan value. A missing estimate refuses allocation, without resolving
+/// credentials. This counter does not claim to enforce an OS memory limit.
 impl FactoryMaterializer {
     pub fn new(
         config: Arc<AppConfig>,
@@ -127,19 +129,20 @@ impl RuntimeMaterializer for FactoryMaterializer {
         let Some(plan) = self.local_runtime_plan(snapshot)? else {
             return Ok(Some(PreparedRuntime::Remote));
         };
+        let resolved = self
+            .prepared_models
+            .resolve(
+                &self.config.deployment.model_manifest,
+                &self.config.deployment.models.root,
+                self.config.deployment.models.offline,
+                plan.model_identity(),
+                &snapshot.adapter,
+                &self.config.deployment,
+            )
+            .map_err(|_| RuntimeError::ArtifactsNotReady)?;
         Ok(Some(PreparedRuntime::Local {
-            model: self
-                .prepared_models
-                .resolve(
-                    &self.config.deployment.model_manifest,
-                    &self.config.deployment.models.root,
-                    self.config.deployment.models.offline,
-                    plan.model_identity(),
-                    &snapshot.adapter,
-                    &self.config.deployment,
-                )
-                .map_err(|_| RuntimeError::ArtifactsNotReady)?
-                .model,
+            model: resolved.model,
+            timings: resolved.timings,
         }))
     }
     fn estimated_peak_bytes(&self, snapshot: &DesiredProvider) -> Result<u64, RuntimeError> {
@@ -236,7 +239,14 @@ impl RuntimeMaterializer for FactoryMaterializer {
         // same immutable model twice.
         let mut timings = MaterializationTimings::default();
         let prepared_model = match prepared {
-            Some(PreparedRuntime::Local { model }) => Some(model),
+            Some(PreparedRuntime::Local {
+                model,
+                timings: prepared,
+            }) => {
+                timings.artifact_prepare = prepared.prepare;
+                timings.artifact_verify = prepared.verify;
+                Some(model)
+            }
             Some(PreparedRuntime::Remote) => None,
             None => match self.local_runtime_plan(snapshot)? {
                 None => None,
@@ -262,6 +272,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             snapshot,
             prepared_model.as_ref().map(|model| model.fingerprint()),
         )?;
+        let physical_capacity = self.physical_capacity(snapshot)?;
         let contract_started = Instant::now();
         let catalog = crate::providers::materialize_provider_from_artifacts(
             &self.config,
@@ -269,7 +280,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             self.secrets.as_ref(),
             quota.clone(),
             prepared_model.as_deref(),
-            self.physical_capacity(snapshot)?,
+            physical_capacity,
         )
         .map_err(|failure| match failure {
             DatabaseRuntimeFailure::Configuration => RuntimeError::Configuration,
@@ -315,6 +326,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             worker_session_init_ms = readiness.initialization.as_millis(),
             worker_warmup_ms = readiness.warmup.as_millis(),
             runtime_total_ms = started.elapsed().as_millis(),
+            physical_replicas = physical_capacity,
             "provider runtime materialized"
         );
         Ok(Arc::new(OwnedRuntimeResource {
@@ -572,101 +584,4 @@ fn kokoro_g2p_fingerprint(path: &std::path::Path) -> Result<[u8; 32], RuntimeErr
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use crate::{
-        database::DesiredProvider,
-        providers::{LoadedVad, RuntimeCatalog, VadError, VadProvider, VadSession},
-        workers::{ProviderRuntimeAdmission, VadWorkerRuntime, WorkerRuntimeConfig},
-    };
-
-    use super::{OwnedRuntimeResource, RuntimeResource, tts_binding};
-
-    struct TestVad;
-
-    impl VadProvider for TestVad {
-        fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
-            Err(VadError::Failed(
-                "test provider does not open native sessions".into(),
-            ))
-        }
-
-        fn adapter(&self) -> &'static str {
-            "silero_onnx"
-        }
-    }
-
-    #[test]
-    fn shared_silero_resource_materializes_snapshot_endpoint_policy() {
-        let mut catalog = RuntimeCatalog::default();
-        catalog.vad.insert(
-            "owner".into(),
-            LoadedVad {
-                runtime: Arc::new(VadWorkerRuntime::new(
-                    Arc::new(TestVad),
-                    WorkerRuntimeConfig::default(),
-                )),
-                segmenter: Default::default(),
-                pre_roll_samples: 0,
-            },
-        );
-        let resource = OwnedRuntimeResource {
-            readiness: Default::default(),
-            physical_admission: ProviderRuntimeAdmission::new(8, 1),
-            resource_key: None,
-            health_flags: Vec::new(),
-            catalog: Mutex::new(Some(catalog)),
-            capabilities: None,
-            timings: Default::default(),
-        };
-        let snapshot = DesiredProvider {
-            id: 0,
-            key: "logical-vad".into(),
-            kind: "vad".into(),
-            adapter: "silero_onnx".into(),
-            revision: 1,
-            config_json: r#"{"speech_threshold":0.7,"exit_threshold":0.4,"min_speech_ms":250,"end_silence_ms":800,"pre_roll_ms":100}"#.into(),
-            secret_ref: None,
-        };
-
-        let view = resource
-            .runtimes_for(&snapshot, ProviderRuntimeAdmission::new(8, 1))
-            .expect("valid logical VAD view");
-        let loaded = &view.vad["logical-vad"];
-        assert_eq!(loaded.segmenter.speech_threshold, 0.7);
-        assert_eq!(loaded.segmenter.exit_threshold, 0.4);
-        assert_eq!(loaded.segmenter.min_speech_samples, 4_000);
-        assert_eq!(loaded.segmenter.end_silence_samples, 12_800);
-        assert_eq!(loaded.pre_roll_samples, 1_600);
-    }
-
-    #[test]
-    fn a_shared_zerotts_runtime_rebinds_voice_without_changing_physical_state() {
-        // Template A and Template B share one resident ZeroTTS runtime, so the only thing that may
-        // differ between their logical views is the voice binding itself.
-        let snapshot = |voice: &str| DesiredProvider {
-            id: 1,
-            key: format!("tts-{voice}"),
-            kind: "tts".into(),
-            adapter: "zerotts_onnx".into(),
-            revision: 1,
-            config_json: format!(
-                r#"{{"voice":"{voice}","language":"vi-VN","delivery_mode":"stream"}}"#
-            ),
-            secret_ref: None,
-        };
-
-        let maichi = tts_binding(&snapshot("maichi")).expect("maichi is a pinned ZeroTTS voice");
-        let hamy = tts_binding(&snapshot("hamy")).expect("hamy is a pinned ZeroTTS voice");
-        assert_eq!(maichi.voice, "maichi");
-        assert_eq!(hamy.voice, "hamy");
-        assert_eq!(maichi.language, "vi-VN");
-
-        let unsupported = snapshot("not-a-zerotts-voice");
-        assert!(
-            tts_binding(&unsupported).is_none(),
-            "a logical view must never fall back to a registry default voice"
-        );
-    }
-}
+mod tests;

@@ -62,10 +62,6 @@ impl ZeroTtsVoiceRegistry {
         self.voices.values().next().cloned()
     }
 
-    pub fn first_id(&self) -> Option<&str> {
-        self.voices.keys().next().map(String::as_str)
-    }
-
     pub(super) fn load(
         index_path: &Path,
         expected: &BTreeMap<String, PathBuf>,

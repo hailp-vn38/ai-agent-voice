@@ -186,7 +186,7 @@ Tài liệu versioned authoritative pin source, revision, license, upstream arti
 _Avoid_: model folder name, latest model
 
 **Model Preparation**:
-Lifecycle startup resolve Logical Model Identity, acquire artifact đã pin khi cần, verify, transform và atomic install dưới model root trước khi provider build/warmup và server bind.
+Lifecycle resolve Logical Model Identity, acquire artifact đã pin khi cần, verify, transform và atomic install dưới model root trước khi provider build/warmup và server bind. Provider Runtime Manager gọi lại cùng preparation này cho một materialization chưa có Prepared Model, và nhận kết quả qua Prepared Model Catalog thay vì tự verify lại.
 _Avoid_: provider download, lazy model load
 
 **Installed Model Artifact**:
@@ -524,12 +524,28 @@ Identity của một Database Desired Configuration của Provider Instance tạ
 _Avoid_: provider key alone, latest mutable provider, Session Profile Revision
 
 **Runtime Resource Key**:
-Opaque identity của backing runtime resource có resource specification tương đương theo hợp đồng Provider Adapter, bao gồm immutable artifact identity, execution settings và credential scope khi cần. Khác Resource Key public của Admin resource.
+Opaque identity của backing runtime resource có resource specification tương đương theo hợp đồng Provider Adapter, bao gồm immutable artifact identity, execution settings, physical replica count và credential scope khi cần. Khác Resource Key public của Admin resource. Không chứa voice, language, Template hay Agent, vì các đó là logical selection.
 _Avoid_: public provider key, raw JSON digest, path as model identity
+
+**Physical Replica**:
+Một bản sao resident của native engine mà một Runtime Resource sở hữu, khai báo bởi Provider Adapter chứ không phải operator. ZeroTTS giữ đúng một Physical Replica vì mỗi replica commit bốn ONNX session; generic worker concurrency không nhân bản nó. Số này là phần của Runtime Resource Key, nên đổi topology vẫn cô lập resource.
+_Avoid_: engine instance per voice, worker count as replica count, template runtime
+
+**Prepared Model**:
+Immutable model đã được Model Preparation cài đặt và SHA-256 verify thành công, kèm thời gian của từng stage. Một materialization nhận đúng một Prepared Model và chuyển thẳng sang provider build; nó không được resolve lại lần hai.
+_Avoid_: mutable artifact alias, path-only model reference
+
+**Prepared Model Catalog**:
+Application-owned cache của Prepared Model theo manifest fingerprint, sống cùng Provider Runtime Manager. Integrity vẫn được kiểm ở mọi installation/change boundary; chỉ bỏ việc đọc lại và hash một cây pinned đã tin cậy trong process hiện tại bị bỏ qua. Một entry chỉ được dùng lại khi mọi pinned artifact vẫn tồn tại.
+_Avoid_: global model cache, manifest trust without artifact presence check
 
 **Resource Lease**:
 Quyền sử dụng backing runtime resource được Provider Runtime Manager cấp cho Voice Session hoặc operation. Resource không thể unload khi quyền này hay cleanup obligation tương ứng còn tồn tại.
 _Avoid_: inference permit, best-effort Arc count, runtime lookup without ownership
+
+**Bounded Startup Warmup**:
+Readiness pass chạy trên từng retained native worker, chỉ chạm mỗi graph trên hot path đúng một lần và xác minh PCM terminal finite non-empty, rồi reset trước traffic. Không synthesize utterance đầy đủ; gate deterministic full-utterance thuộc Optional Runtime Evidence, không thuộc startup path.
+_Avoid_: full-sentence warmup, warmup as qualification, unbounded readiness loop
 
 **Provider Runtime Manager**:
 Application owner cấp runtime đúng ProviderVersion và giữ lifecycle/backing resources dùng chung trong các budget rõ ràng. Không sở hữu session history, stream state hay mutate Database Desired Configuration.

@@ -24,22 +24,34 @@ fn resident_bytes() -> u64 {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let client_only = args.iter().any(|value| value == "--client-only");
-    let hold_ms = args
-        .iter()
-        .position(|value| value == "--hold-ms")
-        .and_then(|index| args.get(index + 1))
-        .map(|value| value.parse::<u64>())
-        .transpose()?;
-    if args.len() < 3 {
+    let mut options = args.iter();
+    let positional: Vec<_> = options.by_ref().take(3).collect();
+    let mut client_only = false;
+    let mut hold_ms = None;
+    while let Some(flag) = options.next() {
+        match flag.as_str() {
+            "--client-only" => client_only = true,
+            "--hold-ms" => {
+                hold_ms = Some(
+                    options
+                        .next()
+                        .ok_or("--hold-ms requires a millisecond count")?
+                        .parse::<u64>()
+                        .map_err(|_| "--hold-ms requires a millisecond count")?,
+                );
+            }
+            unknown => return Err(format!("unknown option {unknown}").into()),
+        }
+    }
+    if positional.len() != 3 {
         return Err(
             "usage: provider-runtime-bench CONFIG KIND KEY [--client-only] [--hold-ms N]".into(),
         );
     }
     let mut config =
-        AppConfig::parse_and_resolve(&args[0]).map_err(|_| "invalid qualification config")?;
+        AppConfig::parse_and_resolve(&positional[0]).map_err(|_| "invalid qualification config")?;
     config.deployment.models.offline = true;
-    let snapshot = deployment_provider_snapshot(&config, &args[1], &args[2])
+    let snapshot = deployment_provider_snapshot(&config, &positional[1], &positional[2])
         .map_err(|_| "invalid qualification provider")?;
     if !client_only && matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
         return Err("native offline providers only".into());

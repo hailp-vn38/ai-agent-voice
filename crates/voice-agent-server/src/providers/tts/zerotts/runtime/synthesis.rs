@@ -132,7 +132,8 @@ impl ZeroTtsFullPcm {
     /// Runs one bounded readiness pass: every hot-path autoregressive graph plus the full codec
     /// decoder execute once, and the caller still resets the retained worker afterwards.
     pub fn warmup(&mut self, voice: &Array3<f32>) -> Result<WarmupReport, TtsError> {
-        let (frames, autoregressive_frames) = self.replica.warmup_frames(WARMUP_TEXT, voice)?;
+        let frames = self.replica.warmup_frames(WARMUP_TEXT, voice)?;
+        let autoregressive_frames = frames.len();
         let pcm = self.codec.decode(&frames)?;
         validate_warmup_pcm(&pcm)?;
         Ok(WarmupReport {
@@ -244,7 +245,8 @@ impl ZeroTtsPcmStream {
     /// Runs one bounded readiness pass: every hot-path autoregressive graph plus the streaming
     /// codec decoder execute once, and the caller still resets the retained worker afterwards.
     pub fn warmup(&mut self, voice: &Array3<f32>) -> Result<WarmupReport, TtsError> {
-        let (frames, autoregressive_frames) = self.replica.warmup_frames(WARMUP_TEXT, voice)?;
+        let frames = self.replica.warmup_frames(WARMUP_TEXT, voice)?;
+        let autoregressive_frames = frames.len();
         let pcm = self.codec.decode_step(&frames)?;
         validate_warmup_pcm(&pcm)?;
         Ok(WarmupReport {
@@ -326,7 +328,7 @@ impl ZeroTtsReplica {
         &mut self,
         text: &str,
         voice: &Array3<f32>,
-    ) -> Result<(Vec<Vec<i32>>, usize), TtsError> {
+    ) -> Result<Vec<Vec<i32>>, TtsError> {
         let mut frames = Vec::new();
         self.synthesize_with_frame_sink(
             &text::normalize_vi_text(text),
@@ -338,8 +340,7 @@ impl ZeroTtsReplica {
                 Ok(())
             },
         )?;
-        let autoregressive_frames = frames.len();
-        Ok((frames, autoregressive_frames))
+        Ok(frames)
     }
 
     /// One autoregressive step: sample codes for the current position, record them in the turn's
