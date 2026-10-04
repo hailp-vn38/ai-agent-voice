@@ -79,19 +79,22 @@ pub(super) struct AttentionCache {
     pub(super) positions_dtype: String,
 }
 
-pub(super) struct CodecOperation {
+/// Retained streaming codec replica for one native worker. The session outlives every turn; only the
+/// streaming cache below is per-delivery state and is reset before this worker is handed to another
+/// Voice Session.
+pub(super) struct ZeroTtsCodecReplica {
     pub(super) contract: ZeroTtsContract,
     // The step graph is owned by one native worker; only its cache is reset between leases.
     pub(super) decode_step: Session,
-    pub(super) streaming_state: BTreeMap<String, CodecStreamState>,
+    pub(super) streaming_state: BTreeMap<String, ZeroTtsCodecStreamState>,
 }
 
-pub(super) enum CodecStreamState {
+pub(super) enum ZeroTtsCodecStreamState {
     I32 { shape: Vec<usize>, data: Vec<i32> },
     F32 { shape: Vec<usize>, data: Vec<f32> },
 }
 
-impl CodecOperation {
+impl ZeroTtsCodecReplica {
     pub(super) fn new(contract: &ZeroTtsContract) -> Result<Self, TtsError> {
         let graphs = contract
             .graphs
@@ -112,7 +115,7 @@ impl CodecOperation {
 
     pub(super) fn initial_streaming_state(
         contract: &ZeroTtsContract,
-    ) -> Result<BTreeMap<String, CodecStreamState>, TtsError> {
+    ) -> Result<BTreeMap<String, ZeroTtsCodecStreamState>, TtsError> {
         let graphs = contract
             .graphs
             .as_ref()
@@ -121,7 +124,7 @@ impl CodecOperation {
         for offset in &graphs.codec.metadata.streaming_decode.transformer_offsets {
             streaming_state.insert(
                 offset.input_name.clone(),
-                CodecStreamState::I32 {
+                ZeroTtsCodecStreamState::I32 {
                     shape: offset.shape.clone(),
                     data: vec![0; offset.shape.iter().product()],
                 },
@@ -130,7 +133,7 @@ impl CodecOperation {
         for cache in &graphs.codec.metadata.streaming_decode.attention_caches {
             streaming_state.insert(
                 cache.offset_input_name.clone(),
-                CodecStreamState::I32 {
+                ZeroTtsCodecStreamState::I32 {
                     shape: cache.offset_shape.clone(),
                     data: vec![0; cache.offset_shape.iter().product()],
                 },
@@ -141,7 +144,7 @@ impl CodecOperation {
             ] {
                 streaming_state.insert(
                     name.clone(),
-                    CodecStreamState::F32 {
+                    ZeroTtsCodecStreamState::F32 {
                         shape: cache.cache_shape.clone(),
                         data: vec![0.0; cache.cache_shape.iter().product()],
                     },
@@ -149,7 +152,7 @@ impl CodecOperation {
             }
             streaming_state.insert(
                 cache.cached_positions_input_name.clone(),
-                CodecStreamState::I32 {
+                ZeroTtsCodecStreamState::I32 {
                     shape: cache.positions_shape.clone(),
                     data: vec![-1; cache.positions_shape.iter().product()],
                 },
@@ -187,10 +190,10 @@ impl CodecOperation {
         ];
         for (name, state) in &self.streaming_state {
             let value = match state {
-                CodecStreamState::I32 { shape, data } => {
+                ZeroTtsCodecStreamState::I32 { shape, data } => {
                     tensor(shape.clone(), data.clone())?.into()
                 }
-                CodecStreamState::F32 { shape, data } => {
+                ZeroTtsCodecStreamState::F32 { shape, data } => {
                     tensor(shape.clone(), data.clone())?.into()
                 }
             };
@@ -212,13 +215,13 @@ impl CodecOperation {
     pub(super) fn next_streaming_state(
         metadata: &CodecMetadata,
         output: &ort::session::SessionOutputs<'_>,
-    ) -> Result<BTreeMap<String, CodecStreamState>, TtsError> {
+    ) -> Result<BTreeMap<String, ZeroTtsCodecStreamState>, TtsError> {
         let mut state = BTreeMap::new();
         for offset in &metadata.streaming_decode.transformer_offsets {
             let value = i32_tensor(&output[offset.output_name.as_str()])?;
             state.insert(
                 offset.input_name.clone(),
-                CodecStreamState::I32 {
+                ZeroTtsCodecStreamState::I32 {
                     shape: value.shape,
                     data: value.data,
                 },
@@ -228,7 +231,7 @@ impl CodecOperation {
             let offset = i32_tensor(&output[cache.offset_output_name.as_str()])?;
             state.insert(
                 cache.offset_input_name.clone(),
-                CodecStreamState::I32 {
+                ZeroTtsCodecStreamState::I32 {
                     shape: offset.shape,
                     data: offset.data,
                 },
@@ -246,7 +249,7 @@ impl CodecOperation {
                 let value = f32_tensor(&output[output_name.as_str()])?;
                 state.insert(
                     input.clone(),
-                    CodecStreamState::F32 {
+                    ZeroTtsCodecStreamState::F32 {
                         shape: value.shape,
                         data: value.data,
                     },
@@ -255,7 +258,7 @@ impl CodecOperation {
             let positions = i32_tensor(&output[cache.cached_positions_output_name.as_str()])?;
             state.insert(
                 cache.cached_positions_input_name.clone(),
-                CodecStreamState::I32 {
+                ZeroTtsCodecStreamState::I32 {
                     shape: positions.shape,
                     data: positions.data,
                 },
@@ -301,13 +304,15 @@ impl CodecOperation {
     }
 }
 
-/// The full decoder owns one native session per TTS worker in file delivery mode.
-pub(super) struct FullCodecOperation {
+/// The full decoder owns one native session per TTS replica in file delivery mode. Unlike the
+/// streaming replica it keeps no cross-turn cache, so file delivery needs no reset beyond its
+/// first-segment flag.
+pub(super) struct ZeroTtsFileCodecReplica {
     session: Session,
     metadata: CodecMetadata,
 }
 
-impl FullCodecOperation {
+impl ZeroTtsFileCodecReplica {
     pub(super) fn new(contract: &ZeroTtsContract) -> Result<Self, TtsError> {
         let graphs = contract
             .graphs
@@ -342,7 +347,7 @@ impl FullCodecOperation {
                 "audio_code_lengths" => tensor(vec![1], vec![frames.len() as i32])?,
             })
             .map_err(contract_error)?;
-        CodecOperation::mono_pcm(&self.metadata, &output)
+        ZeroTtsCodecReplica::mono_pcm(&self.metadata, &output)
     }
 }
 

@@ -27,7 +27,8 @@ pub(in crate::providers::tts::zerotts) struct Config {
     pub(super) special_tokens: BTreeMap<String, u32>,
 }
 
-/// Immutable values shared by every synthesis operation for one pinned pack.
+/// Immutable values for one pinned pack: the tokenizer, the pinned graph dimensions, the verified
+/// silence frame, and the voice registry shared by every replica and every voice.
 #[derive(Clone)]
 pub struct ZeroTtsContract {
     pub(super) tokenizer: Tokenizer,
@@ -37,7 +38,8 @@ pub struct ZeroTtsContract {
     pub(super) graphs: Option<GraphPaths>,
 }
 
-/// Immutable graph sources. Runtime workers load their own sessions from these paths once.
+/// Immutable graph sources, part of the shared static state. Each physical replica commits its own
+/// sessions from these paths exactly once, when the retained worker is built.
 #[derive(Clone)]
 pub(super) struct GraphPaths {
     pub(super) text_encoder: PathBuf,
@@ -223,7 +225,7 @@ impl ZeroTtsContract {
     }
 
     pub fn synthesize_codes(&self, text: &str, max_frames: usize) -> Result<CodeFrames, TtsError> {
-        ZeroTtsOperation::new(self)?.synthesize(text, max_frames)
+        ZeroTtsReplica::new(self)?.synthesize(text, max_frames)
     }
 
     /// Produces the provider boundary PCM. Codec layout and profile are validated at startup.
@@ -281,8 +283,10 @@ fn load_silence_frame(
         .collect()
 }
 
-/// Codec state is scoped to one SpeechOutput delivery, while every text segment still creates a
-/// fresh ZeroTtsOperation for its AR/KV state.
+/// Ownership of runtime state, in one place: the pinned pack's immutable values and every voice
+/// embedding are shared by all replicas, each replica's four ONNX sessions are retained for the
+/// life of one retained worker, and every AR/KV value plus codec streaming cache belongs to exactly
+/// one SpeechOutput delivery and is dropped with it.
 pub(super) fn tokenizer_special_id(document: &serde_json::Value, token: &str) -> Option<u32> {
     document
         .get("added_tokens")?

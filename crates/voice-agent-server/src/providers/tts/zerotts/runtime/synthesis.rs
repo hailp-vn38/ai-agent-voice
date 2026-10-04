@@ -53,16 +53,16 @@ pub struct WarmupReport {
 
 /// Complete per-segment inference for file delivery. This path never calls decode_step.
 pub struct ZeroTtsFullPcm {
-    operation: ZeroTtsOperation,
-    codec: FullCodecOperation,
+    replica: ZeroTtsReplica,
+    codec: ZeroTtsFileCodecReplica,
     first_segment: bool,
 }
 
 impl ZeroTtsFullPcm {
     pub fn new(contract: &ZeroTtsContract) -> Result<Self, TtsError> {
         Ok(Self {
-            operation: ZeroTtsOperation::new(contract)?,
-            codec: FullCodecOperation::new(contract)?,
+            replica: ZeroTtsReplica::new(contract)?,
+            codec: ZeroTtsFileCodecReplica::new(contract)?,
             first_segment: true,
         })
     }
@@ -73,7 +73,7 @@ impl ZeroTtsFullPcm {
         max_frames: usize,
         cancelled: &AtomicBool,
     ) -> Result<PcmF32Mono, TtsError> {
-        let voice = self.operation.contract.readiness_voice()?;
+        let voice = self.replica.contract.readiness_voice()?;
         self.synthesize_with_voice(text, max_frames, cancelled, &voice)
     }
 
@@ -93,7 +93,7 @@ impl ZeroTtsFullPcm {
         );
         let spoken_text = text::normalize_vi_text(text);
         let mut frames = CodeFrames::default();
-        let eoa = self.operation.synthesize_with_frame_sink(
+        let eoa = self.replica.synthesize_with_frame_sink(
             &spoken_text,
             FrameBudget::UntilEndOfAudio(max_frames),
             voice,
@@ -112,7 +112,7 @@ impl ZeroTtsFullPcm {
             ));
         }
         if !self.first_segment {
-            let silence = &self.operation.contract.silence_frame;
+            let silence = &self.replica.contract.silence_frame;
             frames.frames.splice(
                 ..0,
                 std::iter::repeat_n(silence.clone(), INTER_SEGMENT_SILENCE_FRAMES),
@@ -132,7 +132,7 @@ impl ZeroTtsFullPcm {
     /// Runs one bounded readiness pass: every hot-path autoregressive graph plus the full codec
     /// decoder execute once, and the caller still resets the retained worker afterwards.
     pub fn warmup(&mut self, voice: &Array3<f32>) -> Result<WarmupReport, TtsError> {
-        let (frames, autoregressive_frames) = self.operation.warmup_frames(WARMUP_TEXT, voice)?;
+        let (frames, autoregressive_frames) = self.replica.warmup_frames(WARMUP_TEXT, voice)?;
         let pcm = self.codec.decode(&frames)?;
         validate_warmup_pcm(&pcm)?;
         Ok(WarmupReport {
@@ -148,16 +148,16 @@ impl ZeroTtsFullPcm {
 }
 
 pub struct ZeroTtsPcmStream {
-    operation: ZeroTtsOperation,
-    codec: CodecOperation,
+    replica: ZeroTtsReplica,
+    codec: ZeroTtsCodecReplica,
     first_segment: bool,
 }
 
 impl ZeroTtsPcmStream {
     pub fn new(contract: &ZeroTtsContract) -> Result<Self, TtsError> {
         Ok(Self {
-            operation: ZeroTtsOperation::new(contract)?,
-            codec: CodecOperation::new(contract)?,
+            replica: ZeroTtsReplica::new(contract)?,
+            codec: ZeroTtsCodecReplica::new(contract)?,
             first_segment: true,
         })
     }
@@ -168,7 +168,7 @@ impl ZeroTtsPcmStream {
         max_frames: usize,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
-        let voice = self.operation.contract.readiness_voice()?;
+        let voice = self.replica.contract.readiness_voice()?;
         self.synthesize_with_voice(text, max_frames, &voice, on_pcm)
     }
 
@@ -192,11 +192,11 @@ impl ZeroTtsPcmStream {
         };
         if !self.first_segment {
             let silence =
-                vec![self.operation.contract.silence_frame.clone(); INTER_SEGMENT_SILENCE_FRAMES];
+                vec![self.replica.contract.silence_frame.clone(); INTER_SEGMENT_SILENCE_FRAMES];
             on_pcm(self.codec.decode_step(&silence)?)?;
         }
         let ramp = self.first_segment;
-        let result = self.operation.synthesize_with_frame_sink(
+        let result = self.replica.synthesize_with_frame_sink(
             &spoken_text,
             FrameBudget::UntilEndOfAudio(max_frames),
             voice,
@@ -244,7 +244,7 @@ impl ZeroTtsPcmStream {
     /// Runs one bounded readiness pass: every hot-path autoregressive graph plus the streaming
     /// codec decoder execute once, and the caller still resets the retained worker afterwards.
     pub fn warmup(&mut self, voice: &Array3<f32>) -> Result<WarmupReport, TtsError> {
-        let (frames, autoregressive_frames) = self.operation.warmup_frames(WARMUP_TEXT, voice)?;
+        let (frames, autoregressive_frames) = self.replica.warmup_frames(WARMUP_TEXT, voice)?;
         let pcm = self.codec.decode_step(&frames)?;
         validate_warmup_pcm(&pcm)?;
         Ok(WarmupReport {
@@ -263,15 +263,18 @@ impl ZeroTtsPcmStream {
     }
 }
 
-/// Mutable ONNX sessions and turn-local decode state for exactly one synthesis operation.
-pub(super) struct ZeroTtsOperation {
+/// One physical replica of the ZeroTTS autoregressive engine: the three retained AR sessions plus
+/// the shared immutable contract. Created once when the physical runtime is materialized and kept
+/// for every turn that worker serves. Only `ZeroTtsTurnState` is per-turn; nothing here is rebuilt
+/// when a new turn or a new voice arrives.
+pub(super) struct ZeroTtsReplica {
     pub(super) contract: ZeroTtsContract,
     pub(super) text_encoder: Session,
     pub(super) prefix_step: Session,
     pub(super) local_frame_decode: Session,
 }
 
-impl ZeroTtsOperation {
+impl ZeroTtsReplica {
     pub(super) fn new(contract: &ZeroTtsContract) -> Result<Self, TtsError> {
         let graphs = contract
             .graphs
