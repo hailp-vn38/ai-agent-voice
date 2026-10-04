@@ -40,12 +40,15 @@ trả 403 khi enrollment tắt. Xem [flow database và enrollment](docs/flows/08
 để chuyển cấu hình cũ và chuẩn bị dữ liệu.
 
 Server tự tạo thư mục cha của SQLite (mặc định `data/`) trước khi mở database và
-chạy migration. Server materialize provider mặc định của cả bốn loại trước khi bind, nên
-mọi model local cần thiết đều được tải về `models/<KIND>/<provider>` và runtime đã resident
-trước khi nhận request đầu tiên. File đã tồn tại và khác 0 byte thì dùng ngay, không gọi
-mạng và không kiểm tra checksum. Provider có `preload = true` cũng được nạp ở bước này; các
-provider còn lại trong database chỉ được materialize khi Template hoặc Session dùng đến.
-ZeroTTS tải **toàn bộ** voice nó hỗ trợ, không chỉ voice đang cấu hình.
+chạy migration. Trước khi bind, server kiểm tra model của **mọi** provider local mà
+deployment khai báo — không chỉ provider mặc định — và tải về file nào còn thiếu vào
+`models/<KIND>/<provider>`. File đã tồn tại và khác 0 byte thì dùng ngay, không gọi mạng và
+không kiểm tra checksum. Provider remote không có file model nào nên được bỏ qua. ZeroTTS
+tải **toàn bộ** voice nó hỗ trợ, không chỉ voice đang cấu hình.
+
+Sau đó server materialize provider mặc định của cả bốn loại (và mọi TTS `preload = true`)
+để runtime đã resident trước request đầu tiên. Các provider còn lại trong database chỉ được
+materialize khi Template hoặc Session dùng đến.
 
 Nếu một provider mặc định không tải được, startup fail thay vì để request đầu tiên gặp lỗi.
 Thời gian tải nằm trong `provider_runtime.startup_timeout_ms`, nên tăng hạn mức này khi deploy

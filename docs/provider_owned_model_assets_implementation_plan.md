@@ -47,6 +47,13 @@ Hai việc phát sinh trong lúc code, không nằm trong kế hoạch gốc:
 Đã kiểm chứng bằng cold start thật: cwd không có `models/`, chạy server → tải 5 file (85 MB)
 cho silero + gipformer, materialize đủ 4 provider mặc định, rồi mới bind. Chạy lần hai →
 5 asset `reusing`, 0 download.
+
+- **Sau đó operator báo TTS không tải lúc start.** Nguyên nhân: `provider_defaults.tts` là
+  `chillaudio_ws` (remote, không có file), còn `zerotts_onnx`/`kokoro_vi_onnx` chỉ là instance
+  không phải default với `preload = false`. Yêu cầu thật: check và tải **mọi** provider local
+  đã khai báo, không cần cờ `preload`. Đã thêm `ensure_declared_assets()` chạy trước khi bind
+  trên cả hai startup path. Kiểm chứng: xóa `models/tts`, start → 37 file / 1.2 GB tải về
+  (13 file reuse của VAD/ASR), materialize provider mặc định, rồi bind.
 - **`load_local` (unmanaged path) phải `ensure_assets()` trước khi build.** Path này không có
   Provider Runtime Manager, nên không có chỗ nào khác để tải. Đây là lý do `ensure_assets` tồn
   tại ở cả hai path.

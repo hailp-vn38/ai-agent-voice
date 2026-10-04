@@ -193,11 +193,18 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     let database = Database::connect(&config.database).await?;
     let (plan, rows) = read_load_plan(&config, &database).await?;
     config.validate().map_err(|_| BootstrapError::Provider)?;
+    // Every local provider this deployment declares gets its model files on disk before the server
+    // binds, whether or not its runtime is built yet. Files already present are reused, so this
+    // costs nothing after the first start and never hashes a model.
+    let declared = config.clone();
+    tokio::task::spawn_blocking(move || ensure_declared_assets(&declared))
+        .await
+        .map_err(|_| BootstrapError::Provider)?
+        .map_err(|_| BootstrapError::Provider)?;
     if config.provider_runtime.is_some() {
         return managed_startup(config, database, secret_resolver, lifecycle).await;
     }
-    // Nothing downloads here. A provider installs its own model files when the runtime manager
-    // materializes it, so a deployment starts whether or not the model directory is populated.
+    // Provider runtimes are built here; their model files are already on disk from the pass above.
     let startup_config = config.clone();
     let startup_secret_resolver = Arc::clone(&secret_resolver);
     let (loaded, materialization) = tokio::task::spawn_blocking(move || {
@@ -224,6 +231,61 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     );
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
+}
+
+/// Installs the model files of every local provider the deployment declares.
+///
+/// This is the whole of startup's model handling: each provider knows its own files, and a file
+/// that exists with content is reused without a request. Nothing is scanned, hashed or checksummed,
+/// and a provider that publishes no files — every remote adapter — is skipped.
+///
+/// A declared provider whose files cannot be installed is a startup failure. The operator asked
+/// for that model by configuring it, so finding out at boot beats discovering it on a request.
+fn ensure_declared_assets(config: &AppConfig) -> Result<(), crate::providers::ProviderLoadError> {
+    let registry = crate::providers::compiled_provider_adapter_registry();
+    let mut ensured: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for adapter in configured_local_adapters(config) {
+        // Several instances may share one adapter; one ensure covers them all.
+        if !ensured.insert(adapter) {
+            continue;
+        }
+        let Some(assets) = registry.assets(adapter) else {
+            continue;
+        };
+        tracing::info!(adapter, "checking provider model files");
+        assets.ensure_assets()?;
+    }
+    Ok(())
+}
+
+/// Adapters of every provider instance the deployment configures, deduplicated by adapter.
+fn configured_local_adapters(config: &AppConfig) -> Vec<&'static str> {
+    let mut adapters: Vec<&'static str> = config
+        .providers
+        .vad
+        .instances
+        .values()
+        .map(|instance| instance.adapter())
+        .chain(
+            config
+                .providers
+                .asr
+                .instances
+                .values()
+                .map(|instance| instance.adapter()),
+        )
+        .chain(
+            config
+                .providers
+                .tts
+                .instances
+                .values()
+                .map(|instance| instance.adapter()),
+        )
+        .collect();
+    adapters.sort_unstable();
+    adapters.dedup();
+    adapters
 }
 
 /// Providers that must be ready before the server binds.

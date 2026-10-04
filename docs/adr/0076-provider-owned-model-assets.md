@@ -70,11 +70,22 @@ chính là voice mà provider nạp được. Cùng một luận đó áp dụng
 
 ## Consequences
 
-Generic startup không scan và không verify model, nhưng nó **có** materialize provider mặc
-định của cả bốn loại trước khi bind. Mỗi provider tải đúng các file mà nó khai báo, nên
-deploy khởi động vào trạng thái đã biết: model của provider mặc định có mặt và runtime đã
-resident. Một provider mặc định không tải được là startup failure, không phải một lỗi để
-request đầu tiên mới gặp.
+Generic startup không scan và không verify model, nhưng nó **có** cài model của mọi provider
+local mà deployment khai báo trước khi bind: duyệt các instance VAD/ASR/TTS trong TOML, rồi
+gọi `ensure_assets()` của từng adapter. File có sẵn thì reuse, file thiếu thì tải, adapter
+không khai báo file nào (mọi provider remote) thì bỏ qua.
+
+Việc này tách hai khái niệm vốn bị gộp:
+
+- **Cài file** là việc của mọi provider local đã cấu hình, và diễn ra lúc boot. Không có cờ
+  nào bật/tắt nó.
+- **Dựng runtime** là việc của provider mặc định và các TTS `preload = true`. Phần còn lại
+  lazy.
+
+Lý do tách: một deployment khai báo `zerotts_onnx` nghĩa là operator đã quyết định dùng model
+đó. Tải nó lúc boot rẻ hơn để request đầu tiên phát hiện ra mình thiếu 1 GB. Một provider
+local khai báo mà không cài được file là startup failure — biết lúc boot tốt hơn biết giữa
+lúc chạy.
 
 Lý do giữ hành vi này thay vì để mọi provider lazy: một deployment chỉ "thành công" khi nó
 phục vụ được. Trì hoãn tải xuống request đầu tiên biến một lần cài đặt thành một timeout
