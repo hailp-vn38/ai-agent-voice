@@ -22,7 +22,7 @@ Core V1:
 - Abort/barge-in/cancellation.
 - Device MCP (`initialize`, `tools/list`, `tools/call`).
 
-Không nằm trong V1: manager web/mobile, multi-user, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory.
+Không nằm trong Core V1 như một dependency runtime bắt buộc: manager web/mobile, multi-user, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory. Admin Web tại `apps/admin-web/` là công cụ quản trị tùy chọn, giao tiếp với server chỉ qua Admin API công khai và không sở hữu Voice Session state.
 
 ## Chạy nhanh Protocol V1
 
@@ -47,6 +47,22 @@ provider runtime, nên thời gian tải không tính vào `provider_runtime.sta
 Các instance local trong TOML được chuẩn bị xuống đĩa; provider trong DB chỉ được
 chuẩn bị khi đang được Template sử dụng. Model trùng nhau được gộp. Model bắt buộc
 lỗi sẽ chặn startup; model tùy chọn lỗi được ghi log mà không chặn server.
+
+## Admin Web tùy chọn
+
+Vue Admin nằm trong workspace tại [`apps/admin-web/`](apps/admin-web/). Khởi động
+server với `api.enabled=true`, sau đó ở terminal khác chạy:
+
+```bash
+cd apps/admin-web
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Mở `http://127.0.0.1:5173`, rồi nhập admin bearer token vào form kết nối. Vite
+proxy các request `/api/admin/*` đến server tại `http://127.0.0.1:8000` theo mặc
+định; xem [hướng dẫn đầy đủ của Admin Web](apps/admin-web/README.md).
 
 Downloader dùng buffer 64 KiB, timeout kết nối 15 giây, timeout 15 phút cho mỗi
 lần tải và tối đa 3 lần thử cho lỗi mạng/HTTP tạm thời. File tạm chỉ được publish

@@ -15,7 +15,7 @@ import TemplateConfigurationPanel from '@/components/templates/TemplateConfigura
 import TemplateFormDialog from '@/components/templates/TemplateFormDialog.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import type { AgentTemplate, ProviderInstance, ProviderType } from '@/domain/admin'
+import type { Agent, AgentTemplate, ProviderInstance, ProviderType } from '@/domain/admin'
 import { useAdminStore, type TemplateSetupInput } from '@/stores/admin'
 
 const store = useAdminStore()
@@ -36,10 +36,17 @@ const selectedProvider = ref<ProviderInstance | undefined>()
 const providerEditOpen = ref(false)
 const editingProvider = ref<ProviderInstance | undefined>()
 const deleteTarget = ref<AgentTemplate | undefined>()
+const unlinkAgentTarget = ref<Agent | undefined>()
 const deleteOpen = computed({
   get: () => Boolean(deleteTarget.value),
   set: (value: boolean) => {
     if (!value) deleteTarget.value = undefined
+  },
+})
+const unlinkOpen = computed({
+  get: () => Boolean(unlinkAgentTarget.value),
+  set: (value: boolean) => {
+    if (!value) unlinkAgentTarget.value = undefined
   },
 })
 
@@ -124,8 +131,15 @@ async function linkTemplate(agentId: string, setAsDefault: boolean) {
   if (setAsDefault) await store.setAgentDefaultTemplate(agentId, templateId.value)
 }
 
-function unlinkTemplate(agentId: string) {
-  store.unlinkTemplateFromAgent(templateId.value, agentId)
+function requestUnlinkTemplate(agentId: string) {
+  unlinkAgentTarget.value = agents.value.find((agent) => agent.id === agentId)
+}
+
+async function confirmUnlinkTemplate() {
+  const agent = unlinkAgentTarget.value
+  if (!agent) return
+  await store.unlinkTemplateFromAgent(templateId.value, agent.id)
+  unlinkAgentTarget.value = undefined
 }
 
 /** Arrives on the agent with this template already selected. */
@@ -215,7 +229,7 @@ function isDefaultForAgent(agentId: string) {
       :device-count-by-agent="deviceCountByAgent"
       :is-default="isDefaultForAgent"
       @view-agent="viewAgent"
-      @unlink="unlinkTemplate"
+      @unlink="requestUnlinkTemplate"
     />
 
     <TemplateFormDialog
@@ -257,6 +271,16 @@ function isDefaultForAgent(agentId: string) {
         {{ t('templateDelete.blockedDevices', { count: deleteDeviceCount }) }}
       </p>
       <p v-else>{{ t('templateDelete.clean') }}</p>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      v-model="unlinkOpen"
+      :title="t('templateUnlink.title', { name: template.name })"
+      :confirm-label="t('templateUnlink.submit')"
+      tone="danger"
+      @confirm="confirmUnlinkTemplate"
+    >
+      <p>{{ t('templateUnlink.description', { name: template.name, agent: unlinkAgentTarget?.name ?? '' }) }}</p>
     </ConfirmDialog>
   </div>
 

@@ -240,6 +240,9 @@ export const en = {
   'templateUsage.linkedTemplate': 'Linked template',
   'templateUsage.viewAgent': 'View agent',
   'templateUsage.unlink': 'Unlink from agent',
+  'templateUnlink.title': 'Remove {name} from this agent?',
+  'templateUnlink.description': '{name} will no longer be available to {agent}. This does not delete the template.',
+  'templateUnlink.submit': 'Remove template',
   'templateUsage.unused': 'Not used by any agent',
   'templateUsage.unusedDescription':
     'Link it to an agent to make it selectable in that agent\u2019s template switcher.',
@@ -647,6 +650,9 @@ export const vi: Record<MessageKey, MessageValue> = {
   'templateUsage.linkedTemplate': 'Template đã link',
   'templateUsage.viewAgent': 'Xem agent',
   'templateUsage.unlink': 'Bỏ link khỏi agent',
+  'templateUnlink.title': 'Xóa {name} khỏi agent này?',
+  'templateUnlink.description': '{name} sẽ không còn khả dụng cho {agent}. Template vẫn được giữ trong catalog.',
+  'templateUnlink.submit': 'Xóa khỏi agent',
   'templateUsage.unused': 'Chưa agent nào dùng',
   'templateUsage.unusedDescription':
     'Link cho một agent để template xuất hiện trong bộ chuyển template của agent đó.',

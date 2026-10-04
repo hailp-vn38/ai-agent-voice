@@ -20,7 +20,7 @@ Standalone management UI for `voice-agent-server`. The Vue application is outsid
 ## Start
 
 ```bash
-cd web
+cd apps/admin-web
 cp .env.example .env
 npm install
 npm run dev

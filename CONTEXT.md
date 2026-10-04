@@ -515,6 +515,10 @@ _Avoid_: per-session-only cap, unbounded cross-session fan-out, permit held duri
 Surface quản trị tùy chọn cho Database Desired Configuration và Persistent Transcript, chỉ mount khi được enable và luôn dùng credential riêng với Voice/OTA.
 _Avoid_: Voice API, trusted-LAN anonymous endpoint, shared OTA token
 
+**Admin Web**:
+Ứng dụng Vue tùy chọn tại `apps/admin-web/` quản lý server qua Admin API công khai. Nó sở hữu trình bày và browser-side read model, nhưng không import Rust internal module, không đọc hoặc sửa `config.toml` trực tiếp, và không sở hữu Voice Session state. Khi Admin API không được enable hoặc bearer token không hợp lệ, UI không có quyền thay thế bằng một control path khác.
+_Avoid_: server module, Admin API handler, direct SQLite/config editor, Voice Session owner
+
 **Exchange Atom**:
 Đơn vị Dialogue History không thể tách khi dựng prompt hoặc eviction: một user turn với các Completed Tool Round theo thứ tự, mỗi round gồm các cặp assistant tool call/tool result đã terminal, và Delivered Assistant Response nếu writer đóng turn Normal. Tool call chưa có terminal result không thuộc atom; turn lỗi trước tool đầu tiên là user-only atom.
 _Avoid_: message, partial exchange

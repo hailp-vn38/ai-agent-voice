@@ -96,6 +96,7 @@ const editingProvider = ref<ProviderInstance | undefined>()
 const deleteAgentOpen = ref(false)
 const deleteDeviceTarget = ref<Device | undefined>()
 const deleteTemplateTarget = ref<AgentTemplate | undefined>()
+const unlinkTemplateTarget = ref<AgentTemplate | undefined>()
 
 const deleteDeviceOpen = computed({
   get: () => Boolean(deleteDeviceTarget.value),
@@ -108,6 +109,13 @@ const deleteTemplateOpen = computed({
   get: () => Boolean(deleteTemplateTarget.value),
   set: (value: boolean) => {
     if (!value) deleteTemplateTarget.value = undefined
+  },
+})
+
+const unlinkTemplateOpen = computed({
+  get: () => Boolean(unlinkTemplateTarget.value),
+  set: (value: boolean) => {
+    if (!value) unlinkTemplateTarget.value = undefined
   },
 })
 
@@ -244,9 +252,15 @@ async function linkExistingTemplate(templateId: string, setAsDefault: boolean) {
   selectTemplate(templateId)
 }
 
-function unlinkSelectedTemplateFromAgent() {
-  if (!selectedTemplate.value || !agent.value) return
-  store.unlinkTemplateFromAgent(selectedTemplate.value.id, agent.value.id)
+function requestUnlinkSelectedTemplateFromAgent() {
+  if (selectedTemplate.value) unlinkTemplateTarget.value = selectedTemplate.value
+}
+
+async function confirmUnlinkTemplateFromAgent() {
+  const target = unlinkTemplateTarget.value
+  if (!target || !agent.value) return
+  await store.unlinkTemplateFromAgent(target.id, agent.value.id)
+  unlinkTemplateTarget.value = undefined
 }
 
 function linkTemplateProvider(type: ProviderType, providerId: string) {
@@ -370,7 +384,7 @@ async function confirmDeleteDevice() {
           @edit-template="openEditTemplate"
           @link-to-agent="linkTemplateOpen = true"
           @copy-template="copyOpen = true"
-          @unlink-from-agent="unlinkSelectedTemplateFromAgent"
+          @unlink-from-agent="requestUnlinkSelectedTemplateFromAgent"
           @delete-template="requestDeleteTemplate"
           @save-prompt="savePrompt"
         />
@@ -392,7 +406,7 @@ async function confirmDeleteDevice() {
           size="sm"
           variant="outline"
           :disabled="agent.defaultTemplateId === selectedTemplate.id"
-          @click="unlinkSelectedTemplateFromAgent"
+          @click="requestUnlinkSelectedTemplateFromAgent"
         >
           {{ t('agentDetail.unlink') }}
         </Button>
@@ -517,6 +531,16 @@ async function confirmDeleteDevice() {
         {{ t('templateDelete.blockedDevices', { count: deleteTemplateDeviceCount }) }}
       </p>
       <p v-else>{{ t('templateDelete.cleanAgentDetail') }}</p>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      v-model="unlinkTemplateOpen"
+      :title="t('templateUnlink.title', { name: unlinkTemplateTarget?.name ?? '' })"
+      :confirm-label="t('templateUnlink.submit')"
+      tone="danger"
+      @confirm="confirmUnlinkTemplateFromAgent"
+    >
+      <p>{{ t('templateUnlink.description', { name: unlinkTemplateTarget?.name ?? '', agent: agent.name }) }}</p>
     </ConfirmDialog>
   </div>
 
