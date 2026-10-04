@@ -1589,23 +1589,41 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         .unwrap();
     assert_eq!(missing_if_match.status(), StatusCode::BAD_REQUEST);
 
-    // The first assignment took the only default slot, and `unlink` refuses to remove an Agent's
-    // default because doing so would leave it unable to admit anything. Promoting a second
-    // Template is what makes `quiet` an ordinary candidate again.
-    let blocked_default_unlink = client
+    // Agents may have no Templates. Unlinking their sole default clears the assignment and lets
+    // subsequent sessions resolve through the server defaults.
+    let unlinked_default = client
         .delete(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
         .header("if-match", "\"2\"")
         .send()
         .await
         .unwrap();
-    assert_eq!(blocked_default_unlink.status(), StatusCode::CONFLICT);
+    assert_eq!(unlinked_default.status(), StatusCode::OK);
     assert_eq!(
-        blocked_default_unlink
+        client
+            .get(format!("{agents}/kitchen/templates"))
+            .bearer_auth(auth)
+            .send()
+            .await
+            .unwrap()
             .json::<serde_json::Value>()
             .await
-            .unwrap()["error"]["code"],
-        "default_template_conflict"
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        client
+            .put(format!("{agents}/kitchen/templates/quiet"))
+            .bearer_auth(auth)
+            .header("if-match", "\"3\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
     );
     assert_eq!(
         client
@@ -1620,8 +1638,20 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
             .status(),
         StatusCode::CREATED
     );
-    // `set_default_template` only accepts a structurally complete Template, so `loud` needs the
-    // same four bindings `quiet` has before it can hold the default slot.
+    // A default Template may inherit missing provider slots from server defaults.
+    let default_loud = client
+        .put(format!("{agents}/kitchen/default-template/loud"))
+        .bearer_auth(auth)
+        .header("if-match", "\"4\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        default_loud.status(),
+        StatusCode::OK,
+        "promoting a partial template failed: {:?}",
+        default_loud.text().await
+    );
     for (revision, (kind, provider_key)) in (1..).zip([
         ("vad", "vad_main"),
         ("asr", "asr_main"),
@@ -1641,37 +1671,10 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
             StatusCode::OK
         );
     }
-    let assign_loud = client
-        .put(format!("{agents}/kitchen/templates/loud"))
-        .bearer_auth(auth)
-        .header("if-match", "\"2\"")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        assign_loud.status(),
-        StatusCode::OK,
-        "assigning the second template failed: {:?}",
-        assign_loud.text().await
-    );
-    let default_loud = client
-        .put(format!("{agents}/kitchen/default-template/loud"))
-        .bearer_auth(auth)
-        .header("if-match", "\"3\"")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        default_loud.status(),
-        StatusCode::OK,
-        "promoting the second template failed: {:?}",
-        default_loud.text().await
-    );
-
     let unlinked = client
         .delete(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"4\"")
+        .header("if-match", "\"5\"")
         .send()
         .await
         .unwrap();
@@ -1695,7 +1698,7 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
     let reassigned = client
         .put(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"5\"")
+        .header("if-match", "\"6\"")
         .send()
         .await
         .unwrap();
@@ -1703,7 +1706,7 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
     let stale_unlink = client
         .delete(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"5\"")
+        .header("if-match", "\"6\"")
         .send()
         .await
         .unwrap();
@@ -1715,23 +1718,19 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
     let defaulted = client
         .put(format!("{agents}/kitchen/default-template/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"6\"")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(defaulted.status(), StatusCode::OK);
-    let default_conflict = client
-        .delete(format!("{agents}/kitchen/templates/quiet"))
-        .bearer_auth(auth)
         .header("if-match", "\"7\"")
         .send()
         .await
         .unwrap();
-    assert_eq!(default_conflict.status(), StatusCode::CONFLICT);
-    assert_eq!(
-        default_conflict.json::<serde_json::Value>().await.unwrap()["error"]["code"],
-        "default_template_conflict"
-    );
+    assert_eq!(defaulted.status(), StatusCode::OK);
+    let unlinked_default = client
+        .delete(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"8\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unlinked_default.status(), StatusCode::OK);
 
     let missing_binding_if_match = client
         .delete(format!("{templates}/quiet/providers/llm"))
@@ -2400,8 +2399,8 @@ async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
         );
     }
 
-    // Promotion is gated on the Template being structurally complete, exactly as
-    // `set_default_template` requires, so both candidates need all four bindings first.
+    // `assign_template` promotes a first assignment only after it is structurally complete;
+    // explicit `set_default_template` may instead rely on server-default provider slots.
     for (provider_key, kind, adapter, config_json) in [
         ("vad_main", "vad", "silero_onnx", serde_json::json!({})),
         (

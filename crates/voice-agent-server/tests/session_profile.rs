@@ -405,8 +405,7 @@ async fn assign(pool: &SqlitePool, template_id: i64, is_default: bool, enabled: 
     .unwrap();
 }
 
-/// Binds the four required slots.  An omitted kind leaves that slot unbound, which must make the
-/// Template invalid rather than partially defaulted.
+/// Binds explicit provider slots. Omitted kinds inherit their server defaults at admission.
 async fn bind(pool: &SqlitePool, template_id: i64, kinds: &[(&str, &str)]) {
     for (kind, key) in kinds {
         let provider_id: i64 = match sqlx::query_scalar("SELECT id FROM providers WHERE key = ?")
@@ -651,7 +650,7 @@ async fn a_disabled_default_template_fails_closed() {
 }
 
 #[tokio::test]
-async fn a_default_template_missing_a_binding_never_mixes_in_defaults() {
+async fn a_default_template_missing_a_binding_uses_the_server_default_for_that_slot() {
     let (base, url, task) = start(with_server_default_prompt(config(
         "127.0.0.1:0".parse().unwrap(),
         database_url(),
@@ -667,8 +666,11 @@ async fn a_default_template_missing_a_binding_never_mixes_in_defaults() {
     .await;
     assign(&pool, template, true, true).await;
 
-    let error = connect_async(request(&base)).await.unwrap_err();
-    assert_eq!(rejected_status(error), StatusCode::SERVICE_UNAVAILABLE);
+    let mut socket = admit(&base).await;
+    assert_eq!(
+        speak_once(&mut socket).await,
+        format!("default-llm[{TEMPLATE_PROMPT_V1}]")
+    );
     task.abort();
 }
 
@@ -1478,6 +1480,95 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
             ),
         )))
     }
+}
+
+#[tokio::test]
+async fn managed_template_acquires_deployment_runtimes_for_missing_slots() {
+    use voice_agent_server::{
+        database::{AdmittedAssignment, AdmittedProviderBinding, DesiredProvider},
+        services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits},
+        session::resolve_managed_session_profile,
+    };
+
+    let state = AppState::from_provider_set(
+        config("127.0.0.1:0".parse().unwrap(), database_url()),
+        Arc::new(ProviderSet::with_all(
+            Arc::new(SilentVad),
+            Arc::new(FinalAsr),
+            Arc::new(EchoLlm {
+                label: "default-llm",
+            }),
+            Arc::new(ShortTts),
+        )),
+    );
+    let builds = Arc::new(Mutex::new(Vec::new()));
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 0,
+            max_waiters: 8,
+            max_resident_bytes: 8,
+            max_resources: 8,
+            max_version_entries: 8,
+            admission_timeout_ms: 2000,
+            failure_cooldown_ms: 10,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(ManagedFixtureBuilder {
+            config: state.config.as_ref().clone(),
+            builds: builds.clone(),
+            supervisor: state.worker_supervisor.clone(),
+        }),
+        state.admission_gate().clone(),
+    )
+    .unwrap();
+    let provider = |id: i64, kind: &str, key: &str| DesiredProvider {
+        id,
+        key: key.into(),
+        kind: kind.into(),
+        adapter: "fixture".into(),
+        revision: 1,
+        config_json: "{}".into(),
+        secret_ref: None,
+    };
+    let assignment = AdmittedAssignment {
+        template_id: 1,
+        template_key: "partial".into(),
+        template_name: "Partial".into(),
+        language: "vi-VN".into(),
+        prompt: TEMPLATE_PROMPT_V1.into(),
+        template_enabled: true,
+        template_revision: 1,
+        is_default: true,
+        assignment_enabled: true,
+        bindings: [("asr", "db_asr", 1), ("tts", "db_tts", 2)]
+            .map(|(kind, key, id)| AdmittedProviderBinding {
+                provider_type: kind.into(),
+                provider_key: key.into(),
+                provider_enabled: true,
+                snapshot: Some(Arc::new(provider(id, kind, key))),
+            })
+            .to_vec(),
+    };
+    let deployment = [provider(0, "vad", "test"), provider(0, "llm", "test")];
+    let profile = resolve_managed_session_profile(
+        2,
+        None,
+        1,
+        "home",
+        &[assignment],
+        &state.config,
+        &manager,
+        &deployment,
+    )
+    .await
+    .unwrap();
+    assert_eq!(profile.providers.vad, "test");
+    assert_eq!(profile.providers.asr, "db_asr");
+    assert_eq!(profile.providers.llm, "test");
+    assert_eq!(profile.providers.tts, "db_tts");
+    assert!(profile.selected_runtimes.is_some());
+    assert_eq!(builds.lock().unwrap().len(), 4);
 }
 
 #[tokio::test]

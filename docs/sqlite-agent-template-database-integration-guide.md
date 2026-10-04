@@ -135,7 +135,8 @@ Agent không có bất kỳ Template assignment nào
   → fallback toàn bộ EffectiveAgentConfig + provider_defaults của server
 ```
 
-Không fallback từng provider riêng lẻ bên trong một Template.
+Binding provider vắng mặt trong Template dùng provider cùng loại từ effective server defaults.
+Binding đã tồn tại nhưng disabled hoặc runtime không dùng được vẫn làm Template không hợp lệ.
 
 Template đã được activate phải là một profile hợp lệ và đầy đủ:
 
@@ -148,7 +149,8 @@ LLM
 TTS
 ```
 
-Nếu thiếu một binding provider bắt buộc thì Template không được activate.
+Mỗi slot VAD/ASR/LLM/TTS phải resolve được qua binding của Template hoặc server default
+tương ứng trước khi Template được activate.
 
 ## D3 — Active Template là session state, không phải Agent state
 
@@ -1608,8 +1610,9 @@ Provider unbound/orphan không thuộc set: skip load, `runtime_available=false`
 `not_loaded`, không block boot. `enabled` nghĩa là được phép bind, không có nghĩa runtime
 phải materialize.
 
-Default Template phải structurally valid trước: assignment/binding đủ, Provider enabled
-và config reference hợp lệ; runtime validity là bước materialize kế tiếp. Default phải
+Default Template phải structurally valid trước: assignment enabled, Provider đã bind enabled,
+slot chưa bind có server default và config reference hợp lệ; runtime validity là bước
+materialize kế tiếp. Default phải
 pass cả hai, còn non-default structurally/runtime invalid fail-soft theo candidate.
 
 Startup:
@@ -1855,7 +1858,7 @@ load all template assignments
   │
   └─ one or more assignments exist
        → require exactly one enabled default assignment
-       → default candidate must validate Template, bindings and Loaded Runtime
+       → default candidate must validate Template, bound/default providers and Loaded Runtime
        → validate every non-default enabled assignment independently
        → build TemplateSwitchCatalog from valid candidates only
   ↓
@@ -3415,4 +3418,3 @@ SQLite / SQLx
 ```
 
 Kiến trúc này giữ realtime voice path độc lập với DB, đồng thời chuẩn bị sẵn một data/API layer để sau này thêm manager web, CRUD hoặc query endpoint mà không phải thiết kế lại connection, pagination, filtering, error handling và database access từ đầu.
-

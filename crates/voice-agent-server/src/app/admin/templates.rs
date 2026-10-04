@@ -438,10 +438,6 @@ pub(super) async fn set_default_template(
         Ok(v) if v.enabled == 1 => v,
         _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_template"),
     };
-    let complete:i64=sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND p.enabled=1 AND b.provider_type=p.type").bind(template.id).fetch_one(pool).await.unwrap_or(0);
-    if complete != 4 {
-        return error(&request, StatusCode::BAD_REQUEST, "template_incomplete");
-    };
     let mut tx = match pool.begin().await {
         Ok(v) => v,
         Err(_) => {

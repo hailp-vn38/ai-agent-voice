@@ -410,7 +410,7 @@
                   }
                 ],
                 "url": "{{base_url}}/api/admin/agents/{{agent_key}}/templates/{{template_key}}",
-                "description": "Soft-unlinks a non-default active assignment and increments the Agent revision. A default assignment returns default_template_conflict.",
+                "description": "Soft-unlinks an active assignment and increments the Agent revision. This may remove the default assignment; if none remain, new sessions use server defaults.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [

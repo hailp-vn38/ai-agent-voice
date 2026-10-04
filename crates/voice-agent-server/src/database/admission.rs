@@ -77,8 +77,8 @@ pub struct DeviceAdmissionGraph {
     pub device_db_id: i64,
     pub template_override_id: Option<i64>,
     pub agent: AdmittedAgent,
-    /// Every assignment row the Agent has, including disabled ones.  A non-empty list means the
-    /// Agent entered the Template mechanism and can never fall back to server defaults.
+    /// Enabled assignment rows only. Soft-unlinked rows remain in SQLite for audit/history but
+    /// are outside the Voice admission graph.
     pub assignments: Vec<AdmittedAssignment>,
 }
 
@@ -202,15 +202,15 @@ impl Database {
         }))
     }
 
-    /// Bounded metadata/size checks and two graph reads cover the Template graph.  Bindings are read for every assigned
-    /// Template in one statement so admission never scales with the number of assignments.
+    /// Bounded metadata/size checks and two graph reads cover active Template assignments.
+    /// Bindings are read in one statement so admission never scales with the number of assignments.
     async fn assignment_graph(
         &self,
         agent_id: i64,
         transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<Vec<AdmittedAssignment>, DeviceAdmissionError> {
         let assignment_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM (SELECT template_id FROM agent_template_assignments WHERE agent_id=? LIMIT 65)",
+            "SELECT COUNT(*) FROM (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1 LIMIT 65)",
         ).bind(agent_id).fetch_one(&mut **transaction).await.map_err(map_sqlx_error)?;
         if assignment_count > 64 {
             return Err(DeviceAdmissionError::Unavailable);
@@ -221,11 +221,11 @@ impl Database {
             "SELECT COALESCE((SELECT SUM(length(CAST(t.key AS BLOB)) + length(CAST(t.name AS BLOB)) + \
                     length(CAST(t.language AS BLOB)) + length(CAST(t.prompt AS BLOB))) \
                 FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id \
-                WHERE ata.agent_id=?),0) + COALESCE((SELECT SUM(length(CAST(p.key AS BLOB)) + \
+                WHERE ata.agent_id=? AND ata.enabled=1),0) + COALESCE((SELECT SUM(length(CAST(p.key AS BLOB)) + \
                     length(CAST(p.type AS BLOB)) + length(CAST(p.adapter AS BLOB)) + \
                     length(CAST(p.config_json AS BLOB)) + COALESCE(length(CAST(p.secret_ref AS BLOB)),0)) \
                 FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id \
-                WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=?)),0)",
+                WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1)),0)",
         )
         .bind(agent_id)
         .bind(agent_id)
@@ -240,7 +240,7 @@ impl Database {
                     ata.is_default, ata.enabled \
              FROM agent_template_assignments ata \
              JOIN agent_templates t ON t.id = ata.template_id \
-             WHERE ata.agent_id = ? ORDER BY t.id LIMIT 65",
+             WHERE ata.agent_id = ? AND ata.enabled=1 ORDER BY t.id LIMIT 65",
         )
         .bind(agent_id)
         .fetch_all(&mut **transaction)
@@ -254,7 +254,7 @@ impl Database {
              FROM template_provider_bindings b \
              JOIN providers p ON p.id = b.provider_id \
              WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments \
-                                     WHERE agent_id = ?) \
+                                     WHERE agent_id = ? AND enabled=1) \
              ORDER BY b.template_id, b.provider_type LIMIT 257",
         )
         .bind(agent_id)

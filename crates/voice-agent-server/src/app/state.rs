@@ -385,6 +385,7 @@ impl AppState {
                 &graph.assignments,
                 &self.config,
                 manager,
+                &self.deployment_snapshots,
             )
             .await
             .map_err(SessionProfileAdmissionError::Runtime)?
