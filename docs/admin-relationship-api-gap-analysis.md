@@ -402,8 +402,9 @@ Template bị xóa                    →  assignment/binding CASCADE, history.t
 
 Quyết định đã chốt tại ADR-0070: DELETE là conditional hard-delete có `If-Match`.
 Resource còn active relationship hoặc history reference trả `409 *_in_use`; người dùng unlink
-tường minh hoặc purge history scoped trước. Không có cascade-unlink, revision bump ngầm hay
-history purge ngầm.
+tường minh hoặc purge history scoped trước. Ngoại lệ là Agent ↔ Template: xóa Agent được phép,
+vì FK cascade chỉ dọn assignment của Agent và không ảnh hưởng Template global. Không có cascade
+unlink cho các relationship active khác, revision bump ngầm hay history purge ngầm.
 
 Collection phải được cập nhật sau khi P3 hoàn thành để expose DELETE và MCP unlink.
 

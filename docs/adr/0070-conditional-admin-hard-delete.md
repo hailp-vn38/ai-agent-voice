@@ -20,16 +20,18 @@ bump ngầm của owner, hay history purge ngầm. History vẫn chỉ bị xóa
 - MCP Server bị chặn bởi Agent MCP Binding.
 - Template bị chặn bởi active Agent Template Assignment, Template Provider Binding, Device
   Template Override hoặc History Message.
-- Agent bị chặn bởi Device, active Agent Template Assignment, Agent MCP Binding hoặc History
-  Message.
+- Agent bị chặn bởi Device, Agent MCP Binding hoặc History Message. Agent Template Assignment
+  không chặn xóa: FK cascade chỉ xóa row liên kết của Agent, còn Template global vẫn giữ nguyên và
+  tiếp tục dùng được bởi Agent khác.
 - Device bị chặn bởi History Message.
 
 `DELETE /api/admin/agents/{key}/mcp-bindings/{server_key}` là unlink tường minh; mutation
 increment revision của Agent và audit action `unlink_mcp_binding`.
 
 Agent Template unlink kế thừa P0 semantics: row assignment được giữ với `enabled=false`, nên
-không còn là active relationship. Xóa Agent hoặc Template sau unlink có thể để foreign key dọn
-row inert đó; đây không phải cascade-unlink một relationship active và không làm mất history.
+không còn là active relationship. Xóa Agent cũng được phép khi còn assignment active: foreign key
+chỉ dọn các row assignment của Agent, không xóa Template hay history. Xóa Template vẫn cần unlink
+mọi assignment active trước; sau unlink, foreign key có thể dọn row inert đó.
 
 ## Consequences
 

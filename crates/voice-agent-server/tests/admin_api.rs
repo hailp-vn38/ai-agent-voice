@@ -1925,7 +1925,7 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
 }
 
 #[tokio::test]
-async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
+async fn conditional_delete_requires_a_current_revision_and_preserves_linked_templates() {
     let (base, task) = server(true).await;
     let client = Client::new();
     let auth = "admin-test-token";
@@ -2052,28 +2052,50 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
         template_in_use.json::<serde_json::Value>().await.unwrap()["error"]["code"],
         "template_in_use"
     );
+    // A Template is globally reusable. Deleting an Agent only removes that Agent's assignment;
+    // it must not delete or otherwise mutate the Template itself.
     assert_eq!(
         client
-            .delete(format!("{agents}/kitchen/templates/quiet"))
+            .delete(format!("{agents}/kitchen"))
             .bearer_auth(auth)
             .header("if-match", "\"2\"")
             .send()
             .await
             .unwrap()
             .status(),
-        StatusCode::OK
+        StatusCode::NO_CONTENT
     );
-    // P0 unlink retains an inert assignment row, but it is no longer an active relationship.
     assert_eq!(
         client
-            .delete(format!("{templates}/quiet"))
+            .get(format!("{templates}/quiet"))
             .bearer_auth(auth)
-            .header("if-match", "\"3\"")
             .send()
             .await
             .unwrap()
             .status(),
-        StatusCode::NO_CONTENT
+        StatusCode::OK
+    );
+    let template_agents = client
+        .get(format!("{templates}/quiet/agents"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(template_agents.status(), StatusCode::OK);
+    assert_eq!(
+        template_agents.json::<serde_json::Value>().await.unwrap()["items"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        client
+            .post(&agents)
+            .bearer_auth(auth)
+            .json(&serde_json::json!({"key":"kitchen","name":"Kitchen"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
     );
     let devices = format!("{base}/api/admin/devices");
     assert_eq!(
@@ -2090,7 +2112,7 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
     let agent_in_use = client
         .delete(format!("{agents}/kitchen"))
         .bearer_auth(auth)
-        .header("if-match", "\"3\"")
+        .header("if-match", "\"1\"")
         .send()
         .await
         .unwrap();
@@ -2114,7 +2136,7 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
         client
             .delete(format!("{agents}/kitchen"))
             .bearer_auth(auth)
-            .header("if-match", "\"3\"")
+            .header("if-match", "\"1\"")
             .send()
             .await
             .unwrap()

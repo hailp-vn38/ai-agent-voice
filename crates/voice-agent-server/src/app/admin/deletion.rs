@@ -14,9 +14,11 @@ struct DeleteSpec {
 const AGENT: DeleteSpec = DeleteSpec {
     resource: "agent",
     select_sql: "SELECT id,revision FROM agents WHERE key=?",
-    dependency_sql: "SELECT EXISTS(SELECT 1 FROM devices WHERE agent_id=? UNION ALL SELECT 1 FROM agent_template_assignments WHERE agent_id=? AND enabled=1 UNION ALL SELECT 1 FROM agent_mcp_bindings WHERE agent_id=? UNION ALL SELECT 1 FROM history_messages WHERE agent_id=?)",
-    dependency_binds: 4,
-    delete_sql: "DELETE FROM agents WHERE id=? AND revision=? AND NOT EXISTS(SELECT 1 FROM devices WHERE agent_id=?) AND NOT EXISTS(SELECT 1 FROM agent_template_assignments WHERE agent_id=? AND enabled=1) AND NOT EXISTS(SELECT 1 FROM agent_mcp_bindings WHERE agent_id=?) AND NOT EXISTS(SELECT 1 FROM history_messages WHERE agent_id=?)",
+    dependency_sql: "SELECT EXISTS(SELECT 1 FROM devices WHERE agent_id=? UNION ALL SELECT 1 FROM agent_mcp_bindings WHERE agent_id=? UNION ALL SELECT 1 FROM history_messages WHERE agent_id=?)",
+    dependency_binds: 3,
+    // The assignment table cascades on Agent deletion. This removes only the relationship; the
+    // globally reusable Template itself stays intact and may remain linked to other Agents.
+    delete_sql: "DELETE FROM agents WHERE id=? AND revision=? AND NOT EXISTS(SELECT 1 FROM devices WHERE agent_id=?) AND NOT EXISTS(SELECT 1 FROM agent_mcp_bindings WHERE agent_id=?) AND NOT EXISTS(SELECT 1 FROM history_messages WHERE agent_id=?)",
     in_use_code: "agent_in_use",
 };
 
