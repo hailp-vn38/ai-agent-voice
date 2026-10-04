@@ -88,7 +88,7 @@ pub(super) async fn handler(
         }
         Err(SessionProfileAdmissionError::ProfileUnavailable) => {
             debug!(
-                agent_key = %device_id,
+                device_id = %device_id,
                 "the admitted agent has no usable effective session profile"
             );
             return (StatusCode::SERVICE_UNAVAILABLE, "agent profile unavailable").into_response();
