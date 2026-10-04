@@ -71,8 +71,10 @@ pub(super) fn voicepack_v1(input: &[u8]) -> Result<Vec<u8>, ModelError> {
     }
     let storage = storage.ok_or_else(invalid)?;
     if storage
-        .chunks_exact(4)
-        .any(|bytes| !f32::from_le_bytes(bytes.try_into().expect("four bytes")).is_finite())
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .any(|bytes| !f32::from_le_bytes(*bytes).is_finite())
     {
         return Err(invalid());
     }
