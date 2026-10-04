@@ -581,7 +581,7 @@ mod tests {
         workers::{ProviderRuntimeAdmission, VadWorkerRuntime, WorkerRuntimeConfig},
     };
 
-    use super::{OwnedRuntimeResource, RuntimeResource};
+    use super::{OwnedRuntimeResource, RuntimeResource, tts_binding};
 
     struct TestVad;
 
@@ -639,5 +639,34 @@ mod tests {
         assert_eq!(loaded.segmenter.min_speech_samples, 4_000);
         assert_eq!(loaded.segmenter.end_silence_samples, 12_800);
         assert_eq!(loaded.pre_roll_samples, 1_600);
+    }
+
+    #[test]
+    fn a_shared_zerotts_runtime_rebinds_voice_without_changing_physical_state() {
+        // Template A and Template B share one resident ZeroTTS runtime, so the only thing that may
+        // differ between their logical views is the voice binding itself.
+        let snapshot = |voice: &str| DesiredProvider {
+            id: 1,
+            key: format!("tts-{voice}"),
+            kind: "tts".into(),
+            adapter: "zerotts_onnx".into(),
+            revision: 1,
+            config_json: format!(
+                r#"{{"voice":"{voice}","language":"vi-VN","delivery_mode":"stream"}}"#
+            ),
+            secret_ref: None,
+        };
+
+        let maichi = tts_binding(&snapshot("maichi")).expect("maichi is a pinned ZeroTTS voice");
+        let hamy = tts_binding(&snapshot("hamy")).expect("hamy is a pinned ZeroTTS voice");
+        assert_eq!(maichi.voice, "maichi");
+        assert_eq!(hamy.voice, "hamy");
+        assert_eq!(maichi.language, "vi-VN");
+
+        let unsupported = snapshot("not-a-zerotts-voice");
+        assert!(
+            tts_binding(&unsupported).is_none(),
+            "a logical view must never fall back to a registry default voice"
+        );
     }
 }
