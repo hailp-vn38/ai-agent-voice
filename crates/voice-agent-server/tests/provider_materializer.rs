@@ -239,6 +239,56 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
 }
 
 #[test]
+fn zerotts_resource_identity_shares_voices_but_isolates_delivery_mode() {
+    use std::{collections::HashMap, sync::Arc};
+    use voice_agent_server::{
+        services::provider_runtime::{FactoryMaterializer, RuntimeMaterializer},
+        workers::WorkerSupervisor,
+    };
+
+    let mut cfg = config();
+    cfg.deployment.model_manifest =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
+    cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../runtime/onnxruntime/libonnxruntime.dylib");
+    let builder = FactoryMaterializer::new(
+        Arc::new(cfg),
+        Arc::new(Secrets(AtomicUsize::new(0))),
+        HashMap::from([("zerotts_onnx".into(), 1024)]),
+        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
+    )
+    .unwrap();
+    let row = |key: &str, voice: &str, delivery_mode: &str| DesiredProvider {
+        id: 1,
+        key: key.into(),
+        kind: "tts".into(),
+        adapter: "zerotts_onnx".into(),
+        revision: 1,
+        config_json: format!(
+            r#"{{"voice":"{voice}","language":"vi-VN","delivery_mode":"{delivery_mode}"}}"#
+        ),
+        secret_ref: None,
+    };
+
+    let maichi = builder
+        .resource_key(&row("maichi", "maichi", "stream"))
+        .unwrap();
+    let baotrang = builder
+        .resource_key(&row("baotrang", "baotrang", "stream"))
+        .unwrap();
+    let file = builder
+        .resource_key(&row("maichi-file", "maichi", "file"))
+        .unwrap();
+    assert_eq!(maichi, baotrang);
+    assert_ne!(maichi, file);
+    assert!(
+        builder
+            .resource_key(&row("unsupported", "not-a-zerotts-voice", "stream"))
+            .is_err()
+    );
+}
+
+#[test]
 fn native_resource_identity_uses_execution_content_not_only_its_path() {
     use std::{collections::HashMap, sync::Arc};
     use voice_agent_server::{

@@ -15,7 +15,7 @@ use crate::{
     },
     models::prepare_immutable as prepare,
     providers::{
-        LoadedVad, ProviderCatalog, RuntimeCatalog, compiled_provider_registry,
+        LoadedVad, ProviderCatalog, RuntimeCatalog, TtsBinding, compiled_provider_registry,
         loader::LoadedProviders, loader::vad_timing,
     },
     workers::{
@@ -457,12 +457,13 @@ fn materialize_one(
             loaded.runtimes.tts.insert(
                 row.key.clone(),
                 Arc::new(
-                    TtsWorkerRuntime::try_new_with_admission(
+                    TtsWorkerRuntime::try_new_with_admission_and_binding(
                         Arc::clone(&provider),
                         tts_worker_config(config),
                         quota.unwrap_or_else(|| {
                             ProviderRuntimeAdmission::new(config.workers.tts.max_workers, 1)
                         }),
+                        tts_binding(&instance),
                     )
                     .map_err(|error| {
                         if matches!(error, crate::workers::TtsWorkerError::Quarantined) {
@@ -478,6 +479,16 @@ fn materialize_one(
         _ => return Err(DatabaseRuntimeFailure::Configuration),
     }
     Ok(())
+}
+
+fn tts_binding(instance: &TtsInstanceConfig) -> TtsBinding {
+    match instance {
+        TtsInstanceConfig::ZeroTtsOnnx(config) => TtsBinding {
+            voice: config.voice.clone(),
+            language: config.language.clone(),
+        },
+        _ => TtsBinding::readiness(),
+    }
 }
 
 fn desired_value(row: &DesiredProvider) -> Result<Value, DatabaseRuntimeFailure> {

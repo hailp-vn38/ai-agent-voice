@@ -26,6 +26,7 @@ const ROLES: &[&str] = &[
     "codec_shared_data",
     "codec_metadata",
     "codec_license",
+    "silence_frame",
 ];
 
 #[test]
@@ -186,21 +187,13 @@ fn warmup_pcm_requires_terminal_finite_non_empty_48khz_mono_audio() {
 }
 
 #[test]
-fn selected_zerotts_voice_requires_its_own_artifact_without_fallback() {
+fn shared_zerotts_pool_requires_every_descriptor_voice_artifact() {
     let root = temp_dir("zerotts-selected-voice");
-    let model = prepared_pack(&root, None);
+    let model = prepared_pack(&root, Some("voice_baotrang"));
     let factory = compiled_provider_registry()
         .tts_factory("zerotts_onnx")
         .unwrap();
-    for voice in [
-        "baotrang",
-        "giahuy",
-        "hamy",
-        "huuduc",
-        "kimoanh",
-        "quangminh",
-        "tiendat",
-    ] {
+    for voice in ["maichi", "baotrang"] {
         let config =
             voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig {
                 voice: voice.into(),
@@ -211,7 +204,8 @@ fn selected_zerotts_voice_requires_its_own_artifact_without_fallback() {
             Err(error) => error,
         };
         assert!(
-            matches!(error, voice_agent_server::providers::ProviderLoadError::MissingArtifact(role) if role == format!("voice_{voice}"))
+            matches!(error, voice_agent_server::providers::ProviderLoadError::MissingArtifact(ref role) if role == "voice_baotrang"),
+            "unexpected factory error: {error:?}"
         );
     }
     let config = voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(ZeroTtsOnnxConfig {

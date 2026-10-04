@@ -10,6 +10,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Adapter-owned portion of a ZeroTTS physical resource. Logical provider selection deliberately
+/// stays out of this identity so aliases can share one resident worker pool safely.
+#[derive(serde::Serialize)]
+struct ZeroTtsPhysicalSpec {
+    delivery_mode: crate::config::ZeroTtsDeliveryMode,
+}
+
 /// Production bridge to the same installed-artifact factories used by deployment startup.
 /// Estimates are deployment-owned worst-case peaks per adapter, including all configured
 /// workers and warmup allocations. A missing estimate refuses allocation, without resolving
@@ -321,9 +328,10 @@ impl RuntimeResource for OwnedRuntimeResource {
             view.vad.insert(snapshot.key.clone(), runtime);
         }
         if let Some(runtime) = resident.tts.values().next() {
+            let binding = tts_binding(snapshot)?;
             view.tts.insert(
                 snapshot.key.clone(),
-                Arc::new(runtime.logical_view(quota.clone())),
+                Arc::new(runtime.logical_view(quota.clone(), binding)),
             );
         }
         if let Some(runtime) = resident.llm.values().next() {
@@ -338,6 +346,32 @@ impl RuntimeResource for OwnedRuntimeResource {
             .expect("runtime resource poisoned")
             .clone()
     }
+}
+
+fn zerotts_binding(
+    configuration: &crate::config::ZeroTtsOnnxConfig,
+) -> Result<crate::providers::TtsBinding, RuntimeError> {
+    let voice = configuration.voice.trim();
+    let language = configuration.language.trim();
+    let supported = crate::providers::tts::zerotts::descriptor::DESCRIPTOR
+        .capabilities
+        .voices
+        .is_some_and(|voices| voices.iter().any(|candidate| candidate.id == voice));
+    if voice.is_empty() || language != "vi-VN" || !supported {
+        return Err(RuntimeError::Configuration);
+    }
+    Ok(crate::providers::TtsBinding {
+        voice: voice.into(),
+        language: language.into(),
+    })
+}
+
+fn tts_binding(snapshot: &DesiredProvider) -> Option<crate::providers::TtsBinding> {
+    if snapshot.adapter != "zerotts_onnx" {
+        return Some(crate::providers::TtsBinding::readiness());
+    }
+    let configuration = serde_json::from_str(&snapshot.config_json).ok()?;
+    zerotts_binding(&configuration).ok()
 }
 
 impl FactoryMaterializer {
@@ -406,10 +440,12 @@ impl FactoryMaterializer {
                     .map_err(|_| RuntimeError::Configuration)?,
             ),
             "zerotts_onnx" => {
-                let mut specification: crate::config::ZeroTtsOnnxConfig =
+                let configuration: crate::config::ZeroTtsOnnxConfig =
                     serde_json::from_value(value).map_err(|_| RuntimeError::Configuration)?;
-                specification.preload = false;
-                serde_json::to_value(specification)
+                zerotts_binding(&configuration)?;
+                serde_json::to_value(ZeroTtsPhysicalSpec {
+                    delivery_mode: configuration.delivery_mode,
+                })
             }
             "kokoro_vi_onnx" => {
                 let mut specification: crate::config::KokoroViOnnxConfig =

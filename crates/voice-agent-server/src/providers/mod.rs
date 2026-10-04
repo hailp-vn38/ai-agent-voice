@@ -45,7 +45,10 @@ pub use runtime_catalog::{
     RuntimeCatalog, RuntimeResolveError, TtsDiagnosticValidationError,
 };
 pub use set::ProviderSet;
-pub use tts::{TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsWorker};
+pub use tts::{
+    TtsBinding, TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsSynthesisRequest,
+    TtsWorker,
+};
 pub use vad::{VadInput, VadProbability, VadProvider, VadSession};
 pub use vision::{
     OpenAiVisionProvider, VisionError, VisionProvider, VisionRequest, VisionResponse,

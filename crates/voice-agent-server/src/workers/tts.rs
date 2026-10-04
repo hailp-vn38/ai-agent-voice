@@ -15,7 +15,10 @@ use super::{
 };
 use crate::{
     audio::PcmF32Mono,
-    providers::{TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsWorker},
+    providers::{
+        TtsBinding, TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsSynthesisRequest,
+        TtsWorker,
+    },
     services::provider_diagnostic::{
         ProviderDiagnosticOperation, ProviderDiagnosticOperationError,
     },
@@ -52,6 +55,8 @@ pub enum TtsWorkerError {
     Quarantined,
     #[error("TTS worker configuration is invalid")]
     InvalidConfig,
+    #[error("TTS stream binding does not match its logical runtime")]
+    BindingMismatch,
     #[error("TTS worker lease is not active")]
     UnknownLease,
 }
@@ -67,8 +72,11 @@ enum WorkerCommand {
 }
 
 enum TtsWorkRequest {
-    Voice(String),
-    Diagnostic(TtsDiagnosticRequest),
+    Voice(TtsSynthesisRequest),
+    Diagnostic {
+        request: TtsSynthesisRequest,
+        original: TtsDiagnosticRequest,
+    },
 }
 struct WorkerRecord {
     command_tx: mpsc::SyncSender<WorkerCommand>,
@@ -96,9 +104,14 @@ struct State {
     next: u64,
     next_stream: u64,
     slots: HashMap<TtsLease, Slot>,
-    streams: HashMap<TtsStreamId, Option<usize>>,
+    streams: HashMap<TtsStreamId, StreamRecord>,
     closed_streams: HashSet<TtsStreamId>,
     workers: Vec<WorkerRecord>,
+}
+
+struct StreamRecord {
+    worker: Option<usize>,
+    binding: TtsBinding,
 }
 
 /// Fixed native pool: a thread (and native sessions supplied by `TtsWorker`) is created once per
@@ -111,6 +124,7 @@ pub struct TtsWorkerRuntime {
     config: WorkerRuntimeConfig,
     state: Arc<Mutex<State>>,
     admission: ProviderRuntimeAdmission,
+    binding: TtsBinding,
 }
 
 /// Provider-boundary WAV returned by a TTS diagnostic. It deliberately never enters Voice
@@ -128,7 +142,16 @@ pub struct TtsDiagnosticOperation {
 
 impl TtsWorkerRuntime {
     pub fn new(provider: Arc<dyn TtsProvider>, config: WorkerRuntimeConfig) -> Self {
-        Self::try_new(provider, config).expect("cannot initialize TTS runtime")
+        Self::new_with_binding(provider, config, TtsBinding::readiness())
+    }
+
+    pub fn new_with_binding(
+        provider: Arc<dyn TtsProvider>,
+        config: WorkerRuntimeConfig,
+        binding: TtsBinding,
+    ) -> Self {
+        Self::try_new_with_binding(provider, config, binding)
+            .expect("cannot initialize TTS runtime")
     }
 
     /// Blocking construction seam. Ready means every retained native worker acknowledged init.
@@ -140,15 +163,24 @@ impl TtsWorkerRuntime {
         config
             .validate()
             .map_err(|_| TtsWorkerError::InvalidConfig)?;
-        let admission =
-            ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
-        Self::try_new_with_admission(provider, config, admission)
+        Self::try_new_with_binding(provider, config, TtsBinding::readiness())
     }
 
-    pub(crate) fn try_new_with_admission(
+    pub fn try_new_with_binding(
+        provider: Arc<dyn TtsProvider>,
+        config: WorkerRuntimeConfig,
+        binding: TtsBinding,
+    ) -> Result<Self, TtsWorkerError> {
+        let admission =
+            ProviderRuntimeAdmission::new(config.max_workers, config.voice_reserved_capacity);
+        Self::try_new_with_admission_and_binding(provider, config, admission, binding)
+    }
+
+    pub(crate) fn try_new_with_admission_and_binding(
         provider: Arc<dyn TtsProvider>,
         config: WorkerRuntimeConfig,
         admission: ProviderRuntimeAdmission,
+        binding: TtsBinding,
     ) -> Result<Self, TtsWorkerError> {
         config
             .validate()
@@ -212,6 +244,7 @@ impl TtsWorkerRuntime {
             config,
             state,
             admission,
+            binding,
         })
     }
     pub fn provider(&self) -> Arc<dyn TtsProvider> {
@@ -233,10 +266,20 @@ impl TtsWorkerRuntime {
             .collect()
     }
 
-    pub(crate) fn logical_view(&self, quota: ProviderRuntimeAdmission) -> Self {
+    pub(crate) fn logical_view(
+        &self,
+        quota: ProviderRuntimeAdmission,
+        binding: TtsBinding,
+    ) -> Self {
         let mut view = self.clone();
         view.admission = quota.composed(&self.admission);
+        view.binding = binding;
         view
+    }
+
+    #[doc(hidden)]
+    pub fn logical_view_for_test(&self, binding: TtsBinding) -> Self {
+        self.logical_view(self.admission.clone(), binding)
     }
     pub fn shutdown_acknowledged(&self) -> bool {
         let mut workers = {
@@ -268,13 +311,23 @@ impl TtsWorkerRuntime {
         let stream = TtsStreamId(state.next_stream);
         state.next_stream += 1;
         if !state.closed {
-            state.streams.insert(stream, None);
+            state.streams.insert(
+                stream,
+                StreamRecord {
+                    worker: None,
+                    binding: self.binding.clone(),
+                },
+            );
         }
         stream
     }
     pub fn close_stream(&self, stream: TtsStreamId) {
         let mut state = self.state.lock().expect("TTS worker state poisoned");
-        let Some(worker) = state.streams.remove(&stream).flatten() else {
+        let Some(worker) = state
+            .streams
+            .remove(&stream)
+            .and_then(|record| record.worker)
+        else {
             return;
         };
         if state.slots.values().any(|slot| slot.stream == Some(stream)) {
@@ -287,14 +340,28 @@ impl TtsWorkerRuntime {
         }
     }
     pub fn start(&self, text: String) -> Result<TtsLease, TtsWorkerError> {
-        self.start_internal(None, TtsWorkRequest::Voice(text), true)
+        self.start_internal(
+            None,
+            TtsWorkRequest::Voice(TtsSynthesisRequest {
+                text,
+                selection: self.binding.clone(),
+            }),
+            true,
+        )
     }
     pub fn start_in_stream(
         &self,
         stream: TtsStreamId,
         text: String,
     ) -> Result<TtsLease, TtsWorkerError> {
-        self.start_internal(Some(stream), TtsWorkRequest::Voice(text), true)
+        self.start_internal(
+            Some(stream),
+            TtsWorkRequest::Voice(TtsSynthesisRequest {
+                text,
+                selection: self.binding.clone(),
+            }),
+            true,
+        )
     }
     fn start_internal(
         &self,
@@ -314,18 +381,24 @@ impl TtsWorkerRuntime {
             Some(stream) => match state
                 .streams
                 .get(&stream)
-                .copied()
                 .ok_or(TtsWorkerError::UnknownLease)?
             {
-                Some(worker)
-                    if !state.workers[worker].busy
-                        && !state.workers[worker].quarantined
-                        && state.workers[worker].healthy.load(Ordering::Acquire) =>
-                {
-                    worker
+                StreamRecord { binding, .. } if binding != request.selection() => {
+                    return Err(TtsWorkerError::BindingMismatch);
                 }
-                Some(_) => return Err(TtsWorkerError::Capacity),
-                None => state
+                StreamRecord {
+                    worker: Some(worker),
+                    ..
+                } if !state.workers[*worker].busy
+                    && !state.workers[*worker].quarantined
+                    && state.workers[*worker].healthy.load(Ordering::Acquire) =>
+                {
+                    *worker
+                }
+                StreamRecord {
+                    worker: Some(_), ..
+                } => return Err(TtsWorkerError::Capacity),
+                StreamRecord { worker: None, .. } => state
                     .workers
                     .iter()
                     .position(|entry| {
@@ -351,7 +424,11 @@ impl TtsWorkerRuntime {
         state.workers[worker].busy = true;
         if let Some(stream) = stream {
             state.workers[worker].stream = Some(stream);
-            state.streams.insert(stream, Some(worker));
+            state
+                .streams
+                .get_mut(&stream)
+                .expect("stream checked above")
+                .worker = Some(worker);
         }
         state.slots.insert(
             lease,
@@ -499,14 +576,52 @@ impl TtsWorkerRuntime {
     }
 
     pub fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
-        self.provider.validate_diagnostic(request)
+        self.effective_diagnostic_request(request.clone())
+            .map(|_| ())
     }
 
     pub(super) fn start_diagnostic(
         &self,
         request: TtsDiagnosticRequest,
     ) -> Result<TtsLease, TtsWorkerError> {
-        self.start_internal(None, TtsWorkRequest::Diagnostic(request), false)
+        let original = request.clone();
+        let request = self
+            .effective_diagnostic_request(request)
+            .map_err(|_| TtsWorkerError::InvalidConfig)?;
+        self.start_internal(
+            None,
+            TtsWorkRequest::Diagnostic { request, original },
+            false,
+        )
+    }
+
+    fn effective_diagnostic_request(
+        &self,
+        request: TtsDiagnosticRequest,
+    ) -> Result<TtsSynthesisRequest, TtsError> {
+        let selection = TtsBinding {
+            voice: request
+                .voice
+                .clone()
+                .unwrap_or_else(|| self.binding.voice.clone()),
+            language: request
+                .language
+                .clone()
+                .unwrap_or_else(|| self.binding.language.clone()),
+        };
+        if self.provider.adapter() == "zerotts_onnx" {
+            self.provider.validate_diagnostic(&TtsDiagnosticRequest {
+                text: request.text.clone(),
+                voice: Some(selection.voice.clone()),
+                language: Some(selection.language.clone()),
+            })?;
+        } else {
+            self.provider.validate_diagnostic(&request)?;
+        }
+        Ok(TtsSynthesisRequest {
+            text: request.text,
+            selection,
+        })
     }
 
     pub(super) fn quarantine_diagnostic(&self, lease: TtsLease) {
@@ -517,6 +632,14 @@ impl TtsWorkerRuntime {
             slot.worker
         }) {
             state.workers[worker].quarantined = true;
+        }
+    }
+}
+
+impl TtsWorkRequest {
+    fn selection(&self) -> &TtsBinding {
+        match self {
+            Self::Voice(request) | Self::Diagnostic { request, .. } => &request.selection,
         }
     }
 }
@@ -602,32 +725,31 @@ fn worker_loop(
                 cancelled,
                 events,
             } => {
-                let diagnostic = matches!(&request, TtsWorkRequest::Diagnostic(_));
-                if let TtsWorkRequest::Voice(text) = &request {
+                let diagnostic = matches!(&request, TtsWorkRequest::Diagnostic { .. });
+                if let TtsWorkRequest::Voice(request) = &request {
                     tracing::info!(
-                        chars = text.chars().count(),
+                        chars = request.text.chars().count(),
                         delivery = "worker",
                         "TTS synthesis input"
                     );
                 }
                 let started = Instant::now();
                 let result = match request {
-                    TtsWorkRequest::Voice(text) => {
-                        worker.synthesize(&text, &cancelled, &mut |pcm| {
+                    TtsWorkRequest::Voice(request) => {
+                        worker.synthesize(&request, &cancelled, &mut |pcm| {
                             if cancelled.load(Ordering::Acquire) {
                                 return Err(TtsError::Failed);
                             }
                             send_pcm_until_cancelled(&events, &cancelled, pcm)
                         })
                     }
-                    TtsWorkRequest::Diagnostic(request) => {
-                        worker.synthesize_diagnostic(&request, &cancelled, &mut |pcm| {
+                    TtsWorkRequest::Diagnostic { request, original } => worker
+                        .synthesize_diagnostic(&request, &original, &cancelled, &mut |pcm| {
                             if cancelled.load(Ordering::Acquire) {
                                 return Err(TtsError::Failed);
                             }
                             send_pcm_until_cancelled(&events, &cancelled, pcm)
-                        })
-                    }
+                        }),
                 };
                 let event = if cancelled.load(Ordering::Acquire) {
                     TtsWorkerEvent::Cancelled
@@ -678,7 +800,7 @@ impl ProviderWorker {
 impl TtsWorker for ProviderWorker {
     fn synthesize(
         &mut self,
-        text: &str,
+        request: &TtsSynthesisRequest,
         cancelled: &AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
@@ -686,8 +808,8 @@ impl TtsWorker for ProviderWorker {
             return Err(TtsError::Failed);
         }
         match &mut self.stream {
-            Some(stream) => stream.synthesize(text, on_pcm),
-            None => self.provider.synthesize_stream(text, on_pcm),
+            Some(stream) => stream.synthesize(&request.text, on_pcm),
+            None => self.provider.synthesize_stream(&request.text, on_pcm),
         }
     }
     fn reset(&mut self) -> Result<(), TtsError> {
@@ -696,12 +818,13 @@ impl TtsWorker for ProviderWorker {
 
     fn synthesize_diagnostic(
         &mut self,
-        request: &TtsDiagnosticRequest,
+        _request: &TtsSynthesisRequest,
+        original: &TtsDiagnosticRequest,
         cancelled: &AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
         self.provider
-            .synthesize_diagnostic(request, cancelled, on_pcm)
+            .synthesize_diagnostic(original, cancelled, on_pcm)
     }
 }
 

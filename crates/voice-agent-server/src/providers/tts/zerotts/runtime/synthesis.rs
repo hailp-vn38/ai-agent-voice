@@ -29,6 +29,17 @@ impl ZeroTtsFullPcm {
         max_frames: usize,
         cancelled: &AtomicBool,
     ) -> Result<PcmF32Mono, TtsError> {
+        let voice = self.operation.contract.readiness_voice()?;
+        self.synthesize_with_voice(text, max_frames, cancelled, &voice)
+    }
+
+    pub fn synthesize_with_voice(
+        &mut self,
+        text: &str,
+        max_frames: usize,
+        cancelled: &AtomicBool,
+        voice: &Array3<f32>,
+    ) -> Result<PcmF32Mono, TtsError> {
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }
@@ -41,6 +52,7 @@ impl ZeroTtsFullPcm {
         let eoa = self.operation.synthesize_with_frame_sink(
             &spoken_text,
             max_frames,
+            voice,
             Some(&mut frames),
             |_, _, _| {
                 if cancelled.load(Ordering::Acquire) {
@@ -99,6 +111,17 @@ impl ZeroTtsPcmStream {
         max_frames: usize,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
+        let voice = self.operation.contract.readiness_voice()?;
+        self.synthesize_with_voice(text, max_frames, &voice, on_pcm)
+    }
+
+    pub fn synthesize_with_voice(
+        &mut self,
+        text: &str,
+        max_frames: usize,
+        voice: &Array3<f32>,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
         let spoken_text = text::normalize_vi_text(text);
         tracing::info!(
             first_segment = self.first_segment,
@@ -119,6 +142,7 @@ impl ZeroTtsPcmStream {
         let result = self.operation.synthesize_with_frame_sink(
             &spoken_text,
             max_frames,
+            voice,
             None,
             |frame, _index, _is_eoa| {
                 frames.push(frame.to_vec());
@@ -211,10 +235,12 @@ impl ZeroTtsOperation {
         text: &str,
         max_frames: usize,
     ) -> Result<CodeFrames, TtsError> {
+        let voice = self.contract.readiness_voice()?;
         let mut diagnostics = CodeFrames::default();
         self.synthesize_with_frame_sink(
             text,
             max_frames,
+            &voice,
             Some(&mut diagnostics),
             |_, _, _| Ok(()),
         )?;
@@ -225,6 +251,7 @@ impl ZeroTtsOperation {
         &mut self,
         text: &str,
         max_frames: usize,
+        voice: &Array3<f32>,
         mut diagnostics: Option<&mut CodeFrames>,
         mut on_frame: F,
     ) -> Result<Option<usize>, TtsError>
@@ -232,7 +259,6 @@ impl ZeroTtsOperation {
         F: FnMut(&[i32], usize, bool) -> Result<(), TtsError>,
     {
         let ids = self.contract.encode(text)?;
-        let voice = self.contract.voice.as_ref().expect("engine invariant");
         let text_out = self
             .text_encoder
             .run(ort::inputs! {

@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::{
     audio::PcmF32Mono,
     config::{KokoroViOnnxConfig, RuntimeConfig},
-    providers::tts::{TtsError, TtsProvider, TtsWorker},
+    providers::tts::{TtsBinding, TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker},
 };
 
 use runtime::KokoroViWorker;
@@ -79,13 +79,20 @@ impl TtsProvider for ConfiguredKokoroVi {
         let mut worker = self.open_worker()?;
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         let mut samples = Vec::new();
-        worker.synthesize(text, &cancelled, &mut |pcm| {
-            if pcm.sample_rate_hz() != 24_000 {
-                return Err(TtsError::Failed);
-            }
-            samples.extend_from_slice(pcm.samples());
-            Ok(())
-        })?;
+        worker.synthesize(
+            &TtsSynthesisRequest {
+                text: text.into(),
+                selection: TtsBinding::readiness(),
+            },
+            &cancelled,
+            &mut |pcm| {
+                if pcm.sample_rate_hz() != 24_000 {
+                    return Err(TtsError::Failed);
+                }
+                samples.extend_from_slice(pcm.samples());
+                Ok(())
+            },
+        )?;
         if samples.is_empty() {
             return Err(TtsError::Failed);
         }
@@ -99,7 +106,14 @@ impl TtsProvider for ConfiguredKokoroVi {
     ) -> Result<(), TtsError> {
         let mut worker = self.open_worker()?;
         let cancelled = std::sync::atomic::AtomicBool::new(false);
-        worker.synthesize(text, &cancelled, on_pcm)
+        worker.synthesize(
+            &TtsSynthesisRequest {
+                text: text.into(),
+                selection: TtsBinding::readiness(),
+            },
+            &cancelled,
+            on_pcm,
+        )
     }
 
     fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {

@@ -5,7 +5,8 @@ use crate::{
     config::{AppConfig, SileroOnnxConfig},
     models::prepare,
     providers::{
-        LoadedVad, ProviderCatalog, ProviderLoadError, RuntimeCatalog, compiled_provider_registry,
+        LoadedVad, ProviderCatalog, ProviderLoadError, RuntimeCatalog, TtsBinding,
+        compiled_provider_registry,
     },
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
@@ -233,7 +234,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         tts_runtimes.insert(
             id.clone(),
             Arc::new(
-                TtsWorkerRuntime::try_new(
+                TtsWorkerRuntime::try_new_with_binding(
                     Arc::clone(&provider),
                     WorkerRuntimeConfig {
                         max_workers: config.workers.tts.max_workers,
@@ -242,6 +243,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                         final_timeout: Duration::from_millis(config.tts.timeout_ms),
                         cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
                     },
+                    tts_binding(instance),
                 )
                 .map_err(|_| ProviderLoadError::Initialize("TTS"))?,
             ),
@@ -294,4 +296,14 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             vision: vision_runtimes,
         },
     })
+}
+
+fn tts_binding(instance: &crate::config::TtsInstanceConfig) -> TtsBinding {
+    match instance {
+        crate::config::TtsInstanceConfig::ZeroTtsOnnx(config) => TtsBinding {
+            voice: config.voice.clone(),
+            language: config.language.clone(),
+        },
+        _ => TtsBinding::readiness(),
+    }
 }

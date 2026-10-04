@@ -4,7 +4,7 @@ use voice_agent_server::{
     benchmark::{BenchmarkErrorCategory, TtsBenchmarkMode, TtsBenchmarkResult, run_tts_benchmark},
     config::{AppConfig, BenchmarkTarget},
     models::{prepare, verify_installed},
-    providers::compiled_provider_registry,
+    providers::{TtsBinding, compiled_provider_registry},
 };
 
 #[derive(Clone, Debug)]
@@ -97,6 +97,13 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
         .map_err(|_| BenchmarkErrorCategory::Config)?;
     let registry = compiled_provider_registry();
     let instance = &config.providers.tts.instances[&config.effective_agent().providers.tts];
+    let binding = match instance {
+        voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(configuration) => TtsBinding {
+            voice: configuration.voice.clone(),
+            language: configuration.language.clone(),
+        },
+        _ => TtsBinding::readiness(),
+    };
     let factory = registry
         .tts_factory(instance.adapter())
         .map_err(|_| BenchmarkErrorCategory::Config)?;
@@ -138,7 +145,13 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
         .open_worker()
         .map_err(|_| BenchmarkErrorCategory::ProviderBuild)?;
     let worker_open_ms = elapsed_ms(worker_open_started);
-    let mut report = run_tts_benchmark(worker.as_mut(), args.mode, args.warmup_runs, args.runs)?;
+    let mut report = run_tts_benchmark(
+        worker.as_mut(),
+        &binding,
+        args.mode,
+        args.warmup_runs,
+        args.runs,
+    )?;
     report.adapter = Some(factory.adapter().into());
     report.model_identity = model_identity.map(str::to_owned);
     report.model_preparation_ms = Some(model_preparation_ms);

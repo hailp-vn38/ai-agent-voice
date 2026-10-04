@@ -315,17 +315,30 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                 "ZeroTTS resolved model does not match configured logical model".into(),
             ));
         }
-        let voice_role = format!("voice_{}", config.voice);
-        required(model, &voice_role)?;
         for role in ZEROTTS_REQUIRED_ARTIFACT_ROLES {
             required(model, role)?;
         }
+        let voices = super::tts::zerotts::descriptor::DESCRIPTOR
+            .capabilities
+            .voices
+            .expect("ZeroTTS descriptor has static voices")
+            .iter()
+            .map(|voice| {
+                let role = format!("voice_{}", voice.id);
+                required(model, &role)?;
+                Ok((
+                    voice.id.to_owned(),
+                    model.artifact(&role).expect("required above").into(),
+                ))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, ProviderLoadError>>()?;
         Ok(Arc::new(
             ConfiguredZeroTts::load(
                 ZeroTtsArtifacts {
                     config: model.artifact("config").expect("required above"),
                     tokenizer: model.artifact("tokenizer").expect("required above"),
-                    voice: model.artifact(&voice_role).expect("required above"),
+                    voices_index: model.artifact("voices_index").expect("required below"),
+                    voices,
                     text_encoder: model.artifact("text_encoder").expect("required above"),
                     prefix_step: model.artifact("prefix_step").expect("required above"),
                     local_frame_decode: model
@@ -340,7 +353,6 @@ impl TtsFactory for ZeroTtsOnnxFactory {
                 &runtime.onnx.library,
                 config.num_threads,
                 config.delivery_mode,
-                &config.voice,
             )
             .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
         ))
