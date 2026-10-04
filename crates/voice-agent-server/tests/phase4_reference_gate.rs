@@ -1,11 +1,6 @@
 mod support;
 
-use std::{
-    fs,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
@@ -20,10 +15,9 @@ use voice_agent_server::{
     audio::PcmF32Mono,
     config::{
         AppConfig, AudioConfig, AuthConfig, DeploymentConfig, LimitsConfig, LlmConfig,
-        ModelAcknowledgement, ModelStoreConfig, OnnxRuntimeConfig, ProvidersConfig, RuntimeConfig,
-        ServerConfig, SpeechOutputConfig, TtsConfig, WebsocketConfig, WorkersConfig,
+        OnnxRuntimeConfig, ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig,
+        TtsConfig, WebsocketConfig, WorkersConfig,
     },
-    models::prepare,
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmEvent, LlmProvider, ProviderSet,
         TtsProvider, VadError, VadProvider, VadSession, compiled_provider_registry,
@@ -94,48 +88,21 @@ fn runtime_library() -> PathBuf {
 }
 
 fn real_tts() -> Arc<dyn TtsProvider> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("models");
     let runtime = runtime_library();
     assert!(
         runtime.is_file(),
         "Phase 4 real-model gate unavailable: ONNX Runtime is missing"
     );
-    let manifest = include_str!("../../../models/manifest.toml")
-        .replace("install_path = \"tts/zerotts/", "install_path = \"zerotts/");
-    let path = std::env::temp_dir().join(format!(
-        "phase4-manifest-{}.toml",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::write(&path, manifest).unwrap();
-    let deployment = DeploymentConfig {
-        model_manifest: path.clone(),
-        models: ModelStoreConfig {
-            root,
-            offline: true,
-            ..ModelStoreConfig::default()
-        },
-        model_acknowledgements: vec![ModelAcknowledgement {
-            model: "zerotts_default".into(),
-            revision: "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4".into(),
-            license: "MIT; bundled-codec=Apache-2.0".into(),
-        }],
-        ..DeploymentConfig::default()
-    };
-    let model = prepare(
-        &path,
-        &deployment.models.root,
-        true,
-        "zerotts_default",
-        "zerotts_onnx",
-        &deployment,
-    )
-    .unwrap();
-    let _ = fs::remove_file(path);
+    // The model root is an internal constant relative to the working directory, so the gate runs
+    // from the workspace root where `models/` lives. Tests otherwise start in the package
+    // directory, which has no models.
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert!(
+        voice_agent_server::providers::tts::zerotts::assets::model_dir().exists(),
+        "Phase 4 real-model gate unavailable: {} does not exist",
+        voice_agent_server::providers::tts::zerotts::assets::model_dir().display()
+    );
+    std::env::set_current_dir(&workspace).expect("enter the workspace root");
     compiled_provider_registry()
         .tts_factory("zerotts_onnx")
         .unwrap()
@@ -148,7 +115,6 @@ fn real_tts() -> Arc<dyn TtsProvider> {
                 },
                 ..RuntimeConfig::default()
             },
-            Some(&model),
         )
         .unwrap()
 }

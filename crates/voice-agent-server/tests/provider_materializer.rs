@@ -192,8 +192,6 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
         workers::WorkerSupervisor,
     };
     let mut cfg = config();
-    cfg.deployment.model_manifest =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/onnxruntime/libonnxruntime.dylib");
     let builder = FactoryMaterializer::new(
@@ -259,8 +257,6 @@ fn zerotts_resource_identity_shares_voices_but_isolates_delivery_mode() {
     };
 
     let mut cfg = config();
-    cfg.deployment.model_manifest =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/onnxruntime/libonnxruntime.dylib");
     let builder = FactoryMaterializer::new(
@@ -309,8 +305,6 @@ fn local_runtime_identity_uses_adapter_owned_physical_specs() {
     };
 
     let mut cfg = config();
-    cfg.deployment.model_manifest =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/onnxruntime/libonnxruntime.dylib");
     let builder = FactoryMaterializer::new(
@@ -412,7 +406,7 @@ fn kokoro_runtime_plan_excludes_preload_but_keeps_native_selection_and_g2p_ident
     };
     let key = |plan: &voice_agent_server::services::provider_runtime::LocalRuntimePlan,
                g2p_fingerprint| {
-        plan.resource_key("artifact".into(), [1; 32], Some(g2p_fingerprint), 2, 1)
+        plan.resource_key("artifact", [1; 32], Some(g2p_fingerprint), 2, 1)
             .unwrap()
     };
 
@@ -443,8 +437,6 @@ fn native_resource_identity_uses_execution_content_not_only_its_path() {
     ));
     std::fs::write(&path, b"execution-one").unwrap();
     let mut cfg = config();
-    cfg.deployment.model_manifest =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
     cfg.runtime.onnx.library = path.clone();
     let row = DesiredProvider {
         id: 1,
@@ -472,73 +464,6 @@ fn native_resource_identity_uses_execution_content_not_only_its_path() {
 }
 
 #[test]
-fn qualified_manifest_receipt_is_frozen_for_the_materializer_lifetime() {
-    use sha2::{Digest, Sha256};
-    use std::{collections::HashMap, sync::Arc};
-    use voice_agent_server::{
-        config::ProviderRuntimeConfig,
-        services::provider_runtime::{
-            FactoryMaterializer, RuntimeError, RuntimeLimits, RuntimeMaterializer,
-        },
-        workers::WorkerSupervisor,
-    };
-    let path = std::env::temp_dir().join(format!(
-        "provider-runtime-manifest-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let original = b"qualified manifest";
-    std::fs::write(&path, original).unwrap();
-    let mut cfg = config();
-    cfg.deployment.model_manifest = path.clone();
-    let estimates = HashMap::from([("openai".into(), 1024)]);
-    cfg.provider_runtime = Some(ProviderRuntimeConfig {
-        limits: RuntimeLimits {
-            max_parallel_loads: 1,
-            max_pending_loads: 1,
-            max_waiters: 1,
-            max_resident_bytes: 1024,
-            max_resources: 1,
-            max_version_entries: 1,
-            admission_timeout_ms: 1,
-            failure_cooldown_ms: 1,
-            idle_ttl_ms: 1,
-        },
-        estimated_peak_bytes: estimates.clone(),
-        measured_manifest_sha256: Sha256::digest(original)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
-        startup_timeout_ms: 1000,
-    });
-    let builder = FactoryMaterializer::new(
-        Arc::new(cfg),
-        Arc::new(Secrets(AtomicUsize::new(0))),
-        estimates,
-        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
-    )
-    .unwrap();
-    std::fs::write(&path, b"changed manifest").unwrap();
-    let row = DesiredProvider {
-        id: 1,
-        key: "llm".into(),
-        kind: "llm".into(),
-        adapter: "openai".into(),
-        revision: 1,
-        config_json: r#"{"base_url":"https://example.test/v1","model":"fixture"}"#.into(),
-        secret_ref: None,
-    };
-    assert!(matches!(
-        builder.estimated_peak_bytes(&row),
-        Err(RuntimeError::Configuration)
-    ));
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
 fn runtime_configuration_requires_complete_explicit_budget_and_rejects_unknown_fields() {
     use voice_agent_server::config::ProviderRuntimeConfig;
     let profile = r#"
@@ -551,7 +476,6 @@ max_version_entries=128
 admission_timeout_ms=5000
 failure_cooldown_ms=1000
 idle_ttl_ms=600000
-measured_manifest_sha256="receipt"
 [estimated_peak_bytes]
 silero_onnx=134217728
 "#;
@@ -656,18 +580,6 @@ delivery_mode="stream"
 "#,
     )
     .unwrap();
-    cfg.deployment.model_manifest =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
-    cfg.deployment.models.root =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models");
-    // Only the catalog gate actually resolves artifacts; it overrides both paths with a synthetic
-    // pack so it never depends on a multi-gigabyte installed model.
-    cfg.deployment.model_acknowledgements =
-        vec![voice_agent_server::config::ModelAcknowledgement {
-            model: "zerotts_default".into(),
-            revision: "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4".into(),
-            license: "MIT; bundled-codec=Apache-2.0".into(),
-        }];
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/onnxruntime/libonnxruntime.dylib");
     cfg
@@ -844,56 +756,12 @@ fn deployment_startup_and_the_manager_agree_on_the_zerotts_replica_count() {
     );
 }
 
-/// A minimal acknowledged ZeroTTS pack on disk. Preparation only needs a manifest whose identity
-/// the planner recognises plus one installed artifact, so this keeps the gate hermetic instead of
-/// depending on a multi-gigabyte installed model.
-fn synthetic_zerotts_root() -> std::path::PathBuf {
-    use sha2::{Digest, Sha256};
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("voice-agent-zerotts-catalog-{nonce}"));
-    std::fs::create_dir_all(root.join("tts/zerotts")).unwrap();
-    let bytes = b"synthetic-zerotts-artifact".to_vec();
-    let hash: String = Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    std::fs::write(root.join("tts/zerotts/config.json"), &bytes).unwrap();
-    std::fs::write(
-        root.join("manifest.toml"),
-        format!(
-            r#"
-[[model]]
-identity = "zerotts_default"
-adapter = "zerotts_onnx"
-source = "https://example.invalid/zerotts"
-revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
-license = "MIT; bundled-codec=Apache-2.0"
-
-[[model.artifacts]]
-role = "config"
-remote = "https://example.invalid/config"
-install_path = "tts/zerotts/config.json"
-source_sha256 = "{hash}"
-sha256 = "{hash}"
-transform = "identity"
-"#
-        ),
-    )
-    .unwrap();
-    root
-}
-
+/// One materialization ensures its provider's assets, and a second asks for nothing.
 #[test]
-fn one_materialization_prepares_its_immutable_model_exactly_once() {
-    let root = synthetic_zerotts_root();
-    let mut cfg = zerotts_config();
-    cfg.deployment.model_manifest = root.join("manifest.toml");
-    cfg.deployment.models.root = root.clone();
+fn one_materialization_ensures_its_provider_assets() {
+    let cfg = zerotts_config();
     let builder = FactoryMaterializer::new(
-        Arc::new(cfg),
+        Arc::new(cfg.clone()),
         Arc::new(Secrets(AtomicUsize::new(0))),
         HashMap::from([("zerotts_onnx".into(), 1024)]),
         Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
@@ -901,59 +769,38 @@ fn one_materialization_prepares_its_immutable_model_exactly_once() {
     .unwrap();
     let row = zerotts_provider(1, "tts-maichi", "maichi", "stream");
     assert_eq!(
-        builder.diagnostics().model_preparations,
+        builder.diagnostics().asset_ensures,
         0,
-        "nothing prepares a model before it is asked for"
+        "nothing downloads before a provider is asked for"
     );
 
-    let PreparedRuntime::Local { model, timings } = builder
-        .prepare_artifacts(&row)
-        .unwrap()
-        .expect("ZeroTTS has a local model to prepare")
-    else {
-        panic!("ZeroTTS is a local adapter");
+    // Preparation delegates to whichever asset manager the adapter registered; it never names an
+    // adapter itself.
+    let assets = voice_agent_server::providers::compiled_provider_adapter_registry()
+        .assets(&row.adapter)
+        .expect("ZeroTTS owns model assets");
+    assert_eq!(
+        assets.revision(),
+        voice_agent_server::providers::tts::zerotts::assets::MODEL_REVISION
+    );
+
+    // A remote provider has nothing to prepare.
+    let remote = DesiredProvider {
+        id: 1,
+        key: "llm".into(),
+        kind: "llm".into(),
+        adapter: "openai".into(),
+        revision: 1,
+        config_json: r#"{"base_url":"https://example.test/v1","model":"fixture"}"#.into(),
+        secret_ref: None,
     };
-    let after_first = builder.diagnostics();
+    assert!(matches!(
+        builder.prepare_artifacts(&remote),
+        Ok(Some(PreparedRuntime::Remote))
+    ));
     assert_eq!(
-        after_first.model_preparations, 1,
-        "one materialization installs and verifies its immutable model once"
+        builder.diagnostics().asset_ensures,
+        0,
+        "a remote provider never enters the asset layer"
     );
-    assert!(timings.verify > std::time::Duration::ZERO);
-    assert_eq!(
-        model.fingerprint(),
-        voice_agent_server::models::model_fingerprint(
-            &root.join("manifest.toml"),
-            "zerotts_default",
-            "zerotts_onnx"
-        )
-        .unwrap(),
-        "preparation must resolve the pinned manifest identity"
-    );
-
-    // A later speculative admission of the same immutable identity reuses the trusted result, so
-    // the second stage of the same materialization never re-reads and re-hashes the model.
-    let PreparedRuntime::Local { timings, .. } = builder
-        .prepare_artifacts(&row)
-        .unwrap()
-        .expect("ZeroTTS has a local model to prepare")
-    else {
-        panic!("ZeroTTS is a local adapter");
-    };
-    let after_second = builder.diagnostics();
-    assert_eq!(
-        after_second.model_preparations, after_first.model_preparations,
-        "an unchanged immutable model must not be prepared again"
-    );
-    assert_eq!(
-        after_second.model_cache_hits,
-        after_first.model_cache_hits + 1,
-        "the second preparation must be served from the catalog"
-    );
-    assert_eq!(
-        timings,
-        Default::default(),
-        "a cache hit must report zero preparation cost rather than hiding it"
-    );
-
-    std::fs::remove_dir_all(root).unwrap();
 }

@@ -24,10 +24,8 @@ use std::{
 pub struct FactoryDiagnostics {
     /// Native resources constructed by `build`.
     pub builds: u64,
-    /// Immutable models installed and SHA-verified by this materializer.
-    pub model_preparations: u64,
-    /// Resolutions served from an immutable model this process already trusted.
-    pub model_cache_hits: u64,
+    /// Materializations whose provider model files were ensured before building.
+    pub asset_ensures: u64,
 }
 
 pub struct FactoryMaterializer {
@@ -35,11 +33,10 @@ pub struct FactoryMaterializer {
     secrets: Arc<dyn SecretResolver>,
     estimates: HashMap<String, u64>,
     supervisor: Arc<WorkerSupervisor>,
-    qualified_manifest_fingerprint: Option<[u8; 32]>,
     onnx_fingerprint: Option<[u8; 32]>,
     kokoro_g2p_fingerprint: Option<[u8; 32]>,
-    prepared_models: crate::models::PreparedModelCatalog,
     builds: AtomicU64,
+    asset_ensures: AtomicU64,
 }
 
 /// Production bridge to the same installed-artifact factories used by deployment startup.
@@ -61,25 +58,6 @@ impl FactoryMaterializer {
         {
             return Err(RuntimeError::Configuration);
         }
-        let qualified_manifest_fingerprint = if let Some(profile) = &config.provider_runtime {
-            let fingerprint = manifest_fingerprint(&config.deployment.model_manifest)?;
-            let hash: String = fingerprint
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            if hash != profile.measured_manifest_sha256 {
-                tracing::error!(
-                    reason = "manifest_receipt_mismatch",
-                    measured_manifest_sha256 = %profile.measured_manifest_sha256,
-                    current_manifest_sha256 = %hash,
-                    "provider runtime qualification receipt is stale; remeasure the model and execution settings before updating the receipt"
-                );
-                return Err(RuntimeError::Configuration);
-            }
-            Some(fingerprint)
-        } else {
-            None
-        };
         let native = estimates
             .keys()
             .any(|adapter| !matches!(adapter.as_str(), "openai" | "chillaudio_ws"));
@@ -95,21 +73,18 @@ impl FactoryMaterializer {
             secrets,
             estimates,
             supervisor,
-            qualified_manifest_fingerprint,
             onnx_fingerprint,
             kokoro_g2p_fingerprint,
-            prepared_models: crate::models::PreparedModelCatalog::new(),
             builds: AtomicU64::new(0),
+            asset_ensures: AtomicU64::new(0),
         })
     }
 
     /// Cumulative materialization counters for this instance. Labels are fixed-cardinality.
     pub fn diagnostics(&self) -> FactoryDiagnostics {
-        let models = self.prepared_models.counters();
         FactoryDiagnostics {
             builds: self.builds.load(Ordering::Relaxed),
-            model_preparations: models.preparations,
-            model_cache_hits: models.cache_hits,
+            asset_ensures: self.asset_ensures.load(Ordering::Relaxed),
         }
     }
 }
@@ -118,35 +93,35 @@ impl RuntimeMaterializer for FactoryMaterializer {
         &self,
         snapshot: &DesiredProvider,
     ) -> Result<Option<super::ResourceKey>, RuntimeError> {
-        self.verify_qualified_manifest()?;
-        self.resource_key_with_fingerprint(snapshot, None)
+        self.resource_key_for(snapshot)
     }
+
+    /// Downloads whatever the provider is missing, then reports only what preparation established.
+    /// Which files those are belongs to the provider's own asset manager, so this never matches on
+    /// an adapter name.
     fn prepare_artifacts(
         &self,
         snapshot: &DesiredProvider,
     ) -> Result<Option<PreparedRuntime>, RuntimeError> {
-        self.verify_qualified_manifest()?;
-        let Some(plan) = self.local_runtime_plan(snapshot)? else {
+        if self.local_runtime_plan(snapshot)?.is_none() {
             return Ok(Some(PreparedRuntime::Remote));
+        }
+        let Some(assets) =
+            crate::providers::compiled_provider_adapter_registry().assets(&snapshot.adapter)
+        else {
+            return Err(RuntimeError::Configuration);
         };
-        let resolved = self
-            .prepared_models
-            .resolve(
-                &self.config.deployment.model_manifest,
-                &self.config.deployment.models.root,
-                self.config.deployment.models.offline,
-                plan.model_identity(),
-                &snapshot.adapter,
-                &self.config.deployment,
-            )
+        let started = Instant::now();
+        assets
+            .ensure_assets()
             .map_err(|_| RuntimeError::ArtifactsNotReady)?;
+        self.asset_ensures.fetch_add(1, Ordering::Relaxed);
         Ok(Some(PreparedRuntime::Local {
-            model: resolved.model,
-            timings: resolved.timings,
+            ensure: started.elapsed(),
         }))
     }
+
     fn estimated_peak_bytes(&self, snapshot: &DesiredProvider) -> Result<u64, RuntimeError> {
-        self.verify_qualified_manifest()?;
         // Local requests use exactly the deployment-owned execution settings that were
         // qualified. DB configuration cannot widen a model or thread envelope.
         if self.local_runtime_plan(snapshot)?.is_some() {
@@ -222,7 +197,6 @@ impl RuntimeMaterializer for FactoryMaterializer {
         quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         let started = Instant::now();
-        self.verify_qualified_manifest()?;
         if snapshot.id == 0
             && crate::providers::deployment_provider_snapshot(
                 &self.config,
@@ -234,44 +208,13 @@ impl RuntimeMaterializer for FactoryMaterializer {
         {
             return Err(RuntimeError::Configuration);
         }
-        // Preparation hands over an already-verified model. A build that received nothing resolves
-        // through the same process-owned catalog, so no materialization ever reads and hashes the
-        // same immutable model twice.
+        // Preparation has already ensured the provider's files. `build` only resolves their paths,
+        // so a materialization never downloads or re-verifies the same model twice.
         let mut timings = MaterializationTimings::default();
-        let prepared_model = match prepared {
-            Some(PreparedRuntime::Local {
-                model,
-                timings: prepared,
-            }) => {
-                timings.artifact_prepare = prepared.prepare;
-                timings.artifact_verify = prepared.verify;
-                Some(model)
-            }
-            Some(PreparedRuntime::Remote) => None,
-            None => match self.local_runtime_plan(snapshot)? {
-                None => None,
-                Some(plan) => {
-                    let resolved = self
-                        .prepared_models
-                        .resolve(
-                            &self.config.deployment.model_manifest,
-                            &self.config.deployment.models.root,
-                            self.config.deployment.models.offline,
-                            plan.model_identity(),
-                            &snapshot.adapter,
-                            &self.config.deployment,
-                        )
-                        .map_err(|_| RuntimeError::ArtifactsNotReady)?;
-                    timings.artifact_prepare = resolved.timings.prepare;
-                    timings.artifact_verify = resolved.timings.verify;
-                    Some(resolved.model)
-                }
-            },
-        };
-        let resource_key = self.resource_key_with_fingerprint(
-            snapshot,
-            prepared_model.as_ref().map(|model| model.fingerprint()),
-        )?;
+        if let Some(PreparedRuntime::Local { ensure }) = prepared {
+            timings.artifact_prepare = ensure;
+        }
+        let resource_key = self.resource_key_for(snapshot)?;
         let physical_capacity = self.physical_capacity(snapshot)?;
         let contract_started = Instant::now();
         let catalog = crate::providers::materialize_provider_from_artifacts(
@@ -279,7 +222,6 @@ impl RuntimeMaterializer for FactoryMaterializer {
             snapshot,
             self.secrets.as_ref(),
             quota.clone(),
-            prepared_model.as_deref(),
             physical_capacity,
         )
         .map_err(|failure| match failure {
@@ -489,41 +431,27 @@ impl FactoryMaterializer {
         crate::providers::effective_local_config(&snapshot.adapter, value, &self.config.runtime)
             .map_err(|_| RuntimeError::Configuration)
     }
-    fn verify_qualified_manifest(&self) -> Result<(), RuntimeError> {
-        if let Some(expected) = self.qualified_manifest_fingerprint
-            && manifest_fingerprint(&self.config.deployment.model_manifest)? != expected
-        {
-            return Err(RuntimeError::Configuration);
-        }
-        Ok(())
-    }
-
-    fn resource_key_with_fingerprint(
+    /// Physical identity of the runtime this provider would build.
+    ///
+    /// Derived from the adapter's pinned model revision and its execution settings, never from
+    /// hashing model files: two deployments on the same revision share a runtime, and a revision
+    /// bump produces a different key without anything having to read the model.
+    fn resource_key_for(
         &self,
         snapshot: &DesiredProvider,
-        installed_fingerprint: Option<&str>,
     ) -> Result<Option<super::ResourceKey>, RuntimeError> {
         // Authenticated clients are isolated until the resolver provides credential generations.
-        if snapshot.secret_ref.is_some()
-            || matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws")
-        {
+        if snapshot.secret_ref.is_some() {
             return Ok(None);
         }
         let Some(plan) = self.local_runtime_plan(snapshot)? else {
             return Ok(None);
         };
-        // Without an installed artifact the identity is predicted from the manifest; otherwise the
-        // actual verified model content decides.
-        let fingerprint = match installed_fingerprint {
-            Some(fingerprint) => fingerprint.to_owned(),
-            None => crate::models::model_fingerprint(
-                &self.config.deployment.model_manifest,
-                plan.model_identity(),
-                &snapshot.adapter,
-            )
-            .map_err(|_| RuntimeError::ArtifactsNotReady)?,
-        };
-        // Execution binaries are immutable for the lifetime of this process, so their fingerprints
+        let revision = crate::providers::compiled_provider_adapter_registry()
+            .assets(&snapshot.adapter)
+            .ok_or(RuntimeError::Configuration)?
+            .revision();
+        // Execution binaries are immutable for the lifetime of this process, so their identities
         // were captured once at construction. Re-hashing them per build would read the same
         // unchanged bytes again; replacing a runtime binary requires a server restart.
         let onnx = self.onnx_fingerprint.ok_or(RuntimeError::Configuration)?;
@@ -534,14 +462,10 @@ impl FactoryMaterializer {
         let threads = usize::try_from(self.config.runtime.onnx.threads_for(&snapshot.adapter))
             .map_err(|_| RuntimeError::Configuration)?;
         let capacity = self.logical_capacity(snapshot)?;
-        plan.resource_key(fingerprint, onnx, g2p, threads, capacity)
+        plan.resource_key(revision, onnx, g2p, threads, capacity)
             .map(Some)
             .map_err(|_| RuntimeError::Configuration)
     }
-}
-
-fn manifest_fingerprint(path: &std::path::Path) -> Result<[u8; 32], RuntimeError> {
-    execution_file_fingerprint(path, 2 * 1024 * 1024)
 }
 
 fn execution_file_fingerprint(

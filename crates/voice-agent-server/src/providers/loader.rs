@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use crate::{
     audio::VadSegmenterConfig,
     config::{AppConfig, SileroOnnxConfig},
-    models::prepare,
     providers::{
         LoadedVad, ProviderCatalog, ProviderLoadError, RuntimeCatalog, TtsBinding,
         compiled_provider_registry,
@@ -108,15 +107,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             continue;
         }
         let factory = registry.vad_factory(instance.adapter())?;
-        let model = prepare(
-            &config.deployment.model_manifest,
-            &config.deployment.models.root,
-            config.deployment.models.offline,
-            factory.model_identity(instance)?,
-            factory.adapter(),
-            &config.deployment,
-        )?;
-        let provider = factory.build(instance, &config.runtime, &model)?;
+        let provider = factory.build(instance, &config.runtime)?;
         let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
         vad_runtimes.insert(
             id.clone(),
@@ -153,14 +144,6 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             continue;
         }
         let factory = registry.asr_factory(instance.adapter())?;
-        let model = prepare(
-            &config.deployment.model_manifest,
-            &config.deployment.models.root,
-            config.deployment.models.offline,
-            factory.model_identity(instance)?,
-            factory.adapter(),
-            &config.deployment,
-        )?;
         let max_buffered_samples = usize::try_from(config.audio.max_utterance_ms)
             .map_err(|_| {
                 ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
@@ -169,7 +152,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             .ok_or_else(|| {
                 ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
             })?;
-        let provider = factory.build(instance, &config.runtime, &model, max_buffered_samples)?;
+        let provider = factory.build(instance, &config.runtime, max_buffered_samples)?;
         asr_runtimes.insert(
             id.clone(),
             Arc::new(
@@ -186,7 +169,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                 .map_err(|_| ProviderLoadError::Initialize("ASR"))?,
             ),
         );
-        tracing::info!(provider_kind = "asr", provider_instance = %id, adapter = instance.adapter(), model = %model.identity(), "provider runtime loaded");
+        tracing::info!(provider_kind = "asr", provider_instance = %id, adapter = instance.adapter(), "provider runtime loaded");
         asr_providers.insert(id.clone(), provider);
     }
 
@@ -216,20 +199,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             continue;
         }
         let factory = registry.tts_factory(instance.adapter())?;
-        let model = factory
-            .model_identity(instance)?
-            .map(|identity| {
-                prepare(
-                    &config.deployment.model_manifest,
-                    &config.deployment.models.root,
-                    config.deployment.models.offline,
-                    identity,
-                    factory.adapter(),
-                    &config.deployment,
-                )
-            })
-            .transpose()?;
-        let provider = factory.build(instance, &config.runtime, model.as_ref())?;
+        let provider = factory.build(instance, &config.runtime)?;
         tts_runtimes.insert(
             id.clone(),
             Arc::new(

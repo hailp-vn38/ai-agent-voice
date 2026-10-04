@@ -13,20 +13,19 @@ pub struct MaterializationTimings {
     pub provider_contract: Duration,
 }
 
-/// Immutable inputs one materialization already resolved, handed from preparation to build.
+/// What preparation established before `build` runs.
 ///
-/// Preparation used to return nothing and let `build` resolve the model again, so a single
-/// materialization read and re-hashed the same artifacts twice. Carrying the result makes that
-/// impossible rather than merely unlikely.
-#[derive(Clone)]
+/// Preparation ensures the provider's files exist; `build` then resolves their paths and constructs
+/// the runtime. Carrying the outcome forward keeps `build` from re-entering the asset layer, so a
+/// materialization never downloads twice.
+#[derive(Clone, Copy, Debug)]
 pub enum PreparedRuntime {
-    /// A remote adapter has no local artifacts to prepare.
+    /// A remote adapter has no local model files to prepare.
     Remote,
+    /// The provider's model files were present before the runtime was built.
     Local {
-        model: Arc<crate::models::ResolvedModel>,
-        /// Cost of the preparation that produced this model. A cache hit reports zero, which is
-        /// exactly what it saved.
-        timings: crate::models::PreparationTimings,
+        /// Wall time spent ensuring assets, so a materialization can report which phase dominated.
+        ensure: Duration,
     },
 }
 

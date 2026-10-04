@@ -3,7 +3,6 @@ use std::{env, fs, io::Write, path::PathBuf, process::ExitCode, time::Instant};
 use voice_agent_server::{
     benchmark::{BenchmarkErrorCategory, TtsBenchmarkMode, TtsBenchmarkResult, run_tts_benchmark},
     config::{AppConfig, BenchmarkTarget},
-    models::{prepare, verify_installed},
     providers::{TtsBinding, compiled_provider_registry},
 };
 
@@ -13,7 +12,6 @@ struct Args {
     config: Option<PathBuf>,
     output: Option<PathBuf>,
     overwrite: bool,
-    require_local_models: bool,
     warmup_runs: usize,
     runs: usize,
 }
@@ -62,7 +60,6 @@ fn parse_args() -> Result<Args, ()> {
         config: None,
         output: None,
         overwrite: false,
-        require_local_models: false,
         warmup_runs: 1,
         runs: 5,
     };
@@ -75,7 +72,6 @@ fn parse_args() -> Result<Args, ()> {
             }
             "--runs" => args.runs = values.next().ok_or(())?.parse().map_err(|_| ())?,
             "--overwrite" => args.overwrite = true,
-            "--require-local-models" => args.require_local_models = true,
             _ => return Err(()),
         }
     }
@@ -110,34 +106,21 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
     let model_identity = factory
         .model_identity(instance)
         .map_err(|_| BenchmarkErrorCategory::Config)?;
+    // A local provider installs its own files before it can be built. Remote providers have
+    // nothing to install, so a benchmark of one never reaches the network through this path.
     let preparation_started = Instant::now();
-    let model = model_identity
-        .map(|model_identity| {
-            if args.require_local_models {
-                verify_installed(
-                    &config.deployment.model_manifest,
-                    &config.deployment.models.root,
-                    model_identity,
-                    factory.adapter(),
-                    &config.deployment,
-                )
-            } else {
-                prepare(
-                    &config.deployment.model_manifest,
-                    &config.deployment.models.root,
-                    config.deployment.models.offline,
-                    model_identity,
-                    factory.adapter(),
-                    &config.deployment,
-                )
-            }
-        })
-        .transpose()
-        .map_err(|_| BenchmarkErrorCategory::ModelPreparation)?;
+    if model_identity.is_some()
+        && let Some(assets) = voice_agent_server::providers::compiled_provider_adapter_registry()
+            .assets(factory.adapter())
+    {
+        assets
+            .ensure_assets()
+            .map_err(|_| BenchmarkErrorCategory::ModelPreparation)?;
+    }
     let model_preparation_ms = elapsed_ms(preparation_started);
     let build_started = Instant::now();
     let provider = factory
-        .build(instance, &config.runtime, model.as_ref())
+        .build(instance, &config.runtime)
         .map_err(|_| BenchmarkErrorCategory::ProviderBuild)?;
     let provider_build_and_readiness_ms = elapsed_ms(build_started);
     let worker_open_started = Instant::now();
@@ -157,10 +140,6 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
     report.model_preparation_ms = Some(model_preparation_ms);
     report.provider_build_and_readiness_ms = Some(provider_build_and_readiness_ms);
     report.worker_open_ms = Some(worker_open_ms);
-    report.comparison_qualified = Some(comparison_qualified(
-        config.deployment.models.offline,
-        args.require_local_models,
-    ));
     report.overall_elapsed_ms = Some(elapsed_ms(overall_started));
     if let Some(output) = args.output {
         write_json(&output, args.overwrite, &report)?;
@@ -240,10 +219,6 @@ fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1_000.0
 }
 
-const fn comparison_qualified(offline: bool, require_local_models: bool) -> bool {
-    offline || require_local_models
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -252,7 +227,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{BenchmarkErrorCategory, comparison_qualified, write_failure, write_json_value};
+    use super::{BenchmarkErrorCategory, write_failure, write_json_value};
 
     static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -319,12 +294,5 @@ mod tests {
             "{\n  \"schema_version\": 1,\n  \"status\": \"failed\",\n  \"error_category\": \"model_preparation\"\n}"
         );
         fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn comparison_requires_offline_or_explicit_local_verification() {
-        assert!(!comparison_qualified(false, false));
-        assert!(comparison_qualified(true, false));
-        assert!(comparison_qualified(false, true));
     }
 }

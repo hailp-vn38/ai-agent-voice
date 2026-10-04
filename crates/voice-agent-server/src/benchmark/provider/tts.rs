@@ -64,7 +64,6 @@ pub fn run_tts_benchmark(
         model_preparation_ms: None,
         provider_build_and_readiness_ms: None,
         worker_open_ms: None,
-        comparison_qualified: None,
         overall_elapsed_ms: None,
     })
 }

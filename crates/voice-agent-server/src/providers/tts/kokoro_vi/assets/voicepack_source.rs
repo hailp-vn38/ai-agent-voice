@@ -1,21 +1,22 @@
-//! Deterministic extraction for the pinned ContextBox tensor layout.
-//! The pickle metadata is compared byte-for-byte, never interpreted or executed.
-use super::ModelError;
+//! Deterministic extraction for the pinned ContextBox voicepack layout.
+//!
+//! Upstream ships each voice as a PyTorch archive. The provider needs a flat float table, so the
+//! tensor is extracted here. The archive's metadata is compared byte-for-byte and never
+//! interpreted or executed, which is what makes accepting an untrusted download safe.
+use super::AssetError;
 use std::{
     collections::BTreeSet,
     io::{Cursor, Read},
 };
 
-const METADATA: &[u8] = include_bytes!("kokoro_tensor_v1.pkl");
+const METADATA: &[u8] = include_bytes!("../kokoro_tensor_v1.pkl");
 const ROWS: u32 = 510;
 const DIMENSION: u32 = 256;
 const STORAGE_BYTES: usize = ROWS as usize * DIMENSION as usize * 4;
 const MAX_ARCHIVE_BYTES: usize = 2 * 1024 * 1024;
 
-pub(super) fn voicepack_v1(input: &[u8]) -> Result<Vec<u8>, ModelError> {
-    let invalid = || {
-        ModelError::UnsupportedTransform("kokoro_voicepack_v1: incompatible tensor archive".into())
-    };
+pub(super) fn voicepack_v1(input: &[u8]) -> Result<Vec<u8>, AssetError> {
+    let invalid = || AssetError::Transform("incompatible voicepack tensor archive".into());
     if input.len() > MAX_ARCHIVE_BYTES {
         return Err(invalid());
     }
@@ -60,7 +61,8 @@ pub(super) fn voicepack_v1(input: &[u8]) -> Result<Vec<u8>, ModelError> {
         let mut bytes = Vec::with_capacity(expected);
         (&mut entry)
             .take(expected as u64 + 1)
-            .read_to_end(&mut bytes)?;
+            .read_to_end(&mut bytes)
+            .map_err(|_| invalid())?;
         if bytes.len() != expected {
             return Err(invalid());
         }

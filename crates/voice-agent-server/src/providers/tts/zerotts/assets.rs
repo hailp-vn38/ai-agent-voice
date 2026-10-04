@@ -117,6 +117,10 @@ impl ProviderAssetManager for ZeroTtsAssetManager {
     fn ensure_assets(&self) -> Result<(), AssetError> {
         ensure_assets_into(http_acquirer(), &model_dir())
     }
+
+    fn revision(&self) -> &'static str {
+        MODEL_REVISION
+    }
 }
 
 static ASSET_MANAGER: ZeroTtsAssetManager = ZeroTtsAssetManager;

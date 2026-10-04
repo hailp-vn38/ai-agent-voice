@@ -1,6 +1,8 @@
-//! Bounded HTTP acquisition for provider assets.
+//! Downloading provider asset files over HTTP.
+//!
+//! This is transport only: it knows how to move bytes from a URL to a path, and nothing about
+//! which files a provider needs or whether their contents are acceptable.
 
-use super::{ModelAcquirer, ModelError};
 use crate::providers::assets::{AssetAcquirer, AssetError};
 use std::{
     fs::{self, File},
@@ -9,64 +11,52 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A homelab model is gigabytes over a possibly slow link, so the ceiling is generous while the
+/// connect budget stays short enough to fail fast on an unreachable host.
 const ATTEMPTS: u32 = 3;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(900);
 
-pub struct HttpModelAcquirer;
+pub struct HttpAssetAcquirer;
 
 struct AttemptError {
     error: AssetError,
     retryable: bool,
 }
 
-impl AssetAcquirer for HttpModelAcquirer {
+impl AssetAcquirer for HttpAssetAcquirer {
     fn acquire(&self, url: &str, destination: &Path) -> Result<(), AssetError> {
-        acquire(url, destination)
-    }
-}
-
-impl ModelAcquirer for HttpModelAcquirer {
-    fn acquire(&self, remote: &str, destination: &Path) -> Result<(), ModelError> {
-        acquire(remote, destination).map_err(|error| match error {
-            AssetError::Io(error) => ModelError::Read(error),
-            AssetError::Download(reason) => ModelError::Acquire(reason),
-            AssetError::Transform(reason) => ModelError::UnsupportedTransform(reason),
-            AssetError::InvalidDownload(path) => ModelError::Acquire(path.display().to_string()),
-            AssetError::Missing(path) => ModelError::MissingArtifact(path.display().to_string()),
-        })
-    }
-}
-
-fn acquire(remote: &str, destination: &Path) -> Result<(), AssetError> {
-    let url = reqwest::Url::parse(remote)
-        .map_err(|_| AssetError::Download("invalid asset URL".into()))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(AssetError::Download("asset URL must use HTTP(S)".into()));
-    }
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(DOWNLOAD_TIMEOUT)
-        .build()
-        .map_err(|error| AssetError::Download(error.without_url().to_string()))?;
-    for attempt in 1..=ATTEMPTS {
-        match acquire_once(&client, &url, destination) {
-            Ok(()) => return Ok(()),
-            Err(failure) => {
-                let _ = fs::remove_file(destination);
-                if !failure.retryable || attempt == ATTEMPTS {
-                    return Err(failure.error);
+        let url = reqwest::Url::parse(url)
+            .map_err(|_| AssetError::Download("invalid asset URL".into()))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(AssetError::Download("asset URL must use HTTP(S)".into()));
+        }
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(DOWNLOAD_TIMEOUT)
+            .build()
+            .map_err(|error| AssetError::Download(error.without_url().to_string()))?;
+        for attempt in 1..=ATTEMPTS {
+            match acquire_once(&client, &url, destination) {
+                Ok(()) => return Ok(()),
+                Err(failure) => {
+                    // Restart from zero on every attempt: resuming a partial body would require
+                    // trusting state this layer does not track.
+                    let _ = fs::remove_file(destination);
+                    if !failure.retryable || attempt == ATTEMPTS {
+                        return Err(failure.error);
+                    }
+                    tracing::warn!(
+                        attempt,
+                        max_attempts = ATTEMPTS,
+                        "provider asset download interrupted; retrying"
+                    );
+                    std::thread::sleep(Duration::from_secs(u64::from(attempt)));
                 }
-                tracing::warn!(
-                    attempt,
-                    max_attempts = ATTEMPTS,
-                    "provider asset download interrupted; retrying"
-                );
-                std::thread::sleep(Duration::from_secs(u64::from(attempt)));
             }
         }
+        unreachable!("the final attempt always returns")
     }
-    unreachable!("the final attempt always returns")
 }
 
 fn acquire_once(

@@ -65,6 +65,10 @@ pub trait AssetAcquirer: Send + Sync {
 pub trait ProviderAssetManager: Send + Sync {
     /// Downloads every missing file this provider needs. Safe to call concurrently and repeatedly.
     fn ensure_assets(&self) -> Result<(), AssetError>;
+
+    /// The pinned upstream revision these files come from. Two deployments on different revisions
+    /// must not share one physical runtime, so this participates in resource identity.
+    fn revision(&self) -> &'static str;
 }
 
 /// Ensures one asset exists, returning its resolved path.
@@ -121,7 +125,7 @@ pub fn resolve_assets(
 }
 
 pub(crate) fn http_acquirer() -> &'static dyn AssetAcquirer {
-    &crate::models::HttpModelAcquirer
+    &crate::assets::HttpAssetAcquirer
 }
 
 fn install(acquirer: &dyn AssetAcquirer, url: &str, target: &Path) -> Result<(), AssetError> {
@@ -140,6 +144,27 @@ fn install(acquirer: &dyn AssetAcquirer, url: &str, target: &Path) -> Result<(),
         Ok(())
     })();
     // A failed attempt must leave nothing behind, so the next attempt starts clean.
+    let _ = fs::remove_file(&part);
+    result
+}
+
+/// Publishes bytes a provider derived itself, using the same temporary-file discipline as a
+/// download so a failed transform never leaves a half-written file looking ready.
+pub fn install_bytes(content: &[u8], target: &Path) -> Result<(), AssetError> {
+    if content.is_empty() {
+        return Err(AssetError::InvalidDownload(target.to_path_buf()));
+    }
+    let parent = target
+        .parent()
+        .ok_or(AssetError::Missing(target.to_path_buf()))?;
+    fs::create_dir_all(parent)?;
+    let part = PathBuf::from(format!("{}.part", target.display()));
+    let _ = fs::remove_file(&part);
+    let result = (|| {
+        fs::write(&part, content)?;
+        fs::rename(&part, target)?;
+        Ok(())
+    })();
     let _ = fs::remove_file(&part);
     result
 }

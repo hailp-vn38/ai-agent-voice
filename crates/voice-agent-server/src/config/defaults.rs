@@ -178,12 +178,6 @@ pub(crate) fn default_gipformer_decoding_method() -> super::TransducerDecodingMe
 pub(crate) fn default_gipformer_max_active_paths() -> i32 {
     4
 }
-pub(super) fn default_manifest_path() -> std::path::PathBuf {
-    "models/manifest.toml".into()
-}
-pub(super) fn default_models_root() -> std::path::PathBuf {
-    "models".into()
-}
 pub(super) fn default_onnx_runtime_library() -> std::path::PathBuf {
     "runtime/onnxruntime/libonnxruntime.dylib".into()
 }

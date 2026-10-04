@@ -192,26 +192,13 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect(&config.database).await?;
     let (plan, rows) = read_load_plan(&config, &database).await?;
-    let preparation_config = config.clone();
-    preparation_config
-        .validate()
-        .map_err(|_| BootstrapError::Provider)?;
-    let preparation_rows = rows.clone();
-    let preparation_plan = plan.clone();
-    tokio::task::spawn_blocking(move || {
-        crate::models::prepare_startup(&preparation_config, &preparation_rows, &preparation_plan)
-    })
-    .await
-    .map_err(|_| BootstrapError::Provider)?
-    .map_err(|_| BootstrapError::Provider)?;
+    config.validate().map_err(|_| BootstrapError::Provider)?;
     if config.provider_runtime.is_some() {
         return managed_startup(config, database, secret_resolver, lifecycle).await;
     }
-    // The plan and the desired rows are read before any runtime exists, so a required provider is
-    // known to be required before the first model is prepared.
-    let mut startup_config = config.clone();
-    // Runtime construction uses verified disk artifacts and never repeats a failed download.
-    startup_config.deployment.models.offline = true;
+    // Nothing downloads here. A provider installs its own model files when the runtime manager
+    // materializes it, so a deployment starts whether or not the model directory is populated.
+    let startup_config = config.clone();
     let startup_secret_resolver = Arc::clone(&secret_resolver);
     let (loaded, materialization) = tokio::task::spawn_blocking(move || {
         let local =

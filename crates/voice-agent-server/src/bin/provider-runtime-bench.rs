@@ -48,10 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: provider-runtime-bench CONFIG KIND KEY [--client-only] [--hold-ms N]".into(),
         );
     }
-    let mut config =
-        AppConfig::parse_and_resolve(&positional[0]).map_err(|_| "invalid qualification config")?;
-    config.deployment.models.offline = true;
-    let snapshot = deployment_provider_snapshot(&config, &positional[1], &positional[2])
+    let config =
+        AppConfig::parse_and_resolve(positional[0]).map_err(|_| "invalid qualification config")?;
+    let snapshot = deployment_provider_snapshot(&config, positional[1], positional[2])
         .map_err(|_| "invalid qualification provider")?;
     if !client_only && matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
         return Err("native offline providers only".into());
@@ -95,12 +94,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "artifact_prepare_ms":prepared_ms,
             "ready_ms":ready_ms,
             "total_load_ms":prepared_ms + ready_ms,
-            "artifact_verify_ms":timings.artifact_verify.as_secs_f64() * 1000.0,
             "provider_contract_ms":timings.provider_contract.as_secs_f64() * 1000.0,
             "worker_session_init_ms":readiness.initialization.as_secs_f64() * 1000.0,
             "worker_warmup_ms":readiness.warmup.as_secs_f64() * 1000.0,
             "physical_replicas":physical_capacity,
-            "model_preparations":diagnostics.model_preparations,
+            "asset_ensures":diagnostics.asset_ensures,
             "ready_resident_bytes":ready_resident_bytes,
             "unload_acknowledged":true,
             "client_only":client_only

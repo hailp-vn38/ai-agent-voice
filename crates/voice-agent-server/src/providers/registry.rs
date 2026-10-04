@@ -88,7 +88,7 @@ impl ProviderAdapterRegistry {
 }
 
 static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
-    super::vad::silero_descriptor::REGISTRATION,
+    super::vad::silero::descriptor::REGISTRATION,
     super::asr::zipformer::descriptor::REGISTRATION,
     super::asr::gipformer::descriptor::REGISTRATION,
     super::llm::openai::descriptor::REGISTRATION,

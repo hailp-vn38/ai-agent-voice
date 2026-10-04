@@ -1,8 +1,9 @@
 //! Native ONNX adapter for the ContextBox Vietnamese Kokoro model.
 //!
-//! The provider receives already-prepared `KOVI_VOICEPACK_V1` assets.  It never
-//! imports PyTorch or converts assets during synthesis; Model Preparation owns conversion.
+//! The runtime receives already-converted `KOVI_VOICEPACK_V1` voicepacks. It never imports
+//! PyTorch and never converts assets during synthesis; `assets` owns conversion.
 
+pub mod assets;
 pub(crate) mod config;
 pub(crate) mod descriptor;
 mod g2p;

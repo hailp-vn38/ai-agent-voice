@@ -36,4 +36,4 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     },
 };
 pub static REGISTRATION: ProviderAdapterRegistration =
-    ProviderAdapterRegistration::local(&DESCRIPTOR, None, None);
+    ProviderAdapterRegistration::local(&DESCRIPTOR, None, Some(super::assets::ASSETS));

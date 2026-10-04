@@ -518,45 +518,14 @@ impl Default for AsrWorkerConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeploymentConfig {
-    #[serde(default = "default_manifest_path")]
-    pub model_manifest: std::path::PathBuf,
     #[serde(default)]
     pub profile: String,
-    #[serde(default)]
-    pub model_acknowledgements: Vec<ModelAcknowledgement>,
-    #[serde(default)]
-    pub models: ModelStoreConfig,
 }
 
 impl Default for DeploymentConfig {
     fn default() -> Self {
         Self {
-            model_manifest: default_manifest_path(),
             profile: "development-noncommercial".into(),
-            model_acknowledgements: Vec::new(),
-            models: ModelStoreConfig::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelStoreConfig {
-    #[serde(default = "default_models_root")]
-    pub root: std::path::PathBuf,
-    #[serde(default)]
-    pub offline: bool,
-    /// Download locations for deployment-prepared artifacts; manifest checksums still apply.
-    #[serde(default)]
-    pub sources: std::collections::BTreeMap<String, String>,
-}
-
-impl Default for ModelStoreConfig {
-    fn default() -> Self {
-        Self {
-            root: default_models_root(),
-            offline: false,
-            sources: Default::default(),
         }
     }
 }
@@ -605,14 +574,6 @@ impl Default for OnnxRuntimeConfig {
             threads: default_runtime_threads(),
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelAcknowledgement {
-    pub model: String,
-    pub revision: String,
-    pub license: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1129,7 +1090,6 @@ pub struct ProviderRuntimeConfig {
     #[serde(flatten)]
     pub limits: crate::services::provider_runtime::RuntimeLimits,
     pub estimated_peak_bytes: std::collections::HashMap<String, u64>,
-    pub measured_manifest_sha256: String,
     #[serde(default = "default_provider_startup_timeout_ms")]
     pub startup_timeout_ms: u64,
 }

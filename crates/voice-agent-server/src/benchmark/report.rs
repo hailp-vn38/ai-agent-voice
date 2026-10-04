@@ -53,14 +53,13 @@ pub struct TtsBenchmarkResult {
     pub adapter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_identity: Option<String>,
+    /// Wall time to install the provider's model files before the runtime was built.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_preparation_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_build_and_readiness_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worker_open_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub comparison_qualified: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overall_elapsed_ms: Option<f64>,
 }

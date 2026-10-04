@@ -177,15 +177,11 @@ command_queue_capacity = 32
 cleanup_grace_ms = 5000
 
 [deployment]
-model_manifest = "models/manifest.toml"
 profile = "development-noncommercial"
 
-[deployment.models]
-root = "models"
-offline = false
-
-# Startup verifies/downloads local models before constructing provider runtimes.
-# Existing verified artifacts are reused without contacting the source.
+# Model files are owned by each provider: it downloads what it is missing into `models/` when the
+# runtime manager materializes it, and reuses whatever is already there. Nothing here configures
+# where models live or where they come from.
 [runtime.onnx]
 library = "runtime/onnxruntime/libonnxruntime.dylib"
 
@@ -201,25 +197,9 @@ kokoro_vi_onnx = 2
 # ws_url = "wss://your-deployment-chillaudio-endpoint.example/ws"
 timeout_ms = 12000
 
-[[deployment.model_acknowledgements]]
-model = "silero_vad_v5"
-revision = "60b7ffa243625ebdc1070275a29f18c87843786a"
-license = "MIT"
 
-[[deployment.model_acknowledgements]]
-model = "zipformer_vi_streaming"
-revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
-license = "CC-BY-NC-ND-4.0"
 
-[[deployment.model_acknowledgements]]
-model = "gipformer15_vi_int8"
-revision = "dd9227dcd8705c13f33bdbe59728d546ab94480f"
-license = "MIT"
 
-[[deployment.model_acknowledgements]]
-model = "zerotts_default"
-revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
-license = "MIT; bundled-codec=Apache-2.0"
 
 [llm]
 max_history_messages = 20
@@ -250,9 +230,10 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # prompt_template = "prompts/custom-voice-assistant.txt"
 
 # Optional bounded hot-runtime manager. Enable only after measuring every adapter/model/worker
-# envelope on the deployment host. The manifest receipt prevents reusing stale measurements after
-# artifact metadata changes. See docs/provider-runtime-manager-qualification.md for the development
-# host example and the qualification boundary.
+# envelope on the deployment host. A measured envelope stays valid for as long as the provider's
+# pinned model revision and execution settings are unchanged; bumping either requires measuring
+# again. See docs/provider-runtime-manager-qualification.md for the development host example and the
+# qualification boundary.
 # [provider_runtime]
 # max_parallel_loads = 1
 # max_pending_loads = 8
@@ -264,7 +245,6 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # startup_timeout_ms = 60000
 # failure_cooldown_ms = 1000
 # idle_ttl_ms = 600000
-# measured_manifest_sha256 = "replace-with-measured-manifest-sha256"
 #
 # [provider_runtime.estimated_peak_bytes]
 # silero_onnx = 134217728

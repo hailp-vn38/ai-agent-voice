@@ -13,7 +13,6 @@ use crate::{
         DesiredProvider, ProviderLoadPlan, ProviderLoadRequirement, provider_config,
         secrets::{SecretRef, SecretResolver},
     },
-    models::prepare_immutable as prepare,
     providers::{
         LoadedVad, ProviderCatalog, RuntimeCatalog, TtsBinding, compiled_provider_registry,
         loader::LoadedProviders, loader::vad_timing,
@@ -163,7 +162,7 @@ fn load_one(
         ),
         ProviderLoadRequirement::Required | ProviderLoadRequirement::Optional => (
             DatabaseRuntimeStatus::Loaded,
-            materialize_one(config, row, secrets, loaded, None, None, None),
+            materialize_one(config, row, secrets, loaded, None, None),
         ),
     };
     match outcome {
@@ -251,10 +250,8 @@ pub fn materialize_provider_with_admission(
             .validate()
             .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
     }
-    let mut config = config.clone();
-    config.deployment.models.offline = true;
     let mut loaded = empty_loaded();
-    materialize_one(&config, row, secrets, &mut loaded, Some(quota), None, None)?;
+    materialize_one(config, row, secrets, &mut loaded, Some(quota), None)?;
     Ok(loaded.runtimes)
 }
 
@@ -263,44 +260,18 @@ pub(crate) fn materialize_provider_from_artifacts(
     row: &DesiredProvider,
     secrets: &dyn SecretResolver,
     quota: ProviderRuntimeAdmission,
-    model: Option<&crate::models::ResolvedModel>,
     physical_capacity: usize,
 ) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
-    let mut config = config.clone();
-    config.deployment.models.offline = true;
     let mut loaded = empty_loaded();
     materialize_one(
-        &config,
+        config,
         row,
         secrets,
         &mut loaded,
         Some(quota),
-        model,
         Some(physical_capacity),
     )?;
     Ok(loaded.runtimes)
-}
-
-fn selected_model(
-    config: &AppConfig,
-    identity: &str,
-    adapter: &str,
-    prepared: Option<&crate::models::ResolvedModel>,
-) -> Result<crate::models::ResolvedModel, crate::models::ModelError> {
-    if let Some(model) = prepared {
-        if model.identity() != identity || model.adapter() != adapter {
-            return Err(crate::models::ModelError::UnknownModel(identity.into()));
-        }
-        return Ok(model.clone());
-    }
-    prepare(
-        &config.deployment.model_manifest,
-        &config.deployment.models.root,
-        config.deployment.models.offline,
-        identity,
-        adapter,
-        &config.deployment,
-    )
 }
 
 fn materialize_one(
@@ -309,7 +280,6 @@ fn materialize_one(
     secrets: &dyn SecretResolver,
     loaded: &mut LoadedProviders,
     quota: Option<ProviderRuntimeAdmission>,
-    prepared_model: Option<&crate::models::ResolvedModel>,
     physical: Option<usize>,
 ) -> Result<(), DatabaseRuntimeFailure> {
     let mut value = super::factory_registry::effective_local_config(
@@ -345,16 +315,7 @@ fn materialize_one(
                 typed_instance(&mut value, &row.adapter, None)?
             };
             let factory = registry.vad_factory(instance.adapter()).map_err(|_| ())?;
-            let model = selected_model(
-                config,
-                factory.model_identity(&instance).map_err(|_| ())?,
-                factory.adapter(),
-                prepared_model,
-            )
-            .map_err(|_| ())?;
-            let provider = factory
-                .build(&instance, &config.runtime, &model)
-                .map_err(|_| ())?;
+            let provider = factory.build(&instance, &config.runtime).map_err(|_| ())?;
             let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
             loaded.runtimes.vad.insert(
                 row.key.clone(),
@@ -379,19 +340,12 @@ fn materialize_one(
             reject_secret(row, secret.as_ref())?;
             let instance: AsrInstanceConfig = typed_instance(&mut value, &row.adapter, None)?;
             let factory = registry.asr_factory(instance.adapter()).map_err(|_| ())?;
-            let model = selected_model(
-                config,
-                factory.model_identity(&instance).map_err(|_| ())?,
-                factory.adapter(),
-                prepared_model,
-            )
-            .map_err(|_| ())?;
             let samples = usize::try_from(config.audio.max_utterance_ms)
                 .map_err(|_| ())?
                 .checked_mul(16)
                 .ok_or(())?;
             let provider = factory
-                .build(&instance, &config.runtime, &model, samples)
+                .build(&instance, &config.runtime, samples)
                 .map_err(|_| ())?;
             loaded.runtimes.asr.insert(
                 row.key.clone(),
@@ -455,15 +409,7 @@ fn materialize_one(
                 typed_tts_instance(&mut value, &row.adapter, secret.as_ref())?
             };
             let factory = registry.tts_factory(instance.adapter()).map_err(|_| ())?;
-            let model = factory
-                .model_identity(&instance)
-                .map_err(|_| ())?
-                .map(|identity| selected_model(config, identity, factory.adapter(), prepared_model))
-                .transpose()
-                .map_err(|_| ())?;
-            let provider = factory
-                .build(&instance, &config.runtime, model.as_ref())
-                .map_err(|_| ())?;
+            let provider = factory.build(&instance, &config.runtime).map_err(|_| ())?;
             loaded.runtimes.tts.insert(
                 row.key.clone(),
                 Arc::new(

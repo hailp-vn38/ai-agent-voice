@@ -190,4 +190,4 @@ impl BootstrapCapabilityInspector for Inspector {
 }
 static INSPECTOR: Inspector = Inspector;
 pub static REGISTRATION: ProviderAdapterRegistration =
-    ProviderAdapterRegistration::local(&DESCRIPTOR, Some(&INSPECTOR), None);
+    ProviderAdapterRegistration::local(&DESCRIPTOR, Some(&INSPECTOR), Some(super::assets::ASSETS));

@@ -21,6 +21,7 @@ pub mod vad;
 pub mod vision;
 
 pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession};
+pub use assets::{Asset, AssetError, VoiceAsset};
 pub use catalog::{ProviderCatalog, ProviderLookupError};
 pub use database_loader::{
     DatabaseMaterialization, DatabaseRuntimeFailure, DatabaseRuntimeSnapshot, DatabaseRuntimeState,

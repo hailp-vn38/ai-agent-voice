@@ -118,7 +118,7 @@ impl LocalRuntimePlan {
 
     pub fn resource_key(
         &self,
-        artifact_fingerprint: String,
+        model_revision: &'static str,
         onnx_execution_fingerprint: [u8; 32],
         auxiliary_execution_fingerprint: Option<[u8; 32]>,
         execution_threads: usize,
@@ -126,7 +126,7 @@ impl LocalRuntimePlan {
     ) -> Result<ResourceKey, serde_json::Error> {
         let identity = PhysicalResourceIdentity {
             adapter: self.adapter,
-            artifact_fingerprint,
+            model_revision,
             onnx_execution_fingerprint,
             auxiliary_execution_fingerprint,
             execution_threads,
@@ -145,7 +145,8 @@ impl LocalRuntimePlan {
 #[derive(Serialize)]
 struct PhysicalResourceIdentity<'a> {
     adapter: &'static str,
-    artifact_fingerprint: String,
+    /// The provider's pinned upstream model revision.
+    model_revision: &'static str,
     onnx_execution_fingerprint: [u8; 32],
     auxiliary_execution_fingerprint: Option<[u8; 32]>,
     execution_threads: usize,
