@@ -16,7 +16,8 @@ pub(crate) use chillaudio::ChillAudioWsProvider;
 /// Compatibility exports for native ZeroTTS tooling.
 pub mod zerotts_onnx {
     pub use super::zerotts::runtime::{
-        ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream, normalize_text, session_constructions,
+        WarmupReport, ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream, normalize_text,
+        session_constructions,
     };
 }
 
@@ -417,27 +418,21 @@ enum ZeroTtsNativeDelivery {
 
 impl TtsWorker for ZeroTtsNativeWorker {
     fn warmup(&mut self) -> Result<(), TtsError> {
-        let request = TtsSynthesisRequest {
-            text: "ZeroTTS startup readiness.".into(),
-            selection: TtsBinding {
-                voice: self.contract.readiness_voice_id()?.into(),
-                language: "vi-VN".into(),
-            },
+        // Readiness only needs every hot-path graph to have executed once: sessions loaded, ORT
+        // allocator warm, the codec able to emit finite PCM. Decoding a whole utterance per runtime
+        // materialization is a qualification gate, not a startup cost. The readiness voice comes
+        // from the shared registry, so warming never depends on any one provider's binding.
+        let voice = self.contract.readiness_voice()?;
+        let report = match &mut self.delivery {
+            ZeroTtsNativeDelivery::Stream(stream) => stream.warmup(&voice)?,
+            ZeroTtsNativeDelivery::File(full) => full.warmup(&voice)?,
         };
-        let cancelled = AtomicBool::new(false);
-        let mut samples = 0usize;
-        self.synthesize(&request, &cancelled, &mut |pcm| {
-            if pcm.sample_rate_hz() != 48_000
-                || pcm.samples().iter().any(|sample| !sample.is_finite())
-            {
-                return Err(TtsError::InvalidWarmupPcm);
-            }
-            samples += pcm.samples().len();
-            Ok(())
-        })?;
-        if samples == 0 {
-            return Err(TtsError::InvalidWarmupPcm);
-        }
+        tracing::debug!(
+            autoregressive_frames = report.autoregressive_frames,
+            codec_decodes = report.codec_decodes,
+            pcm_samples = report.pcm_samples,
+            "ZeroTTS bounded warmup completed"
+        );
         self.reset()
     }
 
