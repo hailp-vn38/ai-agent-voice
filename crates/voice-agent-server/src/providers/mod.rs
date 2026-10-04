@@ -37,7 +37,8 @@ pub use llm::{LlmError, LlmEvent, LlmProvider};
 pub(crate) use loader::{LoadedProviders, load_local, vad_timing};
 
 pub use factory_registry::{
-    AsrFactory, LlmFactory, ProviderRegistry, TtsFactory, VadFactory, compiled_provider_registry,
+    AsrFactory, LlmFactory, LocalRuntimeAdapter, LocalRuntimeAdapterRegistry, ProviderRegistry,
+    TtsFactory, VadFactory, compiled_local_runtime_adapter_registry, compiled_provider_registry,
     local_model_identity,
 };
 pub use runtime_catalog::{

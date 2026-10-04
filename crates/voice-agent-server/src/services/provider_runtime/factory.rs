@@ -10,13 +10,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// Adapter-owned portion of a ZeroTTS physical resource. Logical provider selection deliberately
-/// stays out of this identity so aliases can share one resident worker pool safely.
-#[derive(serde::Serialize)]
-struct ZeroTtsPhysicalSpec {
-    delivery_mode: crate::config::ZeroTtsDeliveryMode,
-}
-
 /// Production bridge to the same installed-artifact factories used by deployment startup.
 /// Estimates are deployment-owned worst-case peaks per adapter, including all configured
 /// workers and warmup allocations. A missing estimate refuses allocation, without resolving
@@ -93,21 +86,14 @@ impl RuntimeMaterializer for FactoryMaterializer {
     }
     fn prepare_artifacts(&self, snapshot: &DesiredProvider) -> Result<(), RuntimeError> {
         self.verify_qualified_manifest()?;
-        if matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
+        let Some(plan) = self.local_runtime_plan(snapshot)? else {
             return Ok(());
-        }
-        let value: serde_json::Value = self
-            .effective_config(snapshot)
-            .map_err(|_| RuntimeError::Configuration)?;
-        let model = value
-            .get("model")
-            .and_then(|v| v.as_str())
-            .ok_or(RuntimeError::Configuration)?;
+        };
         crate::models::prepare_immutable(
             &self.config.deployment.model_manifest,
             &self.config.deployment.models.root,
             self.config.deployment.models.offline,
-            model,
+            plan.model_identity(),
             &snapshot.adapter,
             &self.config.deployment,
         )
@@ -118,8 +104,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
         self.verify_qualified_manifest()?;
         // Local requests use exactly the deployment-owned execution settings that were
         // qualified. DB configuration cannot widen a model or thread envelope.
-        if !matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
-            self.effective_config(snapshot)?;
+        if self.local_runtime_plan(snapshot)?.is_some() {
             let allowed = match snapshot.kind.as_str() {
                 "vad" => self
                     .config
@@ -195,27 +180,20 @@ impl RuntimeMaterializer for FactoryMaterializer {
         {
             return Err(RuntimeError::Configuration);
         }
-        let prepared_model = if matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
-            None
-        } else {
-            let value: serde_json::Value = self
-                .effective_config(snapshot)
-                .map_err(|_| RuntimeError::Configuration)?;
-            let model = value
-                .get("model")
-                .and_then(|v| v.as_str())
-                .ok_or(RuntimeError::Configuration)?;
+        let prepared_model = if let Some(plan) = self.local_runtime_plan(snapshot)? {
             Some(
                 crate::models::prepare_immutable(
                     &self.config.deployment.model_manifest,
                     &self.config.deployment.models.root,
                     self.config.deployment.models.offline,
-                    model,
+                    plan.model_identity(),
                     &snapshot.adapter,
                     &self.config.deployment,
                 )
                 .map_err(|_| RuntimeError::ArtifactsNotReady)?,
             )
+        } else {
+            None
         };
         let resource_key = self.resource_key_with_fingerprint(
             snapshot,
@@ -325,6 +303,9 @@ impl RuntimeResource for OwnedRuntimeResource {
         if let Some(runtime) = resident.vad.values().next() {
             let mut runtime = runtime.clone();
             runtime.runtime = Arc::new(runtime.runtime.logical_view(quota.clone()));
+            let (segmenter, pre_roll_samples) = vad_timing(snapshot)?;
+            runtime.segmenter = segmenter;
+            runtime.pre_roll_samples = pre_roll_samples;
             view.vad.insert(snapshot.key.clone(), runtime);
         }
         if let Some(runtime) = resident.tts.values().next() {
@@ -374,7 +355,31 @@ fn tts_binding(snapshot: &DesiredProvider) -> Option<crate::providers::TtsBindin
     zerotts_binding(&configuration).ok()
 }
 
+fn vad_timing(snapshot: &DesiredProvider) -> Option<(crate::audio::VadSegmenterConfig, u64)> {
+    if snapshot.adapter != "silero_onnx" {
+        return None;
+    }
+    let configuration =
+        serde_json::from_str::<crate::config::SileroOnnxConfig>(&snapshot.config_json).ok()?;
+    Some(crate::providers::vad_timing(&configuration))
+}
+
 impl FactoryMaterializer {
+    fn local_runtime_plan(
+        &self,
+        snapshot: &DesiredProvider,
+    ) -> Result<Option<super::LocalRuntimePlan>, RuntimeError> {
+        let registry = crate::providers::compiled_local_runtime_adapter_registry();
+        let Some(adapter) = registry.get(&snapshot.adapter) else {
+            return Ok(None);
+        };
+        let effective = self.effective_config(snapshot)?;
+        adapter
+            .physical_plan(effective)
+            .map(Some)
+            .map_err(|_| RuntimeError::Configuration)
+    }
+
     fn effective_config(
         &self,
         snapshot: &DesiredProvider,
@@ -409,75 +414,43 @@ impl FactoryMaterializer {
         {
             return Ok(None);
         }
-        let value: serde_json::Value = self
-            .effective_config(snapshot)
-            .map_err(|_| RuntimeError::Configuration)?;
-        let model = value
-            .get("model")
-            .and_then(|v| v.as_str())
-            .ok_or(RuntimeError::Configuration)?;
+        let Some(plan) = self.local_runtime_plan(snapshot)? else {
+            return Ok(None);
+        };
         let fingerprint = match installed_fingerprint {
             Some(fingerprint) => fingerprint.to_owned(),
             None => crate::models::model_fingerprint(
                 &self.config.deployment.model_manifest,
-                model,
+                plan.model_identity(),
                 &snapshot.adapter,
             )
             .map_err(|_| RuntimeError::ArtifactsNotReady)?,
         };
-        use sha2::{Digest, Sha256};
-        let specification = match snapshot.adapter.as_str() {
-            "silero_onnx" => serde_json::to_value(
-                serde_json::from_value::<crate::config::SileroOnnxConfig>(value)
-                    .map_err(|_| RuntimeError::Configuration)?,
-            ),
-            "zipformer_sherpa" => serde_json::to_value(
-                serde_json::from_value::<crate::config::ZipformerSherpaConfig>(value)
-                    .map_err(|_| RuntimeError::Configuration)?,
-            ),
-            "gipformer_sherpa_offline" => serde_json::to_value(
-                serde_json::from_value::<crate::config::GipformerSherpaOfflineConfig>(value)
-                    .map_err(|_| RuntimeError::Configuration)?,
-            ),
-            "zerotts_onnx" => {
-                let configuration: crate::config::ZeroTtsOnnxConfig =
-                    serde_json::from_value(value).map_err(|_| RuntimeError::Configuration)?;
-                zerotts_binding(&configuration)?;
-                serde_json::to_value(ZeroTtsPhysicalSpec {
-                    delivery_mode: configuration.delivery_mode,
-                })
-            }
-            "kokoro_vi_onnx" => {
-                let mut specification: crate::config::KokoroViOnnxConfig =
-                    serde_json::from_value(value).map_err(|_| RuntimeError::Configuration)?;
-                specification.preload = false;
-                serde_json::to_value(specification)
-            }
-            _ => return Ok(None),
-        }
-        .map_err(|_| RuntimeError::Configuration)?;
         let (onnx, g2p) = if installed_fingerprint.is_some() {
             (
                 Some(execution_file_fingerprint(
                     &self.config.runtime.onnx.library,
                     512 * 1024 * 1024,
                 )?),
-                (snapshot.adapter == "kokoro_vi_onnx")
+                plan.requires_kokoro_g2p()
                     .then(|| kokoro_g2p_fingerprint(&self.config.runtime.kokoro_vi.g2p_executable))
                     .transpose()?,
             )
         } else {
             (
                 self.onnx_fingerprint,
-                (snapshot.adapter == "kokoro_vi_onnx")
+                plan.requires_kokoro_g2p()
                     .then_some(self.kokoro_g2p_fingerprint)
                     .flatten(),
             )
         };
         let onnx = onnx.ok_or(RuntimeError::Configuration)?;
-        let mut digest = Sha256::new();
-        digest.update(serde_json::to_vec(&serde_json::json!({"adapter":snapshot.adapter,"specification":specification,"execution_threads":self.config.runtime.onnx.threads_for(&snapshot.adapter),"artifacts":fingerprint,"capacity":self.logical_capacity(snapshot)?,"onnx_execution":onnx,"g2p_execution":g2p})).map_err(|_| RuntimeError::Configuration)?);
-        Ok(Some(super::ResourceKey(digest.finalize().into())))
+        let threads = usize::try_from(self.config.runtime.onnx.threads_for(&snapshot.adapter))
+            .map_err(|_| RuntimeError::Configuration)?;
+        let capacity = self.logical_capacity(snapshot)?;
+        plan.resource_key(fingerprint, onnx, g2p, threads, capacity)
+            .map(Some)
+            .map_err(|_| RuntimeError::Configuration)
     }
 }
 
@@ -522,4 +495,74 @@ fn kokoro_g2p_fingerprint(path: &std::path::Path) -> Result<[u8; 32], RuntimeErr
     digest.update(executable);
     digest.update(worker);
     Ok(digest.finalize().into())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::{
+        database::DesiredProvider,
+        providers::{LoadedVad, RuntimeCatalog, VadError, VadProvider, VadSession},
+        workers::{ProviderRuntimeAdmission, VadWorkerRuntime, WorkerRuntimeConfig},
+    };
+
+    use super::{OwnedRuntimeResource, RuntimeResource};
+
+    struct TestVad;
+
+    impl VadProvider for TestVad {
+        fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
+            Err(VadError::Failed(
+                "test provider does not open native sessions".into(),
+            ))
+        }
+
+        fn adapter(&self) -> &'static str {
+            "silero_onnx"
+        }
+    }
+
+    #[test]
+    fn shared_silero_resource_materializes_snapshot_endpoint_policy() {
+        let mut catalog = RuntimeCatalog::default();
+        catalog.vad.insert(
+            "owner".into(),
+            LoadedVad {
+                runtime: Arc::new(VadWorkerRuntime::new(
+                    Arc::new(TestVad),
+                    WorkerRuntimeConfig::default(),
+                )),
+                segmenter: Default::default(),
+                pre_roll_samples: 0,
+            },
+        );
+        let resource = OwnedRuntimeResource {
+            readiness: Default::default(),
+            physical_admission: ProviderRuntimeAdmission::new(8, 1),
+            resource_key: None,
+            health_flags: Vec::new(),
+            catalog: Mutex::new(Some(catalog)),
+            capabilities: None,
+        };
+        let snapshot = DesiredProvider {
+            id: 0,
+            key: "logical-vad".into(),
+            kind: "vad".into(),
+            adapter: "silero_onnx".into(),
+            revision: 1,
+            config_json: r#"{"speech_threshold":0.7,"exit_threshold":0.4,"min_speech_ms":250,"end_silence_ms":800,"pre_roll_ms":100}"#.into(),
+            secret_ref: None,
+        };
+
+        let view = resource
+            .runtimes_for(&snapshot, ProviderRuntimeAdmission::new(8, 1))
+            .expect("valid logical VAD view");
+        let loaded = &view.vad["logical-vad"];
+        assert_eq!(loaded.segmenter.speech_threshold, 0.7);
+        assert_eq!(loaded.segmenter.exit_threshold, 0.4);
+        assert_eq!(loaded.segmenter.min_speech_samples, 4_000);
+        assert_eq!(loaded.segmenter.end_silence_samples, 12_800);
+        assert_eq!(loaded.pre_roll_samples, 1_600);
+    }
 }

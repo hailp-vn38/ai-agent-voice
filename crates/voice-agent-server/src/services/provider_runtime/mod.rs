@@ -5,6 +5,7 @@ mod identity;
 mod lease;
 mod lifecycle;
 mod materialize;
+mod plan;
 mod registry;
 mod status;
 
@@ -13,6 +14,7 @@ pub use factory::FactoryMaterializer;
 pub use identity::{ProviderIdentity, ProviderVersion, ResourceKey};
 pub use lease::ResourceLease;
 pub use materialize::{RuntimeMaterializer, RuntimeResource};
+pub use plan::{LocalExecutionRequirements, LocalRuntimePlan};
 pub use registry::ProviderRuntimeManager;
 pub use status::{RuntimeAccounting, RuntimeError, RuntimeInspection, RuntimeState};
 

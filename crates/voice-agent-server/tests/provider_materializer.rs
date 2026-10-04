@@ -289,6 +289,97 @@ fn zerotts_resource_identity_shares_voices_but_isolates_delivery_mode() {
 }
 
 #[test]
+fn local_runtime_identity_uses_adapter_owned_physical_specs() {
+    use std::{collections::HashMap, sync::Arc};
+    use voice_agent_server::{
+        services::provider_runtime::{FactoryMaterializer, RuntimeMaterializer},
+        workers::WorkerSupervisor,
+    };
+
+    let mut cfg = config();
+    cfg.deployment.model_manifest =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/manifest.toml");
+    cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../runtime/onnxruntime/libonnxruntime.dylib");
+    let builder = FactoryMaterializer::new(
+        Arc::new(cfg),
+        Arc::new(Secrets(AtomicUsize::new(0))),
+        HashMap::from([
+            ("silero_onnx".into(), 1024),
+            ("zipformer_sherpa".into(), 1024),
+            ("gipformer_sherpa_offline".into(), 1024),
+        ]),
+        Arc::new(WorkerSupervisor::start_many(vec![], vec![])),
+    )
+    .unwrap();
+    let row = |kind: &str, adapter: &str, config_json: &str| DesiredProvider {
+        // Deployment snapshots may include server-owned local settings; database provider
+        // configuration intentionally cannot.
+        id: 0,
+        key: "local".into(),
+        kind: kind.into(),
+        adapter: adapter.into(),
+        revision: 1,
+        config_json: config_json.into(),
+        secret_ref: None,
+    };
+
+    let silero_a = builder
+        .resource_key(&row(
+            "vad",
+            "silero_onnx",
+            r#"{"speech_threshold":0.5,"end_silence_ms":400}"#,
+        ))
+        .unwrap();
+    let silero_b = builder
+        .resource_key(&row(
+            "vad",
+            "silero_onnx",
+            r#"{"speech_threshold":0.7,"end_silence_ms":800}"#,
+        ))
+        .unwrap();
+    assert_eq!(silero_a, silero_b, "VAD endpoint policy is a logical view");
+
+    let zipformer_greedy = builder
+        .resource_key(&row(
+            "asr",
+            "zipformer_sherpa",
+            r#"{"decoding_method":"greedy_search"}"#,
+        ))
+        .unwrap();
+    let zipformer_beam = builder
+        .resource_key(&row(
+            "asr",
+            "zipformer_sherpa",
+            r#"{"decoding_method":"modified_beam_search"}"#,
+        ))
+        .unwrap();
+    assert_ne!(
+        zipformer_greedy, zipformer_beam,
+        "Zipformer constructs a recognizer with its decoding method"
+    );
+
+    let gipformer_small_beam = builder
+        .resource_key(&row(
+            "asr",
+            "gipformer_sherpa_offline",
+            r#"{"max_active_paths":4}"#,
+        ))
+        .unwrap();
+    let gipformer_large_beam = builder
+        .resource_key(&row(
+            "asr",
+            "gipformer_sherpa_offline",
+            r#"{"max_active_paths":8}"#,
+        ))
+        .unwrap();
+    assert_ne!(
+        gipformer_small_beam, gipformer_large_beam,
+        "Gipformer constructs a recognizer with max_active_paths"
+    );
+}
+
+#[test]
 fn native_resource_identity_uses_execution_content_not_only_its_path() {
     use std::{collections::HashMap, sync::Arc};
     use voice_agent_server::{
