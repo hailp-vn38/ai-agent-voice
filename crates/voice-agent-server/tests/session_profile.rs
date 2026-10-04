@@ -1636,6 +1636,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     let client = reqwest::Client::new();
     let auth = "managed-test-token";
     let providers = format!("{base}/api/admin/providers");
+    let mut generated = Vec::new();
     for (kind, adapter, config_json) in [
         ("vad", "silero_onnx", serde_json::json!({})),
         (
@@ -1650,25 +1651,24 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         ),
         ("tts", "zerotts_onnx", serde_json::json!({"voice":"maichi"})),
     ] {
-        let response = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"key":format!("managed_{kind}"),"name":kind,"type":kind,"adapter":adapter,"config_json":config_json})).send().await.unwrap();
-        assert_eq!(
-            response.status(),
-            reqwest::StatusCode::CREATED,
-            "{}",
-            response.text().await.unwrap()
-        );
+        let response = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"name":kind,"type":kind,"adapter":adapter,"config_json":config_json})).send().await.unwrap();
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::CREATED, "{body}");
+        generated.push((kind, body["key"].as_str().unwrap().to_owned()));
     }
+    let llm_key = &generated[2].1;
     let response = client.post(format!("{base}/api/admin/templates")).bearer_auth(auth).json(&serde_json::json!({"key":"managed","name":"Managed","language":"vi-VN","prompt":"MANAGED-PROMPT"})).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::CREATED);
     let mut template: serde_json::Value = response.json().await.unwrap();
-    for kind in ["vad", "asr", "llm", "tts"] {
+    for (kind, provider_key) in &generated {
         let response = client
             .put(format!(
                 "{base}/api/admin/templates/managed/providers/{kind}"
             ))
             .bearer_auth(auth)
             .header("if-match", format!("\"{}\"", template["revision"]))
-            .json(&serde_json::json!({"provider_key":format!("managed_{kind}")}))
+            .json(&serde_json::json!({"provider_key":provider_key}))
             .send()
             .await
             .unwrap();
@@ -1690,7 +1690,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         "CRUD must not build runtimes"
     );
     let cold: serde_json::Value = client
-        .get(format!("{providers}/managed_llm"))
+        .get(format!("{providers}/{llm_key}"))
         .bearer_auth(auth)
         .send()
         .await
@@ -1709,10 +1709,10 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
             .starts_with("managed-v1[MANAGED-PROMPT]")
     );
     assert_eq!(builds.lock().unwrap().len(), 4);
-    let response = client.patch(format!("{providers}/managed_llm")).bearer_auth(auth).header("if-match", "\"1\"").json(&serde_json::json!({"config_json":{"base_url":"https://example.test/v1","model":"version-two"}})).send().await.unwrap();
+    let response = client.patch(format!("{providers}/{llm_key}")).bearer_auth(auth).header("if-match", "\"1\"").json(&serde_json::json!({"config_json":{"base_url":"https://example.test/v1","model":"version-two"}})).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let changed: serde_json::Value = client
-        .get(format!("{providers}/managed_llm"))
+        .get(format!("{providers}/{llm_key}"))
         .bearer_auth(auth)
         .send()
         .await
@@ -1745,10 +1745,12 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         5,
         "only changed exact version is built"
     );
-    let created = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"key":"unbound_llm","name":"Unbound","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"unbound"}})).send().await.unwrap();
+    let created = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"name":"Unbound","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"unbound"}})).send().await.unwrap();
     assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let created: serde_json::Value = created.json().await.unwrap();
+    let unbound = created["key"].as_str().unwrap().to_owned();
     let prepared = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({}))
         .send()
@@ -1760,10 +1762,10 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         prepared.text().await.unwrap()
     );
     let prepared: serde_json::Value = prepared.json().await.unwrap();
-    assert_eq!(prepared["provider_key"], "unbound_llm");
+    assert_eq!(prepared["provider_key"], unbound);
     assert_eq!(prepared["desired_revision"], 1);
     let invalid = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({"config_json":{"model":"override"}}))
         .send()
@@ -1771,7 +1773,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         .unwrap();
     assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
     let ready = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({}))
         .send()
@@ -1784,7 +1786,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         "repeated prepare is idempotent"
     );
     let tested = client
-        .post(format!("{providers}/unbound_llm/test/llm"))
+        .post(format!("{providers}/{unbound}/test/llm"))
         .bearer_auth(auth)
         .json(&serde_json::json!({"input":"fixture"}))
         .send()
@@ -1807,7 +1809,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     );
     assert_eq!(builds.lock().unwrap().len(), 6);
     let disabled = client
-        .patch(format!("{providers}/unbound_llm"))
+        .patch(format!("{providers}/{unbound}"))
         .bearer_auth(auth)
         .header("If-Match", "\"1\"")
         .json(&serde_json::json!({"enabled":false}))
@@ -1816,7 +1818,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         .unwrap();
     assert_eq!(disabled.status(), reqwest::StatusCode::OK);
     let denied = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({}))
         .send()
@@ -1899,14 +1901,18 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     .await;
     let client = reqwest::Client::new();
     let providers = format!("{base}/api/admin/providers");
-    for key in ["first", "second"] {
+    let mut generated = Vec::new();
+    for name in ["first", "second"] {
         let created = client.post(&providers).bearer_auth("prepare-test-token")
-            .json(&serde_json::json!({"key":key,"name":key,"type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"fixture"}}))
+            .json(&serde_json::json!({"name":name,"type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"fixture"}}))
             .send().await.unwrap();
         assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+        let created: serde_json::Value = created.json().await.unwrap();
+        generated.push(created["key"].as_str().unwrap().to_owned());
     }
+    let (first_key, second_key) = (&generated[0], &generated[1]);
     let first = client
-        .post(format!("{providers}/first/prepare"))
+        .post(format!("{providers}/{first_key}/prepare"))
         .bearer_auth("prepare-test-token")
         .json(&serde_json::json!({}))
         .send()
@@ -1914,11 +1920,11 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
         .unwrap();
     assert_eq!(first.status(), reqwest::StatusCode::ACCEPTED);
     let accepted: serde_json::Value = first.json().await.unwrap();
-    assert_eq!(accepted["provider_key"], "first");
+    assert_eq!(accepted["provider_key"], *first_key);
     assert_eq!(accepted["desired_revision"], 1);
     entered_rx.recv().await.unwrap();
     let blocked = client
-        .post(format!("{providers}/second/prepare"))
+        .post(format!("{providers}/{second_key}/prepare"))
         .bearer_auth("prepare-test-token")
         .json(&serde_json::json!({}))
         .send()
@@ -1929,7 +1935,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
     loop {
         let response = client
-            .get(format!("{providers}/first"))
+            .get(format!("{providers}/{first_key}"))
             .bearer_auth("prepare-test-token")
             .send()
             .await
@@ -1942,7 +1948,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
         tokio::task::yield_now().await;
     }
     let ready = client
-        .post(format!("{providers}/first/prepare"))
+        .post(format!("{providers}/{first_key}/prepare"))
         .bearer_auth("prepare-test-token")
         .json(&serde_json::json!({}))
         .send()
