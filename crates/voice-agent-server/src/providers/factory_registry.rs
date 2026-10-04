@@ -25,7 +25,6 @@ use crate::{
         vad::LoadedSileroVad,
         vision::OpenAiVisionProvider,
     },
-    services::provider_runtime::LocalRuntimePlan,
 };
 
 pub trait VadFactory: Send + Sync {
@@ -81,29 +80,6 @@ pub trait VisionFactory: Send + Sync {
         &self,
         config: &VisionInstanceConfig,
     ) -> Result<Arc<dyn VisionProvider>, ProviderLoadError>;
-}
-
-/// Adapter seam for planning a shareable local native resource. The input has already had
-/// deployment-owned settings applied; implementations decide which fields are physical.
-pub trait LocalRuntimeAdapter: Send + Sync {
-    fn adapter_id(&self) -> &'static str;
-    fn physical_plan(
-        &self,
-        effective_config: serde_json::Value,
-    ) -> Result<LocalRuntimePlan, ProviderLoadError>;
-}
-
-pub struct LocalRuntimeAdapterRegistry {
-    adapters: &'static [&'static dyn LocalRuntimeAdapter],
-}
-
-impl LocalRuntimeAdapterRegistry {
-    pub fn get(&self, adapter: &str) -> Option<&'static dyn LocalRuntimeAdapter> {
-        self.adapters
-            .iter()
-            .copied()
-            .find(|candidate| candidate.adapter_id() == adapter)
-    }
 }
 
 /// Factories are linked into the binary. There is no runtime code discovery or plugin loading.
@@ -197,29 +173,6 @@ impl ProviderRegistry {
 
 struct SileroOnnxFactory;
 
-impl LocalRuntimeAdapter for SileroOnnxFactory {
-    fn adapter_id(&self) -> &'static str {
-        "silero_onnx"
-    }
-
-    fn physical_plan(
-        &self,
-        effective_config: serde_json::Value,
-    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
-        let config: crate::config::SileroOnnxConfig = serde_json::from_value(effective_config)
-            .map_err(|_| {
-                ProviderLoadError::Configuration("invalid Silero local runtime config".into())
-            })?;
-        // Endpoint thresholds and capture timing are consumed by the logical LoadedVad view;
-        // the ONNX session itself has no selection-specific state.
-        Ok(LocalRuntimePlan::onnx(
-            self.adapter_id(),
-            config.model,
-            serde_json::json!({}),
-        ))
-    }
-}
-
 impl VadFactory for SileroOnnxFactory {
     fn adapter(&self) -> &'static str {
         "silero_onnx"
@@ -257,73 +210,6 @@ impl VadFactory for SileroOnnxFactory {
 
 struct ZipformerSherpaFactory;
 struct GipformerSherpaOfflineFactory;
-
-#[derive(serde::Serialize)]
-struct ZipformerPhysicalSpec {
-    decoding_method: crate::config::TransducerDecodingMethod,
-}
-
-impl LocalRuntimeAdapter for ZipformerSherpaFactory {
-    fn adapter_id(&self) -> &'static str {
-        "zipformer_sherpa"
-    }
-
-    fn physical_plan(
-        &self,
-        effective_config: serde_json::Value,
-    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
-        let config: crate::config::ZipformerSherpaConfig = serde_json::from_value(effective_config)
-            .map_err(|_| {
-                ProviderLoadError::Configuration("invalid Zipformer local runtime config".into())
-            })?;
-        let spec = serde_json::to_value(ZipformerPhysicalSpec {
-            decoding_method: config.decoding_method,
-        })
-        .map_err(|_| ProviderLoadError::Configuration("invalid Zipformer physical spec".into()))?;
-        Ok(LocalRuntimePlan::onnx(
-            self.adapter_id(),
-            config.model,
-            spec,
-        ))
-    }
-}
-
-#[derive(serde::Serialize)]
-struct GipformerPhysicalSpec {
-    decoding_method: crate::config::TransducerDecodingMethod,
-    max_active_paths: i32,
-}
-
-impl LocalRuntimeAdapter for GipformerSherpaOfflineFactory {
-    fn adapter_id(&self) -> &'static str {
-        "gipformer_sherpa_offline"
-    }
-
-    fn physical_plan(
-        &self,
-        effective_config: serde_json::Value,
-    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
-        let config: crate::config::GipformerSherpaOfflineConfig =
-            serde_json::from_value(effective_config).map_err(|_| {
-                ProviderLoadError::Configuration("invalid Gipformer local runtime config".into())
-            })?;
-        if config.language != "vi-VN" || !(1..=10_000).contains(&config.max_active_paths) {
-            return Err(ProviderLoadError::Configuration(
-                "invalid Gipformer local runtime config".into(),
-            ));
-        }
-        let spec = serde_json::to_value(GipformerPhysicalSpec {
-            decoding_method: config.decoding_method,
-            max_active_paths: config.max_active_paths,
-        })
-        .map_err(|_| ProviderLoadError::Configuration("invalid Gipformer physical spec".into()))?;
-        Ok(LocalRuntimePlan::onnx(
-            self.adapter_id(),
-            config.model,
-            spec,
-        ))
-    }
-}
 
 struct OpenAiFactory;
 struct OpenAiVisionFactory;
@@ -374,45 +260,6 @@ impl LlmFactory for OpenAiFactory {
 }
 
 struct ZeroTtsOnnxFactory;
-
-#[derive(serde::Serialize)]
-struct ZeroTtsPhysicalSpec {
-    delivery_mode: crate::config::ZeroTtsDeliveryMode,
-}
-
-impl LocalRuntimeAdapter for ZeroTtsOnnxFactory {
-    fn adapter_id(&self) -> &'static str {
-        "zerotts_onnx"
-    }
-
-    fn physical_plan(
-        &self,
-        effective_config: serde_json::Value,
-    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
-        let config: crate::config::ZeroTtsOnnxConfig = serde_json::from_value(effective_config)
-            .map_err(|_| {
-                ProviderLoadError::Configuration("invalid ZeroTTS local runtime config".into())
-            })?;
-        let supported = super::tts::zerotts::descriptor::DESCRIPTOR
-            .capabilities
-            .voices
-            .is_some_and(|voices| voices.iter().any(|voice| voice.id == config.voice));
-        if !supported || config.language != "vi-VN" || config.num_threads <= 0 {
-            return Err(ProviderLoadError::Configuration(
-                "invalid ZeroTTS local runtime config".into(),
-            ));
-        }
-        let spec = serde_json::to_value(ZeroTtsPhysicalSpec {
-            delivery_mode: config.delivery_mode,
-        })
-        .map_err(|_| ProviderLoadError::Configuration("invalid ZeroTTS physical spec".into()))?;
-        Ok(LocalRuntimePlan::onnx(
-            self.adapter_id(),
-            config.model,
-            spec,
-        ))
-    }
-}
 
 impl TtsFactory for ZeroTtsOnnxFactory {
     fn adapter(&self) -> &'static str {
@@ -514,38 +361,6 @@ impl TtsFactory for ZeroTtsOnnxFactory {
 
 struct ChillAudioWsFactory;
 struct KokoroViOnnxFactory;
-
-impl LocalRuntimeAdapter for KokoroViOnnxFactory {
-    fn adapter_id(&self) -> &'static str {
-        "kokoro_vi_onnx"
-    }
-
-    fn physical_plan(
-        &self,
-        effective_config: serde_json::Value,
-    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
-        let mut config: crate::config::KokoroViOnnxConfig =
-            serde_json::from_value(effective_config).map_err(|_| {
-                ProviderLoadError::Configuration("invalid Kokoro local runtime config".into())
-            })?;
-        if !config.valid_selection() {
-            return Err(ProviderLoadError::Configuration(
-                "invalid Kokoro local runtime config".into(),
-            ));
-        }
-        // Kokoro has not yet moved voicepack/speed into a logical request, so preserve its
-        // existing physical identity. `preload` is lifecycle policy, never native state.
-        config.preload = false;
-        let model = config.model.clone();
-        let spec = serde_json::to_value(config)
-            .map_err(|_| ProviderLoadError::Configuration("invalid Kokoro physical spec".into()))?;
-        Ok(LocalRuntimePlan::onnx_with_kokoro_g2p(
-            self.adapter_id(),
-            model,
-            spec,
-        ))
-    }
-}
 
 impl TtsFactory for KokoroViOnnxFactory {
     fn adapter(&self) -> &'static str {
@@ -802,16 +617,6 @@ static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
 static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
-static LOCAL_RUNTIME_ADAPTERS: [&dyn LocalRuntimeAdapter; 5] = [
-    &SILERO_ONNX_FACTORY,
-    &ZIPFORMER_SHERPA_FACTORY,
-    &GIPFORMER_SHERPA_OFFLINE_FACTORY,
-    &ZEROTTS_ONNX_FACTORY,
-    &KOKORO_VI_ONNX_FACTORY,
-];
-static LOCAL_RUNTIME_ADAPTER_REGISTRY: LocalRuntimeAdapterRegistry = LocalRuntimeAdapterRegistry {
-    adapters: &LOCAL_RUNTIME_ADAPTERS,
-};
 static VAD_FACTORIES: [&dyn VadFactory; 1] = [&SILERO_ONNX_FACTORY];
 static ASR_FACTORIES: [&dyn AsrFactory; 2] =
     [&ZIPFORMER_SHERPA_FACTORY, &GIPFORMER_SHERPA_OFFLINE_FACTORY];
@@ -832,10 +637,6 @@ static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
 
 pub fn compiled_provider_registry() -> &'static ProviderRegistry {
     &COMPILED_PROVIDER_REGISTRY
-}
-
-pub fn compiled_local_runtime_adapter_registry() -> &'static LocalRuntimeAdapterRegistry {
-    &LOCAL_RUNTIME_ADAPTER_REGISTRY
 }
 
 fn validate_model_adapter(

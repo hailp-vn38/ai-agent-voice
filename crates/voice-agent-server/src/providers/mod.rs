@@ -8,6 +8,7 @@ mod error;
 mod factory_registry;
 pub mod inspector;
 mod loader;
+mod local_runtime;
 pub mod registry;
 mod runtime_catalog;
 mod set;
@@ -37,9 +38,11 @@ pub use llm::{LlmError, LlmEvent, LlmProvider};
 pub(crate) use loader::{LoadedProviders, load_local, vad_timing};
 
 pub use factory_registry::{
-    AsrFactory, LlmFactory, LocalRuntimeAdapter, LocalRuntimeAdapterRegistry, ProviderRegistry,
-    TtsFactory, VadFactory, compiled_local_runtime_adapter_registry, compiled_provider_registry,
+    AsrFactory, LlmFactory, ProviderRegistry, TtsFactory, VadFactory, compiled_provider_registry,
     local_model_identity,
+};
+pub use local_runtime::{
+    LocalRuntimeAdapter, LocalRuntimeAdapterRegistry, compiled_local_runtime_adapter_registry,
 };
 pub use runtime_catalog::{
     DiagnosticRuntimeError, DiagnosticRuntimeKind, LoadedVad, ResolvedAgentRuntimes,

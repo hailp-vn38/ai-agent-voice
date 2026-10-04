@@ -380,6 +380,41 @@ fn local_runtime_identity_uses_adapter_owned_physical_specs() {
 }
 
 #[test]
+fn kokoro_runtime_plan_excludes_preload_but_keeps_native_selection_and_g2p_identity() {
+    use voice_agent_server::providers::compiled_local_runtime_adapter_registry;
+
+    let planner = compiled_local_runtime_adapter_registry()
+        .get("kokoro_vi_onnx")
+        .expect("compiled Kokoro planner");
+    let plan = |voice: &str, speed_percent: u16, preload: bool| {
+        planner
+            .physical_plan(serde_json::json!({
+                "model": "kokoro_vi_contextbox",
+                "num_threads": 2,
+                "voice": voice,
+                "language": "vi-VN",
+                "speed_percent": speed_percent,
+                "preload": preload,
+            }))
+            .unwrap()
+    };
+    let key = |plan: &voice_agent_server::services::provider_runtime::LocalRuntimePlan,
+               g2p_fingerprint| {
+        plan.resource_key("artifact".into(), [1; 32], Some(g2p_fingerprint), 2, 1)
+            .unwrap()
+    };
+
+    let default = plan("mai_linh", 100, false);
+    let preloaded = plan("mai_linh", 100, true);
+    let other_voice = plan("thanh_dat", 100, false);
+    let other_speed = plan("mai_linh", 120, false);
+    assert_eq!(key(&default, [2; 32]), key(&preloaded, [2; 32]));
+    assert_ne!(key(&default, [2; 32]), key(&other_voice, [2; 32]));
+    assert_ne!(key(&default, [2; 32]), key(&other_speed, [2; 32]));
+    assert_ne!(key(&default, [2; 32]), key(&default, [3; 32]));
+}
+
+#[test]
 fn native_resource_identity_uses_execution_content_not_only_its_path() {
     use std::{collections::HashMap, sync::Arc};
     use voice_agent_server::{

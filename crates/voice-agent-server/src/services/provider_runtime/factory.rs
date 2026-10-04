@@ -11,8 +11,10 @@ use std::{
 };
 
 /// Production bridge to the same installed-artifact factories used by deployment startup.
-/// Estimates are deployment-owned worst-case peaks per adapter, including all configured
-/// workers and warmup allocations. A missing estimate refuses allocation, without resolving
+/// Estimates are deployment-owned worst-case peaks per adapter, including every physical plan
+/// that adapter may materialize, its configured workers, and warmup allocations. The current
+/// deployment schema intentionally budgets one conservative ceiling per adapter rather than an
+/// unqualified per-plan value. A missing estimate refuses allocation, without resolving
 /// credentials. This counter does not claim to enforce an OS memory limit.
 pub struct FactoryMaterializer {
     config: Arc<AppConfig>,
