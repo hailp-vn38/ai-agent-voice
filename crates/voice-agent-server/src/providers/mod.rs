@@ -1,5 +1,6 @@
 //! Local inference seams and adapters. Provider code never owns workers or Voice Sessions.
 
+pub mod assets;
 pub mod capabilities;
 mod catalog;
 mod database_loader;

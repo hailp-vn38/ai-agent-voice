@@ -1,3 +1,4 @@
+use super::assets;
 use crate::providers::{
     capabilities::{
         CapabilityDiscoveryMode, CapabilitySource, DiscoverySource, LanguageOption, ModelOption,
@@ -14,8 +15,9 @@ use crate::providers::{
     registry::ProviderAdapterRegistration,
 };
 use serde_json::Value;
+const MODEL_ID: &str = "zerotts_default";
 const MODELS: &[ModelOption] = &[ModelOption {
-    id: "zerotts_default",
+    id: MODEL_ID,
     name: "ZeroTTS Default",
     description: None,
 }];
@@ -23,56 +25,32 @@ const VIETNAMESE: &[LanguageOption] = &[LanguageOption {
     id: "vi-VN",
     name: "Vietnamese",
 }];
-const VOICES: &[VoiceOption] = &[
-    VoiceOption {
-        id: "baotrang",
-        name: "Bao Trang",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-    VoiceOption {
-        id: "giahuy",
-        name: "Gia Huy",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-    VoiceOption {
-        id: "hamy",
-        name: "Ha My",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-    VoiceOption {
-        id: "huuduc",
-        name: "Huu Duc",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-    VoiceOption {
-        id: "kimoanh",
-        name: "Kim Oanh",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-    VoiceOption {
-        id: "maichi",
-        name: "Mai Chi",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-    VoiceOption {
-        id: "quangminh",
-        name: "Quang Minh",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-    VoiceOption {
-        id: "tiendat",
-        name: "Tien Dat",
-        languages: &["vi-VN"],
-        model: Some("zerotts_default"),
-    },
-];
+/// Voice metadata is projected from the asset catalog, so a voice the Admin API advertises is
+/// exactly a voice the provider has on disk. Built at compile time to keep the descriptor a plain
+/// static; there is no second list to keep in step.
+const fn voice_options() -> [VoiceOption; assets::VOICES.len()] {
+    let mut options = [VoiceOption {
+        id: "",
+        name: "",
+        languages: &[],
+        model: None,
+    }; assets::VOICES.len()];
+    let mut index = 0;
+    while index < assets::VOICES.len() {
+        let voice = &assets::VOICES[index];
+        options[index] = VoiceOption {
+            id: voice.id,
+            name: voice.name,
+            languages: &["vi-VN"],
+            model: Some(MODEL_ID),
+        };
+        index += 1;
+    }
+    options
+}
+
+const VOICES: &[VoiceOption] = &voice_options();
+
 const FIELDS: &[ProviderConfigField] = &[
     field(
         "voice",
@@ -146,7 +124,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
 struct Inspector;
 impl BootstrapCapabilityInspector for Inspector {
     fn inspect(&self, selection: &Value) -> Result<DiscoveredCapabilities, ProviderInspectError> {
-        validate_model_selection(selection, "zerotts_default")?;
+        validate_model_selection(selection, MODEL_ID)?;
         Ok(DiscoveredCapabilities {
             models: MODELS,
             voices: VOICES,
@@ -155,7 +133,5 @@ impl BootstrapCapabilityInspector for Inspector {
     }
 }
 static INSPECTOR: Inspector = Inspector;
-pub static REGISTRATION: ProviderAdapterRegistration = ProviderAdapterRegistration {
-    descriptor: &DESCRIPTOR,
-    bootstrap_inspector: Some(&INSPECTOR),
-};
+pub static REGISTRATION: ProviderAdapterRegistration =
+    ProviderAdapterRegistration::local(&DESCRIPTOR, Some(&INSPECTOR), Some(assets::ASSETS));

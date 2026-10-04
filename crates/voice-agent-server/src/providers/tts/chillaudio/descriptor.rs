@@ -96,7 +96,5 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         languages: DiscoverySource::Static,
     },
 };
-pub static REGISTRATION: ProviderAdapterRegistration = ProviderAdapterRegistration {
-    descriptor: &DESCRIPTOR,
-    bootstrap_inspector: None,
-};
+pub static REGISTRATION: ProviderAdapterRegistration =
+    ProviderAdapterRegistration::remote(&DESCRIPTOR, None);

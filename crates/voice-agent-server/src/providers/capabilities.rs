@@ -40,7 +40,7 @@ pub struct LanguageOption {
     pub name: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct VoiceOption {
     pub id: &'static str,
     pub name: &'static str,
