@@ -16,9 +16,8 @@ use crate::{
     },
 };
 
-use super::{
-    VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime, WorkerIdentity,
-};
+use super::super::WorkerIdentity;
+use super::{VadCaptureCycleId, VadCommand, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime};
 
 static NEXT_DIAGNOSTIC: AtomicU64 = AtomicU64::new(1);
 

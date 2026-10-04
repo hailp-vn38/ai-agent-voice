@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::providers::{VadError, VadInput, VadProbability, VadProvider, VadSession};
 
-use super::{VadCommand, VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig};
+use super::{VadCommand, VadRechunker, VadWorkerRuntime, WorkerIdentity, WorkerRuntimeConfig};
+use crate::audio::PcmF32Mono;
 
 struct TestVad;
 
@@ -52,4 +53,14 @@ fn a_diagnostic_worker_lease_leaves_the_voice_reservation_available() {
         .expect("the voice reservation remains available");
     runtime.send(diagnostic, VadCommand::Close).unwrap();
     runtime.send(voice, VadCommand::Close).unwrap();
+}
+
+#[test]
+fn reset_discards_rechunk_slack_and_restarts_the_sample_timeline() {
+    let mut rechunker = VadRechunker::default();
+    let frame = PcmF32Mono::new(vec![0.0; 960], 16_000);
+
+    assert_eq!(rechunker.push(frame.clone()).unwrap()[0].start_sample, 0);
+    rechunker.reset();
+    assert_eq!(rechunker.push(frame).unwrap()[0].start_sample, 0);
 }

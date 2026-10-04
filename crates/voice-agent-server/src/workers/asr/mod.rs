@@ -12,6 +12,11 @@ use super::{
     ProviderWorkloadClass, WorkerIdentity, WorkerRuntimeConfig,
 };
 
+mod diagnostic;
+mod pool;
+
+pub use diagnostic::AsrDiagnosticOperation;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AsrStreamLease(u64);
 
@@ -68,12 +73,12 @@ pub struct AsrWorkerRuntime {
     events_tx: mpsc::Sender<AsrWorkerEvent>,
     routes: Arc<Mutex<HashMap<String, session_mpsc::Sender<AsrWorkerEvent>>>>,
     admission: ProviderRuntimeAdmission,
-    pool: Option<Arc<super::asr_pool::AsrSessionPool>>,
+    pool: Option<Arc<pool::AsrSessionPool>>,
     unload: Arc<Mutex<()>>,
 }
 
 struct State {
-    threads: super::native_threads::NativeThreads,
+    threads: super::supervision::NativeThreads,
     next_lease: u64,
     slots: HashMap<AsrStreamLease, Slot>,
 }
@@ -142,9 +147,8 @@ impl AsrWorkerRuntime {
         config
             .validate()
             .map_err(|_| AsrWorkerError::Initialization)?;
-        let pool =
-            super::asr_pool::AsrSessionPool::initialize(provider.as_ref(), config.max_workers)
-                .map_err(|_| AsrWorkerError::Initialization)?;
+        let pool = pool::AsrSessionPool::initialize(provider.as_ref(), config.max_workers)
+            .map_err(|_| AsrWorkerError::Initialization)?;
         let mut runtime = Self::new_with_admission(provider, config, admission);
         runtime.pool = Some(pool);
         Ok(runtime)
@@ -263,12 +267,12 @@ impl AsrWorkerRuntime {
 
     /// Builds a standalone diagnostic operation without loading or reconfiguring the provider.
     /// Admission remains owned by `ProviderDiagnosticService`.
-    pub fn diagnostic(&self, pcm: PcmF32Mono) -> super::AsrDiagnosticOperation {
+    pub fn diagnostic(&self, pcm: PcmF32Mono) -> AsrDiagnosticOperation {
         let provider: Arc<dyn AsrProvider> = match &self.pool {
             Some(pool) => Arc::new(Arc::clone(pool)),
             None => Arc::clone(&self.provider),
         };
-        super::AsrDiagnosticOperation::new(provider, pcm)
+        AsrDiagnosticOperation::new(provider, pcm)
     }
 
     pub fn send(&self, lease: AsrStreamLease, command: AsrCommand) -> Result<(), AsrWorkerError> {

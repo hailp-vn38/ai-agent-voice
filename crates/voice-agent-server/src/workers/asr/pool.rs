@@ -11,12 +11,12 @@ use std::sync::{
 pub(super) struct AsrSessionPool(
     Mutex<Vec<Box<dyn AsrSession>>>,
     Arc<AtomicBool>,
-    super::NativeReadiness,
+    super::super::NativeReadiness,
 );
 impl AsrSessionPool {
     pub fn initialize(provider: &dyn AsrProvider, count: usize) -> Result<Arc<Self>, AsrError> {
         let mut sessions = Vec::with_capacity(count);
-        let mut readiness = super::NativeReadiness::default();
+        let mut readiness = super::super::NativeReadiness::default();
         for _ in 0..count {
             let started = std::time::Instant::now();
             let mut session = provider.open()?;
@@ -36,7 +36,7 @@ impl AsrSessionPool {
             readiness,
         )))
     }
-    pub fn readiness(&self) -> super::NativeReadiness {
+    pub fn readiness(&self) -> super::super::NativeReadiness {
         self.2
     }
     pub fn health_flag(&self) -> Arc<AtomicBool> {

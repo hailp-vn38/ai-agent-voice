@@ -3,34 +3,27 @@
 
 mod admission;
 mod asr;
-mod asr_diagnostic;
-mod asr_pool;
 mod llm;
-mod native_threads;
-mod supervisor;
+mod supervision;
 mod tts;
 mod vad;
-mod vad_diagnostic;
-mod vad_pool;
-#[cfg(test)]
-mod vad_tests;
 mod vision_runtime;
 
 pub use admission::{
     ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission, ProviderWorkloadClass,
 };
+pub use asr::AsrDiagnosticOperation;
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
-pub use asr_diagnostic::AsrDiagnosticOperation;
 pub use llm::{LlmDiagnosticOperation, LlmRuntime, LlmRuntimeEvent};
-pub use supervisor::WorkerSupervisor;
+pub use supervision::WorkerSupervisor;
 pub use tts::{
     TtsDiagnosticOperation, TtsDiagnosticOutput, TtsLease, TtsStreamId, TtsWorkerError,
     TtsWorkerEvent, TtsWorkerRuntime,
 };
+pub use vad::VadDiagnosticOperation;
 pub use vad::{
     VadCaptureCycleId, VadCommand, VadWorkerError, VadWorkerEvent, VadWorkerLease, VadWorkerRuntime,
 };
-pub use vad_diagnostic::VadDiagnosticOperation;
 pub use vision_runtime::VisionRuntime;
 
 use std::time::Duration;

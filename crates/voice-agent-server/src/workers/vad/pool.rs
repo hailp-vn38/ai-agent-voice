@@ -8,12 +8,12 @@ use std::sync::{
 pub(super) struct VadSessionPool(
     Mutex<Vec<Box<dyn VadSession>>>,
     Arc<AtomicBool>,
-    super::NativeReadiness,
+    super::super::NativeReadiness,
 );
 impl VadSessionPool {
     pub fn initialize(provider: &dyn VadProvider, count: usize) -> Result<Arc<Self>, VadError> {
         let mut sessions = Vec::with_capacity(count);
-        let mut readiness = super::NativeReadiness::default();
+        let mut readiness = super::super::NativeReadiness::default();
         for _ in 0..count {
             let started = std::time::Instant::now();
             let mut session = provider.open()?;
@@ -40,7 +40,7 @@ impl VadSessionPool {
             readiness,
         )))
     }
-    pub fn readiness(&self) -> super::NativeReadiness {
+    pub fn readiness(&self) -> super::super::NativeReadiness {
         self.2
     }
     pub fn health_flag(&self) -> Arc<AtomicBool> {

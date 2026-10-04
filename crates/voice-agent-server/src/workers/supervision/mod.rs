@@ -7,6 +7,10 @@ use std::{
     time::Duration,
 };
 
+mod native_threads;
+
+pub(in crate::workers) use native_threads::NativeThreads;
+
 use super::{AsrWorkerRuntime, VadWorkerRuntime};
 
 /// Sole production driver for worker event routing and timeout quarantine.

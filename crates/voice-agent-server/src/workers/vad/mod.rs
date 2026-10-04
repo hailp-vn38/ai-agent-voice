@@ -16,6 +16,13 @@ use super::{
     ProviderWorkloadClass, WorkerIdentity, WorkerRuntimeConfig,
 };
 
+mod diagnostic;
+mod pool;
+#[cfg(test)]
+mod tests;
+
+pub use diagnostic::VadDiagnosticOperation;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VadWorkerLease(u64);
 
@@ -93,7 +100,7 @@ pub enum VadWorkerError {
 
 #[derive(Clone)]
 pub struct VadWorkerRuntime {
-    pool: Option<Arc<super::vad_pool::VadSessionPool>>,
+    pool: Option<Arc<pool::VadSessionPool>>,
     unload: Arc<Mutex<()>>,
     provider: Arc<dyn VadProvider>,
     config: WorkerRuntimeConfig,
@@ -104,7 +111,7 @@ pub struct VadWorkerRuntime {
     admission: ProviderRuntimeAdmission,
 }
 struct State {
-    threads: super::native_threads::NativeThreads,
+    threads: super::supervision::NativeThreads,
     next_lease: u64,
     slots: HashMap<VadWorkerLease, Slot>,
 }
@@ -171,9 +178,8 @@ impl VadWorkerRuntime {
         config
             .validate()
             .map_err(|_| VadWorkerError::Initialization)?;
-        let pool =
-            super::vad_pool::VadSessionPool::initialize(provider.as_ref(), config.max_workers)
-                .map_err(|_| VadWorkerError::Initialization)?;
+        let pool = pool::VadSessionPool::initialize(provider.as_ref(), config.max_workers)
+            .map_err(|_| VadWorkerError::Initialization)?;
         let mut runtime = Self::new_with_admission(provider, config, admission);
         runtime.pool = Some(pool);
         Ok(runtime)
@@ -306,8 +312,8 @@ impl VadWorkerRuntime {
 
     /// Builds a standalone diagnostic against this already-materialized VAD provider. Admission
     /// remains owned by `ProviderDiagnosticService`; this never changes capture-cycle state.
-    pub fn diagnostic(self: &Arc<Self>) -> super::VadDiagnosticOperation {
-        super::VadDiagnosticOperation::new(Arc::clone(self))
+    pub fn diagnostic(self: &Arc<Self>) -> VadDiagnosticOperation {
+        VadDiagnosticOperation::new(Arc::clone(self))
     }
 
     pub(super) fn quarantine_diagnostic(&self, lease: VadWorkerLease) {
@@ -614,21 +620,5 @@ impl VadRechunker {
     fn reset(&mut self) {
         self.pending.clear();
         self.next_sample = 0;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::VadRechunker;
-    use crate::audio::PcmF32Mono;
-
-    #[test]
-    fn reset_discards_rechunk_slack_and_restarts_the_sample_timeline() {
-        let mut rechunker = VadRechunker::default();
-        let frame = PcmF32Mono::new(vec![0.0; 960], 16_000);
-
-        assert_eq!(rechunker.push(frame.clone()).unwrap()[0].start_sample, 0);
-        rechunker.reset();
-        assert_eq!(rechunker.push(frame).unwrap()[0].start_sample, 0);
     }
 }

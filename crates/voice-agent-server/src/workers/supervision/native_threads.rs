@@ -3,7 +3,7 @@ use std::thread::JoinHandle;
 /// Handles remain resident after a semantic terminal event until native destructors exit.
 /// The owning runtime serializes admission and cleanup under its state mutex.
 #[derive(Default)]
-pub(super) struct NativeThreads {
+pub(in crate::workers) struct NativeThreads {
     closed: bool,
     quarantined: bool,
     handles: Vec<JoinHandle<()>>,
