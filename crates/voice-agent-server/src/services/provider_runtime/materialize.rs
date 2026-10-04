@@ -26,6 +26,12 @@ pub trait RuntimeMaterializer: Send + Sync {
     }
     fn estimated_peak_bytes(&self, snapshot: &DesiredProvider) -> Result<u64, RuntimeError>;
     fn logical_capacity(&self, snapshot: &DesiredProvider) -> Result<usize, RuntimeError>;
+    /// Backing native topology owned by one materialization. Defaults to the logical capacity for
+    /// adapters that hold no resident per-worker native state; adapters with fixed replica
+    /// topology override it so application concurrency cannot multiply native resources.
+    fn physical_capacity(&self, snapshot: &DesiredProvider) -> Result<usize, RuntimeError> {
+        self.logical_capacity(snapshot)
+    }
     fn global_capacity(&self, _: &DesiredProvider) -> Result<Option<usize>, RuntimeError> {
         Ok(None)
     }

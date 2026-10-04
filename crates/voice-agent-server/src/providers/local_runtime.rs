@@ -130,6 +130,11 @@ struct ZeroTtsPhysicalSpec {
     delivery_mode: crate::config::ZeroTtsDeliveryMode,
 }
 
+/// A ZeroTTS replica owns four resident ONNX sessions. Replicating it multiplies both resident
+/// memory and per-runtime warmup, so one physical replica serves every logical voice and template
+/// while `workers.tts.max_workers` continues to bound application-level TTS concurrency.
+const ZEROTTS_PHYSICAL_REPLICAS: usize = 1;
+
 impl LocalRuntimeAdapter for ZeroTtsOnnxPlanner {
     fn adapter_id(&self) -> &'static str {
         "zerotts_onnx"
@@ -151,14 +156,17 @@ impl LocalRuntimeAdapter for ZeroTtsOnnxPlanner {
                 "invalid ZeroTTS local runtime config".into(),
             ));
         }
+        // Voice and language stay logical: they select an embedding from the shared registry and
+        // never change the resident ONNX sessions this replica holds.
         let spec = serde_json::to_value(ZeroTtsPhysicalSpec {
             delivery_mode: config.delivery_mode,
         })
         .map_err(|_| ProviderLoadError::Configuration("invalid ZeroTTS physical spec".into()))?;
-        Ok(LocalRuntimePlan::onnx(
+        Ok(LocalRuntimePlan::onnx_with_replicas(
             self.adapter_id(),
             config.model,
             spec,
+            ZEROTTS_PHYSICAL_REPLICAS,
         ))
     }
 }
@@ -213,4 +221,31 @@ static LOCAL_RUNTIME_ADAPTER_REGISTRY: LocalRuntimeAdapterRegistry = LocalRuntim
 
 pub fn compiled_local_runtime_adapter_registry() -> &'static LocalRuntimeAdapterRegistry {
     &LOCAL_RUNTIME_ADAPTER_REGISTRY
+}
+
+/// Resident native width that one configured instance of `adapter` owns. `instance_config` is the
+/// adapter's own configuration object; deployment-owned `model` and thread settings are applied
+/// first so the result matches what the manager plans. Returns `None` for remote adapters and for
+/// plans whose topology follows the generic worker capacity, which callers read as "keep the
+/// logical concurrency". The planner stays the single source of truth so deployment startup and
+/// the provider runtime manager cannot disagree about session counts.
+pub fn configured_physical_replicas(
+    adapter: &str,
+    instance_config: serde_json::Value,
+    runtime: &crate::config::RuntimeConfig,
+) -> Option<usize> {
+    let effective = crate::providers::factory_registry::effective_local_config(
+        adapter,
+        instance_config,
+        runtime,
+    )
+    .ok()?;
+    let plan = compiled_local_runtime_adapter_registry()
+        .get(adapter)?
+        .physical_plan(effective)
+        .ok()?;
+    match plan.physical_capacity() {
+        crate::services::provider_runtime::PhysicalCapacity::FollowsLogicalCapacity => None,
+        crate::services::provider_runtime::PhysicalCapacity::Replicas(replicas) => Some(replicas),
+    }
 }

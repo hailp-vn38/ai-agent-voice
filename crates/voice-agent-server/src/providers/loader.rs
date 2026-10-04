@@ -236,7 +236,10 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                 TtsWorkerRuntime::try_new_with_binding(
                     Arc::clone(&provider),
                     WorkerRuntimeConfig {
-                        max_workers: config.workers.tts.max_workers,
+                        // Deployment startup must honour the adapter's resident native width so it
+                        // cannot load more ONNX sessions than the manager would.
+                        max_workers: deployment_tts_replicas(instance, &config.runtime)
+                            .unwrap_or(config.workers.tts.max_workers),
                         voice_reserved_capacity: 1,
                         command_capacity: config.workers.tts.command_queue_capacity,
                         final_timeout: Duration::from_millis(config.tts.timeout_ms),
@@ -304,4 +307,19 @@ fn tts_binding(instance: &crate::config::TtsInstanceConfig) -> TtsBinding {
         },
         _ => TtsBinding::readiness(),
     }
+}
+
+/// Resident native width declared by the adapter planner for this deployment instance. `None` means
+/// the adapter holds no fixed per-replica session topology.
+fn deployment_tts_replicas(
+    instance: &crate::config::TtsInstanceConfig,
+    runtime: &crate::config::RuntimeConfig,
+) -> Option<usize> {
+    use crate::config::TtsInstanceConfig;
+    let value = match instance {
+        TtsInstanceConfig::ZeroTtsOnnx(config) => serde_json::to_value(config).ok()?,
+        TtsInstanceConfig::ChillAudioWs(config) => serde_json::to_value(config).ok()?,
+        TtsInstanceConfig::KokoroViOnnx(config) => serde_json::to_value(config).ok()?,
+    };
+    crate::providers::configured_physical_replicas(instance.adapter(), value, runtime)
 }

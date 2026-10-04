@@ -43,6 +43,7 @@ pub use factory_registry::{
 };
 pub use local_runtime::{
     LocalRuntimeAdapter, LocalRuntimeAdapterRegistry, compiled_local_runtime_adapter_registry,
+    configured_physical_replicas,
 };
 pub use runtime_catalog::{
     DiagnosticRuntimeError, DiagnosticRuntimeKind, LoadedVad, ResolvedAgentRuntimes,

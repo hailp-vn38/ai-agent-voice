@@ -183,6 +183,13 @@ impl RuntimeMaterializer for FactoryMaterializer {
         }
         Ok(capacity)
     }
+    fn physical_capacity(&self, snapshot: &DesiredProvider) -> Result<usize, RuntimeError> {
+        let Some(plan) = self.local_runtime_plan(snapshot)? else {
+            return self.logical_capacity(snapshot);
+        };
+        let logical = self.logical_capacity(snapshot)?;
+        Ok(plan.physical_capacity().resolve(logical))
+    }
     fn global_capacity(&self, snapshot: &DesiredProvider) -> Result<Option<usize>, RuntimeError> {
         let capacity = match snapshot.kind.as_str() {
             "vad" => self.config.workers.vad.max_workers,
@@ -240,6 +247,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             self.secrets.as_ref(),
             quota.clone(),
             prepared_model.as_ref(),
+            self.physical_capacity(snapshot)?,
         )
         .map_err(|failure| match failure {
             DatabaseRuntimeFailure::Configuration => RuntimeError::Configuration,

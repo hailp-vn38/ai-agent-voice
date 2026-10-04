@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -581,6 +581,7 @@ fn checkout_example_configuration_parses_without_resolving_or_printing_credentia
 struct CountingLocalFactory {
     inner: FactoryMaterializer,
     builds: Arc<AtomicUsize>,
+    quotas: Arc<Mutex<Vec<ProviderRuntimeAdmission>>>,
 }
 
 impl RuntimeMaterializer for CountingLocalFactory {
@@ -596,15 +597,19 @@ impl RuntimeMaterializer for CountingLocalFactory {
     fn logical_capacity(&self, snapshot: &DesiredProvider) -> Result<usize, RuntimeError> {
         self.inner.logical_capacity(snapshot)
     }
+    fn physical_capacity(&self, snapshot: &DesiredProvider) -> Result<usize, RuntimeError> {
+        self.inner.physical_capacity(snapshot)
+    }
     fn global_capacity(&self, snapshot: &DesiredProvider) -> Result<Option<usize>, RuntimeError> {
         self.inner.global_capacity(snapshot)
     }
     fn build(
         &self,
         _: &DesiredProvider,
-        _: ProviderRuntimeAdmission,
+        quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         self.builds.fetch_add(1, Ordering::SeqCst);
+        self.quotas.lock().unwrap().push(quota);
         Ok(Arc::new(UnloadedResource))
     }
 }
@@ -660,6 +665,7 @@ delivery_mode="stream"
 fn zerotts_manager(
     factory: FactoryMaterializer,
     builds: Arc<AtomicUsize>,
+    quotas: Arc<Mutex<Vec<ProviderRuntimeAdmission>>>,
 ) -> Arc<ProviderRuntimeManager> {
     ProviderRuntimeManager::new(
         RuntimeLimits {
@@ -676,6 +682,7 @@ fn zerotts_manager(
         Arc::new(CountingLocalFactory {
             inner: factory,
             builds,
+            quotas,
         }),
         AdmissionGate::open(),
     )
@@ -699,7 +706,11 @@ fn zerotts_provider(id: i64, key: &str, voice: &str, delivery_mode: &str) -> Des
 #[tokio::test]
 async fn switching_the_logical_voice_never_rematerializes_the_zerotts_runtime() {
     let builds = Arc::new(AtomicUsize::new(0));
-    let manager = zerotts_manager(zerotts_factory(2), Arc::clone(&builds));
+    let manager = zerotts_manager(
+        zerotts_factory(2),
+        Arc::clone(&builds),
+        Arc::new(Mutex::new(Vec::new())),
+    );
 
     // An Agent's home binds Template A -> maichi and later switches to Template B -> hamy. The two
     // templates differ only in the logical voice, so the switch must alias the resident runtime.
@@ -731,7 +742,11 @@ async fn switching_the_logical_voice_never_rematerializes_the_zerotts_runtime() 
 #[tokio::test]
 async fn a_different_zerotts_delivery_mode_builds_a_second_physical_runtime() {
     let builds = Arc::new(AtomicUsize::new(0));
-    let manager = zerotts_manager(zerotts_factory(2), Arc::clone(&builds));
+    let manager = zerotts_manager(
+        zerotts_factory(2),
+        Arc::clone(&builds),
+        Arc::new(Mutex::new(Vec::new())),
+    );
 
     let stream = manager
         .acquire(zerotts_provider(1, "tts-stream", "maichi", "stream"))
@@ -748,4 +763,72 @@ async fn a_different_zerotts_delivery_mode_builds_a_second_physical_runtime() {
     );
     assert_eq!(manager.accounting().resources, 2);
     drop((stream, file));
+}
+
+#[test]
+fn zerotts_physical_replica_count_is_independent_of_generic_tts_concurrency() {
+    let builder = zerotts_factory(4);
+    let row = zerotts_provider(1, "tts-maichi", "maichi", "stream");
+    assert_eq!(builder.logical_capacity(&row).unwrap(), 4);
+    assert_eq!(
+        builder.physical_capacity(&row).unwrap(),
+        1,
+        "generic TTS concurrency must not multiply ZeroTTS engine replicas"
+    );
+}
+
+#[tokio::test]
+async fn a_shared_zerotts_physical_runtime_admits_one_native_synthesis_at_a_time() {
+    use voice_agent_server::workers::ProviderWorkloadClass;
+
+    let quotas = Arc::new(Mutex::new(Vec::new()));
+    let manager = zerotts_manager(
+        zerotts_factory(2),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::clone(&quotas),
+    );
+    let lease = manager
+        .acquire(zerotts_provider(1, "tts-maichi", "maichi", "stream"))
+        .await
+        .unwrap();
+    let quota = quotas.lock().unwrap()[0].clone();
+
+    let first = quota
+        .try_admit(ProviderWorkloadClass::Voice)
+        .expect("the physical engine admits one native synthesis");
+    assert!(
+        quota.try_admit(ProviderWorkloadClass::Voice).is_err(),
+        "a single ZeroTTS replica must not admit concurrent native synthesis"
+    );
+    drop(first);
+    assert!(quota.try_admit(ProviderWorkloadClass::Voice).is_ok());
+    drop(lease);
+}
+
+#[test]
+fn deployment_startup_and_the_manager_agree_on_the_zerotts_replica_count() {
+    use voice_agent_server::config::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig};
+    use voice_agent_server::providers::configured_physical_replicas;
+
+    let cfg = zerotts_config();
+    let instance = ZeroTtsOnnxConfig {
+        model: "zerotts_default".into(),
+        num_threads: cfg.runtime.onnx.threads_for("zerotts_onnx"),
+        voice: "maichi".into(),
+        language: "vi-VN".into(),
+        delivery_mode: ZeroTtsDeliveryMode::Stream,
+        preload: false,
+    };
+    let value = serde_json::to_value(&instance).unwrap();
+
+    assert_eq!(
+        configured_physical_replicas("zerotts_onnx", value, &cfg.runtime),
+        Some(1),
+        "deployment startup must load the same session count the manager builds"
+    );
+    // A remote adapter has no resident native topology at all.
+    assert_eq!(
+        configured_physical_replicas("chillaudio_ws", serde_json::json!({}), &cfg.runtime),
+        None
+    );
 }

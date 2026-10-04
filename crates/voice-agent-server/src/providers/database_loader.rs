@@ -163,7 +163,15 @@ fn load_one(
         ),
         ProviderLoadRequirement::Required | ProviderLoadRequirement::Optional => (
             DatabaseRuntimeStatus::Loaded,
-            materialize_one(config, row, secrets, loaded, None, None),
+            materialize_one(
+                config,
+                row,
+                secrets,
+                loaded,
+                None,
+                None,
+                PhysicalWidth::default(),
+            ),
         ),
     };
     match outcome {
@@ -243,9 +251,9 @@ pub fn materialize_provider_with_admission(
     quota: ProviderRuntimeAdmission,
 ) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
     for worker in [
-        vad_worker_config(config),
-        asr_worker_config(config),
-        tts_worker_config(config),
+        vad_worker_config(config, None),
+        asr_worker_config(config, None),
+        tts_worker_config(config, None),
     ] {
         worker
             .validate()
@@ -254,8 +262,33 @@ pub fn materialize_provider_with_admission(
     let mut config = config.clone();
     config.deployment.models.offline = true;
     let mut loaded = empty_loaded();
-    materialize_one(&config, row, secrets, &mut loaded, Some(quota), None)?;
+    materialize_one(
+        &config,
+        row,
+        secrets,
+        &mut loaded,
+        Some(quota),
+        None,
+        PhysicalWidth::default(),
+    )?;
     Ok(loaded.runtimes)
+}
+
+/// Backing native width resolved by the caller for one physical resource. `None` keeps the
+/// historical behaviour where the generic worker capacity also decided native topology.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PhysicalWidth {
+    replicas: Option<usize>,
+}
+
+impl PhysicalWidth {
+    pub(crate) fn replicas(replicas: Option<usize>) -> Self {
+        Self { replicas }
+    }
+
+    fn resolve(self, logical: usize) -> usize {
+        self.replicas.filter(|value| *value > 0).unwrap_or(logical)
+    }
 }
 
 pub(crate) fn materialize_provider_from_artifacts(
@@ -264,11 +297,20 @@ pub(crate) fn materialize_provider_from_artifacts(
     secrets: &dyn SecretResolver,
     quota: ProviderRuntimeAdmission,
     model: Option<&crate::models::ResolvedModel>,
+    physical_capacity: usize,
 ) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
     let mut config = config.clone();
     config.deployment.models.offline = true;
     let mut loaded = empty_loaded();
-    materialize_one(&config, row, secrets, &mut loaded, Some(quota), model)?;
+    materialize_one(
+        &config,
+        row,
+        secrets,
+        &mut loaded,
+        Some(quota),
+        model,
+        PhysicalWidth::replicas(Some(physical_capacity)),
+    )?;
     Ok(loaded.runtimes)
 }
 
@@ -301,6 +343,7 @@ fn materialize_one(
     loaded: &mut LoadedProviders,
     quota: Option<ProviderRuntimeAdmission>,
     prepared_model: Option<&crate::models::ResolvedModel>,
+    physical: PhysicalWidth,
 ) -> Result<(), DatabaseRuntimeFailure> {
     let mut value = super::factory_registry::effective_local_config(
         &row.adapter,
@@ -352,7 +395,7 @@ fn materialize_one(
                     runtime: Arc::new(
                         VadWorkerRuntime::try_new_with_admission(
                             Arc::clone(&provider),
-                            vad_worker_config(config),
+                            vad_worker_config(config, Some(physical)),
                             quota.unwrap_or_else(|| {
                                 ProviderRuntimeAdmission::new(config.workers.vad.max_workers, 1)
                             }),
@@ -388,7 +431,7 @@ fn materialize_one(
                 Arc::new(
                     AsrWorkerRuntime::try_new_with_admission(
                         Arc::clone(&provider),
-                        asr_worker_config(config),
+                        asr_worker_config(config, Some(physical)),
                         quota.unwrap_or_else(|| {
                             ProviderRuntimeAdmission::new(config.workers.asr.max_workers, 1)
                         }),
@@ -459,7 +502,7 @@ fn materialize_one(
                 Arc::new(
                     TtsWorkerRuntime::try_new_with_admission_and_binding(
                         Arc::clone(&provider),
-                        tts_worker_config(config),
+                        tts_worker_config(config, Some(physical)),
                         quota.unwrap_or_else(|| {
                             ProviderRuntimeAdmission::new(config.workers.tts.max_workers, 1)
                         }),
@@ -557,27 +600,35 @@ fn reject_secret_value(secret: Option<&crate::database::secrets::SecretValue>) -
     if secret.is_some() { Err(()) } else { Ok(()) }
 }
 
-fn vad_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
+fn vad_worker_config(config: &AppConfig, physical: Option<PhysicalWidth>) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
-        max_workers: config.workers.vad.max_workers,
+        max_workers: physical.map_or(config.workers.vad.max_workers, |width| {
+            width.resolve(config.workers.vad.max_workers)
+        }),
         voice_reserved_capacity: 1,
         command_capacity: config.workers.vad.command_queue_capacity,
         final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
         cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
     }
 }
-fn asr_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
+fn asr_worker_config(config: &AppConfig, physical: Option<PhysicalWidth>) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
-        max_workers: config.workers.asr.max_workers,
+        max_workers: physical.map_or(config.workers.asr.max_workers, |width| {
+            width.resolve(config.workers.asr.max_workers)
+        }),
         voice_reserved_capacity: 1,
         command_capacity: config.workers.asr.command_queue_capacity,
         final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
         cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
     }
 }
-fn tts_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
+/// Pool width for one physical TTS runtime. A fixed physical width keeps one ONNX session set per
+/// replica; generic TTS concurrency still bounds work through admission, not through session count.
+fn tts_worker_config(config: &AppConfig, physical: Option<PhysicalWidth>) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
-        max_workers: config.workers.tts.max_workers,
+        max_workers: physical.map_or(config.workers.tts.max_workers, |width| {
+            width.resolve(config.workers.tts.max_workers)
+        }),
         voice_reserved_capacity: 1,
         command_capacity: config.workers.tts.command_queue_capacity,
         final_timeout: Duration::from_millis(config.tts.timeout_ms),
@@ -589,6 +640,27 @@ fn tts_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
 mod tests {
     use super::*;
     use crate::database::secrets::{EnvSecretResolver, SecretValue};
+
+    #[test]
+    fn a_fixed_physical_width_narrows_only_the_tts_pool_of_resident_sessions() {
+        let mut cfg = config();
+        cfg.workers.tts.max_workers = 4;
+        cfg.workers.vad.max_workers = 4;
+        cfg.workers.asr.max_workers = 4;
+
+        let legacy = tts_worker_config(&cfg, None);
+        assert_eq!(legacy.max_workers, 4);
+        let narrowed = tts_worker_config(&cfg, Some(PhysicalWidth::replicas(Some(1))));
+        assert_eq!(narrowed.max_workers, 1);
+        assert_eq!(narrowed.command_capacity, legacy.command_capacity);
+        assert_eq!(narrowed.final_timeout, legacy.final_timeout);
+
+        // A physical width of zero must never produce an unusable pool.
+        assert_eq!(
+            tts_worker_config(&cfg, Some(PhysicalWidth::replicas(Some(0)))).max_workers,
+            4
+        );
+    }
 
     #[test]
     fn chillaudio_tts_materialization_maps_the_secret_reference_to_its_runtime_token() {

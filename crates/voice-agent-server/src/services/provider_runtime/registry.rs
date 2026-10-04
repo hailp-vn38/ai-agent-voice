@@ -240,6 +240,17 @@ impl ProviderRuntimeManager {
         if !(1..=4096).contains(&total) {
             return Err(RuntimeError::Configuration);
         }
+        // A shared physical pool is admitted at its own native width, not at application
+        // concurrency, so extra logical views can never run concurrent work on one engine.
+        let physical_total = if resource_key.is_some() {
+            let physical_total = self.builder.physical_capacity(&snapshot)?;
+            if !(1..=4096).contains(&physical_total) {
+                return Err(RuntimeError::Configuration);
+            }
+            physical_total
+        } else {
+            total
+        };
         let global_capacity = self.builder.global_capacity(&snapshot)?;
         if global_capacity.is_some_and(|value| !(1..=4096).contains(&value)) {
             return Err(RuntimeError::Configuration);
@@ -404,7 +415,7 @@ impl ProviderRuntimeManager {
             let version = version.clone();
             let build_snapshot = snapshot.clone();
             let physical_quota = if resource_key.is_some() {
-                ProviderRuntimeAdmission::new(total, 1)
+                ProviderRuntimeAdmission::new(physical_total, 1)
             } else {
                 quota.clone()
             };
