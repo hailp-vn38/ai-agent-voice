@@ -34,7 +34,6 @@ const agentId = computed(() => String(route.params.agentId ?? ''))
 const agent = computed(() => store.getAgent(agentId.value))
 /** Only templates linked to this agent, never the whole global catalog. */
 const templates = computed(() => store.getTemplatesForAgent(agentId.value))
-const takenTemplateKeys = computed(() => store.templates.map((template) => template.id))
 const availableTemplates = computed(() => store.getAvailableTemplatesForAgent(agentId.value))
 const devices = computed(() => store.devicesForAgent(agentId.value))
 
@@ -431,7 +430,6 @@ async function confirmDeleteDevice() {
       :template="editingTemplate"
       :providers="store.providers"
       :agent-count="selectedTemplateAgentCount"
-      :taken-keys="takenTemplateKeys"
       :save="saveTemplate"
     />
     <CopyTemplateDialog v-model="copyOpen" :template="selectedTemplate" @copy="copySelectedTemplate" />

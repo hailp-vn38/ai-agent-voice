@@ -25,7 +25,6 @@ const { t } = useI18n()
 
 const templateId = computed(() => String(route.params.templateId ?? ''))
 const template = computed(() => store.getTemplate(templateId.value))
-const takenTemplateKeys = computed(() => store.templates.map((item) => item.id))
 const agents = computed(() => store.getAgentsUsingTemplate(templateId.value))
 const agentCount = computed(() => store.getTemplateAgentCount(templateId.value))
 
@@ -224,7 +223,6 @@ function isDefaultForAgent(agentId: string) {
       :template="template"
       :providers="store.providers"
       :agent-count="agentCount"
-      :taken-keys="takenTemplateKeys"
       :save="saveTemplate"
     />
     <CopyTemplateDialog v-model="copyOpen" :template="template" @copy="copyTemplate" />

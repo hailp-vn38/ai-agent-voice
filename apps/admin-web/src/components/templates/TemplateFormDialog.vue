@@ -23,8 +23,6 @@ const props = defineProps<{
   providers: ProviderInstance[]
   /** Agents currently linking the template, used to show the blast radius on edit. */
   agentCount?: number
-  /** Keys already taken, so the form can reject a collision before the request. */
-  takenKeys?: string[]
   /** Awaited by the form so it can own the submitting and error state. */
   save: (payload: TemplateSetupInput) => Promise<unknown>
 }>()
@@ -41,7 +39,6 @@ const failure = ref<unknown>(null)
 
 const form = reactive({
   name: '',
-  key: '',
   description: '',
   language: templateLanguageOptions[0] as string,
   prompt: '',
@@ -59,30 +56,12 @@ const steps = computed(() => [
   t('templateForm.stepReview'),
 ])
 
-const KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
-
-const validKey = computed(() => KEY_PATTERN.test(form.key))
-const keyTaken = computed(
-  () => !editing.value && (props.takenKeys ?? []).includes(form.key),
-)
-const keyError = computed(() => {
-  if (!form.key) return ''
-  if (!validKey.value) return t('templateForm.keyInvalid')
-  if (keyTaken.value) return t('templateForm.keyTaken')
-  return ''
-})
-
 const boundCount = computed(
   () => bindableTypes.value.filter((type) => Boolean(form.providerBindings[type])).length,
 )
 
-/** The pipeline is only worth a slot once the template has an identity. */
-const canContinue = computed(() => {
-  if (step.value === 1) return form.name.trim().length > 0 && validKey.value && !keyTaken.value
-  return true
-})
-
-const canSave = computed(() => form.name.trim().length > 0 && !keyError.value)
+const canContinue = computed(() => step.value !== 1 || form.name.trim().length > 0)
+const canSave = computed(() => form.name.trim().length > 0)
 
 function candidatesFor(type: ProviderType) {
   return props.providers.filter((provider) => provider.type === type)
@@ -93,22 +72,8 @@ function boundProviderName(type: ProviderType) {
   return providerId ? (props.providers.find((provider) => provider.id === providerId)?.name ?? providerId) : ''
 }
 
-/** Mirrors the server key rule so the operator sees the outcome before submitting. */
-function suggestKey(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .replace(/^[^a-z]+/, '')
-    .slice(0, 64)
-}
-
 function loadForm() {
   form.name = props.template?.name ?? ''
-  form.key = props.template?.id ?? ''
   form.description = props.template?.description ?? ''
   form.language = props.template?.language ?? (templateLanguageOptions[0] as string)
   form.prompt = props.template?.prompt ?? ''
@@ -124,14 +89,6 @@ watch(
     loadForm()
   },
   { immediate: true },
-)
-
-// The key follows the name until the operator takes it over.
-watch(
-  () => form.name,
-  (value) => {
-    if (!form.key || form.key === suggestKey(form.name)) form.key = suggestKey(value)
-  },
 )
 
 function next() {
@@ -150,7 +107,6 @@ async function submit() {
   try {
     await props.save({
       id: props.template?.id,
-      key: form.key.trim(),
       name: form.name.trim(),
       description: form.description.trim(),
       language: form.language.trim() || (templateLanguageOptions[0] as string),
@@ -209,7 +165,7 @@ async function submit() {
       </p>
 
       <div v-if="step === 1" class="space-y-4">
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div>
           <label class="block space-y-1.5">
             <span class="text-sm font-medium">{{ t('templateForm.name') }}</span>
             <input
@@ -220,23 +176,6 @@ async function submit() {
             />
           </label>
 
-          <label class="block space-y-1.5">
-            <span class="text-sm font-medium">{{ t('templateForm.key') }}</span>
-            <input
-              v-model="form.key"
-              class="admin-input font-mono"
-              :class="keyError && 'border-danger'"
-              :placeholder="t('templateForm.keyPlaceholder')"
-              :readonly="editing"
-              :aria-invalid="Boolean(keyError)"
-              spellcheck="false"
-            />
-            <small v-if="editing" class="text-xs text-muted-foreground">
-              {{ t('templateForm.keyLocked') }}
-            </small>
-            <small v-else-if="keyError" class="text-danger">{{ keyError }}</small>
-            <small v-else class="text-xs text-muted-foreground">{{ t('templateForm.keyHint') }}</small>
-          </label>
         </div>
 
         <label class="block space-y-1.5">
@@ -311,10 +250,6 @@ async function submit() {
             <dd class="font-medium">{{ form.name }}</dd>
           </div>
           <div>
-            <dt class="text-muted-foreground">{{ t('templateForm.key') }}</dt>
-            <dd class="font-mono">{{ form.key }}</dd>
-          </div>
-          <div>
             <dt class="text-muted-foreground">{{ t('templateForm.reviewLanguage') }}</dt>
             <dd>{{ form.language }}</dd>
           </div>
@@ -366,7 +301,6 @@ async function submit() {
           <pre class="mt-3 overflow-auto text-xs">{{
             JSON.stringify(
               {
-                ...(props.template ? { key: props.template.id } : { key: form.key.trim() }),
                 name: form.name.trim(),
                 description: form.description.trim(),
                 language: form.language.trim(),

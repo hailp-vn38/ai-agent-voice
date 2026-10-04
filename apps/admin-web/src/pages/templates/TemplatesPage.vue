@@ -59,8 +59,6 @@ const deleteOpen = computed({
   },
 })
 
-const takenTemplateKeys = computed(() => store.templates.map((template) => template.id))
-
 // Derived statistics only: agent usage is read from agentTemplateLinks, never persisted.
 const inUseCount = computed(
   () => store.templates.filter((template) => store.getTemplateAgentCount(template.id) > 0).length,
@@ -227,7 +225,6 @@ function agentNamesFor(templateId: string) {
       :template="editingTemplate"
       :providers="store.providers"
       :agent-count="editingTemplate ? store.getTemplateAgentCount(editingTemplate.id) : 0"
-      :taken-keys="takenTemplateKeys"
       :save="saveTemplate"
     />
 

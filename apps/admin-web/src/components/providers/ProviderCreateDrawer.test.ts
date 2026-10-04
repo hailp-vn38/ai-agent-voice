@@ -13,6 +13,39 @@ const BaseModalStub = { template: '<div><slot /><slot name="footer" /></div>' }
 const ButtonStub = { props: ['disabled', 'type'], template: '<button :disabled="disabled" :type="type || \'button\'"><slot /></button>' }
 
 describe('ProviderCreateDrawer', () => {
+  it('does not send a client key and emits the key returned by the server', async () => {
+    adaptersApi.list.mockResolvedValue([{ adapter: 'zerotts_onnx', type: 'tts', display_name: 'ZeroTTS' }])
+    adaptersApi.get.mockResolvedValue({ adapter: 'zerotts_onnx', type: 'tts', config_schema: { fields: [] } })
+    const create = vi.fn().mockResolvedValue({ key: 'tts_6eb737d745d74285ab916b723eed3671' })
+    const wrapper = mount(ProviderCreateDrawer, {
+      props: { modelValue: false, create },
+      global: { stubs: { BaseModal: BaseModalStub, Button: ButtonStub } },
+    })
+
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    await wrapper.find('select').setValue('zerotts_onnx')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
+    await wrapper.get('input[placeholder="Giọng Mai Chi"]').setValue('Giọng Mai Chi')
+    await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
+
+    expect(wrapper.find('input[placeholder="tts_maichi"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Server tự tạo')
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Tạo provider')!.trigger('click')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledWith({
+      name: 'Giọng Mai Chi',
+      type: 'tts',
+      adapter: 'zerotts_onnx',
+      config_json: {},
+      secret_ref: undefined,
+    })
+    expect(wrapper.emitted('created')).toEqual([['tts_6eb737d745d74285ab916b723eed3671']])
+  })
+
   it('ignores a late adapter catalog response from the previously selected type', async () => {
     let resolveTts!: (items: Array<{ adapter: string; type: 'tts'; display_name: string }>) => void
     adaptersApi.list.mockImplementation((type: string) => type === 'tts'
@@ -48,7 +81,6 @@ describe('ProviderCreateDrawer', () => {
     await flushPromises()
     await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
     await wrapper.get('input[placeholder="Giọng Mai Chi"]').setValue('Giọng cũ')
-    await wrapper.get('input[placeholder="tts_maichi"]').setValue('tts_cu')
 
     await wrapper.findAll('button').find((button) => button.text() === 'Quay lại')!.trigger('click')
 
@@ -67,6 +99,6 @@ describe('ProviderCreateDrawer', () => {
     await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
 
     expect((wrapper.get('input[placeholder="Giọng Mai Chi"]').element as HTMLInputElement).value).toBe('')
-    expect((wrapper.get('input[placeholder="tts_maichi"]').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('input[placeholder="tts_maichi"]').exists()).toBe(false)
   })
 })

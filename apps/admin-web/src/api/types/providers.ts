@@ -11,17 +11,21 @@ export interface ProviderRuntime {
 }
 
 export interface AdminProvider {
+  id: number
   key: string
   name: string
   type: TemplateProviderType
   adapter: string
-  config_json: Record<string, unknown>
-  secret_ref: string | null
-  enabled: boolean
+  /** Canonical JSON returned by the server; parse only where the UI needs a field. */
+  config_json: string
+  enabled: 0 | 1
   revision: number
-  runtime_status?: string
-  runtime_matches_desired?: boolean
-  requires_restart?: boolean
+  created_at: number
+  updated_at: number
+  has_secret_ref: boolean
+  runtime_status: 'not_loaded' | 'unavailable' | 'loaded'
+  runtime_matches_desired: boolean
+  requires_restart: boolean
   runtime?: ProviderRuntime
 }
 
@@ -37,7 +41,6 @@ export interface ProviderPage extends Page<AdminProvider> {
 }
 
 export interface CreateProviderInput {
-  key: string
   name: string
   type: TemplateProviderType
   adapter: string

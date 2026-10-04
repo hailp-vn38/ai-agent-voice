@@ -116,7 +116,7 @@ describe('Admin resource APIs', () => {
     const wav = new Blob(['wav'], { type: 'audio/wav' })
     await providersApi.list({ type: 'tts', q: 'mai', enabled: false, sort: '-name' })
     await providersApi.get('p/x')
-    await providersApi.create({ key: 'p', name: 'Mai', type: 'tts', adapter: 'zero', config_json: {} })
+    await providersApi.create({ name: 'Mai', type: 'tts', adapter: 'zero', config_json: {} })
     await providersApi.update('p/x', { enabled: false }, 1)
     await providersApi.remove('p/x', 2)
     await providersApi.templates('p/x', 3, 20)
@@ -128,7 +128,7 @@ describe('Admin resource APIs', () => {
 
     expect(call(fetch, 0)[0]).toBe('/api/admin/providers?page=1&page_size=50&enabled=false&q=mai&type=tts&sort=-name')
     expect(call(fetch, 1)[0]).toBe('/api/admin/providers/p%2Fx')
-    expectJsonMutation(call(fetch, 2)[1], 'POST', { key: 'p', name: 'Mai', type: 'tts', adapter: 'zero', config_json: {} })
+    expectJsonMutation(call(fetch, 2)[1], 'POST', { name: 'Mai', type: 'tts', adapter: 'zero', config_json: {} })
     expectJsonMutation(call(fetch, 3)[1], 'PATCH', { enabled: false }, 1)
     expect(call(fetch, 5)[0]).toBe('/api/admin/providers/p%2Fx/templates?page=3&page_size=20')
     expect(call(fetch, 6)[0]).toBe('/api/admin/providers/p%2Fx/capabilities')

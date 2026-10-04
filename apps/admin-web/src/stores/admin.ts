@@ -49,7 +49,8 @@ export interface AgentTemplateInput {
 export interface TemplateSetupInput {
   /** Omit to create a new global Template; set to edit an existing one. */
   id?: string
-  key: string
+  /** The store derives this only while the Template API still requires it. */
+  key?: string
   name: string
   description: string
   language: string
@@ -71,11 +72,7 @@ function isApiProviderType(value: string): value is TemplateProviderType {
   return (apiProviderTypes as string[]).includes(value)
 }
 
-/**
- * Server keys are lowercase `[a-z0-9_]`, at most 64 characters, and cannot
- * start with a digit. Names come from free-form input, so derive and then
- * de-duplicate against what is already cached.
- */
+/** Derive keys only for resources whose create API still requires one. */
 function slugifyKey(name: string): string {
   const slug = name
     .trim()
@@ -100,12 +97,21 @@ function uniqueKey(name: string, taken: (key: string) => boolean): string {
 function providerStatus(provider: AdminProvider): ProviderStatus {
   if (!provider.enabled) return 'disabled'
   const runtime = provider.runtime_status
-  if (runtime === 'unavailable' || runtime === 'failed' || runtime === 'error') return 'error'
+  if (runtime === 'unavailable') return 'error'
   return 'ready'
 }
 
 function providerConfig(provider: AdminProvider, field: string): string {
-  const value = provider.config_json?.[field]
+  let config: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(provider.config_json)
+    config = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+  } catch {
+    config = {}
+  }
+  const value = config[field]
   return typeof value === 'string' ? value : ''
 }
 
@@ -698,7 +704,7 @@ export const useAdminStore = defineStore('admin', () => {
     try {
       const provider = await providersApi.create(input)
       upsertProvider(provider)
-      return getProvider(provider.key)
+      return provider
     } catch (cause) {
       error.value = formatApiError(cause)
       throw cause
@@ -707,9 +713,7 @@ export const useAdminStore = defineStore('admin', () => {
 
   async function createProvider(input: ProviderInput) {
     return run(async () => {
-      const key = uniqueKey(input.name, (candidate) => Boolean(getProvider(candidate)))
       const created = await providersApi.create({
-        key,
         name: input.name,
         type: input.type as TemplateProviderType,
         adapter: input.adapter,
@@ -717,11 +721,11 @@ export const useAdminStore = defineStore('admin', () => {
       })
       // The create endpoint always enables the provider, so a disabled draft needs a follow-up.
       const provider = input.status === 'disabled'
-        ? await providersApi.update(key, { enabled: false }, created.revision)
+        ? await providersApi.update(created.key, { enabled: false }, created.revision)
         : created
-      providerRevisions.value[key] = provider.revision
+      providerRevisions.value[provider.key] = provider.revision
       upsertProvider(provider)
-      return getProvider(key)
+      return getProvider(provider.key)
     })
   }
 

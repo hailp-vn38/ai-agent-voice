@@ -101,10 +101,6 @@ function runTest() {
         <CardContent>
           <dl class="grid gap-3 text-sm sm:grid-cols-2">
             <div>
-              <dt class="text-xs tracking-wide text-muted-foreground uppercase">{{ t('providers.id') }}</dt>
-              <dd class="mt-1 break-all font-mono text-xs">{{ provider.id }}</dd>
-            </div>
-            <div>
               <dt class="text-xs tracking-wide text-muted-foreground uppercase">{{ t('providers.type') }}</dt>
               <dd class="mt-1">{{ providerTypeLabel(provider.type) }}</dd>
             </div>

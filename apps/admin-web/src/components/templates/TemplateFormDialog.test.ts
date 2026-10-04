@@ -39,28 +39,17 @@ function button(wrapper: ReturnType<typeof page>, label: string) {
 }
 
 describe('TemplateFormDialog', () => {
-  it('suggests a key from the name and blocks a key the server already holds', async () => {
-    const wrapper = page({ takenKeys: ['vietnamese_home'] })
+  it('creates from the name without exposing or submitting a key', async () => {
+    const save = vi.fn().mockResolvedValue(undefined)
+    const wrapper = page({ save })
     await wrapper.get('input[placeholder="Vietnamese Home"]').setValue('Vietnamese Home')
-
-    const key = wrapper.get('input[placeholder="vietnamese_home"]')
-    expect((key.element as HTMLInputElement).value).toBe('vietnamese_home')
-    expect(button(wrapper, 'Continue').attributes('disabled')).toBeDefined()
-
-    await key.setValue('classroom_assistant')
+    expect(wrapper.find('input[placeholder="vietnamese_home"]').exists()).toBe(false)
     expect(button(wrapper, 'Continue').attributes('disabled')).toBeUndefined()
-  })
-
-  it('refuses to continue on a malformed key', async () => {
-    const wrapper = page()
-    await wrapper.get('input[placeholder="Vietnamese Home"]').setValue('Home')
-    const key = wrapper.get('input[placeholder="vietnamese_home"]')
-
-    await key.setValue('Home')
-    expect(button(wrapper, 'Continue').attributes('disabled')).toBeDefined()
-
-    await key.setValue('9_invalid')
-    expect(button(wrapper, 'Continue').attributes('disabled')).toBeDefined()
+    await button(wrapper, 'Continue').trigger('click')
+    await button(wrapper, 'Continue').trigger('click')
+    await button(wrapper, 'Create template').trigger('click')
+    await flushPromises()
+    expect(save).toHaveBeenCalledWith(expect.not.objectContaining({ key: expect.anything() }))
   })
 
   it('never offers a vision slot, because the API has no vision binding', async () => {
@@ -74,12 +63,11 @@ describe('TemplateFormDialog', () => {
     expect(options).not.toContain('Vision')
   })
 
-  it('locks the key when editing and sends the existing id instead', async () => {
+  it('keeps the existing id internal when editing', async () => {
     const save = vi.fn().mockResolvedValue(undefined)
     const wrapper = page({ template: existing, save })
 
-    const key = wrapper.get('input[placeholder="vietnamese_home"]')
-    expect(key.attributes('readonly')).toBeDefined()
+    expect(wrapper.find('input[placeholder="vietnamese_home"]').exists()).toBe(false)
 
     await button(wrapper, 'Continue').trigger('click')
     await button(wrapper, 'Continue').trigger('click')
@@ -87,7 +75,7 @@ describe('TemplateFormDialog', () => {
     await flushPromises()
 
     expect(save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'vietnamese_home', key: 'vietnamese_home' }),
+      expect.objectContaining({ id: 'vietnamese_home' }),
     )
   })
 
