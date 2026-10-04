@@ -1,7 +1,7 @@
 reference/
 /target/
 /config.toml
-/models/**
+models/
 /runtime/**
 .DS_Store
 /output/

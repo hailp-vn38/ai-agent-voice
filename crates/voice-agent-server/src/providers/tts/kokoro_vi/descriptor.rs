@@ -1,3 +1,4 @@
+use super::assets;
 use crate::providers::{
     capabilities::{
         CapabilityDiscoveryMode, CapabilitySource, DiscoverySource, LanguageOption, ModelOption,
@@ -15,8 +16,9 @@ use crate::providers::{
 };
 use serde_json::Value;
 
+const MODEL_ID: &str = "kokoro_vi_contextbox";
 const MODELS: &[ModelOption] = &[ModelOption {
-    id: "kokoro_vi_contextbox",
+    id: MODEL_ID,
     name: "Kokoro Vietnamese (ContextBox)",
     description: None,
 }];
@@ -24,92 +26,32 @@ const VIETNAMESE: &[LanguageOption] = &[LanguageOption {
     id: "vi-VN",
     name: "Vietnamese",
 }];
-const VOICES: &[VoiceOption] = &[
-    VoiceOption {
-        id: "diem_trinh",
-        name: "Diem Trinh",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "hung_thinh",
-        name: "Hung Thinh",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "mai_linh",
-        name: "Mai Linh",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "mai_loan",
-        name: "Mai Loan",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "manh_dung",
-        name: "Manh Dung",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "my_yen",
-        name: "My Yen",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "ngoc_huyen",
-        name: "Ngoc Huyen",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "phat_tai",
-        name: "Phat Tai",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "thanh_dat",
-        name: "Thanh Dat",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "thuc_trinh",
-        name: "Thuc Trinh",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "tuan_ngoc",
-        name: "Tuan Ngoc",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "storyvert",
-        name: "Storyvert",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "duc_an",
-        name: "Duc An",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-    VoiceOption {
-        id: "duc_duy",
-        name: "Duc Duy",
-        languages: &["vi-VN"],
-        model: Some("kokoro_vi_contextbox"),
-    },
-];
+/// Voice metadata is projected from the asset catalog, so a voice the Admin API advertises is
+/// exactly a voice whose voicepack the provider installs. Built at compile time to keep the
+/// descriptor a plain static; there is no second list to keep in step.
+const fn voice_options() -> [VoiceOption; assets::VOICES.len()] {
+    let mut options = [VoiceOption {
+        id: "",
+        name: "",
+        languages: &[],
+        model: None,
+    }; assets::VOICES.len()];
+    let mut index = 0;
+    while index < assets::VOICES.len() {
+        let voice = &assets::VOICES[index];
+        options[index] = VoiceOption {
+            id: voice.id,
+            name: voice.name,
+            languages: &["vi-VN"],
+            model: Some(MODEL_ID),
+        };
+        index += 1;
+    }
+    options
+}
+
+const VOICES: &[VoiceOption] = &voice_options();
+
 const FIELDS: &[ProviderConfigField] = &[
     field(
         "voice",
@@ -180,7 +122,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
 struct Inspector;
 impl BootstrapCapabilityInspector for Inspector {
     fn inspect(&self, selection: &Value) -> Result<DiscoveredCapabilities, ProviderInspectError> {
-        validate_model_selection(selection, "kokoro_vi_contextbox")?;
+        validate_model_selection(selection, MODEL_ID)?;
         Ok(DiscoveredCapabilities {
             models: MODELS,
             voices: VOICES,

@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::providers::assets::{
-    Asset, AssetAcquirer, AssetError, ProviderAssetManager, ensure_asset, http_acquirer, model_path,
+    Asset, AssetAcquirer, AssetError, ProviderAssetManager, ensure_asset, http_acquirer,
+    model_path, required,
 };
 
 /// Pinned upstream commit. Silero publishes the graph straight from its repository, so the commit
@@ -51,17 +52,10 @@ pub fn ensure_assets_into(acquirer: &dyn AssetAcquirer, root: &Path) -> Result<(
 
 pub fn resolve_assets_from(root: &Path) -> Result<SileroAssets, AssetError> {
     Ok(SileroAssets {
-        model: ready(root, CORE_ASSETS[0].path)?,
+        model: required(root, CORE_ASSETS[0].path)?,
     })
 }
 
 pub fn resolve_assets() -> Result<SileroAssets, AssetError> {
     resolve_assets_from(&model_dir())
-}
-
-fn ready(root: &Path, relative: &str) -> Result<PathBuf, AssetError> {
-    let path = root.join(relative);
-    crate::providers::assets::is_ready(&path)
-        .then_some(path.clone())
-        .ok_or(AssetError::Missing(path))
 }

@@ -8,7 +8,6 @@
 //! belongs to runtime initialization, which fails loudly if a model cannot be loaded.
 
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard, OnceLock},
@@ -57,6 +56,15 @@ pub fn is_ready(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
 }
 
+/// Resolves one declared file that must already be installed. A missing file is an error rather
+/// than a silent download, so callers can tell "not prepared yet" from "prepared".
+pub fn required(root: &Path, relative: &str) -> Result<PathBuf, AssetError> {
+    let path = root.join(relative);
+    is_ready(&path)
+        .then_some(path.clone())
+        .ok_or(AssetError::Missing(path))
+}
+
 /// Fetches one remote URL to a local destination.
 pub trait AssetAcquirer: Send + Sync {
     fn acquire(&self, url: &str, destination: &Path) -> Result<(), AssetError>;
@@ -82,46 +90,19 @@ pub fn ensure_asset(
 ) -> Result<PathBuf, AssetError> {
     let target = root.join(asset.path);
     if is_ready(&target) {
+        tracing::info!(asset = asset.path, destination = %target.display(), "reusing provider asset");
         return Ok(target);
     }
     let _guard = asset_lock(&target);
     // Another caller may have installed it while this one waited.
     if is_ready(&target) {
+        tracing::info!(asset = asset.path, destination = %target.display(), "reusing provider asset");
         return Ok(target);
     }
-    tracing::info!(asset = asset.path, "downloading provider asset");
+    tracing::info!(asset = asset.path, url = asset.url, destination = %target.display(), "downloading provider asset");
     install(acquirer, asset.url, &target)?;
-    tracing::info!(asset = asset.path, "provider asset ready");
+    tracing::info!(asset = asset.path, destination = %target.display(), "provider asset ready");
     Ok(target)
-}
-
-/// Ensures a batch of assets and returns their resolved paths keyed by relative path.
-pub fn download_atomic(
-    acquirer: &dyn AssetAcquirer,
-    root: &Path,
-    assets: &[Asset],
-) -> Result<BTreeMap<String, PathBuf>, AssetError> {
-    let mut resolved = BTreeMap::new();
-    for asset in assets {
-        resolved.insert(asset.path.to_owned(), ensure_asset(acquirer, root, asset)?);
-    }
-    Ok(resolved)
-}
-
-/// Resolves paths for assets that must already be on disk. Reads metadata only.
-pub fn resolve_assets(
-    root: &Path,
-    assets: &[Asset],
-) -> Result<BTreeMap<String, PathBuf>, AssetError> {
-    let mut resolved = BTreeMap::new();
-    for asset in assets {
-        let path = root.join(asset.path);
-        if !is_ready(&path) {
-            return Err(AssetError::Missing(path));
-        }
-        resolved.insert(asset.path.to_owned(), path);
-    }
-    Ok(resolved)
 }
 
 pub(crate) fn http_acquirer() -> &'static dyn AssetAcquirer {

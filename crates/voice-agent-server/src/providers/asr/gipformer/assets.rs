@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::providers::assets::{
-    Asset, AssetAcquirer, AssetError, ProviderAssetManager, ensure_asset, http_acquirer, is_ready,
-    model_path,
+    Asset, AssetAcquirer, AssetError, ProviderAssetManager, ensure_asset, http_acquirer,
+    model_path, required,
 };
 
 /// Pinned upstream revision.
@@ -55,22 +55,15 @@ pub fn ensure_assets_into(acquirer: &dyn AssetAcquirer, root: &Path) -> Result<(
 
 pub fn resolve_assets_from(root: &Path) -> Result<GipformerAssets, AssetError> {
     Ok(GipformerAssets {
-        encoder: ready(root, "encoder.onnx")?,
-        decoder: ready(root, "decoder.onnx")?,
-        joiner: ready(root, "joiner.onnx")?,
-        tokens: ready(root, "tokens.txt")?,
+        encoder: required(root, "encoder.onnx")?,
+        decoder: required(root, "decoder.onnx")?,
+        joiner: required(root, "joiner.onnx")?,
+        tokens: required(root, "tokens.txt")?,
     })
 }
 
 pub fn resolve_assets() -> Result<GipformerAssets, AssetError> {
     resolve_assets_from(&model_dir())
-}
-
-fn ready(root: &Path, relative: &str) -> Result<PathBuf, AssetError> {
-    let path = root.join(relative);
-    is_ready(&path)
-        .then_some(path.clone())
-        .ok_or(AssetError::Missing(path))
 }
 
 /// Declares one file: the name it is installed under locally, and its upstream name, which differs

@@ -12,7 +12,7 @@ use std::{
 
 use crate::providers::assets::{
     Asset, AssetAcquirer, AssetError, ProviderAssetManager, ensure_asset, http_acquirer,
-    install_bytes, is_ready, model_path,
+    install_bytes, is_ready, model_path, required,
 };
 
 mod voicepack_source;
@@ -142,24 +142,17 @@ fn ensure_voicepack(
 pub fn resolve_assets_from(root: &Path) -> Result<KokoroViAssets, AssetError> {
     let voicepacks = VOICES
         .iter()
-        .map(|voice| Ok((voice.id.to_owned(), ready(root, voice.path)?)))
+        .map(|voice| Ok((voice.id.to_owned(), required(root, voice.path)?)))
         .collect::<Result<BTreeMap<_, _>, AssetError>>()?;
     Ok(KokoroViAssets {
-        model: ready(root, "kokoro_vi.onnx")?,
-        config: ready(root, "config.json")?,
+        model: required(root, "kokoro_vi.onnx")?,
+        config: required(root, "config.json")?,
         voicepacks,
     })
 }
 
 pub fn resolve_assets() -> Result<KokoroViAssets, AssetError> {
     resolve_assets_from(&model_dir())
-}
-
-fn ready(root: &Path, relative: &str) -> Result<PathBuf, AssetError> {
-    let path = root.join(relative);
-    is_ready(&path)
-        .then_some(path.clone())
-        .ok_or(AssetError::Missing(path))
 }
 
 /// Declares one voice. `path` is the converted form the runtime reads; `url` is the upstream

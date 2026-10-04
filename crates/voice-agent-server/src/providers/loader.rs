@@ -100,6 +100,16 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let registry = compiled_provider_registry();
     let defaults = &config.provider_defaults;
 
+    // Each local provider installs the files it is missing before anything is built. Remote
+    // adapters have no asset manager and are skipped.
+    fn ensure_assets(adapter: &str) -> Result<(), ProviderLoadError> {
+        if let Some(assets) = super::registry::compiled_provider_adapter_registry().assets(adapter)
+        {
+            assets.ensure_assets()?;
+        }
+        Ok(())
+    }
+
     let mut vad_providers = HashMap::new();
     let mut vad_runtimes = HashMap::new();
     for (id, instance) in &config.providers.vad.instances {
@@ -107,6 +117,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             continue;
         }
         let factory = registry.vad_factory(instance.adapter())?;
+        ensure_assets(instance.adapter())?;
         let provider = factory.build(instance, &config.runtime)?;
         let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
         vad_runtimes.insert(
@@ -152,6 +163,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             .ok_or_else(|| {
                 ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
             })?;
+        ensure_assets(instance.adapter())?;
         let provider = factory.build(instance, &config.runtime, max_buffered_samples)?;
         asr_runtimes.insert(
             id.clone(),
@@ -199,6 +211,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             continue;
         }
         let factory = registry.tts_factory(instance.adapter())?;
+        ensure_assets(instance.adapter())?;
         let provider = factory.build(instance, &config.runtime)?;
         tts_runtimes.insert(
             id.clone(),

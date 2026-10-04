@@ -1,7 +1,6 @@
 //! Behaviour of the provider-owned asset layer: reuse, atomic download, and download safety.
 
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -12,7 +11,7 @@ use std::{
 };
 
 use voice_agent_server::providers::assets::{
-    Asset, AssetAcquirer, AssetError, download_atomic, ensure_asset, is_ready,
+    Asset, AssetAcquirer, AssetError, ensure_asset, is_ready,
 };
 
 fn root(name: &str) -> PathBuf {
@@ -181,27 +180,6 @@ fn concurrent_ensures_download_a_missing_asset_only_once() {
     );
     assert_eq!(calls.load(Ordering::Relaxed), 1);
     fs::remove_dir_all(root.as_path()).unwrap();
-}
-
-#[test]
-fn download_atomic_always_terminates_at_the_declared_destination() {
-    let root = root("destination");
-    let (acquirer, _) = FixtureAcquirer::new(b"payload");
-    let assets = [Asset {
-        path: "voices/index.json",
-        url: "https://example.invalid/voices/index.json",
-    }];
-
-    let resolved = download_atomic(&acquirer, &root, &assets).unwrap();
-
-    assert_eq!(
-        resolved,
-        BTreeMap::from([(
-            "voices/index.json".to_owned(),
-            root.join("voices/index.json"),
-        )])
-    );
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

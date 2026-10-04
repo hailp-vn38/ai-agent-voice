@@ -25,3 +25,14 @@ pub enum ProviderLoadError {
     #[error("provider initialization failed: {0}")]
     Provider(String),
 }
+
+impl From<crate::providers::assets::AssetError> for ProviderLoadError {
+    fn from(error: crate::providers::assets::AssetError) -> Self {
+        match error {
+            crate::providers::assets::AssetError::Missing(path) => {
+                Self::MissingArtifact(path.display().to_string())
+            }
+            error => Self::Provider(error.to_string()),
+        }
+    }
+}

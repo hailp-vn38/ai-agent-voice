@@ -11,7 +11,7 @@ use std::{
 
 use crate::providers::assets::{
     Asset, AssetAcquirer, AssetError, ProviderAssetManager, ensure_asset, http_acquirer, is_ready,
-    model_path,
+    model_path, required,
 };
 
 /// Pinned upstream revision.
@@ -106,22 +106,15 @@ pub fn ensure_assets_into(acquirer: &dyn AssetAcquirer, root: &Path) -> Result<(
 /// Resolved paths for an already-prepared model root. Reads metadata only.
 pub fn resolve_assets_from(root: &Path) -> Result<ZipformerAssets, AssetError> {
     Ok(ZipformerAssets {
-        encoder: ready(root, "encoder.onnx")?,
-        decoder: ready(root, "decoder.onnx")?,
-        joiner: ready(root, "joiner.onnx")?,
-        tokens: ready(root, TOKENS_PATH)?,
+        encoder: required(root, "encoder.onnx")?,
+        decoder: required(root, "decoder.onnx")?,
+        joiner: required(root, "joiner.onnx")?,
+        tokens: required(root, TOKENS_PATH)?,
     })
 }
 
 pub fn resolve_assets() -> Result<ZipformerAssets, AssetError> {
     resolve_assets_from(&model_dir())
-}
-
-fn ready(root: &Path, relative: &str) -> Result<PathBuf, AssetError> {
-    let path = root.join(relative);
-    is_ready(&path)
-        .then_some(path.clone())
-        .ok_or(AssetError::Missing(path))
 }
 
 /// Reads a SentencePiece BPE model as a plain piece list.

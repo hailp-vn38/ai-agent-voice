@@ -264,24 +264,19 @@ async fn managed_startup(
     )
     .map_err(|_| BootstrapError::Provider)?;
     state = state.with_runtime_manager(manager.clone());
-    let defaults = &config.provider_defaults;
     let startup_deadline =
         tokio::time::Instant::now() + Duration::from_millis(runtime_config.startup_timeout_ms);
-    let mut required = std::collections::BTreeSet::new();
-    for (kind, key) in [
-        ("vad", &defaults.vad),
-        ("asr", &defaults.asr),
-        ("llm", &defaults.llm),
-        ("tts", &defaults.tts),
-    ] {
-        required.insert((kind.to_owned(), key.clone()));
-    }
+    // Nothing is materialized here. Binding the server must not depend on which model files happen
+    // to be installed, so a deployment comes up on a host that has never downloaded anything. Only
+    // an explicit opt-in is paid for up front; every other provider is materialized by the runtime
+    // manager when a session or template first needs it.
+    let mut preloaded = std::collections::BTreeSet::new();
     for (key, instance) in &config.providers.tts.instances {
         if instance.preload() {
-            required.insert(("tts".into(), key.clone()));
+            preloaded.insert(("tts".to_owned(), key.clone()));
         }
     }
-    for (kind, key) in required {
+    for (kind, key) in preloaded {
         let snapshot = crate::providers::deployment_provider_snapshot(&config, &kind, &key)
             .map_err(|_| BootstrapError::Provider)?;
         let lease = manager

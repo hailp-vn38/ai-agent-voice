@@ -71,8 +71,14 @@ chính là voice mà provider nạp được. Cùng một luận đó áp dụng
 ## Consequences
 
 Server khởi động được khi model directory rỗng hoặc chưa có. Generic startup không scan
-model. Một provider chỉ tải model khi nó thực sự được dùng, hoặc sớm hơn nếu
+model, và cũng không materialize provider nào: nó chỉ dựng registry, Provider Runtime
+Manager rồi bind. Một provider chỉ tải model khi nó thực sự được dùng, hoặc sớm hơn nếu
 `preload = true`.
+
+Điều này thay đổi hành vi so với trước: managed startup từng acquire sẵn bốn provider mặc
+định theo `provider_defaults`, nên nó tải model ngay lúc khởi động. Bỏ việc đó là điều kiện
+để một host chưa từng tải gì vẫn bind được. Hệ quả là request đầu tiên phải chờ materialize,
+đổi lại startup không còn phụ thuộc trạng thái `models/`.
 
 ZeroTTS materialize giờ báo `artifact_prepare_ms` khoảng 2 ms thay vì hash 1.2 GB ONNX.
 

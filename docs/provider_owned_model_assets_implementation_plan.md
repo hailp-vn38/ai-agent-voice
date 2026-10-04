@@ -28,6 +28,17 @@ Hai điểm lệch so với kế hoạch, đều do code thật:
 - Kokoro cần một type `Voicepack` riêng thay vì dùng `VoiceAsset`, vì file nó đọc (`.bin`) là
   file nó tạo ra (`.pt`), không phải file tải về nguyên vẹn.
 
+Hai việc phát sinh trong lúc code, không nằm trong kế hoạch gốc:
+
+- **`managed_startup` từng materialize sẵn toàn bộ provider mặc định.** Nghĩa là startup vẫn
+  tải model, vi phạm §13 và checklist §33. Đã bỏ vòng acquire đó; chỉ còn `preload = true`
+  được nạp trước. Đây là thay đổi hành vi thật, không chỉ là dọn code.
+- **`load_local` (unmanaged path) phải `ensure_assets()` trước khi build.** Path này không có
+  Provider Runtime Manager, nên không có chỗ nào khác để tải. Đây là lý do `ensure_assets` tồn
+  tại ở cả hai path.
+- `models/` trong `.gitignore` đổi từ `/models/**` sang `models/`, vì model install là output
+  chứ không phải source, và test có thể tạo ra nó trong crate directory.
+
 ---
 
 ## 1. Đối chiếu spec với codebase

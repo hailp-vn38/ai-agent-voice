@@ -19,9 +19,9 @@ pub enum RuntimePhase {
     Unload,
     WorkerInit,
     Warmup,
-    /// Manifest resolution plus any missing-artifact acquisition/transform for one model.
+    /// Ensuring the provider's declared assets, including any missing download or transform.
     ArtifactPrepare,
-    /// SHA-256 verification of immutable artifacts on the materialization path.
+    /// Resolving the provider's declared asset paths on the materialization path.
     ArtifactVerify,
     /// Adapter-owned native construction, e.g. reading the pinned ZeroTTS contract.
     ProviderContract,

@@ -11,7 +11,7 @@ use std::{
 
 use crate::providers::assets::{
     Asset, AssetAcquirer, AssetError, ProviderAssetManager, VoiceAsset, ensure_asset,
-    http_acquirer, is_ready, model_path,
+    http_acquirer, model_path, required,
 };
 
 /// Pinned upstream revision. Embedding it in every URL is what makes a download immutable.
@@ -153,22 +153,22 @@ pub fn ensure_assets_into(acquirer: &dyn AssetAcquirer, root: &Path) -> Result<(
 pub fn resolve_assets_from(root: &Path) -> Result<ZeroTtsAssets, AssetError> {
     let voices = VOICES
         .iter()
-        .map(|voice| Ok((voice.id.to_owned(), ready(root, voice.path)?)))
+        .map(|voice| Ok((voice.id.to_owned(), required(root, voice.path)?)))
         .collect::<Result<BTreeMap<_, _>, AssetError>>()?;
     Ok(ZeroTtsAssets {
-        config: ready(root, "config.json")?,
-        tokenizer: ready(root, "tokenizer.json")?,
-        null_voice: ready(root, "null_voice_emb.npy")?,
-        silence_frame: ready(root, "silence_frame.npy")?,
-        voices_index: ready(root, "voices/index.json")?,
-        text_encoder: ready(root, "onnx/text_encoder.onnx")?,
-        prefix_step: ready(root, "onnx/prefix_step.onnx")?,
-        local_frame_decode: ready(root, "onnx/local_frame_decode.onnx")?,
-        codec_decode_full: ready(root, "onnx/codec/moss_audio_tokenizer_decode_full.onnx")?,
-        codec_decode_step: ready(root, "onnx/codec/moss_audio_tokenizer_decode_step.onnx")?,
-        codec_shared_data: ready(root, "onnx/codec/moss_audio_tokenizer_decode_shared.data")?,
-        codec_metadata: ready(root, "onnx/codec/codec_browser_onnx_meta.json")?,
-        codec_license: ready(root, "onnx/codec/LICENSE-Apache-2.0.txt")?,
+        config: required(root, "config.json")?,
+        tokenizer: required(root, "tokenizer.json")?,
+        null_voice: required(root, "null_voice_emb.npy")?,
+        silence_frame: required(root, "silence_frame.npy")?,
+        voices_index: required(root, "voices/index.json")?,
+        text_encoder: required(root, "onnx/text_encoder.onnx")?,
+        prefix_step: required(root, "onnx/prefix_step.onnx")?,
+        local_frame_decode: required(root, "onnx/local_frame_decode.onnx")?,
+        codec_decode_full: required(root, "onnx/codec/moss_audio_tokenizer_decode_full.onnx")?,
+        codec_decode_step: required(root, "onnx/codec/moss_audio_tokenizer_decode_step.onnx")?,
+        codec_shared_data: required(root, "onnx/codec/moss_audio_tokenizer_decode_shared.data")?,
+        codec_metadata: required(root, "onnx/codec/codec_browser_onnx_meta.json")?,
+        codec_license: required(root, "onnx/codec/LICENSE-Apache-2.0.txt")?,
         voices,
     })
 }
@@ -176,13 +176,4 @@ pub fn resolve_assets_from(root: &Path) -> Result<ZeroTtsAssets, AssetError> {
 /// Resolved paths from the deployment model root.
 pub fn resolve_assets() -> Result<ZeroTtsAssets, AssetError> {
     resolve_assets_from(&model_dir())
-}
-
-fn ready(root: &Path, relative: &str) -> Result<PathBuf, AssetError> {
-    let path = root.join(relative);
-    if is_ready(&path) {
-        Ok(path)
-    } else {
-        Err(AssetError::Missing(path))
-    }
 }

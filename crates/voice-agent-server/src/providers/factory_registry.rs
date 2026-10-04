@@ -595,11 +595,8 @@ fn path(path: &std::path::Path) -> String {
 
 /// A resolved asset set is a precondition of building, so failure here means the asset manager was
 /// skipped or the files vanished underneath us.
-fn resolve<T>(result: Result<T, AssetError>) -> Result<T, ProviderLoadError> {
-    result.map_err(|error| match error {
-        AssetError::Missing(path) => ProviderLoadError::MissingArtifact(path.display().to_string()),
-        error => ProviderLoadError::Provider(error.to_string()),
-    })
+fn resolve<T>(assets: Result<T, AssetError>) -> Result<T, ProviderLoadError> {
+    assets.map_err(ProviderLoadError::from)
 }
 
 /// Logical requirements come from the compiled adapter contract, never DB internal fields.
