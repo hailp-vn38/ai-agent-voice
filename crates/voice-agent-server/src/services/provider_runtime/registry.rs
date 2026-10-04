@@ -495,7 +495,6 @@ impl ProviderRuntimeManager {
         preclaimed_load: Option<OwnedSemaphorePermit>,
     ) {
         let started = Instant::now();
-        let speculative = preclaimed_load.is_some();
         let load = if preclaimed_load.is_some() {
             preclaimed_load
         } else {
@@ -546,11 +545,10 @@ impl ProviderRuntimeManager {
                     if !manager.gate.is_open() {
                         return Err(RuntimeError::ShuttingDown);
                     }
-                    let prepared = if speculative {
-                        builder.prepare_artifacts(&snapshot)?
-                    } else {
-                        None
-                    };
+                    // Assets are ensured here for every acquisition, not just speculative ones.
+                    // A build only resolves paths, so skipping this would hand it a model that is
+                    // not on disk and fail the request instead of fetching it.
+                    let prepared = builder.prepare_artifacts(&snapshot)?;
                     builder.build(&snapshot, prepared, quota)
                 }))
                 .unwrap_or(Err(RuntimeError::Quarantined));

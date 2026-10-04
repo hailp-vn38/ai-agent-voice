@@ -226,6 +226,31 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     Ok(router_with_state(state))
 }
 
+/// Providers that must be ready before the server binds.
+///
+/// The deployment defaults for every kind, plus any TTS instance that asked to be preloaded. Each
+/// one is acquired here so its model files are installed and its runtime is resident: a deployment
+/// starts into a known-good state rather than making the first request pay for a download. A
+/// provider that fails to materialize is a startup failure, not a deferred surprise.
+pub fn startup_providers(config: &AppConfig) -> std::collections::BTreeSet<(String, String)> {
+    let defaults = &config.provider_defaults;
+    let mut required: std::collections::BTreeSet<(String, String)> = [
+        ("vad", &defaults.vad),
+        ("asr", &defaults.asr),
+        ("llm", &defaults.llm),
+        ("tts", &defaults.tts),
+    ]
+    .into_iter()
+    .map(|(kind, key)| (kind.to_owned(), key.clone()))
+    .collect();
+    for (key, instance) in &config.providers.tts.instances {
+        if instance.preload() {
+            required.insert(("tts".to_owned(), key.clone()));
+        }
+    }
+    required
+}
+
 async fn managed_startup(
     config: AppConfig,
     database: Database,
@@ -266,17 +291,7 @@ async fn managed_startup(
     state = state.with_runtime_manager(manager.clone());
     let startup_deadline =
         tokio::time::Instant::now() + Duration::from_millis(runtime_config.startup_timeout_ms);
-    // Nothing is materialized here. Binding the server must not depend on which model files happen
-    // to be installed, so a deployment comes up on a host that has never downloaded anything. Only
-    // an explicit opt-in is paid for up front; every other provider is materialized by the runtime
-    // manager when a session or template first needs it.
-    let mut preloaded = std::collections::BTreeSet::new();
-    for (key, instance) in &config.providers.tts.instances {
-        if instance.preload() {
-            preloaded.insert(("tts".to_owned(), key.clone()));
-        }
-    }
-    for (kind, key) in preloaded {
+    for (kind, key) in startup_providers(&config) {
         let snapshot = crate::providers::deployment_provider_snapshot(&config, &kind, &key)
             .map_err(|_| BootstrapError::Provider)?;
         let lease = manager

@@ -70,15 +70,27 @@ chính là voice mà provider nạp được. Cùng một luận đó áp dụng
 
 ## Consequences
 
-Server khởi động được khi model directory rỗng hoặc chưa có. Generic startup không scan
-model, và cũng không materialize provider nào: nó chỉ dựng registry, Provider Runtime
-Manager rồi bind. Một provider chỉ tải model khi nó thực sự được dùng, hoặc sớm hơn nếu
-`preload = true`.
+Generic startup không scan và không verify model, nhưng nó **có** materialize provider mặc
+định của cả bốn loại trước khi bind. Mỗi provider tải đúng các file mà nó khai báo, nên
+deploy khởi động vào trạng thái đã biết: model của provider mặc định có mặt và runtime đã
+resident. Một provider mặc định không tải được là startup failure, không phải một lỗi để
+request đầu tiên mới gặp.
 
-Điều này thay đổi hành vi so với trước: managed startup từng acquire sẵn bốn provider mặc
-định theo `provider_defaults`, nên nó tải model ngay lúc khởi động. Bỏ việc đó là điều kiện
-để một host chưa từng tải gì vẫn bind được. Hệ quả là request đầu tiên phải chờ materialize,
-đổi lại startup không còn phụ thuộc trạng thái `models/`.
+Lý do giữ hành vi này thay vì để mọi provider lazy: một deployment chỉ "thành công" khi nó
+phục vụ được. Trì hoãn tải xuống request đầu tiên biến một lần cài đặt thành một timeout
+mờ ám trên đường vào của người dùng. Đổi lại, thời gian tải nằm trong
+`provider_runtime.startup_timeout_ms` và phải được cấp đủ.
+
+Provider không phải mặc định thì lazy: chỉ materialize khi Template hoặc Session dùng đến.
+`preload = true` đưa một TTS instance vào nhóm nạp trước dù không phải mặc định.
+
+Mọi acquisition — kể cả acquisition tường minh của một provider mặc định — đều đi qua
+`prepare_artifacts` trước `build`. Không có ngoại lệ cho acquisition "speculative": nếu
+`build` chỉ resolve path mà không ai đảm bảo file tồn tại, một provider được yêu cầu rõ
+ràng sẽ fail thay vì tải về.
+
+Vẫn còn background prewarm cho các provider mà default template của database trỏ tới; nó
+chạy sau khi bind và không chặn.
 
 ZeroTTS materialize giờ báo `artifact_prepare_ms` khoảng 2 ms thay vì hash 1.2 GB ONNX.
 

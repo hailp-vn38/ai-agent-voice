@@ -243,7 +243,7 @@ VOICE_AGENT_LLM_API_KEY
 - `audio.max_utterance_ms` nằm trong 1.000–120.000 ms và chia hết cho `audio.frame_ms`. Đây là giới hạn chung của Manual Capture và VAD Capture, không phải tham số riêng của VAD; capacity được tính một lần từ integer frame count.
 - `unsupported_protocol_policy` V1 chỉ là `reject`; không advertise v2/v3 khi chưa có parser.
 - timeout > 0.
-- Không có cấu hình model nào: không `deployment.models.root`, không `offline`, không `sources`, không `model_manifest`, không `model_acknowledgements`. Model root là hằng số nội bộ `models/`, tương đối với working directory của process.
+- Không có cấu hình model nào: không `deployment.models.root`, không `offline`, không `sources`, không `model_manifest`, không `model_acknowledgements`. Model root là hằng số nội bộ `models/`, tương đối với working directory của process; layout là `models/<KIND>/<provider>` với `KIND` ∈ `VAD`/`ASR`/`TTS`.
 - mọi instance ID chỉ dùng `[a-zA-Z0-9_-]+`; mỗi instance phải dùng adapter đã build vào binary. Mọi entry `[provider_defaults]` phải trỏ tới instance đang tồn tại; `AppConfig::load()` validate server defaults trước startup.
 - Typed provider instance chọn adapter và Logical Model Identity, không được chứa direct provider-facing file path. Provider Asset Declaration của adapter khai báo URL đã pin và install path; Provider Asset Manager tải file thiếu (`.part` + atomic rename, per-asset lock) trước provider build.
 - adapter không được tải model trong lúc build hoặc scan model directory; download xảy ra ở bước `ensure_assets()` trước đó. Provider Factory resolve path từ asset declaration của chính nó và không tải thêm.

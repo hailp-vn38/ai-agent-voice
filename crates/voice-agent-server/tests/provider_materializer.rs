@@ -805,101 +805,45 @@ fn one_materialization_ensures_its_provider_assets() {
     );
 }
 
-/// Generic startup must not read, download or verify any model file. Under the managed runtime
-/// manager, binding the server is independent of whether `models/` is populated: providers install
-/// their own files when they are materialized.
-#[tokio::test]
-async fn generic_startup_never_touches_model_files() {
-    use voice_agent_server::app::startup;
+/// Startup acquires the deployment default of every kind, so a deployment enters a known-good
+/// state: every default provider has its model files installed and its runtime resident before the
+/// server binds. It does not verify checksums or scan the model directory to do so.
+#[test]
+fn startup_materializes_every_deployment_default() {
+    use voice_agent_server::{app::startup_providers, config::TtsInstanceConfig};
 
-    // The model root is an internal constant relative to the working directory, so run startup from
-    // an empty directory. Any model file it touched would then have to be downloaded, and any
-    // directory it created would be visible here.
-    let isolated = std::env::temp_dir().join(format!(
-        "voice-agent-startup-without-models-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&isolated).unwrap();
-    // Startup records the ONNX execution binary's identity but never loads it, because no provider
-    // is materialized here. Any non-empty file stands in for it.
-    let onnx = isolated.join("onnxruntime-stub.so");
-    std::fs::write(&onnx, b"stub").unwrap();
-    // An absolute path keeps the fixture's database inside the directory this test cleans up.
-    let database = isolated.join("startup.db");
+    let mut config = zerotts_config();
+    let selected = startup_providers(&config);
 
-    let config_text = r#"
-[server]
-bind="127.0.0.1:0"
-public_ws_url="ws://127.0.0.1:0/voice/v1/"
-[database]
-url="sqlite://REPLACE_WITH_DATABASE"
-[deployment]
-profile="development-noncommercial"
-[provider_defaults]
-vad="silero_default"
-asr="gipformer_vi"
-llm="openai_primary"
-tts="zerotts_maichi"
-[providers.vad.instances.silero_default]
-adapter="silero_onnx"
-[providers.asr.instances.gipformer_vi]
-adapter="gipformer_sherpa_offline"
-[providers.tts.instances.zerotts_maichi]
-adapter="zerotts_onnx"
-voice="maichi"
-[providers.llm.instances.openai_primary]
-adapter="openai"
-base_url="https://example.test/v1"
-model="fixture"
-timeout_ms=1000
-[limits]
-tts_concurrency=1
-llm_concurrency=1
-vision_concurrency=1
-[runtime.onnx]
-library="REPLACE_WITH_STUB"
-[provider_runtime]
-max_parallel_loads=1
-max_pending_loads=1
-max_waiters=1
-max_resident_bytes=1073741824
-max_resources=1
-max_version_entries=1
-admission_timeout_ms=50
-failure_cooldown_ms=50
-idle_ttl_ms=1000
-startup_timeout_ms=2000
-[provider_runtime.estimated_peak_bytes]
-silero_onnx=1
-gipformer_sherpa_offline=1
-zerotts_onnx=1
-openai=1
-"#;
-    let config: AppConfig = toml::from_str(
-        &config_text
-            .replace("REPLACE_WITH_STUB", &onnx.display().to_string())
-            .replace("REPLACE_WITH_DATABASE", &database.display().to_string()),
-    )
-    .unwrap();
+    let defaults = &config.provider_defaults;
+    for (kind, key) in [
+        ("vad", &defaults.vad),
+        ("asr", &defaults.asr),
+        ("llm", &defaults.llm),
+        ("tts", &defaults.tts),
+    ] {
+        assert!(
+            selected.contains(&(kind.to_owned(), key.clone())),
+            "startup must materialize the default {kind} provider",
+        );
+    }
 
-    let previous = std::env::current_dir().unwrap();
-    std::env::set_current_dir(&isolated).unwrap();
-    let started = startup(config).await;
-    std::env::set_current_dir(previous).unwrap();
+    // A TTS instance that did not ask to be preloaded is not startup's business.
+    assert_eq!(selected.len(), 4, "only the four defaults: {selected:?}");
+
+    config.providers.tts.instances.insert(
+        "zerotts_hamy".into(),
+        TtsInstanceConfig::ZeroTtsOnnx(voice_agent_server::config::ZeroTtsOnnxConfig {
+            voice: "hamy".into(),
+            preload: true,
+            ..Default::default()
+        }),
+    );
 
     assert!(
-        started.is_ok(),
-        "startup must bind without any model files present: {started:?}"
+        startup_providers(&config).contains(&("tts".to_owned(), "zerotts_hamy".to_owned())),
+        "an explicitly preloaded TTS instance must also be ready before binding",
     );
-    assert!(
-        !isolated.join("models").exists(),
-        "startup must not create or populate a model directory"
-    );
-    std::fs::remove_dir_all(&isolated).unwrap();
 }
 
 /// Preparing a remote provider reports nothing to prepare and never enters the asset layer.

@@ -30,9 +30,23 @@ Hai điểm lệch so với kế hoạch, đều do code thật:
 
 Hai việc phát sinh trong lúc code, không nằm trong kế hoạch gốc:
 
-- **`managed_startup` từng materialize sẵn toàn bộ provider mặc định.** Nghĩa là startup vẫn
-  tải model, vi phạm §13 và checklist §33. Đã bỏ vòng acquire đó; chỉ còn `preload = true`
-  được nạp trước. Đây là thay đổi hành vi thật, không chỉ là dọn code.
+- **Có lúc đã bỏ rồi khôi phục việc materialize provider mặc định ở `managed_startup`.** Ban
+  đầu tôi hiểu §13 là "startup không được chạm model" nên đã bỏ vòng acquire, dẫn tới request
+  đầu tiên phải chờ tải. Yêu cầu thật của operator là startup phải có model sẵn, nên vòng
+  acquire đã quay lại, chỉ khác ở chỗ nó gọi `ensure_assets()` theo provider thay vì verify
+  checksum. Checklist §33 "Generic server startup không tải model" được hiểu lại là "không
+  scan, không verify toàn bộ model", không phải "không tải gì cả" — và đây là điểm guide
+  §13/§34 diễn đạt mơ hồ.
+- Phần chọn provider được nạp trước đã tách thành `startup_providers()` để test được độc lập
+  với model, vì một test "startup materialize default provider" không thể chạy hermetic.
+- **`prepare_artifacts` chỉ chạy cho acquisition speculative** (`registry.rs`), nên acquisition
+  tường minh của provider mặc định gọi thẳng `build` mà không tải gì. Trước refactor
+  `prepare_artifacts` chỉ là một cache lookup nên bỏ qua cũng vô hại; sau khi nó trở thành nơi
+  tải model, điều đó là bug. Đã sửa: mọi acquisition đều đi qua `prepare_artifacts`.
+
+Đã kiểm chứng bằng cold start thật: cwd không có `models/`, chạy server → tải 5 file (85 MB)
+cho silero + gipformer, materialize đủ 4 provider mặc định, rồi mới bind. Chạy lần hai →
+5 asset `reusing`, 0 download.
 - **`load_local` (unmanaged path) phải `ensure_assets()` trước khi build.** Path này không có
   Provider Runtime Manager, nên không có chỗ nào khác để tải. Đây là lý do `ensure_assets` tồn
   tại ở cả hai path.
