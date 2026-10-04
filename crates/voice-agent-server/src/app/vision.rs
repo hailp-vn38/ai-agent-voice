@@ -169,7 +169,7 @@ pub async fn post_handler(
         .await;
     match result {
         Ok(response) => {
-            tracing::info!(vision_provider_instance = ?state.config.effective_agent.providers.vision, vision_adapter = runtime.provider().adapter(), device_id, client_id, image_bytes, mime_type, elapsed_ms = started.elapsed().as_millis(), "vision request completed");
+            tracing::info!(vision_provider_instance = ?state.config.provider_defaults.vision, vision_adapter = runtime.provider().adapter(), device_id, client_id, image_bytes, mime_type, elapsed_ms = started.elapsed().as_millis(), "vision request completed");
             Json(Success {
                 success: true,
                 action: "RESPONSE",

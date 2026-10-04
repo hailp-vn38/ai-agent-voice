@@ -9,12 +9,11 @@ use std::{
 use url::Url;
 use voice_agent_server::config::{
     AppConfig, AsrInstanceConfig, AsrProvidersConfig, AudioConfig, AuthConfig, BargeInConfig,
-    DeploymentConfig, EffectiveAgentConfig, EffectiveProviderBindings,
-    GipformerSherpaOfflineConfig, LimitsConfig, LlmConfig, LlmInstanceConfig, LlmProvidersConfig,
-    OpenAiConfig, ProviderDefaultsConfig, ProvidersConfig, RuntimeConfig, ServerConfig,
-    SileroOnnxConfig, SpeechOutputConfig, TtsConfig, TtsInstanceConfig, TtsProvidersConfig,
-    VadInstanceConfig, VadProvidersConfig, WebsocketConfig, WorkersConfig, ZeroTtsOnnxConfig,
-    ZipformerSherpaConfig,
+    DeploymentConfig, EffectiveAgentConfig, GipformerSherpaOfflineConfig, LimitsConfig, LlmConfig,
+    LlmInstanceConfig, LlmProvidersConfig, OpenAiConfig, ProviderDefaultsConfig, ProvidersConfig,
+    RuntimeConfig, ServerConfig, SileroOnnxConfig, SpeechOutputConfig, TtsConfig,
+    TtsInstanceConfig, TtsProvidersConfig, VadInstanceConfig, VadProvidersConfig, WebsocketConfig,
+    WorkersConfig, ZeroTtsOnnxConfig, ZipformerSherpaConfig,
 };
 use voice_agent_server::{
     app::AppState,
@@ -96,16 +95,7 @@ fn valid_config() -> AppConfig {
         api: voice_agent_server::config::AdminApiConfig::default(),
         shutdown: voice_agent_server::config::ShutdownConfig::default(),
         agent: None,
-        effective_agent: EffectiveAgentConfig {
-            providers: EffectiveProviderBindings {
-                vad: "vad".into(),
-                asr: "asr".into(),
-                llm: "llm".into(),
-                tts: "tts".into(),
-                vision: None,
-            },
-            ..EffectiveAgentConfig::default()
-        },
+        effective_agent: EffectiveAgentConfig::default(),
     }
 }
 
@@ -158,21 +148,9 @@ voice = "maichi"
 }
 
 #[test]
-fn config_load_materializes_defaults_and_agent_tts_override_for_catalog_instances() {
-    let config = load_catalog_config("[agent.providers]\ntts = 'tts_b'").unwrap();
-    assert_eq!(config.providers.tts.instances.len(), 2);
-    assert_eq!(config.effective_agent().providers.tts, "tts_b");
-    assert_eq!(config.effective_agent().providers.llm, "openai_primary");
-}
-
-#[test]
-fn config_load_rejects_a_binding_to_an_unknown_instance() {
-    let error = load_catalog_config("[agent.providers]\ntts = 'missing'").unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("agent TTS provider `missing` does not exist")
-    );
+fn config_rejects_legacy_agent_provider_bindings() {
+    let error = load_catalog_config("[agent.providers]\ntts = 'tts_b'").unwrap_err();
+    assert!(error.to_string().contains("unknown field `providers`"));
 }
 
 #[test]
@@ -266,15 +244,14 @@ fn config_rejects_shutdown_grace_outside_the_bounded_drain_window() {
 }
 
 #[test]
-fn validation_rejects_a_missing_default_even_when_agent_overrides_it() {
+fn validation_rejects_a_missing_default() {
     let mut config = valid_config();
     config.provider_defaults.tts = "missing".into();
-    config.effective_agent.providers.tts = "tts".into();
     let error = config.validate().unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("agent default TTS provider `missing` does not exist")
+            .contains("default TTS provider `missing` does not exist")
     );
 }
 
@@ -309,8 +286,6 @@ num_threads = 4
 decoding_method = "modified_beam_search"
 max_active_paths = 4
 
-[agent.providers]
-asr = "gipformer_vi"
 "#,
     )
     .unwrap();
@@ -320,7 +295,6 @@ asr = "gipformer_vi"
         config.providers.asr.instances["gipformer_vi"].adapter(),
         "gipformer_sherpa_offline"
     );
-    assert_eq!(config.effective_agent().providers.asr, "gipformer_vi");
 }
 
 #[test]
@@ -462,7 +436,7 @@ fn application_builds_each_worker_runtime_from_its_own_config() {
     let state = AppState::from_provider_set(config, Arc::new(ProviderSet::unavailable()));
     let resolved = state
         .runtimes
-        .resolve(&state.config.effective_agent().providers)
+        .resolve(&state.config.provider_defaults.effective_bindings())
         .unwrap();
     let asr = resolved.asr.runtime_config();
     let vad = resolved.vad.runtime_config();

@@ -599,7 +599,7 @@ async fn an_agent_without_any_assignment_row_uses_server_defaults() {
 }
 
 #[tokio::test]
-async fn an_agent_with_only_a_disabled_assignment_never_falls_back_to_server_defaults() {
+async fn an_agent_with_only_a_disabled_assignment_uses_server_defaults() {
     let (base, url, task) = start(with_server_default_prompt(config(
         "127.0.0.1:0".parse().unwrap(),
         database_url(),
@@ -610,8 +610,13 @@ async fn an_agent_with_only_a_disabled_assignment_never_falls_back_to_server_def
     bind(&pool, template, &full_bindings("test")).await;
     assign(&pool, template, true, false).await;
 
-    let error = connect_async(request(&base)).await.unwrap_err();
-    assert_eq!(rejected_status(error), StatusCode::SERVICE_UNAVAILABLE);
+    let mut socket = admit(&base).await;
+    assert!(
+        speak_once(&mut socket)
+            .await
+            .contains(DEFAULT_PROMPT_MARKER),
+        "a soft-unlinked assignment does not block the deployment profile"
+    );
     task.abort();
 }
 
@@ -1407,7 +1412,7 @@ async fn an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_s
 
 struct ManagedFixtureBuilder {
     config: AppConfig,
-    builds: Arc<Mutex<Vec<(i64, i64, String)>>>,
+    builds: Arc<Mutex<Vec<(i64, i64, String, String)>>>,
     supervisor: Arc<voice_agent_server::workers::WorkerSupervisor>,
 }
 struct ManagedFixtureResource(voice_agent_server::providers::RuntimeCatalog);
@@ -1443,7 +1448,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
         self.builds
             .lock()
             .unwrap()
-            .push((row.id, row.revision, row.kind.clone()));
+            .push((row.id, row.revision, row.kind.clone(), row.key.clone()));
         let state = AppState::from_provider_set(
             self.config.clone(),
             Arc::new(ProviderSet::with_all(
@@ -1461,7 +1466,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
         );
         let runtimes = state
             .runtimes
-            .resolve(&state.config.effective_agent.providers)
+            .resolve(&state.config.provider_defaults.effective_bindings())
             .unwrap();
         self.supervisor.observe_asr(runtimes.asr.clone());
         self.supervisor.observe_vad(runtimes.vad.clone());
@@ -1501,6 +1506,11 @@ async fn managed_template_acquires_deployment_runtimes_for_missing_slots() {
             Arc::new(ShortTts),
         )),
     );
+    let mut profile_config = state.config.as_ref().clone();
+    profile_config.provider_defaults.vad = "server_vad".into();
+    profile_config.provider_defaults.asr = "server_asr".into();
+    profile_config.provider_defaults.llm = "openai_primary".into();
+    profile_config.provider_defaults.tts = "server_tts".into();
     let builds = Arc::new(Mutex::new(Vec::new()));
     let manager = ProviderRuntimeManager::new(
         RuntimeLimits {
@@ -1515,7 +1525,7 @@ async fn managed_template_acquires_deployment_runtimes_for_missing_slots() {
             idle_ttl_ms: 1000,
         },
         Arc::new(ManagedFixtureBuilder {
-            config: state.config.as_ref().clone(),
+            config: profile_config.clone(),
             builds: builds.clone(),
             supervisor: state.worker_supervisor.clone(),
         }),
@@ -1550,25 +1560,42 @@ async fn managed_template_acquires_deployment_runtimes_for_missing_slots() {
             })
             .to_vec(),
     };
-    let deployment = [provider(0, "vad", "test"), provider(0, "llm", "test")];
+    let deployment = [
+        provider(0, "vad", "server_vad"),
+        provider(0, "llm", "openai_primary"),
+    ];
     let profile = resolve_managed_session_profile(
         2,
         None,
         1,
         "home",
         &[assignment],
-        &state.config,
+        &profile_config,
         &manager,
         &deployment,
     )
     .await
     .unwrap();
-    assert_eq!(profile.providers.vad, "test");
+    assert_eq!(profile.providers.vad, "server_vad");
     assert_eq!(profile.providers.asr, "db_asr");
-    assert_eq!(profile.providers.llm, "test");
+    assert_eq!(profile.providers.llm, "openai_primary");
     assert_eq!(profile.providers.tts, "db_tts");
     assert!(profile.selected_runtimes.is_some());
-    assert_eq!(builds.lock().unwrap().len(), 4);
+    let actual = builds
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|build| build.3.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual,
+        std::collections::BTreeSet::from([
+            "server_vad".to_owned(),
+            "db_asr".to_owned(),
+            "openai_primary".to_owned(),
+            "db_tts".to_owned(),
+        ])
+    );
 }
 
 #[tokio::test]

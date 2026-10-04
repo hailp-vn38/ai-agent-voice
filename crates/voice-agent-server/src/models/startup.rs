@@ -66,7 +66,6 @@ fn model_plan(
     load_plan: &ProviderLoadPlan,
 ) -> Result<ModelPlan, ModelError> {
     let mut plan = ModelPlan::new();
-    let effective = &config.effective_agent.providers;
     let defaults = &config.provider_defaults;
     let managed = config.provider_runtime.is_some();
     for (key, instance) in &config.providers.vad.instances {
@@ -75,7 +74,7 @@ fn model_plan(
             instance.adapter(),
             crate::providers::local_model_identity(instance.adapter())
                 .expect("compiled local adapter"),
-            key == &effective.vad || key == &defaults.vad,
+            key == &defaults.vad,
             managed,
         );
     }
@@ -85,7 +84,7 @@ fn model_plan(
             instance.adapter(),
             crate::providers::local_model_identity(instance.adapter())
                 .expect("compiled local adapter"),
-            key == &effective.asr || key == &defaults.asr,
+            key == &defaults.asr,
             managed,
         );
     }
@@ -97,7 +96,7 @@ fn model_plan(
             &mut plan,
             instance.adapter(),
             model,
-            key == &effective.tts || key == &defaults.tts || instance.preload(),
+            key == &defaults.tts || instance.preload(),
             managed,
         );
     }

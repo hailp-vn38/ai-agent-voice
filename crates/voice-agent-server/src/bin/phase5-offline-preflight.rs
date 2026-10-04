@@ -58,9 +58,9 @@ fn run() -> Result<()> {
     config.deployment.models.offline = true;
     verify_onnx_runtime(&config.runtime.onnx.library)
         .context("load deployment-selected ONNX Runtime")?;
-    let vad_instance = &config.providers.vad.instances[&config.effective_agent().providers.vad];
-    let asr_instance = &config.providers.asr.instances[&config.effective_agent().providers.asr];
-    let tts_instance = &config.providers.tts.instances[&config.effective_agent().providers.tts];
+    let vad_instance = &config.providers.vad.instances[&config.provider_defaults.vad];
+    let asr_instance = &config.providers.asr.instances[&config.provider_defaults.asr];
+    let tts_instance = &config.providers.tts.instances[&config.provider_defaults.tts];
     let vad_model = verify_installed(
         &config.deployment.model_manifest,
         &config.deployment.models.root,

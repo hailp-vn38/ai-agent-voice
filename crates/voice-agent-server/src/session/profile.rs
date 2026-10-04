@@ -157,7 +157,13 @@ impl ActiveTemplateProfile {
             language: String::new(),
             system_prompt: prompt::render_system(&crate::config::EffectiveAgentConfig::default())
                 .expect("built-in prompt template is valid"),
-            providers: crate::config::EffectiveAgentConfig::default().providers,
+            providers: EffectiveProviderBindings {
+                vad: String::new(),
+                asr: String::new(),
+                llm: String::new(),
+                tts: String::new(),
+                vision: None,
+            },
             revision: 1,
         }
     }
@@ -210,7 +216,7 @@ impl EffectiveSessionProfile {
             source: ProfileSource::ServerDefault,
             language: agent.language.clone(),
             system_prompt: prompt::render_system(agent).map_err(|_| ProfileUnavailable)?,
-            providers: agent.providers.clone(),
+            providers: config.provider_defaults.effective_bindings(),
             revision: 1,
             // An Agent without assignments must not advertise a switch capability it cannot honor.
             switch_catalog: TemplateSwitchCatalog::default(),
@@ -320,21 +326,20 @@ pub fn resolve_effective_session_profile_with_override(
         );
         return Err(ProfileUnavailable);
     };
-    let active = resolve_template(default, runtimes, &config.effective_agent().providers).map_err(
-        |error| {
-            warn!(
-                agent_key,
-                template_key = %default.template_key,
-                reason = %error,
-                "the default template cannot be resolved; refusing to fall back to server defaults"
-            );
-            ProfileUnavailable
-        },
-    )?;
+    let defaults = config.provider_defaults.effective_bindings();
+    let active = resolve_template(default, runtimes, &defaults).map_err(|error| {
+        warn!(
+            agent_key,
+            template_key = %default.template_key,
+            reason = %error,
+            "the default template cannot be resolved; refusing to fall back to server defaults"
+        );
+        ProfileUnavailable
+    })?;
 
     let mut switch_catalog = TemplateSwitchCatalog::default();
     for assignment in assignments.iter().filter(|entry| entry.assignment_enabled) {
-        match resolve_template(assignment, runtimes, &config.effective_agent().providers) {
+        match resolve_template(assignment, runtimes, &defaults) {
             Ok(candidate) => switch_catalog.insert(candidate),
             Err(reason) => warn!(
                 agent_key,
@@ -558,7 +563,7 @@ mod tests {
             resolve_template(
                 &oversized,
                 &RuntimeCatalog::default(),
-                &config().effective_agent().providers,
+                &config().provider_defaults.effective_bindings(),
             )
             .unwrap_err(),
             TemplateCandidateError::PromptInvalid
@@ -666,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn the_switch_catalog_excludes_every_invalid_candidate() {
+    fn the_switch_catalog_keeps_candidates_with_missing_bindings_on_server_defaults() {
         let mut unloaded = named(2, "unloaded", false, true);
         unloaded
             .bindings
@@ -710,7 +715,14 @@ mod tests {
             .iter()
             .map(|candidate| candidate.template_key.clone())
             .collect::<Vec<_>>();
-        assert_eq!(keys, vec!["primary".to_owned(), "usable".to_owned()]);
+        assert_eq!(
+            keys,
+            vec![
+                "primary".to_owned(),
+                "usable".to_owned(),
+                "incomplete".to_owned(),
+            ]
+        );
     }
 
     #[test]
@@ -846,9 +858,10 @@ pub async fn resolve_managed_session_profile(
         );
         return Err(RuntimeError::Configuration);
     };
+    let defaults = config.provider_defaults.effective_bindings();
     let configuration = ConfiguredTemplateProfile::from_assignment_with_defaults(
         selected,
-        &config.effective_agent().providers,
+        &defaults,
         deployment_snapshots,
     )
     .map_err(|_| RuntimeError::Configuration)?;
@@ -860,7 +873,7 @@ pub async fn resolve_managed_session_profile(
         .filter_map(|assignment| {
             ConfiguredTemplateProfile::from_assignment_with_defaults(
                 assignment,
-                &config.effective_agent().providers,
+                &defaults,
                 deployment_snapshots,
             )
             .ok()

@@ -613,11 +613,6 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
         &defaults.tts,
         &config.providers.tts.instances,
     )?;
-    let bindings = &config.effective_agent.providers;
-    require_instance("VAD", &bindings.vad, &config.providers.vad.instances)?;
-    require_instance("ASR", &bindings.asr, &config.providers.asr.instances)?;
-    require_instance("LLM", &bindings.llm, &config.providers.llm.instances)?;
-    require_instance("TTS", &bindings.tts, &config.providers.tts.instances)?;
     validate_vision(config)
 }
 
@@ -635,16 +630,9 @@ fn validate_vision(config: &AppConfig) -> Result<(), ConfigError> {
     if !vision.enabled {
         return Ok(());
     }
-    let binding = config
-        .effective_agent
-        .providers
-        .vision
-        .as_deref()
-        .ok_or_else(|| {
-            ConfigError::Validation(
-                "vision.enabled requires an effective Vision provider binding".into(),
-            )
-        })?;
+    let binding = config.provider_defaults.vision.as_deref().ok_or_else(|| {
+        ConfigError::Validation("vision.enabled requires a default Vision provider binding".into())
+    })?;
     require_instance("VISION", binding, &config.providers.vision.instances)?;
     if vision.advertise_via_mcp {
         let public_url = vision.public_url.as_ref().ok_or_else(|| {

@@ -55,6 +55,8 @@ root = "models"
 offline = false
 
 [provider_defaults]
+# Server-wide fallback providers. A Template may override each slot independently;
+# an absent Template binding uses the corresponding provider declared here.
 vad = "silero_default"
 asr = "zipformer_vi"
 llm = "openai_primary"
@@ -123,10 +125,6 @@ execution_budget_ms = 30000
 # persona = "Bạn là Mây..."
 # prompt_template = "prompts/custom.txt" # relative to this config file
 
-[agent.providers]
-# Omit each field to use [provider_defaults].
-tts = "chillaudio_default"
-
 [providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"
 model = "zerotts_default"
@@ -141,7 +139,7 @@ token = "set-deployment-token-here"
 voice = "BV421_vivn_streaming"
 preload = false
 
-Startup load mọi instance mà `[provider_defaults]` hoặc `[agent.providers]` tham chiếu, cùng mọi instance có `preload = true`. Instance khác vẫn được parse và validate nhưng chưa có runtime; binding sang một instance chưa load bị reject cho tới phase lazy-load sau này.
+Startup load các instance server default được `[provider_defaults]` tham chiếu, cùng mọi instance có `preload = true`. Provider riêng của Template trong database được acquire qua `ProviderRuntimeManager` khi Template được admit; slot Template không bind dùng entry `[provider_defaults]` tương ứng.
 
 [tts]
 timeout_ms = 15000
@@ -246,7 +244,7 @@ VOICE_AGENT_LLM_API_KEY
 - `unsupported_protocol_policy` V1 chỉ là `reject`; không advertise v2/v3 khi chưa có parser.
 - timeout > 0.
 - `deployment.models.root` là relative deployment root; Model Artifact Manifest chỉ được dùng install-relative path, reject absolute path, `..` traversal hoặc path escape root. `deployment.models.offline = true` cấm mọi network acquisition.
-- mọi instance ID chỉ dùng `[a-zA-Z0-9_-]+`; mỗi instance phải dùng adapter đã build vào binary. `[provider_defaults]` và mọi override trong `[agent.providers]` phải trỏ tới instance đang tồn tại; `AppConfig::load()` materialize effective binding hoàn chỉnh trước startup.
+- mọi instance ID chỉ dùng `[a-zA-Z0-9_-]+`; mỗi instance phải dùng adapter đã build vào binary. Mọi entry `[provider_defaults]` phải trỏ tới instance đang tồn tại; `AppConfig::load()` validate server defaults trước startup.
 - Typed provider instance chọn adapter và Logical Model Identity, không được chứa direct provider-facing file path. Manifest resolve identity sang source/revision/artifact/transform/checksum; Model Preparation chỉ reuse hoặc acquire/verify/transform/atomic-install trước provider build/warmup và public bind.
 - adapter không được tự download model, đoán tên artifact hoặc scan model directory. Provider Factory chỉ nhận Resolved Model theo artifact role sau Model Preparation.
 - VAD validate `0.0 <= exit_threshold < speech_threshold <= 1.0`; `min_speech_ms > 0`, `end_silence_ms > 0`, `pre_roll_ms` bounded và retention capacity phải gồm pre-roll, confirmation horizon, bounded VAD in-flight lag cùng rechunk/frame slack.

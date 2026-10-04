@@ -131,7 +131,7 @@ impl AppState {
     /// reached the listener in the first place, so this only catches state assembled some other
     /// way.
     fn required_runtime_missing(&self) -> bool {
-        let providers = &self.config.effective_agent.providers;
+        let providers = self.config.provider_defaults.effective_bindings();
         if let Some(manager) = &self.provider_runtime_manager
             && !self.deployment_snapshots.is_empty()
         {
@@ -144,11 +144,11 @@ impl AppState {
             .into_iter()
             .any(|(kind, key)| !manager.deployment_ready(kind, key));
         }
-        self.runtimes.resolve(providers).is_err()
+        self.runtimes.resolve(&providers).is_err()
     }
 
     pub fn bound_vision_runtime(&self) -> Option<Arc<crate::workers::VisionRuntime>> {
-        let id = self.config.effective_agent.providers.vision.as_deref()?;
+        let id = self.config.provider_defaults.vision.as_deref()?;
         self.runtimes.vision(id).ok()
     }
 
@@ -164,7 +164,7 @@ impl AppState {
         let instance_id = instance_id.into();
         let config = Arc::make_mut(&mut self.config);
         config.vision.enabled = true;
-        config.effective_agent.providers.vision = Some(instance_id.clone());
+        config.provider_defaults.vision = Some(instance_id.clone());
         Arc::make_mut(&mut self.runtimes).vision.insert(
             instance_id,
             Arc::new(crate::workers::VisionRuntime::new(
@@ -774,10 +774,10 @@ pub(super) fn loaded_from_provider_set(
     providers: &ProviderSet,
 ) -> (AppConfig, LoadedProviders) {
     let id = "test".to_owned();
-    config.effective_agent.providers.vad = id.clone();
-    config.effective_agent.providers.asr = id.clone();
-    config.effective_agent.providers.llm = id.clone();
-    config.effective_agent.providers.tts = id.clone();
+    config.provider_defaults.vad = id.clone();
+    config.provider_defaults.asr = id.clone();
+    config.provider_defaults.llm = id.clone();
+    config.provider_defaults.tts = id.clone();
     config
         .providers
         .vad

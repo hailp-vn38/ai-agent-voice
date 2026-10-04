@@ -96,7 +96,7 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
     let config = AppConfig::load_for_benchmark(&config_path, target)
         .map_err(|_| BenchmarkErrorCategory::Config)?;
     let registry = compiled_provider_registry();
-    let instance = &config.providers.tts.instances[&config.effective_agent().providers.tts];
+    let instance = &config.providers.tts.instances[&config.provider_defaults.tts];
     let binding = match instance {
         voice_agent_server::config::TtsInstanceConfig::ZeroTtsOnnx(configuration) => TtsBinding {
             voice: configuration.voice.clone(),

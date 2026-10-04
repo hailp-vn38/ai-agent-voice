@@ -78,8 +78,6 @@ pub struct AgentConfig {
     pub language: Option<String>,
     pub prompt_template: Option<PathBuf>,
     pub persona: Option<String>,
-    #[serde(default)]
-    pub providers: AgentProviderBindings,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -93,14 +91,16 @@ pub struct ProviderDefaultsConfig {
     pub vision: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentProviderBindings {
-    pub vad: Option<String>,
-    pub asr: Option<String>,
-    pub llm: Option<String>,
-    pub tts: Option<String>,
-    pub vision: Option<String>,
+impl ProviderDefaultsConfig {
+    pub fn effective_bindings(&self) -> EffectiveProviderBindings {
+        EffectiveProviderBindings {
+            vad: self.vad.clone(),
+            asr: self.asr.clone(),
+            llm: self.llm.clone(),
+            tts: self.tts.clone(),
+            vision: self.vision.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,25 +118,6 @@ pub struct EffectiveAgentConfig {
     pub language: String,
     pub persona: String,
     pub prompt_template: String,
-    pub providers: EffectiveProviderBindings,
-}
-
-impl EffectiveAgentConfig {
-    fn with_provider_defaults(provider_defaults: &ProviderDefaultsConfig) -> Self {
-        Self {
-            name: DEFAULT_AGENT_NAME.into(),
-            language: DEFAULT_AGENT_LANGUAGE.into(),
-            persona: DEFAULT_AGENT_PERSONA.into(),
-            prompt_template: DEFAULT_PROMPT_TEMPLATE.into(),
-            providers: EffectiveProviderBindings {
-                vad: provider_defaults.vad.clone(),
-                asr: provider_defaults.asr.clone(),
-                llm: provider_defaults.llm.clone(),
-                tts: provider_defaults.tts.clone(),
-                vision: provider_defaults.vision.clone(),
-            },
-        }
-    }
 }
 
 impl Default for EffectiveAgentConfig {
@@ -146,13 +127,6 @@ impl Default for EffectiveAgentConfig {
             language: DEFAULT_AGENT_LANGUAGE.into(),
             persona: DEFAULT_AGENT_PERSONA.into(),
             prompt_template: DEFAULT_PROMPT_TEMPLATE.into(),
-            providers: EffectiveProviderBindings {
-                vad: String::new(),
-                asr: String::new(),
-                llm: String::new(),
-                tts: String::new(),
-                vision: None,
-            },
         }
     }
 }
@@ -163,37 +137,10 @@ impl AppConfig {
     }
 
     pub(crate) fn resolve_agent(&mut self, config_path: &Path) -> Result<(), ConfigError> {
-        let mut effective = EffectiveAgentConfig::with_provider_defaults(&self.provider_defaults);
+        let mut effective = EffectiveAgentConfig::default();
         let Some(overrides) = &mut self.agent else {
             self.effective_agent = effective;
             return Ok(());
-        };
-        effective.providers = EffectiveProviderBindings {
-            vad: overrides
-                .providers
-                .vad
-                .clone()
-                .unwrap_or(effective.providers.vad),
-            asr: overrides
-                .providers
-                .asr
-                .clone()
-                .unwrap_or(effective.providers.asr),
-            llm: overrides
-                .providers
-                .llm
-                .clone()
-                .unwrap_or(effective.providers.llm),
-            tts: overrides
-                .providers
-                .tts
-                .clone()
-                .unwrap_or(effective.providers.tts),
-            vision: overrides
-                .providers
-                .vision
-                .clone()
-                .or(effective.providers.vision),
         };
         if let Some(name) = &overrides.name {
             if name.trim().is_empty() {

@@ -277,16 +277,11 @@ async fn managed_startup(
     )
     .map_err(|_| BootstrapError::Provider)?;
     state = state.with_runtime_manager(manager.clone());
-    let effective = &config.effective_agent.providers;
     let defaults = &config.provider_defaults;
     let startup_deadline =
         tokio::time::Instant::now() + Duration::from_millis(runtime_config.startup_timeout_ms);
     let mut required = std::collections::BTreeSet::new();
     for (kind, key) in [
-        ("vad", &effective.vad),
-        ("asr", &effective.asr),
-        ("llm", &effective.llm),
-        ("tts", &effective.tts),
         ("vad", &defaults.vad),
         ("asr", &defaults.asr),
         ("llm", &defaults.llm),

@@ -94,7 +94,7 @@ async fn run_llm(
         anyhow::bail!("LLM workload item id and messages must not be empty")
     }
     let config = AppConfig::load_for_benchmark(&args.config, BenchmarkTarget::LlmProvider)?;
-    let instance = &config.providers.llm.instances[&config.effective_agent().providers.llm];
+    let instance = &config.providers.llm.instances[&config.provider_defaults.llm];
     let factory = registry.llm_factory(instance.adapter())?;
     let provider = factory.build(instance)?;
     for item in &workload.items {
@@ -167,7 +167,7 @@ fn run_asr(
     registry: &voice_agent_server::providers::ProviderRegistry,
 ) -> anyhow::Result<()> {
     let config = AppConfig::load_for_benchmark(&args.config, BenchmarkTarget::AsrProvider)?;
-    let instance = &config.providers.asr.instances[&config.effective_agent().providers.asr];
+    let instance = &config.providers.asr.instances[&config.provider_defaults.asr];
     let factory = registry.asr_factory(instance.adapter())?;
     let identity = factory.model_identity(instance)?;
     let model = prepare(
@@ -232,7 +232,7 @@ fn run_vad(
     registry: &voice_agent_server::providers::ProviderRegistry,
 ) -> anyhow::Result<()> {
     let config = AppConfig::load_for_benchmark(&args.config, BenchmarkTarget::VadProvider)?;
-    let instance = &config.providers.vad.instances[&config.effective_agent().providers.vad];
+    let instance = &config.providers.vad.instances[&config.provider_defaults.vad];
     let factory = registry.vad_factory(instance.adapter())?;
     let identity = factory.model_identity(instance)?;
     let model = prepare(

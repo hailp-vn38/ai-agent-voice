@@ -74,6 +74,8 @@ tts_concurrency = 2
 vision_concurrency = 2
 
 [provider_defaults]
+# Server-wide fallback providers. A Template may override each slot independently;
+# an absent Template binding uses the corresponding provider declared here.
 vad = "silero_default"
 asr = "gipformer_vi"
 llm = "openai_primary"
@@ -246,11 +248,6 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 Ưu tiên nội dung dễ nghe qua loa.
 """
 # prompt_template = "prompts/custom-voice-assistant.txt"
-
-# Optional agent-specific bindings override [provider_defaults].
-# [agent.providers]
-# tts = "chillaudio_default"
-# asr = "gipformer_vi"
 
 # Optional bounded hot-runtime manager. Enable only after measuring every adapter/model/worker
 # envelope on the deployment host. The manifest receipt prevents reusing stale measurements after

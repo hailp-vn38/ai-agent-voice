@@ -627,7 +627,7 @@ async fn handle_socket(
 fn vision_capability(config: &AppConfig) -> Option<crate::tools::device_mcp::VisionCapability> {
     if config.vision.enabled
         && config.vision.advertise_via_mcp
-        && config.effective_agent.providers.vision.is_some()
+        && config.provider_defaults.vision.is_some()
     {
         Some(crate::tools::device_mcp::VisionCapability {
             url: config.vision.public_url.as_ref()?.to_string(),

@@ -99,13 +99,12 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         .validate()
         .map_err(|error| ProviderLoadError::Configuration(error.to_string()))?;
     let registry = compiled_provider_registry();
-    let bindings = &config.effective_agent.providers;
     let defaults = &config.provider_defaults;
 
     let mut vad_providers = HashMap::new();
     let mut vad_runtimes = HashMap::new();
     for (id, instance) in &config.providers.vad.instances {
-        if id != &bindings.vad && id != &defaults.vad {
+        if id != &defaults.vad {
             continue;
         }
         let factory = registry.vad_factory(instance.adapter())?;
@@ -150,7 +149,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let mut asr_providers = HashMap::new();
     let mut asr_runtimes = HashMap::new();
     for (id, instance) in &config.providers.asr.instances {
-        if id != &bindings.asr && id != &defaults.asr {
+        if id != &defaults.asr {
             continue;
         }
         let factory = registry.asr_factory(instance.adapter())?;
@@ -194,7 +193,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let mut llm_providers = HashMap::new();
     let mut llm_runtimes = HashMap::new();
     for (id, instance) in &config.providers.llm.instances {
-        if id != &bindings.llm && id != &defaults.llm {
+        if id != &defaults.llm {
             continue;
         }
         let provider = registry.llm_factory(instance.adapter())?.build(instance)?;
@@ -213,7 +212,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let mut tts_providers = HashMap::new();
     let mut tts_runtimes = HashMap::new();
     for (id, instance) in &config.providers.tts.instances {
-        if id != &bindings.tts && id != &defaults.tts && !instance.preload() {
+        if id != &defaults.tts && !instance.preload() {
             continue;
         }
         let factory = registry.tts_factory(instance.adapter())?;
@@ -256,8 +255,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let mut vision_runtimes = HashMap::new();
     if config.vision.enabled {
         let binding = config
-            .effective_agent
-            .providers
+            .provider_defaults
             .vision
             .as_deref()
             .expect("validated Vision binding");

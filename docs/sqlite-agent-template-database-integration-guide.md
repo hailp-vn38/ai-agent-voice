@@ -132,7 +132,7 @@ Device
         → provider bindings của Template
 
 Agent không có bất kỳ Template assignment nào
-  → fallback toàn bộ EffectiveAgentConfig + provider_defaults của server
+  → dùng Agent Persona và provider_defaults của server
 ```
 
 Binding provider vắng mặt trong Template dùng provider cùng loại từ effective server defaults.
@@ -1853,7 +1853,7 @@ agent enabled?
 load all template assignments
   │
   ├─ no assignment exists
-  │    → use config.effective_agent + provider_defaults
+  │    → use config.effective_agent for persona and provider_defaults for providers
   │    → TemplateSwitchCatalog {} and no server.switch_template tool
   │
   └─ one or more assignments exist
