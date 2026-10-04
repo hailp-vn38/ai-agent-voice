@@ -2,6 +2,9 @@ Nên xây dựng luồng gồm **3 bước tạo provider**, sau đó chuyển s
 
 Đề xuất dưới đây dựa trên API `dev-test` đã kiểm tra.
 
+> Provider key do server tự sinh khi tạo. Phần hướng dẫn cập nhật cho web:
+> `docs/provider-generated-key-web-migration.md`.
+
 **1. Trang Providers**
 
 Giữ trang danh sách, thêm nút **“Tạo provider”** ở góc phải.
