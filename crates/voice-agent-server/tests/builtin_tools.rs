@@ -49,13 +49,15 @@ fn switch_definition_names_exactly_the_templates_this_session_admitted() {
         serde_json::json!(["primary", "sales"]),
         "the model must only ever be offered this session's own candidates"
     );
-    assert!(
-        SWITCH_TEMPLATE_TOOL_NAME.contains('.'),
-        "the dotted name namespaces a server action the model calls verbatim"
+    assert_eq!(
+        SWITCH_TEMPLATE_TOOL_NAME, "server_switch_template",
+        "the wire name must be accepted by OpenAI-compatible function-tool APIs"
     );
     assert!(
-        !EXIT_TOOL_NAME.contains('.'),
-        "a dotted name is impossible for a sanitized Device MCP tool, so builtins cannot collide"
+        SWITCH_TEMPLATE_TOOL_NAME
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-')),
+        "the switch wire name must use only function-tool-safe characters"
     );
 }
 

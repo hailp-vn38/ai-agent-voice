@@ -14,7 +14,7 @@ pub use admission::{
 };
 pub use asr::AsrDiagnosticOperation;
 pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
-pub use llm::{LlmDiagnosticOperation, LlmRuntime, LlmRuntimeEvent};
+pub use llm::{LlmDiagnosticOperation, LlmFailureReason, LlmRuntime, LlmRuntimeEvent};
 pub use supervision::WorkerSupervisor;
 pub use tts::{
     TtsDiagnosticOperation, TtsDiagnosticOutput, TtsLease, TtsStreamId, TtsWorkerError,

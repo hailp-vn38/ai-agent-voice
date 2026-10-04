@@ -175,7 +175,14 @@ impl LlmProvider for ConfiguredOpenAiLlm {
         let stream = client
             .chat_stream_with_tools(&messages, (!tools.is_empty()).then_some(tools.as_slice()))
             .await
-            .map_err(|_| LlmError::Failed)?;
+            .map_err(|_| {
+                tracing::warn!(
+                    event = "llm_provider_open_stream_failed",
+                    adapter = self.adapter(),
+                    "OpenAI-compatible LLM stream could not be opened"
+                );
+                LlmError::Failed
+            })?;
         Ok(Box::pin(stream.filter_map(|chunk| async move {
             adapt_stream_chunk(chunk)
         })))
@@ -216,7 +223,13 @@ fn adapt_stream_chunk(
             Some(result)
         }
         Ok(llm::chat::StreamChunk::Done { .. }) => Some(Ok(LlmEvent::Finished)),
-        Err(_) => Some(Err(LlmError::Failed)),
+        Err(_) => {
+            tracing::warn!(
+                event = "llm_provider_stream_chunk_failed",
+                "OpenAI-compatible LLM stream chunk failed"
+            );
+            Some(Err(LlmError::Failed))
+        }
     }
 }
 

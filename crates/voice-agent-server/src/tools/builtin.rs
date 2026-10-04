@@ -7,9 +7,9 @@ pub const MAX_GOODBYE_CHARS: usize = 240;
 
 /// Session-local Template switch.
 ///
-/// The dotted name namespaces it as a server action and makes a collision structurally impossible:
-/// a Device MCP tool name is sanitized to alphanumerics, `_` and `-` before it can reach the model.
-pub const SWITCH_TEMPLATE_TOOL_NAME: &str = "server.switch_template";
+/// The name is namespaced with an underscore because OpenAI-compatible function tools accept only
+/// ASCII letters, digits, `_`, and `-`. Device MCP tool names are sanitized to the same alphabet.
+pub const SWITCH_TEMPLATE_TOOL_NAME: &str = "server_switch_template";
 /// Matches the Resource Key bound the Admin API enforces on a stored Template key, so a
 /// model-supplied key can never be an unbounded lookup payload even before membership is checked.
 pub const MAX_TEMPLATE_KEY_CHARS: usize = 64;

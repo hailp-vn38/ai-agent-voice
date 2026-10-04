@@ -15,6 +15,19 @@ struct ScriptedLlm {
     events: Vec<Result<LlmEvent, LlmError>>,
 }
 
+struct OpenStreamFailure;
+
+#[async_trait::async_trait]
+impl LlmProvider for OpenStreamFailure {
+    fn adapter(&self) -> &'static str {
+        "open-stream-failure"
+    }
+
+    async fn stream(&self, _: LlmRequest) -> Result<LlmEventStream, LlmError> {
+        Err(LlmError::Failed)
+    }
+}
+
 #[async_trait::async_trait]
 impl LlmProvider for ScriptedLlm {
     fn adapter(&self) -> &'static str {
@@ -78,5 +91,28 @@ async fn diagnostic_rejects_tool_calls_and_oversized_text() {
     assert_eq!(
         oversized_operation.execute(CancellationToken::new()).await,
         Err(ProviderDiagnosticOperationError::InvalidResponse)
+    );
+}
+
+#[tokio::test]
+async fn session_reports_an_open_stream_failure_without_exposing_provider_details() {
+    let runtime = LlmRuntime::new(Arc::new(OpenStreamFailure), 1, Duration::from_secs(1));
+    let mut events = runtime.register_session("session", 1);
+    let identity = WorkerIdentity::new("session", 1, 1);
+
+    runtime
+        .start(
+            identity.clone(),
+            LlmRequest::text_turn("hello".into()),
+            CancellationToken::new(),
+        )
+        .expect("the operation starts");
+
+    assert_eq!(
+        events.recv().await,
+        Some(LlmRuntimeEvent::Failed {
+            identity,
+            reason: LlmFailureReason::OpenStream,
+        })
     );
 }
