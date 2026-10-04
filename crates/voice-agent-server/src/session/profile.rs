@@ -306,8 +306,19 @@ pub fn resolve_effective_session_profile_with_override(
         None => assignments
             .iter()
             .find(|assignment| assignment.is_default && assignment.assignment_enabled),
-    }
-    .ok_or(ProfileUnavailable)?;
+    };
+    let Some(default) = default else {
+        // Fail-closed is only safe while it is legible. This branch used to return through a bare
+        // `ok_or`, ahead of the `warn!` below, so an Agent holding assignments but no enabled
+        // default refused every one of its devices with an unexplained 503 and nothing else.
+        warn!(
+            agent_key,
+            assignment_count = assignments.len(),
+            template_override_id = ?template_override_id,
+            "no enabled default template is selectable; refusing to fall back to server defaults"
+        );
+        return Err(ProfileUnavailable);
+    };
     let active = resolve_template(default, runtimes).map_err(|error| {
         warn!(
             agent_key,
@@ -787,14 +798,22 @@ pub async fn resolve_managed_session_profile(
         profile.agent_key = agent_key.to_owned();
         return Ok(profile);
     }
-    let selected = assignments
-        .iter()
-        .find(|assignment| {
-            assignment.assignment_enabled
-                && template_override_id
-                    .map_or(assignment.is_default, |id| assignment.template_id == id)
-        })
-        .ok_or(RuntimeError::Configuration)?;
+    let selected = assignments.iter().find(|assignment| {
+        assignment.assignment_enabled
+            && template_override_id.map_or(assignment.is_default, |id| assignment.template_id == id)
+    });
+    let Some(selected) = selected else {
+        // Same legibility requirement as the unmanaged seam: this refusal reaches the client as a
+        // 503 whose body names a configuration error, so the reason has to be logged here or the
+        // operator sees only the status.
+        warn!(
+            agent_key,
+            assignment_count = assignments.len(),
+            template_override_id = ?template_override_id,
+            "no enabled default template is selectable; refusing to fall back to server defaults"
+        );
+        return Err(RuntimeError::Configuration);
+    };
     let configuration = ConfiguredTemplateProfile::from_assignment(selected)
         .map_err(|_| RuntimeError::Configuration)?;
     let prepared = configuration
