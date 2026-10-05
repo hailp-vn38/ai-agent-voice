@@ -19,7 +19,7 @@
 - real ZeroTTS PCM đi qua resample 24 kHz, Opus và pacing; Reference Client decode được packet.
 - unexpected tool call sau audio đã deliver -> cancel audio còn lại, không MCP/retry và không stale packet sau generation invalidation.
 - no worker slot hoặc command queue full -> fail-fast generation, không drop/skip segment.
-- timeout tính từ worker accept segment, không reset bởi PCM chunk; cleanup acknowledgement release slot, cleanup timeout quarantine worker.
+- voice timeout tính từ worker accept segment rồi reset khi consumer nhận PCM không rỗng; segment vẫn phát đủ khi tổng synthesis vượt timeout nhưng có tiến triển. Không có PCM đầu tiên hoặc stall sau PCM vẫn timeout; PCM rỗng không kéo dài timer. Provider diagnostic giữ deadline tuyệt đối. Cleanup acknowledgement release slot, cleanup timeout quarantine worker.
 - segment ordinal liên tục: chỉ một active synthesis, N+1 đợi `SegmentFinished(N)` nhưng có thể overlap pacer N; pending full fail generation.
 - failure trước `Started` không gửi start/stop; failure sau `Started` gửi đúng một stop và không audio packet cùng generation nào tới wire sau stop.
 - `pending_segments` full -> `speech_output_backpressure`, cancel LLM và không accept thêm delta; no dropped/overwritten segment.

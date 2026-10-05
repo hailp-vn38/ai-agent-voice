@@ -717,3 +717,102 @@ fn unspeakable_response_fails_instead_of_waiting_forever() {
     output.push_delta("😊🚀").unwrap();
     assert_eq!(output.finish_input(), Err(SpeechOutputError::Synthesis));
 }
+
+#[tokio::test(start_paused = true)]
+async fn progressing_tts_does_not_cut_playback_at_total_timeout() {
+    use super::{MAX_BUFFERED_PACKETS, SpeechOutput, SpeechOutputEvent};
+    use crate::{
+        audio::PcmF32Mono,
+        providers::{TtsError, TtsProvider},
+        workers::{TtsWorkerRuntime, WorkerRuntimeConfig},
+    };
+    use std::{
+        sync::{Arc, Mutex, mpsc},
+        time::{Duration, Instant},
+    };
+
+    struct ControlledTts {
+        release: Mutex<mpsc::Receiver<usize>>,
+        emitted: mpsc::Sender<()>,
+    }
+    impl TtsProvider for ControlledTts {
+        fn adapter(&self) -> &'static str {
+            "controlled-stream"
+        }
+        fn synthesize_stream(
+            &self,
+            _: &str,
+            on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+        ) -> Result<(), TtsError> {
+            while let Ok(frames) = self.release.lock().unwrap().recv() {
+                if frames == 0 {
+                    break;
+                }
+                on_pcm(PcmF32Mono::new(vec![0.1; 2_880 * frames], 48_000))?;
+                self.emitted.send(()).unwrap();
+            }
+            Ok(())
+        }
+    }
+    let (release_tx, release_rx) = mpsc::channel();
+    let (emitted_tx, emitted_rx) = mpsc::channel();
+    let provider: Arc<dyn TtsProvider> = Arc::new(ControlledTts {
+        release: Mutex::new(release_rx),
+        emitted: emitted_tx,
+    });
+    let runtime = Arc::new(TtsWorkerRuntime::new(
+        Arc::clone(&provider),
+        WorkerRuntimeConfig {
+            final_timeout: Duration::from_secs(15),
+            ..WorkerRuntimeConfig::default()
+        },
+    ));
+    let mut output =
+        SpeechOutput::with_worker(provider, runtime, SpeechOutputConfig::default()).unwrap();
+    output.push_delta("Một câu đang được phát đầy đủ.").unwrap();
+    output.finish_input().unwrap();
+    assert!(matches!(
+        output.poll().unwrap(),
+        Some(SpeechOutputEvent::SegmentReady { .. })
+    ));
+    output.poll().unwrap();
+    release_tx.send(MAX_BUFFERED_PACKETS).unwrap();
+    emitted_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(
+        output.poll().unwrap(),
+        Some(SpeechOutputEvent::Started)
+    ));
+    let mut sent = 0;
+    for batch in 0..=4 {
+        if batch > 0 {
+            tokio::time::advance(Duration::from_secs(4)).await;
+            release_tx.send(1).unwrap();
+            emitted_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        loop {
+            // Exercise production PCM conversion and packet delivery without real-time waits.
+            output.playback_origin = Some(Instant::now() - Duration::from_secs(60));
+            match output
+                .poll()
+                .expect("progressing synthesis must not cut playback")
+            {
+                Some(SpeechOutputEvent::AudioPacket(_)) => sent += 1,
+                None => break,
+                _ => panic!("unexpected playback event"),
+            }
+        }
+    }
+    release_tx.send(0).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while output.active_worker.is_some() {
+        assert!(Instant::now() < deadline, "worker did not finish");
+        output.poll().unwrap();
+        std::thread::yield_now();
+    }
+    assert_eq!(sent, MAX_BUFFERED_PACKETS + 4, "audio was truncated");
+    output.playback_end_deadline = Some(Instant::now());
+    assert!(matches!(
+        output.poll().unwrap(),
+        Some(SpeechOutputEvent::Drained)
+    ));
+}

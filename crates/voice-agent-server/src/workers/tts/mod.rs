@@ -6,8 +6,9 @@ use std::{
         mpsc,
     },
     thread,
-    time::Instant,
 };
+
+use tokio::time::Instant;
 
 use super::{
     ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission,
@@ -21,6 +22,8 @@ use crate::{
 mod diagnostic;
 mod pool;
 mod stream;
+#[cfg(test)]
+mod tests;
 
 use pool::{TtsPoolOwner, stop_and_join, worker_loop};
 
@@ -89,6 +92,7 @@ struct Slot {
     cancelled: Arc<AtomicBool>,
     events: Arc<Mutex<mpsc::Receiver<TtsWorkerEvent>>>,
     deadline: Instant,
+    refresh_on_pcm: bool,
     cleanup_deadline: Option<Instant>,
     quarantined: bool,
     cleanup_reported: bool,

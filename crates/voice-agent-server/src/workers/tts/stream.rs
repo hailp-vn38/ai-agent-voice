@@ -134,6 +134,7 @@ impl TtsWorkerRuntime {
                 cancelled: Arc::clone(&cancelled),
                 events: Arc::new(Mutex::new(events_rx)),
                 deadline: Instant::now() + self.config.final_timeout,
+                refresh_on_pcm: matches!(&request, TtsWorkRequest::Voice(_)),
                 cleanup_deadline: None,
                 quarantined: false,
                 cleanup_reported: false,
@@ -190,6 +191,16 @@ impl TtsWorkerRuntime {
             }
             Err(mpsc::TryRecvError::Disconnected) => TtsWorkerEvent::Failed,
         };
+        // Voice synthesis is streaming: a long utterance must not be cancelled while
+        // it is making progress. Refresh on consumption so bounded-channel/pacing
+        // backpressure is not charged as an inference stall. Diagnostics retain their
+        // absolute operation budget, and cancellation never extends cleanup grace.
+        if matches!(&event, TtsWorkerEvent::Pcm(pcm) if !pcm.samples().is_empty())
+            && slot.refresh_on_pcm
+            && slot.cleanup_deadline.is_none()
+        {
+            slot.deadline = Instant::now() + self.config.final_timeout;
+        }
         if event.is_terminal() {
             release_terminal(&mut state, lease);
         }

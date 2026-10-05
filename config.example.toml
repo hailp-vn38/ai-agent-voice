@@ -151,6 +151,7 @@ token = "set-deployment-token-here"
 # g2p_executable = "runtime/kokoro-vi/kokoro_vi_g2p"
 
 [tts]
+# Voice: maximum wait for first/next non-empty PCM; diagnostics: total synthesis budget.
 timeout_ms = 15000
 
 [speech_output]
