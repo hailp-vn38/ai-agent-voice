@@ -378,14 +378,16 @@ impl AppState {
         drop(snapshot_timer);
         let profile = if let Some(manager) = &self.provider_runtime_manager {
             crate::session::resolve_managed_session_profile(
-                graph.device_db_id,
-                graph.template_override_id,
-                graph.agent.id,
-                &graph.agent.key,
-                &graph.assignments,
-                &self.config,
-                manager,
-                &self.deployment_snapshots,
+                crate::session::ManagedSessionProfileInput {
+                    device_db_id: graph.device_db_id,
+                    template_override_id: graph.template_override_id,
+                    agent_id: graph.agent.id,
+                    agent_key: &graph.agent.key,
+                    assignments: &graph.assignments,
+                    config: &self.config,
+                    manager,
+                    deployment_snapshots: &self.deployment_snapshots,
+                },
             )
             .await
             .map_err(SessionProfileAdmissionError::Runtime)?

@@ -1410,9 +1410,11 @@ async fn an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_s
     task.abort();
 }
 
+type ManagedBuild = (i64, i64, String, String);
+
 struct ManagedFixtureBuilder {
     config: AppConfig,
-    builds: Arc<Mutex<Vec<(i64, i64, String, String)>>>,
+    builds: Arc<Mutex<Vec<ManagedBuild>>>,
     supervisor: Arc<voice_agent_server::workers::WorkerSupervisor>,
 }
 struct ManagedFixtureResource(voice_agent_server::providers::RuntimeCatalog);
@@ -1493,7 +1495,7 @@ async fn managed_template_acquires_deployment_runtimes_for_missing_slots() {
     use voice_agent_server::{
         database::{AdmittedAssignment, AdmittedProviderBinding, DesiredProvider},
         services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits},
-        session::resolve_managed_session_profile,
+        session::{ManagedSessionProfileInput, resolve_managed_session_profile},
     };
 
     let state = AppState::from_provider_set(
@@ -1565,16 +1567,16 @@ async fn managed_template_acquires_deployment_runtimes_for_missing_slots() {
         provider(0, "vad", "server_vad"),
         provider(0, "llm", "openai_primary"),
     ];
-    let profile = resolve_managed_session_profile(
-        2,
-        None,
-        1,
-        "home",
-        &[assignment],
-        &profile_config,
-        &manager,
-        &deployment,
-    )
+    let profile = resolve_managed_session_profile(ManagedSessionProfileInput {
+        device_db_id: 2,
+        template_override_id: None,
+        agent_id: 1,
+        agent_key: "home",
+        assignments: &[assignment],
+        config: &profile_config,
+        manager: &manager,
+        deployment_snapshots: &deployment,
+    })
     .await
     .unwrap();
     assert_eq!(profile.providers.vad, "server_vad");

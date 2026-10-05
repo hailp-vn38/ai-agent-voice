@@ -37,6 +37,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 mod admin;
+mod cors;
 mod enrollment;
 mod ota;
 mod state;
@@ -106,24 +107,35 @@ pub fn router_with_state(state: AppState) -> Router {
     let router = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route_layer(cors::layer())
         .route(
             "/voice/ota/",
-            get(ota::handler).post(ota::handler).options(ota::options),
+            get(ota::handler)
+                .post(ota::handler)
+                .options(ota::options)
+                .layer(middleware::from_fn(ota::cors_response)),
         )
         .route("/voice/v1/", get(websocket::handler));
     let router = if state.config.database.devices.enrollment.enabled {
         router
             .route(
                 "/voice/ota",
-                get(ota::handler).post(ota::handler).options(ota::options),
+                get(ota::handler)
+                    .post(ota::handler)
+                    .options(ota::options)
+                    .layer(middleware::from_fn(ota::cors_response)),
             )
             .route(
                 "/voice/ota/activate",
-                axum::routing::post(ota::activate).options(ota::options),
+                axum::routing::post(ota::activate)
+                    .options(ota::options)
+                    .layer(middleware::from_fn(ota::cors_response)),
             )
             .route(
                 "/voice/ota/activate/",
-                axum::routing::post(ota::activate).options(ota::options),
+                axum::routing::post(ota::activate)
+                    .options(ota::options)
+                    .layer(middleware::from_fn(ota::cors_response)),
             )
     } else {
         router
@@ -144,7 +156,10 @@ pub fn router_with_state(state: AppState) -> Router {
         router
     };
     let router = if state.config.api.enabled {
-        router.nest("/api/admin", admin::router(state.clone()))
+        router.nest(
+            "/api/admin",
+            admin::router(state.clone()).layer(cors::layer()),
+        )
     } else {
         router
     };

@@ -11,11 +11,18 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
-use url::Url;
 use uuid::Uuid;
 
 const OTA_BODY_MAX: usize = 32 * 1024;
 const ACTIVATE_BODY_MAX: usize = 8 * 1024;
+
+/// Include CORS on validation, admission and database errors as well as successful OTA replies.
+pub(super) async fn cors_response(request: Request, next: axum::middleware::Next) -> Response {
+    let headers = request.headers().clone();
+    let mut response = next.run(request).await;
+    apply_cors(response.headers_mut(), &headers);
+    response
+}
 
 pub(crate) async fn handler(State(state): State<AppState>, request: Request) -> Response {
     let headers = request.headers().clone();
@@ -144,7 +151,7 @@ pub(crate) async fn options(request_headers: HeaderMap) -> Response {
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("POST, OPTIONS"),
+        HeaderValue::from_static("GET, POST, OPTIONS"),
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -337,20 +344,7 @@ fn apply_cors(response_headers: &mut HeaderMap, request_headers: &HeaderMap) {
     let Some(origin) = request_headers.get(header::ORIGIN) else {
         return;
     };
-    let Ok(origin_text) = origin.to_str() else {
-        return;
-    };
-    let Ok(origin_url) = Url::parse(origin_text) else {
-        return;
-    };
-    let Some(host) = origin_url.host_str() else {
-        return;
-    };
-    if !(host == "localhost"
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback()))
-    {
+    if !super::cors::is_local_origin(origin) {
         return;
     }
     response_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());

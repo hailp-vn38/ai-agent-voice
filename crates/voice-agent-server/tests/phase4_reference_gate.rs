@@ -1,6 +1,6 @@
 mod support;
 
-use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};

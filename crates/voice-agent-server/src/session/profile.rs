@@ -823,17 +823,35 @@ impl std::fmt::Debug for TemplateSwitchCatalog {
     }
 }
 
+/// Immutable input collected during Device admission for managed runtime resolution.
+///
+/// Grouping it keeps the public resolution seam aligned with the atomic admission snapshot: a
+/// caller cannot pair an Agent's assignments with another Device or deployment configuration.
+pub struct ManagedSessionProfileInput<'a> {
+    pub device_db_id: i64,
+    pub template_override_id: Option<i64>,
+    pub agent_id: i64,
+    pub agent_key: &'a str,
+    pub assignments: &'a [AdmittedAssignment],
+    pub config: &'a AppConfig,
+    pub manager: &'a Arc<ProviderRuntimeManager>,
+    pub deployment_snapshots: &'a [crate::database::DesiredProvider],
+}
+
 /// Acquires only the selected template; all switch candidates retain immutable configuration.
 pub async fn resolve_managed_session_profile(
-    device_db_id: i64,
-    template_override_id: Option<i64>,
-    agent_id: i64,
-    agent_key: &str,
-    assignments: &[AdmittedAssignment],
-    config: &AppConfig,
-    manager: &Arc<ProviderRuntimeManager>,
-    deployment_snapshots: &[crate::database::DesiredProvider],
+    input: ManagedSessionProfileInput<'_>,
 ) -> Result<EffectiveSessionProfile, RuntimeError> {
+    let ManagedSessionProfileInput {
+        device_db_id,
+        template_override_id,
+        agent_id,
+        agent_key,
+        assignments,
+        config,
+        manager,
+        deployment_snapshots,
+    } = input;
     if uses_server_defaults(template_override_id, assignments) {
         let mut profile = EffectiveSessionProfile::server_default(config)
             .map_err(|_| RuntimeError::Configuration)?;

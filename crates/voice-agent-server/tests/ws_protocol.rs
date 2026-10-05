@@ -211,7 +211,7 @@ async fn ota_accepts_post_and_advertises_preflight_methods() {
     );
     assert_eq!(
         preflight.headers()[reqwest::header::ACCESS_CONTROL_ALLOW_METHODS],
-        "POST, OPTIONS"
+        "GET, POST, OPTIONS"
     );
     assert_eq!(
         preflight.headers()[reqwest::header::ACCESS_CONTROL_ALLOW_ORIGIN],
