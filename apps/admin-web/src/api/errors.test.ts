@@ -17,4 +17,10 @@ describe('API errors', () => {
     expect(formatApiError(new Error('offline'))).toBe('offline')
     expect(formatApiError('offline')).toBe('Unknown API error')
   })
+
+  it('turns proxy and server status codes into an actionable message', () => {
+    expect(formatApiError(new ApiError('ignored', 502, 'http_502'))).toBe(
+      'Không thể kết nối tới server (HTTP 502). Hãy thử lại sau ít phút.',
+    )
+  })
 })

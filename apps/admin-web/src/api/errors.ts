@@ -47,6 +47,22 @@ export function formatApiError(error: unknown): string {
     database_unavailable: 'Database hiện không khả dụng.',
     database_busy: 'Database đang bận; hãy thử lại sau.',
   }
-  const message = messages[error.code] ?? error.code
+  const httpMessages: Record<number, string> = {
+    400: 'Yêu cầu không hợp lệ. Hãy kiểm tra lại dữ liệu và thử lại.',
+    401: 'Admin token không hợp lệ hoặc đã hết hạn.',
+    403: 'Bạn không có quyền thực hiện thao tác này.',
+    404: 'Không tìm thấy tài nguyên.',
+    408: 'Server phản hồi quá lâu. Hãy thử lại.',
+    409: 'Dữ liệu đã thay đổi trên server. Hãy tải lại và thử lại.',
+    429: 'Có quá nhiều yêu cầu. Hãy thử lại sau ít phút.',
+    500: 'Server gặp lỗi nội bộ. Hãy thử lại sau ít phút.',
+    502: 'Không thể kết nối tới server (HTTP 502). Hãy thử lại sau ít phút.',
+    503: 'Server đang tạm thời không khả dụng. Hãy thử lại sau ít phút.',
+    504: 'Server phản hồi quá lâu. Hãy thử lại sau ít phút.',
+  }
+  const message = messages[error.code]
+    ?? (error.code === `http_${error.status}`
+      ? httpMessages[error.status] ?? `Server trả về lỗi HTTP ${error.status}. Hãy thử lại sau.`
+      : error.code)
   return error.requestId ? `${message} (request_id: ${error.requestId})` : message
 }
