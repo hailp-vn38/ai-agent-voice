@@ -74,9 +74,12 @@ fn managed_provider_response(provider: Provider, state: &AppState) -> Value {
         serde_json::to_value(runtime).expect("runtime inspection is serializable");
     response
 }
+/// A create request carries business data only. The provider key is server-owned and immutable, so
+/// a client-chosen `key` is a contract error rather than input to ignore; silently dropping it
+/// would leave the client believing its own key was adopted.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateProvider {
-    key: String,
     name: String,
     #[serde(rename = "type")]
     kind: String,
@@ -109,13 +112,22 @@ fn adapter_matches_kind(kind: &str, adapter: &str) -> bool {
 async fn provider_by(pool: &SqlitePool, key: &str) -> Result<Provider, sqlx::Error> {
     sqlx::query_as("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers WHERE key=?").bind(key).fetch_one(pool).await
 }
+/// Mints the immutable identity for a new provider as `{provider_type}_{uuid32}`.
+///
+/// The key never derives from the display name: names repeat, get renamed and carry no slug
+/// rules, so a random suffix keeps every create collision-free without a retry loop. The result
+/// satisfies the `valid_key` rules a client-supplied key once had to, so existing rows, URLs and
+/// template bindings keep working unchanged. `kind` must already be one of the four provider
+/// types, which is what keeps the prefix lowercase.
+fn generate_provider_key(kind: &str) -> String {
+    format!("{kind}_{}", Uuid::new_v4().simple())
+}
 pub(super) async fn create_provider(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (_, CreateProvider) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
     };
-    if !valid_key(&body.key)
-        || !valid_text(&body.name, 128, false)
+    if !valid_text(&body.name, 128, false)
         || !matches!(body.kind.as_str(), "vad" | "asr" | "llm" | "tts")
         || !adapter_matches_kind(&body.kind, &body.adapter)
         || body
@@ -124,7 +136,8 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
             .is_some_and(|v| !valid_secret_ref(v))
     {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
-    };
+    }
+    let provider_key = generate_provider_key(&body.kind);
     let config = match provider_config::validate(&body.adapter, &body.config_json) {
         Ok(v) => v,
         Err(_) => return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid"),
@@ -143,7 +156,7 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
             );
         }
     };
-    let r=sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,secret_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").bind(&body.key).bind(&body.name).bind(&body.kind).bind(&body.adapter).bind(config).bind(&body.secret_ref).bind(now()).bind(now()).execute(&mut *tx).await;
+    let r=sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,secret_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").bind(&provider_key).bind(&body.name).bind(&body.kind).bind(&body.adapter).bind(config).bind(&body.secret_ref).bind(now()).bind(now()).execute(&mut *tx).await;
     let provider_id = match r {
         Ok(v) => v.last_insert_rowid(),
         Err(e) => return mutation_sql_error(&request, &e),
@@ -169,7 +182,7 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
             "database_unavailable",
         );
     };
-    match provider_by(pool, &body.key).await {
+    match provider_by(pool, &provider_key).await {
         Ok(v) => (
             StatusCode::CREATED,
             Json(managed_provider_response(v, &state)),
@@ -541,6 +554,16 @@ pub(super) async fn patch_provider(
 mod provider_runtime_tests {
     use super::*;
     use crate::providers::{DatabaseRuntimeSnapshot, DatabaseRuntimeState, DatabaseRuntimeStatus};
+
+    #[test]
+    fn a_generated_key_is_prefixed_by_type_and_never_repeats() {
+        let key = generate_provider_key("llm");
+        assert!(key.starts_with("llm_"), "{key}");
+        assert!(valid_key(&key), "{key}");
+        assert_eq!(key.len(), "llm_".len() + 32, "{key}");
+        assert_ne!(key, generate_provider_key("llm"));
+        assert_ne!(key, generate_provider_key("tts"));
+    }
 
     #[test]
     fn loaded_runtime_becomes_stale_after_desired_revision_changes() {

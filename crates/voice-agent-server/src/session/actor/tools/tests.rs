@@ -966,6 +966,7 @@ impl crate::services::provider_runtime::RuntimeMaterializer for SwitchBuilder {
     fn build(
         &self,
         _: &crate::database::DesiredProvider,
+        _: Option<crate::services::provider_runtime::PreparedRuntime>,
         _: crate::workers::ProviderRuntimeAdmission,
     ) -> Result<
         Arc<dyn crate::services::provider_runtime::RuntimeResource>,
@@ -1180,6 +1181,7 @@ impl crate::services::provider_runtime::RuntimeMaterializer for HeldSwitchBuilde
     fn build(
         &self,
         _: &crate::database::DesiredProvider,
+        _: Option<crate::services::provider_runtime::PreparedRuntime>,
         _: crate::workers::ProviderRuntimeAdmission,
     ) -> Result<
         Arc<dyn crate::services::provider_runtime::RuntimeResource>,

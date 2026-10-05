@@ -157,7 +157,13 @@ impl ActiveTemplateProfile {
             language: String::new(),
             system_prompt: prompt::render_system(&crate::config::EffectiveAgentConfig::default())
                 .expect("built-in prompt template is valid"),
-            providers: crate::config::EffectiveAgentConfig::default().providers,
+            providers: EffectiveProviderBindings {
+                vad: String::new(),
+                asr: String::new(),
+                llm: String::new(),
+                tts: String::new(),
+                vision: None,
+            },
             revision: 1,
         }
     }
@@ -210,7 +216,7 @@ impl EffectiveSessionProfile {
             source: ProfileSource::ServerDefault,
             language: agent.language.clone(),
             system_prompt: prompt::render_system(agent).map_err(|_| ProfileUnavailable)?,
-            providers: agent.providers.clone(),
+            providers: config.provider_defaults.effective_bindings(),
             revision: 1,
             // An Agent without assignments must not advertise a switch capability it cannot honor.
             switch_catalog: TemplateSwitchCatalog::default(),
@@ -260,8 +266,9 @@ pub struct AdmittedSessionProfile {
 
 /// Resolves exactly one Effective Session Profile for an admitted Device.
 ///
-/// Any assignment row at all means the Agent entered the Template mechanism, so there is no path
-/// back to server defaults: a missing, disabled or incomplete default Template is `Unavailable`.
+/// An Agent with no enabled assignment and no Device override uses server defaults. An enabled
+/// assignment graph without a selectable default, or an override that is no longer assigned,
+/// remains `Unavailable`.
 pub fn resolve_effective_session_profile(
     device_db_id: i64,
     agent_id: i64,
@@ -291,7 +298,7 @@ pub fn resolve_effective_session_profile_with_override(
     config: &AppConfig,
     runtimes: &RuntimeCatalog,
 ) -> Result<EffectiveSessionProfile, ProfileUnavailable> {
-    if assignments.is_empty() {
+    if uses_server_defaults(template_override_id, assignments) {
         let mut profile = EffectiveSessionProfile::server_default(config)?;
         profile.device_db_id = device_db_id;
         profile.agent_id = agent_id;
@@ -306,9 +313,21 @@ pub fn resolve_effective_session_profile_with_override(
         None => assignments
             .iter()
             .find(|assignment| assignment.is_default && assignment.assignment_enabled),
-    }
-    .ok_or(ProfileUnavailable)?;
-    let active = resolve_template(default, runtimes).map_err(|error| {
+    };
+    let Some(default) = default else {
+        // Fail-closed is only safe while it is legible. This branch used to return through a bare
+        // `ok_or`, ahead of the `warn!` below, so an Agent holding assignments but no enabled
+        // default refused every one of its devices with an unexplained 503 and nothing else.
+        warn!(
+            agent_key,
+            assignment_count = assignments.len(),
+            template_override_id = ?template_override_id,
+            "no enabled default template is selectable; refusing to fall back to server defaults"
+        );
+        return Err(ProfileUnavailable);
+    };
+    let defaults = config.provider_defaults.effective_bindings();
+    let active = resolve_template(default, runtimes, &defaults).map_err(|error| {
         warn!(
             agent_key,
             template_key = %default.template_key,
@@ -320,7 +339,7 @@ pub fn resolve_effective_session_profile_with_override(
 
     let mut switch_catalog = TemplateSwitchCatalog::default();
     for assignment in assignments.iter().filter(|entry| entry.assignment_enabled) {
-        match resolve_template(assignment, runtimes) {
+        match resolve_template(assignment, runtimes, &defaults) {
             Ok(candidate) => switch_catalog.insert(candidate),
             Err(reason) => warn!(
                 agent_key,
@@ -351,11 +370,25 @@ pub fn resolve_effective_session_profile_with_override(
     })
 }
 
-/// A candidate is valid only when its Template is enabled, its prompt is bounded, all four
-/// provider slots are bound to enabled providers, and every one of them has a Loaded Runtime.
+/// A soft-unlinked assignment remains in SQLite for audit/history, but it is not an active
+/// Template choice. Device overrides deliberately bypass this fallback so a stale override still
+/// fails closed instead of silently selecting server defaults.
+fn uses_server_defaults(
+    template_override_id: Option<i64>,
+    assignments: &[AdmittedAssignment],
+) -> bool {
+    template_override_id.is_none()
+        && !assignments
+            .iter()
+            .any(|assignment| assignment.assignment_enabled)
+}
+
+/// A candidate is valid only when its Template is enabled, its prompt is bounded, and every
+/// selected provider (explicit binding or deployment default) has a Loaded Runtime.
 fn resolve_template(
     assignment: &AdmittedAssignment,
     runtimes: &RuntimeCatalog,
+    defaults: &EffectiveProviderBindings,
 ) -> Result<ResolvedTemplateProfile, TemplateCandidateError> {
     if !assignment.template_enabled {
         return Err(TemplateCandidateError::TemplateDisabled);
@@ -377,10 +410,10 @@ fn resolve_template(
         );
     }
     let providers = EffectiveProviderBindings {
-        vad: bound_key(bound.get("vad").copied())?,
-        asr: bound_key(bound.get("asr").copied())?,
-        llm: bound_key(bound.get("llm").copied())?,
-        tts: bound_key(bound.get("tts").copied())?,
+        vad: bound_key(bound.get("vad").copied(), &defaults.vad)?,
+        asr: bound_key(bound.get("asr").copied(), &defaults.asr)?,
+        llm: bound_key(bound.get("llm").copied(), &defaults.llm)?,
+        tts: bound_key(bound.get("tts").copied(), &defaults.tts)?,
         vision: None,
     };
     // One resolution proves all four slots resolve to runtimes this process actually loaded, and
@@ -400,11 +433,14 @@ fn resolve_template(
     })
 }
 
-/// Every required slot must be bound; a Template with a missing slot is invalid rather than
-/// partially defaulted.
-fn bound_key(key: Option<&str>) -> Result<String, TemplateCandidateError> {
-    key.map(str::to_owned)
-        .ok_or(TemplateCandidateError::BindingMissing)
+/// Only a genuinely absent binding uses the server default. An explicitly bound provider that
+/// is disabled or unavailable remains an error.
+fn bound_key(key: Option<&str>, default: &str) -> Result<String, TemplateCandidateError> {
+    let selected = key.unwrap_or(default);
+    if selected.is_empty() {
+        return Err(TemplateCandidateError::BindingMissing);
+    }
+    Ok(selected.to_owned())
 }
 
 /// Bounded reason classes.  Only these strings reach telemetry; no key, prompt or config content
@@ -481,28 +517,29 @@ mod tests {
     }
 
     #[test]
-    fn only_an_agent_without_any_assignment_row_uses_server_defaults() {
-        let profile = resolve_effective_session_profile(
+    fn only_disabled_assignments_use_server_defaults_without_an_override() {
+        let server_defaults = resolve_effective_session_profile(
             1,
             2,
             "agent",
             &[assignment(true, false, full_bindings())],
             &config(),
             &RuntimeCatalog::default(),
-        );
-        assert_eq!(profile.err(), Some(ProfileUnavailable));
-
-        let server_defaults = resolve_effective_session_profile(
-            1,
-            2,
-            "agent",
-            &[],
-            &config(),
-            &RuntimeCatalog::default(),
         )
-        .expect("an unassigned agent keeps deployment defaults");
+        .expect("a soft-unlinked agent keeps deployment defaults");
         assert_eq!(server_defaults.source, ProfileSource::ServerDefault);
         assert!(server_defaults.switch_catalog.is_empty());
+
+        let stale_override = resolve_effective_session_profile_with_override(
+            1,
+            Some(4),
+            2,
+            "agent",
+            &[assignment(true, false, full_bindings())],
+            &config(),
+            &RuntimeCatalog::default(),
+        );
+        assert_eq!(stale_override.err(), Some(ProfileUnavailable));
     }
 
     #[test]
@@ -523,18 +560,28 @@ mod tests {
         let mut oversized = assignment(true, true, full_bindings());
         oversized.prompt = "p".repeat(MAX_TEMPLATE_PROMPT_BYTES + 1);
         assert_eq!(
-            resolve_template(&oversized, &RuntimeCatalog::default()).unwrap_err(),
+            resolve_template(
+                &oversized,
+                &RuntimeCatalog::default(),
+                &config().provider_defaults.effective_bindings(),
+            )
+            .unwrap_err(),
             TemplateCandidateError::PromptInvalid
         );
     }
 
     #[test]
-    fn a_missing_binding_never_produces_a_mixed_profile() {
+    fn a_missing_binding_uses_the_matching_server_default() {
         let partial = assignment(true, true, vec![("asr", "asr"), ("llm", "llm")]);
-        assert_eq!(
-            resolve_template(&partial, &loaded_catalog()).unwrap_err(),
-            TemplateCandidateError::BindingMissing
-        );
+        let defaults = EffectiveProviderBindings {
+            vad: "vad".into(),
+            asr: "asr".into(),
+            llm: "llm".into(),
+            tts: "tts".into(),
+            vision: None,
+        };
+        let profile = resolve_template(&partial, &loaded_catalog(), &defaults).unwrap();
+        assert_eq!(profile.providers, defaults);
     }
 
     /// One loaded runtime per server default instance id, so a stored binding to any of them
@@ -624,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn the_switch_catalog_excludes_every_invalid_candidate() {
+    fn the_switch_catalog_keeps_candidates_with_missing_bindings_on_server_defaults() {
         let mut unloaded = named(2, "unloaded", false, true);
         unloaded
             .bindings
@@ -668,7 +715,14 @@ mod tests {
             .iter()
             .map(|candidate| candidate.template_key.clone())
             .collect::<Vec<_>>();
-        assert_eq!(keys, vec!["primary".to_owned(), "usable".to_owned()]);
+        assert_eq!(
+            keys,
+            vec![
+                "primary".to_owned(),
+                "usable".to_owned(),
+                "incomplete".to_owned(),
+            ]
+        );
     }
 
     #[test]
@@ -778,8 +832,9 @@ pub async fn resolve_managed_session_profile(
     assignments: &[AdmittedAssignment],
     config: &AppConfig,
     manager: &Arc<ProviderRuntimeManager>,
+    deployment_snapshots: &[crate::database::DesiredProvider],
 ) -> Result<EffectiveSessionProfile, RuntimeError> {
-    if assignments.is_empty() {
+    if uses_server_defaults(template_override_id, assignments) {
         let mut profile = EffectiveSessionProfile::server_default(config)
             .map_err(|_| RuntimeError::Configuration)?;
         profile.device_db_id = device_db_id;
@@ -787,22 +842,42 @@ pub async fn resolve_managed_session_profile(
         profile.agent_key = agent_key.to_owned();
         return Ok(profile);
     }
-    let selected = assignments
-        .iter()
-        .find(|assignment| {
-            assignment.assignment_enabled
-                && template_override_id
-                    .map_or(assignment.is_default, |id| assignment.template_id == id)
-        })
-        .ok_or(RuntimeError::Configuration)?;
-    let configuration = ConfiguredTemplateProfile::from_assignment(selected)
-        .map_err(|_| RuntimeError::Configuration)?;
+    let selected = assignments.iter().find(|assignment| {
+        assignment.assignment_enabled
+            && template_override_id.map_or(assignment.is_default, |id| assignment.template_id == id)
+    });
+    let Some(selected) = selected else {
+        // Same legibility requirement as the unmanaged seam: this refusal reaches the client as a
+        // 503 whose body names a configuration error, so the reason has to be logged here or the
+        // operator sees only the status.
+        warn!(
+            agent_key,
+            assignment_count = assignments.len(),
+            template_override_id = ?template_override_id,
+            "no enabled default template is selectable; refusing to fall back to server defaults"
+        );
+        return Err(RuntimeError::Configuration);
+    };
+    let defaults = config.provider_defaults.effective_bindings();
+    let configuration = ConfiguredTemplateProfile::from_assignment_with_defaults(
+        selected,
+        &defaults,
+        deployment_snapshots,
+    )
+    .map_err(|_| RuntimeError::Configuration)?;
     let prepared = configuration
         .prepare(manager, manager.admission_deadline())
         .await?;
     let cold = assignments
         .iter()
-        .filter_map(|assignment| ConfiguredTemplateProfile::from_assignment(assignment).ok())
+        .filter_map(|assignment| {
+            ConfiguredTemplateProfile::from_assignment_with_defaults(
+                assignment,
+                &defaults,
+                deployment_snapshots,
+            )
+            .ok()
+        })
         .collect();
     Ok(EffectiveSessionProfile {
         selected_runtimes: Some(prepared.runtimes),

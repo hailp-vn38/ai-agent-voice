@@ -181,21 +181,21 @@ _Avoid_: provider request template, Dialogue History
 Tập message bất biến của một Conversational Turn gồm system snapshot, các Exchange Atom đã commit trước turn và current User đã commit; tool continuation chỉ nối completed tool prefix vào tập này.
 _Avoid_: per-round history rebuild, mutable provider prompt
 
-**Model Artifact Manifest**:
-Tài liệu versioned authoritative pin source, revision, license, upstream artifact, install-relative path, transform và checksum provider-facing của từng model artifact; path directory không tự xác nhận model identity.
-_Avoid_: model folder name, latest model
+**Provider Asset Declaration**:
+Module `assets.rs` cạnh một local provider khai báo authoritative URL upstream đã pin, revision, relative install path của từng file model, danh sách voice, và phép chuyển đổi riêng của provider nếu upstream format cần nó. Không có tài liệu manifest trung tâm; provider tự là nguồn.
+_Avoid_: model manifest, artifact registry, database asset row
 
-**Model Preparation**:
-Lifecycle startup resolve Logical Model Identity, acquire artifact đã pin khi cần, verify, transform và atomic install dưới model root trước khi provider build/warmup và server bind.
-_Avoid_: provider download, lazy model load
+**Provider Asset Manager**:
+Phần của Provider Adapter Registration chịu trách nhiệm làm cho file model của provider tồn tại. Provider Runtime Manager gọi `ensure_assets()` khi materialize provider; Provider Factory sau đó resolve path và build, không tải thêm.
+_Avoid_: provider download, startup model scan, asset framework
 
-**Installed Model Artifact**:
-Artifact provider-facing đã qua declared transform, checksum verification và atomic install bên trong configured model root.
-_Avoid_: downloaded file, guessed model file
+**Provider Asset**:
+Một file model mà provider cần, khai báo trong Provider Asset Declaration. Sẵn sàng khi nó là regular file và có kích thước lớn hơn 0 — không checksum, không fingerprint, không parse ONNX. Model có nạp được hay không do runtime initialization xác nhận.
+_Avoid_: verified artifact, immutable install, content-addressed copy
 
-**Offline Model Preparation**:
-Chế độ deployment cấm mọi network acquisition trong Model Preparation; artifact thiếu, corrupt hoặc transform sai làm startup fail trước bind.
-_Avoid_: best-effort offline, provider offline mode
+**Provider Asset Download**:
+Một lần tải asset ghi vào `<target>.part`, kiểm kích thước khác 0, rồi atomic rename vào final path; mỗi asset giữ một striped lock nên hai request materializing cùng provider không tải trùng file. File final không bao giờ tồn tại ở trạng thái dở dang, và một lần thất bại để lại gì để retry sạch.
+_Avoid_: partial final file, unlocked concurrent download
 
 **Typed Provider Configuration**:
 Cấu hình selection adapter bằng `[providers.<kind>].adapter` và cấu hình concrete dưới bảng cùng tên adapter; startup chỉ chấp nhận bảng khớp adapter được compile vào binary.
@@ -246,7 +246,7 @@ Các runtime concrete được resolve một lần cho Voice Session, giữ ổn
 _Avoid_: hot-switched segment runtime, catalog-aware SessionActor
 
 **Provider Benchmark**:
-Developer CLI chạy cùng fixed, versioned TTS workload, selected Typed Provider Configuration và run policy ở hai mode để đo initialization và steady-state processing trên hardware hiện tại. Nó tách Model Preparation và provider build/startup readiness (cold) khỏi workload warmup và measured run (steady); warmup không thuộc samples. Không sở hữu Voice Session, WebSocket hoặc pacing. Mode `provider` kết thúc ở PCM provider-facing; mode `delivery` dùng cùng PCM stream và cùng deterministic canonical downlink conversion với production, gồm fade, resample, framing, Opus encode và tail finalization, kết thúc ở canonical Opus packet cuối cùng sẵn sàng gửi. Mặc định chỉ in stdout; artifact JSON là opt-in, không chứa benchmark text, audio, filesystem path, secret hoặc deployment endpoint. Comparison chỉ qualified khi Offline Model Preparation hoặc explicit local-model verification được yêu cầu.
+Developer CLI chạy cùng fixed, versioned TTS workload, selected Typed Provider Configuration và run policy ở hai mode để đo initialization và steady-state processing trên hardware hiện tại. Nó tách Provider Asset Download và provider build/startup readiness (cold) khỏi workload warmup và measured run (steady); warmup không thuộc samples. Không sở hữu Voice Session, WebSocket hoặc pacing. Mode `provider` kết thúc ở PCM provider-facing; mode `delivery` dùng cùng PCM stream và cùng deterministic canonical downlink conversion với production, gồm fade, resample, framing, Opus encode và tail finalization, kết thúc ở canonical Opus packet cuối cùng sẵn sàng gửi. Mặc định chỉ in stdout; artifact JSON là opt-in, không chứa benchmark text, audio, filesystem path, secret hoặc deployment endpoint. Không còn phân biệt model đã verify với model đã tải, vì đó giờ là một khái niệm.
 _Avoid_: correctness test, end-to-end latency benchmark, playback benchmark
 
 **Provider Factory**:
@@ -258,12 +258,12 @@ Tập Provider Factory được compile vào binary, lookup khi startup theo typ
 _Avoid_: dynamic plugin registry, service locator
 
 **Logical Model Identity**:
-Khoá model do typed provider configuration chọn, dùng để lookup đúng entry authoritative trong Model Artifact Manifest; không phải filesystem path hoặc tên thư mục.
+Khoá model do typed provider configuration chọn, dùng để chọn đúng Provider Asset Declaration của adapter; nó không phải filesystem path hay tên thư mục, và không định nghĩa nội dung file.
 _Avoid_: model directory, latest model, adapter name
 
-**Model License Acknowledgement**:
-Khai báo deployment khớp chính xác logical model, revision và license trong Model Artifact Manifest; thiếu hoặc lệch thì server fail trước bind.
-_Avoid_: license bypass, generic agreement flag
+**Model License**:
+License của một model, khai báo cùng Provider Asset Declaration. ZeroTTS bundle codec Apache-2.0 nên dùng composite `MIT; bundled-codec=Apache-2.0`. License không phải config: một deployment không acknowledge hay override nó.
+_Avoid_: license acknowledgement config, per-deployment license gate
 
 **Phase Completion Gate**:
 Gate bắt buộc để một phase được đánh dấu hoàn tất. Gate phải dùng boundary thực của phase; với Phase 3 là real-model Voice Protocol E2E Manual và Auto qua canonical Opus tới exactly one STT, còn Phase 6 là Reference Client MCP E2E qua WebSocket và SessionActor. Cả hai tách biệt implementation gate dùng fake provider.
@@ -442,8 +442,8 @@ Thao tác destructive tường minh xóa Persistent Transcript trong scope Devic
 _Avoid_: side effect of disabling Device, implicit transcript delete, session memory reset
 
 **Resource Key**:
-Public resource identity ổn định, lowercase ASCII và immutable của Agent, Template, Provider hoặc MCP Server; database primary key chỉ là implementation detail.
-_Avoid_: mutable display name, runtime-generated identifier, case-insensitive alias, database primary key
+Public resource identity ổn định, lowercase ASCII và immutable của Agent, Template, Provider hoặc MCP Server; database primary key chỉ là implementation detail. Agent, Template và MCP Server do client chọn khi tạo; Provider Key do server sinh ở thời điểm tạo theo format `{provider_type}_{uuid32}` vì Provider name có thể trùng và đổi.
+_Avoid_: mutable display name, client-supplied Provider key, identity derived from display name, case-insensitive alias, database primary key
 
 **Protocol Device Identity**:
 Identity opaque và immutable do Voice Protocol Client cung cấp để provision Device, được so sánh byte-preserving tại database boundary.
@@ -515,6 +515,10 @@ _Avoid_: per-session-only cap, unbounded cross-session fan-out, permit held duri
 Surface quản trị tùy chọn cho Database Desired Configuration và Persistent Transcript, chỉ mount khi được enable và luôn dùng credential riêng với Voice/OTA.
 _Avoid_: Voice API, trusted-LAN anonymous endpoint, shared OTA token
 
+**Admin Web**:
+Ứng dụng Vue tùy chọn tại `apps/admin-web/` quản lý server qua Admin API công khai. Nó sở hữu trình bày và browser-side read model, nhưng không import Rust internal module, không đọc hoặc sửa `config.toml` trực tiếp, và không sở hữu Voice Session state. Khi Admin API không được enable hoặc bearer token không hợp lệ, UI không có quyền thay thế bằng một control path khác.
+_Avoid_: server module, Admin API handler, direct SQLite/config editor, Voice Session owner
+
 **Exchange Atom**:
 Đơn vị Dialogue History không thể tách khi dựng prompt hoặc eviction: một user turn với các Completed Tool Round theo thứ tự, mỗi round gồm các cặp assistant tool call/tool result đã terminal, và Delivered Assistant Response nếu writer đóng turn Normal. Tool call chưa có terminal result không thuộc atom; turn lỗi trước tool đầu tiên là user-only atom.
 _Avoid_: message, partial exchange
@@ -524,12 +528,28 @@ Identity của một Database Desired Configuration của Provider Instance tạ
 _Avoid_: provider key alone, latest mutable provider, Session Profile Revision
 
 **Runtime Resource Key**:
-Opaque identity của backing runtime resource có resource specification tương đương theo hợp đồng Provider Adapter, bao gồm immutable artifact identity, execution settings và credential scope khi cần. Khác Resource Key public của Admin resource.
+Opaque identity của backing runtime resource có resource specification tương đương theo hợp đồng Provider Adapter, bao gồm immutable artifact identity, execution settings, physical replica count và credential scope khi cần. Khác Resource Key public của Admin resource. Không chứa voice, language, Template hay Agent, vì các đó là logical selection.
 _Avoid_: public provider key, raw JSON digest, path as model identity
+
+**Physical Replica**:
+Một bản sao resident của native engine mà một Runtime Resource sở hữu, khai báo bởi Provider Adapter chứ không phải operator. ZeroTTS giữ đúng một Physical Replica vì mỗi replica commit bốn ONNX session; generic worker concurrency không nhân bản nó. Số này là phần của Runtime Resource Key, nên đổi topology vẫn cô lập resource.
+_Avoid_: engine instance per voice, worker count as replica count, template runtime
+
+**Prepared Runtime**:
+Kết quả mà preparation đã xác lập trước khi `build` chạy: các file model của provider đã tồn tại, kèm thời gian đã dùng. `build` chỉ resolve path và dựng runtime, nên một materialization không bao giờ tải lại cùng một model.
+_Avoid_: prepared model cache, immutable model tree
+
+**Physical Resource Key — model identity**:
+Phần identity của một physical runtime đến từ adapter, MODEL_REVISION đã pin của provider, ONNX execution identity và thread count — không từ việc đọc model file. Bump revision tạo key khác mà không phải hash gì.
+_Avoid_: model content hash, manifest fingerprint
 
 **Resource Lease**:
 Quyền sử dụng backing runtime resource được Provider Runtime Manager cấp cho Voice Session hoặc operation. Resource không thể unload khi quyền này hay cleanup obligation tương ứng còn tồn tại.
 _Avoid_: inference permit, best-effort Arc count, runtime lookup without ownership
+
+**Bounded Startup Warmup**:
+Readiness pass chạy trên từng retained native worker, chỉ chạm mỗi graph trên hot path đúng một lần và xác minh PCM terminal finite non-empty, rồi reset trước traffic. Không synthesize utterance đầy đủ; gate deterministic full-utterance thuộc Optional Runtime Evidence, không thuộc startup path.
+_Avoid_: full-sentence warmup, warmup as qualification, unbounded readiness loop
 
 **Provider Runtime Manager**:
 Application owner cấp runtime đúng ProviderVersion và giữ lifecycle/backing resources dùng chung trong các budget rõ ràng. Không sở hữu session history, stream state hay mutate Database Desired Configuration.

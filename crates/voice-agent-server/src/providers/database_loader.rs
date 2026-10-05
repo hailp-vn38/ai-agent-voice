@@ -13,9 +13,8 @@ use crate::{
         DesiredProvider, ProviderLoadPlan, ProviderLoadRequirement, provider_config,
         secrets::{SecretRef, SecretResolver},
     },
-    models::prepare_immutable as prepare,
     providers::{
-        LoadedVad, ProviderCatalog, RuntimeCatalog, compiled_provider_registry,
+        LoadedVad, ProviderCatalog, RuntimeCatalog, TtsBinding, compiled_provider_registry,
         loader::LoadedProviders, loader::vad_timing,
     },
     workers::{
@@ -243,18 +242,16 @@ pub fn materialize_provider_with_admission(
     quota: ProviderRuntimeAdmission,
 ) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
     for worker in [
-        vad_worker_config(config),
-        asr_worker_config(config),
-        tts_worker_config(config),
+        vad_worker_config(config, None),
+        asr_worker_config(config, None),
+        tts_worker_config(config, None),
     ] {
         worker
             .validate()
             .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
     }
-    let mut config = config.clone();
-    config.deployment.models.offline = true;
     let mut loaded = empty_loaded();
-    materialize_one(&config, row, secrets, &mut loaded, Some(quota), None)?;
+    materialize_one(config, row, secrets, &mut loaded, Some(quota), None)?;
     Ok(loaded.runtimes)
 }
 
@@ -263,35 +260,18 @@ pub(crate) fn materialize_provider_from_artifacts(
     row: &DesiredProvider,
     secrets: &dyn SecretResolver,
     quota: ProviderRuntimeAdmission,
-    model: Option<&crate::models::ResolvedModel>,
+    physical_capacity: usize,
 ) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
-    let mut config = config.clone();
-    config.deployment.models.offline = true;
     let mut loaded = empty_loaded();
-    materialize_one(&config, row, secrets, &mut loaded, Some(quota), model)?;
+    materialize_one(
+        config,
+        row,
+        secrets,
+        &mut loaded,
+        Some(quota),
+        Some(physical_capacity),
+    )?;
     Ok(loaded.runtimes)
-}
-
-fn selected_model(
-    config: &AppConfig,
-    identity: &str,
-    adapter: &str,
-    prepared: Option<&crate::models::ResolvedModel>,
-) -> Result<crate::models::ResolvedModel, crate::models::ModelError> {
-    if let Some(model) = prepared {
-        if model.identity() != identity || model.adapter() != adapter {
-            return Err(crate::models::ModelError::UnknownModel(identity.into()));
-        }
-        return Ok(model.clone());
-    }
-    prepare(
-        &config.deployment.model_manifest,
-        &config.deployment.models.root,
-        config.deployment.models.offline,
-        identity,
-        adapter,
-        &config.deployment,
-    )
 }
 
 fn materialize_one(
@@ -300,9 +280,14 @@ fn materialize_one(
     secrets: &dyn SecretResolver,
     loaded: &mut LoadedProviders,
     quota: Option<ProviderRuntimeAdmission>,
-    prepared_model: Option<&crate::models::ResolvedModel>,
+    physical: Option<usize>,
 ) -> Result<(), DatabaseRuntimeFailure> {
-    let mut value = desired_value(row)?;
+    let mut value = super::factory_registry::effective_local_config(
+        &row.adapter,
+        desired_value(row)?,
+        &config.runtime,
+    )
+    .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
     let secret = match &row.secret_ref {
         Some(reference) => Some(
             secrets
@@ -330,16 +315,7 @@ fn materialize_one(
                 typed_instance(&mut value, &row.adapter, None)?
             };
             let factory = registry.vad_factory(instance.adapter()).map_err(|_| ())?;
-            let model = selected_model(
-                config,
-                factory.model_identity(&instance).map_err(|_| ())?,
-                factory.adapter(),
-                prepared_model,
-            )
-            .map_err(|_| ())?;
-            let provider = factory
-                .build(&instance, &config.runtime, &model)
-                .map_err(|_| ())?;
+            let provider = factory.build(&instance, &config.runtime).map_err(|_| ())?;
             let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
             loaded.runtimes.vad.insert(
                 row.key.clone(),
@@ -347,7 +323,7 @@ fn materialize_one(
                     runtime: Arc::new(
                         VadWorkerRuntime::try_new_with_admission(
                             Arc::clone(&provider),
-                            vad_worker_config(config),
+                            vad_worker_config(config, physical),
                             quota.unwrap_or_else(|| {
                                 ProviderRuntimeAdmission::new(config.workers.vad.max_workers, 1)
                             }),
@@ -364,24 +340,19 @@ fn materialize_one(
             reject_secret(row, secret.as_ref())?;
             let instance: AsrInstanceConfig = typed_instance(&mut value, &row.adapter, None)?;
             let factory = registry.asr_factory(instance.adapter()).map_err(|_| ())?;
-            let model = selected_model(
-                config,
-                factory.model_identity(&instance).map_err(|_| ())?,
-                factory.adapter(),
-                prepared_model,
-            )
-            .map_err(|_| ())?;
             let samples = usize::try_from(config.audio.max_utterance_ms)
                 .map_err(|_| ())?
                 .checked_mul(16)
                 .ok_or(())?;
-            let provider = factory.build(&instance, &model, samples).map_err(|_| ())?;
+            let provider = factory
+                .build(&instance, &config.runtime, samples)
+                .map_err(|_| ())?;
             loaded.runtimes.asr.insert(
                 row.key.clone(),
                 Arc::new(
                     AsrWorkerRuntime::try_new_with_admission(
                         Arc::clone(&provider),
-                        asr_worker_config(config),
+                        asr_worker_config(config, physical),
                         quota.unwrap_or_else(|| {
                             ProviderRuntimeAdmission::new(config.workers.asr.max_workers, 1)
                         }),
@@ -438,24 +409,17 @@ fn materialize_one(
                 typed_tts_instance(&mut value, &row.adapter, secret.as_ref())?
             };
             let factory = registry.tts_factory(instance.adapter()).map_err(|_| ())?;
-            let model = factory
-                .model_identity(&instance)
-                .map_err(|_| ())?
-                .map(|identity| selected_model(config, identity, factory.adapter(), prepared_model))
-                .transpose()
-                .map_err(|_| ())?;
-            let provider = factory
-                .build(&instance, &config.runtime, model.as_ref())
-                .map_err(|_| ())?;
+            let provider = factory.build(&instance, &config.runtime).map_err(|_| ())?;
             loaded.runtimes.tts.insert(
                 row.key.clone(),
                 Arc::new(
-                    TtsWorkerRuntime::try_new_with_admission(
+                    TtsWorkerRuntime::try_new_with_admission_and_binding(
                         Arc::clone(&provider),
-                        tts_worker_config(config),
+                        tts_worker_config(config, physical),
                         quota.unwrap_or_else(|| {
                             ProviderRuntimeAdmission::new(config.workers.tts.max_workers, 1)
                         }),
+                        tts_binding(&instance),
                     )
                     .map_err(|error| {
                         if matches!(error, crate::workers::TtsWorkerError::Quarantined) {
@@ -471,6 +435,16 @@ fn materialize_one(
         _ => return Err(DatabaseRuntimeFailure::Configuration),
     }
     Ok(())
+}
+
+fn tts_binding(instance: &TtsInstanceConfig) -> TtsBinding {
+    match instance {
+        TtsInstanceConfig::ZeroTtsOnnx(config) => TtsBinding {
+            voice: config.voice.clone(),
+            language: config.language.clone(),
+        },
+        _ => TtsBinding::readiness(),
+    }
 }
 
 fn desired_value(row: &DesiredProvider) -> Result<Value, DatabaseRuntimeFailure> {
@@ -539,27 +513,29 @@ fn reject_secret_value(secret: Option<&crate::database::secrets::SecretValue>) -
     if secret.is_some() { Err(()) } else { Ok(()) }
 }
 
-fn vad_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
+fn vad_worker_config(config: &AppConfig, physical: Option<usize>) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
-        max_workers: config.workers.vad.max_workers,
+        max_workers: physical.unwrap_or(config.workers.vad.max_workers),
         voice_reserved_capacity: 1,
         command_capacity: config.workers.vad.command_queue_capacity,
         final_timeout: Duration::from_millis(config.workers.vad.reset_timeout_ms),
         cleanup_grace: Duration::from_millis(config.workers.vad.cleanup_grace_ms),
     }
 }
-fn asr_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
+fn asr_worker_config(config: &AppConfig, physical: Option<usize>) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
-        max_workers: config.workers.asr.max_workers,
+        max_workers: physical.unwrap_or(config.workers.asr.max_workers),
         voice_reserved_capacity: 1,
         command_capacity: config.workers.asr.command_queue_capacity,
         final_timeout: Duration::from_millis(config.workers.asr.final_timeout_ms),
         cleanup_grace: Duration::from_millis(config.workers.asr.cleanup_grace_ms),
     }
 }
-fn tts_worker_config(config: &AppConfig) -> WorkerRuntimeConfig {
+/// Pool width for one physical TTS runtime. A resolved physical width keeps one ONNX session set per
+/// replica; generic TTS concurrency still bounds work through admission, not through session count.
+fn tts_worker_config(config: &AppConfig, physical: Option<usize>) -> WorkerRuntimeConfig {
     WorkerRuntimeConfig {
-        max_workers: config.workers.tts.max_workers,
+        max_workers: physical.unwrap_or(config.workers.tts.max_workers),
         voice_reserved_capacity: 1,
         command_capacity: config.workers.tts.command_queue_capacity,
         final_timeout: Duration::from_millis(config.tts.timeout_ms),

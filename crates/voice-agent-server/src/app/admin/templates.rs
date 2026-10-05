@@ -438,10 +438,6 @@ pub(super) async fn set_default_template(
         Ok(v) if v.enabled == 1 => v,
         _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_template"),
     };
-    let complete:i64=sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND p.enabled=1 AND b.provider_type=p.type").bind(template.id).fetch_one(pool).await.unwrap_or(0);
-    if complete != 4 {
-        return error(&request, StatusCode::BAD_REQUEST, "template_incomplete");
-    };
     let mut tx = match pool.begin().await {
         Ok(v) => v,
         Err(_) => {
@@ -501,8 +497,23 @@ pub(super) async fn assign_template(
             );
         }
     };
-    let mutated = sqlx::query("INSERT INTO agent_template_assignments(agent_id,template_id,is_default,enabled,created_at) VALUES (?,?,0,1,?) ON CONFLICT(agent_id,template_id) DO UPDATE SET enabled=1")
-        .bind(agent.id).bind(template.id).bind(now()).execute(&mut *tx).await.is_ok()
+    // An Agent inside the Template mechanism has no path back to server defaults, so leaving it
+    // with assignments but no enabled default refuses every one of its devices with a 503. The
+    // first assignment therefore takes the default slot -- but only when it can actually serve as
+    // one, judged by the same structural bar `set_default_template` applies. Promoting an
+    // incomplete Template would just trade a silent 503 for a differently-silent 503, so an
+    // incomplete first assignment stays an ordinary candidate. A failed probe promotes anyway,
+    // because the invariant matters more than the optimistic read.
+    let complete: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND p.enabled=1 AND b.provider_type=p.type")
+        .bind(template.id).fetch_one(&mut *tx).await.unwrap_or(4);
+    let promote: i64 = if complete == 4 {
+        sqlx::query_scalar::<_, i64>("SELECT NOT EXISTS(SELECT 1 FROM agent_template_assignments WHERE agent_id=? AND enabled=1 AND is_default=1)")
+            .bind(agent.id).fetch_one(&mut *tx).await.unwrap_or(1)
+    } else {
+        0
+    };
+    let mutated = sqlx::query("INSERT INTO agent_template_assignments(agent_id,template_id,is_default,enabled,created_at) VALUES (?,?,?,1,?) ON CONFLICT(agent_id,template_id) DO UPDATE SET enabled=1,is_default=MAX(is_default,excluded.is_default)")
+        .bind(agent.id).bind(template.id).bind(promote).bind(now()).execute(&mut *tx).await.is_ok()
         && sqlx::query("UPDATE agents SET revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(now()).bind(agent.id).bind(expected).execute(&mut *tx).await.map(|v| v.rows_affected() == 1).unwrap_or(false);
     if !mutated {
         let _ = tx.rollback().await;

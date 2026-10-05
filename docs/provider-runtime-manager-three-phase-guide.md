@@ -1,5 +1,9 @@
 # Hướng dẫn triển khai Provider Runtime Manager theo ba đợt
 
+> **Ghi chú:** tài liệu này ghi lại trạng thái tại thời điểm nó được viết. Cơ chế Model
+> Preparation, `ResolvedModel`, `prepare_immutable()` và `deployment.models.*` đã bị thay thế
+> bởi [ADR 0076](adr/0076-provider-owned-model-assets.md). Đọc ADR đó cho kiến trúc hiện hành.
+
 **Dự án:** `hailp-vn38/ai-agent-voice`
 
 **Nhánh đối chiếu:** `dev-test`

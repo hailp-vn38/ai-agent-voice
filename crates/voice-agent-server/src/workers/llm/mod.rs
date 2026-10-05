@@ -34,6 +34,14 @@ pub enum LlmStartError {
     Capacity,
 }
 
+/// Coarse, redaction-safe reason an LLM operation could not produce a response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LlmFailureReason {
+    OpenStream,
+    Stream,
+    TimedOut,
+}
+
 /// Identity-tagged LLM outcomes consumed only by the owning Voice Session.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LlmRuntimeEvent {
@@ -50,6 +58,7 @@ pub enum LlmRuntimeEvent {
     },
     Failed {
         identity: WorkerIdentity,
+        reason: LlmFailureReason,
     },
     Cancelled {
         identity: WorkerIdentity,
@@ -185,6 +194,7 @@ impl LlmRuntime {
                 .await
                 .unwrap_or(LlmRuntimeEvent::Failed {
                     identity: identity.clone(),
+                    reason: LlmFailureReason::TimedOut,
                 })
             } else {
                 LlmRuntimeEvent::Cancelled {
@@ -306,7 +316,10 @@ async fn run_operation(
     route: mpsc::Sender<LlmRuntimeEvent>,
 ) -> LlmRuntimeEvent {
     let Ok(mut stream) = provider.stream(request).await else {
-        return LlmRuntimeEvent::Failed { identity };
+        return LlmRuntimeEvent::Failed {
+            identity,
+            reason: LlmFailureReason::OpenStream,
+        };
     };
     loop {
         tokio::select! {
@@ -323,7 +336,10 @@ async fn run_operation(
                     }
                 }
                 Some(Ok(LlmEvent::Finished)) | None => return LlmRuntimeEvent::Finished { identity },
-                Some(Err(_)) => return LlmRuntimeEvent::Failed { identity },
+                Some(Err(_)) => return LlmRuntimeEvent::Failed {
+                    identity,
+                    reason: LlmFailureReason::Stream,
+                },
             },
         }
     }

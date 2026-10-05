@@ -6,7 +6,7 @@ fn short_streaming_segment_waits_for_completion_before_starting_playback() {
     use super::{SpeechOutput, SpeechOutputEvent};
     use crate::{
         audio::PcmF32Mono,
-        providers::{TtsError, TtsProvider, TtsWorker},
+        providers::{TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker},
         workers::{TtsWorkerRuntime, WorkerRuntimeConfig},
     };
     use std::{
@@ -36,7 +36,7 @@ fn short_streaming_segment_waits_for_completion_before_starting_playback() {
     impl TtsWorker for GatedWorker {
         fn synthesize(
             &mut self,
-            _: &str,
+            _: &TtsSynthesisRequest,
             _: &AtomicBool,
             on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
         ) -> Result<(), TtsError> {
@@ -130,7 +130,7 @@ fn long_streaming_segment_starts_at_bounded_initial_buffer() {
     use super::{MAX_BUFFERED_PACKETS, SpeechOutput, SpeechOutputEvent};
     use crate::{
         audio::PcmF32Mono,
-        providers::{TtsError, TtsProvider, TtsWorker},
+        providers::{TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker},
         workers::{TtsWorkerRuntime, WorkerRuntimeConfig},
     };
     use std::{
@@ -151,7 +151,7 @@ fn long_streaming_segment_starts_at_bounded_initial_buffer() {
     impl TtsWorker for LargeChunkWorker {
         fn synthesize(
             &mut self,
-            _: &str,
+            _: &TtsSynthesisRequest,
             _: &AtomicBool,
             on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
         ) -> Result<(), TtsError> {

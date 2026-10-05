@@ -51,6 +51,8 @@ pub struct SpeechOutput {
     playback_end_deadline: Option<Instant>,
     json_filter: JsonFilter,
     segmenter: SentenceSegmenter,
+    pending_filtered_text: String,
+    finish_requested: bool,
     max_pending: usize,
 }
 
@@ -67,7 +69,7 @@ mod tests;
 
 impl SpeechOutput {
     pub(crate) fn has_pending_capacity(&self) -> bool {
-        self.pending.len() < self.max_pending
+        self.pending.len() < self.max_pending && self.pending_filtered_text.is_empty()
     }
 
     pub fn with_config(
@@ -91,6 +93,8 @@ impl SpeechOutput {
             playback_end_deadline: None,
             json_filter: JsonFilter::default(),
             segmenter: SentenceSegmenter::new(config),
+            pending_filtered_text: String::new(),
+            finish_requested: false,
             max_pending,
         })
     }
@@ -119,28 +123,42 @@ impl SpeechOutput {
     /// Accepts LLM text incrementally. Every completed segment is admitted atomically.
     pub fn push_delta(&mut self, text: &str) -> Result<(), SpeechOutputError> {
         let text = self.json_filter.push(text);
-        for segment in self.segmenter.push(&text) {
-            self.enqueue(segment)?;
-        }
-        Ok(())
+        self.pending_filtered_text.push_str(&text);
+        self.advance_filtered_text()
     }
 
     pub fn finish_input(&mut self) -> Result<(), SpeechOutputError> {
-        let remaining = self.json_filter.finish();
-        for segment in self.segmenter.push(&remaining) {
-            self.enqueue(segment)?;
+        self.pending_filtered_text
+            .push_str(&self.json_filter.finish());
+        self.finish_requested = true;
+        self.advance_filtered_text()?;
+        Ok(())
+    }
+
+    fn advance_filtered_text(&mut self) -> Result<(), SpeechOutputError> {
+        let text = std::mem::take(&mut self.pending_filtered_text);
+        for (offset, ch) in text.char_indices() {
+            if self.pending.len() >= self.max_pending {
+                self.pending_filtered_text.push_str(&text[offset..]);
+                return Ok(());
+            }
+            for segment in self.segmenter.push(ch.encode_utf8(&mut [0; 4])) {
+                self.enqueue(segment)?;
+            }
         }
-        if let Some(segment) = self.segmenter.finish() {
-            self.enqueue(segment)?;
+        if self.finish_requested && self.pending.len() < self.max_pending {
+            if let Some(segment) = self.segmenter.finish() {
+                self.enqueue(segment)?;
+            }
+            if !self.started
+                && self.pending.is_empty()
+                && self.active_worker.is_none()
+                && self.packets.is_empty()
+            {
+                return Err(SpeechOutputError::Synthesis);
+            }
+            self.finish_input = true;
         }
-        if !self.started
-            && self.pending.is_empty()
-            && self.active_worker.is_none()
-            && self.packets.is_empty()
-        {
-            return Err(SpeechOutputError::Synthesis);
-        }
-        self.finish_input = true;
         Ok(())
     }
 }

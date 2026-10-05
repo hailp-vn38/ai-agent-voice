@@ -6,7 +6,10 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
-use voice_agent_server::models::{HttpModelAcquirer, ModelAcquirer, ModelError};
+use voice_agent_server::{
+    assets::HttpAssetAcquirer,
+    providers::assets::{AssetAcquirer, AssetError},
+};
 
 fn target() -> PathBuf {
     std::env::temp_dir().join(format!("voice-download-{}.part", uuid::Uuid::new_v4()))
@@ -51,7 +54,7 @@ fn interrupted_stream_retries_from_zero_without_appending_partial_bytes() {
         response("200 OK", &body, body.len()),
     ]);
     let target = target();
-    HttpModelAcquirer.acquire(&url, &target).unwrap();
+    HttpAssetAcquirer.acquire(&url, &target).unwrap();
     server.join().unwrap();
     assert_eq!(fs::read(&target).unwrap(), body);
     fs::remove_file(target).unwrap();
@@ -64,7 +67,7 @@ fn transient_server_error_is_retried() {
         response("200 OK", b"model", 5),
     ]);
     let target = target();
-    HttpModelAcquirer.acquire(&url, &target).unwrap();
+    HttpAssetAcquirer.acquire(&url, &target).unwrap();
     server.join().unwrap();
     assert_eq!(fs::read(&target).unwrap(), b"model");
     fs::remove_file(target).unwrap();
@@ -76,8 +79,8 @@ fn not_found_is_not_retried_and_leaves_no_partial_file() {
     let target = target();
     fs::write(&target, b"stale partial").unwrap();
     assert!(matches!(
-        HttpModelAcquirer.acquire(&url, &target),
-        Err(ModelError::Acquire(_))
+        HttpAssetAcquirer.acquire(&url, &target),
+        Err(AssetError::Download(_))
     ));
     server.join().unwrap();
     assert!(!target.exists());

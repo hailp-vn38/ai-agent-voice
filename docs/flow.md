@@ -2,6 +2,9 @@ Nên xây dựng luồng gồm **3 bước tạo provider**, sau đó chuyển s
 
 Đề xuất dưới đây dựa trên API `dev-test` đã kiểm tra.
 
+> Provider key do server tự sinh khi tạo. Phần hướng dẫn cập nhật cho web:
+> `docs/provider-generated-key-web-migration.md`.
+
 **1. Trang Providers**
 
 Giữ trang danh sách, thêm nút **“Tạo provider”** ở góc phải.
@@ -51,7 +54,7 @@ Chia form thành hai nhóm.
 
 | Nhóm | Trường cần có |
 |---|---|
-| Thông tin provider | Tên hiển thị, key |
+| Thông tin provider | Tên hiển thị |
 | Cấu hình adapter | Dựng theo `config_schema.fields` |
 | Credential, nếu cần | Tên biến môi trường trong `secret_ref` |
 
@@ -60,7 +63,6 @@ Ví dụ TTS ZeroTTS:
 | Trường | UI |
 |---|---|
 | Tên | Text input: “Giọng Mai Chi” |
-| Key | Text input: `tts_maichi` |
 | Model | Select |
 | Voice | Select |
 | Language | Select |
@@ -68,7 +70,7 @@ Ví dụ TTS ZeroTTS:
 | Delivery mode | Select `stream` / `file` |
 | Preload | Switch trong nhóm “Nâng cao” |
 
-Web có thể gợi ý key từ tên, nhưng cho người dùng sửa. Validate key theo quy tắc hiện tại: bắt đầu bằng chữ thường, chỉ chứa chữ thường, số và `_`, tối đa 64 ký tự.
+Provider key do server tự sinh khi tạo, theo format `{type}_{uuid32}`. Web không hiển thị input key và không gửi key trong POST request. Tên provider là thông tin người dùng quản lý; key là identity do server quản lý.
 
 Dựng control theo descriptor:
 
@@ -114,7 +116,7 @@ Hiển thị bản tóm tắt dễ đọc:
 | Nội dung | Ví dụ |
 |---|---|
 | Provider | Giọng Mai Chi |
-| Key | `tts_maichi` |
+| Key | Server tự tạo |
 | Loại / Adapter | TTS / ZeroTTS |
 | Model | ZeroTTS Default |
 | Voice / Language | Mai Chi / Vietnamese |
@@ -140,7 +142,6 @@ POST /api/admin/providers
 
 ```json
 {
-  "key": "tts_maichi",
   "name": "Giọng Mai Chi",
   "type": "tts",
   "adapter": "zerotts_onnx",
@@ -164,6 +165,8 @@ Sau `201 Created`, đóng drawer và mở trang chi tiết provider.
 Phần đầu hiển thị tên provider, loại, adapter và trạng thái:
 
 > **Đã tạo — chưa nạp runtime**
+
+Key trả về trong response `201` dùng làm định tuyến cho mọi thao tác phía sau: chi tiết provider, `prepare`, `test/*`, `capabilities`, `templates` và binding template. Hiển thị key ở dạng metadata kỹ thuật: read-only, copy được, không sửa được. Tên provider vẫn là thông tin chính trên UI.
 
 Bên dưới đặt khối **“Đưa provider vào sử dụng”** với các bước:
 
@@ -190,9 +193,11 @@ If-Match: "<template_revision>"
 
 ```json
 {
-  "provider_key": "tts_maichi"
+  "provider_key": "tts_c20963fea89d401e989de9f7a6851463"
 }
 ```
+
+Selector chọn provider lấy từ danh sách provider của server, không cho người dùng tự nhập key.
 
 Nếu vị trí TTS đã có provider, hiển thị rõ:
 

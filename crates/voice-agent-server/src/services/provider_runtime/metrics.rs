@@ -19,6 +19,14 @@ pub enum RuntimePhase {
     Unload,
     WorkerInit,
     Warmup,
+    /// Ensuring the provider's declared assets, including any missing download or transform.
+    ArtifactPrepare,
+    /// Resolving the provider's declared asset paths on the materialization path.
+    ArtifactVerify,
+    /// Adapter-owned native construction, e.g. reading the pinned ZeroTTS contract.
+    ProviderContract,
+    /// Wall time of one complete native materialization, from preparation through retention.
+    RuntimeTotal,
 }
 #[derive(Clone, Copy)]
 pub enum RuntimeCounter {
@@ -44,7 +52,7 @@ struct DurationSummary {
 }
 pub struct RuntimeMetrics {
     counters: [AtomicU64; 10],
-    durations: [Mutex<DurationSummary>; 10],
+    durations: [Mutex<DurationSummary>; 14],
 }
 impl Default for RuntimeMetrics {
     fn default() -> Self {
@@ -99,6 +107,10 @@ impl RuntimeMetrics {
             "unload",
             "worker_init",
             "warmup",
+            "artifact_prepare",
+            "artifact_verify",
+            "provider_contract",
+            "runtime_total",
         ];
         let counters: serde_json::Map<_, _> = names
             .into_iter()

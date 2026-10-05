@@ -1,9 +1,8 @@
 use crate::providers::{
     capabilities::{
-        CapabilityDiscoveryMode, CapabilitySource, DiscoverySource, LanguageOption, ModelOption,
-        ProviderCapabilities,
+        CapabilityDiscoveryMode, DiscoverySource, LanguageOption, ModelOption, ProviderCapabilities,
     },
-    descriptor::{ConfigFieldType, ProviderConfigSchema, ProviderDescriptor, ProviderType, field},
+    descriptor::{ProviderConfigSchema, ProviderDescriptor, ProviderType},
     registry::ProviderAdapterRegistration,
 };
 const MODELS: &[ModelOption] = &[ModelOption {
@@ -15,38 +14,12 @@ const VIETNAMESE: &[LanguageOption] = &[LanguageOption {
     id: "vi-VN",
     name: "Vietnamese",
 }];
-const FIELDS: &[crate::providers::descriptor::ProviderConfigField] = &[
-    field(
-        "model",
-        "Model",
-        ConfigFieldType::Select,
-        true,
-        Some(CapabilitySource::Models),
-        None,
-        None,
-        Some(128),
-    ),
-    field(
-        "num_threads",
-        "Threads",
-        ConfigFieldType::Integer,
-        true,
-        None,
-        Some(1),
-        Some(128),
-        None,
-    ),
-    field(
+const FIELDS: &[crate::providers::descriptor::ProviderConfigField] =
+    &[crate::providers::descriptor::select_field(
         "decoding_method",
         "Decoding method",
-        ConfigFieldType::String,
-        true,
-        None,
-        None,
-        None,
-        Some(64),
-    ),
-];
+        &["greedy_search", "modified_beam_search"],
+    )];
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     adapter: "zipformer_sherpa",
     provider_type: ProviderType::Asr,
@@ -72,7 +45,5 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         languages: DiscoverySource::Static,
     },
 };
-pub static REGISTRATION: ProviderAdapterRegistration = ProviderAdapterRegistration {
-    descriptor: &DESCRIPTOR,
-    bootstrap_inspector: None,
-};
+pub static REGISTRATION: ProviderAdapterRegistration =
+    ProviderAdapterRegistration::local(&DESCRIPTOR, None, Some(super::assets::ASSETS));

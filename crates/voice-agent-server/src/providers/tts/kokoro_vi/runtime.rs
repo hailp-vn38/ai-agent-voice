@@ -8,7 +8,7 @@ use ort::{session::Session, value::Tensor};
 use crate::{
     audio::PcmF32Mono,
     providers::{
-        tts::{TtsError, TtsWorker},
+        tts::{TtsError, TtsSynthesisRequest, TtsWorker},
         vad::initialize_ort,
     },
 };
@@ -77,14 +77,14 @@ impl TtsWorker for KokoroViWorker {
 
     fn synthesize(
         &mut self,
-        text: &str,
+        request: &TtsSynthesisRequest,
         cancelled: &AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }
-        let ids = self.tokenizer.encode(&self.g2p.phonemes(text)?)?;
+        let ids = self.tokenizer.encode(&self.g2p.phonemes(&request.text)?)?;
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }

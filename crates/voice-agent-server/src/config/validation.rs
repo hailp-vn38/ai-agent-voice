@@ -450,6 +450,23 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             )));
         }
     }
+    if config
+        .runtime
+        .onnx
+        .threads
+        .iter()
+        .any(|(adapter, threads)| {
+            crate::providers::local_model_identity(adapter).is_none()
+                || !(1..=128).contains(threads)
+        })
+        || config.runtime.chillaudio.ws_url.scheme() != "wss"
+        || config.runtime.chillaudio.ws_url.host_str().is_none()
+        || !(1..=120_000).contains(&config.runtime.chillaudio.timeout_ms)
+    {
+        return Err(ConfigError::Validation(
+            "invalid server-owned provider runtime configuration".into(),
+        ));
+    }
     for (id, instance) in &config.providers.asr.instances {
         validate_instance_id(id)?;
         registry.asr_factory(instance.adapter()).map_err(|_| {
@@ -460,9 +477,7 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
         })?;
         match instance {
             crate::config::AsrInstanceConfig::ZipformerSherpa(asr)
-                if asr.num_threads <= 0
-                    || asr.decoding_method.trim().is_empty()
-                    || asr.model.trim().is_empty() =>
+                if asr.num_threads <= 0 || asr.model.trim().is_empty() =>
             {
                 return Err(ConfigError::Validation(format!(
                     "ASR instance `{id}` has invalid runtime options or model identity"
@@ -598,11 +613,6 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
         &defaults.tts,
         &config.providers.tts.instances,
     )?;
-    let bindings = &config.effective_agent.providers;
-    require_instance("VAD", &bindings.vad, &config.providers.vad.instances)?;
-    require_instance("ASR", &bindings.asr, &config.providers.asr.instances)?;
-    require_instance("LLM", &bindings.llm, &config.providers.llm.instances)?;
-    require_instance("TTS", &bindings.tts, &config.providers.tts.instances)?;
     validate_vision(config)
 }
 
@@ -620,16 +630,9 @@ fn validate_vision(config: &AppConfig) -> Result<(), ConfigError> {
     if !vision.enabled {
         return Ok(());
     }
-    let binding = config
-        .effective_agent
-        .providers
-        .vision
-        .as_deref()
-        .ok_or_else(|| {
-            ConfigError::Validation(
-                "vision.enabled requires an effective Vision provider binding".into(),
-            )
-        })?;
+    let binding = config.provider_defaults.vision.as_deref().ok_or_else(|| {
+        ConfigError::Validation("vision.enabled requires a default Vision provider binding".into())
+    })?;
     require_instance("VISION", binding, &config.providers.vision.instances)?;
     if vision.advertise_via_mcp {
         let public_url = vision.public_url.as_ref().ok_or_else(|| {
@@ -693,35 +696,9 @@ fn validate_speech_output(config: &AppConfig) -> Result<(), ConfigError> {
 }
 
 fn validate_deployment(config: &AppConfig) -> Result<(), ConfigError> {
-    if config.deployment.models.sources.len() > 64
-        || config
-            .deployment
-            .models
-            .sources
-            .iter()
-            .any(|(source, remote)| {
-                !source.starts_with("prepared://")
-                    || source.len() > 512
-                    || remote.len() > 2048
-                    || !url::Url::parse(remote).is_ok_and(|url| {
-                        matches!(url.scheme(), "http" | "https")
-                            && url.host_str().is_some()
-                            && url.username().is_empty()
-                            && url.password().is_none()
-                            && url.fragment().is_none()
-                    })
-            })
-    {
+    if config.deployment.profile.is_empty() {
         return Err(ConfigError::Validation(
-            "deployment.models.sources requires at most 64 prepared:// keys and HTTP(S) URLs without credentials or fragments".into(),
-        ));
-    }
-    if config.deployment.profile.is_empty()
-        || config.deployment.model_manifest.as_os_str().is_empty()
-        || config.deployment.models.root.as_os_str().is_empty()
-    {
-        return Err(ConfigError::Validation(
-            "deployment profile and model manifest must be set".into(),
+            "deployment profile must be set".into(),
         ));
     }
     if config.runtime.onnx.library.as_os_str().is_empty() {
@@ -731,10 +708,6 @@ fn validate_deployment(config: &AppConfig) -> Result<(), ConfigError> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "model_sources_tests.rs"]
-mod model_sources_tests;
 
 #[cfg(test)]
 mod tests {

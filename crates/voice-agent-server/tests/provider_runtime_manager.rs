@@ -6,8 +6,8 @@ use voice_agent_server::{
     database::DesiredProvider,
     lifecycle::AdmissionGate,
     services::provider_runtime::{
-        ProviderRuntimeManager, ProviderVersion, RuntimeError, RuntimeLimits, RuntimeMaterializer,
-        RuntimeResource,
+        PreparedRuntime, ProviderRuntimeManager, ProviderVersion, RuntimeError, RuntimeLimits,
+        RuntimeMaterializer, RuntimeResource,
     },
 };
 
@@ -28,6 +28,7 @@ impl RuntimeMaterializer for Builder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -130,6 +131,7 @@ impl RuntimeMaterializer for BlockingBuilder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         self.entered.send(()).unwrap();
@@ -210,6 +212,7 @@ impl RuntimeMaterializer for FailureBuilder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -288,6 +291,7 @@ impl RuntimeMaterializer for QuotaBuilder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         quota: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         self.0.lock().unwrap().push(quota);
@@ -353,6 +357,7 @@ impl RuntimeMaterializer for DrainingBuilder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         Ok(self.0.clone())
@@ -559,6 +564,7 @@ impl RuntimeMaterializer for HealthBuilder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         Ok(Arc::new(HealthResource(self.0.clone())))
@@ -648,6 +654,7 @@ impl RuntimeMaterializer for SharedBuilder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -829,6 +836,7 @@ impl RuntimeMaterializer for InvalidMetadataBuilder {
     fn build(
         &self,
         _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
         Ok(Arc::new(InvalidMetadataResource { panic: self.panic }))

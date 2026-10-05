@@ -240,6 +240,17 @@ impl ProviderRuntimeManager {
         if !(1..=4096).contains(&total) {
             return Err(RuntimeError::Configuration);
         }
+        // A shared physical pool is admitted at its own native width, not at application
+        // concurrency, so extra logical views can never run concurrent work on one engine.
+        let physical_total = if resource_key.is_some() {
+            let physical_total = self.builder.physical_capacity(&snapshot)?;
+            if !(1..=4096).contains(&physical_total) {
+                return Err(RuntimeError::Configuration);
+            }
+            physical_total
+        } else {
+            total
+        };
         let global_capacity = self.builder.global_capacity(&snapshot)?;
         if global_capacity.is_some_and(|value| !(1..=4096).contains(&value)) {
             return Err(RuntimeError::Configuration);
@@ -404,7 +415,7 @@ impl ProviderRuntimeManager {
             let version = version.clone();
             let build_snapshot = snapshot.clone();
             let physical_quota = if resource_key.is_some() {
-                ProviderRuntimeAdmission::new(total, 1)
+                ProviderRuntimeAdmission::new(physical_total, 1)
             } else {
                 quota.clone()
             };
@@ -483,7 +494,7 @@ impl ProviderRuntimeManager {
         attempt: OwnedSemaphorePermit,
         preclaimed_load: Option<OwnedSemaphorePermit>,
     ) {
-        let speculative = preclaimed_load.is_some();
+        let started = Instant::now();
         let load = if preclaimed_load.is_some() {
             preclaimed_load
         } else {
@@ -499,6 +510,7 @@ impl ProviderRuntimeManager {
                 Err(RuntimeError::ShuttingDown),
                 None,
                 Some(attempt),
+                started,
             );
             return;
         }
@@ -533,13 +545,21 @@ impl ProviderRuntimeManager {
                     if !manager.gate.is_open() {
                         return Err(RuntimeError::ShuttingDown);
                     }
-                    if speculative {
-                        builder.prepare_artifacts(&snapshot)?;
-                    }
-                    builder.build(&snapshot, quota)
+                    // Assets are ensured here for every acquisition, not just speculative ones.
+                    // A build only resolves paths, so skipping this would hand it a model that is
+                    // not on disk and fail the request instead of fetching it.
+                    let prepared = builder.prepare_artifacts(&snapshot)?;
+                    builder.build(&snapshot, prepared, quota)
                 }))
                 .unwrap_or(Err(RuntimeError::Quarantined));
-                manager.complete(&native_version, generation, outcome, load, Some(attempt));
+                manager.complete(
+                    &native_version,
+                    generation,
+                    outcome,
+                    load,
+                    Some(attempt),
+                    started,
+                );
             });
         if spawn.is_err() {
             self.complete(
@@ -548,6 +568,7 @@ impl ProviderRuntimeManager {
                 Err(RuntimeError::Unavailable),
                 None,
                 None,
+                started,
             );
         }
     }
@@ -559,6 +580,7 @@ impl ProviderRuntimeManager {
         outcome: Result<Arc<dyn RuntimeResource>, RuntimeError>,
         mut load: Option<OwnedSemaphorePermit>,
         mut attempt: Option<OwnedSemaphorePermit>,
+        started: Instant,
     ) {
         let metadata = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             outcome.as_ref().ok().map(|resource| {
@@ -568,20 +590,40 @@ impl ProviderRuntimeManager {
                     resource.resource_key(),
                     resource.physical_admission(),
                     resource.readiness(),
+                    resource.materialization_timings(),
                 )
             })
         }));
         let metadata_failed = metadata.is_err();
-        let (capabilities, health_flags, actual_key, physical_admission, readiness) = metadata
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| (None, Vec::new(), None, None, Default::default()));
+        let (capabilities, health_flags, actual_key, physical_admission, readiness, timings) =
+            metadata.ok().flatten().unwrap_or_else(|| {
+                (
+                    None,
+                    Vec::new(),
+                    None,
+                    None,
+                    Default::default(),
+                    Default::default(),
+                )
+            });
         if !metadata_failed {
             self.metrics
                 .observe(super::RuntimePhase::WorkerInit, readiness.initialization);
             self.metrics
                 .observe(super::RuntimePhase::Warmup, readiness.warmup);
+            self.metrics.observe(
+                super::RuntimePhase::ArtifactPrepare,
+                timings.artifact_prepare,
+            );
+            self.metrics
+                .observe(super::RuntimePhase::ArtifactVerify, timings.artifact_verify);
+            self.metrics.observe(
+                super::RuntimePhase::ProviderContract,
+                timings.provider_contract,
+            );
         }
+        self.metrics
+            .observe(super::RuntimePhase::RuntimeTotal, started.elapsed());
         let mut registry = self.registry.lock().expect("runtime registry poisoned");
         let Some(entry) = registry.entries.get_mut(version) else {
             return;

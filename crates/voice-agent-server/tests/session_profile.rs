@@ -405,8 +405,7 @@ async fn assign(pool: &SqlitePool, template_id: i64, is_default: bool, enabled: 
     .unwrap();
 }
 
-/// Binds the four required slots.  An omitted kind leaves that slot unbound, which must make the
-/// Template invalid rather than partially defaulted.
+/// Binds explicit provider slots. Omitted kinds inherit their server defaults at admission.
 async fn bind(pool: &SqlitePool, template_id: i64, kinds: &[(&str, &str)]) {
     for (kind, key) in kinds {
         let provider_id: i64 = match sqlx::query_scalar("SELECT id FROM providers WHERE key = ?")
@@ -600,7 +599,7 @@ async fn an_agent_without_any_assignment_row_uses_server_defaults() {
 }
 
 #[tokio::test]
-async fn an_agent_with_only_a_disabled_assignment_never_falls_back_to_server_defaults() {
+async fn an_agent_with_only_a_disabled_assignment_uses_server_defaults() {
     let (base, url, task) = start(with_server_default_prompt(config(
         "127.0.0.1:0".parse().unwrap(),
         database_url(),
@@ -611,8 +610,13 @@ async fn an_agent_with_only_a_disabled_assignment_never_falls_back_to_server_def
     bind(&pool, template, &full_bindings("test")).await;
     assign(&pool, template, true, false).await;
 
-    let error = connect_async(request(&base)).await.unwrap_err();
-    assert_eq!(rejected_status(error), StatusCode::SERVICE_UNAVAILABLE);
+    let mut socket = admit(&base).await;
+    assert!(
+        speak_once(&mut socket)
+            .await
+            .contains(DEFAULT_PROMPT_MARKER),
+        "a soft-unlinked assignment does not block the deployment profile"
+    );
     task.abort();
 }
 
@@ -651,7 +655,7 @@ async fn a_disabled_default_template_fails_closed() {
 }
 
 #[tokio::test]
-async fn a_default_template_missing_a_binding_never_mixes_in_defaults() {
+async fn a_default_template_missing_a_binding_uses_the_server_default_for_that_slot() {
     let (base, url, task) = start(with_server_default_prompt(config(
         "127.0.0.1:0".parse().unwrap(),
         database_url(),
@@ -667,8 +671,11 @@ async fn a_default_template_missing_a_binding_never_mixes_in_defaults() {
     .await;
     assign(&pool, template, true, true).await;
 
-    let error = connect_async(request(&base)).await.unwrap_err();
-    assert_eq!(rejected_status(error), StatusCode::SERVICE_UNAVAILABLE);
+    let mut socket = admit(&base).await;
+    assert_eq!(
+        speak_once(&mut socket).await,
+        format!("default-llm[{TEMPLATE_PROMPT_V1}]")
+    );
     task.abort();
 }
 
@@ -1405,7 +1412,7 @@ async fn an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_s
 
 struct ManagedFixtureBuilder {
     config: AppConfig,
-    builds: Arc<Mutex<Vec<(i64, i64, String)>>>,
+    builds: Arc<Mutex<Vec<(i64, i64, String, String)>>>,
     supervisor: Arc<voice_agent_server::workers::WorkerSupervisor>,
 }
 struct ManagedFixtureResource(voice_agent_server::providers::RuntimeCatalog);
@@ -1433,6 +1440,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
     fn build(
         &self,
         row: &voice_agent_server::database::DesiredProvider,
+        _: Option<voice_agent_server::services::provider_runtime::PreparedRuntime>,
         _: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<
         Arc<dyn voice_agent_server::services::provider_runtime::RuntimeResource>,
@@ -1441,7 +1449,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
         self.builds
             .lock()
             .unwrap()
-            .push((row.id, row.revision, row.kind.clone()));
+            .push((row.id, row.revision, row.kind.clone(), row.key.clone()));
         let state = AppState::from_provider_set(
             self.config.clone(),
             Arc::new(ProviderSet::with_all(
@@ -1459,7 +1467,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
         );
         let runtimes = state
             .runtimes
-            .resolve(&state.config.effective_agent.providers)
+            .resolve(&state.config.provider_defaults.effective_bindings())
             .unwrap();
         self.supervisor.observe_asr(runtimes.asr.clone());
         self.supervisor.observe_vad(runtimes.vad.clone());
@@ -1478,6 +1486,117 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Man
             ),
         )))
     }
+}
+
+#[tokio::test]
+async fn managed_template_acquires_deployment_runtimes_for_missing_slots() {
+    use voice_agent_server::{
+        database::{AdmittedAssignment, AdmittedProviderBinding, DesiredProvider},
+        services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits},
+        session::resolve_managed_session_profile,
+    };
+
+    let state = AppState::from_provider_set(
+        config("127.0.0.1:0".parse().unwrap(), database_url()),
+        Arc::new(ProviderSet::with_all(
+            Arc::new(SilentVad),
+            Arc::new(FinalAsr),
+            Arc::new(EchoLlm {
+                label: "default-llm",
+            }),
+            Arc::new(ShortTts),
+        )),
+    );
+    let mut profile_config = state.config.as_ref().clone();
+    profile_config.provider_defaults.vad = "server_vad".into();
+    profile_config.provider_defaults.asr = "server_asr".into();
+    profile_config.provider_defaults.llm = "openai_primary".into();
+    profile_config.provider_defaults.tts = "server_tts".into();
+    let builds = Arc::new(Mutex::new(Vec::new()));
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 0,
+            max_waiters: 8,
+            max_resident_bytes: 8,
+            max_resources: 8,
+            max_version_entries: 8,
+            admission_timeout_ms: 2000,
+            failure_cooldown_ms: 10,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(ManagedFixtureBuilder {
+            config: profile_config.clone(),
+            builds: builds.clone(),
+            supervisor: state.worker_supervisor.clone(),
+        }),
+        state.admission_gate().clone(),
+    )
+    .unwrap();
+    let provider = |id: i64, kind: &str, key: &str| DesiredProvider {
+        id,
+        key: key.into(),
+        kind: kind.into(),
+        adapter: "fixture".into(),
+        revision: 1,
+        config_json: "{}".into(),
+        secret_ref: None,
+    };
+    let assignment = AdmittedAssignment {
+        template_id: 1,
+        template_key: "partial".into(),
+        template_name: "Partial".into(),
+        language: "vi-VN".into(),
+        prompt: TEMPLATE_PROMPT_V1.into(),
+        template_enabled: true,
+        template_revision: 1,
+        is_default: true,
+        assignment_enabled: true,
+        bindings: [("asr", "db_asr", 1), ("tts", "db_tts", 2)]
+            .map(|(kind, key, id)| AdmittedProviderBinding {
+                provider_type: kind.into(),
+                provider_key: key.into(),
+                provider_enabled: true,
+                snapshot: Some(Arc::new(provider(id, kind, key))),
+            })
+            .to_vec(),
+    };
+    let deployment = [
+        provider(0, "vad", "server_vad"),
+        provider(0, "llm", "openai_primary"),
+    ];
+    let profile = resolve_managed_session_profile(
+        2,
+        None,
+        1,
+        "home",
+        &[assignment],
+        &profile_config,
+        &manager,
+        &deployment,
+    )
+    .await
+    .unwrap();
+    assert_eq!(profile.providers.vad, "server_vad");
+    assert_eq!(profile.providers.asr, "db_asr");
+    assert_eq!(profile.providers.llm, "openai_primary");
+    assert_eq!(profile.providers.tts, "db_tts");
+    assert!(profile.selected_runtimes.is_some());
+    let actual = builds
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|build| build.3.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        actual,
+        std::collections::BTreeSet::from([
+            "server_vad".to_owned(),
+            "db_asr".to_owned(),
+            "openai_primary".to_owned(),
+            "db_tts".to_owned(),
+        ])
+    );
 }
 
 #[tokio::test]
@@ -1517,47 +1636,39 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     let client = reqwest::Client::new();
     let auth = "managed-test-token";
     let providers = format!("{base}/api/admin/providers");
+    let mut generated = Vec::new();
     for (kind, adapter, config_json) in [
-        (
-            "vad",
-            "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
-        ),
+        ("vad", "silero_onnx", serde_json::json!({})),
         (
             "asr",
             "gipformer_sherpa_offline",
-            serde_json::json!({"model":"gipformer15_vi_int8","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}),
+            serde_json::json!({"decoding_method":"greedy_search","max_active_paths":4}),
         ),
         (
             "llm",
             "openai",
             serde_json::json!({"base_url":"https://example.test/v1","model":"version-one"}),
         ),
-        (
-            "tts",
-            "zerotts_onnx",
-            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
-        ),
+        ("tts", "zerotts_onnx", serde_json::json!({"voice":"maichi"})),
     ] {
-        let response = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"key":format!("managed_{kind}"),"name":kind,"type":kind,"adapter":adapter,"config_json":config_json})).send().await.unwrap();
-        assert_eq!(
-            response.status(),
-            reqwest::StatusCode::CREATED,
-            "{}",
-            response.text().await.unwrap()
-        );
+        let response = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"name":kind,"type":kind,"adapter":adapter,"config_json":config_json})).send().await.unwrap();
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::CREATED, "{body}");
+        generated.push((kind, body["key"].as_str().unwrap().to_owned()));
     }
+    let llm_key = &generated[2].1;
     let response = client.post(format!("{base}/api/admin/templates")).bearer_auth(auth).json(&serde_json::json!({"key":"managed","name":"Managed","language":"vi-VN","prompt":"MANAGED-PROMPT"})).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::CREATED);
     let mut template: serde_json::Value = response.json().await.unwrap();
-    for kind in ["vad", "asr", "llm", "tts"] {
+    for (kind, provider_key) in &generated {
         let response = client
             .put(format!(
                 "{base}/api/admin/templates/managed/providers/{kind}"
             ))
             .bearer_auth(auth)
             .header("if-match", format!("\"{}\"", template["revision"]))
-            .json(&serde_json::json!({"provider_key":format!("managed_{kind}")}))
+            .json(&serde_json::json!({"provider_key":provider_key}))
             .send()
             .await
             .unwrap();
@@ -1579,7 +1690,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         "CRUD must not build runtimes"
     );
     let cold: serde_json::Value = client
-        .get(format!("{providers}/managed_llm"))
+        .get(format!("{providers}/{llm_key}"))
         .bearer_auth(auth)
         .send()
         .await
@@ -1598,10 +1709,10 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
             .starts_with("managed-v1[MANAGED-PROMPT]")
     );
     assert_eq!(builds.lock().unwrap().len(), 4);
-    let response = client.patch(format!("{providers}/managed_llm")).bearer_auth(auth).header("if-match", "\"1\"").json(&serde_json::json!({"config_json":{"base_url":"https://example.test/v1","model":"version-two"}})).send().await.unwrap();
+    let response = client.patch(format!("{providers}/{llm_key}")).bearer_auth(auth).header("if-match", "\"1\"").json(&serde_json::json!({"config_json":{"base_url":"https://example.test/v1","model":"version-two"}})).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let changed: serde_json::Value = client
-        .get(format!("{providers}/managed_llm"))
+        .get(format!("{providers}/{llm_key}"))
         .bearer_auth(auth)
         .send()
         .await
@@ -1634,10 +1745,12 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         5,
         "only changed exact version is built"
     );
-    let created = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"key":"unbound_llm","name":"Unbound","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"unbound"}})).send().await.unwrap();
+    let created = client.post(&providers).bearer_auth(auth).json(&serde_json::json!({"name":"Unbound","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"unbound"}})).send().await.unwrap();
     assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+    let created: serde_json::Value = created.json().await.unwrap();
+    let unbound = created["key"].as_str().unwrap().to_owned();
     let prepared = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({}))
         .send()
@@ -1649,10 +1762,10 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         prepared.text().await.unwrap()
     );
     let prepared: serde_json::Value = prepared.json().await.unwrap();
-    assert_eq!(prepared["provider_key"], "unbound_llm");
+    assert_eq!(prepared["provider_key"], unbound);
     assert_eq!(prepared["desired_revision"], 1);
     let invalid = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({"config_json":{"model":"override"}}))
         .send()
@@ -1660,7 +1773,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         .unwrap();
     assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
     let ready = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({}))
         .send()
@@ -1673,7 +1786,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         "repeated prepare is idempotent"
     );
     let tested = client
-        .post(format!("{providers}/unbound_llm/test/llm"))
+        .post(format!("{providers}/{unbound}/test/llm"))
         .bearer_auth(auth)
         .json(&serde_json::json!({"input":"fixture"}))
         .send()
@@ -1696,7 +1809,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
     );
     assert_eq!(builds.lock().unwrap().len(), 6);
     let disabled = client
-        .patch(format!("{providers}/unbound_llm"))
+        .patch(format!("{providers}/{unbound}"))
         .bearer_auth(auth)
         .header("If-Match", "\"1\"")
         .json(&serde_json::json!({"enabled":false}))
@@ -1705,7 +1818,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         .unwrap();
     assert_eq!(disabled.status(), reqwest::StatusCode::OK);
     let denied = client
-        .post(format!("{providers}/unbound_llm/prepare"))
+        .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)
         .json(&serde_json::json!({}))
         .send()
@@ -1739,6 +1852,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Pre
     fn build(
         &self,
         row: &voice_agent_server::database::DesiredProvider,
+        prepared: Option<voice_agent_server::services::provider_runtime::PreparedRuntime>,
         quota: voice_agent_server::workers::ProviderRuntimeAdmission,
     ) -> Result<
         Arc<dyn voice_agent_server::services::provider_runtime::RuntimeResource>,
@@ -1746,7 +1860,7 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer for Pre
     > {
         self.entered.send(()).unwrap();
         self.release.lock().unwrap().recv().unwrap();
-        self.inner.build(row, quota)
+        self.inner.build(row, prepared, quota)
     }
 }
 #[tokio::test]
@@ -1787,14 +1901,18 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     .await;
     let client = reqwest::Client::new();
     let providers = format!("{base}/api/admin/providers");
-    for key in ["first", "second"] {
+    let mut generated = Vec::new();
+    for name in ["first", "second"] {
         let created = client.post(&providers).bearer_auth("prepare-test-token")
-            .json(&serde_json::json!({"key":key,"name":key,"type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"fixture"}}))
+            .json(&serde_json::json!({"name":name,"type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"fixture"}}))
             .send().await.unwrap();
         assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+        let created: serde_json::Value = created.json().await.unwrap();
+        generated.push(created["key"].as_str().unwrap().to_owned());
     }
+    let (first_key, second_key) = (&generated[0], &generated[1]);
     let first = client
-        .post(format!("{providers}/first/prepare"))
+        .post(format!("{providers}/{first_key}/prepare"))
         .bearer_auth("prepare-test-token")
         .json(&serde_json::json!({}))
         .send()
@@ -1802,11 +1920,11 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
         .unwrap();
     assert_eq!(first.status(), reqwest::StatusCode::ACCEPTED);
     let accepted: serde_json::Value = first.json().await.unwrap();
-    assert_eq!(accepted["provider_key"], "first");
+    assert_eq!(accepted["provider_key"], *first_key);
     assert_eq!(accepted["desired_revision"], 1);
     entered_rx.recv().await.unwrap();
     let blocked = client
-        .post(format!("{providers}/second/prepare"))
+        .post(format!("{providers}/{second_key}/prepare"))
         .bearer_auth("prepare-test-token")
         .json(&serde_json::json!({}))
         .send()
@@ -1817,7 +1935,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
     loop {
         let response = client
-            .get(format!("{providers}/first"))
+            .get(format!("{providers}/{first_key}"))
             .bearer_auth("prepare-test-token")
             .send()
             .await
@@ -1830,7 +1948,7 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
         tokio::task::yield_now().await;
     }
     let ready = client
-        .post(format!("{providers}/first/prepare"))
+        .post(format!("{providers}/{first_key}/prepare"))
         .bearer_auth("prepare-test-token")
         .json(&serde_json::json!({}))
         .send()

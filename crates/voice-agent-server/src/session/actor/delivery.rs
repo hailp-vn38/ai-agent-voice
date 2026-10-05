@@ -103,6 +103,11 @@ impl SessionActor {
         } else {
             Vec::new()
         };
+        let tool_count = tools.len();
+        let profile_source = match &self.profile.source {
+            crate::session::ProfileSource::ServerDefault => "server_default",
+            crate::session::ProfileSource::Template { .. } => "template",
+        };
         // A tool that can change the final answer forces its whole round to be buffered
         // (ADR-0018), so the round's prose is never spoken before the tools have had their say.
         // The builtin tools are different: a normal no-tool response must retain
@@ -127,7 +132,13 @@ impl SessionActor {
             self.complete_recognition();
             return;
         }
-        info!("LLM operation started");
+        info!(
+            event = "llm_operation_started",
+            profile_source,
+            system_prompt_bytes = self.profile.system_prompt.len(),
+            tool_count,
+            "LLM operation started"
+        );
         self.llm_operation = Some(identity);
     }
 
@@ -149,7 +160,7 @@ impl SessionActor {
             LlmRuntimeEvent::TextDelta { identity, .. }
             | LlmRuntimeEvent::ToolCall { identity, .. }
             | LlmRuntimeEvent::Finished { identity }
-            | LlmRuntimeEvent::Failed { identity }
+            | LlmRuntimeEvent::Failed { identity, .. }
             | LlmRuntimeEvent::Cancelled { identity } => identity,
         };
         if self.llm_operation.as_ref() != Some(identity)
@@ -200,9 +211,22 @@ impl SessionActor {
                 };
                 round.calls.push(call);
             }
-            LlmRuntimeEvent::Failed { .. } | LlmRuntimeEvent::Cancelled { .. } => {
+            LlmRuntimeEvent::Failed { reason, .. } => {
                 self.llm_operation = None;
-                warn!("LLM operation ended without a deliverable response");
+                warn!(
+                    event = "llm_operation_ended_without_deliverable",
+                    reason = ?reason,
+                    "LLM operation ended without a deliverable response"
+                );
+                self.fail_speech_delivery();
+            }
+            LlmRuntimeEvent::Cancelled { .. } => {
+                self.llm_operation = None;
+                warn!(
+                    event = "llm_operation_ended_without_deliverable",
+                    reason = "cancelled",
+                    "LLM operation ended without a deliverable response"
+                );
                 self.fail_speech_delivery();
             }
         }

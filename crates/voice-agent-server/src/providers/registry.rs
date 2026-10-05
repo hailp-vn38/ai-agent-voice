@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use super::{
+    assets::ProviderAssetManager,
     descriptor::{ProviderDescriptor, ProviderType},
     inspector::{BootstrapCapabilityInspector, DiscoveredCapabilities, ProviderInspectError},
 };
@@ -9,6 +10,30 @@ use super::{
 pub struct ProviderAdapterRegistration {
     pub descriptor: &'static ProviderDescriptor,
     pub bootstrap_inspector: Option<&'static dyn BootstrapCapabilityInspector>,
+    /// Present only for adapters that load model files from this host. Remote adapters leave it
+    /// `None`, which is how the runtime manager knows a provider has nothing to prepare.
+    pub assets: Option<&'static dyn ProviderAssetManager>,
+}
+
+impl ProviderAdapterRegistration {
+    pub const fn local(
+        descriptor: &'static ProviderDescriptor,
+        bootstrap_inspector: Option<&'static dyn BootstrapCapabilityInspector>,
+        assets: Option<&'static dyn ProviderAssetManager>,
+    ) -> Self {
+        Self {
+            descriptor,
+            bootstrap_inspector,
+            assets,
+        }
+    }
+
+    pub const fn remote(
+        descriptor: &'static ProviderDescriptor,
+        bootstrap_inspector: Option<&'static dyn BootstrapCapabilityInspector>,
+    ) -> Self {
+        Self::local(descriptor, bootstrap_inspector, None)
+    }
 }
 
 pub struct ProviderAdapterRegistry {
@@ -29,10 +54,20 @@ impl ProviderAdapterRegistry {
     }
 
     pub fn get(&self, adapter: &str) -> Option<&'static ProviderDescriptor> {
+        self.registration(adapter)
+            .map(|registration| registration.descriptor)
+    }
+
+    /// The full registration for an adapter, including how it obtains its model files.
+    pub fn registration(&self, adapter: &str) -> Option<&'static ProviderAdapterRegistration> {
         self.registrations
             .iter()
             .find(|item| item.descriptor.adapter == adapter)
-            .map(|item| item.descriptor)
+    }
+
+    /// The asset manager an adapter registered, if it loads local model files.
+    pub fn assets(&self, adapter: &str) -> Option<&'static dyn ProviderAssetManager> {
+        self.registration(adapter).and_then(|item| item.assets)
     }
 
     pub fn supports(&self, adapter: &str, provider_type: &str) -> bool {
@@ -45,9 +80,7 @@ impl ProviderAdapterRegistry {
         adapter: &str,
         selection: &Value,
     ) -> Result<DiscoveredCapabilities, ProviderInspectError> {
-        self.registrations
-            .iter()
-            .find(|item| item.descriptor.adapter == adapter)
+        self.registration(adapter)
             .and_then(|item| item.bootstrap_inspector)
             .ok_or(ProviderInspectError::Unsupported)?
             .inspect(selection)
@@ -55,7 +88,7 @@ impl ProviderAdapterRegistry {
 }
 
 static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
-    super::vad::silero_descriptor::REGISTRATION,
+    super::vad::silero::descriptor::REGISTRATION,
     super::asr::zipformer::descriptor::REGISTRATION,
     super::asr::gipformer::descriptor::REGISTRATION,
     super::llm::openai::descriptor::REGISTRATION,

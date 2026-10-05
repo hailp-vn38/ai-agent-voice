@@ -74,6 +74,8 @@ tts_concurrency = 2
 vision_concurrency = 2
 
 [provider_defaults]
+# Server-wide fallback providers. A Template may override each slot independently;
+# an absent Template binding uses the corresponding provider declared here.
 vad = "silero_default"
 asr = "gipformer_vi"
 llm = "openai_primary"
@@ -100,8 +102,6 @@ advertise_via_mcp = false
 
 [providers.vad.instances.silero_default]
 adapter = "silero_onnx"
-model = "silero_vad_v5"
-num_threads = 1
 min_speech_ms = 180
 end_silence_ms = 600
 pre_roll_ms = 300
@@ -110,8 +110,6 @@ exit_threshold = 0.35
 
 [providers.asr.instances.zipformer_vi]
 adapter = "zipformer_sherpa"
-model = "zipformer_vi_streaming"
-num_threads = 2
 decoding_method = "greedy_search"
 
 # Gipformer is an offline ASR candidate: PCM is buffered during capture and
@@ -119,8 +117,6 @@ decoding_method = "greedy_search"
 # until a local qualification benchmark supports changing it.
 [providers.asr.instances.gipformer_vi]
 adapter = "gipformer_sherpa_offline"
-model = "gipformer15_vi_int8"
-num_threads = 4
 decoding_method = "modified_beam_search"
 max_active_paths = 4
 
@@ -132,8 +128,6 @@ model = "model-name"
 
 [providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"
-model = "zerotts_default"
-num_threads = 2
 voice = "maichi"
 delivery_mode = "stream"
 
@@ -143,14 +137,11 @@ delivery_mode = "stream"
 adapter = "chillaudio_ws"
 token = "set-deployment-token-here"
 # voice = "BV421_vivn_streaming"
-# timeout_ms = 12000
 
-# Local Vietnamese Kokoro. Install the pinned model, its prepared voicepack,
-# and the deployment-owned G2P sidecar before selecting this instance.
+# Local Vietnamese Kokoro. Model Preparation acquires and converts all pinned
+# voicepacks. Install the deployment-owned G2P sidecar before selecting it.
 # [providers.tts.instances.kokoro_vi]
 # adapter = "kokoro_vi_onnx"
-# model = "kokoro_vi_contextbox"
-# num_threads = 1
 # voice = "diem_trinh"
 # language = "vi-VN"
 # speed_percent = 100
@@ -186,41 +177,29 @@ command_queue_capacity = 32
 cleanup_grace_ms = 5000
 
 [deployment]
-model_manifest = "models/manifest.toml"
 profile = "development-noncommercial"
 
-[deployment.models]
-root = "models"
-offline = false
-
-# Startup verifies/downloads local models before constructing provider runtimes.
-# Existing verified artifacts are reused without contacting the source.
-# Deployment-prepared artifacts need a checksum-matching binary at an HTTP(S) URL:
-# [deployment.models.sources]
-# "prepared://deployment/kokoro-vi/voicepacks/diem_trinh.bin" = "https://your-artifact-host/diem_trinh.bin"
-
+# Model files are owned by each provider: it downloads what it is missing into `models/` when the
+# runtime manager materializes it, and reuses whatever is already there. Nothing here configures
+# where models live or where they come from.
 [runtime.onnx]
 library = "runtime/onnxruntime/libonnxruntime.dylib"
 
-[[deployment.model_acknowledgements]]
-model = "silero_vad_v5"
-revision = "60b7ffa243625ebdc1070275a29f18c87843786a"
-license = "MIT"
+# Server-owned execution settings. Admin provider JSON cannot override these.
+[runtime.onnx.threads]
+silero_onnx = 1
+zipformer_sherpa = 2
+gipformer_sherpa_offline = 4
+zerotts_onnx = 2
+kokoro_vi_onnx = 2
 
-[[deployment.model_acknowledgements]]
-model = "zipformer_vi_streaming"
-revision = "c122fdc21cea4894fd775e9d3fe66ebbc787e26b"
-license = "CC-BY-NC-ND-4.0"
+[runtime.chillaudio]
+# ws_url = "wss://your-deployment-chillaudio-endpoint.example/ws"
+timeout_ms = 12000
 
-[[deployment.model_acknowledgements]]
-model = "gipformer15_vi_int8"
-revision = "dd9227dcd8705c13f33bdbe59728d546ab94480f"
-license = "MIT"
 
-[[deployment.model_acknowledgements]]
-model = "zerotts_default"
-revision = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
-license = "MIT; bundled-codec=Apache-2.0"
+
+
 
 [llm]
 max_history_messages = 20
@@ -250,15 +229,11 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 """
 # prompt_template = "prompts/custom-voice-assistant.txt"
 
-# Optional agent-specific bindings override [provider_defaults].
-# [agent.providers]
-# tts = "chillaudio_default"
-# asr = "gipformer_vi"
-
 # Optional bounded hot-runtime manager. Enable only after measuring every adapter/model/worker
-# envelope on the deployment host. The manifest receipt prevents reusing stale measurements after
-# artifact metadata changes. See docs/provider-runtime-manager-qualification.md for the development
-# host example and the qualification boundary.
+# envelope on the deployment host. A measured envelope stays valid for as long as the provider's
+# pinned model revision and execution settings are unchanged; bumping either requires measuring
+# again. See docs/provider-runtime-manager-qualification.md for the development host example and the
+# qualification boundary.
 # [provider_runtime]
 # max_parallel_loads = 1
 # max_pending_loads = 8
@@ -270,7 +245,6 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # startup_timeout_ms = 60000
 # failure_cooldown_ms = 1000
 # idle_ttl_ms = 600000
-# measured_manifest_sha256 = "replace-with-measured-manifest-sha256"
 #
 # [provider_runtime.estimated_peak_bytes]
 # silero_onnx = 134217728

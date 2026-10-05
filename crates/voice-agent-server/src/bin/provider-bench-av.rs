@@ -10,7 +10,6 @@ use voice_agent_server::{
         run_asr_provider, run_llm_provider, run_vad_provider, summarize,
     },
     config::{AppConfig, BenchmarkTarget},
-    models::prepare,
     providers::{
         compiled_provider_registry,
         llm::{ChatMessage, LlmRequest},
@@ -94,7 +93,7 @@ async fn run_llm(
         anyhow::bail!("LLM workload item id and messages must not be empty")
     }
     let config = AppConfig::load_for_benchmark(&args.config, BenchmarkTarget::LlmProvider)?;
-    let instance = &config.providers.llm.instances[&config.effective_agent().providers.llm];
+    let instance = &config.providers.llm.instances[&config.provider_defaults.llm];
     let factory = registry.llm_factory(instance.adapter())?;
     let provider = factory.build(instance)?;
     for item in &workload.items {
@@ -167,20 +166,11 @@ fn run_asr(
     registry: &voice_agent_server::providers::ProviderRegistry,
 ) -> anyhow::Result<()> {
     let config = AppConfig::load_for_benchmark(&args.config, BenchmarkTarget::AsrProvider)?;
-    let instance = &config.providers.asr.instances[&config.effective_agent().providers.asr];
+    let instance = &config.providers.asr.instances[&config.provider_defaults.asr];
     let factory = registry.asr_factory(instance.adapter())?;
-    let identity = factory.model_identity(instance)?;
-    let model = prepare(
-        &config.deployment.model_manifest,
-        &config.deployment.models.root,
-        config.deployment.models.offline,
-        identity,
-        factory.adapter(),
-        &config.deployment,
-    )?;
     let provider = factory.build(
         instance,
-        &model,
+        &config.runtime,
         usize::try_from(config.audio.max_utterance_ms)? * 16,
     )?;
     for (_, samples) in &audio {
@@ -231,18 +221,9 @@ fn run_vad(
     registry: &voice_agent_server::providers::ProviderRegistry,
 ) -> anyhow::Result<()> {
     let config = AppConfig::load_for_benchmark(&args.config, BenchmarkTarget::VadProvider)?;
-    let instance = &config.providers.vad.instances[&config.effective_agent().providers.vad];
+    let instance = &config.providers.vad.instances[&config.provider_defaults.vad];
     let factory = registry.vad_factory(instance.adapter())?;
-    let identity = factory.model_identity(instance)?;
-    let model = prepare(
-        &config.deployment.model_manifest,
-        &config.deployment.models.root,
-        config.deployment.models.offline,
-        identity,
-        factory.adapter(),
-        &config.deployment,
-    )?;
-    let provider = factory.build(instance, &config.runtime, &model)?;
+    let provider = factory.build(instance, &config.runtime)?;
     for (_, samples) in &audio {
         for _ in 0..args.warmup {
             run_vad_provider(provider.as_ref(), samples)?;

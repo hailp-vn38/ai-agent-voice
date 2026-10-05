@@ -9,8 +9,64 @@ use std::{collections::HashMap, sync::Arc};
 use crate::config::DatabaseDevicesConfig;
 use sqlx::{Sqlite, Transaction};
 use thiserror::Error;
+use tracing::{info, warn};
 
 use super::{Database, DatabaseError, map_sqlx_error};
+
+/// How many assignments the diagnostic line renders before it summarizes the rest.  Admission
+/// itself admits up to 64, and telemetry has to stay bounded regardless of what an operator
+/// accumulated through the Admin API.
+const LOGGED_ASSIGNMENTS: usize = 8;
+
+/// Renders the Template graph for one connection's admission decision.
+///
+/// Every field here is something the resolver branches on, so the line answers "which row made
+/// this fail" without a second query. It deliberately carries **no** prompt text, no provider
+/// `config_json`, no `secret_ref` and no raw Device/Client ID: ADR 0024 keeps telemetry to
+/// operational metadata, so a prompt is reported by length and an identity by its database id.
+fn summarize_assignments(assignments: &[AdmittedAssignment]) -> String {
+    let mut rendered = String::new();
+    for assignment in assignments.iter().take(LOGGED_ASSIGNMENTS) {
+        if !rendered.is_empty() {
+            rendered.push_str("; ");
+        }
+        let bindings = assignment
+            .bindings
+            .iter()
+            .map(|binding| {
+                format!(
+                    "{}={}(enabled={},resolved={})",
+                    binding.provider_type,
+                    binding.provider_key,
+                    binding.provider_enabled,
+                    binding.snapshot.is_some()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = std::fmt::Write::write_fmt(
+            &mut rendered,
+            format_args!(
+                "{}(id={},rev={},default={},assignment_enabled={},template_enabled={},prompt_bytes={},bindings=[{}])",
+                assignment.template_key,
+                assignment.template_id,
+                assignment.template_revision,
+                assignment.is_default,
+                assignment.assignment_enabled,
+                assignment.template_enabled,
+                assignment.prompt.len(),
+                bindings
+            ),
+        );
+    }
+    if assignments.len() > LOGGED_ASSIGNMENTS {
+        let _ = std::fmt::Write::write_fmt(
+            &mut rendered,
+            format_args!("; +{} more", assignments.len() - LOGGED_ASSIGNMENTS),
+        );
+    }
+    rendered
+}
 
 /// Immutable database facts captured before a WebSocket is upgraded.
 ///
@@ -21,8 +77,8 @@ pub struct DeviceAdmissionGraph {
     pub device_db_id: i64,
     pub template_override_id: Option<i64>,
     pub agent: AdmittedAgent,
-    /// Every assignment row the Agent has, including disabled ones.  A non-empty list means the
-    /// Agent entered the Template mechanism and can never fall back to server defaults.
+    /// Enabled assignment rows only. Soft-unlinked rows remain in SQLite for audit/history but
+    /// are outside the Voice admission graph.
     pub assignments: Vec<AdmittedAssignment>,
 }
 
@@ -81,7 +137,13 @@ impl Database {
         match self.find_admission(device_id).await? {
             Some(admission) => Ok(admission),
             None if devices.auto_register => self.auto_register_and_admit(device_id, devices).await,
-            None => Err(DeviceAdmissionError::Denied),
+            None => {
+                warn!(
+                    auto_register = devices.auto_register,
+                    "device admission denied: no device row matches this identity"
+                );
+                Err(DeviceAdmissionError::Denied)
+            }
         }
     }
 
@@ -111,10 +173,27 @@ impl Database {
         };
 
         if device_enabled == 0 || agent_enabled == 0 {
+            warn!(
+                device_db_id,
+                agent_id,
+                agent_key = %key,
+                device_enabled = device_enabled == 1,
+                agent_enabled = agent_enabled == 1,
+                "device admission denied: the device row or its agent is disabled"
+            );
             return Err(DeviceAdmissionError::Denied);
         }
         let assignments = self.assignment_graph(agent_id, &mut transaction).await?;
         transaction.commit().await.map_err(map_sqlx_error)?;
+        info!(
+            device_db_id,
+            agent_id,
+            agent_key = %key,
+            template_override_id = ?template_override_id,
+            assignment_count = assignments.len(),
+            assignments = %summarize_assignments(&assignments),
+            "device admission graph resolved from the database"
+        );
         Ok(Some(DeviceAdmissionGraph {
             device_db_id,
             template_override_id,
@@ -123,15 +202,15 @@ impl Database {
         }))
     }
 
-    /// Bounded metadata/size checks and two graph reads cover the Template graph.  Bindings are read for every assigned
-    /// Template in one statement so admission never scales with the number of assignments.
+    /// Bounded metadata/size checks and two graph reads cover active Template assignments.
+    /// Bindings are read in one statement so admission never scales with the number of assignments.
     async fn assignment_graph(
         &self,
         agent_id: i64,
         transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<Vec<AdmittedAssignment>, DeviceAdmissionError> {
         let assignment_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM (SELECT template_id FROM agent_template_assignments WHERE agent_id=? LIMIT 65)",
+            "SELECT COUNT(*) FROM (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1 LIMIT 65)",
         ).bind(agent_id).fetch_one(&mut **transaction).await.map_err(map_sqlx_error)?;
         if assignment_count > 64 {
             return Err(DeviceAdmissionError::Unavailable);
@@ -142,11 +221,11 @@ impl Database {
             "SELECT COALESCE((SELECT SUM(length(CAST(t.key AS BLOB)) + length(CAST(t.name AS BLOB)) + \
                     length(CAST(t.language AS BLOB)) + length(CAST(t.prompt AS BLOB))) \
                 FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id \
-                WHERE ata.agent_id=?),0) + COALESCE((SELECT SUM(length(CAST(p.key AS BLOB)) + \
+                WHERE ata.agent_id=? AND ata.enabled=1),0) + COALESCE((SELECT SUM(length(CAST(p.key AS BLOB)) + \
                     length(CAST(p.type AS BLOB)) + length(CAST(p.adapter AS BLOB)) + \
                     length(CAST(p.config_json AS BLOB)) + COALESCE(length(CAST(p.secret_ref AS BLOB)),0)) \
                 FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id \
-                WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=?)),0)",
+                WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1)),0)",
         )
         .bind(agent_id)
         .bind(agent_id)
@@ -161,7 +240,7 @@ impl Database {
                     ata.is_default, ata.enabled \
              FROM agent_template_assignments ata \
              JOIN agent_templates t ON t.id = ata.template_id \
-             WHERE ata.agent_id = ? ORDER BY t.id LIMIT 65",
+             WHERE ata.agent_id = ? AND ata.enabled=1 ORDER BY t.id LIMIT 65",
         )
         .bind(agent_id)
         .fetch_all(&mut **transaction)
@@ -175,7 +254,7 @@ impl Database {
              FROM template_provider_bindings b \
              JOIN providers p ON p.id = b.provider_id \
              WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments \
-                                     WHERE agent_id = ?) \
+                                     WHERE agent_id = ? AND enabled=1) \
              ORDER BY b.template_id, b.provider_type LIMIT 257",
         )
         .bind(agent_id)
@@ -309,5 +388,101 @@ impl Database {
         self.find_admission(device_id)
             .await?
             .ok_or(DeviceAdmissionError::Denied)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::DesiredProvider;
+
+    fn assignment() -> AdmittedAssignment {
+        AdmittedAssignment {
+            template_id: 7,
+            template_key: "kitchen".into(),
+            template_name: "Kitchen".into(),
+            language: "vi-VN".into(),
+            prompt: "PROMPT-MUST-NOT-BE-LOGGED".into(),
+            template_enabled: true,
+            template_revision: 3,
+            is_default: false,
+            assignment_enabled: true,
+            bindings: vec![AdmittedProviderBinding {
+                provider_type: "llm".into(),
+                provider_key: "llm_main".into(),
+                provider_enabled: true,
+                snapshot: Some(Arc::new(DesiredProvider {
+                    id: 9,
+                    key: "llm_main".into(),
+                    kind: "llm".into(),
+                    adapter: "openai".into(),
+                    config_json: "CONFIG-MUST-NOT-BE-LOGGED".into(),
+                    secret_ref: Some("SECRET-REF-MUST-NOT-BE-LOGGED".into()),
+                    revision: 1,
+                })),
+            }],
+        }
+    }
+
+    /// The admission line exists to make the graph legible, and ADR 0024 keeps telemetry free of
+    /// prompt text, provider config and credentials. Both halves are asserted here because a
+    /// formatter is exactly where that constraint decays without any test noticing.
+    #[test]
+    fn admission_summary_reports_decision_facts_without_sensitive_values() {
+        let rendered = summarize_assignments(std::slice::from_ref(&assignment()));
+
+        for expected in [
+            "kitchen",
+            "id=7",
+            "rev=3",
+            "default=false",
+            "assignment_enabled=true",
+            "template_enabled=true",
+            "prompt_bytes=25",
+            "llm=llm_main(enabled=true,resolved=true)",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "{expected} missing from {rendered}"
+            );
+        }
+        for forbidden in [
+            "PROMPT-MUST-NOT-BE-LOGGED",
+            "CONFIG-MUST-NOT-BE-LOGGED",
+            "SECRET-REF-MUST-NOT-BE-LOGGED",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "{forbidden} leaked into {rendered}"
+            );
+        }
+    }
+
+    /// A `None` snapshot is an opaque refusal upstream, so the line has to show it per binding
+    /// rather than leave the operator to guess which slot failed to resolve.
+    #[test]
+    fn admission_summary_marks_an_unresolved_binding() {
+        let mut unresolved = assignment();
+        unresolved.bindings[0].snapshot = None;
+        let rendered = summarize_assignments(std::slice::from_ref(&unresolved));
+        assert!(
+            rendered.contains("llm_main(enabled=true,resolved=false)"),
+            "{rendered}"
+        );
+    }
+
+    /// Telemetry has to stay bounded no matter what an operator accumulated through the Admin API.
+    #[test]
+    fn admission_summary_truncates_beyond_the_bounded_prefix() {
+        let many: Vec<AdmittedAssignment> = (0..LOGGED_ASSIGNMENTS + 5)
+            .map(|index| AdmittedAssignment {
+                template_key: format!("t{index}"),
+                ..assignment()
+            })
+            .collect();
+        let rendered = summarize_assignments(&many);
+        assert!(rendered.contains("t7"), "{rendered}");
+        assert!(!rendered.contains("t8"), "{rendered}");
+        assert!(rendered.contains("+5 more"), "{rendered}");
     }
 }

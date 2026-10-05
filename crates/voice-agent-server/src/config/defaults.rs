@@ -166,23 +166,17 @@ pub(super) fn default_asr_worker_count() -> usize {
 pub(crate) fn default_asr_threads() -> i32 {
     2
 }
-pub(crate) fn default_decoding_method() -> String {
-    "greedy_search".into()
+pub(crate) fn default_decoding_method() -> super::TransducerDecodingMethod {
+    super::TransducerDecodingMethod::GreedySearch
 }
 pub(crate) fn default_gipformer_threads() -> i32 {
     4
 }
-pub(crate) fn default_gipformer_decoding_method() -> String {
-    "modified_beam_search".into()
+pub(crate) fn default_gipformer_decoding_method() -> super::TransducerDecodingMethod {
+    super::TransducerDecodingMethod::ModifiedBeamSearch
 }
 pub(crate) fn default_gipformer_max_active_paths() -> i32 {
     4
-}
-pub(super) fn default_manifest_path() -> std::path::PathBuf {
-    "models/manifest.toml".into()
-}
-pub(super) fn default_models_root() -> std::path::PathBuf {
-    "models".into()
 }
 pub(super) fn default_onnx_runtime_library() -> std::path::PathBuf {
     "runtime/onnxruntime/libonnxruntime.dylib".into()
@@ -285,4 +279,10 @@ pub(super) fn default_enrollment_ws_prompt_repeat_seconds() -> u64 {
 }
 pub(super) fn default_enrollment_prompt_assets_dir() -> std::path::PathBuf {
     "assets/enrollment/vi-VN".into()
+}
+
+pub(crate) fn default_gipformer_model() -> String {
+    crate::providers::local_model_identity("gipformer_sherpa_offline")
+        .expect("compiled local adapter")
+        .into()
 }

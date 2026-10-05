@@ -1,0 +1,7 @@
+{
+  "ready": true,
+  "ready_body": "ready",
+  "health_body": "ok",
+  "exit_code": 0,
+  "provider_resources_drained": true
+}

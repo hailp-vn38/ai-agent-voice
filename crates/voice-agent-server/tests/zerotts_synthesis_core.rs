@@ -118,3 +118,147 @@ fn tokenizer_contract_rejects_wrong_voice_or_graph_dimensions_before_inference()
     assert!(error.contains("pinned ZeroTTS"));
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Real installed ZeroTTS pack, resolved from the environment so the gate never guesses paths.
+struct InstalledPack {
+    root: PathBuf,
+}
+
+impl InstalledPack {
+    fn resolve() -> Self {
+        let root = PathBuf::from(
+            std::env::var("ZEROTTS_QUALIFICATION_PACK")
+                .expect("ZeroTTS qualification gate unavailable: set ZEROTTS_QUALIFICATION_PACK"),
+        );
+        assert!(
+            root.is_dir(),
+            "ZEROTTS_QUALIFICATION_PACK is not a directory"
+        );
+        Self { root }
+    }
+
+    fn path(&self, relative: &str) -> PathBuf {
+        let path = self.root.join(relative);
+        assert!(path.is_file(), "missing installed artifact {relative}");
+        path
+    }
+
+    fn contract(&self) -> ZeroTtsContract {
+        let codec = self.root.join("onnx/codec");
+        ZeroTtsContract::load_engine_with_voices(
+            &self.path("config.json"),
+            &self.path("tokenizer.json"),
+            &self.path("voices/index.json"),
+            [
+                "baotrang",
+                "giahuy",
+                "hamy",
+                "huuduc",
+                "kimoanh",
+                "maichi",
+                "quangminh",
+                "tiendat",
+            ]
+            .into_iter()
+            .map(|voice| {
+                (
+                    voice.to_owned(),
+                    self.path(&format!("voices/{voice}/voice.npz")),
+                )
+            })
+            .collect(),
+            &self.path("onnx/text_encoder.onnx"),
+            &self.path("onnx/prefix_step.onnx"),
+            &self.path("onnx/local_frame_decode.onnx"),
+            &codec.join("moss_audio_tokenizer_decode_full.onnx"),
+            &codec.join("moss_audio_tokenizer_decode_step.onnx"),
+            &codec.join("moss_audio_tokenizer_decode_shared.data"),
+            &codec.join("codec_browser_onnx_meta.json"),
+            &self.path("silence_frame.npy"),
+            &PathBuf::from(
+                std::env::var("VOICE_ONNX_RUNTIME_LIB")
+                    .expect("ZeroTTS qualification gate unavailable: set VOICE_ONNX_RUNTIME_LIB"),
+            ),
+            1,
+        )
+        .expect("installed ZeroTTS pack satisfies the pinned contract")
+    }
+}
+
+fn collect_pcm(
+    stream: &mut voice_agent_server::providers::tts::zerotts_onnx::ZeroTtsPcmStream,
+    text: &str,
+    voice: &ndarray::Array3<f32>,
+) -> Vec<f32> {
+    let mut samples = Vec::new();
+    stream
+        .synthesize_with_voice(text, 256, voice, &mut |pcm| {
+            samples.extend_from_slice(pcm.samples());
+            Ok(())
+        })
+        .expect("installed ZeroTTS pack synthesizes the gate utterance");
+    samples
+}
+
+#[test]
+#[ignore = "requires an installed ZeroTTS pack and ONNX runtime; set ZEROTTS_QUALIFICATION_PACK and VOICE_ONNX_RUNTIME_LIB"]
+fn startup_warmup_is_bounded_and_leaves_no_state_in_the_retained_runtime() {
+    use voice_agent_server::providers::tts::zerotts_onnx::{
+        ZeroTtsPcmStream, session_constructions,
+    };
+
+    let pack = InstalledPack::resolve();
+    let contract = pack.contract();
+    let maichi = contract.voice("maichi").unwrap();
+    let hamy = contract.voice("hamy").unwrap();
+
+    let before = session_constructions();
+    let mut warmed = ZeroTtsPcmStream::new(&contract).unwrap();
+    assert_eq!(
+        session_constructions() - before,
+        4,
+        "one streaming replica must commit exactly four ONNX sessions"
+    );
+
+    let report = warmed.warmup(&maichi).expect("bounded warmup completes");
+    assert_eq!(report.autoregressive_frames, 1);
+    assert_eq!(report.codec_decodes, 1);
+    assert!(report.pcm_samples > 0);
+    warmed
+        .reset()
+        .expect("warmup state is dropped before traffic");
+    assert_eq!(
+        session_constructions() - before,
+        4,
+        "the readiness pass must not commit any additional ONNX session"
+    );
+
+    let after_warmup = collect_pcm(&mut warmed, "Xin chao ban", &maichi);
+    assert!(!after_warmup.is_empty());
+    assert!(
+        after_warmup.len() > report.pcm_samples,
+        "a full utterance must be longer than the bounded readiness pass"
+    );
+    assert_eq!(
+        session_constructions() - before,
+        4,
+        "a turn must reuse the resident sessions instead of rebuilding the engine"
+    );
+    drop(warmed);
+
+    // A replica that never warmed must produce byte-identical audio, which proves the readiness
+    // pass left no autoregressive KV, repetition history, or codec cache behind.
+    let mut reference = ZeroTtsPcmStream::new(&contract).unwrap();
+    let cold = collect_pcm(&mut reference, "Xin chao ban", &maichi);
+    assert_eq!(
+        after_warmup, cold,
+        "warmup residue changed the first real turn"
+    );
+
+    // A different voice on the same resident runtime binds its own embedding and its own turn.
+    let switched = collect_pcm(&mut reference, "Xin chao ban", &hamy);
+    assert_ne!(
+        switched, cold,
+        "a voice switch must not silently reuse the previous voice's turn state"
+    );
+}

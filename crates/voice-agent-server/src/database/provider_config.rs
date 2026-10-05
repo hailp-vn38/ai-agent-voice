@@ -1,5 +1,5 @@
 //! Credential-free, bounded provider desired-configuration validation.
-use crate::config::ZeroTtsDeliveryMode;
+use crate::config::{TransducerDecodingMethod, ZeroTtsDeliveryMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
@@ -33,9 +33,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "zipformer_sherpa" => canonical::<Zipformer, _>(&value, Zipformer::valid),
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
-        "kokoro_vi_onnx" => canonical::<crate::config::KokoroViOnnxConfig, _>(&value, |config| {
-            config.valid_selection()
-        }),
+        "kokoro_vi_onnx" => canonical::<Kokoro, _>(&value, Kokoro::valid),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
         _ => Err(ProviderConfigError::Invalid),
     }
@@ -102,10 +100,6 @@ fn protected(value: &Value) -> bool {
 fn string(value: &str, max: usize) -> bool {
     !value.is_empty() && value.len() <= max
 }
-fn threads(value: i32) -> bool {
-    (1..=128).contains(&value)
-}
-
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct OpenAi {
@@ -126,53 +120,41 @@ impl OpenAi {
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Silero {
-    model: String,
-    num_threads: i32,
-}
+struct Silero {}
 impl Silero {
     fn valid(&self) -> bool {
-        string(&self.model, 256) && threads(self.num_threads)
+        true
     }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Zipformer {
-    model: String,
-    num_threads: i32,
-    decoding_method: String,
+    #[serde(default)]
+    decoding_method: TransducerDecodingMethod,
 }
 impl Zipformer {
     fn valid(&self) -> bool {
-        string(&self.model, 256) && threads(self.num_threads) && string(&self.decoding_method, 64)
+        true
     }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Gipformer {
-    model: String,
     #[serde(default = "default_vietnamese_language")]
     language: String,
-    num_threads: i32,
     #[serde(default = "default_decode")]
-    decoding_method: String,
+    decoding_method: TransducerDecodingMethod,
     #[serde(default = "default_paths")]
     max_active_paths: i32,
 }
 impl Gipformer {
     fn valid(&self) -> bool {
-        string(&self.model, 256)
-            && self.language == "vi-VN"
-            && threads(self.num_threads)
-            && string(&self.decoding_method, 64)
-            && (1..=10_000).contains(&self.max_active_paths)
+        self.language == "vi-VN" && (1..=10_000).contains(&self.max_active_paths)
     }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ZeroTts {
-    model: String,
-    num_threads: i32,
     voice: String,
     #[serde(default = "default_vietnamese_language")]
     language: String,
@@ -183,46 +165,64 @@ struct ZeroTts {
 }
 impl ZeroTts {
     fn valid(&self) -> bool {
-        string(&self.model, 256)
-            && threads(self.num_threads)
-            && string(&self.voice, 128)
+        crate::providers::tts::zerotts::descriptor::DESCRIPTOR
+            .capabilities
+            .voices
+            .is_some_and(|voices| voices.iter().any(|voice| voice.id == self.voice))
             && self.language == "vi-VN"
-            && matches!(
-                self.delivery_mode,
-                ZeroTtsDeliveryMode::File | ZeroTtsDeliveryMode::Stream
-            )
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Kokoro {
+    voice: String,
+    #[serde(default = "default_vietnamese_language")]
+    language: String,
+    #[serde(default = "crate::config::defaults::default_kokoro_vi_speed_percent")]
+    speed_percent: u16,
+    #[serde(default)]
+    preload: bool,
+}
+impl Kokoro {
+    fn valid(&self) -> bool {
+        crate::providers::tts::kokoro_vi::descriptor::DESCRIPTOR
+            .capabilities
+            .voices
+            .is_some_and(|voices| voices.iter().any(|voice| voice.id == self.voice))
+            && self.language == "vi-VN"
+            && (50..=200).contains(&self.speed_percent)
     }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ChillAudio {
-    ws_url: Url,
     voice: String,
-    #[serde(default = "default_chillaudio_timeout")]
-    timeout_ms: u64,
+    #[serde(default = "default_chillaudio_language")]
+    language: String,
     #[serde(default)]
     preload: bool,
 }
 impl ChillAudio {
     fn valid(&self) -> bool {
-        self.ws_url.scheme() == "wss"
-            && self.ws_url.host_str().is_some()
-            && string(&self.voice, 128)
-            && (1..=120_000).contains(&self.timeout_ms)
+        crate::providers::tts::chillaudio::descriptor::DESCRIPTOR
+            .capabilities
+            .voices
+            .is_some_and(|voices| voices.iter().any(|voice| voice.id == self.voice))
+            && self.language == "vi"
     }
+}
+fn default_chillaudio_language() -> String {
+    "vi".into()
 }
 fn default_timeout() -> u64 {
     30_000
 }
-fn default_decode() -> String {
-    "greedy_search".into()
+fn default_decode() -> TransducerDecodingMethod {
+    TransducerDecodingMethod::ModifiedBeamSearch
 }
 fn default_paths() -> i32 {
     4
 }
 fn default_vietnamese_language() -> String {
     "vi-VN".into()
-}
-fn default_chillaudio_timeout() -> u64 {
-    12_000
 }

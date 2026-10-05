@@ -13,7 +13,7 @@ pub(super) const SPECIAL_TOKENS: [(&str, u32); 8] = [
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Config {
+pub(in crate::providers::tts::zerotts) struct Config {
     pub(super) text_format: String,
     pub(super) vocab_size: usize,
     pub(super) num_codebooks: usize,
@@ -27,17 +27,19 @@ pub(super) struct Config {
     pub(super) special_tokens: BTreeMap<String, u32>,
 }
 
-/// Immutable values shared by every synthesis operation for one pinned pack.
+/// Immutable values for one pinned pack: the tokenizer, the pinned graph dimensions, the verified
+/// silence frame, and the voice registry shared by every replica and every voice.
 #[derive(Clone)]
 pub struct ZeroTtsContract {
     pub(super) tokenizer: Tokenizer,
     pub(super) config: Config,
-    pub(super) voice: Option<Array3<f32>>,
+    pub(super) voices: Arc<ZeroTtsVoiceRegistry>,
     pub(super) silence_frame: Vec<i32>,
     pub(super) graphs: Option<GraphPaths>,
 }
 
-/// Immutable graph sources. Runtime workers load their own sessions from these paths once.
+/// Immutable graph sources, part of the shared static state. Each physical replica commits its own
+/// sessions from these paths exactly once, when the retained worker is built.
 #[derive(Clone)]
 pub(super) struct GraphPaths {
     pub(super) text_encoder: PathBuf,
@@ -75,7 +77,7 @@ impl ZeroTtsContract {
         Ok(Self {
             tokenizer,
             config,
-            voice: None,
+            voices: Arc::new(ZeroTtsVoiceRegistry::default()),
             silence_frame: Vec::new(),
             graphs: None,
         })
@@ -126,7 +128,7 @@ impl ZeroTtsContract {
         Ok(Self {
             tokenizer,
             config,
-            voice: Some(voice),
+            voices: Arc::new(ZeroTtsVoiceRegistry::from_legacy(voice)),
             silence_frame,
             graphs: Some(GraphPaths {
                 text_encoder: text_encoder_path.into(),
@@ -140,6 +142,49 @@ impl ZeroTtsContract {
                 },
             }),
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_engine_with_voices(
+        config_path: &Path,
+        tokenizer_path: &Path,
+        voices_index_path: &Path,
+        voices: BTreeMap<String, PathBuf>,
+        text_encoder_path: &Path,
+        prefix_step_path: &Path,
+        local_frame_decode_path: &Path,
+        codec_decode_full_path: &Path,
+        codec_decode_step_path: &Path,
+        codec_shared_data_path: &Path,
+        codec_metadata_path: &Path,
+        silence_frame_path: &Path,
+        runtime_library: &Path,
+        num_threads: i32,
+    ) -> Result<Self, TtsError> {
+        let first = voices.values().next().ok_or_else(|| {
+            TtsError::IncompatibleContract("ZeroTTS requires at least one voice".into())
+        })?;
+        let mut contract = Self::load_engine(
+            config_path,
+            tokenizer_path,
+            first,
+            text_encoder_path,
+            prefix_step_path,
+            local_frame_decode_path,
+            codec_decode_full_path,
+            codec_decode_step_path,
+            codec_shared_data_path,
+            codec_metadata_path,
+            silence_frame_path,
+            runtime_library,
+            num_threads,
+        )?;
+        contract.voices = Arc::new(ZeroTtsVoiceRegistry::load(
+            voices_index_path,
+            &voices,
+            &contract.config,
+        )?);
+        Ok(contract)
     }
 
     /// Encodes one operation's text; no cache survives this call.
@@ -160,11 +205,21 @@ impl ZeroTtsContract {
     }
 
     pub fn voice_shape(&self) -> Option<&[usize]> {
-        self.voice.as_ref().map(ndarray::ArrayBase::shape)
+        self.voices.first().map(ndarray::ArrayBase::shape)
+    }
+
+    pub fn voice(&self, id: &str) -> Result<Arc<Array3<f32>>, TtsError> {
+        self.voices.get_arc(id)
+    }
+
+    pub fn readiness_voice(&self) -> Result<Arc<Array3<f32>>, TtsError> {
+        self.voices
+            .first_arc()
+            .ok_or_else(|| TtsError::UnsupportedVoice("readiness".into()))
     }
 
     pub fn synthesize_codes(&self, text: &str, max_frames: usize) -> Result<CodeFrames, TtsError> {
-        ZeroTtsOperation::new(self)?.synthesize(text, max_frames)
+        ZeroTtsReplica::new(self)?.synthesize(text, max_frames)
     }
 
     /// Produces the provider boundary PCM. Codec layout and profile are validated at startup.
@@ -222,8 +277,10 @@ fn load_silence_frame(
         .collect()
 }
 
-/// Codec state is scoped to one SpeechOutput delivery, while every text segment still creates a
-/// fresh ZeroTtsOperation for its AR/KV state.
+/// Ownership of runtime state, in one place: the pinned pack's immutable values and every voice
+/// embedding are shared by all replicas, each replica's four ONNX sessions are retained for the
+/// life of one retained worker, and every AR/KV value plus codec streaming cache belongs to exactly
+/// one SpeechOutput delivery and is dropped with it.
 pub(super) fn tokenizer_special_id(document: &serde_json::Value, token: &str) -> Option<u32> {
     document
         .get("added_tokens")?
@@ -310,7 +367,7 @@ pub(super) fn load_voice(path: &Path, config: &Config) -> Result<Array3<f32>, Tt
         || voice.iter().any(|sample| !sample.is_finite())
     {
         return Err(TtsError::IncompatibleContract(
-            "maichi voice latent shape does not match the pinned model".into(),
+            "selected voice latent shape does not match the pinned model".into(),
         ));
     }
     Ok(voice)
@@ -328,6 +385,7 @@ pub(super) fn load_graph(
         .map_err(contract_error)?
         .commit_from_file(path)
         .map_err(contract_error)?;
+    record_session_construction();
     validate_graph_io(session.inputs(), inputs)?;
     validate_graph_io(session.outputs(), outputs)?;
     Ok(session)

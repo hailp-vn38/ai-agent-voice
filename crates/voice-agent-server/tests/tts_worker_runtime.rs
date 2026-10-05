@@ -9,9 +9,16 @@ use std::{
 
 use voice_agent_server::{
     audio::PcmF32Mono,
-    providers::{TtsError, TtsProvider, TtsStream, TtsWorker},
+    providers::{TtsBinding, TtsError, TtsProvider, TtsStream, TtsSynthesisRequest, TtsWorker},
     workers::{TtsWorkerEvent, TtsWorkerRuntime, WorkerRuntimeConfig},
 };
+
+fn binding(voice: &str) -> TtsBinding {
+    TtsBinding {
+        voice: voice.into(),
+        language: "vi-VN".into(),
+    }
+}
 
 struct BlockingTts {
     entered: mpsc::Sender<()>,
@@ -86,7 +93,7 @@ struct CountedWorker;
 impl TtsWorker for CountedWorker {
     fn synthesize(
         &mut self,
-        _: &str,
+        _: &TtsSynthesisRequest,
         _: &std::sync::atomic::AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
@@ -95,6 +102,87 @@ impl TtsWorker for CountedWorker {
     fn reset(&mut self) -> Result<(), TtsError> {
         Ok(())
     }
+}
+
+struct BindingRecordingProvider(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl TtsProvider for BindingRecordingProvider {
+    fn adapter(&self) -> &'static str {
+        "binding-recording"
+    }
+
+    fn open_worker(&self) -> Result<Box<dyn TtsWorker>, TtsError> {
+        Ok(Box::new(BindingRecordingWorker(Arc::clone(&self.0))))
+    }
+}
+
+struct BindingRecordingWorker(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl TtsWorker for BindingRecordingWorker {
+    fn synthesize(
+        &mut self,
+        request: &TtsSynthesisRequest,
+        _: &std::sync::atomic::AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        self.0.lock().unwrap().push(request.selection.voice.clone());
+        on_pcm(PcmF32Mono::new(vec![0.1; 96], 48_000))
+    }
+
+    fn reset(&mut self) -> Result<(), TtsError> {
+        Ok(())
+    }
+}
+
+fn wait_for_finish(runtime: &TtsWorkerRuntime, lease: voice_agent_server::workers::TtsLease) {
+    loop {
+        if matches!(runtime.poll(lease).unwrap(), Some(TtsWorkerEvent::Finished)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn logical_views_inject_their_own_binding_into_shared_workers() {
+    let selected = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let owner = TtsWorkerRuntime::new_with_binding(
+        Arc::new(BindingRecordingProvider(Arc::clone(&selected))),
+        WorkerRuntimeConfig::default(),
+        binding("maichi"),
+    );
+    let baotrang = owner.logical_view_for_test(binding("baotrang"));
+
+    let first = owner.start("first".into()).unwrap();
+    wait_for_finish(&owner, first);
+    let second = baotrang.start("second".into()).unwrap();
+    wait_for_finish(&baotrang, second);
+    let third = owner.start("third".into()).unwrap();
+    wait_for_finish(&owner, third);
+
+    assert_eq!(
+        *selected.lock().unwrap(),
+        vec!["maichi", "baotrang", "maichi"]
+    );
+}
+
+#[test]
+fn a_stream_rejects_a_segment_from_a_different_logical_binding() {
+    let selected = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let owner = TtsWorkerRuntime::new_with_binding(
+        Arc::new(BindingRecordingProvider(selected)),
+        WorkerRuntimeConfig::default(),
+        binding("maichi"),
+    );
+    let alias = owner.logical_view_for_test(binding("baotrang"));
+    let stream = owner.begin_stream();
+
+    assert!(alias.start_in_stream(stream, "must fail".into()).is_err());
+    let lease = owner
+        .start_in_stream(stream, "owner still works".into())
+        .unwrap();
+    wait_for_finish(&owner, lease);
+    owner.close_stream(stream);
 }
 
 struct BurstingWorkerProvider(mpsc::Sender<()>);
@@ -112,7 +200,7 @@ struct BurstingWorker(mpsc::Sender<()>);
 impl TtsWorker for BurstingWorker {
     fn synthesize(
         &mut self,
-        _: &str,
+        _: &TtsSynthesisRequest,
         _: &std::sync::atomic::AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
@@ -407,7 +495,7 @@ impl TtsProvider for WarmupFailureProvider {
 impl TtsWorker for WarmupFailureWorker {
     fn synthesize(
         &mut self,
-        _: &str,
+        _: &TtsSynthesisRequest,
         _: &std::sync::atomic::AtomicBool,
         _: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
@@ -459,7 +547,7 @@ impl TtsProvider for ExitBarrierProvider {
 impl TtsWorker for ExitBarrierWorker {
     fn synthesize(
         &mut self,
-        _: &str,
+        _: &TtsSynthesisRequest,
         _: &std::sync::atomic::AtomicBool,
         _: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
@@ -547,7 +635,7 @@ impl TtsWorker for PanickingCleanupWorker {
     }
     fn synthesize(
         &mut self,
-        _: &str,
+        _: &TtsSynthesisRequest,
         _: &std::sync::atomic::AtomicBool,
         _: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {

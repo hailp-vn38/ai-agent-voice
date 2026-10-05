@@ -192,26 +192,20 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect(&config.database).await?;
     let (plan, rows) = read_load_plan(&config, &database).await?;
-    let preparation_config = config.clone();
-    preparation_config
-        .validate()
+    config.validate().map_err(|_| BootstrapError::Provider)?;
+    // Every local provider this deployment declares gets its model files on disk before the server
+    // binds, whether or not its runtime is built yet. Files already present are reused, so this
+    // costs nothing after the first start and never hashes a model.
+    let declared = config.clone();
+    tokio::task::spawn_blocking(move || ensure_declared_assets(&declared))
+        .await
+        .map_err(|_| BootstrapError::Provider)?
         .map_err(|_| BootstrapError::Provider)?;
-    let preparation_rows = rows.clone();
-    let preparation_plan = plan.clone();
-    tokio::task::spawn_blocking(move || {
-        crate::models::prepare_startup(&preparation_config, &preparation_rows, &preparation_plan)
-    })
-    .await
-    .map_err(|_| BootstrapError::Provider)?
-    .map_err(|_| BootstrapError::Provider)?;
     if config.provider_runtime.is_some() {
         return managed_startup(config, database, secret_resolver, lifecycle).await;
     }
-    // The plan and the desired rows are read before any runtime exists, so a required provider is
-    // known to be required before the first model is prepared.
-    let mut startup_config = config.clone();
-    // Runtime construction uses verified disk artifacts and never repeats a failed download.
-    startup_config.deployment.models.offline = true;
+    // Provider runtimes are built here; their model files are already on disk from the pass above.
+    let startup_config = config.clone();
     let startup_secret_resolver = Arc::clone(&secret_resolver);
     let (loaded, materialization) = tokio::task::spawn_blocking(move || {
         let local =
@@ -237,6 +231,86 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     );
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
+}
+
+/// Installs the model files of every local provider the deployment declares.
+///
+/// This is the whole of startup's model handling: each provider knows its own files, and a file
+/// that exists with content is reused without a request. Nothing is scanned, hashed or checksummed,
+/// and a provider that publishes no files — every remote adapter — is skipped.
+///
+/// A declared provider whose files cannot be installed is a startup failure. The operator asked
+/// for that model by configuring it, so finding out at boot beats discovering it on a request.
+fn ensure_declared_assets(config: &AppConfig) -> Result<(), crate::providers::ProviderLoadError> {
+    let registry = crate::providers::compiled_provider_adapter_registry();
+    let mut ensured: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for adapter in configured_local_adapters(config) {
+        // Several instances may share one adapter; one ensure covers them all.
+        if !ensured.insert(adapter) {
+            continue;
+        }
+        let Some(assets) = registry.assets(adapter) else {
+            continue;
+        };
+        assets.ensure_assets()?;
+        tracing::info!(provider = adapter, "provider model files ready");
+    }
+    Ok(())
+}
+
+/// Adapters of every provider instance the deployment configures, deduplicated by adapter.
+fn configured_local_adapters(config: &AppConfig) -> Vec<&'static str> {
+    let mut adapters: Vec<&'static str> = config
+        .providers
+        .vad
+        .instances
+        .values()
+        .map(|instance| instance.adapter())
+        .chain(
+            config
+                .providers
+                .asr
+                .instances
+                .values()
+                .map(|instance| instance.adapter()),
+        )
+        .chain(
+            config
+                .providers
+                .tts
+                .instances
+                .values()
+                .map(|instance| instance.adapter()),
+        )
+        .collect();
+    adapters.sort_unstable();
+    adapters.dedup();
+    adapters
+}
+
+/// Providers that must be ready before the server binds.
+///
+/// The deployment defaults for every kind, plus any TTS instance that asked to be preloaded. Each
+/// one is acquired here so its model files are installed and its runtime is resident: a deployment
+/// starts into a known-good state rather than making the first request pay for a download. A
+/// provider that fails to materialize is a startup failure, not a deferred surprise.
+pub fn startup_providers(config: &AppConfig) -> std::collections::BTreeSet<(String, String)> {
+    let defaults = &config.provider_defaults;
+    let mut required: std::collections::BTreeSet<(String, String)> = [
+        ("vad", &defaults.vad),
+        ("asr", &defaults.asr),
+        ("llm", &defaults.llm),
+        ("tts", &defaults.tts),
+    ]
+    .into_iter()
+    .map(|(kind, key)| (kind.to_owned(), key.clone()))
+    .collect();
+    for (key, instance) in &config.providers.tts.instances {
+        if instance.preload() {
+            required.insert(("tts".to_owned(), key.clone()));
+        }
+    }
+    required
 }
 
 async fn managed_startup(
@@ -277,29 +351,9 @@ async fn managed_startup(
     )
     .map_err(|_| BootstrapError::Provider)?;
     state = state.with_runtime_manager(manager.clone());
-    let effective = &config.effective_agent.providers;
-    let defaults = &config.provider_defaults;
     let startup_deadline =
         tokio::time::Instant::now() + Duration::from_millis(runtime_config.startup_timeout_ms);
-    let mut required = std::collections::BTreeSet::new();
-    for (kind, key) in [
-        ("vad", &effective.vad),
-        ("asr", &effective.asr),
-        ("llm", &effective.llm),
-        ("tts", &effective.tts),
-        ("vad", &defaults.vad),
-        ("asr", &defaults.asr),
-        ("llm", &defaults.llm),
-        ("tts", &defaults.tts),
-    ] {
-        required.insert((kind.to_owned(), key.clone()));
-    }
-    for (key, instance) in &config.providers.tts.instances {
-        if instance.preload() {
-            required.insert(("tts".into(), key.clone()));
-        }
-    }
-    for (kind, key) in required {
+    for (kind, key) in startup_providers(&config) {
         let snapshot = crate::providers::deployment_provider_snapshot(&config, &kind, &key)
             .map_err(|_| BootstrapError::Provider)?;
         let lease = manager

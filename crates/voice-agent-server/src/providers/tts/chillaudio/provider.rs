@@ -12,7 +12,7 @@ use symphonia::core::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::super::{TtsError, TtsProvider, TtsWorker};
+use super::super::{TtsError, TtsProvider, TtsSynthesisRequest, TtsWorker};
 use crate::{audio::PcmF32Mono, config::ChillAudioWsConfig};
 
 pub(crate) struct ChillAudioWsProvider {
@@ -46,7 +46,7 @@ struct ChillAudioWsWorker {
 impl TtsWorker for ChillAudioWsWorker {
     fn synthesize(
         &mut self,
-        text: &str,
+        request: &TtsSynthesisRequest,
         cancelled: &AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
@@ -55,7 +55,7 @@ impl TtsWorker for ChillAudioWsWorker {
         }
         let audio = self
             .runtime
-            .block_on(fetch_mp3(&self.config, text, cancelled))?;
+            .block_on(fetch_mp3(&self.config, &request.text, cancelled))?;
         if cancelled.load(Ordering::Acquire) {
             return Err(TtsError::Failed);
         }

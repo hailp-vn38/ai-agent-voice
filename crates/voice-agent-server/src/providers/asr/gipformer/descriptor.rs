@@ -22,16 +22,6 @@ const VIETNAMESE: &[LanguageOption] = &[LanguageOption {
 }];
 const FIELDS: &[crate::providers::descriptor::ProviderConfigField] = &[
     field(
-        "model",
-        "Model",
-        ConfigFieldType::Select,
-        true,
-        Some(CapabilitySource::Models),
-        None,
-        None,
-        Some(128),
-    ),
-    field(
         "language",
         "Language",
         ConfigFieldType::Select,
@@ -41,25 +31,10 @@ const FIELDS: &[crate::providers::descriptor::ProviderConfigField] = &[
         None,
         Some(32),
     ),
-    field(
-        "num_threads",
-        "Threads",
-        ConfigFieldType::Integer,
-        true,
-        None,
-        Some(1),
-        Some(128),
-        None,
-    ),
-    field(
+    crate::providers::descriptor::select_field(
         "decoding_method",
         "Decoding method",
-        ConfigFieldType::String,
-        true,
-        None,
-        None,
-        None,
-        Some(64),
+        &["greedy_search", "modified_beam_search"],
     ),
     field(
         "max_active_paths",
@@ -109,7 +84,5 @@ impl BootstrapCapabilityInspector for Inspector {
     }
 }
 static INSPECTOR: Inspector = Inspector;
-pub static REGISTRATION: ProviderAdapterRegistration = ProviderAdapterRegistration {
-    descriptor: &DESCRIPTOR,
-    bootstrap_inspector: Some(&INSPECTOR),
-};
+pub static REGISTRATION: ProviderAdapterRegistration =
+    ProviderAdapterRegistration::local(&DESCRIPTOR, Some(&INSPECTOR), Some(super::assets::ASSETS));

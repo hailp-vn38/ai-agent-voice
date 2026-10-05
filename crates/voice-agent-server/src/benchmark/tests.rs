@@ -7,7 +7,8 @@ use crate::{
     providers::llm::{LlmEventStream, LlmRequest, ToolCall},
     providers::{
         AsrError, AsrEvent, AsrProvider, AsrResult, AsrSession, LlmEvent, LlmProvider, TtsError,
-        TtsWorker, VadError, VadInput, VadProbability, VadProvider, VadSession,
+        TtsSynthesisRequest, TtsWorker, VadError, VadInput, VadProbability, VadProvider,
+        VadSession,
     },
 };
 use std::sync::atomic::AtomicBool;
@@ -19,7 +20,7 @@ struct Worker {
 impl TtsWorker for Worker {
     fn synthesize(
         &mut self,
-        _: &str,
+        _: &TtsSynthesisRequest,
         _: &AtomicBool,
         callback: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
@@ -38,7 +39,14 @@ fn delivery_excludes_warmup_and_reports_canonical_packets() {
         syntheses: 0,
         resets: 0,
     };
-    let report = run_tts_benchmark(&mut worker, TtsBenchmarkMode::Delivery, 1, 2).unwrap();
+    let report = run_tts_benchmark(
+        &mut worker,
+        &crate::providers::TtsBinding::readiness(),
+        TtsBenchmarkMode::Delivery,
+        1,
+        2,
+    )
+    .unwrap();
     assert_eq!(worker.syntheses, 3);
     assert_eq!(worker.resets, 3);
     assert_eq!(report.samples.len(), 2);
@@ -57,7 +65,7 @@ fn invalid_pcm_is_rejected() {
     impl TtsWorker for Invalid {
         fn synthesize(
             &mut self,
-            _: &str,
+            _: &TtsSynthesisRequest,
             _: &AtomicBool,
             callback: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
         ) -> Result<(), TtsError> {
@@ -68,7 +76,16 @@ fn invalid_pcm_is_rejected() {
         }
     }
     let mut worker = Invalid;
-    assert!(run_tts_benchmark(&mut worker, TtsBenchmarkMode::Provider, 0, 1).is_err());
+    assert!(
+        run_tts_benchmark(
+            &mut worker,
+            &crate::providers::TtsBinding::readiness(),
+            TtsBenchmarkMode::Provider,
+            0,
+            1,
+        )
+        .is_err()
+    );
 }
 
 struct Asr;
@@ -193,7 +210,7 @@ fn kokoro_24khz_delivery_measures_real_duration_and_canonical_packets() {
     impl TtsWorker for KokoroWorker {
         fn synthesize(
             &mut self,
-            _: &str,
+            _: &TtsSynthesisRequest,
             _: &AtomicBool,
             callback: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
         ) -> Result<(), TtsError> {
@@ -203,7 +220,14 @@ fn kokoro_24khz_delivery_measures_real_duration_and_canonical_packets() {
             Ok(())
         }
     }
-    let report = run_tts_benchmark(&mut KokoroWorker, TtsBenchmarkMode::Delivery, 1, 2).unwrap();
+    let report = run_tts_benchmark(
+        &mut KokoroWorker,
+        &crate::providers::TtsBinding::readiness(),
+        TtsBenchmarkMode::Delivery,
+        1,
+        2,
+    )
+    .unwrap();
     assert!(
         report
             .samples

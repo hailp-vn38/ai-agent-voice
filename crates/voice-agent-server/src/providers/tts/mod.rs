@@ -1,18 +1,23 @@
 //! TTS provider boundary.
 
 use crate::{audio::PcmF32Mono, config::ZeroTtsDeliveryMode};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use thiserror::Error;
 
 pub(crate) mod chillaudio;
 mod file_delivery;
-pub(crate) mod kokoro_vi;
-pub(crate) mod zerotts;
+pub mod kokoro_vi;
+pub mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
 /// Compatibility exports for native ZeroTTS tooling.
 pub mod zerotts_onnx {
     pub use super::zerotts::runtime::{
-        ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream, normalize_text,
+        WarmupReport, ZeroTtsContract, ZeroTtsFullPcm, ZeroTtsPcmStream, normalize_text,
+        session_constructions,
     };
 }
 
@@ -120,7 +125,7 @@ pub trait TtsWorker: Send {
 
     fn synthesize(
         &mut self,
-        text: &str,
+        request: &TtsSynthesisRequest,
         cancelled: &std::sync::atomic::AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError>;
@@ -128,11 +133,12 @@ pub trait TtsWorker: Send {
 
     fn synthesize_diagnostic(
         &mut self,
+        request: &TtsSynthesisRequest,
         _: &TtsDiagnosticRequest,
-        _: &AtomicBool,
-        _: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
-        Err(TtsError::DiagnosticOverrideUnsupported)
+        self.synthesize(request, cancelled, on_pcm)
     }
 }
 
@@ -144,8 +150,12 @@ pub(crate) fn warmup_retained_worker(
     sample_rate: u32,
 ) -> Result<(), TtsError> {
     let cancelled = AtomicBool::new(false);
+    let request = TtsSynthesisRequest {
+        text: text.into(),
+        selection: TtsBinding::readiness(),
+    };
     let mut samples = 0usize;
-    worker.synthesize(text, &cancelled, &mut |pcm| {
+    worker.synthesize(&request, &cancelled, &mut |pcm| {
         if pcm.sample_rate_hz() != sample_rate
             || pcm.samples().iter().any(|sample| !sample.is_finite())
         {
@@ -163,6 +173,30 @@ pub(crate) fn warmup_retained_worker(
         return Err(TtsError::Failed);
     }
     worker.reset()
+}
+
+/// Selection pinned to a logical TTS provider view and carried by every queued operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TtsBinding {
+    pub voice: String,
+    pub language: String,
+}
+
+impl TtsBinding {
+    /// Compatibility selection for adapters whose worker does not use a voice embedding.
+    pub fn readiness() -> Self {
+        Self {
+            voice: "__readiness__".into(),
+            language: "und".into(),
+        }
+    }
+}
+
+/// Fully resolved work sent to a retained TTS worker. It never contains optional selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TtsSynthesisRequest {
+    pub text: String,
+    pub selection: TtsBinding,
 }
 
 /// A typed, temporary TTS selection. It never represents desired configuration.
@@ -197,6 +231,12 @@ pub enum TtsError {
     DiagnosticOverrideUnsupported,
     #[error("TTS diagnostic response is invalid")]
     InvalidDiagnosticResponse,
+    #[error("TTS does not support voice {0}")]
+    UnsupportedVoice(String),
+    #[error("TTS does not support language {0}")]
+    UnsupportedLanguage(String),
+    #[error("TTS stream binding does not match its logical runtime")]
+    BindingMismatch,
 }
 
 pub struct UnavailableTts;
@@ -216,7 +256,8 @@ pub(crate) struct ConfiguredZeroTts {
 pub(crate) struct ZeroTtsArtifacts<'a> {
     pub(crate) config: &'a std::path::Path,
     pub(crate) tokenizer: &'a std::path::Path,
-    pub(crate) voice: &'a std::path::Path,
+    pub(crate) voices_index: &'a std::path::Path,
+    pub(crate) voices: BTreeMap<String, PathBuf>,
     pub(crate) text_encoder: &'a std::path::Path,
     pub(crate) prefix_step: &'a std::path::Path,
     pub(crate) local_frame_decode: &'a std::path::Path,
@@ -234,10 +275,11 @@ impl ConfiguredZeroTts {
         num_threads: i32,
         delivery_mode: ZeroTtsDeliveryMode,
     ) -> Result<Self, TtsError> {
-        let contract = zerotts_onnx::ZeroTtsContract::load_engine(
+        let contract = zerotts_onnx::ZeroTtsContract::load_engine_with_voices(
             artifacts.config,
             artifacts.tokenizer,
-            artifacts.voice,
+            artifacts.voices_index,
+            artifacts.voices,
             artifacts.text_encoder,
             artifacts.prefix_step,
             artifacts.local_frame_decode,
@@ -262,29 +304,18 @@ impl TtsProvider for ConfiguredZeroTts {
         "zerotts_onnx"
     }
 
-    fn synthesize(&self, text: &str) -> Result<PcmF32Mono, TtsError> {
-        let mut samples = Vec::new();
-        self.synthesize_stream(text, &mut |pcm| {
-            samples.extend_from_slice(pcm.samples());
-            Ok(())
-        })?;
-        Ok(PcmF32Mono::new(samples, 48_000))
+    fn synthesize(&self, _: &str) -> Result<PcmF32Mono, TtsError> {
+        // This object is a physical resource. Only its `TtsWorkerRuntime` logical views own a
+        // configured voice binding, so a direct fallback must never pick a registry default.
+        Err(TtsError::WorkerUnsupported)
     }
 
     fn synthesize_stream(
         &self,
-        text: &str,
-        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+        _: &str,
+        _: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
-        match self.delivery_mode {
-            ZeroTtsDeliveryMode::Stream => self.contract.synthesize_pcm_stream(text, 256, on_pcm),
-            ZeroTtsDeliveryMode::File => {
-                let cancelled = std::sync::atomic::AtomicBool::new(false);
-                let pcm = zerotts_onnx::ZeroTtsFullPcm::new(&self.contract)?
-                    .synthesize(text, 256, &cancelled)?;
-                file_delivery::deliver_via_temporary_wav(pcm, &cancelled, on_pcm)
-            }
-        }
+        Err(TtsError::WorkerUnsupported)
     }
 
     fn synthesize_diagnostic(
@@ -293,39 +324,47 @@ impl TtsProvider for ConfiguredZeroTts {
         cancelled: &AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
-        if request
+        let voice = request
             .voice
             .as_deref()
-            .is_some_and(|voice| voice != "maichi")
-            || request
-                .language
-                .as_deref()
-                .is_some_and(|language| language != "vi-VN")
-        {
-            return Err(TtsError::DiagnosticOverrideUnsupported);
+            .ok_or(TtsError::InvalidDiagnosticResponse)?;
+        let language = request
+            .language
+            .as_deref()
+            .ok_or(TtsError::InvalidDiagnosticResponse)?;
+        if language != "vi-VN" {
+            return Err(TtsError::UnsupportedLanguage(language.into()));
         }
-        self.synthesize_stream(&request.text, &mut |pcm| {
-            if cancelled.load(Ordering::Acquire) {
-                return Err(TtsError::Failed);
+        let voice = self.contract.voice(voice)?;
+        match self.delivery_mode {
+            ZeroTtsDeliveryMode::Stream => zerotts_onnx::ZeroTtsPcmStream::new(&self.contract)?
+                .synthesize_with_voice(&request.text, 256, &voice, &mut |pcm| {
+                    if cancelled.load(Ordering::Acquire) {
+                        return Err(TtsError::Failed);
+                    }
+                    on_pcm(pcm)
+                }),
+            ZeroTtsDeliveryMode::File => {
+                let pcm = zerotts_onnx::ZeroTtsFullPcm::new(&self.contract)?
+                    .synthesize_with_voice(&request.text, 256, cancelled, &voice)?;
+                file_delivery::deliver_via_temporary_wav(pcm, cancelled, on_pcm)
             }
-            on_pcm(pcm)
-        })
+        }
     }
 
     fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
-        if request
+        let voice = request
             .voice
             .as_deref()
-            .is_some_and(|voice| voice != "maichi")
-            || request
-                .language
-                .as_deref()
-                .is_some_and(|language| language != "vi-VN")
-        {
-            Err(TtsError::DiagnosticOverrideUnsupported)
-        } else {
-            Ok(())
+            .ok_or(TtsError::InvalidDiagnosticResponse)?;
+        let language = request
+            .language
+            .as_deref()
+            .ok_or(TtsError::InvalidDiagnosticResponse)?;
+        if language != "vi-VN" {
+            return Err(TtsError::UnsupportedLanguage(language.into()));
         }
+        self.contract.voice(voice).map(|_| ())
     }
 
     fn open_stream(&self) -> Option<Box<dyn TtsStream>> {
@@ -346,7 +385,10 @@ impl TtsProvider for ConfiguredZeroTts {
                 zerotts_onnx::ZeroTtsFullPcm::new(&self.contract)?,
             )),
         };
-        Ok(Box::new(ZeroTtsNativeWorker { delivery }))
+        Ok(Box::new(ZeroTtsNativeWorker {
+            contract: self.contract.clone(),
+            delivery,
+        }))
     }
 }
 
@@ -365,6 +407,7 @@ impl TtsStream for ZeroTtsStream {
 }
 
 struct ZeroTtsNativeWorker {
+    contract: zerotts_onnx::ZeroTtsContract,
     delivery: ZeroTtsNativeDelivery,
 }
 
@@ -375,27 +418,50 @@ enum ZeroTtsNativeDelivery {
 
 impl TtsWorker for ZeroTtsNativeWorker {
     fn warmup(&mut self) -> Result<(), TtsError> {
-        warmup_retained_worker(self, "ZeroTTS startup readiness.", 48_000)
+        // Readiness only needs every hot-path graph to have executed once: sessions loaded, ORT
+        // allocator warm, the codec able to emit finite PCM. Decoding a whole utterance per runtime
+        // materialization is a qualification gate, not a startup cost. The readiness voice comes
+        // from the shared registry, so warming never depends on any one provider's binding.
+        let voice = self.contract.readiness_voice()?;
+        let report = match &mut self.delivery {
+            ZeroTtsNativeDelivery::Stream(stream) => stream.warmup(&voice)?,
+            ZeroTtsNativeDelivery::File(full) => full.warmup(&voice)?,
+        };
+        tracing::debug!(
+            autoregressive_frames = report.autoregressive_frames,
+            codec_decodes = report.codec_decodes,
+            pcm_samples = report.pcm_samples,
+            "ZeroTTS bounded warmup completed"
+        );
+        self.reset()
     }
 
     fn synthesize(
         &mut self,
-        text: &str,
+        request: &TtsSynthesisRequest,
         cancelled: &std::sync::atomic::AtomicBool,
         on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
     ) -> Result<(), TtsError> {
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             return Err(TtsError::Failed);
         }
+        if request.selection.language != "vi-VN" {
+            return Err(TtsError::UnsupportedLanguage(
+                request.selection.language.clone(),
+            ));
+        }
+        let voice = self.contract.voice(&request.selection.voice)?;
         match &mut self.delivery {
-            ZeroTtsNativeDelivery::Stream(stream) => stream.synthesize(text, 256, &mut |pcm| {
-                if cancelled.load(std::sync::atomic::Ordering::Acquire) {
-                    return Err(TtsError::Failed);
-                }
-                on_pcm(pcm)
-            }),
+            ZeroTtsNativeDelivery::Stream(stream) => {
+                stream.synthesize_with_voice(&request.text, 256, &voice, &mut |pcm| {
+                    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                        return Err(TtsError::Failed);
+                    }
+                    on_pcm(pcm)
+                })
+            }
             ZeroTtsNativeDelivery::File(full) => {
-                let pcm = full.synthesize(text, 256, cancelled)?;
+                let pcm = full.synthesize_with_voice(&request.text, 256, cancelled, &voice)?;
                 file_delivery::deliver_via_temporary_wav(pcm, cancelled, on_pcm)
             }
         }
@@ -409,25 +475,5 @@ impl TtsWorker for ZeroTtsNativeWorker {
                 Ok(())
             }
         }
-    }
-
-    fn synthesize_diagnostic(
-        &mut self,
-        request: &TtsDiagnosticRequest,
-        cancelled: &AtomicBool,
-        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
-    ) -> Result<(), TtsError> {
-        if request
-            .voice
-            .as_deref()
-            .is_some_and(|voice| voice != "maichi")
-            || request
-                .language
-                .as_deref()
-                .is_some_and(|language| language != "vi-VN")
-        {
-            return Err(TtsError::DiagnosticOverrideUnsupported);
-        }
-        self.synthesize(&request.text, cancelled, on_pcm)
     }
 }

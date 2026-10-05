@@ -1,41 +1,64 @@
 use crate::providers::{
-    capabilities::{CapabilityDiscoveryMode, DiscoverySource, ProviderCapabilities},
+    capabilities::{
+        CapabilityDiscoveryMode, CapabilitySource, DiscoverySource, LanguageOption,
+        ProviderCapabilities, VoiceOption,
+    },
     descriptor::{
         ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
         ProviderType, field,
     },
     registry::ProviderAdapterRegistration,
 };
+pub(crate) const VOICES: &[VoiceOption] = &[
+    VoiceOption {
+        id: "BV421_vivn_streaming",
+        name: "Nu nhe nhang",
+        languages: &["vi"],
+        model: None,
+    },
+    VoiceOption {
+        id: "vi_female_huong",
+        name: "Nu tram am",
+        languages: &["vi"],
+        model: None,
+    },
+    VoiceOption {
+        id: "BV074_streaming",
+        name: "Nu ca tinh",
+        languages: &["vi"],
+        model: None,
+    },
+    VoiceOption {
+        id: "BV075_streaming",
+        name: "Nam am ap",
+        languages: &["vi"],
+        model: None,
+    },
+];
+const LANGUAGES: &[LanguageOption] = &[LanguageOption {
+    id: "vi",
+    name: "Vietnamese",
+}];
 const FIELDS: &[ProviderConfigField] = &[
-    field(
-        "ws_url",
-        "WebSocket URL",
-        ConfigFieldType::String,
-        true,
-        None,
-        None,
-        None,
-        Some(2048),
-    ),
     field(
         "voice",
         "Voice",
-        ConfigFieldType::String,
+        ConfigFieldType::Select,
         true,
-        None,
+        Some(CapabilitySource::Voices),
         None,
         None,
         Some(128),
     ),
     field(
-        "timeout_ms",
-        "Timeout (ms)",
-        ConfigFieldType::Integer,
+        "language",
+        "Language",
+        ConfigFieldType::Select,
         false,
+        Some(CapabilitySource::Languages),
         None,
-        Some(1),
-        Some(120_000),
         None,
+        Some(32),
     ),
     field(
         "preload",
@@ -56,8 +79,8 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     config_schema: ProviderConfigSchema { fields: FIELDS },
     capabilities: ProviderCapabilities {
         models: None,
-        voices: None,
-        languages: None,
+        voices: Some(VOICES),
+        languages: Some(LANGUAGES),
         streaming: Some(false),
         offline: Some(false),
         tool_calling: None,
@@ -69,11 +92,9 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     },
     discovery: CapabilityDiscoveryMode {
         models: DiscoverySource::Unsupported,
-        voices: DiscoverySource::Unsupported,
-        languages: DiscoverySource::Unsupported,
+        voices: DiscoverySource::Static,
+        languages: DiscoverySource::Static,
     },
 };
-pub static REGISTRATION: ProviderAdapterRegistration = ProviderAdapterRegistration {
-    descriptor: &DESCRIPTOR,
-    bootstrap_inspector: None,
-};
+pub static REGISTRATION: ProviderAdapterRegistration =
+    ProviderAdapterRegistration::remote(&DESCRIPTOR, None);

@@ -22,7 +22,7 @@ Core V1:
 - Abort/barge-in/cancellation.
 - Device MCP (`initialize`, `tools/list`, `tools/call`).
 
-Không nằm trong V1: manager web/mobile, multi-user, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory.
+Không nằm trong Core V1 như một dependency runtime bắt buộc: manager web/mobile, multi-user, MQTT/UDP gateway, RAG, voiceprint, billing/quota, plugin hot-load, long-term memory. Admin Web tại `apps/admin-web/` là công cụ quản trị tùy chọn, giao tiếp với server chỉ qua Admin API công khai và không sở hữu Voice Session state.
 
 ## Chạy nhanh Protocol V1
 
@@ -40,19 +40,41 @@ trả 403 khi enrollment tắt. Xem [flow database và enrollment](docs/flows/08
 để chuyển cấu hình cũ và chuẩn bị dữ liệu.
 
 Server tự tạo thư mục cha của SQLite (mặc định `data/`) trước khi mở database và
-chạy migration. Sau đó Model Preparation kiểm tra checksum và tự tải model local
-thiếu/hỏng vào `deployment.models.root` (mặc định `models/`) khi `offline=false`.
-File hợp lệ được dùng lại mà không gọi mạng. Bước này hoàn tất trước khi dựng
-provider runtime, nên thời gian tải không tính vào `provider_runtime.startup_timeout_ms`.
-Các instance local trong TOML được chuẩn bị xuống đĩa; provider trong DB chỉ được
-chuẩn bị khi đang được Template sử dụng. Model trùng nhau được gộp. Model bắt buộc
-lỗi sẽ chặn startup; model tùy chọn lỗi được ghi log mà không chặn server.
+chạy migration. Trước khi bind, server kiểm tra model của **mọi** provider local mà
+deployment khai báo — không chỉ provider mặc định — và tải về file nào còn thiếu vào
+`models/<KIND>/<provider>`. File đã tồn tại và khác 0 byte thì dùng ngay, không gọi mạng và
+không kiểm tra checksum. Provider remote không có file model nào nên được bỏ qua. ZeroTTS
+tải **toàn bộ** voice nó hỗ trợ, không chỉ voice đang cấu hình.
+
+Sau đó server materialize provider mặc định của cả bốn loại (và mọi TTS `preload = true`)
+để runtime đã resident trước request đầu tiên. Các provider còn lại trong database chỉ được
+materialize khi Template hoặc Session dùng đến.
+
+Nếu một provider mặc định không tải được, startup fail thay vì để request đầu tiên gặp lỗi.
+Thời gian tải nằm trong `provider_runtime.startup_timeout_ms`, nên tăng hạn mức này khi deploy
+trên host lần đầu.
+
+## Admin Web tùy chọn
+
+Vue Admin nằm trong workspace tại [`apps/admin-web/`](apps/admin-web/). Khởi động
+server với `api.enabled=true`, sau đó ở terminal khác chạy:
+
+```bash
+cd apps/admin-web
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Mở `http://127.0.0.1:5173`, rồi nhập admin bearer token vào form kết nối. Vite
+proxy các request `/api/admin/*` đến server tại `http://127.0.0.1:8000` theo mặc
+định; xem [hướng dẫn đầy đủ của Admin Web](apps/admin-web/README.md).
 
 Downloader dùng buffer 64 KiB, timeout kết nối 15 giây, timeout 15 phút cho mỗi
-lần tải và tối đa 3 lần thử cho lỗi mạng/HTTP tạm thời. File tạm chỉ được publish
-sau khi checksum và transform hợp lệ. ONNX Runtime và Kokoro G2P vẫn cần cài riêng.
-Voicepack Kokoro đã chuyển đổi có thể tải tự động bằng `deployment.models.sources`;
-xem [hướng dẫn Kokoro](docs/kokoro-vi-provider.md).
+lần tải và tối đa 3 lần thử cho lỗi mạng/HTTP tạm thời. Mỗi file được tải vào
+`<target>.part` rồi mới atomic rename, nên một lần tải dở không bao giờ để lại file trông
+như đã sẵn sàng. ONNX Runtime và Kokoro G2P vẫn cần cài riêng. Voicepack Kokoro được
+tải và chuyển đổi tự động bởi provider; xem [hướng dẫn Kokoro](docs/kokoro-vi-provider.md).
 
 Chạy các gate tự động hiện có:
 

@@ -1,5 +1,6 @@
 //! Local inference seams and adapters. Provider code never owns workers or Voice Sessions.
 
+pub mod assets;
 pub mod capabilities;
 mod catalog;
 mod database_loader;
@@ -8,6 +9,7 @@ mod error;
 mod factory_registry;
 pub mod inspector;
 mod loader;
+mod local_runtime;
 pub mod registry;
 mod runtime_catalog;
 mod set;
@@ -19,6 +21,7 @@ pub mod vad;
 pub mod vision;
 
 pub use asr::{AsrEvent, AsrProvider, AsrResult, AsrSession};
+pub use assets::{Asset, AssetError, VoiceAsset};
 pub use catalog::{ProviderCatalog, ProviderLookupError};
 pub use database_loader::{
     DatabaseMaterialization, DatabaseRuntimeFailure, DatabaseRuntimeSnapshot, DatabaseRuntimeState,
@@ -38,13 +41,21 @@ pub(crate) use loader::{LoadedProviders, load_local, vad_timing};
 
 pub use factory_registry::{
     AsrFactory, LlmFactory, ProviderRegistry, TtsFactory, VadFactory, compiled_provider_registry,
+    local_model_identity,
+};
+pub use local_runtime::{
+    LocalRuntimeAdapter, LocalRuntimeAdapterRegistry, compiled_local_runtime_adapter_registry,
+    configured_physical_replicas,
 };
 pub use runtime_catalog::{
     DiagnosticRuntimeError, DiagnosticRuntimeKind, LoadedVad, ResolvedAgentRuntimes,
     RuntimeCatalog, RuntimeResolveError, TtsDiagnosticValidationError,
 };
 pub use set::ProviderSet;
-pub use tts::{TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsWorker};
+pub use tts::{
+    TtsBinding, TtsDiagnosticRequest, TtsError, TtsProvider, TtsStream, TtsSynthesisRequest,
+    TtsWorker,
+};
 pub use vad::{VadInput, VadProbability, VadProvider, VadSession};
 pub use vision::{
     OpenAiVisionProvider, VisionError, VisionProvider, VisionRequest, VisionResponse,
@@ -54,3 +65,5 @@ mod deployment_snapshot;
 pub use deployment_snapshot::deployment_provider_snapshot;
 
 pub(crate) use database_loader::materialize_provider_from_artifacts;
+
+pub(crate) use factory_registry::effective_local_config;

@@ -135,6 +135,12 @@ fn database_url() -> String {
 }
 
 async fn server(api_enabled: bool) -> (String, tokio::task::JoinHandle<()>) {
+    server_with_database(api_enabled, &database_url()).await
+}
+async fn server_with_database(
+    api_enabled: bool,
+    database_uri: &str,
+) -> (String, tokio::task::JoinHandle<()>) {
     let config_path =
         std::env::temp_dir().join(format!("voice-agent-admin-{}.toml", uuid::Uuid::new_v4()));
     fs::write(
@@ -157,8 +163,7 @@ admin_token = "admin-test-token"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
-            database_url(),
-            api_enabled
+            database_uri, api_enabled
         ),
     )
     .unwrap();
@@ -171,6 +176,37 @@ allowed_hosts = ["mcp.example.test"]
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (format!("http://{address}"), task)
+}
+
+/// Creates a Provider through the public Admin API and returns the key the server generated.
+async fn create_provider(client: &Client, providers: &str, body: serde_json::Value) -> String {
+    let response = client
+        .post(providers)
+        .bearer_auth("admin-test-token")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED, "{body}");
+    response.json::<serde_json::Value>().await.unwrap()["key"]
+        .as_str()
+        .expect("a created provider carries its generated key")
+        .to_owned()
+}
+
+/// Creates a Provider on a throwaway Admin server and returns the database it committed to plus
+/// the generated key. A loaded-runtime fixture can only publish its runtime under a key chosen
+/// before its router exists, so the provider is created first and the database is carried over
+/// to the server that owns the runtime.
+async fn seeded_provider(body: serde_json::Value) -> (String, String) {
+    let database_uri = database_url();
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let key = create_provider(&Client::new(), &format!("{base}/api/admin/providers"), body).await;
+    // The server that owns the runtime opens this same SQLite path next, so the seeding process
+    // has to be gone rather than merely told to stop.
+    task.abort();
+    let _ = task.await;
+    (database_uri, key)
 }
 
 /// Keeps the Admin router mounted while making the already-configured database unavailable.
@@ -220,7 +256,10 @@ admin_token = "admin-test-token"
     (format!("http://{address}"), task)
 }
 
-async fn server_with_loaded_llm() -> (
+async fn server_with_loaded_llm(
+    database_uri: &str,
+    instance_id: &str,
+) -> (
     String,
     Arc<Mutex<Vec<LlmRequest>>>,
     tokio::task::JoinHandle<()>,
@@ -249,7 +288,7 @@ admin_token = "admin-test-token"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
-            database_url(),
+            database_uri,
         ),
     )
     .unwrap();
@@ -263,7 +302,7 @@ allowed_hosts = ["mcp.example.test"]
         database,
     )
     .with_database_llm_runtime_for_test(
-        "llm_loaded",
+        instance_id,
         Arc::new(DiagnosticLlm {
             requests: Arc::clone(&requests),
         }),
@@ -278,7 +317,10 @@ allowed_hosts = ["mcp.example.test"]
     (format!("http://{address}"), requests, task)
 }
 
-async fn server_with_loaded_tts() -> (
+async fn server_with_loaded_tts(
+    database_uri: &str,
+    instance_id: &str,
+) -> (
     String,
     Arc<Mutex<Vec<TtsDiagnosticRequest>>>,
     tokio::task::JoinHandle<()>,
@@ -307,7 +349,7 @@ admin_token = "admin-test-token"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
-            database_url()
+            database_uri
         ),
     )
     .unwrap();
@@ -321,7 +363,7 @@ allowed_hosts = ["mcp.example.test"]
         database,
     )
     .with_database_tts_runtime_for_test(
-        "tts_loaded",
+        instance_id,
         Arc::new(DiagnosticTts {
             requests: Arc::clone(&requests),
         }),
@@ -341,7 +383,10 @@ allowed_hosts = ["mcp.example.test"]
     (format!("http://{address}"), requests, task)
 }
 
-async fn server_with_loaded_asr() -> (String, Arc<Mutex<Vec<usize>>>, tokio::task::JoinHandle<()>) {
+async fn server_with_loaded_asr(
+    database_uri: &str,
+    instance_id: &str,
+) -> (String, Arc<Mutex<Vec<usize>>>, tokio::task::JoinHandle<()>) {
     let config_path = std::env::temp_dir().join(format!(
         "voice-agent-admin-asr-diagnostic-{}.toml",
         uuid::Uuid::new_v4()
@@ -366,7 +411,7 @@ admin_token = "admin-test-token"
 [mcp.external.network]
 allowed_hosts = ["mcp.example.test"]
 "#,
-            database_url()
+            database_uri
         ),
     )
     .unwrap();
@@ -380,7 +425,7 @@ allowed_hosts = ["mcp.example.test"]
         database,
     )
     .with_database_asr_runtime_for_test(
-        "asr_loaded",
+        instance_id,
         Arc::new(DiagnosticAsr {
             received_samples: Arc::clone(&received_samples),
         }),
@@ -400,7 +445,10 @@ allowed_hosts = ["mcp.example.test"]
     (format!("http://{address}"), received_samples, task)
 }
 
-async fn server_with_loaded_vad() -> (
+async fn server_with_loaded_vad(
+    database_uri: &str,
+    instance_id: &str,
+) -> (
     String,
     Arc<Mutex<Vec<VadInput>>>,
     tokio::task::JoinHandle<()>,
@@ -427,7 +475,7 @@ url = "{}"
 enabled = true
 admin_token = "admin-test-token"
 "#,
-            database_url()
+            database_uri
         ),
     )
     .unwrap();
@@ -441,7 +489,7 @@ admin_token = "admin-test-token"
         database,
     )
     .with_database_vad_runtime_for_test(
-        "vad_loaded",
+        instance_id,
         Arc::new(DiagnosticVad {
             inputs: Arc::clone(&inputs),
         }),
@@ -485,32 +533,23 @@ fn wav_pcm16_mono(sample_rate: u32, samples: usize) -> Vec<u8> {
 
 #[tokio::test]
 async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runtime() {
-    let (base, inputs, task) = server_with_loaded_vad().await;
+    let (database_uri, key) = seeded_provider(serde_json::json!({
+        "name":"Loaded VAD", "type":"vad", "adapter":"silero_onnx",
+        "config_json":{}
+    }))
+    .await;
+    let (base, inputs, task) = server_with_loaded_vad(&database_uri, &key).await;
     let client = Client::new();
     let providers = format!("{base}/api/admin/providers");
-    assert_eq!(
-        client
-            .post(&providers)
-            .bearer_auth("admin-test-token")
-            .json(&serde_json::json!({
-                "key":"vad_loaded", "name":"Loaded VAD", "type":"vad", "adapter":"silero_onnx",
-                "config_json":{"model":"silero","num_threads":1}
-            }))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::CREATED
-    );
     let response = client
-        .post(format!("{providers}/vad_loaded/test/vad"))
+        .post(format!("{providers}/{key}/test/vad"))
         .bearer_auth("admin-test-token")
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let response = response.json::<serde_json::Value>().await.unwrap();
-    assert_eq!(response["provider_key"], "vad_loaded");
+    assert_eq!(response["provider_key"], key);
     assert_eq!(response["type"], "vad");
     assert_eq!(response["result"]["probability"], 0.25);
     assert_eq!(response["result"]["start_sample"], 0);
@@ -523,7 +562,7 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
         }]
     );
     let nonempty = client
-        .post(format!("{providers}/vad_loaded/test/vad"))
+        .post(format!("{providers}/{key}/test/vad"))
         .bearer_auth("admin-test-token")
         .body("caller pcm is not accepted")
         .send()
@@ -534,22 +573,17 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
         nonempty.json::<serde_json::Value>().await.unwrap()["error"]["code"],
         "invalid_test_input"
     );
-    assert_eq!(
-        client
-            .post(&providers)
-            .bearer_auth("admin-test-token")
-            .json(&serde_json::json!({
-                "key":"asr_other", "name":"Other ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
-                "config_json":{"model":"gipformer15_vi_int8","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}
-            }))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::CREATED
-    );
+    let other = create_provider(
+        &client,
+        &providers,
+        serde_json::json!({
+            "name":"Other ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
+            "config_json":{"decoding_method":"greedy_search","max_active_paths":4}
+        }),
+    )
+    .await;
     let wrong_type = client
-        .post(format!("{providers}/asr_other/test/vad"))
+        .post(format!("{providers}/{other}/test/vad"))
         .bearer_auth("admin-test-token")
         .send()
         .await
@@ -574,26 +608,17 @@ async fn vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runti
 
 #[tokio::test]
 async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request() {
-    let (base, requests, task) = server_with_loaded_llm().await;
+    let (database_uri, key) = seeded_provider(serde_json::json!({
+        "name": "Loaded LLM", "type": "llm", "adapter": "openai",
+        "config_json": {"base_url":"https://example.test/v1","model":"test","max_tokens":8}
+    }))
+    .await;
+    let (base, requests, task) = server_with_loaded_llm(&database_uri, &key).await;
     let client = Client::new();
     let providers = format!("{base}/api/admin/providers");
-    let created = client
-        .post(&providers)
-        .bearer_auth("admin-test-token")
-        .json(&serde_json::json!({
-            "key": "llm_loaded",
-            "name": "Loaded LLM",
-            "type": "llm",
-            "adapter": "openai",
-            "config_json": {"base_url":"https://example.test/v1","model":"test","max_tokens":8}
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(created.status(), StatusCode::CREATED);
 
     let response = client
-        .post(format!("{providers}/llm_loaded/test/llm"))
+        .post(format!("{providers}/{key}/test/llm"))
         .bearer_auth("admin-test-token")
         .json(&serde_json::json!({"input":"xin chao"}))
         .send()
@@ -601,7 +626,7 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let response = response.json::<serde_json::Value>().await.unwrap();
-    assert_eq!(response["provider_key"], "llm_loaded");
+    assert_eq!(response["provider_key"], key);
     assert_eq!(response["type"], "llm");
     assert_eq!(response["status"], "success");
     assert_eq!(response["result"]["text"], "diagnostic answer");
@@ -612,7 +637,7 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
     assert!(response["metrics"]["elapsed_ms"].is_u64());
 
     let changed = client
-        .patch(format!("{providers}/llm_loaded"))
+        .patch(format!("{providers}/{key}"))
         .bearer_auth("admin-test-token")
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"name":"Changed desired state"}))
@@ -621,7 +646,7 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
         .unwrap();
     assert_eq!(changed.status(), StatusCode::OK);
     let stale = client
-        .post(format!("{providers}/llm_loaded/test/llm"))
+        .post(format!("{providers}/{key}/test/llm"))
         .bearer_auth("admin-test-token")
         .json(&serde_json::json!({"input":"still loaded"}))
         .send()
@@ -647,7 +672,7 @@ async fn llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request(
     }
 
     let invalid = client
-        .post(format!("{providers}/llm_loaded/test/llm"))
+        .post(format!("{providers}/{key}/test/llm"))
         .bearer_auth("admin-test-token")
         .json(&serde_json::json!({"input":""}))
         .send()
@@ -731,33 +756,25 @@ async fn admin_p1_read_models_and_device_template_override_are_public_contracts(
     );
 
     let providers = format!("{base}/api/admin/providers");
-    for (key, name, kind, adapter, config_json) in [
+    let mut kids_vad = String::new();
+    for (name, kind, adapter, config_json) in [
+        ("Kids VAD", "vad", "silero_onnx", serde_json::json!({})),
         (
-            "vad_kids",
-            "Kids VAD",
-            "vad",
-            "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
-        ),
-        (
-            "llm_main",
             "Main LLM",
             "llm",
             "openai",
             serde_json::json!({"base_url":"https://example.test/v1","model":"test","max_tokens":8}),
         ),
     ] {
-        assert_eq!(
-            client
-                .post(&providers)
-                .bearer_auth(auth)
-                .json(&serde_json::json!({"key":key,"name":name,"type":kind,"adapter":adapter,"config_json":config_json}))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::CREATED
-        );
+        let key = create_provider(
+            &client,
+            &providers,
+            serde_json::json!({"name":name,"type":kind,"adapter":adapter,"config_json":config_json}),
+        )
+        .await;
+        if kind == "vad" {
+            kids_vad = key;
+        }
     }
     let provider_page: serde_json::Value = client
         .get(format!("{providers}?type=vad&q=Kids&page_size=1&sort=name"))
@@ -771,7 +788,7 @@ async fn admin_p1_read_models_and_device_template_override_are_public_contracts(
     assert_eq!(provider_page["total"], 1);
     assert_eq!(provider_page["facets"]["vad"], 1);
     assert_eq!(provider_page["facets"]["llm"], 0);
-    assert_eq!(provider_page["items"][0]["key"], "vad_kids");
+    assert_eq!(provider_page["items"][0]["key"], kids_vad);
 
     let device_url = format!("{base}/api/admin/devices");
     let device: serde_json::Value = client.post(&device_url).bearer_auth(auth).json(&serde_json::json!({"device_id":"kitchen-speaker","agent_key":"kitchen","template_key":"kids"})).send().await.unwrap().json().await.unwrap();
@@ -847,15 +864,16 @@ async fn admin_system_reports_database_unavailable_without_leaking_runtime_detai
 
 #[tokio::test]
 async fn tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_provider_wav() {
-    let (base, requests, task) = server_with_loaded_tts().await;
+    let (database_uri, key) = seeded_provider(serde_json::json!({
+        "name":"Loaded TTS", "type":"tts", "adapter":"zerotts_onnx",
+        "config_json":{"voice":"maichi","language":"vi-VN"}
+    }))
+    .await;
+    let (base, requests, task) = server_with_loaded_tts(&database_uri, &key).await;
     let client = Client::new();
     let providers = format!("{base}/api/admin/providers");
-    assert_eq!(client.post(&providers).bearer_auth("admin-test-token").json(&serde_json::json!({
-        "key":"tts_loaded", "name":"Loaded TTS", "type":"tts", "adapter":"zerotts_onnx",
-        "config_json":{"model":"zerotts_default","num_threads":1,"voice":"maichi","language":"vi-VN"}
-    })).send().await.unwrap().status(), StatusCode::CREATED);
     let response = client
-        .post(format!("{providers}/tts_loaded/test/tts"))
+        .post(format!("{providers}/{key}/test/tts"))
         .bearer_auth("admin-test-token")
         .json(&serde_json::json!({"text":"xin chao","voice":"maichi","language":"vi-VN"}))
         .send()
@@ -884,14 +902,15 @@ async fn tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_p
 
 #[tokio::test]
 async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
-    let (base, received_samples, task) = server_with_loaded_asr().await;
+    let (database_uri, key) = seeded_provider(serde_json::json!({
+        "name":"Loaded ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
+        "config_json":{"language":"vi-VN","decoding_method":"greedy_search","max_active_paths":4}
+    }))
+    .await;
+    let (base, received_samples, task) = server_with_loaded_asr(&database_uri, &key).await;
     let client = Client::new();
     let providers = format!("{base}/api/admin/providers");
-    assert_eq!(client.post(&providers).bearer_auth("admin-test-token").json(&serde_json::json!({
-        "key":"asr_loaded", "name":"Loaded ASR", "type":"asr", "adapter":"gipformer_sherpa_offline",
-        "config_json":{"model":"gipformer15_vi_int8","language":"vi-VN","num_threads":1,"decoding_method":"greedy_search","max_active_paths":4}
-    })).send().await.unwrap().status(), StatusCode::CREATED);
-    let url = format!("{providers}/asr_loaded/test/asr");
+    let url = format!("{providers}/{key}/test/asr");
 
     let response = client
         .post(&url)
@@ -903,7 +922,7 @@ async fn asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let response = response.json::<serde_json::Value>().await.unwrap();
-    assert_eq!(response["provider_key"], "asr_loaded");
+    assert_eq!(response["provider_key"], key);
     assert_eq!(response["type"], "asr");
     assert_eq!(response["result"]["text"], "xin chao");
     assert_eq!(response["result"]["language"], "vi-VN");
@@ -1165,7 +1184,7 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
             .iter()
             .any(|field| field["key"] == "language")
     );
-    assert_eq!(descriptor["discovery"]["voices"], "bootstrap_and_runtime");
+    assert_eq!(descriptor["discovery"]["voices"], "static");
     assert_eq!(
         descriptor["config_schema"]["fields"]
             .as_array()
@@ -1185,7 +1204,14 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
         .unwrap();
     assert_eq!(discovered.status(), StatusCode::OK);
     let discovered = discovered.json::<serde_json::Value>().await.unwrap();
-    assert_eq!(discovered["voices"][0]["id"], "maichi");
+    assert_eq!(discovered["voices"].as_array().unwrap().len(), 8);
+    assert!(
+        discovered["voices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|voice| voice["id"] == "maichi")
+    );
     assert_eq!(discovered["languages"][0]["id"], "vi-VN");
 
     let invalid = client
@@ -1214,14 +1240,11 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
         .post(&providers)
         .bearer_auth("admin-test-token")
         .json(&serde_json::json!({
-            "key": "zerotts_legacy",
             "name": "Legacy ZeroTTS",
             "type": "tts",
             "adapter": "zerotts_onnx",
             "config_json": {
-                "model": "zerotts_default",
-                "voice": "maichi",
-                "num_threads": 1
+                "voice": "maichi"
             }
         }))
         .send()
@@ -1231,7 +1254,7 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
     let legacy = legacy.json::<serde_json::Value>().await.unwrap();
     assert_eq!(
         legacy["config_json"],
-        "{\"model\":\"zerotts_default\",\"num_threads\":1,\"voice\":\"maichi\",\"language\":\"vi-VN\",\"preload\":false,\"delivery_mode\":\"stream\"}"
+        "{\"voice\":\"maichi\",\"language\":\"vi-VN\",\"preload\":false,\"delivery_mode\":\"stream\"}"
     );
     let mut canonical: serde_json::Value =
         serde_json::from_str(legacy["config_json"].as_str().unwrap()).unwrap();
@@ -1247,15 +1270,12 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
         .post(&providers)
         .bearer_auth("admin-test-token")
         .json(&serde_json::json!({
-            "key": "zerotts_wrong_language",
             "name": "Wrong language",
             "type": "tts",
             "adapter": "zerotts_onnx",
             "config_json": {
-                "model": "zerotts_default",
                 "voice": "maichi",
-                "language": "en-US",
-                "num_threads": 1
+                "language": "en-US"
             }
         }))
         .send()
@@ -1271,12 +1291,10 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
         .post(&providers)
         .bearer_auth("admin-test-token")
         .json(&serde_json::json!({
-            "key": "chillaudio_main",
             "name": "ChillAudio",
             "type": "tts",
             "adapter": "chillaudio_ws",
             "config_json": {
-                "ws_url": "wss://tts.example.test/socket",
                 "voice": "BV421_vivn_streaming"
             }
         }))
@@ -1311,7 +1329,7 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
         .post(&provider_url)
         .bearer_auth(auth)
         .json(&serde_json::json!({
-            "key":"bad_openai", "name":"Bad", "type":"llm", "adapter":"openai",
+            "name":"Bad", "type":"llm", "adapter":"openai",
             "config_json":{"model":"x","nested":{"api_key":"nope"}}
         }))
         .send()
@@ -1327,7 +1345,7 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
         .post(&provider_url)
         .bearer_auth(auth)
         .json(&serde_json::json!({
-            "key":"llm_main", "name":"LLM", "type":"llm", "adapter":"openai",
+            "name":"LLM", "type":"llm", "adapter":"openai",
             "config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8},
             "secret_ref":"LLM_SECRET"
         }))
@@ -1336,45 +1354,38 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
         .unwrap();
     assert_eq!(llm.status(), StatusCode::CREATED);
     let llm = llm.json::<serde_json::Value>().await.unwrap();
+    let llm_key = llm["key"].as_str().expect("a key is generated").to_owned();
     assert_eq!(llm["has_secret_ref"], true);
     assert!(llm.get("secret_ref").is_none());
     assert_eq!(llm["runtime_status"], "not_loaded");
     assert_eq!(llm["runtime_matches_desired"], false);
     assert_eq!(llm["requires_restart"], true);
 
-    for (key, kind, adapter, config_json) in [
+    let mut generated = vec![("llm".to_owned(), llm_key)];
+    for (name, kind, adapter, config_json) in [
+        ("Main VAD", "vad", "silero_onnx", serde_json::json!({})),
         (
-            "vad_main",
-            "vad",
-            "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
-        ),
-        (
-            "asr_main",
+            "Main ASR",
             "asr",
             "zipformer_sherpa",
-            serde_json::json!({"model":"zipformer","num_threads":1,"decoding_method":"greedy_search"}),
+            serde_json::json!({"decoding_method":"greedy_search"}),
         ),
         (
-            "tts_main",
+            "Main TTS",
             "tts",
             "zerotts_onnx",
-            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
+            serde_json::json!({"voice":"maichi"}),
         ),
     ] {
-        assert_eq!(
-            client
-                .post(&provider_url)
-                .bearer_auth(auth)
-                .json(&serde_json::json!({
-                    "key":key,"name":key,"type":kind,"adapter":adapter,"config_json":config_json
-                }))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::CREATED
-        );
+        let key = create_provider(
+            &client,
+            &provider_url,
+            serde_json::json!({
+                "name":name,"type":kind,"adapter":adapter,"config_json":config_json
+            }),
+        )
+        .await;
+        generated.push((kind.to_owned(), key));
     }
 
     let templates_url = format!("{base}/api/admin/templates");
@@ -1390,12 +1401,7 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
     assert_eq!(template.status(), StatusCode::CREATED);
     let mut template = template.json::<serde_json::Value>().await.unwrap();
 
-    for (kind, provider_key) in [
-        ("vad", "vad_main"),
-        ("asr", "asr_main"),
-        ("llm", "llm_main"),
-        ("tts", "tts_main"),
-    ] {
+    for (kind, provider_key) in &generated {
         let response = client
             .put(format!("{base}/api/admin/templates/quiet/providers/{kind}"))
             .bearer_auth(auth)
@@ -1454,53 +1460,41 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         StatusCode::CREATED
     );
 
-    for (key, kind, adapter, config_json) in [
+    let mut generated = Vec::new();
+    for (name, kind, adapter, config_json) in [
+        ("Main VAD", "vad", "silero_onnx", serde_json::json!({})),
         (
-            "vad_main",
-            "vad",
-            "silero_onnx",
-            serde_json::json!({"model":"silero","num_threads":1}),
-        ),
-        (
-            "asr_main",
+            "Main ASR",
             "asr",
             "zipformer_sherpa",
-            serde_json::json!({"model":"zipformer","num_threads":1,"decoding_method":"greedy_search"}),
+            serde_json::json!({"decoding_method":"greedy_search"}),
         ),
         (
-            "llm_main",
+            "Main LLM",
             "llm",
             "openai",
             serde_json::json!({"base_url":"https://example.test/v1","model":"test","max_tokens":8}),
         ),
         (
-            "tts_main",
+            "Main TTS",
             "tts",
             "zerotts_onnx",
-            serde_json::json!({"model":"zerotts","num_threads":1,"voice":"vi"}),
+            serde_json::json!({"voice":"maichi"}),
         ),
     ] {
-        assert_eq!(
-            client
-                .post(&providers)
-                .bearer_auth(auth)
-                .json(&serde_json::json!({
-                    "key":key,"name":key,"type":kind,"adapter":adapter,"config_json":config_json
-                }))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::CREATED
-        );
+        let key = create_provider(
+            &client,
+            &providers,
+            serde_json::json!({
+                "name":name,"type":kind,"adapter":adapter,"config_json":config_json
+            }),
+        )
+        .await;
+        assert!(key.starts_with(kind));
+        generated.push((kind, key));
     }
 
-    for (template_revision, (kind, provider_key)) in (1..).zip([
-        ("vad", "vad_main"),
-        ("asr", "asr_main"),
-        ("llm", "llm_main"),
-        ("tts", "tts_main"),
-    ]) {
+    for (template_revision, (kind, provider_key)) in (1..).zip(&generated) {
         let response = client
             .put(format!("{templates}/quiet/providers/{kind}"))
             .bearer_auth(auth)
@@ -1531,7 +1525,7 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         .await
         .unwrap();
     assert_eq!(agent_templates["items"][0]["key"], "quiet");
-    assert_eq!(agent_templates["items"][0]["is_default"], false);
+    assert_eq!(agent_templates["items"][0]["is_default"], true);
     assert_eq!(agent_templates["revision"], 2);
 
     let template_agents = client
@@ -1544,7 +1538,7 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         .await
         .unwrap();
     assert_eq!(template_agents["items"][0]["key"], "kitchen");
-    assert_eq!(template_agents["items"][0]["is_default"], false);
+    assert_eq!(template_agents["items"][0]["is_default"], true);
     assert_eq!(template_agents["revision"], 5);
     assert_eq!(template_agents["total"], 1);
 
@@ -1559,10 +1553,11 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         .unwrap();
     assert_eq!(bindings["template_key"], "quiet");
     assert_eq!(bindings["revision"], 5);
-    assert_eq!(bindings["bindings"]["llm"]["provider_key"], "llm_main");
+    let llm_key = &generated[2].1;
+    assert_eq!(bindings["bindings"]["llm"]["provider_key"], *llm_key);
 
     let provider_templates = client
-        .get(format!("{providers}/llm_main/templates"))
+        .get(format!("{providers}/{llm_key}/templates"))
         .bearer_auth(auth)
         .send()
         .await
@@ -1582,10 +1577,87 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         .unwrap();
     assert_eq!(missing_if_match.status(), StatusCode::BAD_REQUEST);
 
-    let unlinked = client
+    // Agents may have no Templates. Unlinking their sole default clears the assignment and lets
+    // subsequent sessions resolve through the server defaults.
+    let unlinked_default = client
         .delete(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
         .header("if-match", "\"2\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unlinked_default.status(), StatusCode::OK);
+    assert_eq!(
+        client
+            .get(format!("{agents}/kitchen/templates"))
+            .bearer_auth(auth)
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        client
+            .put(format!("{agents}/kitchen/templates/quiet"))
+            .bearer_auth(auth)
+            .header("if-match", "\"3\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .post(&templates)
+            .bearer_auth(auth)
+            .json(&serde_json::json!({
+                "key":"loud","name":"Loud","language":"vi-VN","prompt":"Nói to"
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    // A default Template may inherit missing provider slots from server defaults.
+    let default_loud = client
+        .put(format!("{agents}/kitchen/default-template/loud"))
+        .bearer_auth(auth)
+        .header("if-match", "\"4\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        default_loud.status(),
+        StatusCode::OK,
+        "promoting a partial template failed: {:?}",
+        default_loud.text().await
+    );
+    for (revision, (kind, provider_key)) in (1..).zip(&generated) {
+        assert_eq!(
+            client
+                .put(format!("{templates}/loud/providers/{kind}"))
+                .bearer_auth(auth)
+                .header("if-match", format!("\"{revision}\""))
+                .json(&serde_json::json!({"provider_key":provider_key}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+    let unlinked = client
+        .delete(format!("{agents}/kitchen/templates/quiet"))
+        .bearer_auth(auth)
+        .header("if-match", "\"5\"")
         .send()
         .await
         .unwrap();
@@ -1603,13 +1675,13 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
             .as_array()
             .unwrap()
             .len(),
-        0
+        1
     );
 
     let reassigned = client
         .put(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"3\"")
+        .header("if-match", "\"6\"")
         .send()
         .await
         .unwrap();
@@ -1617,7 +1689,7 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
     let stale_unlink = client
         .delete(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"3\"")
+        .header("if-match", "\"6\"")
         .send()
         .await
         .unwrap();
@@ -1629,23 +1701,19 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
     let defaulted = client
         .put(format!("{agents}/kitchen/default-template/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"4\"")
+        .header("if-match", "\"7\"")
         .send()
         .await
         .unwrap();
     assert_eq!(defaulted.status(), StatusCode::OK);
-    let default_conflict = client
+    let unlinked_default = client
         .delete(format!("{agents}/kitchen/templates/quiet"))
         .bearer_auth(auth)
-        .header("if-match", "\"5\"")
+        .header("if-match", "\"8\"")
         .send()
         .await
         .unwrap();
-    assert_eq!(default_conflict.status(), StatusCode::CONFLICT);
-    assert_eq!(
-        default_conflict.json::<serde_json::Value>().await.unwrap()["error"]["code"],
-        "default_template_conflict"
-    );
+    assert_eq!(unlinked_default.status(), StatusCode::OK);
 
     let missing_binding_if_match = client
         .delete(format!("{templates}/quiet/providers/llm"))
@@ -1697,7 +1765,7 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
         .json::<serde_json::Value>()
         .await
         .unwrap();
-    assert_eq!(bindings["bindings"]["tts"]["provider_key"], "tts_main");
+    assert_eq!(bindings["bindings"]["tts"]["provider_key"], generated[3].1);
 
     task.abort();
 }
@@ -1857,7 +1925,7 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
 }
 
 #[tokio::test]
-async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
+async fn conditional_delete_requires_a_current_revision_and_preserves_linked_templates() {
     let (base, task) = server(true).await;
     let client = Client::new();
     let auth = "admin-test-token";
@@ -1874,10 +1942,6 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
             templates.as_str(),
             serde_json::json!({"key":"quiet","name":"Quiet","language":"vi-VN","prompt":"Be concise"}),
         ),
-        (
-            providers.as_str(),
-            serde_json::json!({"key":"llm_main","name":"LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}}),
-        ),
     ] {
         assert_eq!(
             client
@@ -1891,6 +1955,12 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
             StatusCode::CREATED
         );
     }
+    let llm_key = create_provider(
+        &client,
+        &providers,
+        serde_json::json!({"name":"LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}}),
+    )
+    .await;
 
     let missing_match = client
         .delete(format!("{agents}/kitchen"))
@@ -1917,7 +1987,7 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
             .put(format!("{templates}/quiet/providers/llm"))
             .bearer_auth(auth)
             .header("if-match", "\"1\"")
-            .json(&serde_json::json!({"provider_key":"llm_main"}))
+            .json(&serde_json::json!({"provider_key":llm_key}))
             .send()
             .await
             .unwrap()
@@ -1925,7 +1995,7 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
         StatusCode::OK
     );
     let provider_in_use = client
-        .delete(format!("{providers}/llm_main"))
+        .delete(format!("{providers}/{llm_key}"))
         .bearer_auth(auth)
         .header("if-match", "\"1\"")
         .send()
@@ -1949,7 +2019,7 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
     );
     assert_eq!(
         client
-            .delete(format!("{providers}/llm_main"))
+            .delete(format!("{providers}/{llm_key}"))
             .bearer_auth(auth)
             .header("if-match", "\"1\"")
             .send()
@@ -1982,28 +2052,50 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
         template_in_use.json::<serde_json::Value>().await.unwrap()["error"]["code"],
         "template_in_use"
     );
+    // A Template is globally reusable. Deleting an Agent only removes that Agent's assignment;
+    // it must not delete or otherwise mutate the Template itself.
     assert_eq!(
         client
-            .delete(format!("{agents}/kitchen/templates/quiet"))
+            .delete(format!("{agents}/kitchen"))
             .bearer_auth(auth)
             .header("if-match", "\"2\"")
             .send()
             .await
             .unwrap()
             .status(),
-        StatusCode::OK
+        StatusCode::NO_CONTENT
     );
-    // P0 unlink retains an inert assignment row, but it is no longer an active relationship.
     assert_eq!(
         client
-            .delete(format!("{templates}/quiet"))
+            .get(format!("{templates}/quiet"))
             .bearer_auth(auth)
-            .header("if-match", "\"3\"")
             .send()
             .await
             .unwrap()
             .status(),
-        StatusCode::NO_CONTENT
+        StatusCode::OK
+    );
+    let template_agents = client
+        .get(format!("{templates}/quiet/agents"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(template_agents.status(), StatusCode::OK);
+    assert_eq!(
+        template_agents.json::<serde_json::Value>().await.unwrap()["items"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        client
+            .post(&agents)
+            .bearer_auth(auth)
+            .json(&serde_json::json!({"key":"kitchen","name":"Kitchen"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
     );
     let devices = format!("{base}/api/admin/devices");
     assert_eq!(
@@ -2020,7 +2112,7 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
     let agent_in_use = client
         .delete(format!("{agents}/kitchen"))
         .bearer_auth(auth)
-        .header("if-match", "\"3\"")
+        .header("if-match", "\"1\"")
         .send()
         .await
         .unwrap();
@@ -2044,7 +2136,7 @@ async fn conditional_delete_requires_a_current_revision_and_explicit_unlink() {
         client
             .delete(format!("{agents}/kitchen"))
             .bearer_auth(auth)
-            .header("if-match", "\"3\"")
+            .header("if-match", "\"1\"")
             .send()
             .await
             .unwrap()
@@ -2059,15 +2151,546 @@ async fn kokoro_desired_configuration_accepts_catalog_selection_and_rejects_fact
  {
     let (base, task) = server(true).await;
     let client = Client::new();
-    for (key, voice, status) in [
-        ("kokoro_valid", "diem_trinh", StatusCode::CREATED),
-        ("kokoro_invalid", "unknown", StatusCode::BAD_REQUEST),
+    for (voice, status) in [
+        ("diem_trinh", StatusCode::CREATED),
+        ("unknown", StatusCode::BAD_REQUEST),
     ] {
         let response = client.post(format!("{base}/api/admin/providers"))
             .bearer_auth("admin-test-token")
-            .json(&serde_json::json!({"key":key,"name":key,"type":"tts","adapter":"kokoro_vi_onnx","config_json":{"model":"kokoro_vi_contextbox","voice":voice,"num_threads":1,"language":"vi-VN","speed_percent":100}}))
+            .json(&serde_json::json!({"name":"Kokoro","type":"tts","adapter":"kokoro_vi_onnx","config_json":{"voice":voice,"language":"vi-VN","speed_percent":100}}))
             .send().await.unwrap();
         assert_eq!(response.status(), status);
     }
+    task.abort();
+}
+
+#[tokio::test]
+async fn provider_mutations_reject_server_owned_configuration() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    for (kind, adapter, valid, overrides) in [
+        (
+            "vad",
+            "silero_onnx",
+            serde_json::json!({}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("silero_vad_v5")),
+            ],
+        ),
+        (
+            "asr",
+            "zipformer_sherpa",
+            serde_json::json!({"decoding_method":"greedy_search"}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("zipformer_vi_streaming")),
+                ("decoding_method", serde_json::json!("arbitrary")),
+            ],
+        ),
+        (
+            "asr",
+            "gipformer_sherpa_offline",
+            serde_json::json!({}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("gipformer15_vi_int8")),
+                ("decoding_method", serde_json::json!("arbitrary")),
+                ("max_active_paths", serde_json::json!(10001)),
+            ],
+        ),
+        (
+            "tts",
+            "zerotts_onnx",
+            serde_json::json!({"voice":"maichi"}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("zerotts_default")),
+                ("voice", serde_json::json!("unknown")),
+            ],
+        ),
+        (
+            "tts",
+            "kokoro_vi_onnx",
+            serde_json::json!({"voice":"diem_trinh"}),
+            vec![
+                ("num_threads", serde_json::json!(128)),
+                ("model", serde_json::json!("kokoro_vi_contextbox")),
+            ],
+        ),
+        (
+            "tts",
+            "chillaudio_ws",
+            serde_json::json!({"voice":"BV421_vivn_streaming"}),
+            vec![
+                ("ws_url", serde_json::json!("wss://attacker.example/socket")),
+                ("timeout_ms", serde_json::json!(1)),
+                ("voice", serde_json::json!("unknown")),
+            ],
+        ),
+    ]
+    .into_iter()
+    {
+        let providers = format!("{base}/api/admin/providers");
+        let key = create_provider(
+            &client,
+            &providers,
+            serde_json::json!({"name":"Valid","type":kind,"adapter":adapter,"config_json":valid}),
+        )
+        .await;
+        for (field, value) in overrides {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            for update in [false, true] {
+                let request = if update {
+                    client
+                        .patch(format!("{providers}/{key}"))
+                        .header("if-match", "\"1\"")
+                        .json(&serde_json::json!({"config_json":invalid}))
+                } else {
+                    client.post(&providers)
+                        .json(&serde_json::json!({"name":"Invalid","type":kind,"adapter":adapter,"config_json":invalid}))
+                };
+                let response = request
+                    .bearer_auth("admin-test-token")
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::BAD_REQUEST,
+                    "{adapter}.{field}, update={update}"
+                );
+                assert_eq!(
+                    response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+                    "provider_config_invalid"
+                );
+            }
+        }
+        let row = client
+            .get(format!("{providers}/{key}"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        assert_eq!(row["revision"], 1);
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn provider_key_is_generated_by_the_server_and_never_accepted_from_a_client() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let providers = format!("{base}/api/admin/providers");
+    let body = serde_json::json!({"name":"OpenAI LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}});
+    let key = create_provider(&client, &providers, body.clone()).await;
+    assert!(key.starts_with("llm_"), "{key}");
+    assert!(key.len() <= 64, "{key}");
+    assert!(
+        key.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+        "{key}"
+    );
+    let identity = key.strip_prefix("llm_").expect("the type prefixes the key");
+    assert_eq!(identity.len(), 32, "{key}");
+    assert!(
+        identity
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{key}"
+    );
+
+    let twin = create_provider(&client, &providers, body).await;
+    assert_ne!(twin, key, "identity never comes from the display name");
+
+    let chosen = client
+        .post(&providers)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"key":"user_controlled_key","name":"OpenAI LLM","type":"llm","adapter":"openai","config_json":{}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(chosen.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        chosen.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "invalid_json"
+    );
+
+    let fetched = client
+        .get(format!("{providers}/{key}"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(fetched.status(), StatusCode::OK);
+    assert_eq!(
+        fetched.json::<serde_json::Value>().await.unwrap()["key"],
+        key
+    );
+
+    let renamed = client
+        .patch(format!("{providers}/{key}"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"name":"Renamed"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(renamed.status(), StatusCode::OK);
+    // A display name is the user's to change; identity is not.
+    assert_eq!(
+        renamed.json::<serde_json::Value>().await.unwrap()["key"],
+        key
+    );
+
+    let immovable = client
+        .patch(format!("{providers}/{key}"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"2\"")
+        .json(&serde_json::json!({"key":"new_key"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(immovable.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        immovable.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "immutable_field"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_generated_provider_key_binds_a_template_without_being_retyped() {
+    use voice_agent_server::config::DatabaseConfig;
+    let database_uri = database_url();
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let client = Client::new();
+    let templates = format!("{base}/api/admin/templates");
+    let providers = format!("{base}/api/admin/providers");
+    assert_eq!(
+        client
+            .post(&templates)
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"key":"quiet","name":"Quiet","language":"vi-VN","prompt":"Be concise"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CREATED
+    );
+    let key = create_provider(
+        &client,
+        &providers,
+        serde_json::json!({"name":"Main LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}}),
+    )
+    .await;
+    assert_eq!(
+        client
+            .put(format!("{templates}/quiet/providers/llm"))
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"provider_key":key}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let bindings: serde_json::Value = client
+        .get(format!("{templates}/quiet/providers"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(bindings["bindings"]["llm"]["provider_key"], key);
+    let using: serde_json::Value = client
+        .get(format!("{providers}/{key}/templates"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(using["items"][0]["key"], "quiet");
+
+    // An echoed key would still pass above if the row resolved to a different provider, so the
+    // binding is checked against the row the generated key actually names.
+    let database = Database::connect(&DatabaseConfig {
+        url: database_uri,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let provider_id: i64 = sqlx::query_scalar("SELECT id FROM providers WHERE key = ?")
+        .bind(&key)
+        .fetch_one(database.pool())
+        .await
+        .unwrap();
+    let bound_id: i64 = sqlx::query_scalar(
+        "SELECT b.provider_id FROM template_provider_bindings b \
+         JOIN agent_templates t ON t.id = b.template_id WHERE t.key = ? AND b.provider_type = ?",
+    )
+    .bind("quiet")
+    .bind("llm")
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(bound_id, provider_id);
+    task.abort();
+}
+
+#[tokio::test]
+async fn legacy_provider_runtime_fields_are_removed_by_migration_before_admin_reads() {
+    use voice_agent_server::config::DatabaseConfig;
+    let database_uri = database_url();
+    let config = DatabaseConfig {
+        url: database_uri.clone(),
+        ..Default::default()
+    };
+    let database = Database::connect(&config).await.unwrap();
+    let cases = [
+        (
+            "legacy_vad",
+            "vad",
+            "silero_onnx",
+            serde_json::json!({"model":"silero_vad_v5","num_threads":128}),
+            serde_json::json!({}),
+        ),
+        (
+            "legacy_asr",
+            "asr",
+            "zipformer_sherpa",
+            serde_json::json!({"model":"zipformer_vi_streaming","num_threads":128,"decoding_method":"greedy_search"}),
+            serde_json::json!({"decoding_method":"greedy_search"}),
+        ),
+        (
+            "legacy_gip",
+            "asr",
+            "gipformer_sherpa_offline",
+            serde_json::json!({"model":"gipformer15_vi_int8","num_threads":128}),
+            serde_json::json!({}),
+        ),
+        (
+            "legacy_zero",
+            "tts",
+            "zerotts_onnx",
+            serde_json::json!({"model":"zerotts_default","num_threads":128,"voice":"maichi"}),
+            serde_json::json!({"voice":"maichi"}),
+        ),
+        (
+            "legacy_kokoro",
+            "tts",
+            "kokoro_vi_onnx",
+            serde_json::json!({"model":"kokoro_vi_contextbox","num_threads":128,"voice":"duc_an"}),
+            serde_json::json!({"voice":"duc_an"}),
+        ),
+        (
+            "legacy_chill",
+            "tts",
+            "chillaudio_ws",
+            serde_json::json!({"ws_url":"wss://attacker.example/ws","timeout_ms":1,"voice":"BV421_vivn_streaming"}),
+            serde_json::json!({"voice":"BV421_vivn_streaming"}),
+        ),
+    ];
+    for (key, kind, adapter, legacy, _) in &cases {
+        sqlx::query("INSERT INTO providers (key,name,type,adapter,config_json,revision,created_at,updated_at) VALUES (?,?,?,?,?,1,1,1)")
+            .bind(*key).bind(*key).bind(*kind).bind(*adapter).bind(legacy.to_string())
+            .execute(database.pool()).await.unwrap();
+    }
+    // Fixture represents the previous version: migration 0006 changes data only.
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 6")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    database.pool().close().await;
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let client = Client::new();
+    for (key, _, _, _, expected) in &cases {
+        let response = client
+            .get(format!("{base}/api/admin/providers/{key}"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let row = response.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(row["config_json"].as_str().unwrap())
+                .unwrap(),
+            *expected
+        );
+        assert_eq!(row["revision"], 2);
+    }
+    task.abort();
+}
+
+/// An Agent inside the Template mechanism has no path back to server defaults: admission requires
+/// exactly one enabled default assignment and refuses the connection otherwise. `assign_template`
+/// used to insert `is_default = 0` unconditionally, so the very first assignment to an Agent left
+/// it in that state and every one of its devices got a bare 503.
+#[tokio::test]
+async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let auth = "admin-test-token";
+    let agents = format!("{base}/api/admin/agents");
+    let templates = format!("{base}/api/admin/templates");
+    let providers = format!("{base}/api/admin/providers");
+
+    for (path, body) in [
+        (
+            &agents,
+            serde_json::json!({"key":"kitchen","name":"Kitchen"}),
+        ),
+        (
+            &templates,
+            serde_json::json!({"key":"quiet","name":"Quiet","language":"vi-VN","prompt":"Nói ngắn gọn"}),
+        ),
+        (
+            &templates,
+            serde_json::json!({"key":"loud","name":"Loud","language":"vi-VN","prompt":"Nói to"}),
+        ),
+    ] {
+        assert_eq!(
+            client
+                .post(path)
+                .bearer_auth(auth)
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    // `assign_template` promotes a first assignment only after it is structurally complete;
+    // explicit `set_default_template` may instead rely on server-default provider slots.
+    let mut generated = Vec::new();
+    for (name, kind, adapter, config_json) in [
+        ("Main VAD", "vad", "silero_onnx", serde_json::json!({})),
+        (
+            "Main ASR",
+            "asr",
+            "zipformer_sherpa",
+            serde_json::json!({"decoding_method":"greedy_search"}),
+        ),
+        (
+            "Main LLM",
+            "llm",
+            "openai",
+            serde_json::json!({"base_url":"https://example.test/v1","model":"test","max_tokens":8}),
+        ),
+        (
+            "Main TTS",
+            "tts",
+            "zerotts_onnx",
+            serde_json::json!({"voice":"maichi"}),
+        ),
+    ] {
+        let key = create_provider(
+            &client,
+            &providers,
+            serde_json::json!({
+                "name":name,"type":kind,"adapter":adapter,"config_json":config_json
+            }),
+        )
+        .await;
+        generated.push((kind, key));
+    }
+
+    for template_key in ["quiet", "loud"] {
+        for (revision, (kind, provider_key)) in (1..).zip(&generated) {
+            assert_eq!(
+                client
+                    .put(format!("{templates}/{template_key}/providers/{kind}"))
+                    .bearer_auth(auth)
+                    .header("if-match", format!("\"{revision}\""))
+                    .json(&serde_json::json!({"provider_key":provider_key}))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+        }
+    }
+
+    let assign = |template_key: &'static str, if_match: &'static str| {
+        let client = client.clone();
+        let url = format!("{agents}/kitchen/templates/{template_key}");
+        async move {
+            client
+                .put(url)
+                .bearer_auth(auth)
+                .header("if-match", if_match)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+
+    // The first assignment has no default to preserve, so it must take the default slot.
+    assert_eq!(assign("quiet", "\"1\"").await, StatusCode::OK);
+    let after_first: serde_json::Value = client
+        .get(format!("{agents}/kitchen/templates"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let default_count = |items: &serde_json::Value| {
+        items["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["is_default"] == true)
+            .count()
+    };
+    assert_eq!(
+        default_count(&after_first),
+        1,
+        "the first assignment must become the default, got {after_first}"
+    );
+    let find = |items: &serde_json::Value, key: &str| {
+        items["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["key"] == key)
+            .unwrap_or_else(|| panic!("{key} missing from {items}"))
+            .clone()
+    };
+    assert_eq!(find(&after_first, "quiet")["is_default"], true);
+
+    // A second assignment is a switch candidate and must not steal the default slot.
+    assert_eq!(assign("loud", "\"2\"").await, StatusCode::OK);
+    let after_second: serde_json::Value = client
+        .get(format!("{agents}/kitchen/templates"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        default_count(&after_second),
+        1,
+        "exactly one enabled default must remain, got {after_second}"
+    );
+    assert_eq!(find(&after_second, "quiet")["is_default"], true);
+    assert_eq!(find(&after_second, "loud")["is_default"], false);
     task.abort();
 }

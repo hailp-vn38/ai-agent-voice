@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct KokoroViOnnxConfig {
     #[serde(default = "default_kokoro_vi_model")]
+    #[serde(skip_serializing)]
     pub model: String,
     #[serde(default = "default_asr_threads")]
+    #[serde(skip_serializing)]
     pub num_threads: i32,
     #[serde(default = "default_kokoro_vi_voice")]
     pub voice: String,

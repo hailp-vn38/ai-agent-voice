@@ -1,9 +1,15 @@
 reference/
 /target/
 /config.toml
-/models/**
-!/models/manifest.toml
+models/
 /runtime/**
 .DS_Store
 /output/
 /data/
+
+# Vue Admin local build and development state.
+/apps/admin-web/node_modules/
+/apps/admin-web/dist/
+/apps/admin-web/.env
+/apps/admin-web/.vite/
+/apps/admin-web/*.tsbuildinfo

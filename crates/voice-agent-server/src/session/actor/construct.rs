@@ -328,7 +328,6 @@ impl SessionActor {
     ) -> Result<Self, crate::session::prompt::PromptError> {
         self.profile.system_prompt = crate::session::prompt::render_system(agent)?;
         self.profile.language = agent.language.clone();
-        self.profile.providers = agent.providers.clone();
         self.max_tool_result_chars = max_tool_result_chars;
         Ok(self)
     }

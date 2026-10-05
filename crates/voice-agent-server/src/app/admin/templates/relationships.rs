@@ -283,8 +283,8 @@ pub(in crate::app::admin) async fn unlink_agent_template(
         audit_conflict(pool, id(&request).into(), "agent", agent.id, expected).await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
-    let assignment: Result<(i64, i64), _> = sqlx::query_as(
-        "SELECT ata.id,ata.is_default FROM agent_template_assignments ata \
+    let assignment: Result<(i64,), _> = sqlx::query_as(
+        "SELECT ata.id FROM agent_template_assignments ata \
          JOIN agent_templates t ON t.id=ata.template_id \
          WHERE ata.agent_id=? AND t.key=? AND ata.enabled=1",
     )
@@ -292,16 +292,13 @@ pub(in crate::app::admin) async fn unlink_agent_template(
     .bind(&template_key)
     .fetch_one(pool)
     .await;
-    let (assignment_id, is_default) = match assignment {
+    let (assignment_id,) = match assignment {
         Ok(value) => value,
         Err(sqlx::Error::RowNotFound) => {
             return error(&request, StatusCode::NOT_FOUND, "not_found");
         }
         Err(error_value) => return sql_error(&request, &error_value),
     };
-    if is_default != 0 {
-        return error(&request, StatusCode::CONFLICT, "default_template_conflict");
-    }
     let mut tx = match pool.begin().await {
         Ok(value) => value,
         Err(_) => {

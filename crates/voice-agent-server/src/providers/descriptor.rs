@@ -125,3 +125,24 @@ pub(crate) const fn field(
         description: None,
     }
 }
+
+/// A user-selectable enum whose values are independent of capability discovery.
+pub(crate) const fn select_field(
+    key: &'static str,
+    label: &'static str,
+    values: &'static [&'static str],
+) -> ProviderConfigField {
+    ProviderConfigField {
+        enum_values: Some(values),
+        ..field(
+            key,
+            label,
+            ConfigFieldType::Select,
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+}

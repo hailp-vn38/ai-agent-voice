@@ -17,6 +17,7 @@ pub struct ConfiguredTemplateProfile {
     pub(super) system_prompt: String,
     pub(super) providers: EffectiveProviderBindings,
     snapshots: Vec<Arc<DesiredProvider>>,
+    deployment_snapshots: Vec<DesiredProvider>,
 }
 pub struct PreparedTemplateProfile {
     pub configuration: ConfiguredTemplateProfile,
@@ -25,6 +26,21 @@ pub struct PreparedTemplateProfile {
 }
 impl ConfiguredTemplateProfile {
     pub fn from_assignment(assignment: &AdmittedAssignment) -> Result<Self, ProfileUnavailable> {
+        Self::from_assignment_internal(assignment, None)
+    }
+
+    pub fn from_assignment_with_defaults(
+        assignment: &AdmittedAssignment,
+        defaults: &EffectiveProviderBindings,
+        deployment: &[DesiredProvider],
+    ) -> Result<Self, ProfileUnavailable> {
+        Self::from_assignment_internal(assignment, Some((defaults, deployment)))
+    }
+
+    fn from_assignment_internal(
+        assignment: &AdmittedAssignment,
+        fallback: Option<(&EffectiveProviderBindings, &[DesiredProvider])>,
+    ) -> Result<Self, ProfileUnavailable> {
         if !assignment.assignment_enabled
             || !assignment.template_enabled
             || assignment.language.trim().is_empty()
@@ -51,17 +67,28 @@ impl ConfiguredTemplateProfile {
                 return Err(ProfileUnavailable);
             }
         }
-        let key = |kind| {
-            snapshots
-                .get(kind)
-                .map(|row| row.key.clone())
-                .ok_or(ProfileUnavailable)
+        let mut deployment_snapshots = Vec::new();
+        let mut key = |kind: &str, default: Option<&str>| {
+            if let Some(row) = snapshots.get(kind) {
+                return Ok(row.key.clone());
+            }
+            let (_, deployment) = fallback.ok_or(ProfileUnavailable)?;
+            let key = default
+                .filter(|key| !key.is_empty())
+                .ok_or(ProfileUnavailable)?;
+            let snapshot = deployment
+                .iter()
+                .find(|row| row.kind == kind && row.key == key)
+                .ok_or(ProfileUnavailable)?;
+            deployment_snapshots.push(snapshot.clone());
+            Ok(key.to_owned())
         };
+        let defaults = fallback.map(|(defaults, _)| defaults);
         let providers = EffectiveProviderBindings {
-            vad: key("vad")?,
-            asr: key("asr")?,
-            llm: key("llm")?,
-            tts: key("tts")?,
+            vad: key("vad", defaults.map(|value| value.vad.as_str()))?,
+            asr: key("asr", defaults.map(|value| value.asr.as_str()))?,
+            llm: key("llm", defaults.map(|value| value.llm.as_str()))?,
+            tts: key("tts", defaults.map(|value| value.tts.as_str()))?,
             vision: None,
         };
         Ok(Self {
@@ -75,6 +102,7 @@ impl ConfiguredTemplateProfile {
             system_prompt: assignment.prompt.clone(),
             providers,
             snapshots: snapshots.into_values().collect(),
+            deployment_snapshots,
         })
     }
     pub fn template_key(&self) -> &str {
@@ -86,10 +114,19 @@ impl ConfiguredTemplateProfile {
         }
     }
     pub fn provider_versions(&self) -> Vec<ProviderVersion> {
-        self.snapshots
+        let mut versions: Vec<_> = self
+            .snapshots
             .iter()
             .map(|row| ProviderVersion::database(row.id, row.revision))
-            .collect()
+            .collect();
+        versions.extend(self.deployment_snapshots.iter().map(|row| ProviderVersion {
+            identity: crate::services::provider_runtime::ProviderIdentity::Deployment {
+                kind: row.kind.clone(),
+                key: row.key.clone(),
+            },
+            revision: row.revision,
+        }));
+        versions
     }
     /// All four slots use one admission deadline. Failure drops every acquired lease before
     /// returning, leaving the current profile untouched. Only the manager may retain warm cache.
@@ -104,6 +141,19 @@ impl ConfiguredTemplateProfile {
             let lease = manager
                 .acquire_until(snapshot.as_ref().clone(), deadline)
                 .await?;
+            log_provider_loaded(snapshot, lease.version(), "database");
+            let resident = lease.runtimes().ok_or(RuntimeError::Unavailable)?;
+            catalog.vad.extend(resident.vad);
+            catalog.asr.extend(resident.asr);
+            catalog.llm.extend(resident.llm);
+            catalog.tts.extend(resident.tts);
+            leases.push(lease);
+        }
+        for snapshot in &self.deployment_snapshots {
+            let lease = manager
+                .acquire_deployment_until(snapshot.clone(), deadline)
+                .await?;
+            log_provider_loaded(snapshot, lease.version(), "deployment");
             let resident = lease.runtimes().ok_or(RuntimeError::Unavailable)?;
             catalog.vad.extend(resident.vad);
             catalog.asr.extend(resident.asr);
@@ -120,6 +170,23 @@ impl ConfiguredTemplateProfile {
             leases,
         })
     }
+}
+
+/// Names the provider a Voice Session just acquired, by kind and instance key.
+///
+/// A session loads up to four providers, and several sessions can share one physical runtime, so
+/// without the kind and key an operator reading the log cannot tell which provider a line refers
+/// to, nor whether this connection was the one that paid for the load.
+fn log_provider_loaded(snapshot: &DesiredProvider, version: &ProviderVersion, source: &str) {
+    tracing::info!(
+        provider_kind = %snapshot.kind,
+        provider_key = %snapshot.key,
+        adapter = %snapshot.adapter,
+        provider_revision = snapshot.revision,
+        source,
+        ?version,
+        "voice session loaded provider"
+    );
 }
 
 impl std::fmt::Debug for ConfiguredTemplateProfile {

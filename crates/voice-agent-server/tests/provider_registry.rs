@@ -149,3 +149,166 @@ fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapter
         }
     }
 }
+
+#[test]
+fn descriptors_expose_only_user_configuration_and_typed_decoding_choices() {
+    let registry = compiled_provider_adapter_registry();
+    for descriptor in registry.list(None) {
+        let json = serde_json::to_value(descriptor).unwrap();
+        let fields = json["config_schema"]["fields"].as_array().unwrap();
+        assert!(fields.iter().all(|field| !matches!(
+            field["key"].as_str(),
+            Some("threads" | "num_threads" | "ws_url")
+        )));
+        if matches!(
+            descriptor.adapter,
+            "silero_onnx"
+                | "zerotts_onnx"
+                | "kokoro_vi_onnx"
+                | "zipformer_sherpa"
+                | "gipformer_sherpa_offline"
+        ) {
+            assert!(fields.iter().all(|field| field["key"] != "model"));
+        }
+        if descriptor.adapter == "silero_onnx" {
+            assert!(fields.is_empty());
+        }
+        if matches!(
+            descriptor.adapter,
+            "zipformer_sherpa" | "gipformer_sherpa_offline"
+        ) {
+            let decoding = fields
+                .iter()
+                .find(|field| field["key"] == "decoding_method")
+                .unwrap();
+            assert_eq!(decoding["type"], "select");
+            assert_eq!(
+                decoding["enum_values"],
+                serde_json::json!(["greedy_search", "modified_beam_search"])
+            );
+        }
+    }
+    let chill = registry.get("chillaudio_ws").unwrap();
+    assert_eq!(chill.capabilities.voices.unwrap().len(), 4);
+    assert_eq!(chill.capabilities.languages.unwrap()[0].id, "vi");
+}
+
+/// Every voice a local provider advertises is one it can actually load, because both come from the
+/// same asset catalog.
+#[test]
+fn every_advertised_local_voice_is_an_installed_voice_asset() {
+    for (adapter, voices) in [
+        (
+            "zerotts_onnx",
+            voice_agent_server::providers::tts::zerotts::assets::VOICES
+                .iter()
+                .map(|voice| voice.id)
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "kokoro_vi_onnx",
+            voice_agent_server::providers::tts::kokoro_vi::assets::VOICES
+                .iter()
+                .map(|voice| voice.id)
+                .collect::<Vec<_>>(),
+        ),
+    ] {
+        let descriptor = compiled_provider_adapter_registry().get(adapter).unwrap();
+        let advertised: HashSet<_> = descriptor
+            .capabilities
+            .voices
+            .expect("local TTS advertises voices")
+            .iter()
+            .map(|voice| voice.id)
+            .collect();
+        assert_eq!(advertised, voices.iter().copied().collect(), "{adapter}");
+    }
+}
+
+/// Every local adapter owns its model files, and every remote adapter owns none.
+#[test]
+fn asset_ownership_follows_whether_a_provider_loads_local_files() {
+    for adapter in compiled_provider_adapter_registry()
+        .list(None)
+        .map(|descriptor| descriptor.adapter)
+    {
+        let owns_assets = compiled_provider_adapter_registry()
+            .assets(adapter)
+            .is_some();
+        assert_eq!(
+            owns_assets,
+            !matches!(adapter, "openai" | "openai_vision" | "chillaudio_ws"),
+            "{adapter}"
+        );
+    }
+}
+
+/// Each local adapter pins exactly one upstream revision, and it is what resource identity uses.
+#[test]
+fn every_local_adapter_pins_an_immutable_upstream_revision() {
+    for adapter in [
+        "silero_onnx",
+        "zipformer_sherpa",
+        "gipformer_sherpa_offline",
+        "zerotts_onnx",
+        "kokoro_vi_onnx",
+    ] {
+        let revision = compiled_provider_adapter_registry()
+            .assets(adapter)
+            .unwrap_or_else(|| panic!("{adapter} owns model files"))
+            .revision();
+        assert!(!revision.is_empty(), "{adapter}");
+        assert!(
+            revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "{adapter} pins a content-addressed revision"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires acknowledged installed ASR models; set PROVIDER_QUALIFICATION_CONFIG"]
+fn native_transducers_accept_every_advertised_decoding_method() {
+    use voice_agent_server::{
+        audio::PcmF32Mono,
+        config::{AsrInstanceConfig, TransducerDecodingMethod},
+    };
+    let path = std::env::var("PROVIDER_QUALIFICATION_CONFIG").expect("qualification config");
+    let mut config = AppConfig::parse_and_resolve(&path).expect("valid deployment configuration");
+    // The model root is an internal constant relative to the working directory, so the gate runs
+    // from the deployment directory that holds `models/`.
+    let deployment_root = std::path::Path::new(&path).parent().unwrap();
+    if config.runtime.onnx.library.is_relative() {
+        config.runtime.onnx.library = deployment_root.join(&config.runtime.onnx.library);
+    }
+    std::env::set_current_dir(deployment_root).expect("enter the deployment directory");
+    for adapter in ["zipformer_sherpa", "gipformer_sherpa_offline"] {
+        let instance = config
+            .providers
+            .asr
+            .instances
+            .values()
+            .find(|instance| instance.adapter() == adapter)
+            .expect("configured adapter");
+        let factory = compiled_provider_registry().asr_factory(adapter).unwrap();
+        for method in [
+            TransducerDecodingMethod::GreedySearch,
+            TransducerDecodingMethod::ModifiedBeamSearch,
+        ] {
+            let mut selected = instance.clone();
+            match &mut selected {
+                AsrInstanceConfig::ZipformerSherpa(options) => options.decoding_method = method,
+                AsrInstanceConfig::GipformerSherpaOffline(options) => {
+                    options.decoding_method = method
+                }
+            }
+            let provider = factory
+                .build(&selected, &config.runtime, 480_000)
+                .expect("native recognizer accepts decoding mode");
+            let mut session = provider.open().unwrap();
+            session
+                .push_pcm(&PcmF32Mono::new(vec![0.0; 16_000], 16_000))
+                .unwrap();
+            session.finish().unwrap();
+        }
+    }
+}

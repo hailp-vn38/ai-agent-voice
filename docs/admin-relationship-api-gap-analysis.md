@@ -19,7 +19,7 @@ Tài liệu lưu đánh giá ban đầu đối chiếu **Postman collection đan
 
 - `GET /api/admin/agents/{agent_key}/templates` và `GET /api/admin/templates/{template_key}/agents`.
 - `GET /api/admin/templates/{template_key}/providers` và `GET /api/admin/providers/{provider_key}/templates`.
-- `DELETE /api/admin/agents/{agent_key}/templates/{template_key}`: soft-unlink, yêu cầu `If-Match`, từ chối default template bằng `default_template_conflict`.
+- `DELETE /api/admin/agents/{agent_key}/templates/{template_key}`: soft-unlink, yêu cầu `If-Match`; có thể gỡ cả default Template, để Agent không còn assignment và dùng server defaults.
 - `DELETE /api/admin/templates/{template_key}/providers/{provider_type}`: unlink transactionally, yêu cầu `If-Match`.
 
 Mọi GET relationship trả revision của owner; inverse usage có pagination và `total` được đếm trước `LIMIT/OFFSET`. Test bao phủ `If-Match` thiếu/stale, revision conflict và relationship không đổi sau conflict.
@@ -208,17 +208,8 @@ DELETE /api/admin/agents/{agent_key}/templates/{template_key}
 If-Match: "<agent_revision>"
 ```
 
-Server phải reject nếu Template đang là default:
-
-```json
-{
-  "error": {
-    "code": "default_template_conflict"
-  }
-}
-```
-
-User phải set default khác trước rồi mới unlink.
+Template default cũng có thể được unlink. Khi đây là assignment cuối cùng, Agent không còn
+Template và Voice Session mới dùng server defaults.
 
 ---
 
@@ -411,8 +402,9 @@ Template bị xóa                    →  assignment/binding CASCADE, history.t
 
 Quyết định đã chốt tại ADR-0070: DELETE là conditional hard-delete có `If-Match`.
 Resource còn active relationship hoặc history reference trả `409 *_in_use`; người dùng unlink
-tường minh hoặc purge history scoped trước. Không có cascade-unlink, revision bump ngầm hay
-history purge ngầm.
+tường minh hoặc purge history scoped trước. Ngoại lệ là Agent ↔ Template: xóa Agent được phép,
+vì FK cascade chỉ dọn assignment của Agent và không ảnh hưởng Template global. Không có cascade
+unlink cho các relationship active khác, revision bump ngầm hay history purge ngầm.
 
 Collection phải được cập nhật sau khi P3 hoàn thành để expose DELETE và MCP unlink.
 
@@ -775,4 +767,3 @@ Nếu mục tiêu là đưa Web Admin ra khỏi mock/localStorage, trạng thái
 P0 read-model đã hoàn thành: phần **Agents + Template Switcher + AI Pipeline + Templates Page + Provider Catalog** có thể hoạt động bằng server API mà không cần frontend tự giữ relational state. Đây là desired configuration: UI phải hiển thị `requires_restart`/runtime status khi mutation chưa effective, và không được hứa hot-reload session đang chạy.
 
 Bản Postman đang làm việc đã có nền tảng create/update và P0 relationship đầy đủ cho Agent/Device, Template và Provider; phần còn lại chủ yếu là **Vision Database Provider integration**. Postman collection cần được đồng bộ riêng theo P3 deletion contract.
-

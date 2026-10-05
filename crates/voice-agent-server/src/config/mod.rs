@@ -78,8 +78,6 @@ pub struct AgentConfig {
     pub language: Option<String>,
     pub prompt_template: Option<PathBuf>,
     pub persona: Option<String>,
-    #[serde(default)]
-    pub providers: AgentProviderBindings,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -93,14 +91,16 @@ pub struct ProviderDefaultsConfig {
     pub vision: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentProviderBindings {
-    pub vad: Option<String>,
-    pub asr: Option<String>,
-    pub llm: Option<String>,
-    pub tts: Option<String>,
-    pub vision: Option<String>,
+impl ProviderDefaultsConfig {
+    pub fn effective_bindings(&self) -> EffectiveProviderBindings {
+        EffectiveProviderBindings {
+            vad: self.vad.clone(),
+            asr: self.asr.clone(),
+            llm: self.llm.clone(),
+            tts: self.tts.clone(),
+            vision: self.vision.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -118,25 +118,6 @@ pub struct EffectiveAgentConfig {
     pub language: String,
     pub persona: String,
     pub prompt_template: String,
-    pub providers: EffectiveProviderBindings,
-}
-
-impl EffectiveAgentConfig {
-    fn with_provider_defaults(provider_defaults: &ProviderDefaultsConfig) -> Self {
-        Self {
-            name: DEFAULT_AGENT_NAME.into(),
-            language: DEFAULT_AGENT_LANGUAGE.into(),
-            persona: DEFAULT_AGENT_PERSONA.into(),
-            prompt_template: DEFAULT_PROMPT_TEMPLATE.into(),
-            providers: EffectiveProviderBindings {
-                vad: provider_defaults.vad.clone(),
-                asr: provider_defaults.asr.clone(),
-                llm: provider_defaults.llm.clone(),
-                tts: provider_defaults.tts.clone(),
-                vision: provider_defaults.vision.clone(),
-            },
-        }
-    }
 }
 
 impl Default for EffectiveAgentConfig {
@@ -146,13 +127,6 @@ impl Default for EffectiveAgentConfig {
             language: DEFAULT_AGENT_LANGUAGE.into(),
             persona: DEFAULT_AGENT_PERSONA.into(),
             prompt_template: DEFAULT_PROMPT_TEMPLATE.into(),
-            providers: EffectiveProviderBindings {
-                vad: String::new(),
-                asr: String::new(),
-                llm: String::new(),
-                tts: String::new(),
-                vision: None,
-            },
         }
     }
 }
@@ -163,37 +137,10 @@ impl AppConfig {
     }
 
     pub(crate) fn resolve_agent(&mut self, config_path: &Path) -> Result<(), ConfigError> {
-        let mut effective = EffectiveAgentConfig::with_provider_defaults(&self.provider_defaults);
+        let mut effective = EffectiveAgentConfig::default();
         let Some(overrides) = &mut self.agent else {
             self.effective_agent = effective;
             return Ok(());
-        };
-        effective.providers = EffectiveProviderBindings {
-            vad: overrides
-                .providers
-                .vad
-                .clone()
-                .unwrap_or(effective.providers.vad),
-            asr: overrides
-                .providers
-                .asr
-                .clone()
-                .unwrap_or(effective.providers.asr),
-            llm: overrides
-                .providers
-                .llm
-                .clone()
-                .unwrap_or(effective.providers.llm),
-            tts: overrides
-                .providers
-                .tts
-                .clone()
-                .unwrap_or(effective.providers.tts),
-            vision: overrides
-                .providers
-                .vision
-                .clone()
-                .or(effective.providers.vision),
         };
         if let Some(name) = &overrides.name {
             if name.trim().is_empty() {
@@ -571,45 +518,14 @@ impl Default for AsrWorkerConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeploymentConfig {
-    #[serde(default = "default_manifest_path")]
-    pub model_manifest: std::path::PathBuf,
     #[serde(default)]
     pub profile: String,
-    #[serde(default)]
-    pub model_acknowledgements: Vec<ModelAcknowledgement>,
-    #[serde(default)]
-    pub models: ModelStoreConfig,
 }
 
 impl Default for DeploymentConfig {
     fn default() -> Self {
         Self {
-            model_manifest: default_manifest_path(),
             profile: "development-noncommercial".into(),
-            model_acknowledgements: Vec::new(),
-            models: ModelStoreConfig::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelStoreConfig {
-    #[serde(default = "default_models_root")]
-    pub root: std::path::PathBuf,
-    #[serde(default)]
-    pub offline: bool,
-    /// Download locations for deployment-prepared artifacts; manifest checksums still apply.
-    #[serde(default)]
-    pub sources: std::collections::BTreeMap<String, String>,
-}
-
-impl Default for ModelStoreConfig {
-    fn default() -> Self {
-        Self {
-            root: default_models_root(),
-            offline: false,
-            sources: Default::default(),
         }
     }
 }
@@ -621,6 +537,8 @@ pub struct RuntimeConfig {
     pub onnx: OnnxRuntimeConfig,
     #[serde(default)]
     pub kokoro_vi: KokoroViRuntimeConfig,
+    #[serde(default)]
+    pub chillaudio: ChillAudioRuntimeConfig,
 }
 
 /// Deployment-owned executable for Vietnamese grapheme-to-phoneme conversion.
@@ -645,22 +563,17 @@ impl Default for KokoroViRuntimeConfig {
 pub struct OnnxRuntimeConfig {
     #[serde(default = "default_onnx_runtime_library")]
     pub library: std::path::PathBuf,
+    #[serde(default = "default_runtime_threads")]
+    pub threads: std::collections::BTreeMap<String, i32>,
 }
 
 impl Default for OnnxRuntimeConfig {
     fn default() -> Self {
         Self {
             library: default_onnx_runtime_library(),
+            threads: default_runtime_threads(),
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModelAcknowledgement {
-    pub model: String,
-    pub revision: String,
-    pub license: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1177,11 +1090,55 @@ pub struct ProviderRuntimeConfig {
     #[serde(flatten)]
     pub limits: crate::services::provider_runtime::RuntimeLimits,
     pub estimated_peak_bytes: std::collections::HashMap<String, u64>,
-    pub measured_manifest_sha256: String,
     #[serde(default = "default_provider_startup_timeout_ms")]
     pub startup_timeout_ms: u64,
 }
 
 fn default_provider_startup_timeout_ms() -> u64 {
     60_000
+}
+
+fn default_runtime_threads() -> std::collections::BTreeMap<String, i32> {
+    [
+        ("silero_onnx", 1),
+        ("zipformer_sherpa", 2),
+        ("gipformer_sherpa_offline", 4),
+        ("zerotts_onnx", 2),
+        ("kokoro_vi_onnx", 2),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.into(), value))
+    .collect()
+}
+impl OnnxRuntimeConfig {
+    pub fn threads_for(&self, adapter: &str) -> i32 {
+        self.threads
+            .get(adapter)
+            .copied()
+            .unwrap_or_else(|| default_runtime_threads().get(adapter).copied().unwrap_or(1))
+    }
+}
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChillAudioRuntimeConfig {
+    #[serde(default = "default_chillaudio_ws_url")]
+    pub ws_url: url::Url,
+    #[serde(default = "default_chillaudio_timeout_ms")]
+    pub timeout_ms: u64,
+}
+impl Default for ChillAudioRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            ws_url: default_chillaudio_ws_url(),
+            timeout_ms: default_chillaudio_timeout_ms(),
+        }
+    }
+}
+impl std::fmt::Debug for ChillAudioRuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChillAudioRuntimeConfig")
+            .field("ws_url", &"[REDACTED]")
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
 }

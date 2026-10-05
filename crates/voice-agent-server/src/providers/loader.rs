@@ -3,9 +3,9 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use crate::{
     audio::VadSegmenterConfig,
     config::{AppConfig, SileroOnnxConfig},
-    models::prepare,
     providers::{
-        LoadedVad, ProviderCatalog, ProviderLoadError, RuntimeCatalog, compiled_provider_registry,
+        LoadedVad, ProviderCatalog, ProviderLoadError, RuntimeCatalog, TtsBinding,
+        compiled_provider_registry,
     },
     workers::{
         AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime, VisionRuntime,
@@ -98,25 +98,27 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         .validate()
         .map_err(|error| ProviderLoadError::Configuration(error.to_string()))?;
     let registry = compiled_provider_registry();
-    let bindings = &config.effective_agent.providers;
     let defaults = &config.provider_defaults;
+
+    // Each local provider installs the files it is missing before anything is built. Remote
+    // adapters have no asset manager and are skipped.
+    fn ensure_assets(adapter: &str) -> Result<(), ProviderLoadError> {
+        if let Some(assets) = super::registry::compiled_provider_adapter_registry().assets(adapter)
+        {
+            assets.ensure_assets()?;
+        }
+        Ok(())
+    }
 
     let mut vad_providers = HashMap::new();
     let mut vad_runtimes = HashMap::new();
     for (id, instance) in &config.providers.vad.instances {
-        if id != &bindings.vad && id != &defaults.vad {
+        if id != &defaults.vad {
             continue;
         }
         let factory = registry.vad_factory(instance.adapter())?;
-        let model = prepare(
-            &config.deployment.model_manifest,
-            &config.deployment.models.root,
-            config.deployment.models.offline,
-            factory.model_identity(instance)?,
-            factory.adapter(),
-            &config.deployment,
-        )?;
-        let provider = factory.build(instance, &config.runtime, &model)?;
+        ensure_assets(instance.adapter())?;
+        let provider = factory.build(instance, &config.runtime)?;
         let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
         vad_runtimes.insert(
             id.clone(),
@@ -149,18 +151,10 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let mut asr_providers = HashMap::new();
     let mut asr_runtimes = HashMap::new();
     for (id, instance) in &config.providers.asr.instances {
-        if id != &bindings.asr && id != &defaults.asr {
+        if id != &defaults.asr {
             continue;
         }
         let factory = registry.asr_factory(instance.adapter())?;
-        let model = prepare(
-            &config.deployment.model_manifest,
-            &config.deployment.models.root,
-            config.deployment.models.offline,
-            factory.model_identity(instance)?,
-            factory.adapter(),
-            &config.deployment,
-        )?;
         let max_buffered_samples = usize::try_from(config.audio.max_utterance_ms)
             .map_err(|_| {
                 ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
@@ -169,7 +163,8 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             .ok_or_else(|| {
                 ProviderLoadError::Configuration("audio.max_utterance_ms is too large".into())
             })?;
-        let provider = factory.build(instance, &model, max_buffered_samples)?;
+        ensure_assets(instance.adapter())?;
+        let provider = factory.build(instance, &config.runtime, max_buffered_samples)?;
         asr_runtimes.insert(
             id.clone(),
             Arc::new(
@@ -186,14 +181,14 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                 .map_err(|_| ProviderLoadError::Initialize("ASR"))?,
             ),
         );
-        tracing::info!(provider_kind = "asr", provider_instance = %id, adapter = instance.adapter(), model = %model.identity(), "provider runtime loaded");
+        tracing::info!(provider_kind = "asr", provider_instance = %id, adapter = instance.adapter(), "provider runtime loaded");
         asr_providers.insert(id.clone(), provider);
     }
 
     let mut llm_providers = HashMap::new();
     let mut llm_runtimes = HashMap::new();
     for (id, instance) in &config.providers.llm.instances {
-        if id != &bindings.llm && id != &defaults.llm {
+        if id != &defaults.llm {
             continue;
         }
         let provider = registry.llm_factory(instance.adapter())?.build(instance)?;
@@ -212,36 +207,28 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let mut tts_providers = HashMap::new();
     let mut tts_runtimes = HashMap::new();
     for (id, instance) in &config.providers.tts.instances {
-        if id != &bindings.tts && id != &defaults.tts && !instance.preload() {
+        if id != &defaults.tts && !instance.preload() {
             continue;
         }
         let factory = registry.tts_factory(instance.adapter())?;
-        let model = factory
-            .model_identity(instance)?
-            .map(|identity| {
-                prepare(
-                    &config.deployment.model_manifest,
-                    &config.deployment.models.root,
-                    config.deployment.models.offline,
-                    identity,
-                    factory.adapter(),
-                    &config.deployment,
-                )
-            })
-            .transpose()?;
-        let provider = factory.build(instance, &config.runtime, model.as_ref())?;
+        ensure_assets(instance.adapter())?;
+        let provider = factory.build(instance, &config.runtime)?;
         tts_runtimes.insert(
             id.clone(),
             Arc::new(
-                TtsWorkerRuntime::try_new(
+                TtsWorkerRuntime::try_new_with_binding(
                     Arc::clone(&provider),
                     WorkerRuntimeConfig {
-                        max_workers: config.workers.tts.max_workers,
+                        // Deployment startup must honour the adapter's resident native width so it
+                        // cannot load more ONNX sessions than the manager would.
+                        max_workers: deployment_tts_replicas(instance, &config.runtime)
+                            .unwrap_or(config.workers.tts.max_workers),
                         voice_reserved_capacity: 1,
                         command_capacity: config.workers.tts.command_queue_capacity,
                         final_timeout: Duration::from_millis(config.tts.timeout_ms),
                         cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
                     },
+                    tts_binding(instance),
                 )
                 .map_err(|_| ProviderLoadError::Initialize("TTS"))?,
             ),
@@ -254,8 +241,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
     let mut vision_runtimes = HashMap::new();
     if config.vision.enabled {
         let binding = config
-            .effective_agent
-            .providers
+            .provider_defaults
             .vision
             .as_deref()
             .expect("validated Vision binding");
@@ -294,4 +280,29 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             vision: vision_runtimes,
         },
     })
+}
+
+fn tts_binding(instance: &crate::config::TtsInstanceConfig) -> TtsBinding {
+    match instance {
+        crate::config::TtsInstanceConfig::ZeroTtsOnnx(config) => TtsBinding {
+            voice: config.voice.clone(),
+            language: config.language.clone(),
+        },
+        _ => TtsBinding::readiness(),
+    }
+}
+
+/// Resident native width declared by the adapter planner for this deployment instance. `None` means
+/// the adapter holds no fixed per-replica session topology.
+fn deployment_tts_replicas(
+    instance: &crate::config::TtsInstanceConfig,
+    runtime: &crate::config::RuntimeConfig,
+) -> Option<usize> {
+    use crate::config::TtsInstanceConfig;
+    let value = match instance {
+        TtsInstanceConfig::ZeroTtsOnnx(config) => serde_json::to_value(config).ok()?,
+        TtsInstanceConfig::ChillAudioWs(config) => serde_json::to_value(config).ok()?,
+        TtsInstanceConfig::KokoroViOnnx(config) => serde_json::to_value(config).ok()?,
+    };
+    crate::providers::configured_physical_replicas(instance.adapter(), value, runtime)
 }
