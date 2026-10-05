@@ -397,12 +397,12 @@ fn phase_four_delivery_capacity_and_speech_bounds_fail_fast() {
 }
 
 #[test]
-fn local_http_llm_endpoint_is_allowed_but_remote_http_is_rejected() {
+fn private_network_http_llm_endpoint_is_allowed_but_public_http_is_rejected() {
     let mut config = valid_config();
     {
         let LlmInstanceConfig::Openai(openai) =
             config.providers.llm.instances.get_mut("llm").unwrap();
-        openai.base_url = Url::parse("http://localhost:20128/v1").unwrap();
+        openai.base_url = Url::parse("http://192.168.1.158:20128/v1").unwrap();
     }
     assert!(config.validate().is_ok());
 

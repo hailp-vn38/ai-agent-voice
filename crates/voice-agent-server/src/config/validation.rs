@@ -1,5 +1,5 @@
 use super::AppConfig;
-use std::{fs, path::Path, str::FromStr};
+use std::{fs, net::IpAddr, path::Path, str::FromStr};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -508,12 +508,19 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             ))
         })?;
         let openai = instance.openai();
-        let local_http = openai.base_url.scheme() == "http"
-            && matches!(
-                openai.base_url.host_str(),
-                Some("localhost") | Some("127.0.0.1") | Some("::1")
-            );
-        if (openai.base_url.scheme() != "https" && !local_http)
+        let http_allowed = openai.base_url.scheme() == "http"
+            && match openai.base_url.host_str() {
+                Some("localhost") => true,
+                Some(host) => host.parse::<IpAddr>().is_ok_and(|ip| match ip {
+                    IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_loopback(),
+                    IpAddr::V6(ip) => {
+                        ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_loopback()
+                    }
+                }),
+                None => false,
+            };
+        let scheme_allowed = openai.base_url.scheme() == "https" || http_allowed;
+        if !scheme_allowed
             || openai.base_url.host_str().is_none()
             || openai.model.trim().is_empty()
             || openai.timeout_ms == 0
