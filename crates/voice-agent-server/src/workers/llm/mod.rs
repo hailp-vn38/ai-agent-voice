@@ -85,6 +85,11 @@ pub struct LlmDiagnosticOperation {
 }
 
 impl LlmRuntime {
+    /// Physical work remains occupied until terminal acknowledgement, including quarantine.
+    pub(crate) fn pilot_work_pending(&self) -> bool {
+        self.admission.view_usage() != 0
+    }
+
     pub fn new(provider: Arc<dyn LlmProvider>, capacity: usize, timeout: Duration) -> Self {
         Self::new_with_voice_reservation(provider, capacity, 1, timeout)
     }

@@ -44,6 +44,7 @@ pub struct AppState {
     pub provider_diagnostics: Arc<ProviderDiagnosticService>,
     pub worker_supervisor: Arc<WorkerSupervisor>,
     pub active_turn_limiter: Arc<ActiveTurnLimiter>,
+    pub pilot_admission: crate::session::pilot::PilotAdmission,
     /// Required for a ready application. None represents incomplete injected state and fails closed.
     pub database: Option<Arc<Database>>,
     pub database_runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
@@ -217,13 +218,16 @@ impl AppState {
                 failure: None,
             },
         )])));
-        self.provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
-            Arc::clone(&self.runtimes),
-            self.database_runtime_snapshot.clone(),
-            self.database.clone(),
-            ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
-            Duration::from_millis(self.config.api.provider_tests.timeout_ms),
-        ));
+        self.provider_diagnostics = Arc::new(
+            ProviderDiagnosticService::new(
+                Arc::clone(&self.runtimes),
+                self.database_runtime_snapshot.clone(),
+                self.database.clone(),
+                ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+                Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+            )
+            .with_pilot_admission(self.pilot_admission.clone()),
+        );
         self
     }
 
@@ -250,13 +254,16 @@ impl AppState {
                 failure: None,
             },
         )])));
-        self.provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
-            Arc::clone(&self.runtimes),
-            self.database_runtime_snapshot.clone(),
-            self.database.clone(),
-            ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
-            Duration::from_millis(self.config.api.provider_tests.timeout_ms),
-        ));
+        self.provider_diagnostics = Arc::new(
+            ProviderDiagnosticService::new(
+                Arc::clone(&self.runtimes),
+                self.database_runtime_snapshot.clone(),
+                self.database.clone(),
+                ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+                Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+            )
+            .with_pilot_admission(self.pilot_admission.clone()),
+        );
         self
     }
 
@@ -283,13 +290,16 @@ impl AppState {
                 failure: None,
             },
         )])));
-        self.provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
-            Arc::clone(&self.runtimes),
-            self.database_runtime_snapshot.clone(),
-            self.database.clone(),
-            ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
-            Duration::from_millis(self.config.api.provider_tests.timeout_ms),
-        ));
+        self.provider_diagnostics = Arc::new(
+            ProviderDiagnosticService::new(
+                Arc::clone(&self.runtimes),
+                self.database_runtime_snapshot.clone(),
+                self.database.clone(),
+                ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+                Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+            )
+            .with_pilot_admission(self.pilot_admission.clone()),
+        );
         self
     }
 
@@ -325,13 +335,16 @@ impl AppState {
                 failure: None,
             },
         )])));
-        self.provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
-            Arc::clone(&self.runtimes),
-            self.database_runtime_snapshot.clone(),
-            self.database.clone(),
-            ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
-            Duration::from_millis(self.config.api.provider_tests.timeout_ms),
-        ));
+        self.provider_diagnostics = Arc::new(
+            ProviderDiagnosticService::new(
+                Arc::clone(&self.runtimes),
+                self.database_runtime_snapshot.clone(),
+                self.database.clone(),
+                ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
+                Duration::from_millis(self.config.api.provider_tests.timeout_ms),
+            )
+            .with_pilot_admission(self.pilot_admission.clone()),
+        );
         self
     }
 
@@ -499,6 +512,7 @@ impl AppState {
                 ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
                 Duration::from_millis(self.config.api.provider_tests.timeout_ms),
             )
+            .with_pilot_admission(self.pilot_admission.clone())
             .with_runtime_manager(Arc::clone(&manager)),
         );
         self.provider_prewarm = self.database.as_ref().and_then(|database| {
@@ -590,18 +604,24 @@ impl AppState {
         let config = Arc::new(config);
         let runtimes = Arc::new(loaded.runtimes);
         let database_runtime_snapshot = database_runtime_snapshot.map(Arc::new);
-        let provider_diagnostics = Arc::new(ProviderDiagnosticService::new(
-            Arc::clone(&runtimes),
-            database_runtime_snapshot.clone(),
-            database.as_ref().cloned().map(Arc::new),
-            ProviderDiagnosticLimiter::new(config.api.provider_tests.max_concurrency),
-            Duration::from_millis(config.api.provider_tests.timeout_ms),
-        ));
+        let pilot_admission =
+            crate::session::pilot::PilotAdmission::new(config.deployment.speaker_pilot);
+        let provider_diagnostics = Arc::new(
+            ProviderDiagnosticService::new(
+                Arc::clone(&runtimes),
+                database_runtime_snapshot.clone(),
+                database.as_ref().cloned().map(Arc::new),
+                ProviderDiagnosticLimiter::new(config.api.provider_tests.max_concurrency),
+                Duration::from_millis(config.api.provider_tests.timeout_ms),
+            )
+            .with_pilot_admission(pilot_admission.clone()),
+        );
         let state = Self {
             started_at: Instant::now(),
             deployment_snapshots: Vec::new(),
             provider_prewarm: None,
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),
+            pilot_admission,
             config,
             providers: Arc::new(loaded.providers),
             runtimes,

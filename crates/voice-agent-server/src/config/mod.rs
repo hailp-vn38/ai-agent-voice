@@ -518,6 +518,9 @@ impl Default for AsrWorkerConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeploymentConfig {
+    /// Explicit process-wide one-voice-pipeline pilot admission.
+    #[serde(default)]
+    pub speaker_pilot: bool,
     #[serde(default)]
     pub profile: String,
 }
@@ -526,6 +529,7 @@ impl Default for DeploymentConfig {
     fn default() -> Self {
         Self {
             profile: "development-noncommercial".into(),
+            speaker_pilot: false,
         }
     }
 }

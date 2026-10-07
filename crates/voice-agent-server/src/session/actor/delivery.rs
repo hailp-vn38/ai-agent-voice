@@ -452,6 +452,7 @@ impl SessionActor {
         self.pending_audio = None;
         let playback_requested = self.tts_started;
         if playback_requested && let Some(turn_id) = self.current_turn_id() {
+            self.pipeline_writer_pending.insert(turn_id);
             // Writer owns whether start crossed the wire. This merely prevents a recursive
             // urgent-admission failure from attempting the same abort command again.
             self.tts_started = false;

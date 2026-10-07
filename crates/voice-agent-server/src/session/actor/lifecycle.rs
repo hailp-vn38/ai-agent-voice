@@ -108,6 +108,8 @@ impl SessionActor {
 
 impl Drop for SessionActor {
     fn drop(&mut self) {
+        self.pipeline_request
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if self.turn.is_some() || self.tts_started {
             info!(phase = ?self.phase, generation = self.generation, "Voice session ended during active turn");
         }
@@ -121,5 +123,6 @@ impl Drop for SessionActor {
         self.asr_runtime.unregister_session(&self.session_id);
         self.vad_runtime.unregister_session(&self.session_id);
         self.llm_runtime.unregister_session(&self.session_id);
+        self.retain_pipeline_until_cleanup();
     }
 }

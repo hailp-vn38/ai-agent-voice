@@ -98,6 +98,11 @@ enum SlotState {
 }
 
 impl AsrWorkerRuntime {
+    /// Physical work remains occupied until terminal acknowledgement, including quarantine.
+    pub(crate) fn pilot_work_pending(&self) -> bool {
+        self.admission.view_usage() != 0
+    }
+
     pub fn new(provider: Arc<dyn AsrProvider>, config: WorkerRuntimeConfig) -> Self {
         config.validate().expect("invalid worker runtime config");
         let admission =

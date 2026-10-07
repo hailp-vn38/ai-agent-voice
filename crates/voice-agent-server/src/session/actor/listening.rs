@@ -2,6 +2,14 @@ use super::*;
 
 impl SessionActor {
     pub(super) fn on_listen_command(&mut self, command: ListenCommand) {
+        self.release_pipeline_if_idle();
+        if matches!(
+            command,
+            ListenCommand::Start { .. } | ListenCommand::Detect { .. }
+        ) && !self.admit_pipeline()
+        {
+            return;
+        }
         match command {
             ListenCommand::Start { mode } => self.start_listening(mode),
             ListenCommand::Detect { text } => self.accept_detect(text),

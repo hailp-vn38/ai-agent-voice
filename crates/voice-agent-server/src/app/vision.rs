@@ -159,6 +159,11 @@ pub async fn post_handler(
     let Some(runtime) = state.bound_vision_runtime() else {
         return failure(StatusCode::SERVICE_UNAVAILABLE, "vision is not configured");
     };
+    // ponytail: Vision is remote-only; add native acknowledgement ownership before a native adapter.
+    // Keep the process pipeline slot through response/timeout, alongside its own capacity.
+    let Some(_pipeline) = state.pilot_admission.try_voice() else {
+        return failure(StatusCode::SERVICE_UNAVAILABLE, "voice pipeline is busy");
+    };
     let started = Instant::now();
     let result = runtime
         .analyze(VisionRequest {

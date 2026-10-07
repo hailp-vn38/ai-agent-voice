@@ -177,6 +177,10 @@ impl VadSession for SpeechThenSilenceVadSession {
 }
 
 async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
+    start_pilot(outcome, false).await
+}
+
+async fn start_pilot(outcome: AsrOutcome, pilot: bool) -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut providers_config = ProvidersConfig::default();
@@ -207,7 +211,10 @@ async fn start(outcome: AsrOutcome) -> (String, JoinHandle<()>) {
         },
         providers: providers_config,
         workers: WorkersConfig::default(),
-        deployment: DeploymentConfig::default(),
+        deployment: DeploymentConfig {
+            speaker_pilot: pilot,
+            ..DeploymentConfig::default()
+        },
         runtime: RuntimeConfig::default(),
         provider_runtime: None,
         llm: LlmConfig::default(),
@@ -262,7 +269,10 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
         },
         providers: providers_config,
         workers: WorkersConfig::default(),
-        deployment: DeploymentConfig::default(),
+        deployment: DeploymentConfig {
+            speaker_pilot: true,
+            ..DeploymentConfig::default()
+        },
         runtime: RuntimeConfig::default(),
         provider_runtime: None,
         llm: LlmConfig::default(),
@@ -638,6 +648,168 @@ async fn trusted_aec_realtime_barge_in_keeps_the_voice_session_connected() {
     assert!(
         frames.iter().any(|message| matches!(message, Message::Text(text) if serde_json::from_str::<serde_json::Value>(text).is_ok_and(|value| value["type"] == "stt" && value["text"] == "utterance B"))),
         "B must be accepted on the same Realtime socket: {frames:?}"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn pilot_busy_keeps_opt_in_controls_and_closes_legacy_before_capture() {
+    let (base, task) = start_pilot(AsrOutcome::Final, true).await;
+    let mut owner = connect(&base).await;
+    owner
+        .send(Message::Text(
+            r#"{"type":"listen","state":"start","mode":"manual"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let mut req = request(&base);
+    req.headers_mut()
+        .insert("Device-Id", "browser-client".parse().unwrap());
+    let (mut waiting, _) = connect_async(req).await.unwrap();
+    waiting
+        .send(Message::Text(
+            r#"{"type":"hello","features":{"pipeline_status":true}}"#.into(),
+        ))
+        .await
+        .unwrap();
+    waiting.next().await.unwrap().unwrap();
+    waiting
+        .send(Message::Text(
+            r#"{"type":"listen","state":"start","mode":"auto"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let busy = timeout(Duration::from_secs(1), waiting.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Message::Text(busy) = busy else {
+        panic!("expected pipeline status")
+    };
+    let busy: serde_json::Value = serde_json::from_str(&busy).unwrap();
+    assert_eq!(
+        busy,
+        serde_json::json!({"type":"pipeline","state":"busy","reason":"capacity"})
+    );
+    waiting.send(Message::Ping(vec![1].into())).await.unwrap();
+    assert!(matches!(
+        timeout(Duration::from_secs(1), waiting.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        Message::Pong(_)
+    ));
+    let mut req = request(&base);
+    req.headers_mut()
+        .insert("Device-Id", "tracer-device".parse().unwrap());
+    let (mut legacy, _) = connect_async(req).await.unwrap();
+    legacy
+        .send(Message::Text(r#"{"type":"hello"}"#.into()))
+        .await
+        .unwrap();
+    legacy.next().await.unwrap().unwrap();
+    legacy
+        .send(Message::Text(
+            r#"{"type":"listen","state":"detect","text":"blocked"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let close = timeout(Duration::from_secs(1), legacy.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(matches!(close, Message::Close(Some(frame)) if u16::from(frame.code) == 1013));
+    owner
+        .send(Message::Text(r#"{"type":"abort"}"#.into()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    waiting
+        .send(Message::Text(
+            r#"{"type":"listen","state":"start","mode":"manual"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    waiting
+        .send(Message::Text(
+            r#"{"type":"listen","state":"detect","text":"accepted after cleanup"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let frames = collect_until_quiet(&mut waiting).await;
+    assert!(
+        frames
+            .iter()
+            .any(|f| f["type"] == "stt" && f["text"] == "accepted after cleanup")
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn pilot_auto_abort_retains_armed_slot_until_disconnect_cleanup() {
+    let (base, task) = start_pilot(AsrOutcome::Final, true).await;
+    let mut owner = connect(&base).await;
+    owner
+        .send(Message::Text(
+            r#"{"type":"listen","state":"start","mode":"auto"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    owner
+        .send(Message::Text(r#"{"type":"abort"}"#.into()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let mut req = request(&base);
+    req.headers_mut()
+        .insert("Device-Id", "browser-client".parse().unwrap());
+    let (mut waiting, _) = connect_async(req).await.unwrap();
+    waiting
+        .send(Message::Text(
+            r#"{"type":"hello","features":{"pipeline_status":true}}"#.into(),
+        ))
+        .await
+        .unwrap();
+    waiting.next().await.unwrap().unwrap();
+    waiting
+        .send(Message::Text(
+            r#"{"type":"listen","state":"start","mode":"manual"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let message = timeout(Duration::from_secs(1), waiting.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Message::Text(message) = message else {
+        panic!("expected busy")
+    };
+    let message: serde_json::Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(message["state"], "busy");
+    owner.close(None).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    waiting
+        .send(Message::Text(
+            r#"{"type":"listen","state":"start","mode":"manual"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    waiting
+        .send(Message::Text(
+            r#"{"type":"listen","state":"detect","text":"after armed cleanup"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    let messages = collect_until_quiet(&mut waiting).await;
+    assert!(
+        messages
+            .iter()
+            .any(|f| f["type"] == "stt" && f["text"] == "after armed cleanup")
     );
     task.abort();
 }

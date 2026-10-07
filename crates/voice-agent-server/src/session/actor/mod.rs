@@ -60,6 +60,12 @@ const EXTERNAL_CALL_CAPACITY: usize = 2;
 pub struct SessionActor {
     session_id: String,
     phase: SessionPhase,
+    pilot_admission: crate::session::pilot::PilotAdmission,
+    pipeline_permit: Option<crate::session::pilot::PilotPermit>,
+    pipeline_status: bool,
+    pipeline_request: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pipeline_writer_pending: HashSet<TurnId>,
+    pipeline_writer_terminal: Option<watch::Receiver<bool>>,
     accepted_binary_frames: u64,
     uplink_decoder: UplinkOpusDecoder,
     manual_capture: ManualCapture,
@@ -460,6 +466,10 @@ pub struct SessionRuntimes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboundMessage {
     Text(String),
+    PipelineStatus {
+        request: u64,
+        text: String,
+    },
     TurnText {
         generation: u64,
         turn_id: TurnId,
@@ -490,6 +500,7 @@ impl OutboundMessage {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(text)
+            | Self::PipelineStatus { text, .. }
             | Self::TurnText { text, .. }
             | Self::BeginTurn { text, .. }
             | Self::FinishTurn { text, .. }
@@ -505,6 +516,7 @@ mod ingress;
 mod lifecycle;
 mod listening;
 mod mcp;
+mod pilot;
 mod tools;
 fn normalize_detect_text(input: String) -> Option<String> {
     let text = input.trim();

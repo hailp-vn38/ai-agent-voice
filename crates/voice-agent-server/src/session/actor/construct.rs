@@ -170,6 +170,12 @@ impl SessionActor {
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
+            pilot_admission: crate::session::pilot::PilotAdmission::new(false),
+            pipeline_permit: None,
+            pipeline_status: false,
+            pipeline_request: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            pipeline_writer_pending: HashSet::new(),
+            pipeline_writer_terminal: None,
             accepted_binary_frames: 0,
             uplink_decoder: UplinkOpusDecoder::new()?,
             manual_capture: ManualCapture::new(max_capture_frames)?,
