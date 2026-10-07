@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 mod canonical_downlink;
+pub(crate) mod enrollment;
 mod opus;
 mod resampler;
 mod vad_segmenter;

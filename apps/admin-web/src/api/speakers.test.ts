@@ -83,4 +83,23 @@ describe('speakersApi', () => {
 
     expect(call(fetch, 0)[0]).toBe('/api/admin/speakers/a%2Fb/bindings?page=1&page_size=50')
   })
+
+  it('uploads a WAV sample to a slot and deletes it under revision control', async () => {
+    const fetch = installFetch()
+    const wav = new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/wav' })
+    await speakersApi.uploadSample('owner', 'draft-1', 2, wav, 7)
+    await speakersApi.deleteSample('owner', 'draft-1', 2, 8)
+
+    const [uploadUrl, uploadInit] = call(fetch, 0)
+    expect(uploadUrl).toBe('/api/admin/speakers/owner/enrollments/draft-1/samples/2')
+    expect(uploadInit.method).toBe('PUT')
+    expect((uploadInit.headers as Headers).get('If-Match')).toBe('"7"')
+    expect((uploadInit.headers as Headers).get('Content-Type')).toBe('audio/wav')
+    expect(uploadInit.body).toBe(wav)
+
+    const [deleteUrl, deleteInit] = call(fetch, 1)
+    expect(deleteUrl).toBe('/api/admin/speakers/owner/enrollments/draft-1/samples/2')
+    expect(deleteInit.method).toBe('DELETE')
+    expect((deleteInit.headers as Headers).get('If-Match')).toBe('"8"')
+  })
 })

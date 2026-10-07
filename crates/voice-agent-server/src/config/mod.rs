@@ -157,6 +157,9 @@ pub struct SpeakerEnrollmentConfig {
     pub max_clip_ms: u64,
     #[serde(default = "default_speaker_min_speech_ms")]
     pub min_speech_ms: u64,
+    /// Longest window the extractor will consume; the speechiest span of a longer clip is used.
+    #[serde(default = "default_speaker_max_window_ms")]
+    pub max_window_ms: u64,
     /// Draft lifetime. Expired drafts are swept at startup and every five minutes.
     #[serde(default = "default_speaker_enrollment_ttl_ms")]
     pub ttl_ms: u64,
@@ -176,6 +179,7 @@ impl Default for SpeakerEnrollmentConfig {
             min_clip_ms: default_speaker_min_clip_ms(),
             max_clip_ms: default_speaker_max_clip_ms(),
             min_speech_ms: default_speaker_min_speech_ms(),
+            max_window_ms: default_speaker_max_window_ms(),
             ttl_ms: default_speaker_enrollment_ttl_ms(),
             max_open_enrollments: default_speaker_max_open_enrollments(),
             max_audio_body_bytes: default_speaker_max_audio_body_bytes(),

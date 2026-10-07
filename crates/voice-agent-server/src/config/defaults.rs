@@ -64,6 +64,9 @@ pub(super) fn default_speaker_max_clip_ms() -> u64 {
 pub(super) fn default_speaker_min_speech_ms() -> u64 {
     3_000
 }
+pub(super) fn default_speaker_max_window_ms() -> u64 {
+    6_000
+}
 pub(super) fn default_speaker_enrollment_ttl_ms() -> u64 {
     1_800_000
 }

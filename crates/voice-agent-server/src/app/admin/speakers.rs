@@ -7,8 +7,11 @@
 //! See `docs/speaker-recognition-web-enrollment-implementation-guide (1).md` §5–§7.
 
 use super::*;
+use crate::audio::enrollment::{self, QualityProfile, Reject as SampleReject};
 use crate::database::DesiredProvider;
+use crate::services::provider_diagnostic::ProviderDiagnosticRequestError;
 use crate::services::provider_runtime::RuntimeError;
+use axum::body::to_bytes;
 use axum::http::header;
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -18,6 +21,8 @@ use sqlx::SqlitePool;
 const TOMBSTONE_SECONDS: i64 = 300;
 const MAX_DESCRIPTION: usize = 2048;
 const MAX_DRAFT_ID: usize = 64;
+/// Enrollment slots are sequential; a draft holds at most this many samples.
+const MAX_SAMPLE_SLOT: u32 = 5;
 
 #[derive(sqlx::FromRow)]
 struct SpeakerRow {
@@ -69,6 +74,15 @@ struct DraftRow {
     revision: i64,
     expires_at: i64,
 }
+
+#[derive(sqlx::FromRow)]
+struct SampleRow {
+    seq: i64,
+    duration_ms: i64,
+    speech_ms: i64,
+}
+
+const SAMPLE_COLUMNS: &str = "seq,duration_ms,speech_ms";
 
 const DRAFT_COLUMNS: &str = "id,speaker_id,embedding_space,provider_id,provider_key,provider_revision,loaded_provider_revision,runtime_id,sample_rate,dims,status,committed_speaker_id,base_speaker_revision,base_voiceprint_revision,revision,created_at,expires_at,terminal_at";
 
@@ -135,7 +149,7 @@ fn speaker_resource(row: &SpeakerRow, voiceprints: Vec<Value>, drafts: Vec<Value
     })
 }
 
-fn draft_resource(draft: &DraftRow, speaker_key: &str) -> Value {
+fn draft_resource(draft: &DraftRow, speaker_key: &str, samples: &[SampleRow]) -> Value {
     json!({
         "id": draft.id,
         "speaker_key": speaker_key,
@@ -145,13 +159,57 @@ fn draft_resource(draft: &DraftRow, speaker_key: &str) -> Value {
         "runtime_id": draft.runtime_id,
         "embedding_space_id": draft.embedding_space,
         "dimension": draft.dims,
+        "preprocessing": enrollment::PREPROCESSING_CONTRACT,
         "revision": draft.revision,
         "status": draft.status,
         "base_speaker_revision": draft.base_speaker_revision,
         "base_voiceprint_revision": draft.base_voiceprint_revision,
         "expires_at": draft.expires_at,
-        "samples": [],
+        "samples": samples.iter().map(sample_resource).collect::<Vec<_>>(),
     })
+}
+
+/// One stored sample as bounded metadata. Raw audio and the embedding vector never leave the
+/// server; only numbers the wizard can render.
+fn sample_resource(sample: &SampleRow) -> Value {
+    json!({
+        "slot": sample.seq,
+        "status": "accepted",
+        "quality": "good",
+        "duration_ms": sample.duration_ms,
+        "speech_ms": sample.speech_ms,
+    })
+}
+
+async fn load_samples(pool: &SqlitePool, draft_id: &str) -> Result<Vec<SampleRow>, sqlx::Error> {
+    sqlx::query_as::<_, SampleRow>(&format!(
+        "SELECT {SAMPLE_COLUMNS} FROM speaker_enrollment_samples WHERE draft_id=? ORDER BY seq"
+    ))
+    .bind(draft_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Draft response with its stored samples. Loads them fresh so every caller stays consistent.
+async fn loaded_draft_response(
+    pool: &SqlitePool,
+    draft: &DraftRow,
+    speaker_key: &str,
+    status: StatusCode,
+) -> Result<Response, sqlx::Error> {
+    let samples = load_samples(pool, &draft.id).await?;
+    Ok(with_etag(
+        (status, Json(draft_resource(draft, speaker_key, &samples))).into_response(),
+        draft.revision,
+    ))
+}
+
+/// Map a loaded-draft result, keeping the request borrow out of the awaited future.
+fn draft_result(request: &Request, result: Result<Response, sqlx::Error>) -> Response {
+    match result {
+        Ok(response) => response,
+        Err(error_value) => sql_error(request, &error_value),
+    }
 }
 
 pub(super) fn with_etag(response: Response, revision: i64) -> Response {
@@ -217,6 +275,7 @@ pub(super) async fn summary(State(state): State<AppState>, request: Request) -> 
             "min_clip_ms": enrollment.min_clip_ms,
             "max_clip_ms": enrollment.max_clip_ms,
             "min_speech_ms": enrollment.min_speech_ms,
+            "max_window_ms": enrollment.max_window_ms,
             "ttl_ms": enrollment.ttl_ms,
             "max_body_bytes": enrollment.max_audio_body_bytes,
         },
@@ -850,14 +909,11 @@ pub(super) async fn create_draft(
         );
     }
     match load_draft(pool, &draft_id).await {
-        Ok(Some(draft)) => with_etag(
-            (
-                StatusCode::CREATED,
-                Json(draft_resource(&draft, &speaker.key)),
-            )
-                .into_response(),
-            draft.revision,
-        ),
+        Ok(Some(draft)) => {
+            let loaded =
+                loaded_draft_response(pool, &draft, &speaker.key, StatusCode::CREATED).await;
+            draft_result(&request, loaded)
+        }
         _ => error(
             &request,
             StatusCode::SERVICE_UNAVAILABLE,
@@ -902,10 +958,8 @@ pub(super) async fn get_draft(
         Err(error_value) => return sql_error(&request, &error_value),
     };
     if draft.runtime_id == state.runtime_id {
-        return with_etag(
-            Json(draft_resource(&draft, &speaker.key)).into_response(),
-            draft.revision,
-        );
+        let loaded = loaded_draft_response(pool, &draft, &speaker.key, StatusCode::OK).await;
+        return draft_result(&request, loaded);
     }
     // Compatible runtime repin: another process incarnation opened this draft, so re-pin it to this
     // one only when the exact provider revision, embedding space and dimension still agree.
@@ -947,10 +1001,10 @@ pub(super) async fn get_draft(
         Err(error_value) => return sql_error(&request, &error_value),
     }
     match load_draft(pool, &draft_id).await {
-        Ok(Some(draft)) => with_etag(
-            Json(draft_resource(&draft, &speaker.key)).into_response(),
-            draft.revision,
-        ),
+        Ok(Some(draft)) => {
+            let loaded = loaded_draft_response(pool, &draft, &speaker.key, StatusCode::OK).await;
+            draft_result(&request, loaded)
+        }
         _ => error(
             &request,
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1042,6 +1096,431 @@ pub(super) async fn cancel_draft(
         );
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// `PUT /speakers/{key}/enrollments/{id}/samples/{slot}` — bounded raw WAV upload.
+///
+/// The body is the recorder's PCM16 mono 16 kHz WAV. The server parses it, runs the quality gate,
+/// asks the bounded worker for one embedding, and stores only bounded metadata plus the vector.
+/// A rejected request never mutates the draft.
+pub(super) async fn put_sample(
+    State(state): State<AppState>,
+    Path((key, draft_id, slot)): Path<(String, String, u32)>,
+    request: Request,
+) -> Response {
+    let expected = match expected(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    if !(1..=MAX_SAMPLE_SLOT).contains(&slot) {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    if !wav_content_type(request.headers()) {
+        return error(
+            &request,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_audio_format",
+        );
+    }
+    if request
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .is_some_and(|encoding| encoding.as_bytes() != b"identity")
+    {
+        return error(
+            &request,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_content_encoding",
+        );
+    }
+    if draft_id.len() > MAX_DRAFT_ID {
+        return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found");
+    }
+    let pool = match db(&state) {
+        Ok(pool) => pool,
+        Err(response) => return response,
+    };
+    let speaker = match get_speaker_by(pool, &key).await {
+        Ok(speaker) => speaker,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "speaker_not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let draft = match load_draft(pool, &draft_id).await {
+        Ok(Some(draft)) if draft.status == "expired" => {
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) if draft.status != "collecting" => {
+            return error(&request, StatusCode::CONFLICT, "enrollment_committed");
+        }
+        Ok(Some(draft)) if draft.expires_at <= now() => {
+            expire_draft(pool, &draft.id).await;
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) => draft,
+        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found"),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if draft.runtime_id != state.runtime_id {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "enrollment_runtime_incompatible",
+        );
+    }
+    if draft.revision != expected {
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    let provider_revision = match draft.loaded_provider_revision {
+        Some(revision) => revision,
+        None => {
+            return error(
+                &request,
+                StatusCode::CONFLICT,
+                "enrollment_runtime_incompatible",
+            );
+        }
+    };
+    let dims = draft.dims.unwrap_or_default() as usize;
+
+    // Split the body off but keep a Request for error responses and tracing.
+    let (parts, body) = request.into_parts();
+    let request = Request::from_parts(parts, Body::empty());
+    let limit = state
+        .config
+        .speaker_recognition
+        .enrollment
+        .max_audio_body_bytes;
+    let body = match to_bytes(body, limit).await {
+        Ok(body) => body,
+        Err(_) => {
+            return error(&request, StatusCode::PAYLOAD_TOO_LARGE, "request_too_large");
+        }
+    };
+    let (clip, duration_ms) = match enrollment::parse_wav(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_audio_format",
+            );
+        }
+    };
+    let config = &state.config.speaker_recognition.enrollment;
+    let profile = QualityProfile {
+        min_clip_ms: config.min_clip_ms,
+        max_clip_ms: config.max_clip_ms,
+        min_speech_ms: config.min_speech_ms,
+        max_window_ms: config.max_window_ms,
+    };
+    let analyzed = match enrollment::analyze(&clip, duration_ms, &profile) {
+        Ok(analyzed) => analyzed,
+        Err(SampleReject::Clipped) => {
+            return error(
+                &request,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "speaker_audio_clipped",
+            );
+        }
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "speaker_insufficient_audio",
+            );
+        }
+    };
+
+    let extracted = match state
+        .provider_diagnostics
+        .extract_speaker_embedding(&draft.provider_key, provider_revision, analyzed.window)
+        .await
+    {
+        Ok(extracted) => extracted,
+        Err(error_value) => return enrollment_error_response(&request, error_value),
+    };
+    if extracted.embedding_space_id != draft.embedding_space || extracted.dimension != dims {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "enrollment_runtime_incompatible",
+        );
+    }
+    if enrollment::validate_embedding(&extracted.embedding, dims).is_err() {
+        return error(
+            &request,
+            StatusCode::BAD_GATEWAY,
+            "speaker_inference_failed",
+        );
+    }
+    let mut embedding = extracted.embedding;
+    if !enrollment::normalize(&mut embedding) {
+        return error(
+            &request,
+            StatusCode::BAD_GATEWAY,
+            "speaker_inference_failed",
+        );
+    }
+    let vector = enrollment::encode_embedding(&embedding);
+
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let inserted = sqlx::query(
+        "INSERT INTO speaker_enrollment_samples (draft_id,seq,duration_ms,speech_ms,vector,created_at) VALUES (?,?,?,?,?,?) \
+         ON CONFLICT(draft_id,seq) DO UPDATE SET duration_ms=excluded.duration_ms,speech_ms=excluded.speech_ms,vector=excluded.vector",
+    )
+    .bind(&draft.id)
+    .bind(i64::from(slot))
+    .bind(analyzed.quality.duration_ms as i64)
+    .bind(analyzed.quality.speech_ms as i64)
+    .bind(&vector)
+    .bind(now())
+    .execute(&mut *tx)
+    .await;
+    let bumped = sqlx::query(
+        "UPDATE speaker_enrollment_drafts SET revision=revision+1 WHERE id=? AND status='collecting' AND revision=?",
+    )
+    .bind(&draft.id)
+    .bind(expected)
+    .execute(&mut *tx)
+    .await;
+    let (inserted, bumped) = match (inserted, bumped) {
+        (Ok(inserted), Ok(bumped)) => (inserted, bumped),
+        _ => {
+            let _ = tx.rollback().await;
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    if inserted.rows_affected() == 0 || bumped.rows_affected() != 1 {
+        let _ = tx.rollback().await;
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    if audit(
+        &mut *tx,
+        id(&request),
+        "speaker_enrollment",
+        Some(speaker.id),
+        "sample_upload",
+        Some(expected),
+        Some(expected + 1),
+        AuditOutcome::Success,
+        1,
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
+
+    match load_draft(pool, &draft.id).await {
+        Ok(Some(draft)) => {
+            let samples = match load_samples(pool, &draft.id).await {
+                Ok(samples) => samples,
+                Err(error_value) => return sql_error(&request, &error_value),
+            };
+            with_etag(
+                (
+                    StatusCode::OK,
+                    Json(draft_resource(&draft, &speaker.key, &samples)),
+                )
+                    .into_response(),
+                draft.revision,
+            )
+        }
+        _ => error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        ),
+    }
+}
+
+/// `DELETE /speakers/{key}/enrollments/{id}/samples/{slot}` — remove one stored sample.
+pub(super) async fn delete_sample(
+    State(state): State<AppState>,
+    Path((key, draft_id, slot)): Path<(String, String, u32)>,
+    request: Request,
+) -> Response {
+    let expected = match expected(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    let pool = match db(&state) {
+        Ok(pool) => pool,
+        Err(response) => return response,
+    };
+    let speaker = match get_speaker_by(pool, &key).await {
+        Ok(speaker) => speaker,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "speaker_not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let draft = match load_draft(pool, &draft_id).await {
+        Ok(Some(draft)) if draft.status == "expired" => {
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) if draft.status != "collecting" => {
+            return error(&request, StatusCode::CONFLICT, "enrollment_committed");
+        }
+        Ok(Some(draft)) if draft.expires_at <= now() => {
+            expire_draft(pool, &draft.id).await;
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) => draft,
+        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found"),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if draft.revision != expected {
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let removed = sqlx::query("DELETE FROM speaker_enrollment_samples WHERE draft_id=? AND seq=?")
+        .bind(&draft.id)
+        .bind(i64::from(slot))
+        .execute(&mut *tx)
+        .await;
+    let bumped = sqlx::query(
+        "UPDATE speaker_enrollment_drafts SET revision=revision+1 WHERE id=? AND status='collecting' AND revision=?",
+    )
+    .bind(&draft.id)
+    .bind(expected)
+    .execute(&mut *tx)
+    .await;
+    let (Ok(removed), Ok(bumped)) = (removed, bumped) else {
+        let _ = tx.rollback().await;
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    };
+    if removed.rows_affected() == 0 {
+        let _ = tx.rollback().await;
+        return error(&request, StatusCode::NOT_FOUND, "sample_not_found");
+    }
+    if bumped.rows_affected() != 1 {
+        let _ = tx.rollback().await;
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    if audit(
+        &mut *tx,
+        id(&request),
+        "speaker_enrollment",
+        Some(speaker.id),
+        "sample_delete",
+        Some(expected),
+        Some(expected + 1),
+        AuditOutcome::Success,
+        1,
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
+    match load_draft(pool, &draft.id).await {
+        Ok(Some(draft)) => {
+            let samples = match load_samples(pool, &draft.id).await {
+                Ok(samples) => samples,
+                Err(error_value) => return sql_error(&request, &error_value),
+            };
+            with_etag(
+                (
+                    StatusCode::OK,
+                    Json(draft_resource(&draft, &speaker.key, &samples)),
+                )
+                    .into_response(),
+                draft.revision,
+            )
+        }
+        _ => error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        ),
+    }
+}
+
+/// The recorder only ever sends `audio/wav`; parameters such as `codecs=1` are tolerated.
+fn wav_content_type(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("audio/wav"))
+}
+
+fn enrollment_error_response(
+    request: &Request,
+    error_value: ProviderDiagnosticRequestError,
+) -> Response {
+    let (status, code) = enrollment_error_status(error_value);
+    error(request, status, code)
+}
+
+/// HTTP mapping for a failed enrollment extraction, kept pure so it is unit-testable.
+fn enrollment_error_status(
+    error_value: ProviderDiagnosticRequestError,
+) -> (StatusCode, &'static str) {
+    use crate::services::provider_diagnostic::ProviderDiagnosticError;
+    match error_value {
+        ProviderDiagnosticRequestError::RevisionConflict => {
+            (StatusCode::CONFLICT, "revision_conflict")
+        }
+        ProviderDiagnosticRequestError::Runtime(RuntimeError::Busy)
+        | ProviderDiagnosticRequestError::Diagnostic(ProviderDiagnosticError::Busy) => {
+            (StatusCode::TOO_MANY_REQUESTS, "provider_runtime_busy")
+        }
+        ProviderDiagnosticRequestError::Runtime(RuntimeError::Timeout)
+        | ProviderDiagnosticRequestError::Diagnostic(ProviderDiagnosticError::Timeout) => {
+            (StatusCode::GATEWAY_TIMEOUT, "speaker_inference_timeout")
+        }
+        ProviderDiagnosticRequestError::Diagnostic(ProviderDiagnosticError::InvalidResponse) => {
+            (StatusCode::BAD_GATEWAY, "speaker_inference_failed")
+        }
+        ProviderDiagnosticRequestError::Runtime(error_value) => {
+            (StatusCode::SERVICE_UNAVAILABLE, error_value.code())
+        }
+        _ => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "speaker_runtime_unavailable",
+        ),
+    }
 }
 
 async fn get_speaker_by(pool: &SqlitePool, key: &str) -> Result<SpeakerRow, sqlx::Error> {
@@ -1231,4 +1710,63 @@ pub(crate) async fn cleanup_expired_drafts(pool: &SqlitePool) {
     .bind(cutoff - TOMBSTONE_SECONDS)
     .execute(pool)
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::provider_diagnostic::{
+        ProviderDiagnosticError, ProviderDiagnosticRequestError,
+    };
+
+    #[test]
+    fn enrollment_extraction_failures_map_to_bounded_status_codes() {
+        let cases = [
+            (
+                ProviderDiagnosticRequestError::RevisionConflict,
+                StatusCode::CONFLICT,
+                "revision_conflict",
+            ),
+            (
+                ProviderDiagnosticRequestError::Runtime(RuntimeError::Busy),
+                StatusCode::TOO_MANY_REQUESTS,
+                "provider_runtime_busy",
+            ),
+            (
+                ProviderDiagnosticRequestError::Runtime(RuntimeError::Timeout),
+                StatusCode::GATEWAY_TIMEOUT,
+                "speaker_inference_timeout",
+            ),
+            (
+                ProviderDiagnosticRequestError::Diagnostic(ProviderDiagnosticError::Timeout),
+                StatusCode::GATEWAY_TIMEOUT,
+                "speaker_inference_timeout",
+            ),
+            (
+                ProviderDiagnosticRequestError::Diagnostic(
+                    ProviderDiagnosticError::InvalidResponse,
+                ),
+                StatusCode::BAD_GATEWAY,
+                "speaker_inference_failed",
+            ),
+            (
+                ProviderDiagnosticRequestError::SpeakerManagerRequired,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "speaker_runtime_unavailable",
+            ),
+        ];
+        for (error_value, status, code) in cases {
+            assert_eq!(enrollment_error_status(error_value), (status, code));
+        }
+    }
+
+    #[test]
+    fn wav_content_type_tolerates_parameters_only_for_audio_wav() {
+        let mut headers = HeaderMap::new();
+        assert!(!wav_content_type(&headers));
+        headers.insert(header::CONTENT_TYPE, "audio/wav; codecs=1".parse().unwrap());
+        assert!(wav_content_type(&headers));
+        headers.insert(header::CONTENT_TYPE, "audio/webm".parse().unwrap());
+        assert!(!wav_content_type(&headers));
+    }
 }

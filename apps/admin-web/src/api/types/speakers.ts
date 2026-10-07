@@ -71,6 +71,16 @@ export interface UpdateSpeakerInput {
   enabled?: boolean
 }
 
+export type EnrollmentSampleStatus = 'accepted'
+
+export interface EnrollmentSample {
+  slot: number
+  status: EnrollmentSampleStatus
+  quality: string
+  duration_ms: number
+  speech_ms: number
+}
+
 export interface EnrollmentDraft {
   id: string
   speaker_key: string
@@ -85,7 +95,7 @@ export interface EnrollmentDraft {
   base_speaker_revision: number
   base_voiceprint_revision: number | null
   expires_at: number
-  samples: unknown[]
+  samples: EnrollmentSample[]
 }
 
 export interface CreateEnrollmentDraftInput {
@@ -103,6 +113,7 @@ export interface SpeakerRecognitionEnrollmentConfig {
   min_clip_ms: number
   max_clip_ms: number
   min_speech_ms: number
+  max_window_ms: number
   ttl_ms: number
   max_body_bytes: number
 }

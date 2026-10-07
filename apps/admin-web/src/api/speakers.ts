@@ -19,6 +19,10 @@ function draftPath(speakerKey: string, draftId: string) {
   return `${speakerPath(speakerKey)}/enrollments/${encodeURIComponent(draftId)}`
 }
 
+function samplePath(speakerKey: string, draftId: string, slot: number) {
+  return `${draftPath(speakerKey, draftId)}/samples/${slot}`
+}
+
 const speakersPath = '/api/admin/speakers'
 
 export const speakersApi = {
@@ -74,5 +78,26 @@ export const speakersApi = {
   },
   bindings(key: string, signal?: AbortSignal) {
     return requestJson<SpeakerBindingPage>(`${speakerPath(key)}/bindings?page=1&page_size=50`, {}, { signal })
+  },
+  uploadSample(
+    speakerKey: string,
+    draftId: string,
+    slot: number,
+    wav: Blob,
+    revision: number,
+    signal?: AbortSignal,
+  ) {
+    return requestJson<EnrollmentDraft>(samplePath(speakerKey, draftId, slot), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'audio/wav' },
+      body: wav,
+      signal,
+    }, { revision })
+  },
+  deleteSample(speakerKey: string, draftId: string, slot: number, revision: number, signal?: AbortSignal) {
+    return requestJson<EnrollmentDraft>(samplePath(speakerKey, draftId, slot), {
+      method: 'DELETE',
+      signal,
+    }, { revision })
   },
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ArrowLeft, Mic, Play, RefreshCw, Trash2, X } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { ArrowLeft, Mic, Play, RefreshCw, Square, Trash2, X } from '@lucide/vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { formatApiError } from '@/api/errors'
@@ -13,6 +13,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { useMicrophoneRecorder } from '@/composables/useMicrophoneRecorder'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,6 +33,21 @@ const providers = ref<AdminProvider[]>([])
 const enrollOpen = ref(false)
 const selectedProviderKey = ref('')
 const draft = ref<EnrollmentDraft>()
+const uploading = ref(false)
+const sampleError = ref('')
+const previewUrl = ref('')
+let uploadAbort: AbortController | undefined
+const enrollmentLimits = ref({ minClipMs: 5_000, maxClipMs: 10_000 })
+const maxSamples = ref(5)
+const recorder = useMicrophoneRecorder()
+
+const nextSlot = computed(() => {
+  const used = draft.value?.samples.map((sample) => sample.slot) ?? []
+  return used.length === 0 ? 1 : Math.max(...used) + 1
+})
+const canRecord = computed(
+  () => Boolean(draft.value) && nextSlot.value <= maxSamples.value && !uploading.value,
+)
 
 const selectedProvider = computed(() =>
   providers.value.find((provider) => provider.key === selectedProviderKey.value),
@@ -102,8 +118,19 @@ async function openEnroll() {
   selectedProviderKey.value = ''
   enrollOpen.value = true
   try {
-    const page = await providersApi.list({ type: 'speaker', pageSize: 100 })
+    const [page, summary] = await Promise.all([
+      providersApi.list({ type: 'speaker', pageSize: 100 }),
+      speakersApi.summary(),
+    ])
     providers.value = page.items.filter((provider) => provider.enabled === 1)
+    const enrollment = summary.enrollment
+    if (enrollment) {
+      enrollmentLimits.value = {
+        minClipMs: enrollment.min_clip_ms,
+        maxClipMs: enrollment.max_clip_ms,
+      }
+      maxSamples.value = enrollment.max_samples
+    }
   } catch (cause) {
     error.value = formatApiError(cause)
   }
@@ -159,11 +186,94 @@ async function cancelDraft() {
   }
 }
 
+function releasePreview() {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+}
+
+async function startRecording() {
+  if (!canRecord.value) return
+  sampleError.value = ''
+  releasePreview()
+  await recorder.start(enrollmentLimits.value, () => void stopRecording())
+  if (recorder.error.value) sampleError.value = formatApiError(new Error(recorder.error.value))
+}
+
+async function stopRecording() {
+  const wav = await recorder.stop()
+  if (!wav || !draft.value) return
+  releasePreview()
+  previewUrl.value = URL.createObjectURL(wav)
+  uploading.value = true
+  sampleError.value = ''
+  uploadAbort?.abort()
+  const controller = new AbortController()
+  uploadAbort = controller
+  try {
+    draft.value = await speakersApi.uploadSample(
+      speakerKey.value,
+      draft.value.id,
+      nextSlot.value,
+      wav,
+      draft.value.revision,
+      controller.signal,
+    )
+  } catch (cause) {
+    if (!controller.signal.aborted) {
+      sampleError.value = formatApiError(cause)
+      await refreshDraft()
+    }
+  } finally {
+    if (uploadAbort === controller) uploadAbort = undefined
+    uploading.value = false
+  }
+}
+
+/** Re-read the draft after a lost response so the next request carries the true revision. */
+async function refreshDraft() {
+  if (!draft.value) return
+  try {
+    draft.value = await speakersApi.getDraft(speakerKey.value, draft.value.id)
+  } catch {
+    // Keep the last known draft; the user can retry or cancel.
+  }
+}
+
+async function removeSample(slot: number) {
+  if (!draft.value) return
+  uploading.value = true
+  sampleError.value = ''
+  try {
+    draft.value = await speakersApi.deleteSample(
+      speakerKey.value,
+      draft.value.id,
+      slot,
+      draft.value.revision,
+    )
+    releasePreview()
+  } catch (cause) {
+    sampleError.value = formatApiError(cause)
+    await refreshDraft()
+  } finally {
+    uploading.value = false
+  }
+}
+
 function closeEnroll() {
+  uploadAbort?.abort()
+  uploadAbort = undefined
+  recorder.dispose()
+  releasePreview()
   enrollOpen.value = false
   draft.value = undefined
   void load()
 }
+
+onBeforeUnmount(() => {
+  uploadAbort?.abort()
+  recorder.dispose()
+  releasePreview()
+})
 
 onMounted(load)
 </script>
@@ -281,7 +391,7 @@ onMounted(load)
           </label>
         </template>
 
-        <div v-else class="space-y-2 rounded-md border p-4 text-sm">
+        <div v-else class="space-y-4 rounded-md border p-4 text-sm">
           <div class="flex items-center gap-2 font-medium">
             <Mic class="size-4" />
             {{ t('speakers.draftStatus') }}: {{ draft.status }}
@@ -289,7 +399,36 @@ onMounted(load)
           <p><span class="text-muted-foreground">{{ t('speakers.provider') }}:</span> {{ draft.provider_key }}@{{ draft.desired_provider_revision }}</p>
           <p class="break-all"><span class="text-muted-foreground">{{ t('speakers.embeddingSpace') }}:</span> <span class="font-mono text-xs">{{ draft.embedding_space_id }}</span></p>
           <p><span class="text-muted-foreground">{{ t('speakers.expiresAt') }}:</span> {{ formatDateTime(new Date(draft.expires_at * 1000)) }}</p>
-          <p class="text-xs text-muted-foreground">{{ t('speakers.recordingNext') }}</p>
+
+          <div class="space-y-2 rounded-md bg-muted/40 p-3">
+            <p class="font-medium">{{ t('speakers.samplesTitle', { count: draft.samples.length, max: maxSamples }) }}</p>
+            <p v-if="draft.samples.length === 0" class="text-xs text-muted-foreground">{{ t('speakers.samplesEmpty') }}</p>
+            <ul v-else class="space-y-1">
+              <li v-for="sample in draft.samples" :key="sample.slot" class="flex items-center justify-between gap-2">
+                <span>{{ t('speakers.sampleSlot', { slot: sample.slot }) }} · {{ (sample.duration_ms / 1000).toFixed(1) }}s</span>
+                <Button variant="ghost" size="sm" :disabled="uploading" @click="removeSample(sample.slot)">
+                  <Trash2 class="size-4" />
+                </Button>
+              </li>
+            </ul>
+
+            <p v-if="recorder.recording.value" class="text-xs text-muted-foreground">
+              {{ t('speakers.recordingHint', { seconds: (recorder.elapsedMs.value / 1000).toFixed(1) }) }}
+            </p>
+            <p v-else class="text-xs text-muted-foreground">
+              {{ t('speakers.recordPrompt', { min: enrollmentLimits.minClipMs / 1000, max: enrollmentLimits.maxClipMs / 1000 }) }}
+            </p>
+            <p v-if="sampleError" class="text-xs text-destructive">{{ sampleError }}</p>
+            <div class="flex items-center gap-2">
+              <Button v-if="recorder.recording.value" variant="outline" size="sm" @click="stopRecording">
+                <Square class="size-4" />{{ t('speakers.stopRecording') }}
+              </Button>
+              <Button v-else :disabled="!canRecord" size="sm" @click="startRecording">
+                <Mic class="size-4" />{{ uploading ? t('speakers.uploading') : t('speakers.recordSample') }}
+              </Button>
+              <audio v-if="previewUrl" :src="previewUrl" controls class="h-8" />
+            </div>
+          </div>
         </div>
       </div>
       <template #footer>

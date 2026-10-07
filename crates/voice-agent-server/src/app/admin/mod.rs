@@ -150,6 +150,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             get(speakers::get_draft).delete(speakers::cancel_draft),
         )
         .route(
+            "/speakers/{key}/enrollments/{id}/samples/{slot}",
+            put(speakers::put_sample).delete(speakers::delete_sample),
+        )
+        .route(
             "/agents/{key}/speaker-policy",
             get(speaker_policy::get_policy).put(speaker_policy::put_policy),
         )

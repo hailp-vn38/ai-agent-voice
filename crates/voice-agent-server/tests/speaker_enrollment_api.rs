@@ -1,10 +1,12 @@
-//! Public HTTP + real SQLite tests for ticket 05: Speaker CRUD and web enrollment drafts.
+//! Public HTTP + real SQLite tests for tickets 05–06: Speaker CRUD, web enrollment drafts, and
+//! bounded browser WAV sample upload.
 //!
 //! Covers auth, two-tab CAS, bounded quota/TTL, lost-response idempotency, provider in-use
 //! references, and a real process-restart runtime repin / startup expiry sweep.
 
 use std::{fs, sync::Arc};
 
+use reqwest::header::HeaderValue;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use voice_agent_server::{
@@ -13,6 +15,7 @@ use voice_agent_server::{
     config::AppConfig,
     database::Database,
     providers::{ProviderSet, RuntimeCatalog, speaker::SpeakerRuntime},
+    services::provider_diagnostic::{ProviderDiagnosticLimiter, ProviderDiagnosticService},
     services::provider_runtime::{
         PreparedRuntime, ProviderRuntimeManager, RuntimeError, RuntimeLimits, RuntimeMaterializer,
         RuntimeResource,
@@ -139,24 +142,33 @@ async fn server_with_runtime(
         Some(database),
     );
     if with_runtime {
-        state.provider_runtime_manager = Some(
-            ProviderRuntimeManager::new(
-                RuntimeLimits {
-                    max_parallel_loads: 1,
-                    max_pending_loads: 2,
-                    max_waiters: 8,
-                    max_resident_bytes: 4,
-                    max_resources: 4,
-                    max_version_entries: 8,
-                    admission_timeout_ms: 1000,
-                    failure_cooldown_ms: 100,
-                    idle_ttl_ms: 1000,
-                },
-                Arc::new(TestSpeakerFactory),
-                voice_agent_server::lifecycle::AdmissionGate::open(),
+        let manager = ProviderRuntimeManager::new(
+            RuntimeLimits {
+                max_parallel_loads: 1,
+                max_pending_loads: 2,
+                max_waiters: 8,
+                max_resident_bytes: 4,
+                max_resources: 4,
+                max_version_entries: 8,
+                admission_timeout_ms: 1000,
+                failure_cooldown_ms: 100,
+                idle_ttl_ms: 1000,
+            },
+            Arc::new(TestSpeakerFactory),
+            voice_agent_server::lifecycle::AdmissionGate::open(),
+        )
+        .unwrap();
+        state.provider_diagnostics = Arc::new(
+            ProviderDiagnosticService::new(
+                Arc::new(Default::default()),
+                None,
+                state.database.clone(),
+                ProviderDiagnosticLimiter::new(1),
+                std::time::Duration::from_secs(5),
             )
-            .unwrap(),
+            .with_runtime_manager(manager.clone()),
         );
+        state.provider_runtime_manager = Some(manager);
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -574,6 +586,429 @@ async fn restart_repins_a_compatible_draft_and_sweeps_expired_ones() {
     assert_eq!(
         expired.json::<Value>().await.unwrap()["error"]["code"],
         "enrollment_expired"
+    );
+
+    task.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Ticket 06: browser WAV sample upload
+// ---------------------------------------------------------------------------
+
+/// A PCM16 mono 16 kHz WAV of `ms` milliseconds alternating between `amplitude` and its inverse.
+fn enrollment_wav(ms: u64, amplitude: i16) -> Vec<u8> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    let mut writer = hound::WavWriter::new(&mut buffer, spec).unwrap();
+    for index in 0..ms * 16 {
+        let sample = if index % 2 == 0 {
+            amplitude
+        } else {
+            -amplitude
+        };
+        writer.write_sample(sample).unwrap();
+    }
+    writer.finalize().unwrap();
+    buffer.into_inner()
+}
+
+async fn open_owner_draft(client: &Client, base: &str) -> String {
+    let provider_key = create_speaker_provider(client, base).await;
+    create_speaker(client, base, "owner", "Chủ sở hữu").await;
+    let draft: Value = client
+        .post(format!("{base}/api/admin/speakers/owner/enrollments"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({
+            "provider_key": provider_key,
+            "expected_provider_revision": 1
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    draft["id"].as_str().unwrap().to_owned()
+}
+
+fn sample_url(base: &str, draft_id: &str, slot: u32) -> String {
+    format!("{base}/api/admin/speakers/owner/enrollments/{draft_id}/samples/{slot}")
+}
+
+async fn put_sample(
+    client: &Client,
+    base: &str,
+    draft_id: &str,
+    slot: u32,
+    revision: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> reqwest::Response {
+    client
+        .put(sample_url(base, draft_id, slot))
+        .bearer_auth(TOKEN)
+        .header("if-match", format!("\"{revision}\""))
+        .header("content-type", content_type)
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn sample_upload_stores_bounded_metadata_and_returns_draft() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+
+    let accepted = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        enrollment_wav(8_000, 8_000),
+    )
+    .await;
+    let status = accepted.status();
+    let etag = accepted.headers().get("etag").cloned();
+    let text = accepted.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(etag, Some(HeaderValue::from_static("\"2\"")), "{text}");
+    let body: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["revision"], 2);
+    let sample = &body["samples"][0];
+    assert_eq!(sample["slot"], 1);
+    assert_eq!(sample["status"], "accepted");
+    assert_eq!(sample["quality"], "good");
+    assert_eq!(sample["duration_ms"], 8_000);
+    assert!(sample["speech_ms"].as_u64().unwrap() >= 3_000);
+    // Only bounded metadata leaves the server; no audio, no vector.
+    assert!(sample.get("vector").is_none());
+    assert!(sample.get("audio").is_none());
+
+    // The stored sample is visible on resume and holds no raw audio bytes.
+    let resumed: Value = client
+        .get(format!(
+            "{base}/api/admin/speakers/owner/enrollments/{draft_id}"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resumed["samples"].as_array().unwrap().len(), 1);
+    assert_eq!(resumed["samples"][0]["slot"], 1);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn sample_upload_rejects_bad_transport_without_mutation() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+
+    let wrong_type = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "application/octet-stream",
+        enrollment_wav(8_000, 8_000),
+    )
+    .await;
+    assert_eq!(wrong_type.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(
+        wrong_type.json::<Value>().await.unwrap()["error"]["code"],
+        "unsupported_audio_format"
+    );
+
+    let encoded = client
+        .put(sample_url(&base, &draft_id, 1))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .header("content-type", "audio/wav")
+        .header("content-encoding", "gzip")
+        .body(enrollment_wav(8_000, 8_000))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(encoded.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(
+        encoded.json::<Value>().await.unwrap()["error"]["code"],
+        "unsupported_content_encoding"
+    );
+
+    let malformed = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        b"definitely not a wav".to_vec(),
+    )
+    .await;
+    assert_eq!(malformed.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let oversized = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        vec![0u8; 600_000],
+    )
+    .await;
+    assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        oversized.json::<Value>().await.unwrap()["error"]["code"],
+        "request_too_large"
+    );
+
+    let bad_slot = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        6,
+        "1",
+        "audio/wav",
+        enrollment_wav(8_000, 8_000),
+    )
+    .await;
+    assert_eq!(bad_slot.status(), StatusCode::BAD_REQUEST);
+
+    // Every rejected request left revision 1 untouched.
+    let resumed: Value = client
+        .get(format!(
+            "{base}/api/admin/speakers/owner/enrollments/{draft_id}"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resumed["revision"], 1);
+    assert_eq!(resumed["samples"].as_array().unwrap().len(), 0);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn sample_upload_rejects_low_quality_without_mutation() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+
+    let short = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        enrollment_wav(2_000, 8_000),
+    )
+    .await;
+    assert_eq!(short.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        short.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_insufficient_audio"
+    );
+
+    let silent = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        enrollment_wav(6_000, 0),
+    )
+    .await;
+    assert_eq!(silent.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        silent.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_insufficient_audio"
+    );
+
+    let clipped = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        enrollment_wav(6_000, i16::MAX),
+    )
+    .await;
+    assert_eq!(clipped.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        clipped.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_audio_clipped"
+    );
+
+    let resumed: Value = client
+        .get(format!(
+            "{base}/api/admin/speakers/owner/enrollments/{draft_id}"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resumed["revision"], 1);
+    assert_eq!(resumed["samples"].as_array().unwrap().len(), 0);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn sample_upload_requires_current_revision() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+
+    let missing = client
+        .put(sample_url(&base, &draft_id, 1))
+        .bearer_auth(TOKEN)
+        .header("content-type", "audio/wav")
+        .body(enrollment_wav(8_000, 8_000))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        missing.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_if_match"
+    );
+
+    let stale = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "9",
+        "audio/wav",
+        enrollment_wav(8_000, 8_000),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn sample_replace_and_delete_are_revisioned() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+
+    let first = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        enrollment_wav(8_000, 8_000),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()["etag"], "\"2\"");
+
+    // Re-recording the same slot replaces it rather than adding a second sample.
+    let replaced = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "2",
+        "audio/wav",
+        enrollment_wav(6_000, 8_000),
+    )
+    .await;
+    assert_eq!(replaced.status(), StatusCode::OK);
+    assert_eq!(replaced.headers()["etag"], "\"3\"");
+    let body: Value = replaced.json().await.unwrap();
+    assert_eq!(body["samples"].as_array().unwrap().len(), 1);
+    assert_eq!(body["samples"][0]["duration_ms"], 6_000);
+
+    let removed = client
+        .delete(sample_url(&base, &draft_id, 1))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"3\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::OK);
+    assert_eq!(removed.headers()["etag"], "\"4\"");
+    let body: Value = removed.json().await.unwrap();
+    assert_eq!(body["samples"].as_array().unwrap().len(), 0);
+
+    let gone = client
+        .delete(sample_url(&base, &draft_id, 1))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"4\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn sample_upload_needs_a_collecting_draft() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+
+    let cancelled = client
+        .delete(format!(
+            "{base}/api/admin/speakers/owner/enrollments/{draft_id}"
+        ))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status(), StatusCode::NO_CONTENT);
+
+    let after = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        "1",
+        "audio/wav",
+        enrollment_wav(8_000, 8_000),
+    )
+    .await;
+    assert_eq!(after.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        after.json::<Value>().await.unwrap()["error"]["code"],
+        "enrollment_not_found"
     );
 
     task.abort();

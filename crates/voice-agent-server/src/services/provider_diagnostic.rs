@@ -98,6 +98,13 @@ pub struct VadDiagnosticResult {
     pub runtime: ProviderDiagnosticRuntimeMetadata,
 }
 
+/// One raw enrollment embedding, still unvalidated against the pinned space by the caller.
+pub struct SpeakerEmbeddingResult {
+    pub embedding: Vec<f32>,
+    pub embedding_space_id: String,
+    pub dimension: usize,
+}
+
 #[derive(serde::Serialize)]
 pub struct ProviderPrepareResult {
     pub provider_key: String,
@@ -413,6 +420,65 @@ impl ProviderDiagnosticService {
         Ok(
             serde_json::json!({"provider_key": snapshot.key, "type":"speaker", "status":"success", "quality":{"duration_ms":duration_ms,"rms":rms,"clipping_fraction":clipping_fraction}, "provenance":{"embedding_space_id":embedding_space_id,"dimension":dimension,"model_revision":crate::providers::speaker::assets::MODEL_REVISION,"preprocessing":"pcm16-mono16k-v1"}, "runtime":{"tested_provider_id":snapshot.id,"tested_revision":snapshot.revision,"runtime_matches_desired":true,"requires_restart":false}}),
         )
+    }
+
+    /// One enrollment embedding. The same managed-only bounded-worker path as
+    /// [`Self::execute_speaker`], but it returns the vector instead of a diagnostic summary. The
+    /// caller has already run the quality gate and selected the window, so this boundary owns only
+    /// runtime lookup, admission, timeout, and the post-run revision check.
+    pub async fn extract_speaker_embedding(
+        &self,
+        key: &str,
+        expected_revision: i64,
+        pcm: PcmF32Mono,
+    ) -> Result<SpeakerEmbeddingResult, ProviderDiagnosticRequestError> {
+        let snapshot = self.request_snapshot(key, "speaker").await?;
+        if snapshot.revision != expected_revision {
+            return Err(ProviderDiagnosticRequestError::RevisionConflict);
+        }
+        let config: crate::config::CampPlusConfig = serde_json::from_str(&snapshot.config_json)
+            .map_err(|_| ProviderDiagnosticRequestError::InvalidInput)?;
+        if !config.valid() {
+            return Err(ProviderDiagnosticRequestError::InvalidInput);
+        }
+        let manager = self
+            .manager
+            .as_ref()
+            .ok_or(ProviderDiagnosticRequestError::SpeakerManagerRequired)?;
+        let _diagnostic = self.limiter.try_acquire()?;
+        let lease = manager.acquire(snapshot.clone()).await?;
+        let runtime = lease
+            .runtimes()
+            .and_then(|catalog| catalog.speaker(key))
+            .ok_or(ProviderDiagnosticError::Unavailable)?;
+        let dimension = runtime.dimension();
+        let embedding_space_id = runtime.embedding_space_id().to_owned();
+        let embedding = tokio::time::timeout(self.execution_timeout, runtime.extract(pcm, lease))
+            .await
+            .map_err(|_| ProviderDiagnosticError::Timeout)?
+            .map_err(|err| match err {
+                crate::providers::speaker::SpeakerError::InvalidInput => {
+                    ProviderDiagnosticRequestError::InvalidInput
+                }
+                crate::providers::speaker::SpeakerError::Busy => {
+                    ProviderDiagnosticError::Busy.into()
+                }
+                crate::providers::speaker::SpeakerError::InvalidEmbedding => {
+                    ProviderDiagnosticError::InvalidResponse.into()
+                }
+                crate::providers::speaker::SpeakerError::Unavailable => {
+                    ProviderDiagnosticError::Unavailable.into()
+                }
+            })?;
+        let current = self.request_snapshot(key, "speaker").await?;
+        if current.id != snapshot.id || current.revision != snapshot.revision {
+            return Err(ProviderDiagnosticRequestError::RevisionConflict);
+        }
+        Ok(SpeakerEmbeddingResult {
+            embedding,
+            embedding_space_id,
+            dimension,
+        })
     }
 
     /// Executes a tool-free LLM diagnostic against the exact runtime loaded at process startup.
