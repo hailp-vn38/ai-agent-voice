@@ -7,4 +7,5 @@ pub enum SessionEvent {
     ClientAudio(Vec<u8>),
     /// Application lifecycle requests a controlled WebSocket close before the drain deadline.
     Shutdown,
+    SecurityInvalidated,
 }

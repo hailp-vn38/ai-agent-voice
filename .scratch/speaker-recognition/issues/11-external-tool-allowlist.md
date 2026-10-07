@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Agent Tool Allowlist persistence/API/Agent UI keyed nội bộ incarnation, public server_key + original tool name; default deny, hiện có deny filters vẫn áp dụng.
 - [ ] Review source/schema/description/endpoint/transport/auth scope/reference fingerprint, không secret value; conditional update không approve contract stale.

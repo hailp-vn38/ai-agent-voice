@@ -110,6 +110,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/agents/{key}/mcp-bindings/{server_key}",
             put(put_agent_mcp_binding).delete(unlink_agent_mcp_binding),
         )
+        .route(
+            "/agents/{key}/tool-allowlist",
+            get(tool_allowlist::list).put(tool_allowlist::review),
+        )
         .route("/devices", get(list_devices).post(create_device))
         .route(
             "/device-enrollments/claim",
@@ -141,6 +145,7 @@ mod provider_tests;
 mod providers;
 mod system;
 mod templates;
+mod tool_allowlist;
 
 use agents::{create_agent, get_agent, list_agents, patch_agent};
 use deletion::{delete_agent, delete_device, delete_mcp_server, delete_provider, delete_template};

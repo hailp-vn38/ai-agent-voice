@@ -150,6 +150,8 @@ async fn delete_by_key(
         .await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
+    let security = &state.database.as_ref().unwrap().tool_security;
+    let _publication = security.publication.write().await;
     let mut tx = match pool.begin().await {
         Ok(value) => value,
         Err(_) => {
@@ -227,6 +229,11 @@ async fn delete_by_key(
             StatusCode::SERVICE_UNAVAILABLE,
             "database_unavailable",
         );
+    }
+    match spec.resource {
+        "mcp_server" => security.invalidate_server(resource_id),
+        "agent" => security.invalidate_agent(resource_id),
+        _ => {}
     }
     StatusCode::NO_CONTENT.into_response()
 }

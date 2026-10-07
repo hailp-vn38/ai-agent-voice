@@ -1653,6 +1653,70 @@
       ]
     },
     {
+      "name": "05b - External tool contract review",
+      "item": [
+        {
+          "name": "Inspect observed external tools",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/agents/{{agent_key}}/tool-allowlist",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve reviewed external contract",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/api/admin/agents/{{agent_key}}/tool-allowlist",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "If-Match",
+                "value": "\"{{tool_allowlist_revision}}\"",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"server_key\": \"{{mcp_server_key}}\",\n  \"original_name\": \"{{tool_original_name}}\",\n  \"observed_revision\": {{tool_observed_revision}},\n  \"fingerprint\": \"{{tool_contract_fingerprint}}\",\n  \"allowed\": true,\n  \"sensitive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Approval revision is separate from Agent/observation revision. Fresh approval revision=1; exact observed fingerprint/revision required. Sensitive tools remain blocked. New grant applies only to new WS; revoke closes affected WS1008."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "06 - History",
       "item": [
         {
@@ -1931,6 +1995,26 @@
       "key": "history_template_db_id",
       "value": "1",
       "type": "string"
-    }
+    },
+      {
+        "key": "tool_original_name",
+        "value": "Forecast",
+        "type": "string"
+      },
+      {
+        "key": "tool_observed_revision",
+        "value": "1",
+        "type": "string"
+      },
+      {
+        "key": "tool_allowlist_revision",
+        "value": "1",
+        "type": "string"
+      },
+      {
+        "key": "tool_contract_fingerprint",
+        "value": "COPY_FROM_INSPECTION",
+        "type": "string"
+      }
   ]
 }

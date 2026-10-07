@@ -15,6 +15,8 @@ pub mod history;
 pub mod load_plan;
 pub mod provider_config;
 pub mod secrets;
+pub mod tool_allowlist;
+pub mod tool_security;
 
 pub use history::{
     HistoryArchive, HistoryDrop, HistoryRole, HistoryWrite, HistoryWriter, HistoryWriterCounters,
@@ -34,9 +36,10 @@ pub use load_plan::{ProviderLoadPlan, ProviderLoadRequirement};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Database {
     pool: SqlitePool,
+    pub tool_security: std::sync::Arc<tool_security::ToolSecurity>,
 }
 
 /// Desired provider copied out of SQLite before runtime construction.  It contains no resolved
@@ -127,7 +130,10 @@ impl Database {
         } else {
             ensure_schema_is_current(&pool).await?;
         }
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            tool_security: Default::default(),
+        })
     }
 
     pub fn pool(&self) -> &SqlitePool {

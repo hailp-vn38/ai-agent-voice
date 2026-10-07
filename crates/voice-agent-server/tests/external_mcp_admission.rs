@@ -1693,3 +1693,120 @@ async fn external_mcp_telemetry_carries_bounded_labels_and_no_content() {
 fn snapshot_catalog(snapshot: ExternalMcpSnapshot) -> SessionExternalMcp {
     SessionExternalMcp::new(snapshot.servers)
 }
+
+#[tokio::test]
+async fn participating_agent_reviews_exact_external_contract_and_drift_requires_new_review() {
+    let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
+    let mut configuration = config(database_url());
+    configuration.api.enabled = true;
+    configuration.api.admin_token = "review-token".into();
+    let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+    let pool = voice.database().await;
+    seed(&pool).await;
+    bind_server(&pool, "home", &server.url(), "{}", ("none", None, None)).await;
+    sqlx::query("INSERT INTO agent_speaker_policies(agent_id,mode) VALUES(1,'observe')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(names(voice.admit().await.external_mcp()).is_empty());
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/admin/agents/agent/tool-allowlist", voice.base);
+    let items = client
+        .get(&url)
+        .bearer_auth("review-token")
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let observation = &items["items"][0];
+    assert_eq!(observation["allowed"], false);
+    let mut review = serde_json::json!({"server_key":"home","original_name":"Light","observed_revision":observation["observed_revision"],"fingerprint":observation["fingerprint"],"allowed":true,"sensitive":false});
+    let response = client
+        .put(&url)
+        .bearer_auth("review-token")
+        .header("If-Match", "\"1\"")
+        .json(&review)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        names(voice.admit().await.external_mcp()),
+        vec!["external.home.light"]
+    );
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let mut request = format!("{}/voice/v1/", voice.base.replacen("http", "ws", 1))
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("Protocol-Version", "1".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("Device-Id", "device".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("Client-Id", "review-test".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    socket.send(Message::Text(serde_json::json!({"type":"hello","version":1,"transport":"websocket","audio_params":{"format":"opus","sample_rate":16000,"channels":1,"frame_duration":60}}).to_string().into())).await.unwrap();
+    assert!(matches!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text(_)
+    ));
+    review["sensitive"] = serde_json::json!(true);
+    assert_eq!(
+        client
+            .put(&url)
+            .bearer_auth("review-token")
+            .header("If-Match", "\"1\"")
+            .json(&review)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    assert_eq!(
+        client
+            .put(&url)
+            .bearer_auth("review-token")
+            .header("If-Match", "\"2\"")
+            .json(&review)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::OK
+    );
+    let close = timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(Ok(Message::Close(Some(frame)))) = socket.next().await {
+                break frame.code;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(u16::from(close), 1008);
+    assert!(names(voice.admit().await.external_mcp()).is_empty());
+    server.behaviour.lock().unwrap().tools[0]["description"] =
+        serde_json::json!("changed contract");
+    assert!(names(voice.admit().await.external_mcp()).is_empty());
+    assert_eq!(
+        client
+            .put(&url)
+            .bearer_auth("review-token")
+            .header("If-Match", "\"3\"")
+            .json(&review)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    voice.task.abort();
+    server.task.abort();
+}

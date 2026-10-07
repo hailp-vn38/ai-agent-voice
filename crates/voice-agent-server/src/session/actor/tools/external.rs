@@ -47,6 +47,7 @@ impl SessionActor {
             server_key = %server_key,
             "External MCP tool call sent"
         );
+        let guard = self.external_mcp.guard.clone();
         runtime.spawn(async move {
             let outcome = tokio::select! {
                 biased;
@@ -54,7 +55,7 @@ impl SessionActor {
                     client.telemetry().call_cancelled(&server_key);
                     return;
                 }
-                outcome = client.call_tool(&limiter, &tool, &arguments, budget) => outcome,
+                outcome = client.call_tool_guarded(&limiter, &tool, &arguments, budget, guard.as_ref()) => outcome,
             };
             let completion = ExternalCallCompletion {
                 turn_id,

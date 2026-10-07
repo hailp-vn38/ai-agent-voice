@@ -174,6 +174,8 @@ pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Re
         Ok(v) => v,
         Err(e) => return e,
     };
+    let security = &state.database.as_ref().unwrap().tool_security;
+    let _publication = security.publication.write().await;
     let mut tx = match pool.begin().await {
         Ok(v) => v,
         Err(_) => {
@@ -319,6 +321,8 @@ pub(super) async fn patch_mcp_server(
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
         None => old.enabled,
     };
+    let security = &state.database.as_ref().unwrap().tool_security;
+    let _publication = security.publication.write().await;
     let mut tx = match pool.begin().await {
         Ok(v) => v,
         Err(_) => {
@@ -329,12 +333,30 @@ pub(super) async fn patch_mcp_server(
             );
         }
     };
+    let source_changed = old.url != url
+        || old.headers_json != Value::Object(headers.clone()).to_string()
+        || old.auth_type != auth_type
+        || old.auth_header_name != auth_header_name
+        || old.secret_ref != secret_ref
+        || old.enabled != enabled;
     let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,headers_json=?,auth_type=?,auth_header_name=?,secret_ref=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(Value::Object(headers).to_string()).bind(auth_type).bind(auth_header_name).bind(secret_ref).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
     if !updated {
         let _ = tx.rollback().await;
         audit_conflict(pool, id(&request).into(), "mcp_server", old.id, expected).await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     };
+    let approvals = if source_changed {
+        sqlx::query("UPDATE agent_external_tool_allowlist SET allowed=0,revision=revision+1 WHERE server_id=?").bind(old.id).execute(&mut *tx).await
+    } else {
+        sqlx::query("UPDATE external_tool_observations SET server_revision=? WHERE server_id=?")
+            .bind(expected + 1)
+            .bind(old.id)
+            .execute(&mut *tx)
+            .await
+    };
+    if let Err(e) = approvals {
+        return sql_error(&request, &e);
+    }
     if audit(
         &mut *tx,
         id(&request),
@@ -356,6 +378,10 @@ pub(super) async fn patch_mcp_server(
             "database_unavailable",
         );
     };
+    if source_changed {
+        security.invalidate_server(old.id);
+    }
+    drop(_publication);
     get_mcp_server(State(state), Path(key), request).await
 }
 pub(super) async fn list_agent_mcp_bindings(
@@ -414,6 +440,8 @@ pub(super) async fn put_agent_mcp_binding(
         }
         Err(e) => return sql_error(&request, &e),
     };
+    let security = &state.database.as_ref().unwrap().tool_security;
+    let _publication = security.publication.write().await;
     let mut tx = match pool.begin().await {
         Ok(v) => v,
         Err(_) => {
@@ -450,6 +478,9 @@ pub(super) async fn put_agent_mcp_binding(
             "database_unavailable",
         );
     };
+    if !body.enabled {
+        security.invalidate_agent(agent.id);
+    }
     match get_agent_by(pool, &key).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => sql_error(&request, &e),
@@ -480,6 +511,8 @@ pub(super) async fn unlink_agent_mcp_binding(
         audit_conflict(pool, id(&request).into(), "agent", agent.id, expected).await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
+    let security = &state.database.as_ref().unwrap().tool_security;
+    let _publication = security.publication.write().await;
     let mut tx = match pool.begin().await {
         Ok(value) => value,
         Err(_) => {
@@ -549,5 +582,11 @@ pub(super) async fn unlink_agent_mcp_binding(
             "database_unavailable",
         );
     }
+    state
+        .database
+        .as_ref()
+        .unwrap()
+        .tool_security
+        .invalidate_agent(agent.id);
     StatusCode::NO_CONTENT.into_response()
 }

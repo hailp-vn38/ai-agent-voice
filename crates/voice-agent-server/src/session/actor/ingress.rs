@@ -151,6 +151,11 @@ impl SessionActor {
                         self.apply_reported_turn_outcomes();
                         self.on_binary(payload);
                     }
+                    Some(SessionEvent::SecurityInvalidated) => {
+                        self.begin_application_shutdown();
+                        let _ = self.urgent_tx.send(OutboundMessage::Close(1008)).await;
+                        break;
+                    }
                     Some(SessionEvent::Shutdown) => {
                         self.begin_application_shutdown();
                         let _ = self.urgent_tx.send(OutboundMessage::Close(1001)).await;

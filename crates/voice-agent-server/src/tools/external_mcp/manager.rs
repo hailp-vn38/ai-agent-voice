@@ -185,6 +185,7 @@ impl ExternalMcpSnapshot {
 /// nothing in this type changes after construction.
 #[derive(Clone, Debug, Default)]
 pub struct SessionExternalMcp {
+    pub guard: Option<crate::database::tool_security::ExternalToolGuard>,
     servers: Arc<[ResolvedExternalMcp]>,
     /// LLM-visible name to the origin it stands for.  Routing resolves through the origin rather
     /// than through the name, so a Device MCP name can never reach an External MCP server and the
@@ -211,6 +212,7 @@ impl SessionExternalMcp {
             }
         }
         Self {
+            guard: None,
             servers: Arc::from(servers),
             routes,
             positions,

@@ -310,6 +310,12 @@ async fn handle_socket(
     // materialized snapshot, its admission-time switch catalog and the External MCP tools it may
     // call, never a Database/pool or a live Device/Agent row.
     let admitted = runtimes.profile.into_admitted_profile();
+    let tool_security_close = admitted
+        .external_mcp
+        .guard
+        .as_ref()
+        .map(|g| g.close.clone())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
     let writer_probe = runtimes.writer_probe;
     let session_id = runtimes.session_id;
     let stopping = control.stopping.clone();
@@ -319,6 +325,7 @@ async fn handle_socket(
     let (mut sender, mut receiver) = socket.split();
     let first = tokio::select! {
         _ = stopping.cancelled() => return,
+        _ = tool_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
     };
     let hello = match first {
@@ -559,6 +566,11 @@ async fn handle_socket(
             // The deadline reached this session. It closes cleanly: the actor is told to stop,
             // sends its terminal close frame and lets the writer drain, and this loop only exits
             // once the connection itself is done. No task is aborted.
+            _ = tool_security_close.cancelled() => {
+                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
+                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
+                break;
+            }
             _ = drain_close.cancelled() => {
                 info!("controlled close issued at the shutdown grace deadline");
                 let _ = ingress_tx.send(SessionEvent::Shutdown).await;

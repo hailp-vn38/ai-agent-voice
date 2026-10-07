@@ -492,10 +492,36 @@ impl AppState {
                 return SessionExternalMcp::default();
             }
         };
-        let ExternalMcpSnapshot { servers, .. } = manager
+        let ExternalMcpSnapshot {
+            servers: mut resolved,
+            exclusions,
+        } = manager
             .resolve_snapshot(&servers, self.secret_resolver.as_ref())
             .await;
-        SessionExternalMcp::new(servers)
+        for excluded in exclusions {
+            if let Some(source) = servers
+                .iter()
+                .find(|source| source.key == excluded.server_key)
+            {
+                if database
+                    .block_external_observation(source.id)
+                    .await
+                    .is_err()
+                {
+                    return SessionExternalMcp::default();
+                }
+            }
+        }
+        let guard = match database
+            .review_external_catalog(agent_id, &servers, &mut resolved)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(_) => return SessionExternalMcp::default(),
+        };
+        let mut catalog = SessionExternalMcp::new(resolved);
+        catalog.guard = guard;
+        catalog
     }
 
     /// Injects the bounded materializer seam before public router/WS admission begins.

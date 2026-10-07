@@ -299,6 +299,18 @@ impl ExternalMcpClient {
         arguments: &Value,
         budget: Duration,
     ) -> Result<ExternalToolOutcome, ExternalMcpError> {
+        self.call_tool_guarded(limiter, tool, arguments, budget, None)
+            .await
+    }
+
+    pub async fn call_tool_guarded(
+        &self,
+        limiter: &ExternalMcpCallLimiter,
+        tool: &super::registry::ResolvedExternalTool,
+        arguments: &Value,
+        budget: Duration,
+        guard: Option<&crate::database::tool_security::ExternalToolGuard>,
+    ) -> Result<ExternalToolOutcome, ExternalMcpError> {
         // The permit is taken before the request exists.  A caller that runs out of budget waiting
         // sends nothing, which is its own observation and not a call.
         let _permit = match limiter.acquire_within(&self.server_key, budget).await {
@@ -318,12 +330,34 @@ impl ExternalMcpClient {
                 .as_object()
                 .cloned()
                 .ok_or(ExternalMcpError::ToolInvalidResponse)?;
+            let publication = match guard {
+                Some(guard) => Some(guard.database.tool_security.publication.read().await),
+                None => None,
+            };
+            if let Some(guard) = guard {
+                if !guard.allows(&self.server_key, &tool.original_name).await {
+                    return Err(ExternalMcpError::ToolUnavailable);
+                }
+            }
             let params =
                 CallToolRequestParams::new(tool.original_name.clone()).with_arguments(arguments);
-            let response = tokio::time::timeout(
-                budget.min(self.call_timeout),
-                session.call_tool_once(params),
-            )
+            // Start the outbound operation atomically with the authority check, then release
+            // publication coordination; revocation never waits for the remote response.
+            let mut operation = Box::pin(session.call_tool_once(params));
+            let first = std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(match std::future::Future::poll(operation.as_mut(), cx) {
+                    std::task::Poll::Ready(value) => Some(value),
+                    std::task::Poll::Pending => None,
+                })
+            })
+            .await;
+            drop(publication);
+            let response = tokio::time::timeout(budget.min(self.call_timeout), async {
+                match first {
+                    Some(value) => value,
+                    None => operation.await,
+                }
+            })
             .await
             .map_err(|_| ExternalMcpError::ToolTimeout)?
             .map_err(|error| {

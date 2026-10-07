@@ -3207,3 +3207,34 @@ async fn speaker_waiter_timeout_retains_exact_lease_and_capacity_until_native_co
     assert_eq!(manager.accounting().active_leases, 0);
     assert_eq!(manager.accounting().physical_inference_usage, 0);
 }
+
+#[tokio::test]
+async fn external_tool_reviews_are_admin_authenticated_and_default_empty() {
+    let (base, task) = server_with_database(true, &database_url()).await;
+    let client = Client::new();
+    let response = client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"key":"review_agent","name":"Review Agent"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let url = format!("{base}/api/admin/agents/review_agent/tool-allowlist");
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let response = client
+        .get(&url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["items"],
+        serde_json::json!([])
+    );
+    task.abort();
+}
