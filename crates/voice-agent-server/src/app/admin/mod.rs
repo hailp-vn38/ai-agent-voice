@@ -129,6 +129,22 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/history", get(list_history))
         .route("/history/purge", axum::routing::post(purge_history))
+        .route("/speaker-recognition", get(speakers::summary))
+        .route("/speakers", get(speakers::list).post(speakers::create))
+        .route(
+            "/speakers/{key}",
+            get(speakers::get)
+                .patch(speakers::patch)
+                .delete(speakers::delete),
+        )
+        .route(
+            "/speakers/{key}/enrollments",
+            axum::routing::post(speakers::create_draft),
+        )
+        .route(
+            "/speakers/{key}/enrollments/{id}",
+            get(speakers::get_draft).delete(speakers::cancel_draft),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             authenticate,
@@ -148,7 +164,9 @@ mod mcp_servers;
 mod provider_adapters;
 mod provider_tests;
 mod providers;
+mod speakers;
 mod system;
+pub(crate) use speakers::cleanup_expired_drafts as cleanup_expired_speaker_drafts;
 mod templates;
 mod tool_allowlist;
 

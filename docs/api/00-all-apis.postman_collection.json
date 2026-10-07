@@ -57,8 +57,16 @@
               "request": {
                 "method": "GET",
                 "header": [
-                  {"key":"Device-Id","value":"{{device_id}}","type":"text"},
-                  {"key":"Client-Id","value":"{{client_id}}","type":"text"}
+                  {
+                    "key": "Device-Id",
+                    "value": "{{device_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Client-Id",
+                    "value": "{{client_id}}",
+                    "type": "text"
+                  }
                 ],
                 "url": "{{base_url}}/voice/ota/",
                 "description": "Enrollment defaults to transport=websocket: unknown devices get websocket URL/transport token without activation, then WS hello/stt/tts/Opus presents the code. transport=ota preserves activation without websocket/token. Registered devices get websocket; blocked devices get 403. Prepare static WAV assets before enabling WS enrollment."
@@ -80,12 +88,32 @@
               "request": {
                 "method": "POST",
                 "header": [
-                  {"key":"Device-Id","value":"{{device_id}}","type":"text"},
-                  {"key":"Client-Id","value":"{{client_id}}","type":"text"},
-                  {"key":"Content-Type","value":"application/json","type":"text"}
+                  {
+                    "key": "Device-Id",
+                    "value": "{{device_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Client-Id",
+                    "value": "{{client_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
                 ],
                 "url": "{{base_url}}/voice/ota/activate",
-                "body": {"mode":"raw","raw":"{}","options":{"raw":{"language":"json"}}},
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
                 "description": "202 while an enrollment is pending; 200 once a Device and enabled Agent exist."
               },
               "response": []
@@ -479,11 +507,34 @@
               "name": "Claim activation code",
               "request": {
                 "method": "POST",
-                "header": [{"key":"Content-Type","value":"application/json","type":"text"}],
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
                 "url": "{{base_url}}/api/admin/device-enrollments/claim",
-                "body": {"mode":"raw","raw":"{\n  \"code\": \"{{activation_code}}\",\n  \"agent_key\": \"{{agent_key}}\",\n  \"name\": \"Kitchen Device\",\n  \"template_key\": null\n}","options":{"raw":{"language":"json"}}},
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"code\": \"{{activation_code}}\",\n  \"agent_key\": \"{{agent_key}}\",\n  \"name\": \"Kitchen Device\",\n  \"template_key\": null\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
                 "description": "Consumes one six-digit activation code and returns the created Device. The code is a string to preserve leading zeroes.",
-                "auth": {"type":"bearer","bearer":[{"key":"token","value":"{{admin_token}}","type":"string"}]}
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
               },
               "response": []
             },
@@ -1883,6 +1934,268 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "07 - Speakers",
+      "item": [
+        {
+          "name": "Speaker CRUD",
+          "item": [
+            {
+              "name": "Runtime capability summary",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/speaker-recognition",
+                "description": "Bounded Speaker enrollment config and runtime capability summary. Returns available, runtime_mode, resident providers, enrollment clip/sample/ttl bounds, deployment limits and catalog_revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List speakers",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/speakers?page=1&page_size=50",
+                "description": "Query: page 1..10000, page_size 1..200, optional enabled, enrollment_status=enrolled|unenrolled|draft, provider_key and sort in key|-key|name|-name|updated_at|-updated_at|revision|-revision. Returns items, page, page_size and total.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create speaker",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers",
+                "description": "Create an un-enrolled Speaker profile. Body: key, name, optional description. A duplicate key returns 409 speaker_key_conflict; the deployment speaker cap returns 409 speaker_quota_exceeded. Response is 201 with ETag: \"<revision>\".",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"owner\",\n  \"name\": \"Chủ sở hữu\",\n  \"description\": \"Hồ sơ giọng cá nhân\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get speaker",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}",
+                "description": "Speaker detail with per-space voiceprint metadata and open enrollment drafts. Optional ?provider_key filters voiceprints. Response includes ETag: \"<revision>\". An un-enrolled profile has an empty voiceprints array and is not a usable candidate.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Update speaker (If-Match)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{speaker_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}",
+                "description": "CAS update of name, description (null clears) and/or enabled. Requires If-Match: \"<speaker revision>\". Missing/invalid If-Match returns 400; a stale revision returns 409 revision_conflict. Response carries the new ETag.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Chủ nhà\",\n  \"enabled\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Delete speaker (If-Match)",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{speaker_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}",
+                "description": "Conditional hard delete. Requires If-Match: \"<speaker revision>\". Returns 204, or 409 speaker_in_use while a voiceprint, agent candidate or open draft still references the speaker.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Enrollment drafts",
+          "item": [
+            {
+              "name": "Start enrollment draft (If-Match speaker)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{speaker_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments",
+                "description": "Open a bounded draft pinned to one exact Speaker provider revision. Requires If-Match: \"<speaker revision>\". Body: provider_key and expected_provider_revision. Errors: 409 enrollment_in_progress (body error.enrollment_id), 409 enrollment_quota_exceeded, 409 provider_revision_conflict, 409 provider_disabled, 503 provider_runtime_unavailable. Response is 201 with the draft and ETag: \"<draft revision>\".",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"provider_key\": \"{{speaker_provider_key}}\",\n  \"expected_provider_revision\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get enrollment draft",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}",
+                "description": "Resume a draft. A compatible draft created by another process incarnation is repinned to the current runtime and its revision is bumped. Returns 410 enrollment_expired for an expired draft, 409 enrollment_runtime_incompatible when the pinned provider revision/space no longer matches, and 404 enrollment_not_found otherwise.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Cancel enrollment draft (If-Match draft)",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{enrollment_draft_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}",
+                "description": "Cancel a collecting draft and release its quota slot. Requires If-Match: \"<draft revision>\". Returns 204.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [
@@ -1996,25 +2309,50 @@
       "value": "1",
       "type": "string"
     },
-      {
-        "key": "tool_original_name",
-        "value": "Forecast",
-        "type": "string"
-      },
-      {
-        "key": "tool_observed_revision",
-        "value": "1",
-        "type": "string"
-      },
-      {
-        "key": "tool_allowlist_revision",
-        "value": "1",
-        "type": "string"
-      },
-      {
-        "key": "tool_contract_fingerprint",
-        "value": "COPY_FROM_INSPECTION",
-        "type": "string"
-      }
+    {
+      "key": "tool_original_name",
+      "value": "Forecast",
+      "type": "string"
+    },
+    {
+      "key": "tool_observed_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "tool_allowlist_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "tool_contract_fingerprint",
+      "value": "COPY_FROM_INSPECTION",
+      "type": "string"
+    },
+    {
+      "key": "speaker_key",
+      "value": "owner",
+      "type": "string"
+    },
+    {
+      "key": "speaker_revision",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "speaker_provider_key",
+      "value": "speaker_0123",
+      "type": "string"
+    },
+    {
+      "key": "enrollment_draft_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "enrollment_draft_revision",
+      "value": "1",
+      "type": "string"
+    }
   ]
 }

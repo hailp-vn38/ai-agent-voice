@@ -40,6 +40,39 @@ pub(super) fn default_enrollment_cleanup_interval_seconds() -> u64 {
 pub(super) fn default_enrollment_max_pending() -> u32 {
     1_000
 }
+pub(super) fn default_speaker_max_speakers() -> usize {
+    256
+}
+pub(super) fn default_speaker_max_candidates_per_agent() -> usize {
+    32
+}
+pub(super) fn default_speaker_max_voiceprint_spaces() -> usize {
+    4
+}
+pub(super) fn default_speaker_min_samples() -> usize {
+    3
+}
+pub(super) fn default_speaker_max_samples() -> usize {
+    5
+}
+pub(super) fn default_speaker_min_clip_ms() -> u64 {
+    5_000
+}
+pub(super) fn default_speaker_max_clip_ms() -> u64 {
+    10_000
+}
+pub(super) fn default_speaker_min_speech_ms() -> u64 {
+    3_000
+}
+pub(super) fn default_speaker_enrollment_ttl_ms() -> u64 {
+    1_800_000
+}
+pub(super) fn default_speaker_max_open_enrollments() -> usize {
+    16
+}
+pub(super) fn default_speaker_max_audio_body_bytes() -> usize {
+    524_288
+}
 pub(super) fn default_input_rate() -> u32 {
     16_000
 }

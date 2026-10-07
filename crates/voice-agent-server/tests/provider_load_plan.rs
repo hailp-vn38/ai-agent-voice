@@ -33,6 +33,7 @@ fn database_url() -> String {
 
 fn config(url: String) -> AppConfig {
     AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             public_ws_url: Url::parse("ws://127.0.0.1:0/voice/v1/").unwrap(),

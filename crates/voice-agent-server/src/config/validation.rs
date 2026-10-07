@@ -66,6 +66,7 @@ impl AppConfig {
         validate_deployment(self)?;
         validate_database(self)?;
         validate_admin_api(self)?;
+        validate_speaker_recognition(self)?;
         validate_shutdown(self)?;
         if let Some(runtime) = &self.provider_runtime {
             if !(1000..=120_000).contains(&runtime.startup_timeout_ms) {
@@ -113,6 +114,34 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
     {
         return Err(ConfigError::Validation(
             "api.provider_tests bounds are invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_speaker_recognition(config: &AppConfig) -> Result<(), ConfigError> {
+    let speaker = &config.speaker_recognition;
+    if !(1..=4096).contains(&speaker.max_speakers)
+        || !(1..=256).contains(&speaker.max_candidates_per_agent)
+        || !(1..=16).contains(&speaker.max_voiceprint_spaces_per_speaker)
+    {
+        return Err(ConfigError::Validation(
+            "speaker_recognition bounds are invalid".into(),
+        ));
+    }
+    let enrollment = &speaker.enrollment;
+    if !(1..=8).contains(&enrollment.min_samples)
+        || !(enrollment.min_samples..=8).contains(&enrollment.max_samples)
+        || !(500..=60_000).contains(&enrollment.min_clip_ms)
+        || !(enrollment.min_clip_ms..=60_000).contains(&enrollment.max_clip_ms)
+        || !(250..=60_000).contains(&enrollment.min_speech_ms)
+        || enrollment.min_speech_ms > enrollment.max_clip_ms
+        || !(60_000..=86_400_000).contains(&enrollment.ttl_ms)
+        || !(1..=256).contains(&enrollment.max_open_enrollments)
+        || !(16 * 1024..=4 * 1024 * 1024).contains(&enrollment.max_audio_body_bytes)
+    {
+        return Err(ConfigError::Validation(
+            "speaker_recognition.enrollment bounds are invalid".into(),
         ));
     }
     Ok(())
@@ -802,5 +831,48 @@ retention_days = 0
         );
         capture_off.database.history.retention_days = 30;
         assert!(validate_database(&capture_off).is_ok());
+    }
+
+    #[test]
+    fn speaker_recognition_bounds_are_enforced() {
+        assert!(validate_speaker_recognition(&config("")).is_ok());
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition]
+max_speakers = 0
+"#
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition.enrollment]
+min_samples = 5
+max_samples = 3
+"#
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition.enrollment]
+min_clip_ms = 10_000
+max_clip_ms = 5_000
+"#
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition.enrollment]
+ttl_ms = 1_000
+"#
+            ))
+            .is_err()
+        );
     }
 }

@@ -34,6 +34,7 @@ fn database_url() -> String {
 
 fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
     AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),

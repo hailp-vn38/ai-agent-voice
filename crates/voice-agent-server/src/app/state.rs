@@ -33,6 +33,9 @@ use std::{
 pub struct AppState {
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
+    /// Identity of this process incarnation, pinned into enrollment drafts as provenance so a
+    /// restart can detect a stale runtime and repin a still-compatible draft.
+    pub runtime_id: String,
     pub(crate) deployment_snapshots: Vec<DesiredProvider>,
     pub(crate) provider_prewarm: Option<Arc<crate::services::provider_prewarm::ProviderPrewarm>>,
     pub config: Arc<AppConfig>,
@@ -701,6 +704,7 @@ impl AppState {
         );
         let state = Self {
             started_at: Instant::now(),
+            runtime_id: format!("voice-agent-server-{}", uuid::Uuid::new_v4()),
             deployment_snapshots: Vec::new(),
             provider_prewarm: None,
             active_turn_limiter: Arc::new(ActiveTurnLimiter::new(config.limits.max_active_turns)),

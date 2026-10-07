@@ -24,3 +24,16 @@ The first Template assignment to an Agent becomes its enabled default unless an 
 Deterministic qualification-provider tests check transport and ownership; native readiness only checks a finite nonzero result. Neither establishes speaker accuracy, replay resistance, ESP32 cross-device performance or Required qualification. Real model/device evidence remains separately required.
 
 Forward migration0007 rebuilds provider/type-slot constraints atomically through SQLx. Startup uses a dedicated connection with foreign keys disabled only for migrations; the normal pool retains foreign keys enabled. The rebuild checks every FK before committing and preserves existing IDs, bindings and deleted AUTOINCREMENT high-water marks.
+
+## Speakers and web enrollment drafts
+
+Admin manages Speaker profiles and their enrollment drafts under `/api/admin/speakers` (see the `07 - Speakers` folder in `docs/api/00-all-apis.postman_collection.json`). A Speaker is a named voice with zero or more per-embedding-space voiceprints; until a voiceprint exists it is **not** a usable candidate and no Template binding is required to create it.
+
+- `GET /api/admin/speaker-recognition` returns the bounded enrollment config and resident runtime capability summary.
+- `GET/POST /api/admin/speakers`, `GET/PATCH/DELETE /api/admin/speakers/{key}` implement the profile CRUD. Every mutation is compare-and-swap on the Speaker `revision` through `If-Match`, and successful responses carry `ETag: "<revision>"`. Deleting a Speaker that is still referenced by a voiceprint, an agent candidate or an open draft returns `409 speaker_in_use`; the speaker cap returns `409 speaker_quota_exceeded`.
+- `POST /api/admin/speakers/{key}/enrollments` opens a draft pinned to one exact Speaker provider revision (`expected_provider_revision`) and embedding space. Creating a draft never changes an active voiceprint and never auto-grants policy. At most one collecting draft exists per speaker (`409 enrollment_in_progress` carries the existing `enrollment_id`) and the process-wide cap returns `409 enrollment_quota_exceeded`.
+- `GET /api/admin/speakers/{key}/enrollments/{id}` resumes a draft; if the draft was opened by another process incarnation and the exact provider revision and embedding space still match, it is repinned to the current runtime and its revision is bumped. Otherwise it fails `409 enrollment_runtime_incompatible`. An expired draft answers `410 enrollment_expired` while its tombstone lives, then `404 enrollment_not_found`.
+- `DELETE /api/admin/speakers/{key}/enrollments/{id}` cancels a collecting draft with `If-Match: "<draft revision>"` and releases the quota slot.
+
+Drafts are bounded by `[speaker_recognition.enrollment] ttl_ms`; expired drafts have their sample blobs dropped at startup and on a five-minute sweep, and their rows are removed once the tombstone window passes. Draft inspection and reconciliation expose only metadata: no audio, vector or digest bytes.
+

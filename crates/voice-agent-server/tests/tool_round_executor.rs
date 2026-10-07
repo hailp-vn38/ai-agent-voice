@@ -512,6 +512,7 @@ fn config_with_external(
     vad.min_speech_ms = 32;
     vad.end_silence_ms = 32;
     AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),

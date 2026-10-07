@@ -140,6 +140,7 @@ async fn start(llm: Arc<dyn LlmProvider>, tts: Arc<dyn TtsProvider>) -> (String,
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),

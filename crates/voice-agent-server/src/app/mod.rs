@@ -397,7 +397,29 @@ async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> 
     )
     .await
     .map_err(|_| BootstrapError::Enrollment)?;
+    prepare_speaker_enrollment(state).await;
     Ok(())
+}
+
+/// Sweeps expired enrollment drafts at startup, then on a five-minute tick until shutdown. The
+/// sweep is bounded (indexed expiry column, one row per open draft) and never runs in a request.
+async fn prepare_speaker_enrollment(state: &AppState) {
+    let Some(database) = state.database.as_ref() else {
+        return;
+    };
+    let pool = database.pool().clone();
+    crate::app::admin::cleanup_expired_speaker_drafts(&pool).await;
+    let token = state.lifecycle.stopping().clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(300));
+        ticker.tick().await;
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => break,
+                _ = ticker.tick() => crate::app::admin::cleanup_expired_speaker_drafts(&pool).await,
+            }
+        }
+    });
 }
 
 /// Derives the Provider Load Plan from the persisted graph plus the deployment's server provider

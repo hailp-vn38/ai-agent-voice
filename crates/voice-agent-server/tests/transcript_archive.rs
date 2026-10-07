@@ -253,6 +253,7 @@ fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         vad.end_silence_ms = 32;
     }
     let mut config = AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             public_ws_url: Url::parse("ws://127.0.0.1:0/voice/v1/").unwrap(),

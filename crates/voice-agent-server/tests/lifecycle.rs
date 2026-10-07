@@ -51,6 +51,7 @@ fn database_url() -> String {
 fn config(url: String) -> AppConfig {
     let address: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
     AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),

@@ -193,6 +193,7 @@ async fn start_pilot(outcome: AsrOutcome, pilot: bool) -> (String, JoinHandle<()
     vad.min_speech_ms = 32;
     vad.end_silence_ms = 32;
     let config = AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),
@@ -251,6 +252,7 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
     vad.min_speech_ms = 32;
     vad.end_silence_ms = 32;
     let config = AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),

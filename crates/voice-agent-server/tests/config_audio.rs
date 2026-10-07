@@ -38,6 +38,7 @@ impl TtsProvider for FakeTts {
 
 fn valid_config() -> AppConfig {
     AppConfig {
+        speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:8000".parse::<SocketAddr>().unwrap(),
             public_ws_url: Url::parse("ws://127.0.0.1:8000/voice/v1/").unwrap(),

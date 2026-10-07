@@ -43,9 +43,9 @@ const TEMPLATE: DeleteSpec = DeleteSpec {
 const PROVIDER: DeleteSpec = DeleteSpec {
     resource: "provider",
     select_sql: "SELECT id,revision FROM providers WHERE key=?",
-    dependency_sql: "SELECT EXISTS(SELECT 1 FROM template_provider_bindings WHERE provider_id=?)",
-    dependency_binds: 1,
-    delete_sql: "DELETE FROM providers WHERE id=? AND revision=? AND NOT EXISTS(SELECT 1 FROM template_provider_bindings WHERE provider_id=?)",
+    dependency_sql: "SELECT EXISTS(SELECT 1 FROM template_provider_bindings WHERE provider_id=? UNION ALL SELECT 1 FROM speaker_voiceprints WHERE provider_id=? UNION ALL SELECT 1 FROM speaker_enrollment_drafts WHERE provider_id=? AND status='collecting')",
+    dependency_binds: 3,
+    delete_sql: "DELETE FROM providers WHERE id=? AND revision=? AND NOT EXISTS(SELECT 1 FROM template_provider_bindings WHERE provider_id=?) AND NOT EXISTS(SELECT 1 FROM speaker_voiceprints WHERE provider_id=?) AND NOT EXISTS(SELECT 1 FROM speaker_enrollment_drafts WHERE provider_id=? AND status='collecting')",
     in_use_code: "provider_in_use",
 };
 

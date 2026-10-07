@@ -46,6 +46,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub database: DatabaseConfig,
     #[serde(default)]
+    pub speaker_recognition: SpeakerRecognitionConfig,
+    #[serde(default)]
     pub api: AdminApiConfig,
     #[serde(default)]
     pub shutdown: ShutdownConfig,
@@ -114,6 +116,71 @@ pub struct EffectiveProviderBindings {
     /// Optional Template Speaker slot. There is no deployment default: `None` means the Voice
     /// Session runs without speaker recognition, never an implicit fallback provider.
     pub speaker: Option<String>,
+}
+
+/// Bounded deployment limits for Speaker profiles and web enrollment drafts.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeakerRecognitionConfig {
+    #[serde(default = "default_speaker_max_speakers")]
+    pub max_speakers: usize,
+    #[serde(default = "default_speaker_max_candidates_per_agent")]
+    pub max_candidates_per_agent: usize,
+    #[serde(default = "default_speaker_max_voiceprint_spaces")]
+    pub max_voiceprint_spaces_per_speaker: usize,
+    #[serde(default)]
+    pub enrollment: SpeakerEnrollmentConfig,
+}
+
+impl Default for SpeakerRecognitionConfig {
+    fn default() -> Self {
+        Self {
+            max_speakers: default_speaker_max_speakers(),
+            max_candidates_per_agent: default_speaker_max_candidates_per_agent(),
+            max_voiceprint_spaces_per_speaker: default_speaker_max_voiceprint_spaces(),
+            enrollment: SpeakerEnrollmentConfig::default(),
+        }
+    }
+}
+
+/// Enrollment draft window, quota and clip bounds.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeakerEnrollmentConfig {
+    #[serde(default = "default_speaker_min_samples")]
+    pub min_samples: usize,
+    #[serde(default = "default_speaker_max_samples")]
+    pub max_samples: usize,
+    #[serde(default = "default_speaker_min_clip_ms")]
+    pub min_clip_ms: u64,
+    #[serde(default = "default_speaker_max_clip_ms")]
+    pub max_clip_ms: u64,
+    #[serde(default = "default_speaker_min_speech_ms")]
+    pub min_speech_ms: u64,
+    /// Draft lifetime. Expired drafts are swept at startup and every five minutes.
+    #[serde(default = "default_speaker_enrollment_ttl_ms")]
+    pub ttl_ms: u64,
+    /// Process-wide cap on open (collecting) drafts.
+    #[serde(default = "default_speaker_max_open_enrollments")]
+    pub max_open_enrollments: usize,
+    /// Per-sample WAV body cap for the enrollment routes.
+    #[serde(default = "default_speaker_max_audio_body_bytes")]
+    pub max_audio_body_bytes: usize,
+}
+
+impl Default for SpeakerEnrollmentConfig {
+    fn default() -> Self {
+        Self {
+            min_samples: default_speaker_min_samples(),
+            max_samples: default_speaker_max_samples(),
+            min_clip_ms: default_speaker_min_clip_ms(),
+            max_clip_ms: default_speaker_max_clip_ms(),
+            min_speech_ms: default_speaker_min_speech_ms(),
+            ttl_ms: default_speaker_enrollment_ttl_ms(),
+            max_open_enrollments: default_speaker_max_open_enrollments(),
+            max_audio_body_bytes: default_speaker_max_audio_body_bytes(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
