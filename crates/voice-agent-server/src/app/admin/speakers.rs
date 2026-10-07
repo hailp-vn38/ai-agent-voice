@@ -674,6 +674,15 @@ pub(super) async fn patch(
         .await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
+    // Disabling a speaker revokes its authority: publish the security invalidation.
+    if enabled == 0 && old.enabled != 0 && publish_catalog_revision(&mut tx).await.is_err() {
+        let _ = tx.rollback().await;
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
     if audit(
         &mut *tx,
         id(&request),
@@ -754,7 +763,7 @@ pub(super) async fn delete(
         Err(error_value) => return sql_error(&request, &error_value),
     };
     if in_use > 0 {
-        return error(&request, StatusCode::CONFLICT, "resource_in_use");
+        return error(&request, StatusCode::CONFLICT, "speaker_in_use");
     }
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
@@ -798,6 +807,130 @@ pub(super) async fn delete(
         );
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// The only confirmation value that permits an all-space voiceprint purge. Naming the action
+/// without confirming it is a rejected request, never a second way to ask for it.
+const PURGE_SPEAKER_VOICEPRINT: &str = "PURGE_SPEAKER_VOICEPRINT";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PurgeSpeakerVoiceprint {
+    #[serde(default)]
+    confirm: Option<String>,
+}
+
+/// `POST /speakers/{key}/voiceprint/purge` — explicit, confirmed removal of every voiceprint space,
+/// captured sample and enrollment draft for one speaker. The profile, its grants and its audit
+/// trail survive; so does the transcript history, which is never touched by a biometric purge.
+pub(super) async fn purge(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let (request, body): (_, PurgeSpeakerVoiceprint) = match json(request).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if body.confirm.as_deref() != Some(PURGE_SPEAKER_VOICEPRINT) {
+        return error(&request, StatusCode::BAD_REQUEST, "confirmation_required");
+    }
+    let expected = match expected(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    let pool = match db(&state) {
+        Ok(pool) => pool,
+        Err(response) => return response,
+    };
+    let old = match get_speaker_by(pool, &key).await {
+        Ok(speaker) => speaker,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "speaker_not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if old.revision != expected {
+        audit_conflict_action(
+            pool,
+            id(&request).to_owned(),
+            "speaker",
+            old.id,
+            expected,
+            "purge_voiceprint",
+        )
+        .await;
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let result = async {
+        sqlx::query(
+            "DELETE FROM speaker_enrollment_samples WHERE draft_id IN (SELECT id FROM speaker_enrollment_drafts WHERE speaker_id=?)",
+        )
+        .bind(old.id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM speaker_enrollment_drafts WHERE speaker_id=?")
+            .bind(old.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM speaker_voiceprints WHERE speaker_id=?")
+            .bind(old.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE speakers SET revision=revision+1 WHERE id=?")
+            .bind(old.id)
+            .execute(&mut *tx)
+            .await?;
+        publish_catalog_revision(&mut tx).await?;
+        Ok::<(), sqlx::Error>(())
+    }
+    .await;
+    if let Err(error_value) = result {
+        let _ = tx.rollback().await;
+        return sql_error(&request, &error_value);
+    }
+    if audit(
+        &mut *tx,
+        id(&request),
+        "speaker",
+        Some(old.id),
+        "purge_voiceprint",
+        Some(expected),
+        Some(expected + 1),
+        AuditOutcome::Success,
+        1,
+    )
+    .await
+    .is_err()
+        || tx.commit().await.is_err()
+    {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
+    match get_speaker_by(pool, &key).await {
+        Ok(speaker) => with_etag(
+            Json(speaker_resource(&speaker, Vec::new(), Vec::new())).into_response(),
+            speaker.revision,
+        ),
+        Err(_) => error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        ),
+    }
 }
 
 /// `POST /speakers/{key}/enrollments` — open a draft pinned to an exact provider revision.
@@ -1782,11 +1915,7 @@ pub(super) async fn finalize(
             );
         }
     };
-    let catalog = sqlx::query_scalar::<_, i64>(
-        "UPDATE speaker_catalog SET revision=revision+1 WHERE id=1 RETURNING revision",
-    )
-    .fetch_one(&mut *tx)
-    .await;
+    let catalog = publish_catalog_revision(&mut tx).await;
     let upsert = sqlx::query(
         "INSERT INTO speaker_voiceprints (speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) \
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) \
@@ -1916,6 +2045,19 @@ async fn current_voiceprint_revision(
     .bind(speaker_id)
     .bind(embedding_space)
     .fetch_optional(pool)
+    .await
+}
+
+/// Advances the published speaker catalog revision, which is the security-invalidation signal
+/// subscribers watch. Replace, disable and purge all route through here; the epoch/WS propagation
+/// lands in ticket 16, so ticket 08 only has to move the revision.
+async fn publish_catalog_revision(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        "UPDATE speaker_catalog SET revision=revision+1 WHERE id=1 RETURNING revision",
+    )
+    .fetch_one(&mut **tx)
     .await
 }
 
@@ -2273,19 +2415,19 @@ async fn expire_draft(pool: &SqlitePool, id: &str) {
 pub(crate) async fn cleanup_expired_drafts(pool: &SqlitePool) {
     let cutoff = now();
     let _ = sqlx::query(
-        "UPDATE speaker_enrollment_drafts SET status='expired',terminal_at=? WHERE status='collecting' AND expires_at<=?",
+        "UPDATE speaker_enrollment_drafts SET status='expired',terminal_at=? WHERE terminal_at IS NULL AND expires_at<=?",
     )
     .bind(cutoff)
     .bind(cutoff)
     .execute(pool)
     .await;
     let _ = sqlx::query(
-        "DELETE FROM speaker_enrollment_samples WHERE draft_id IN (SELECT id FROM speaker_enrollment_drafts WHERE status IN ('expired','committed'))",
+        "DELETE FROM speaker_enrollment_samples WHERE draft_id IN (SELECT id FROM speaker_enrollment_drafts WHERE terminal_at IS NOT NULL)",
     )
     .execute(pool)
     .await;
     let _ = sqlx::query(
-        "DELETE FROM speaker_enrollment_drafts WHERE status IN ('expired','committed') AND terminal_at IS NOT NULL AND terminal_at<=?",
+        "DELETE FROM speaker_enrollment_drafts WHERE terminal_at IS NOT NULL AND terminal_at<=?",
     )
     .bind(cutoff - TOMBSTONE_SECONDS)
     .execute(pool)
@@ -2348,5 +2490,51 @@ mod tests {
         assert!(wav_content_type(&headers));
         headers.insert(header::CONTENT_TYPE, "audio/webm".parse().unwrap());
         assert!(!wav_content_type(&headers));
+    }
+
+    /// The startup sweep must tombstone a draft past its TTL *and* drop its captured audio. A CHECK
+    /// constraint that rejected the 'expired' status used to make this silently fail, leaving the
+    /// samples on disk forever.
+    #[tokio::test]
+    async fn expired_drafts_are_tombstoned_and_their_audio_purged() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        // Foreign keys are off so the fixture needs no provider/speaker rows.
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO speaker_enrollment_drafts (id, speaker_id, embedding_space, provider_id, provider_key, provider_revision, runtime_id, sample_rate, status, base_speaker_revision, revision, created_at, expires_at) \
+             VALUES ('d1', 1, 'space', NULL, 'p', 1, 'r', 16000, 'collecting', 1, 1, 1, 2)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO speaker_enrollment_samples (draft_id, seq, duration_ms, speech_ms, vector, created_at) \
+             VALUES ('d1', 1, 100, 100, x'00', 1)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        drop(conn);
+
+        cleanup_expired_drafts(&pool).await;
+
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM speaker_enrollment_drafts WHERE id='d1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "expired");
+        let samples: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM speaker_enrollment_samples WHERE draft_id='d1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(samples, 0);
     }
 }

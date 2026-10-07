@@ -150,6 +150,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             axum::routing::post(speakers::create_draft),
         )
         .route(
+            "/speakers/{key}/voiceprint/purge",
+            axum::routing::post(speakers::purge),
+        )
+        .route(
             "/speakers/{key}/enrollments/{id}",
             get(speakers::get_draft).delete(speakers::cancel_draft),
         )

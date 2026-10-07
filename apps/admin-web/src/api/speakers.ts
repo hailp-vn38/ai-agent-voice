@@ -65,6 +65,17 @@ export const speakersApi = {
   async remove(key: string, revision: number) {
     await request(speakerPath(key), { method: 'DELETE' }, { revision })
   },
+  purgeVoiceprint(key: string, revision: number) {
+    return requestJson<Speaker>(
+      `${speakerPath(key)}/voiceprint/purge`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'PURGE_SPEAKER_VOICEPRINT' }),
+      },
+      { revision },
+    )
+  },
   createDraft(speakerKey: string, input: CreateEnrollmentDraftInput, revision: number) {
     return requestJson<EnrollmentDraft>(`${speakerPath(speakerKey)}/enrollments`, {
       method: 'POST',

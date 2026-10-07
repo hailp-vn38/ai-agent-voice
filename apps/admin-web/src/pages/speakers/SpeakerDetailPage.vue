@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Mic, Play, RefreshCw, Square, Trash2, X } from '@lucide/vue'
+import { ArrowLeft, Eraser, Mic, Play, RefreshCw, Square, Trash2, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -28,6 +28,7 @@ const error = ref('')
 const editOpen = ref(false)
 const editForm = ref({ name: '', description: '', enabled: true })
 const deleteOpen = ref(false)
+const purgeOpen = ref(false)
 
 const providers = ref<AdminProvider[]>([])
 const enrollOpen = ref(false)
@@ -137,6 +138,24 @@ async function confirmDelete() {
   } catch (cause) {
     error.value = formatApiError(cause)
     deleteOpen.value = false
+  } finally {
+    saving.value = false
+  }
+}
+
+async function confirmPurge() {
+  if (!speaker.value) return
+  saving.value = true
+  error.value = ''
+  try {
+    speaker.value = await speakersApi.purgeVoiceprint(
+      speaker.value.key,
+      speaker.value.revision,
+    )
+    purgeOpen.value = false
+  } catch (cause) {
+    error.value = formatApiError(cause)
+    purgeOpen.value = false
   } finally {
     saving.value = false
   }
@@ -380,6 +399,13 @@ onMounted(load)
       <template #actions>
         <Button variant="outline" @click="load"><RefreshCw class="size-4" />{{ t('common.refresh') }}</Button>
         <Button variant="outline" @click="openEdit">{{ t('common.edit') }}</Button>
+        <Button
+          v-if="speaker.voiceprints.length > 0"
+          variant="outline"
+          @click="purgeOpen = true"
+        >
+          <Eraser class="size-4" />{{ t('speakers.purge') }}
+        </Button>
         <Button variant="outline" @click="deleteOpen = true"><Trash2 class="size-4" />{{ t('common.delete') }}</Button>
         <Button @click="openEnroll"><Play class="size-4" />{{ t('speakers.enroll') }}</Button>
       </template>
@@ -566,6 +592,15 @@ onMounted(load)
       :confirm-label="t('speakers.deleteSubmit')"
       tone="danger"
       @confirm="confirmDelete"
+    />
+
+    <ConfirmDialog
+      v-model="purgeOpen"
+      :title="t('speakers.purgeTitle', { name: speaker?.name ?? '' })"
+      :description="t('speakers.purgeDescription')"
+      :confirm-label="t('speakers.purgeSubmit')"
+      tone="danger"
+      @confirm="confirmPurge"
     />
   </section>
 </template>

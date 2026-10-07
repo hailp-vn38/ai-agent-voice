@@ -77,8 +77,18 @@ describe('speakersApi', () => {
     expect((cancelInit.headers as Headers).get('If-Match')).toBe('"6"')
   })
 
-  it('lists the agents/templates granting a speaker with bounded paging', async () => {
+  it('purges every voiceprint with an explicit confirmation under revision control', async () => {
     const fetch = installFetch()
+    await speakersApi.purgeVoiceprint('a/b', 9)
+
+    const [url, init] = call(fetch, 0)
+    expect(url).toBe('/api/admin/speakers/a%2Fb/voiceprint/purge')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Headers).get('If-Match')).toBe('"9"')
+    expect(init.body).toBe(JSON.stringify({ confirm: 'PURGE_SPEAKER_VOICEPRINT' }))
+  })
+
+  it('lists the agents/templates granting a speaker with bounded paging', async () => {    const fetch = installFetch()
     await speakersApi.bindings('a/b')
 
     expect(call(fetch, 0)[0]).toBe('/api/admin/speakers/a%2Fb/bindings?page=1&page_size=50')

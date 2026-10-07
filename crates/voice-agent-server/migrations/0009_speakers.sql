@@ -36,8 +36,9 @@ CREATE TABLE agent_speaker_candidates (
     UNIQUE(agent_id, speaker_id)
 );
 
--- Ephemeral web enrollment drafts. `status` is 'collecting' until commit; committed rows are
--- retained briefly (audit trail) then swept past `terminal_at`.
+-- Ephemeral web enrollment drafts. `status` stays 'collecting' until commit; committed rows are
+-- retained briefly (audit trail) then swept past `terminal_at`. The startup sweep also tombstones
+-- drafts whose `expires_at` has passed.
 CREATE TABLE speaker_enrollment_drafts (
     id TEXT PRIMARY KEY,
     speaker_id INTEGER NOT NULL REFERENCES speakers(id) ON DELETE CASCADE,
@@ -49,7 +50,7 @@ CREATE TABLE speaker_enrollment_drafts (
     runtime_id TEXT NOT NULL,
     sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
     dims INTEGER CHECK (dims IS NULL OR dims > 0),
-    status TEXT NOT NULL DEFAULT 'collecting' CHECK (status IN ('collecting', 'committed')),
+    status TEXT NOT NULL DEFAULT 'collecting' CHECK (status IN ('collecting', 'committed', 'expired')),
     committed_speaker_id INTEGER REFERENCES speakers(id) ON DELETE SET NULL,
     base_speaker_revision INTEGER NOT NULL CHECK (base_speaker_revision > 0),
     base_voiceprint_revision INTEGER CHECK (base_voiceprint_revision IS NULL OR base_voiceprint_revision > 0),
@@ -57,7 +58,7 @@ CREATE TABLE speaker_enrollment_drafts (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL CHECK (expires_at > created_at),
     terminal_at INTEGER,
-    CHECK ((status = 'collecting' AND terminal_at IS NULL) OR (status = 'committed' AND terminal_at IS NOT NULL))
+    CHECK ((status = 'collecting' AND terminal_at IS NULL) OR (status IN ('committed', 'expired') AND terminal_at IS NOT NULL))
 );
 
 CREATE TABLE speaker_enrollment_samples (
@@ -74,5 +75,5 @@ CREATE TABLE speaker_enrollment_samples (
 CREATE INDEX speaker_voiceprints_space ON speaker_voiceprints(embedding_space, speaker_id);
 CREATE INDEX agent_speaker_candidates_agent ON agent_speaker_candidates(agent_id, speaker_id);
 CREATE INDEX speaker_enrollment_drafts_speaker ON speaker_enrollment_drafts(speaker_id, status);
-CREATE INDEX speaker_enrollment_drafts_expiry ON speaker_enrollment_drafts(expires_at, id) WHERE status = 'collecting';
+CREATE INDEX speaker_enrollment_drafts_expiry ON speaker_enrollment_drafts(expires_at, id) WHERE terminal_at IS NULL;
 CREATE INDEX speaker_enrollment_drafts_terminal ON speaker_enrollment_drafts(terminal_at, id) WHERE status = 'committed';

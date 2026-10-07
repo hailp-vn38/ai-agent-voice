@@ -754,9 +754,18 @@ async fn sample_upload_accepts_a_full_length_clip_over_the_json_body_cap() {
     let draft_id = open_owner_draft(&client, &base).await;
 
     let wav = enrollment_wav(9_000, 8_000);
-    assert!(wav.len() > 256 * 1024 && wav.len() < 512 * 1024, "fixture size {}", wav.len());
+    assert!(
+        wav.len() > 256 * 1024 && wav.len() < 512 * 1024,
+        "fixture size {}",
+        wav.len()
+    );
     let response = put_sample(&client, &base, &draft_id, 1, "1", "audio/wav", wav).await;
-    assert_eq!(response.status(), StatusCode::OK, "{}", response.text().await.unwrap());
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{}",
+        response.text().await.unwrap()
+    );
 
     task.abort();
 }
@@ -1379,5 +1388,340 @@ async fn finalized_voiceprint_survives_restart_and_catalog_is_monotonic() {
     let voiceprints = speaker["voiceprints"].as_array().unwrap();
     assert_eq!(voiceprints.len(), 1);
     assert_eq!(voiceprints[0]["browser_validation_status"], "passed");
+    task.abort();
+}
+
+/// Opens a fresh collecting draft for the existing `owner` speaker and registers the three
+/// identical-loudness samples needed to validate and publish a voiceprint. Returns the draft id and
+/// its current revision. Assumes `owner` already exists at revision 1.
+async fn fresh_collecting_draft(client: &Client, base: &str, provider_key: &str) -> (String, u64) {
+    let draft: Value = client
+        .post(format!("{base}/api/admin/speakers/owner/enrollments"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({
+            "provider_key": provider_key,
+            "expected_provider_revision": 1
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let draft_id = draft["id"].as_str().unwrap().to_owned();
+    let mut revision = "1".to_owned();
+    for slot in 1..=3u32 {
+        let response = put_sample(
+            client,
+            base,
+            &draft_id,
+            slot,
+            &revision,
+            "audio/wav",
+            enrollment_wav(8_000, 8_000),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        revision = response.headers()["etag"]
+            .to_str()
+            .unwrap()
+            .trim_matches('"')
+            .to_owned();
+    }
+    (draft_id, revision.parse().unwrap())
+}
+
+/// Validates a same-speaker holdout, then finalizes, publishing exactly one voiceprint.
+/// Returns the finalize response body.
+async fn publish_owner_draft(
+    client: &Client,
+    base: &str,
+    draft_id: &str,
+    revision: u64,
+    expected_speaker_revision: i64,
+) -> Value {
+    let validated = validate_holdout(
+        client,
+        base,
+        draft_id,
+        revision,
+        same_speaker_holdout(8_000),
+    )
+    .await;
+    assert_eq!(validated.status(), StatusCode::OK);
+    let validated: Value = validated.json().await.unwrap();
+    let revision = validated["revision"].as_u64().unwrap();
+    let published =
+        finalize_draft(client, base, draft_id, revision, expected_speaker_revision).await;
+    assert_eq!(published.status(), StatusCode::OK);
+    published.json().await.unwrap()
+}
+
+async fn catalog_revision(database: &str) -> i64 {
+    sqlx::query_scalar("SELECT revision FROM speaker_catalog WHERE id = 1")
+        .fetch_one(&sqlx::SqlitePool::connect(database).await.unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn re_enrolling_replaces_the_voiceprint_for_a_space() {
+    let database = database_url();
+    let (base, task) = server_with_runtime(&database, true, 2).await;
+    let client = Client::new();
+    let provider_key = create_speaker_provider(&client, &base).await;
+    create_speaker(&client, &base, "owner", "Chủ sở hữu").await;
+
+    // First enrollment publishes a voiceprint for the configured space.
+    let (draft_id, revision) = fresh_collecting_draft(&client, &base, &provider_key).await;
+    let published = publish_owner_draft(&client, &base, &draft_id, revision, 1).await;
+    let space = published["speaker"]["voiceprints"][0]["embedding_space_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(published["activation"]["catalog_revision"], 1);
+
+    // Re-enrolling the same space through a fresh draft replaces, not appends. Publishing a
+    // voiceprint does not itself bump the speaker revision, so the draft still pins revision 1.
+    let (second_draft, second_revision) =
+        fresh_collecting_draft(&client, &base, &provider_key).await;
+    let replaced = publish_owner_draft(&client, &base, &second_draft, second_revision, 1).await;
+    // A full replacement re-publishes the catalog revision even for an existing space.
+    assert_eq!(replaced["activation"]["catalog_revision"], 2);
+    let voiceprints = replaced["speaker"]["voiceprints"].as_array().unwrap();
+    assert_eq!(voiceprints.len(), 1);
+    assert_eq!(voiceprints[0]["embedding_space_id"], space);
+
+    // The replacement is durable across a restart.
+    task.abort();
+    let (restarted, task) = server_with_runtime(&database, true, 2).await;
+    let speaker: Value = client
+        .get(format!("{restarted}/api/admin/speakers/owner"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(speaker["voiceprints"].as_array().unwrap().len(), 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn purge_removes_every_space_sample_and_draft_but_keeps_profile_and_audit() {
+    let database = database_url();
+    let (base, task) = server_with_runtime(&database, true, 2).await;
+    let client = Client::new();
+    let provider_key = create_speaker_provider(&client, &base).await;
+    create_speaker(&client, &base, "owner", "Chủ sở hữu").await;
+
+    // One published space plus a second, unfinished draft with captured samples.
+    let (draft_id, revision) = fresh_collecting_draft(&client, &base, &provider_key).await;
+    let published = publish_owner_draft(&client, &base, &draft_id, revision, 1).await;
+    assert_eq!(published["activation"]["catalog_revision"], 1);
+    let (open_draft, _) = fresh_collecting_draft(&client, &base, &provider_key).await;
+
+    let purged = client
+        .post(format!("{base}/api/admin/speakers/owner/voiceprint/purge"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({ "confirm": "PURGE_SPEAKER_VOICEPRINT" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(purged.status(), StatusCode::OK);
+    assert_eq!(purged.headers()["etag"].to_str().unwrap(), "\"2\"");
+    let body: Value = purged.json().await.unwrap();
+    assert_eq!(body["key"], "owner");
+    assert!(body["voiceprints"].as_array().unwrap().is_empty());
+    assert!(body["enrollment_drafts"].as_array().unwrap().is_empty());
+
+    // The purge publishes a security invalidation to the catalog.
+    assert_eq!(catalog_revision(&database).await, 2);
+
+    // Every captured sample and both drafts are gone; the profile and its audit trail survive.
+    let pool = sqlx::SqlitePool::connect(&database).await.unwrap();
+    let samples: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM speaker_enrollment_samples WHERE draft_id = ?")
+            .bind(&open_draft)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(samples, 0);
+    let drafts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM speaker_enrollment_drafts WHERE speaker_id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(drafts, 0);
+    let speakers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM speakers WHERE id = 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(speakers, 1);
+    let purges: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_audit_events WHERE resource_type = 'speaker' AND action = 'purge_voiceprint'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(purges, 1);
+
+    // The speaker is still readable and now has no blocking voiceprint, so it can be hard-deleted.
+    let speaker: Value = client
+        .get(format!("{base}/api/admin/speakers/owner"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(speaker["voiceprints"].as_array().unwrap().is_empty());
+
+    let deleted = client
+        .delete(format!("{base}/api/admin/speakers/owner"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"2\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn purge_requires_confirmation_and_is_revision_guarded() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let provider_key = create_speaker_provider(&client, &base).await;
+    create_speaker(&client, &base, "owner", "Chủ sở hữu").await;
+    let (draft_id, revision) = fresh_collecting_draft(&client, &base, &provider_key).await;
+    publish_owner_draft(&client, &base, &draft_id, revision, 1).await;
+
+    // A missing or wrong confirmation never deletes voice data.
+    for body in [
+        serde_json::json!({}),
+        serde_json::json!({ "confirm": "PURGE" }),
+    ] {
+        let refused = client
+            .post(format!("{base}/api/admin/speakers/owner/voiceprint/purge"))
+            .bearer_auth(TOKEN)
+            .header("if-match", "\"1\"")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            refused.json::<Value>().await.unwrap()["error"]["code"],
+            "confirmation_required"
+        );
+    }
+
+    // A stale revision is refused before anything is written.
+    let stale = client
+        .post(format!("{base}/api/admin/speakers/owner/voiceprint/purge"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"2\"")
+        .json(&serde_json::json!({ "confirm": "PURGE_SPEAKER_VOICEPRINT" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+
+    // An unknown speaker is a 404.
+    let missing = client
+        .post(format!("{base}/api/admin/speakers/nobody/voiceprint/purge"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({ "confirm": "PURGE_SPEAKER_VOICEPRINT" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        missing.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_not_found"
+    );
+
+    // The voiceprint survived all of the refused requests.
+    let speaker: Value = client
+        .get(format!("{base}/api/admin/speakers/owner"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(speaker["voiceprints"].as_array().unwrap().len(), 1);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn disabling_a_speaker_publishes_a_catalog_invalidation() {
+    let database = database_url();
+    let (base, task) = server_with_runtime(&database, true, 2).await;
+    let client = Client::new();
+    let provider_key = create_speaker_provider(&client, &base).await;
+    create_speaker(&client, &base, "owner", "Chủ sở hữu").await;
+    let (draft_id, revision) = fresh_collecting_draft(&client, &base, &provider_key).await;
+    publish_owner_draft(&client, &base, &draft_id, revision, 1).await;
+    assert_eq!(catalog_revision(&database).await, 1);
+
+    let disabled = client
+        .patch(format!("{base}/api/admin/speakers/owner"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({ "enabled": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), StatusCode::OK);
+    assert_eq!(catalog_revision(&database).await, 2);
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn disabling_the_enrollment_provider_keeps_the_published_voiceprint() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let provider_key = create_speaker_provider(&client, &base).await;
+    create_speaker(&client, &base, "owner", "Chủ sở hữu").await;
+    let (draft_id, revision) = fresh_collecting_draft(&client, &base, &provider_key).await;
+    publish_owner_draft(&client, &base, &draft_id, revision, 1).await;
+
+    let disabled = client
+        .patch(format!("{base}/api/admin/providers/{provider_key}"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({ "enabled": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), StatusCode::OK);
+
+    // Disabling the source provider must not erase the biometric vector.
+    let speaker: Value = client
+        .get(format!("{base}/api/admin/speakers/owner"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(speaker["voiceprints"].as_array().unwrap().len(), 1);
+
     task.abort();
 }

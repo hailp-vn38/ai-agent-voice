@@ -441,6 +441,11 @@ export const en = {
   'speakers.deleteTitle': 'Delete "{name}"?',
   'speakers.deleteDescription': 'This action cannot be undone.',
   'speakers.deleteSubmit': 'Delete speaker',
+  'speakers.purge': 'Purge voice',
+  'speakers.purgeTitle': 'Purge every voiceprint of "{name}"?',
+  'speakers.purgeDescription':
+    'Deletes all captured recordings, voiceprints and unfinished enrollments for this speaker. The profile and its transcripts are kept. This cannot be undone.',
+  'speakers.purgeSubmit': 'Purge voiceprints',
   'speakers.inUse': 'This speaker is still referenced by a voiceprint, an agent candidate or an open draft.',
   'speakers.voiceprints': 'Voiceprints',
   'speakers.noVoiceprints': 'No voiceprint yet. This speaker is not a usable candidate.',
@@ -957,6 +962,11 @@ export const vi: Record<MessageKey, MessageValue> = {
   'speakers.deleteTitle': 'Xóa "{name}"?',
   'speakers.deleteDescription': 'Thao tác này không thể hoàn tác.',
   'speakers.deleteSubmit': 'Xóa người nói',
+  'speakers.purge': 'Xóa dữ liệu giọng',
+  'speakers.purgeTitle': 'Xóa toàn bộ giọng nói của "{name}"?',
+  'speakers.purgeDescription':
+    'Xóa mọi bản ghi âm, voiceprint và bản nháp đăng ký chưa hoàn tất của người nói này. Hồ sơ và lịch sử hội thoại được giữ lại. Thao tác này không thể hoàn tác.',
+  'speakers.purgeSubmit': 'Xóa voiceprint',
   'speakers.inUse': 'Người nói này vẫn đang được voiceprint, ứng viên agent hoặc bản nháp đang mở tham chiếu.',
   'speakers.voiceprints': 'Voiceprint',
   'speakers.noVoiceprints': 'Chưa có voiceprint. Người nói này chưa dùng được làm ứng viên.',
