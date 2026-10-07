@@ -2807,6 +2807,55 @@ async fn first_assignment_with_a_partial_core_and_speaker_slot_becomes_the_defau
         partial["is_default"], true,
         "a partial core plus a Speaker slot must still become the default: {assignments}"
     );
+
+    // Unlinking the Speaker slot is a CAS on the Template revision, and once unbound the provider
+    // can be conditionally deleted.
+    let before_unlink = client
+        .get(format!("{templates}/partial/providers"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        before_unlink["bindings"]["speaker"]["provider_key"],
+        speaker
+    );
+    let revision = before_unlink["revision"].as_i64().unwrap();
+    assert_eq!(
+        client
+            .delete(format!("{templates}/partial/providers/speaker"))
+            .bearer_auth(auth)
+            .header("if-match", format!("\"{revision}\""))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let after_unlink = client
+        .get(format!("{templates}/partial/providers"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert!(after_unlink["bindings"]["speaker"].is_null());
+    assert_eq!(
+        client
+            .delete(format!("{providers}/{speaker}"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
     task.abort();
 }
 
