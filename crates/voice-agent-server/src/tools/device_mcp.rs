@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct McpRequestId(pub u64);
@@ -150,13 +151,57 @@ pub fn visible_tools(
     discovered: Vec<DiscoveredTool>,
     allowed: &HashSet<String>,
 ) -> Vec<LlmVisibleTool> {
-    let mut candidate: Vec<_> = discovered
+    let candidate: Vec<_> = discovered
         .into_iter()
         .filter(|tool| {
             (allowed.is_empty() || allowed.contains(&tool.original_name))
                 && !is_dangerous_tool(&tool.original_name)
         })
         .collect();
+    to_visible(candidate)
+}
+
+/// Fingerprint of the parts that define a Device tool contract, so a description or schema change
+/// makes a saved approval stale instead of silently widening it.
+pub fn contract_fingerprint(tool: &DiscoveredTool) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(tool.original_name.as_bytes());
+    hasher.update([0]);
+    hasher.update(tool.description.as_bytes());
+    hasher.update([0]);
+    hasher.update(tool.input_schema.to_string().as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Review-filtered Device tools: only a discovered tool whose `original_name` was approved at this
+/// exact fingerprint becomes visible, so an unreviewed tool is denied by default and an approved
+/// name that now advertises a different contract is drift rather than a new right.
+pub fn reviewed_tools(
+    discovered: Vec<DiscoveredTool>,
+    contracts: &HashMap<String, String>,
+) -> (Vec<LlmVisibleTool>, bool) {
+    let mut drift = false;
+    let mut candidate = Vec::new();
+    for tool in discovered {
+        match contracts.get(&tool.original_name) {
+            Some(fingerprint)
+                if fingerprint == &contract_fingerprint(&tool)
+                    && !is_dangerous_tool(&tool.original_name) =>
+            {
+                candidate.push(tool)
+            }
+            Some(_) => drift = true,
+            None => {}
+        }
+    }
+    (to_visible(candidate), drift)
+}
+
+fn to_visible(candidate: Vec<DiscoveredTool>) -> Vec<LlmVisibleTool> {
     let mut names = HashMap::<String, usize>::new();
     for tool in &candidate {
         *names
@@ -164,7 +209,7 @@ pub fn visible_tools(
             .or_default() += 1;
     }
     candidate
-        .drain(..)
+        .into_iter()
         .filter_map(|tool| {
             let llm_name = sanitize_tool_name(&tool.original_name);
             (names[&llm_name] == 1).then_some(LlmVisibleTool {

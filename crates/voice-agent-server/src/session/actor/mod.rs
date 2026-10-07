@@ -1,6 +1,6 @@
 use crate::session::{
-    ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ProfileSource, SessionPhase,
-    TemplateSwitchCatalog, TurnId,
+    ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ProfileSource, SessionDeviceTools,
+    SessionPhase, TemplateSwitchCatalog, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -55,6 +55,7 @@ const LLM_EVENT_CAPACITY: usize = 64;
 /// never queues.  The bound is two only so a completion that arrives between the executor applying
 /// it and starting the next call still has somewhere to land.
 const EXTERNAL_CALL_CAPACITY: usize = 2;
+const DEVICE_TOOLS_CAPACITY: usize = 2;
 
 /// The only mutable owner of an accepted Voice Session's phase.
 pub struct SessionActor {
@@ -138,6 +139,9 @@ pub struct SessionActor {
     /// Where an External Tool Call this session started reports back.
     external_calls_tx: mpsc::Sender<ExternalCallCompletion>,
     external_calls: mpsc::Receiver<ExternalCallCompletion>,
+    /// Device discovery completes out of band so its observation write cannot block the actor.
+    device_tools_tx: mpsc::Sender<DeviceToolsCompletion>,
+    device_tools_rx: mpsc::Receiver<DeviceToolsCompletion>,
     max_tool_result_chars: usize,
     /// The one configuration snapshot this session runs with.  Admission installs it; a successful
     /// switch replaces it whole at a turn boundary.
@@ -151,6 +155,10 @@ pub struct SessionActor {
     /// and no hot path can re-resolve anything.  Admitting, calling and advertising these tools
     /// belongs to the shared Tool-round Executor, which this snapshot exists to feed.
     external_mcp: SessionExternalMcp,
+    /// The Device tool review this Voice Session was admitted under, if any.  A session admitted
+    /// without one keeps the legacy Device allowlist behavior; one admitted with a participating
+    /// Agent only calls what that Agent approved for this Device incarnation.
+    device_tools: SessionDeviceTools,
     /// Delivery settings are retained so a switch can rebuild SpeechOutput on the candidate's
     /// already-loaded TTS runtime without re-deriving pacing behavior.
     speech_output_config: crate::config::SpeechOutputConfig,
@@ -397,6 +405,14 @@ struct ExternalCallCompletion {
     /// Bounded to `[a-z0-9_]` at admission, which is what makes it a safe metric label.
     server_key: String,
     outcome: Result<ExternalToolOutcome, ExternalMcpError>,
+}
+
+/// One completed Device `tools/list` walk, handed back with the admitted snapshot it was recorded
+/// under so the actor can derive the visible catalog without touching the database again.
+struct DeviceToolsCompletion {
+    discovered: Vec<DiscoveredTool>,
+    contracts: std::collections::HashMap<String, String>,
+    participating: bool,
 }
 
 #[derive(Default)]

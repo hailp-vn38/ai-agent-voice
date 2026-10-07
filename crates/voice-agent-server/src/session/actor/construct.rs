@@ -167,6 +167,7 @@ impl SessionActor {
             .llm
             .register_session(&session_id, LLM_EVENT_CAPACITY);
         let (external_calls_tx, external_calls) = mpsc::channel(EXTERNAL_CALL_CAPACITY);
+        let (device_tools_tx, device_tools_rx) = mpsc::channel(DEVICE_TOOLS_CAPACITY);
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
@@ -237,6 +238,8 @@ impl SessionActor {
             tool_rounds: ToolRoundState::new(ToolRoundLimits::default()),
             external_calls_tx,
             external_calls,
+            device_tools_tx,
+            device_tools_rx,
             max_tool_result_chars: 4_096,
             template_prepare: None,
             managed_switch_boundary: None,
@@ -249,6 +252,8 @@ impl SessionActor {
             switch_catalog: TemplateSwitchCatalog::default(),
             // Likewise no External MCP tools: a session only ever calls what admission resolved.
             external_mcp: SessionExternalMcp::default(),
+            // Likewise no Device tool review: a session admitted without one keeps legacy behavior.
+            device_tools: SessionDeviceTools::default(),
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             // Capture is opt-in, so an actor that is never bound archives nothing.
             transcript: None,
@@ -379,6 +384,17 @@ impl SessionActor {
     /// is no mutator, so nothing a `tools/call` does can change what this session may call.
     pub fn session_external_mcp(&self) -> &SessionExternalMcp {
         &self.external_mcp
+    }
+
+    /// Attaches the Device tool review admission resolved.  Like the External snapshot it is
+    /// installed once and never mutated, so a Template switch cannot widen it either.
+    pub fn with_device_tools(mut self, device_tools: SessionDeviceTools) -> Self {
+        self.device_tools = device_tools;
+        self
+    }
+
+    pub fn session_device_tools(&self) -> &SessionDeviceTools {
+        &self.device_tools
     }
 
     pub fn start_mcp_discovery(&mut self) {

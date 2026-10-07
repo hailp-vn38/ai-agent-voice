@@ -114,6 +114,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/agents/{key}/tool-allowlist",
             get(tool_allowlist::list).put(tool_allowlist::review),
         )
+        .route(
+            "/agents/{key}/device-tool-allowlist",
+            get(device_tools::list).put(device_tools::review),
+        )
         .route("/devices", get(list_devices).post(create_device))
         .route(
             "/device-enrollments/claim",
@@ -136,6 +140,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
 
 mod agents;
 mod deletion;
+mod device_tools;
 mod devices;
 mod enrollments;
 mod history;

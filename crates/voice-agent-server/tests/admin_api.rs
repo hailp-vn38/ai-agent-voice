@@ -3238,3 +3238,119 @@ async fn external_tool_reviews_are_admin_authenticated_and_default_empty() {
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn device_tool_reviews_are_admin_authenticated_and_guarded_by_revision() {
+    use voice_agent_server::{
+        config::DatabaseConfig, database::device_tool_allowlist, tools::device_mcp::DiscoveredTool,
+    };
+    let database_uri = database_url();
+    let config = DatabaseConfig {
+        url: database_uri.clone(),
+        max_connections: 2,
+        busy_timeout_ms: 5_000,
+        migrate_on_start: true,
+        devices: Default::default(),
+        history: Default::default(),
+    };
+    let database = Database::connect(&config).await.unwrap();
+    sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) VALUES ('review_agent','Review Agent',1,1,1)")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    let device = sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('review-device',1,1,1,1)")
+        .execute(database.pool())
+        .await
+        .unwrap()
+        .last_insert_rowid();
+    sqlx::query("INSERT INTO agent_speaker_policies (agent_id,mode) VALUES (1,'observe')")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    device_tool_allowlist::observe(
+        &database,
+        device,
+        &[DiscoveredTool {
+            original_name: "SetBrightness".into(),
+            description: "set brightness".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        }],
+    )
+    .await
+    .unwrap();
+    drop(database);
+
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let client = Client::new();
+    let url = format!("{base}/api/admin/agents/review_agent/device-tool-allowlist");
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let listed = client
+        .get(&url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = listed.json::<serde_json::Value>().await.unwrap();
+    let item = &listed["items"][0];
+    assert_eq!(item["device_id"], serde_json::json!("review-device"));
+    assert_eq!(item["original_name"], serde_json::json!("SetBrightness"));
+    assert_eq!(item["presence"], serde_json::json!("observed_only"));
+    assert_eq!(item["allowed"], serde_json::json!(false));
+
+    let fingerprint = item["fingerprint"].as_str().unwrap().to_owned();
+    let observed_revision = item["observed_revision"].as_i64().unwrap();
+    // Approving with a stale revision conflicts.
+    let stale = client
+        .put(&url)
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"7\"")
+        .json(&serde_json::json!({
+            "device_id": "review-device",
+            "original_name": "SetBrightness",
+            "observed_revision": observed_revision,
+            "fingerprint": fingerprint,
+            "allowed": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+
+    let approved = client
+        .put(&url)
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({
+            "device_id": "review-device",
+            "original_name": "SetBrightness",
+            "observed_revision": observed_revision,
+            "fingerprint": fingerprint,
+            "allowed": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), StatusCode::OK);
+
+    // A changed contract no longer matches the observation the review was based on.
+    let drifted = client
+        .put(&url)
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"2\"")
+        .json(&serde_json::json!({
+            "device_id": "review-device",
+            "original_name": "SetBrightness",
+            "observed_revision": observed_revision,
+            "fingerprint": "0".repeat(64),
+            "allowed": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(drifted.status(), StatusCode::CONFLICT);
+    task.abort();
+}
