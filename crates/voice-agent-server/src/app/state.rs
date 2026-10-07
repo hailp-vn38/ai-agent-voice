@@ -499,6 +499,14 @@ impl AppState {
             .resolve_snapshot(&servers, self.secret_resolver.as_ref())
             .await;
         for excluded in exclusions {
+            if !matches!(
+                excluded.reason,
+                crate::tools::external_mcp::ExternalMcpExclusionReason::CatalogRejected
+                    | crate::tools::external_mcp::ExternalMcpExclusionReason::ToolNameCollision
+                    | crate::tools::external_mcp::ExternalMcpExclusionReason::ToolsListInvalid
+            ) {
+                continue;
+            }
             if let Some(source) = servers
                 .iter()
                 .find(|source| source.key == excluded.server_key)
