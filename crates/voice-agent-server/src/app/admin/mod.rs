@@ -154,6 +154,14 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             put(speakers::put_sample).delete(speakers::delete_sample),
         )
         .route(
+            "/speakers/{key}/enrollments/{id}/validate",
+            axum::routing::post(speakers::validate_holdout),
+        )
+        .route(
+            "/speakers/{key}/enrollments/{id}/finalize",
+            axum::routing::post(speakers::finalize),
+        )
+        .route(
             "/agents/{key}/speaker-policy",
             get(speaker_policy::get_policy).put(speaker_policy::put_policy),
         )

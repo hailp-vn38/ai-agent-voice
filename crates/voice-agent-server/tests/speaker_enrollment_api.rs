@@ -78,9 +78,17 @@ impl voice_agent_server::providers::speaker::SpeakerProvider for TestSpeaker {
     }
     fn extract(
         &mut self,
-        _: &PcmF32Mono,
+        pcm: &PcmF32Mono,
     ) -> Result<Vec<f32>, voice_agent_server::providers::speaker::SpeakerError> {
-        Ok(vec![1.0, 2.0, 3.0])
+        // Map clip loudness to an angle so that identical recordings collapse to one point on the
+        // unit circle and a deliberately different speaker lands far away. Lets the holdout and
+        // consistency paths be exercised without a real embedding model.
+        let samples = pcm.samples();
+        let rms = (samples.iter().map(|sample| sample * sample).sum::<f32>()
+            / samples.len().max(1) as f32)
+            .sqrt();
+        let angle = (rms * std::f32::consts::PI * 4.0).rem_euclid(std::f32::consts::TAU);
+        Ok(vec![angle.cos(), angle.sin(), 0.0])
     }
 }
 
@@ -617,6 +625,31 @@ fn enrollment_wav(ms: u64, amplitude: i16) -> Vec<u8> {
     buffer.into_inner()
 }
 
+/// A WAV differing from [`enrollment_wav`] only by amplitude, i.e. a different speaker for the
+/// test provider's loudness-mapped embedding.
+fn other_speaker_wav(ms: u64) -> Vec<u8> {
+    enrollment_wav(ms, 1_000)
+}
+
+/// Same loudness (so the same embedding) as [`enrollment_wav`] but a different exact PCM, i.e. a
+/// distinct recording of the same speaker.
+fn same_speaker_holdout(ms: u64) -> Vec<u8> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    let mut writer = hound::WavWriter::new(&mut buffer, spec).unwrap();
+    for index in 0..ms * 16 {
+        let sample = if index % 4 < 2 { 8_000 } else { -8_000 };
+        writer.write_sample(sample).unwrap();
+    }
+    writer.finalize().unwrap();
+    buffer.into_inner()
+}
+
 async fn open_owner_draft(client: &Client, base: &str) -> String {
     let provider_key = create_speaker_provider(client, base).await;
     create_speaker(client, base, "owner", "Chủ sở hữu").await;
@@ -1011,5 +1044,324 @@ async fn sample_upload_needs_a_collecting_draft() {
         "enrollment_not_found"
     );
 
+    task.abort();
+}
+
+async fn get_draft(client: &Client, base: &str, draft_id: &str) -> Value {
+    client
+        .get(format!(
+            "{base}/api/admin/speakers/owner/enrollments/{draft_id}"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+/// Registers three identical-loudness samples and returns the draft id and its revision.
+async fn collecting_draft_with_samples(client: &Client, base: &str) -> (String, u64) {
+    let draft_id = open_owner_draft(client, base).await;
+    let mut revision = "1".to_owned();
+    for slot in 1..=3u32 {
+        let response = put_sample(
+            client,
+            base,
+            &draft_id,
+            slot,
+            &revision,
+            "audio/wav",
+            enrollment_wav(8_000, 8_000),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        revision = response.headers()["etag"]
+            .to_str()
+            .unwrap()
+            .trim_matches('"')
+            .to_owned();
+    }
+    (draft_id, revision.parse().unwrap())
+}
+
+async fn validate_holdout(
+    client: &Client,
+    base: &str,
+    draft_id: &str,
+    revision: u64,
+    body: Vec<u8>,
+) -> reqwest::Response {
+    client
+        .post(format!(
+            "{base}/api/admin/speakers/owner/enrollments/{draft_id}/validate"
+        ))
+        .bearer_auth(TOKEN)
+        .header("if-match", format!("\"{revision}\""))
+        .header("content-type", "audio/wav")
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn finalize_draft(
+    client: &Client,
+    base: &str,
+    draft_id: &str,
+    revision: u64,
+    expected_speaker_revision: i64,
+) -> reqwest::Response {
+    client
+        .post(format!(
+            "{base}/api/admin/speakers/owner/enrollments/{draft_id}/finalize"
+        ))
+        .bearer_auth(TOKEN)
+        .header("if-match", format!("\"{revision}\""))
+        .json(&serde_json::json!({"expected_speaker_revision": expected_speaker_revision}))
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn holdout_validation_gates_finalize_and_publishes_the_space() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let (draft_id, revision) = collecting_draft_with_samples(&client, &base).await;
+
+    // Finalize before any validation is refused.
+    let unvalidated = finalize_draft(&client, &base, &draft_id, revision, 1).await;
+    assert_eq!(unvalidated.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        unvalidated.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_validation_required"
+    );
+
+    // A holdout from a different speaker fails and stays HTTP 200 with a decision.
+    let failed = validate_holdout(
+        &client,
+        &base,
+        &draft_id,
+        revision,
+        other_speaker_wav(8_000),
+    )
+    .await;
+    assert_eq!(failed.status(), StatusCode::OK);
+    let failed: Value = failed.json().await.unwrap();
+    assert_eq!(failed["validation"]["status"], "failed");
+    assert_eq!(failed["validation"]["valid_for_current_revision"], false);
+    assert_eq!(failed["revision"], revision + 1);
+
+    // A same-speaker holdout that is byte-identical to a registered sample is rejected.
+    let duplicate = validate_holdout(
+        &client,
+        &base,
+        &draft_id,
+        revision + 1,
+        enrollment_wav(8_000, 8_000),
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        duplicate.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_holdout_duplicate"
+    );
+
+    // A distinct same-speaker recording passes.
+    let passed = validate_holdout(
+        &client,
+        &base,
+        &draft_id,
+        revision + 1,
+        same_speaker_holdout(8_000),
+    )
+    .await;
+    assert_eq!(passed.status(), StatusCode::OK);
+    let passed: Value = passed.json().await.unwrap();
+    assert_eq!(passed["validation"]["status"], "passed");
+    assert_eq!(passed["validation"]["valid_for_current_revision"], true);
+    let validated_revision = passed["revision"].as_u64().unwrap();
+
+    // Any sample mutation invalidates the stored decision.
+    let replaced = put_sample(
+        &client,
+        &base,
+        &draft_id,
+        1,
+        &validated_revision.to_string(),
+        "audio/wav",
+        enrollment_wav(7_000, 8_000),
+    )
+    .await;
+    let replaced_status = replaced.status();
+    let replaced_etag = replaced
+        .headers()
+        .get("etag")
+        .map(|v| v.to_str().unwrap().to_owned());
+    let replaced_body = replaced.text().await.unwrap();
+    assert_eq!(replaced_status, StatusCode::OK, "{replaced_body}");
+    let bumped = replaced_etag
+        .unwrap()
+        .trim_matches('"')
+        .parse::<u64>()
+        .unwrap();
+    let invalidated = get_draft(&client, &base, &draft_id).await;
+    assert_eq!(invalidated["validation"]["status"], "none");
+    assert_eq!(
+        invalidated["validation"]["valid_for_current_revision"],
+        false
+    );
+
+    let blocked = finalize_draft(&client, &base, &draft_id, bumped, 1).await;
+    assert_eq!(blocked.status(), StatusCode::CONFLICT);
+
+    // Re-validate, then finalize bumps the catalog and publishes exactly one space.
+    let revalidated = validate_holdout(
+        &client,
+        &base,
+        &draft_id,
+        bumped,
+        same_speaker_holdout(8_000),
+    )
+    .await;
+    assert_eq!(revalidated.status(), StatusCode::OK);
+    let revalidated: Value = revalidated.json().await.unwrap();
+    let final_revision = revalidated["revision"].as_u64().unwrap();
+
+    let published = finalize_draft(&client, &base, &draft_id, final_revision, 1).await;
+    assert_eq!(published.status(), StatusCode::OK);
+    let published: Value = published.json().await.unwrap();
+    assert_eq!(published["enrollment"]["status"], "committed");
+    assert_eq!(published["activation"]["catalog_revision"], 1);
+    assert_eq!(published["activation"]["new_connections"], "effective");
+    assert_eq!(
+        published["activation"]["existing_connections"],
+        "reconnect_if_affected"
+    );
+    let voiceprints = published["speaker"]["voiceprints"].as_array().unwrap();
+    assert_eq!(voiceprints.len(), 1);
+    assert_eq!(voiceprints[0]["browser_validation_status"], "passed");
+    assert_eq!(voiceprints[0]["calibration_revision"], "vi_esp32_pilot_v1");
+    assert!(voiceprints[0].get("vector").is_none());
+
+    // The draft is terminal: a second finalize conflicts.
+    let again = finalize_draft(&client, &base, &draft_id, final_revision, 2).await;
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+
+    // A stale If-Match is refused before anything is written.
+    let (fresh_draft, fresh_revision) = collecting_draft_with_samples(&client, &base).await;
+    let stale = finalize_draft(&client, &base, &fresh_draft, fresh_revision - 1, 1).await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+
+    // The failed finalize did not advance the published catalog: the next success is revision 2.
+    let fresh_validated = validate_holdout(
+        &client,
+        &base,
+        &fresh_draft,
+        fresh_revision,
+        same_speaker_holdout(8_000),
+    )
+    .await;
+    assert_eq!(fresh_validated.status(), StatusCode::OK);
+    let fresh_validated_revision = fresh_validated.json::<Value>().await.unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let second = finalize_draft(&client, &base, &fresh_draft, fresh_validated_revision, 1).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(
+        second.json::<Value>().await.unwrap()["activation"]["catalog_revision"],
+        2
+    );
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn validate_requires_the_configured_minimum_sample_count() {
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+    let mut revision = "1".to_owned();
+    for slot in 1..=2u32 {
+        let response = put_sample(
+            &client,
+            &base,
+            &draft_id,
+            slot,
+            &revision,
+            "audio/wav",
+            enrollment_wav(8_000, 8_000),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        revision = response.headers()["etag"]
+            .to_str()
+            .unwrap()
+            .trim_matches('"')
+            .to_owned();
+    }
+    let revision = revision.parse().unwrap();
+    let refused = validate_holdout(
+        &client,
+        &base,
+        &draft_id,
+        revision,
+        same_speaker_holdout(8_000),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        refused.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_insufficient_samples"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn finalized_voiceprint_survives_restart_and_catalog_is_monotonic() {
+    let database = database_url();
+    let (base, task) = server_with_runtime(&database, true, 2).await;
+    let client = Client::new();
+    let (draft_id, revision) = collecting_draft_with_samples(&client, &base).await;
+    let passed = validate_holdout(
+        &client,
+        &base,
+        &draft_id,
+        revision,
+        same_speaker_holdout(8_000),
+    )
+    .await;
+    assert_eq!(passed.status(), StatusCode::OK);
+    let validated_revision = passed.json::<Value>().await.unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let published = finalize_draft(&client, &base, &draft_id, validated_revision, 1).await;
+    assert_eq!(published.status(), StatusCode::OK);
+    assert_eq!(
+        published.json::<Value>().await.unwrap()["activation"]["catalog_revision"],
+        1
+    );
+    task.abort();
+
+    // The published voiceprint is durable: a fresh process on the same database sees it.
+    let (restarted, task) = server_with_runtime(&database, true, 2).await;
+    let speaker: Value = client
+        .get(format!("{restarted}/api/admin/speakers/owner"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let voiceprints = speaker["voiceprints"].as_array().unwrap();
+    assert_eq!(voiceprints.len(), 1);
+    assert_eq!(voiceprints[0]["browser_validation_status"], "passed");
     task.abort();
 }

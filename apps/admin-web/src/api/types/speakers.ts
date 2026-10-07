@@ -19,6 +19,7 @@ export interface SpeakerVoiceprint {
   enrolled_with_provider_key: string
   enrolled_with_provider_revision: number
   browser_validation_status: string
+  calibration_revision: string
   enrolled_at: number
 }
 
@@ -81,6 +82,22 @@ export interface EnrollmentSample {
   speech_ms: number
 }
 
+export type EnrollmentValidationStatus =
+  | 'none'
+  | 'passed'
+  | 'failed'
+  | 'inconsistent'
+  | 'ambiguous'
+
+export interface EnrollmentValidation {
+  status: EnrollmentValidationStatus
+  revision: number
+  calibration_revision: string | null
+  runtime_id: string | null
+  provider_revision: number | null
+  valid_for_current_revision: boolean
+}
+
 export interface EnrollmentDraft {
   id: string
   speaker_key: string
@@ -95,7 +112,24 @@ export interface EnrollmentDraft {
   base_speaker_revision: number
   base_voiceprint_revision: number | null
   expires_at: number
+  validation: EnrollmentValidation
   samples: EnrollmentSample[]
+}
+
+export interface EnrollmentValidationResult {
+  validation: EnrollmentValidation
+  enrollment: EnrollmentDraft
+  revision: number
+}
+
+export interface EnrollmentFinalizeResult {
+  enrollment: EnrollmentDraft
+  speaker: Speaker
+  activation: {
+    catalog_revision: number
+    new_connections: string
+    existing_connections: string
+  }
 }
 
 export interface CreateEnrollmentDraftInput {

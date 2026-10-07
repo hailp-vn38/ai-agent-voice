@@ -7,7 +7,7 @@ import { formatApiError } from '@/api/errors'
 import { providersApi } from '@/api/providers'
 import { speakersApi } from '@/api/speakers'
 import type { AdminProvider } from '@/api/types/providers'
-import type { EnrollmentDraft, Speaker } from '@/api/types/speakers'
+import type { EnrollmentDraft, EnrollmentValidationStatus, Speaker } from '@/api/types/speakers'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
@@ -39,7 +39,12 @@ const previewUrl = ref('')
 let uploadAbort: AbortController | undefined
 const enrollmentLimits = ref({ minClipMs: 5_000, maxClipMs: 10_000 })
 const maxSamples = ref(5)
+const minSamples = ref(3)
 const recorder = useMicrophoneRecorder()
+const holdoutRecorder = useMicrophoneRecorder()
+const validating = ref(false)
+const finalizing = ref(false)
+const validationError = ref('')
 
 const nextSlot = computed(() => {
   const used = draft.value?.samples.map((sample) => sample.slot) ?? []
@@ -48,6 +53,31 @@ const nextSlot = computed(() => {
 const canRecord = computed(
   () => Boolean(draft.value) && nextSlot.value <= maxSamples.value && !uploading.value,
 )
+const canValidate = computed(
+  () =>
+    Boolean(draft.value) &&
+    (draft.value?.samples.length ?? 0) >= minSamples.value &&
+    !uploading.value &&
+    !validating.value &&
+    !holdoutRecorder.recording.value,
+)
+const canFinalize = computed(
+  () => Boolean(draft.value?.validation.valid_for_current_revision) && !finalizing.value,
+)
+const validationLabel = computed(() => {
+  switch (draft.value?.validation.status) {
+    case 'passed':
+      return t('speakers.validationPassed')
+    case 'failed':
+      return t('speakers.validationFailed')
+    case 'inconsistent':
+      return t('speakers.validationInconsistent')
+    case 'ambiguous':
+      return t('speakers.validationAmbiguous')
+    default:
+      return t('speakers.validationNone')
+  }
+})
 
 const selectedProvider = computed(() =>
   providers.value.find((provider) => provider.key === selectedProviderKey.value),
@@ -129,6 +159,7 @@ async function openEnroll() {
         minClipMs: enrollment.min_clip_ms,
         maxClipMs: enrollment.max_clip_ms,
       }
+      minSamples.value = enrollment.min_samples
       maxSamples.value = enrollment.max_samples
     }
   } catch (cause) {
@@ -259,10 +290,64 @@ async function removeSample(slot: number) {
   }
 }
 
+async function startHoldout() {
+  if (!canValidate.value) return
+  sampleError.value = ''
+  validationError.value = ''
+  await holdoutRecorder.start(enrollmentLimits.value, () => void stopHoldout())
+  if (holdoutRecorder.error.value) {
+    validationError.value = formatApiError(new Error(holdoutRecorder.error.value))
+  }
+}
+
+async function stopHoldout() {
+  const wav = await holdoutRecorder.stop()
+  if (!wav || !draft.value) return
+  validating.value = true
+  validationError.value = ''
+  try {
+    const result = await speakersApi.validateHoldout(
+      speakerKey.value,
+      draft.value.id,
+      wav,
+      draft.value.revision,
+    )
+    draft.value = result.enrollment
+  } catch (cause) {
+    validationError.value = formatApiError(cause)
+    await refreshDraft()
+  } finally {
+    validating.value = false
+  }
+}
+
+async function finalizeDraft() {
+  if (!draft.value || !speaker.value) return
+  finalizing.value = true
+  validationError.value = ''
+  try {
+    const result = await speakersApi.finalizeDraft(
+      speakerKey.value,
+      draft.value.id,
+      speaker.value.revision,
+      draft.value.revision,
+    )
+    speaker.value = result.speaker
+    draft.value = undefined
+    enrollOpen.value = false
+  } catch (cause) {
+    validationError.value = formatApiError(cause)
+    await refreshDraft()
+  } finally {
+    finalizing.value = false
+  }
+}
+
 function closeEnroll() {
   uploadAbort?.abort()
   uploadAbort = undefined
   recorder.dispose()
+  holdoutRecorder.dispose()
   releasePreview()
   enrollOpen.value = false
   draft.value = undefined
@@ -272,6 +357,7 @@ function closeEnroll() {
 onBeforeUnmount(() => {
   uploadAbort?.abort()
   recorder.dispose()
+  holdoutRecorder.dispose()
   releasePreview()
 })
 
@@ -327,10 +413,13 @@ onMounted(load)
           {{ t('speakers.noVoiceprints') }}
         </p>
         <ul v-else class="divide-y">
-          <li v-for="voiceprint in speaker.voiceprints" :key="voiceprint.embedding_space_id" class="grid gap-2 px-4 py-3 text-sm md:grid-cols-3">
+          <li v-for="voiceprint in speaker.voiceprints" :key="voiceprint.embedding_space_id" class="grid gap-2 px-4 py-3 text-sm md:grid-cols-4">
             <span class="font-mono text-xs">{{ voiceprint.embedding_space_id }}</span>
             <span>{{ t('speakers.provider') }}: {{ voiceprint.enrolled_with_provider_key }}@{{ voiceprint.enrolled_with_provider_revision }}</span>
             <span>{{ t('speakers.sampleCount') }}: {{ voiceprint.sample_count }}</span>
+            <span class="text-muted-foreground">
+              {{ voiceprint.browser_validation_status === 'passed' ? t('speakers.validationPassed') : t('speakers.validation') }}
+            </span>
           </li>
         </ul>
       </div>
@@ -428,6 +517,32 @@ onMounted(load)
               </Button>
               <audio v-if="previewUrl" :src="previewUrl" controls class="h-8" />
             </div>
+          </div>
+
+          <div class="space-y-2 rounded-md border p-3">
+            <p class="font-medium">{{ t('speakers.validation') }}</p>
+            <p class="text-xs" :class="draft.validation.valid_for_current_revision ? 'text-emerald-600' : 'text-muted-foreground'">
+              {{ validationLabel }}
+            </p>
+            <p v-if="draft.samples.length < minSamples" class="text-xs text-muted-foreground">
+              {{ t('speakers.holdoutPrompt') }}
+            </p>
+            <p v-if="holdoutRecorder.recording.value" class="text-xs text-muted-foreground">
+              {{ t('speakers.recordingHint', { seconds: (holdoutRecorder.elapsedMs.value / 1000).toFixed(1) }) }}
+            </p>
+            <p v-if="validationError" class="text-xs text-destructive">{{ validationError }}</p>
+            <div class="flex flex-wrap items-center gap-2">
+              <Button v-if="holdoutRecorder.recording.value" variant="outline" size="sm" @click="stopHoldout">
+                <Square class="size-4" />{{ t('speakers.stopRecording') }}
+              </Button>
+              <Button v-else :disabled="!canValidate" size="sm" @click="startHoldout">
+                <Mic class="size-4" />{{ validating ? t('speakers.uploading') : t('speakers.validateHoldout') }}
+              </Button>
+              <Button :disabled="!canFinalize" size="sm" @click="finalizeDraft">
+                {{ finalizing ? t('speakers.uploading') : t('speakers.finalize') }}
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground">{{ t('speakers.finalizeHint') }}</p>
           </div>
         </div>
       </div>

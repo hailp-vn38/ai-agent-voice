@@ -3,6 +3,8 @@ import type {
   CreateEnrollmentDraftInput,
   CreateSpeakerInput,
   EnrollmentDraft,
+  EnrollmentFinalizeResult,
+  EnrollmentValidationResult,
   Speaker,
   SpeakerBindingPage,
   SpeakerListQuery,
@@ -98,6 +100,32 @@ export const speakersApi = {
     return requestJson<EnrollmentDraft>(samplePath(speakerKey, draftId, slot), {
       method: 'DELETE',
       signal,
+    }, { revision })
+  },
+  validateHoldout(
+    speakerKey: string,
+    draftId: string,
+    wav: Blob,
+    revision: number,
+    signal?: AbortSignal,
+  ) {
+    return requestJson<EnrollmentValidationResult>(`${draftPath(speakerKey, draftId)}/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/wav' },
+      body: wav,
+      signal,
+    }, { revision })
+  },
+  finalizeDraft(
+    speakerKey: string,
+    draftId: string,
+    expectedSpeakerRevision: number,
+    revision: number,
+  ) {
+    return requestJson<EnrollmentFinalizeResult>(`${draftPath(speakerKey, draftId)}/finalize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_speaker_revision: expectedSpeakerRevision }),
     }, { revision })
   },
 }

@@ -56,6 +56,7 @@ struct VoiceprintRow {
     provider_revision: i64,
     browser_validation_status: String,
     enrolled_at: i64,
+    calibration_revision: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -73,6 +74,11 @@ struct DraftRow {
     base_voiceprint_revision: Option<i64>,
     revision: i64,
     expires_at: i64,
+    validation_status: String,
+    validation_revision: i64,
+    validation_calibration_revision: Option<String>,
+    validation_runtime_id: Option<String>,
+    validation_provider_revision: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -84,7 +90,13 @@ struct SampleRow {
 
 const SAMPLE_COLUMNS: &str = "seq,duration_ms,speech_ms";
 
-const DRAFT_COLUMNS: &str = "id,speaker_id,embedding_space,provider_id,provider_key,provider_revision,loaded_provider_revision,runtime_id,sample_rate,dims,status,committed_speaker_id,base_speaker_revision,base_voiceprint_revision,revision,created_at,expires_at,terminal_at";
+const DRAFT_COLUMNS: &str = "id,speaker_id,embedding_space,provider_id,provider_key,provider_revision,loaded_provider_revision,runtime_id,sample_rate,dims,status,committed_speaker_id,base_speaker_revision,base_voiceprint_revision,revision,created_at,expires_at,terminal_at,validation_status,validation_revision,validation_calibration_revision,validation_runtime_id,validation_provider_revision";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FinalizeBody {
+    expected_speaker_revision: i64,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -150,6 +162,10 @@ fn speaker_resource(row: &SpeakerRow, voiceprints: Vec<Value>, drafts: Vec<Value
 }
 
 fn draft_resource(draft: &DraftRow, speaker_key: &str, samples: &[SampleRow]) -> Value {
+    // A pass is only valid while the draft revision it was computed for is unchanged. Any sample
+    // mutation bumps the revision and silently expires the decision.
+    let valid_for_current_revision =
+        draft.validation_status == "passed" && draft.validation_revision == draft.revision;
     json!({
         "id": draft.id,
         "speaker_key": speaker_key,
@@ -165,6 +181,14 @@ fn draft_resource(draft: &DraftRow, speaker_key: &str, samples: &[SampleRow]) ->
         "base_speaker_revision": draft.base_speaker_revision,
         "base_voiceprint_revision": draft.base_voiceprint_revision,
         "expires_at": draft.expires_at,
+        "validation": {
+            "status": draft.validation_status,
+            "revision": draft.validation_revision,
+            "calibration_revision": draft.validation_calibration_revision,
+            "runtime_id": draft.validation_runtime_id,
+            "provider_revision": draft.validation_provider_revision,
+            "valid_for_current_revision": valid_for_current_revision,
+        },
         "samples": samples.iter().map(sample_resource).collect::<Vec<_>>(),
     })
 }
@@ -524,6 +548,7 @@ pub(super) async fn get(
                 "enrolled_with_provider_key": voiceprint.provider_key,
                 "enrolled_with_provider_revision": voiceprint.provider_revision,
                 "browser_validation_status": voiceprint.browser_validation_status,
+                "calibration_revision": voiceprint.calibration_revision,
                 "enrolled_at": voiceprint.enrolled_at,
             })
         })
@@ -867,8 +892,13 @@ pub(super) async fn create_draft(
             );
         }
     };
+    let base_voiceprint_revision =
+        match current_voiceprint_revision(pool, speaker.id, &embedding_space).await {
+            Ok(revision) => revision,
+            Err(error_value) => return sql_error(&request, &error_value),
+        };
     let insert = sqlx::query(
-        "INSERT INTO speaker_enrollment_drafts (id,speaker_id,embedding_space,provider_id,provider_key,provider_revision,loaded_provider_revision,runtime_id,sample_rate,dims,status,base_speaker_revision,revision,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,16000,?,'collecting',?,1,?,?)",
+        "INSERT INTO speaker_enrollment_drafts (id,speaker_id,embedding_space,provider_id,provider_key,provider_revision,loaded_provider_revision,runtime_id,sample_rate,dims,status,base_speaker_revision,base_voiceprint_revision,revision,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,16000,?,'collecting',?,?,1,?,?)",
     )
     .bind(&draft_id)
     .bind(speaker.id)
@@ -880,6 +910,7 @@ pub(super) async fn create_draft(
     .bind(&state.runtime_id)
     .bind(dims)
     .bind(speaker.revision)
+    .bind(base_voiceprint_revision)
     .bind(time)
     .bind(time + ttl_seconds)
     .execute(&mut *tx)
@@ -1233,6 +1264,7 @@ pub(super) async fn put_sample(
         }
     };
 
+    let digest = pcm_digest(analyzed.window.samples());
     let extracted = match state
         .provider_diagnostics
         .extract_speaker_embedding(&draft.provider_key, provider_revision, analyzed.window)
@@ -1276,19 +1308,21 @@ pub(super) async fn put_sample(
         }
     };
     let inserted = sqlx::query(
-        "INSERT INTO speaker_enrollment_samples (draft_id,seq,duration_ms,speech_ms,vector,created_at) VALUES (?,?,?,?,?,?) \
-         ON CONFLICT(draft_id,seq) DO UPDATE SET duration_ms=excluded.duration_ms,speech_ms=excluded.speech_ms,vector=excluded.vector",
+        "INSERT INTO speaker_enrollment_samples (draft_id,seq,duration_ms,speech_ms,vector,pcm_digest,created_at) VALUES (?,?,?,?,?,?,?) \
+         ON CONFLICT(draft_id,seq) DO UPDATE SET duration_ms=excluded.duration_ms,speech_ms=excluded.speech_ms,vector=excluded.vector,pcm_digest=excluded.pcm_digest",
     )
     .bind(&draft.id)
     .bind(i64::from(slot))
     .bind(analyzed.quality.duration_ms as i64)
     .bind(analyzed.quality.speech_ms as i64)
     .bind(&vector)
+    .bind(&digest)
     .bind(now())
     .execute(&mut *tx)
     .await;
+    // Mutating a sample invalidates any prior holdout decision for the new revision.
     let bumped = sqlx::query(
-        "UPDATE speaker_enrollment_drafts SET revision=revision+1 WHERE id=? AND status='collecting' AND revision=?",
+        "UPDATE speaker_enrollment_drafts SET revision=revision+1, validation_status='none', validation_revision=0, holdout_digest=NULL WHERE id=? AND status='collecting' AND revision=?",
     )
     .bind(&draft.id)
     .bind(expected)
@@ -1354,6 +1388,546 @@ pub(super) async fn put_sample(
     }
 }
 
+/// `POST /speakers/{key}/enrollments/{id}/validate` — score a fresh holdout against the centroid.
+///
+/// A non-passing score is still HTTP 200 with a decision (`failed` / `inconsistent` / `ambiguous`):
+/// the wizard needs to show why without treating it as a transport failure. Only a passing score
+/// against the current revision lets a later finalize commit.
+pub(super) async fn validate_holdout(
+    State(state): State<AppState>,
+    Path((key, draft_id)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let expected = match expected(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    if request
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .is_some_and(|value| value != "identity")
+    {
+        return error(
+            &request,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_content_encoding",
+        );
+    }
+    if draft_id.len() > MAX_DRAFT_ID {
+        return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found");
+    }
+    let pool = match db(&state) {
+        Ok(pool) => pool,
+        Err(response) => return response,
+    };
+    let speaker = match get_speaker_by(pool, &key).await {
+        Ok(speaker) => speaker,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "speaker_not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let draft = match load_draft(pool, &draft_id).await {
+        Ok(Some(draft)) if draft.status == "expired" => {
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) if draft.status != "collecting" => {
+            return error(&request, StatusCode::CONFLICT, "enrollment_committed");
+        }
+        Ok(Some(draft)) if draft.expires_at <= now() => {
+            expire_draft(pool, &draft.id).await;
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) => draft,
+        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found"),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if draft.runtime_id != state.runtime_id {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "enrollment_runtime_incompatible",
+        );
+    }
+    if draft.revision != expected {
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    let provider_revision = match draft.loaded_provider_revision {
+        Some(revision) => revision,
+        None => {
+            return error(
+                &request,
+                StatusCode::CONFLICT,
+                "enrollment_runtime_incompatible",
+            );
+        }
+    };
+    let dims = draft.dims.unwrap_or_default() as usize;
+    let sample_vectors = match load_sample_vectors(pool, &draft.id).await {
+        Ok(vectors) => vectors,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if sample_vectors.len() < state.config.speaker_recognition.enrollment.min_samples {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "speaker_insufficient_samples",
+        );
+    }
+
+    // Split the body off but keep a Request for error responses and tracing.
+    let (parts, body) = request.into_parts();
+    let request = Request::from_parts(parts, Body::empty());
+    let limit = state
+        .config
+        .speaker_recognition
+        .enrollment
+        .max_audio_body_bytes;
+    let body = match to_bytes(body, limit).await {
+        Ok(body) => body,
+        Err(_) => {
+            return error(&request, StatusCode::PAYLOAD_TOO_LARGE, "request_too_large");
+        }
+    };
+    let (clip, duration_ms) = match enrollment::parse_wav(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_audio_format",
+            );
+        }
+    };
+    let config = &state.config.speaker_recognition.enrollment;
+    let profile = QualityProfile {
+        min_clip_ms: config.min_clip_ms,
+        max_clip_ms: config.max_clip_ms,
+        min_speech_ms: config.min_speech_ms,
+        max_window_ms: config.max_window_ms,
+    };
+    let analyzed = match enrollment::analyze(&clip, duration_ms, &profile) {
+        Ok(analyzed) => analyzed,
+        Err(SampleReject::Clipped) => {
+            return error(
+                &request,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "speaker_audio_clipped",
+            );
+        }
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "speaker_insufficient_audio",
+            );
+        }
+    };
+    let holdout_digest = pcm_digest(analyzed.window.samples());
+    let stored_digests = match load_sample_digests(pool, &draft.id).await {
+        Ok(digests) => digests,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if stored_digests
+        .iter()
+        .any(|digest| digest == &holdout_digest)
+    {
+        return error(&request, StatusCode::CONFLICT, "speaker_holdout_duplicate");
+    }
+    let extracted = match state
+        .provider_diagnostics
+        .extract_speaker_embedding(&draft.provider_key, provider_revision, analyzed.window)
+        .await
+    {
+        Ok(extracted) => extracted,
+        Err(error_value) => return enrollment_error_response(&request, error_value),
+    };
+    if extracted.embedding_space_id != draft.embedding_space || extracted.dimension != dims {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "enrollment_runtime_incompatible",
+        );
+    }
+    if enrollment::validate_embedding(&extracted.embedding, dims).is_err() {
+        return error(
+            &request,
+            StatusCode::BAD_GATEWAY,
+            "speaker_inference_failed",
+        );
+    }
+    let mut holdout_embedding = extracted.embedding;
+    if !enrollment::normalize(&mut holdout_embedding) {
+        return error(
+            &request,
+            StatusCode::BAD_GATEWAY,
+            "speaker_inference_failed",
+        );
+    }
+    let calibration = enrollment::PRELIMINARY_CALIBRATION;
+    let consistency = enrollment::pairwise_min_cosine(&sample_vectors);
+    let accept_score = enrollment::centroid(&sample_vectors)
+        .as_deref()
+        .and_then(|centroid| enrollment::cosine(&holdout_embedding, centroid));
+    let status = match (consistency, accept_score) {
+        (Some(consistency), _) if consistency < calibration.consistency_threshold => "inconsistent",
+        (_, Some(score)) if score >= calibration.accept_threshold => "passed",
+        (_, Some(_)) => "failed",
+        _ => "ambiguous",
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let updated = sqlx::query(
+        "UPDATE speaker_enrollment_drafts SET revision=revision+1, validation_revision=revision+1, validation_status=?, validation_calibration_revision=?, validation_runtime_id=?, validation_provider_revision=?, holdout_digest=? WHERE id=? AND status='collecting' AND revision=?",
+    )
+    .bind(status)
+    .bind(calibration.revision)
+    .bind(&state.runtime_id)
+    .bind(provider_revision)
+    .bind(&holdout_digest)
+    .bind(&draft.id)
+    .bind(expected)
+    .execute(&mut *tx)
+    .await;
+    let committed = match updated {
+        Ok(updated) if updated.rows_affected() == 1 => {
+            audit(
+                &mut *tx,
+                id(&request),
+                "speaker_enrollment",
+                Some(speaker.id),
+                "validate_holdout",
+                Some(expected),
+                Some(expected + 1),
+                AuditOutcome::Success,
+                1,
+            )
+            .await
+            .is_ok()
+                && tx.commit().await.is_ok()
+        }
+        _ => {
+            let _ = tx.rollback().await;
+            false
+        }
+    };
+    if !committed {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
+    let revision = expected + 1;
+    let samples = match load_samples(pool, &draft.id).await {
+        Ok(samples) => samples,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let refreshed = match load_draft(pool, &draft.id).await {
+        Ok(Some(draft)) => draft,
+        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found"),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let response = Json(json!({
+        "validation": {
+            "status": status,
+            "calibration_revision": calibration.revision,
+            "consistency": consistency,
+            "accept_score": accept_score,
+            "valid_for_current_revision": status == "passed",
+        },
+        "enrollment": draft_resource(&refreshed, &speaker.key, &samples),
+        "revision": revision,
+    }))
+    .into_response();
+    with_etag(response, revision)
+}
+
+/// `POST /speakers/{key}/enrollments/{id}/finalize` — atomically publish exactly one space.
+///
+/// CAS-checks the draft, Speaker and selected-space Voiceprint revisions, recomputes the centroid,
+/// then in one transaction bumps the published catalog, upserts only this embedding space, and
+/// terminalizes the draft. Other spaces, Agent grants and policy are left untouched.
+pub(super) async fn finalize(
+    State(state): State<AppState>,
+    Path((key, draft_id)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let (request, body): (_, FinalizeBody) = match json(request).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let expected = match expected(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    if draft_id.len() > MAX_DRAFT_ID || body.expected_speaker_revision <= 0 {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    let pool = match db(&state) {
+        Ok(pool) => pool,
+        Err(response) => return response,
+    };
+    let speaker = match get_speaker_by(pool, &key).await {
+        Ok(speaker) => speaker,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "speaker_not_found");
+        }
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let draft = match load_draft(pool, &draft_id).await {
+        Ok(Some(draft)) if draft.status == "expired" => {
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) if draft.status != "collecting" => {
+            return error(&request, StatusCode::CONFLICT, "enrollment_committed");
+        }
+        Ok(Some(draft)) if draft.expires_at <= now() => {
+            expire_draft(pool, &draft.id).await;
+            return error(&request, StatusCode::GONE, "enrollment_expired");
+        }
+        Ok(Some(draft)) => draft,
+        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found"),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if draft.revision != expected {
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    if speaker.revision != body.expected_speaker_revision {
+        return error(&request, StatusCode::CONFLICT, "speaker_revision_conflict");
+    }
+    if draft.validation_status != "passed" || draft.validation_revision != draft.revision {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "speaker_validation_required",
+        );
+    }
+    let calibration = enrollment::PRELIMINARY_CALIBRATION;
+    if draft.validation_calibration_revision.as_deref() != Some(calibration.revision) {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "speaker_calibration_required",
+        );
+    }
+    let current_voiceprint =
+        match current_voiceprint_revision(pool, speaker.id, &draft.embedding_space).await {
+            Ok(revision) => revision,
+            Err(error_value) => return sql_error(&request, &error_value),
+        };
+    if current_voiceprint != draft.base_voiceprint_revision {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "voiceprint_revision_conflict",
+        );
+    }
+    let dims = draft.dims.unwrap_or_default() as usize;
+    let sample_vectors = match load_sample_vectors(pool, &draft.id).await {
+        Ok(vectors) => vectors,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if sample_vectors.len() < state.config.speaker_recognition.enrollment.min_samples
+        || sample_vectors.len() > state.config.speaker_recognition.enrollment.max_samples
+    {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "speaker_insufficient_samples",
+        );
+    }
+    if enrollment::pairwise_min_cosine(&sample_vectors)
+        .is_none_or(|floor| floor < calibration.consistency_threshold)
+    {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "speaker_validation_required",
+        );
+    }
+    let centroid = match enrollment::centroid(&sample_vectors) {
+        Some(centroid) if centroid.len() == dims => centroid,
+        _ => {
+            return error(
+                &request,
+                StatusCode::CONFLICT,
+                "speaker_validation_required",
+            );
+        }
+    };
+    let vector = enrollment::encode_embedding(&centroid);
+    let voiceprint_revision = draft.base_voiceprint_revision.unwrap_or(0) + 1;
+    let time = now();
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let catalog = sqlx::query_scalar::<_, i64>(
+        "UPDATE speaker_catalog SET revision=revision+1 WHERE id=1 RETURNING revision",
+    )
+    .fetch_one(&mut *tx)
+    .await;
+    let upsert = sqlx::query(
+        "INSERT INTO speaker_voiceprints (speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) \
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) \
+         ON CONFLICT(speaker_id,embedding_space) DO UPDATE SET revision=excluded.revision,sample_count=excluded.sample_count,browser_validation_status=excluded.browser_validation_status,provider_id=excluded.provider_id,provider_key=excluded.provider_key,provider_revision=excluded.provider_revision,dims=excluded.dims,vector=excluded.vector,calibration_revision=excluded.calibration_revision,updated_at=excluded.updated_at",
+    )
+    .bind(speaker.id)
+    .bind(&draft.embedding_space)
+    .bind(voiceprint_revision)
+    .bind(sample_vectors.len() as i64)
+    .bind("passed")
+    .bind(draft.provider_id)
+    .bind(&draft.provider_key)
+    .bind(draft.provider_revision)
+    .bind(dims as i64)
+    .bind(&vector)
+    .bind(calibration.revision)
+    .bind(time)
+    .bind(time)
+    .execute(&mut *tx)
+    .await;
+    let terminal = sqlx::query(
+        "UPDATE speaker_enrollment_drafts SET status='committed', terminal_at=?, committed_speaker_id=?, revision=revision+1 WHERE id=? AND status='collecting' AND revision=?",
+    )
+    .bind(time)
+    .bind(speaker.id)
+    .bind(&draft.id)
+    .bind(expected)
+    .execute(&mut *tx)
+    .await;
+    let (Ok(catalog), Ok(_upsert), Ok(terminal)) = (catalog, upsert, terminal) else {
+        let _ = tx.rollback().await;
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    };
+    if terminal.rows_affected() != 1
+        || audit(
+            &mut *tx,
+            id(&request),
+            "speaker",
+            Some(speaker.id),
+            "finalize_enrollment",
+            Some(expected),
+            Some(expected + 1),
+            AuditOutcome::Success,
+            1,
+        )
+        .await
+        .is_err()
+        || tx.commit().await.is_err()
+    {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        );
+    }
+    let revision = expected + 1;
+    let refreshed_speaker = match get_speaker_by(pool, &key).await {
+        Ok(speaker) => speaker,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let samples = match load_samples(pool, &draft.id).await {
+        Ok(samples) => samples,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let refreshed_draft = match load_draft(pool, &draft.id).await {
+        Ok(Some(draft)) => draft,
+        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "enrollment_not_found"),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    let speaker_value = speaker_resource_value(pool, &refreshed_speaker).await;
+    let response = Json(json!({
+        "enrollment": draft_resource(&refreshed_draft, &refreshed_speaker.key, &samples),
+        "speaker": speaker_value,
+        "activation": {
+            "catalog_revision": catalog,
+            "new_connections": "effective",
+            "existing_connections": "reconnect_if_affected",
+        },
+    }))
+    .into_response();
+    with_etag(response, revision)
+}
+
+/// Sample vectors (already L2-normalized) in slot order.
+async fn load_sample_vectors(
+    pool: &SqlitePool,
+    draft_id: &str,
+) -> Result<Vec<Vec<f32>>, sqlx::Error> {
+    let rows = sqlx::query_scalar::<_, Vec<u8>>(
+        "SELECT vector FROM speaker_enrollment_samples WHERE draft_id=? ORDER BY seq",
+    )
+    .bind(draft_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|bytes| enrollment::decode_embedding(&bytes))
+        .collect())
+}
+
+/// PCM digests of the stored samples, used only to reject exact-duplicate holdouts.
+async fn load_sample_digests(
+    pool: &SqlitePool,
+    draft_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT pcm_digest FROM speaker_enrollment_samples WHERE draft_id=? ORDER BY seq",
+    )
+    .bind(draft_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Current revision of the selected space's voiceprint, or `None` when the space is unpublished.
+async fn current_voiceprint_revision(
+    pool: &SqlitePool,
+    speaker_id: i64,
+    embedding_space: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT revision FROM speaker_voiceprints WHERE speaker_id=? AND embedding_space=?",
+    )
+    .bind(speaker_id)
+    .bind(embedding_space)
+    .fetch_optional(pool)
+    .await
+}
+
+/// SHA-256 over the decoded f32 window bytes. Exact-duplicate detection only; never served as audio.
+fn pcm_digest(samples: &[f32]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for sample in samples {
+        hasher.update(sample.to_le_bytes());
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// `DELETE /speakers/{key}/enrollments/{id}/samples/{slot}` — remove one stored sample.
 pub(super) async fn delete_sample(
     State(state): State<AppState>,
@@ -1409,7 +1983,7 @@ pub(super) async fn delete_sample(
         .execute(&mut *tx)
         .await;
     let bumped = sqlx::query(
-        "UPDATE speaker_enrollment_drafts SET revision=revision+1 WHERE id=? AND status='collecting' AND revision=?",
+        "UPDATE speaker_enrollment_drafts SET revision=revision+1, validation_status='none', validation_revision=0, holdout_digest=NULL WHERE id=? AND status='collecting' AND revision=?",
     )
     .bind(&draft.id)
     .bind(expected)
@@ -1547,6 +2121,7 @@ async fn speaker_resource_value(pool: &SqlitePool, speaker: &SpeakerRow) -> Valu
                 "enrolled_with_provider_key": voiceprint.provider_key,
                 "enrolled_with_provider_revision": voiceprint.provider_revision,
                 "browser_validation_status": voiceprint.browser_validation_status,
+                "calibration_revision": voiceprint.calibration_revision,
                 "enrolled_at": voiceprint.enrolled_at,
             })
         })
@@ -1571,7 +2146,7 @@ async fn load_voiceprints(
     provider_key: Option<&str>,
 ) -> Result<Vec<VoiceprintRow>, sqlx::Error> {
     sqlx::query_as::<_, VoiceprintRow>(
-        "SELECT revision,sample_count,embedding_space,provider_key,provider_revision,browser_validation_status,enrolled_at FROM speaker_voiceprints WHERE speaker_id=? AND (? IS NULL OR provider_key=?) ORDER BY embedding_space",
+        "SELECT revision,sample_count,embedding_space,provider_key,provider_revision,browser_validation_status,enrolled_at,calibration_revision FROM speaker_voiceprints WHERE speaker_id=? AND (? IS NULL OR provider_key=?) ORDER BY embedding_space",
     )
     .bind(speaker_id)
     .bind(provider_key)

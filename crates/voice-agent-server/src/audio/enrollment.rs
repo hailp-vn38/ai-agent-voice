@@ -239,6 +239,15 @@ pub fn encode_embedding(embedding: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+/// Inverse of [`encode_embedding`]. Trailing bytes that do not complete an `f32` are ignored.
+pub fn decode_embedding(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks(4)
+        .filter(|chunk| chunk.len() == 4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
 /// L2-normalize in place. Returns `false` if the vector has no usable magnitude.
 pub fn normalize(embedding: &mut [f32]) -> bool {
     let norm = embedding
@@ -254,6 +263,87 @@ pub fn normalize(embedding: &mut [f32]) -> bool {
     }
     true
 }
+
+/// Cosine similarity in `[-1, 1]`.
+///
+/// `None` for a length mismatch, an empty vector, a zero vector, or non-finite input.
+pub fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
+    if a.is_empty() || a.len() != b.len() {
+        return None;
+    }
+    let (mut dot, mut norm_a, mut norm_b) = (0.0f32, 0.0f32, 0.0f32);
+    for (x, y) in a.iter().zip(b) {
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if !denom.is_finite() || denom <= f32::EPSILON {
+        return None;
+    }
+    let value = dot / denom;
+    value.is_finite().then(|| value.clamp(-1.0, 1.0))
+}
+
+/// Minimum pairwise cosine across all vectors.
+///
+/// `None` when fewer than two vectors are supplied or any pair is incomputable (dimension
+/// mismatch / degenerate). The floor is the enrollment consistency signal: every recording must
+/// agree with every other one, not merely with the running mean.
+pub fn pairwise_min_cosine(vectors: &[Vec<f32>]) -> Option<f32> {
+    if vectors.len() < 2 {
+        return None;
+    }
+    let mut floor = f32::INFINITY;
+    for (index, left) in vectors.iter().enumerate() {
+        for right in &vectors[index + 1..] {
+            floor = floor.min(cosine(left, right)?);
+        }
+    }
+    floor.is_finite().then_some(floor)
+}
+
+/// Equal-weight centroid of normalized vectors, re-normalized to the unit sphere.
+///
+/// `None` for an empty set, a dimension mismatch, or a degenerate mean (vectors that cancel).
+pub fn centroid(vectors: &[Vec<f32>]) -> Option<Vec<f32>> {
+    let dims = vectors.first()?.len();
+    if dims == 0 {
+        return None;
+    }
+    let mut mean = vec![0.0f32; dims];
+    for vector in vectors {
+        if vector.len() != dims {
+            return None;
+        }
+        for (slot, value) in mean.iter_mut().zip(vector) {
+            *slot += value;
+        }
+    }
+    normalize(&mut mean).then_some(mean)
+}
+
+/// Pinned preliminary calibration used while no deployment catalog is loaded.
+///
+/// Ticket 14 (ADR 0077 / ADR 0079) replaces this with the reloaded deployment catalog; until then
+/// a voiceprint is published with `browser_validation_status = passed`, i.e. "enrolled, not yet
+/// verified on an ESP32".
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Calibration {
+    /// Revision recorded alongside a validated voiceprint.
+    pub revision: &'static str,
+    /// Minimum cosine between the holdout and the sample centroid for a pass.
+    pub accept_threshold: f32,
+    /// Minimum pairwise cosine across registration samples.
+    pub consistency_threshold: f32,
+}
+
+// ponytail: fixed pilot thresholds; ticket 14 swaps in the reloaded deployment catalog.
+pub const PRELIMINARY_CALIBRATION: Calibration = Calibration {
+    revision: "vi_esp32_pilot_v1",
+    accept_threshold: 0.45,
+    consistency_threshold: 0.50,
+};
 
 #[cfg(test)]
 mod tests {
@@ -394,5 +484,47 @@ mod tests {
         assert!((vector[0] - 0.6).abs() < 1e-6);
         assert!((vector[1] - 0.8).abs() < 1e-6);
         assert!(!normalize(&mut [0.0f32, 0.0]));
+    }
+
+    // Independent fixtures: hand-computed values, not derived from the implementation.
+    #[test]
+    fn cosine_matches_hand_computed_fixtures() {
+        assert_eq!(cosine(&[1.0, 0.0], &[1.0, 0.0]), Some(1.0));
+        assert_eq!(cosine(&[1.0, 0.0], &[0.0, 1.0]), Some(0.0));
+        assert_eq!(cosine(&[1.0, 0.0], &[-1.0, 0.0]), Some(-1.0));
+        // [1,1] vs [1,0] -> 1/sqrt(2)
+        let diagonal = cosine(&[1.0, 1.0], &[1.0, 0.0]).unwrap();
+        assert!((diagonal - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+        // Scale invariant: [3,4] is a 5x multiple of the unit vector.
+        assert_eq!(cosine(&[3.0, 4.0], &[0.6, 0.8]), Some(1.0));
+        assert_eq!(cosine(&[1.0, 0.0], &[1.0]), None);
+        assert_eq!(cosine(&[], &[]), None);
+        assert_eq!(cosine(&[0.0, 0.0], &[1.0, 0.0]), None);
+    }
+
+    #[test]
+    fn pairwise_min_cosine_uses_the_worst_pair() {
+        let vectors = vec![vec![1.0, 0.0], vec![1.0, 0.0], vec![0.0, 1.0]];
+        assert_eq!(pairwise_min_cosine(&vectors), Some(0.0));
+        assert_eq!(pairwise_min_cosine(&[vec![1.0, 0.0]]), None);
+        let orthogonal_ish = vec![vec![1.0, 1.0], vec![1.0, 2.0]];
+        let expected = cosine(&orthogonal_ish[0], &orthogonal_ish[1]).unwrap();
+        assert_eq!(pairwise_min_cosine(&orthogonal_ish), Some(expected));
+    }
+
+    #[test]
+    fn centroid_is_the_renormalized_equal_weight_mean() {
+        let mean = centroid(&[vec![1.0, 0.0], vec![0.0, 1.0]]).unwrap();
+        let expected = std::f32::consts::FRAC_1_SQRT_2;
+        assert!((mean[0] - expected).abs() < 1e-6);
+        assert!((mean[1] - expected).abs() < 1e-6);
+        // A single vector is its own centroid.
+        let single = centroid(&[vec![0.6, 0.8]]).unwrap();
+        assert!((single[0] - 0.6).abs() < 1e-6);
+        assert!((single[1] - 0.8).abs() < 1e-6);
+        // Opposite vectors cancel.
+        assert_eq!(centroid(&[vec![1.0, 0.0], vec![-1.0, 0.0]]), None);
+        assert_eq!(centroid(&[]), None);
+        assert_eq!(centroid(&[vec![1.0, 0.0], vec![1.0]]), None);
     }
 }
