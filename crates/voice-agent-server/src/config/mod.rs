@@ -130,6 +130,10 @@ pub struct SpeakerRecognitionConfig {
     pub max_voiceprint_spaces_per_speaker: usize,
     #[serde(default)]
     pub enrollment: SpeakerEnrollmentConfig,
+    /// Fixed deployment path of the calibration catalog reloaded by the Admin route. Never
+    /// supplied per request; absent means reloads report `speaker_catalog_unavailable`.
+    #[serde(default)]
+    pub calibration_source: Option<PathBuf>,
 }
 
 impl Default for SpeakerRecognitionConfig {
@@ -139,6 +143,7 @@ impl Default for SpeakerRecognitionConfig {
             max_candidates_per_agent: default_speaker_max_candidates_per_agent(),
             max_voiceprint_spaces_per_speaker: default_speaker_max_voiceprint_spaces(),
             enrollment: SpeakerEnrollmentConfig::default(),
+            calibration_source: None,
         }
     }
 }

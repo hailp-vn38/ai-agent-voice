@@ -181,6 +181,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/speakers/{key}/bindings",
             get(speaker_policy::list_speaker_bindings),
         )
+        .route(
+            "/speaker-recognition/reload",
+            axum::routing::post(speaker_calibration::reload),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             authenticate,
@@ -203,6 +207,7 @@ mod providers;
 mod speakers;
 mod system;
 pub(crate) use speakers::cleanup_expired_drafts as cleanup_expired_speaker_drafts;
+mod speaker_calibration;
 mod speaker_policy;
 mod templates;
 mod tool_allowlist;

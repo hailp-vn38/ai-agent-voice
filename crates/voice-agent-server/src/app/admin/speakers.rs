@@ -285,6 +285,10 @@ pub(super) async fn summary(State(state): State<AppState>, request: Request) -> 
 
     let available = state.provider_runtime_manager.is_some();
     let enrollment = &config.enrollment;
+    let calibration = match speaker_calibration::status(pool).await {
+        Ok(calibration) => calibration,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
     Json(json!({
         "available": available,
         "runtime_mode": if available { "managed" } else { "unavailable" },
@@ -309,6 +313,7 @@ pub(super) async fn summary(State(state): State<AppState>, request: Request) -> 
             "max_candidates_per_agent": config.max_candidates_per_agent,
         },
         "catalog_revision": catalog_revision,
+        "calibration": calibration,
     }))
     .into_response()
 }

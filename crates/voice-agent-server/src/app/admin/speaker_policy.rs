@@ -10,12 +10,16 @@ use super::*;
 const POLICY_MODES: [&str; 3] = ["off", "observe", "required"];
 const MAX_GRANT_TEMPLATES: usize = 32;
 
-/// Why Agent `required` cannot be enabled yet.  The fresh-turn verification gate (ticket 15) and
-/// Required-qualified calibration (ticket 14) are not built, so enabling `required` would promise
-/// an authority nothing enforces.  Fail closed until those land.
-/// ponytail: always-block until tickets 14/15; replace with the real qualification checks then.
-fn required_blockers() -> Vec<&'static str> {
-    vec!["speaker_calibration_required"]
+/// Why Agent `required` cannot be enabled yet.  Ticket 14 supplies calibration qualification; the
+/// fresh-turn verification gate (ticket 15) is not built, so `required` still promises an authority
+/// nothing enforces.  Fail closed until that lands.
+/// ponytail: always-block until ticket 15; replace with the real enforcement check then.
+fn required_blockers(qualified: bool) -> Vec<&'static str> {
+    if qualified {
+        vec!["speaker_fresh_turn_verification_required"]
+    } else {
+        vec!["speaker_calibration_required"]
+    }
 }
 
 async fn policy_state(pool: &SqlitePool, agent_id: i64) -> Result<(String, i64), sqlx::Error> {
@@ -28,8 +32,8 @@ async fn policy_state(pool: &SqlitePool, agent_id: i64) -> Result<(String, i64),
     Ok(row.unwrap_or_else(|| ("off".to_owned(), 1)))
 }
 
-fn policy_body(agent_key: &str, mode: &str, revision: i64) -> Value {
-    let blockers = required_blockers();
+fn policy_body(agent_key: &str, mode: &str, revision: i64, qualified: bool) -> Value {
+    let blockers = required_blockers(qualified);
     serde_json::json!({
         "agent_key": agent_key,
         "mode": mode,
@@ -68,8 +72,12 @@ pub(super) async fn get_policy(
         Ok(state) => state,
         Err(error_value) => return sql_error(&request, &error_value),
     };
+    let qualified = match speaker_calibration::qualification(pool, agent.id, &agent.key).await {
+        Ok(qualification) => qualification.is_qualified(),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
     with_etag(
-        Json(policy_body(&agent.key, &mode, revision)).into_response(),
+        Json(policy_body(&agent.key, &mode, revision, qualified)).into_response(),
         revision,
     )
 }
@@ -120,11 +128,13 @@ pub(super) async fn put_policy(
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
     if body.mode == "required" {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "speaker_calibration_required",
-        );
+        let qualified = match speaker_calibration::qualification(pool, agent.id, &agent.key).await {
+            Ok(qualification) => qualification.is_qualified(),
+            Err(error_value) => return sql_error(&request, &error_value),
+        };
+        if let Some(blocker) = required_blockers(qualified).first() {
+            return error(&request, StatusCode::SERVICE_UNAVAILABLE, blocker);
+        }
     }
 
     let next = current + 1;
@@ -177,8 +187,12 @@ pub(super) async fn put_policy(
     if let Err(error_value) = tx.commit().await {
         return sql_error(&request, &error_value);
     }
+    let qualified = match speaker_calibration::qualification(pool, agent.id, &agent.key).await {
+        Ok(qualification) => qualification.is_qualified(),
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
     with_etag(
-        Json(policy_body(&agent.key, &body.mode, next)).into_response(),
+        Json(policy_body(&agent.key, &body.mode, next, qualified)).into_response(),
         next,
     )
 }
