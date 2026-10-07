@@ -4,7 +4,7 @@ use super::*;
 #[derive(Serialize, FromRow)]
 pub(super) struct Agent {
     pub(super) id: i64,
-    key: String,
+    pub(super) key: String,
     name: String,
     description: Option<String>,
     pub(super) enabled: i64,

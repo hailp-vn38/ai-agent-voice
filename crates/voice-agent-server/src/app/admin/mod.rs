@@ -149,6 +149,22 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/speakers/{key}/enrollments/{id}",
             get(speakers::get_draft).delete(speakers::cancel_draft),
         )
+        .route(
+            "/agents/{key}/speaker-policy",
+            get(speaker_policy::get_policy).put(speaker_policy::put_policy),
+        )
+        .route(
+            "/agents/{key}/speakers",
+            get(speaker_policy::list_agent_speakers),
+        )
+        .route(
+            "/agents/{key}/speakers/{speaker_key}",
+            put(speaker_policy::put_agent_speaker).delete(speaker_policy::delete_agent_speaker),
+        )
+        .route(
+            "/speakers/{key}/bindings",
+            get(speaker_policy::list_speaker_bindings),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             authenticate,
@@ -171,6 +187,7 @@ mod providers;
 mod speakers;
 mod system;
 pub(crate) use speakers::cleanup_expired_drafts as cleanup_expired_speaker_drafts;
+mod speaker_policy;
 mod templates;
 mod tool_allowlist;
 

@@ -154,7 +154,7 @@ fn draft_resource(draft: &DraftRow, speaker_key: &str) -> Value {
     })
 }
 
-fn with_etag(response: Response, revision: i64) -> Response {
+pub(super) fn with_etag(response: Response, revision: i64) -> Response {
     let Ok(value) = HeaderValue::from_str(&format!("\"{revision}\"")) else {
         return response;
     };
