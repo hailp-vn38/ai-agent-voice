@@ -1,5 +1,5 @@
 use serde::Serialize;
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MetricSummary {
     pub sample_count: usize,
     pub min: f64,
