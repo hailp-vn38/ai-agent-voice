@@ -10,6 +10,7 @@ use thiserror::Error;
 pub mod admission;
 pub mod device_enrollments;
 pub mod device_tool_allowlist;
+pub mod device_tool_recovery;
 pub mod external_mcp;
 pub mod external_mcp_policy;
 pub mod history;

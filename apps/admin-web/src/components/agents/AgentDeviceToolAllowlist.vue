@@ -4,13 +4,25 @@ import { jsonRequest, requestJson } from '@/api/client'
 import { Button } from '@/components/ui/button'
 const props = defineProps<{ agentId: string }>()
 type Tool = { device_id: string; original_name: string; description: string; input_schema: unknown; fingerprint: string; observed_revision: number; observed_at: number; allowed: boolean; sensitive: boolean; revision: number }
+type Batch = { id: number; state: 'open' | 'reviewable' | 'failed' | 'expired'; deadline: number; created_at: number; completed_at: number | null; members: number; required: number }
 const tools = ref<Tool[]>([])
+const recovery = ref<Record<string, Batch>>({})
+const deviceId = ref('')
 const error = ref('')
 const busy = ref(false)
 const path = () => `/api/admin/agents/${encodeURIComponent(props.agentId)}/device-tool-allowlist`
 async function load() {
-  try { tools.value = (await requestJson<{ items: Tool[] }>(path())).items; error.value = '' }
+  try { const data = await requestJson<{ items: Tool[]; recovery: Record<string, Batch> }>(path()); tools.value = data.items; recovery.value = data.recovery ?? {}; error.value = '' }
   catch (e) { error.value = String(e) }
+}
+async function startRecovery() {
+  if (!deviceId.value) return
+  busy.value = true
+  try {
+    await requestJson(`/api/admin/agents/${encodeURIComponent(props.agentId)}/device-tool-recovery`, jsonRequest('POST', { device_id: deviceId.value, deadline_seconds: 300 }))
+    await load()
+  } catch (e) { error.value = String(e) }
+  finally { busy.value = false }
 }
 async function review(tool: Tool, allowed: boolean) {
   busy.value = true
@@ -27,6 +39,11 @@ watch(() => props.agentId, load, { immediate: true })
     <h2 class="font-semibold">Device tool review</h2>
     <p class="text-sm">Contracts observed during completed Device discovery. Observation does not prove current online presence. Sensitive tools are blocked. Grants apply to new connections.</p>
     <Button variant="outline" :disabled="busy" @click="load">Refresh observations</Button>
+    <div class="flex items-end gap-2">
+      <label class="text-sm">Device identity <input v-model="deviceId" placeholder="device-id" :disabled="busy" class="border px-2 py-1"></label>
+      <Button variant="outline" :disabled="busy || !deviceId" @click="startRecovery">Start discovery recovery</Button>
+    </div>
+    <p v-for="(batch, id) in recovery" :key="id" class="text-sm">Recovery for {{ id }}: {{ batch.state }} ({{ batch.members }}/{{ batch.required }}) — deadline {{ new Date(batch.deadline * 1000).toLocaleString() }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-if="!tools.length">No observed Device tools.</p>
     <div v-for="tool in tools" :key="`${tool.device_id}/${tool.original_name}`" class="rounded border p-3 space-y-2">

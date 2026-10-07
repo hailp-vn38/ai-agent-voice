@@ -100,6 +100,7 @@ impl SessionActor {
         let device = guard.device_id;
         let agent = guard.agent_id;
         let participating = guard.participating;
+        let session_id = self.session_id.clone();
         tokio::spawn(async move {
             let changed =
                 crate::database::device_tool_allowlist::observe(&database, device, &discovered)
@@ -107,6 +108,22 @@ impl SessionActor {
             let (changed, conflicted) = changed.unwrap_or((false, false));
             if changed && conflicted {
                 // A conflicting valid observation is not a new right: close the affected sessions.
+                database.tool_security.invalidate_device(device);
+            }
+            // Ticket 13: this complete walk is a member of the Device's open recovery batch, if any.
+            // A resolved batch adopts the agreed contract, so existing approvals no longer match and
+            // the affected sessions close rather than serve a superseded right.
+            if let Some(resolution) = crate::database::device_tool_recovery::record(
+                database.pool(),
+                device,
+                &session_id,
+                &discovered,
+            )
+            .await
+            .unwrap_or(None)
+                && resolution.state == crate::database::device_tool_recovery::BatchState::Reviewable
+                && resolution.changed
+            {
                 database.tool_security.invalidate_device(device);
             }
             let contracts =

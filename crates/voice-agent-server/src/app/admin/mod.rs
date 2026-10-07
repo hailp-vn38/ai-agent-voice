@@ -118,6 +118,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/agents/{key}/device-tool-allowlist",
             get(device_tools::list).put(device_tools::review),
         )
+        .route(
+            "/agents/{key}/device-tool-recovery",
+            axum::routing::post(device_tools::start_recovery),
+        )
         .route("/devices", get(list_devices).post(create_device))
         .route(
             "/device-enrollments/claim",

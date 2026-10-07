@@ -3354,3 +3354,162 @@ async fn device_tool_reviews_are_admin_authenticated_and_guarded_by_revision() {
     assert_eq!(drifted.status(), StatusCode::CONFLICT);
     task.abort();
 }
+
+#[tokio::test]
+async fn device_tool_recovery_batches_are_started_by_admin_and_keep_review_cas() {
+    use voice_agent_server::{
+        config::DatabaseConfig, database::device_tool_allowlist, database::device_tool_recovery,
+        tools::device_mcp::DiscoveredTool,
+    };
+    let database_uri = database_url();
+    let config = DatabaseConfig {
+        url: database_uri.clone(),
+        max_connections: 2,
+        busy_timeout_ms: 5_000,
+        migrate_on_start: true,
+        devices: Default::default(),
+        history: Default::default(),
+    };
+    let database = Database::connect(&config).await.unwrap();
+    sqlx::query("INSERT INTO agents (key,name,enabled,created_at,updated_at) VALUES ('review_agent','Review Agent',1,1,1)")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    let device = sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('review-device',1,1,1,1)")
+        .execute(database.pool())
+        .await
+        .unwrap()
+        .last_insert_rowid();
+    sqlx::query("INSERT INTO agent_speaker_policies (agent_id,mode) VALUES (1,'observe')")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    let tool = |description: &str| DiscoveredTool {
+        original_name: "SetBrightness".into(),
+        description: description.into(),
+        input_schema: serde_json::json!({"type":"object"}),
+    };
+    // Block the tool with a genuine two-observation conflict.
+    device_tool_allowlist::observe(&database, device, &[tool("set brightness")])
+        .await
+        .unwrap();
+    device_tool_allowlist::observe(&database, device, &[tool("set brightness slowly")])
+        .await
+        .unwrap();
+    drop(database);
+
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let client = Client::new();
+    let recovery_url = format!("{base}/api/admin/agents/review_agent/device-tool-recovery");
+    let allowlist_url = format!("{base}/api/admin/agents/review_agent/device-tool-allowlist");
+
+    assert_eq!(
+        client
+            .post(&recovery_url)
+            .json(&serde_json::json!({"device_id": "review-device"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let unknown = client
+        .post(&recovery_url)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id": "other-device"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+    let bad = client
+        .post(&recovery_url)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id": "review-device", "deadline_seconds": 0}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+    let started = client
+        .post(&recovery_url)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id": "review-device", "deadline_seconds": 60}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(started.status(), StatusCode::OK);
+    let started = started.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(started["batch"]["state"], serde_json::json!("open"));
+    assert_eq!(started["batch"]["required"], serde_json::json!(2));
+
+    // The list surfaces the batch outcome/time and the review state.
+    let listed = client
+        .get(&allowlist_url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        listed["recovery"]["review-device"]["state"],
+        serde_json::json!("open")
+    );
+
+    // Two agreeing complete observations resolve the conflict and bump the observation revision.
+    let database = Database::connect(&config).await.unwrap();
+    for key in ["session-a", "session-b"] {
+        device_tool_recovery::record(
+            database.pool(),
+            device,
+            key,
+            &[tool("set brightness slowly")],
+        )
+        .await
+        .unwrap();
+    }
+    let revision = sqlx::query_scalar::<_, i64>(
+        "SELECT revision FROM device_tool_observations WHERE device_id=? AND original_name='SetBrightness'",
+    )
+    .bind(device)
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    drop(database);
+
+    let listed = client
+        .get(&allowlist_url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        listed["recovery"]["review-device"]["state"],
+        serde_json::json!("reviewable")
+    );
+    let item = &listed["items"][0];
+    assert_eq!(item["observed_revision"].as_i64().unwrap(), revision);
+    let fingerprint = item["fingerprint"].as_str().unwrap().to_owned();
+
+    // A review based on the superseded observation revision still conflicts (CAS).
+    let stale = client
+        .put(&allowlist_url)
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({
+            "device_id": "review-device",
+            "original_name": "SetBrightness",
+            "observed_revision": revision - 1,
+            "fingerprint": fingerprint,
+            "allowed": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    task.abort();
+}

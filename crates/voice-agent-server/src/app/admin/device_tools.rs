@@ -1,6 +1,8 @@
 //! Review exact observed Device contracts using observation and approval revisions.
 use super::agents::get_agent_by;
 use super::*;
+use crate::database::device_tool_recovery;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Review {
@@ -27,10 +29,16 @@ pub(super) async fn list(
         Ok(v) => v,
         Err(e) => return sql_error(&request, &e),
     };
-    match sqlx::query_as::<_, (String,String,String,String,String,i64,i64,i64,i64,i64)>("SELECT d.device_id,o.original_name,o.description,o.input_schema,o.fingerprint,o.revision,o.observed_at,CASE WHEN a.fingerprint=o.fingerprint THEN COALESCE(a.allowed,0) ELSE 0 END,COALESCE(a.sensitive,0),COALESCE(a.revision,1) FROM devices d JOIN device_tool_observations o ON o.device_id=d.id AND o.device_revision=d.revision AND o.blocked=0 LEFT JOIN agent_device_tool_allowlist a ON a.agent_id=? AND a.device_id=d.id AND a.original_name=o.original_name WHERE d.agent_id=? ORDER BY d.device_id,o.original_name").bind(agent.id).bind(agent.id).fetch_all(pool).await {
-        Ok(rows) => Json(serde_json::json!({"items":rows.into_iter().map(|(device_id,original_name,description,schema,fingerprint,observed_revision,observed_at,allowed,sensitive,revision)| serde_json::json!({"device_id":device_id,"original_name":original_name,"description":description,"input_schema":serde_json::from_str::<Value>(&schema).unwrap_or_default(),"fingerprint":fingerprint,"observed_revision":observed_revision,"observed_at":observed_at,"allowed":allowed!=0,"sensitive":sensitive!=0,"revision":revision,"presence":"observed_only"})).collect::<Vec<_>>()})).into_response(),
-        Err(e) => sql_error(&request,&e)
-    }
+    let rows = match sqlx::query_as::<_, (String,String,String,String,String,i64,i64,i64,i64,i64)>("SELECT d.device_id,o.original_name,o.description,o.input_schema,o.fingerprint,o.revision,o.observed_at,CASE WHEN a.fingerprint=o.fingerprint THEN COALESCE(a.allowed,0) ELSE 0 END,COALESCE(a.sensitive,0),COALESCE(a.revision,1) FROM devices d JOIN device_tool_observations o ON o.device_id=d.id AND o.device_revision=d.revision AND o.blocked=0 LEFT JOIN agent_device_tool_allowlist a ON a.agent_id=? AND a.device_id=d.id AND a.original_name=o.original_name WHERE d.agent_id=? ORDER BY d.device_id,o.original_name").bind(agent.id).bind(agent.id).fetch_all(pool).await {
+        Ok(rows) => rows,
+        Err(e) => return sql_error(&request, &e),
+    };
+    // Ticket 13: surface the latest recovery batch per Device so the UI can show its outcome/time.
+    let recovery = match device_tool_recovery::latest_for_agent(pool, agent.id).await {
+        Ok(v) => v,
+        Err(e) => return sql_error(&request, &e),
+    };
+    Json(serde_json::json!({"items":rows.into_iter().map(|(device_id,original_name,description,schema,fingerprint,observed_revision,observed_at,allowed,sensitive,revision)| serde_json::json!({"device_id":device_id,"original_name":original_name,"description":description,"input_schema":serde_json::from_str::<Value>(&schema).unwrap_or_default(),"fingerprint":fingerprint,"observed_revision":observed_revision,"observed_at":observed_at,"allowed":allowed!=0,"sensitive":sensitive!=0,"revision":revision,"presence":"observed_only"})).collect::<Vec<_>>(),"recovery":recovery})).into_response()
 }
 pub(super) async fn review(
     State(state): State<AppState>,
@@ -111,4 +119,73 @@ pub(super) async fn review(
         security.invalidate_device(device);
     }
     Json(serde_json::json!({"revision":expected+1})).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartRecovery {
+    device_id: String,
+    #[serde(default = "default_recovery_deadline")]
+    deadline_seconds: i64,
+}
+
+fn default_recovery_deadline() -> i64 {
+    300
+}
+
+/// Ticket 13: starts a bounded discovery recovery batch for one Device incarnation.  The Device's
+/// next complete MCP `tools/list` walks become batch members; the batch only clears a blocked
+/// conflict once enough distinct complete observations agree.
+pub(super) async fn start_recovery(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let (request, body): (_, StartRecovery) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if !valid_text(&body.device_id, 128, false) || !(1..=3600).contains(&body.deadline_seconds) {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    let pool = match db(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let agent = match get_agent_by(pool, &key).await {
+        Ok(v) => v,
+        Err(e) => return sql_error(&request, &e),
+    };
+    let device = match sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM devices WHERE agent_id=? AND device_id=? AND enabled=1",
+    )
+    .bind(agent.id)
+    .bind(&body.device_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "device_not_found"),
+        Err(e) => return sql_error(&request, &e),
+    };
+    let batch = match device_tool_recovery::start(pool, device, body.deadline_seconds).await {
+        Ok(v) => v,
+        Err(e) => return sql_error(&request, &e),
+    };
+    if let Err(e) = audit(
+        pool,
+        id(&request),
+        "agent",
+        Some(agent.id),
+        "start_device_tool_recovery",
+        None,
+        Some(batch.id),
+        AuditOutcome::Success,
+        1,
+    )
+    .await
+    {
+        return sql_error(&request, &e);
+    }
+    Json(serde_json::json!({"batch":batch})).into_response()
 }
