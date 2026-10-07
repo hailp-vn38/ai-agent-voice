@@ -554,3 +554,41 @@ _Avoid_: full-sentence warmup, warmup as qualification, unbounded readiness loop
 **Provider Runtime Manager**:
 Application owner cấp runtime đúng ProviderVersion và giữ lifecycle/backing resources dùng chung trong các budget rõ ràng. Không sở hữu session history, stream state hay mutate Database Desired Configuration.
 _Avoid_: runtime plugin registry, per-frame provider factory, automatic provider retry
+
+## Speaker recognition
+
+**Speaker Match**:
+Kết quả đối chiếu giọng của đoạn audio được kiểm tra với Voiceprint theo calibration tương ứng; chưa phải quyền thực hiện yêu cầu và không chứng minh toàn bộ utterance do cùng một người nói.
+_Avoid_: speaker authorization, authenticated request, liveness proof
+
+**Speaker Authorization**:
+Quyết định cho phép một Speaker sử dụng Agent và Template cho một voice turn, dựa trên Speaker Match mới cùng policy, grants và hiệu lực quyền. Quyền này chưa đủ để thực hiện thao tác nhạy cảm.
+_Avoid_: speaker match, independent confirmation, blanket tool permission
+
+**Independent Confirmation**:
+Xác nhận riêng cho một thao tác nhạy cảm bằng căn cứ độc lập với Speaker Match của yêu cầu đó.
+_Avoid_: repeated speaker match, spoken yes, Device authentication alone
+
+**Preliminary Calibration**:
+Calibration sơ bộ dùng thử nghiệm chất lượng audio, tính nhất quán của mẫu, holdout enrollment và Observe; chưa đủ điều kiện cho Speaker Authorization trong Required.
+_Avoid_: Required-qualified calibration, production authorization threshold
+
+**Required-qualified Calibration**:
+Calibration được người vận hành xác nhận dựa trên báo cáo đánh giá độc lập cho đúng candidate set của Agent/Template, voiceprint revisions, embedding space, preprocessing, scoring parameters và điều kiện audio/tải. Chỉ đủ điều kiện Required khi qualification còn hiệu lực; subset của candidate set không tự được bao phủ.
+_Avoid_: preliminary calibration, browser holdout alone, demo threshold
+
+**Agent Tool Allowlist**:
+Tập tool được admin đánh giá và cho phép cho một Agent, định danh theo Protocol Device Identity (`device_id`) hoặc External MCP server key cùng tên tool gốc; tool ngoài tập bị từ chối. Resource được tạo lại không kế thừa quyền của resource đã xóa. Đây là giới hạn thao tác của Agent, độc lập với Speaker Match và Speaker Authorization.
+_Avoid_: speaker grants, LLM tool name allowlist, read-only safety inference
+
+**Misidentification**:
+Kết quả nhận diện 1:N chấp nhận một identity khác với người thực sự nói trong trial genuine; thuộc genuine failure dù hệ thống có trả match.
+_Avoid_: genuine success, pure rejection, successful match
+
+**Voice Pipeline Processing Permit**:
+Quyền độc quyền xử lý pipeline của một Voice Session trong envelope pilot, gồm cả capture đang armed và công việc hội thoại chưa terminal. Khác Resource Lease giữ model và permit riêng của từng inference operation.
+_Avoid_: Resource Lease, Active Turn Permit, speaker inference permit
+
+**Reviewed Tool Contract**:
+Contract quan sát được của một tool mà admin đã đánh giá, gồm identity nguồn, tên gốc, input schema, description có ảnh hưởng cách sử dụng và cấu hình nguồn liên quan. Review mất hiệu lực khi server quan sát contract thay đổi; không chứng minh hành vi implementation bên ngoài giữ nguyên.
+_Avoid_: tool name alone, remote implementation attestation, secret value fingerprint
