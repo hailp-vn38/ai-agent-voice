@@ -20,6 +20,10 @@ use uuid::Uuid;
 
 const MAX_BODY: usize = 256 * 1024;
 pub(super) const MAX_ASR_TEST_BODY: usize = 5 * 1024 * 1024;
+/// Voice samples are raw PCM16 WAV: 12s mono 16 kHz is 384 KiB, so the 256 KiB
+/// JSON cap would reject every valid clip. The route itself still enforces
+/// `speaker.max_audio_body_bytes` (512 KiB) and the 12s duration cap.
+pub(super) const MAX_SPEAKER_SAMPLE_BODY: usize = 512 * 1024;
 const PAGE_DEFAULT: u32 = 50;
 const PAGE_MAX: u32 = 200;
 
@@ -246,6 +250,10 @@ async fn transport(request: Request, next: Next) -> Response {
     if is_mutation {
         let max_body = if request.uri().path().ends_with("/test/asr") {
             MAX_ASR_TEST_BODY
+        } else if request.uri().path().contains("/enrollments/")
+            && request.uri().path().contains("/samples/")
+        {
+            MAX_SPEAKER_SAMPLE_BODY
         } else {
             MAX_BODY
         };

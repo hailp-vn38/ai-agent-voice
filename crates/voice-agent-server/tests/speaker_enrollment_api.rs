@@ -746,6 +746,22 @@ async fn sample_upload_stores_bounded_metadata_and_returns_draft() {
 }
 
 #[tokio::test]
+async fn sample_upload_accepts_a_full_length_clip_over_the_json_body_cap() {
+    // 9s of PCM16 mono 16 kHz is ~288 KiB, above the 256 KiB JSON cap but below the
+    // 512 KiB sample cap. Regression: the transport middleware used to reject it.
+    let (base, task) = server_with_runtime(&database_url(), true, 2).await;
+    let client = Client::new();
+    let draft_id = open_owner_draft(&client, &base).await;
+
+    let wav = enrollment_wav(9_000, 8_000);
+    assert!(wav.len() > 256 * 1024 && wav.len() < 512 * 1024, "fixture size {}", wav.len());
+    let response = put_sample(&client, &base, &draft_id, 1, "1", "audio/wav", wav).await;
+    assert_eq!(response.status(), StatusCode::OK, "{}", response.text().await.unwrap());
+
+    task.abort();
+}
+
+#[tokio::test]
 async fn sample_upload_rejects_bad_transport_without_mutation() {
     let (base, task) = server_with_runtime(&database_url(), true, 2).await;
     let client = Client::new();
