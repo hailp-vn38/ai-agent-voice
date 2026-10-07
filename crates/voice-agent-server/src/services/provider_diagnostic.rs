@@ -159,6 +159,7 @@ impl ProviderDiagnosticLimiter {
 /// The application-owned diagnostic admission boundary. It never constructs or reloads a runtime.
 pub struct ProviderDiagnosticService {
     limiter: ProviderDiagnosticLimiter,
+    pilot: Option<crate::session::pilot::PilotAdmission>,
     execution_timeout: Duration,
     registry: Arc<RuntimeCatalog>,
     runtime_snapshot: Option<Arc<DatabaseRuntimeSnapshot>>,
@@ -174,11 +175,13 @@ pub struct ProviderDiagnosticService {
 }
 
 struct QuarantinedDiagnosticCapacity {
+    _pipeline: Option<crate::session::pilot::PilotPermit>,
     _capacity: ProviderCapacityPermit,
     _resource: Option<ResourceLease>,
 }
 
 pub struct ProviderDiagnosticLease {
+    pipeline: Option<crate::session::pilot::PilotPermit>,
     _diagnostic: ProviderDiagnosticPermit,
     capacity: Option<ProviderCapacityPermit>,
     quarantine: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
@@ -197,6 +200,7 @@ impl ProviderDiagnosticService {
         assert!(!execution_timeout.is_zero());
         Self {
             limiter,
+            pilot: None,
             execution_timeout,
             registry,
             runtime_snapshot,
@@ -207,6 +211,11 @@ impl ProviderDiagnosticService {
             managed_admission: Mutex::new(None),
             _managed_lease: None,
         }
+    }
+
+    pub fn with_pilot_admission(mut self, pilot: crate::session::pilot::PilotAdmission) -> Self {
+        self.pilot = Some(pilot);
+        self
     }
 
     pub fn with_runtime_manager(mut self, manager: Arc<ProviderRuntimeManager>) -> Self {
@@ -271,6 +280,7 @@ impl ProviderDiagnosticService {
         )]);
         Ok(Self {
             limiter: self.limiter.clone(),
+            pilot: self.pilot.clone(),
             execution_timeout: self.execution_timeout,
             registry: Arc::new(registry),
             runtime_snapshot: Some(Arc::new(runtime_snapshot)),
@@ -572,11 +582,17 @@ impl ProviderDiagnosticService {
             .take()
             .map(Ok)
             .unwrap_or_else(|| self.limiter.try_acquire())?;
+        let pipeline = self
+            .pilot
+            .as_ref()
+            .map(|pilot| pilot.try_voice().ok_or(ProviderDiagnosticError::Busy))
+            .transpose()?;
         let capacity = self
             .registry
             .admit_diagnostic(kind, &target.key)
             .map_err(map_runtime_error)?;
         Ok(ProviderDiagnosticLease {
+            pipeline,
             _diagnostic: diagnostic,
             capacity: Some(capacity),
             resource_lease: self._managed_lease.clone(),
@@ -637,6 +653,7 @@ impl ProviderDiagnosticLease {
                 .expect("provider diagnostic quarantine poisoned")
                 .push(QuarantinedDiagnosticCapacity {
                     _capacity: capacity,
+                    _pipeline: self.pipeline.take(),
                     _resource: self.resource_lease.take(),
                 });
         }

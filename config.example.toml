@@ -178,6 +178,8 @@ command_queue_capacity = 32
 cleanup_grace_ms = 5000
 
 [deployment]
+# Explicit pilot: one active voice pipeline process-wide; idle sockets remain connected.
+speaker_pilot = false
 profile = "development-noncommercial"
 
 # Model files are owned by each provider: it downloads what it is missing into `models/` when the

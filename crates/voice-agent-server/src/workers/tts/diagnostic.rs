@@ -118,6 +118,9 @@ impl ProviderDiagnosticOperation for TtsDiagnosticOperation {
                 Some(TtsWorkerEvent::Pcm(pcm)) => append_pcm(&mut sample_rate, &mut samples, pcm)?,
                 Some(TtsWorkerEvent::Finished) => {
                     self.terminal = true;
+                    while self.runtime.reset_pending() {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
                     return wav(sample_rate, samples).map(|wav| TtsDiagnosticOutput { wav });
                 }
                 Some(TtsWorkerEvent::Failed) | Some(TtsWorkerEvent::Cancelled) => {
@@ -150,6 +153,9 @@ impl ProviderDiagnosticOperation for TtsDiagnosticOperation {
                 Ok(Some(TtsWorkerEvent::CleanupTimedOut)) | Err(_) => return false,
                 _ => tokio::time::sleep(std::time::Duration::from_millis(1)).await,
             }
+        }
+        while self.runtime.reset_pending() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         true
     }

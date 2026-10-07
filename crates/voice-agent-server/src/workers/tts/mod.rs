@@ -67,7 +67,9 @@ enum WorkerCommand {
         cancelled: Arc<AtomicBool>,
         events: mpsc::SyncSender<TtsWorkerEvent>,
     },
-    Reset,
+    Reset {
+        pending: Arc<AtomicBool>,
+    },
     Shutdown,
 }
 
@@ -84,6 +86,7 @@ struct WorkerRecord {
     stream: Option<TtsStreamId>,
     quarantined: bool,
     healthy: Arc<AtomicBool>,
+    reset_pending: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 struct Slot {
@@ -142,6 +145,19 @@ pub struct TtsDiagnosticOperation {
 }
 
 impl TtsWorkerRuntime {
+    /// Physical work remains occupied until terminal acknowledgement, including quarantine.
+    pub(crate) fn pilot_work_pending(&self) -> bool {
+        self.admission.view_usage() != 0 || self.reset_pending()
+    }
+    pub(crate) fn reset_pending(&self) -> bool {
+        self.state
+            .lock()
+            .expect("TTS worker state poisoned")
+            .workers
+            .iter()
+            .any(|worker| worker.reset_pending.load(Ordering::Acquire))
+    }
+
     pub fn new(provider: Arc<dyn TtsProvider>, config: WorkerRuntimeConfig) -> Self {
         Self::new_with_binding(provider, config, TtsBinding::readiness())
     }
@@ -215,6 +231,7 @@ impl TtsWorkerRuntime {
                     stream: None,
                     quarantined: false,
                     healthy,
+                    reset_pending: Arc::new(AtomicBool::new(false)),
                     thread: Some(thread),
                 });
             } else {
