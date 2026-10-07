@@ -28,6 +28,8 @@ pub struct ProvidersConfig {
     pub tts: TtsProvidersConfig,
     #[serde(default)]
     pub vision: VisionProvidersConfig,
+    #[serde(default)]
+    pub speaker: SpeakerProvidersConfig,
 }
 
 macro_rules! provider_catalog_config {
@@ -46,6 +48,53 @@ provider_catalog_config!(AsrProvidersConfig, AsrInstanceConfig);
 provider_catalog_config!(LlmProvidersConfig, LlmInstanceConfig);
 provider_catalog_config!(TtsProvidersConfig, TtsInstanceConfig);
 provider_catalog_config!(VisionProvidersConfig, VisionInstanceConfig);
+provider_catalog_config!(SpeakerProvidersConfig, SpeakerInstanceConfig);
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "adapter", rename_all = "snake_case")]
+pub enum SpeakerInstanceConfig {
+    CampplusSherpa(CampPlusConfig),
+}
+impl SpeakerInstanceConfig {
+    pub const fn adapter(&self) -> &'static str {
+        "campplus_sherpa"
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CampPlusConfig {
+    #[serde(default)]
+    pub calibration_profile: Option<String>,
+    #[serde(default = "speaker_min_speech")]
+    pub min_speech_ms: u64,
+    #[serde(default = "speaker_target_speech")]
+    pub target_speech_ms: u64,
+    #[serde(default = "speaker_max_window")]
+    pub max_window_ms: u64,
+}
+fn speaker_min_speech() -> u64 {
+    2000
+}
+fn speaker_target_speech() -> u64 {
+    4000
+}
+fn speaker_max_window() -> u64 {
+    6000
+}
+impl CampPlusConfig {
+    pub fn valid(&self) -> bool {
+        self.min_speech_ms > 0
+            && self.min_speech_ms <= self.target_speech_ms
+            && self.target_speech_ms <= self.max_window_ms
+            && self.max_window_ms <= 6_000
+            && self.calibration_profile.as_ref().is_none_or(|id| {
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            })
+    }
+}
 
 #[derive(Clone, Default, Deserialize)]
 pub struct SecretString(pub(crate) String);
@@ -253,6 +302,17 @@ impl TransducerDecodingMethod {
         match self {
             Self::GreedySearch => "greedy_search",
             Self::ModifiedBeamSearch => "modified_beam_search",
+        }
+    }
+}
+
+impl Default for CampPlusConfig {
+    fn default() -> Self {
+        Self {
+            calibration_profile: None,
+            min_speech_ms: speaker_min_speech(),
+            target_speech_ms: speaker_target_speech(),
+            max_window_ms: speaker_max_window(),
         }
     }
 }

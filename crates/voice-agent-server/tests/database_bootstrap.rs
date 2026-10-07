@@ -288,3 +288,83 @@ async fn database_parent_that_is_a_file_fails_before_boot() {
     assert_eq!(fs::read(&path).unwrap(), b"not a directory");
     fs::remove_file(path).unwrap();
 }
+
+#[tokio::test]
+async fn speaker_provider_migration_preserves_bindings_and_deleted_high_water_marks() {
+    let config = database_config(temp_database_url("speaker-migration"));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::from_str(&config.url)
+                .unwrap()
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0001_initial_database.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE TABLE _sqlx_migrations(version BIGINT PRIMARY KEY,description TEXT NOT NULL,installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,success BOOLEAN NOT NULL,checksum BLOB NOT NULL,execution_time BIGINT NOT NULL);").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(1,'initial database',1,?,0)").bind(Sha384::digest(include_str!("../migrations/0001_initial_database.sql").as_bytes()).to_vec()).execute(&pool).await.unwrap();
+    for (version, sql) in [
+        (2, include_str!("../migrations/0002_indexes.sql")),
+        (
+            3,
+            include_str!("../migrations/0003_history_archive_indexes.sql"),
+        ),
+        (
+            4,
+            include_str!("../migrations/0004_device_template_override.sql"),
+        ),
+        (5, include_str!("../migrations/0005_device_enrollments.sql")),
+        (
+            6,
+            include_str!("../migrations/0006_provider_runtime_config.sql"),
+        ),
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(?,'previous schema',1,?,0)").bind(version).bind(Sha384::digest(sql.as_bytes()).to_vec()).execute(&pool).await.unwrap();
+    }
+    sqlx::raw_sql("INSERT INTO agent_templates(id,key,name,language,prompt,created_at,updated_at) VALUES(7,'template','Template','vi','hello',1,1);
+INSERT INTO providers(id,key,name,type,adapter,config_json,created_at,updated_at) VALUES(19,'vad','VAD','vad','silero_onnx','{}',1,1),(99,'deleted','Deleted','vad','silero_onnx','{}',1,1);
+DELETE FROM providers WHERE id=99;
+INSERT INTO template_provider_bindings(id,template_id,provider_type,provider_id,created_at,updated_at) VALUES(27,7,'vad',19,1,1);
+UPDATE sqlite_sequence SET seq=88 WHERE name='template_provider_bindings';").execute(&pool).await.unwrap();
+    pool.close().await;
+    let database = Database::connect(&config).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT provider_id FROM template_provider_bindings WHERE id=27 AND template_id=7"
+        )
+        .fetch_one(database.pool())
+        .await
+        .unwrap(),
+        19
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT seq FROM sqlite_sequence WHERE name='providers'")
+            .fetch_one(database.pool())
+            .await
+            .unwrap(),
+        99
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT seq FROM sqlite_sequence WHERE name='template_provider_bindings'"
+        )
+        .fetch_one(database.pool())
+        .await
+        .unwrap(),
+        88
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pragma_foreign_key_check")
+            .fetch_one(database.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(sqlx::query("INSERT INTO template_provider_bindings(template_id,provider_type,provider_id,created_at,updated_at) VALUES(7,'speaker',999,1,1)").execute(database.pool()).await.is_err());
+}

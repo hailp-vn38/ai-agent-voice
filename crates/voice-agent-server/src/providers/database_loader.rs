@@ -200,6 +200,7 @@ fn empty_loaded() -> LoadedProviders {
             vision: HashMap::new(),
         },
         runtimes: RuntimeCatalog {
+            speaker: HashMap::new(),
             vad: HashMap::new(),
             asr: HashMap::new(),
             llm: HashMap::new(),
@@ -301,6 +302,28 @@ fn materialize_one(
     };
     let registry = compiled_provider_registry();
     match row.kind.as_str() {
+        "speaker" => {
+            reject_secret(row, secret.as_ref())?;
+            let speaker_config: crate::config::CampPlusConfig =
+                serde_json::from_str(&row.config_json)
+                    .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
+            if !speaker_config.valid() {
+                return Err(DatabaseRuntimeFailure::Configuration);
+            }
+            let provider = registry
+                .speaker_factory(&row.adapter)
+                .and_then(|factory| factory.build(&config.runtime))
+                .map_err(|_| DatabaseRuntimeFailure::Runtime)?;
+            let runtime = super::speaker::SpeakerRuntime::new(
+                provider,
+                quota.unwrap_or_else(|| ProviderRuntimeAdmission::new(1, 1)),
+            )
+            .map_err(|_| DatabaseRuntimeFailure::Runtime)?;
+            loaded
+                .runtimes
+                .speaker
+                .insert(row.key.clone(), Arc::new(runtime));
+        }
         "vad" => {
             reject_secret(row, secret.as_ref())?;
             let instance: VadInstanceConfig = if row.id == 0 {

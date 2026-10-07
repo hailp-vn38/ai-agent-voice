@@ -221,6 +221,44 @@ pub(super) async fn test_asr_provider(
     .into_response()
 }
 
+pub(super) async fn test_speaker_provider(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    if request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .map(|v| v.as_bytes())
+        != Some(b"audio/wav")
+        || request.headers().contains_key(header::CONTENT_ENCODING)
+    {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_test_input");
+    }
+    let revision = match expected(request.headers()) {
+        Ok(revision) => revision,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    let (parts, body) = request.into_parts();
+    let request = Request::from_parts(parts, Body::empty());
+    let body = match to_bytes(body, 524_288).await {
+        Ok(body) => body,
+        Err(_) => return error(&request, StatusCode::PAYLOAD_TOO_LARGE, "request_too_large"),
+    };
+    let (pcm, _) = match parse_asr_wav(&body) {
+        Some(value) if value.0.sample_rate_hz() == 16_000 && value.1 <= 12_000 => value,
+        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_test_input"),
+    };
+    match state
+        .provider_diagnostics
+        .execute_speaker(&key, revision, pcm)
+        .await
+    {
+        Ok(value) => Json(value).into_response(),
+        Err(value) => request_error_response(&request, value),
+    }
+}
+
 fn parse_asr_wav(body: &[u8]) -> Option<(crate::audio::PcmF32Mono, u64)> {
     let mut reader = hound::WavReader::new(Cursor::new(body)).ok()?;
     let spec = reader.spec();
@@ -256,6 +294,14 @@ fn request_error_response(
     error_value: ProviderDiagnosticRequestError,
 ) -> Response {
     match error_value {
+        ProviderDiagnosticRequestError::SpeakerManagerRequired => error(
+            request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "speaker_runtime_manager_required",
+        ),
+        ProviderDiagnosticRequestError::RevisionConflict => {
+            error(request, StatusCode::CONFLICT, "revision_conflict")
+        }
         ProviderDiagnosticRequestError::Runtime(runtime_error) => {
             let status = match runtime_error {
                 crate::services::provider_runtime::RuntimeError::Busy => {

@@ -11,6 +11,7 @@ pub enum ProviderType {
     Asr,
     Llm,
     Tts,
+    Speaker,
 }
 
 impl ProviderType {
@@ -20,6 +21,7 @@ impl ProviderType {
             Self::Asr => "asr",
             Self::Llm => "llm",
             Self::Tts => "tts",
+            Self::Speaker => "speaker",
         }
     }
 
@@ -29,6 +31,7 @@ impl ProviderType {
             "asr" => Some(Self::Asr),
             "llm" => Some(Self::Llm),
             "tts" => Some(Self::Tts),
+            "speaker" => Some(Self::Speaker),
             _ => None,
         }
     }

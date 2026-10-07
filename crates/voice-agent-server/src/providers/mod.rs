@@ -16,6 +16,7 @@ mod set;
 
 pub mod asr;
 pub mod llm;
+pub mod speaker;
 pub mod tts;
 pub mod vad;
 pub mod vision;

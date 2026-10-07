@@ -59,6 +59,7 @@ export const en = {
 
   'providerType.vad': 'VAD',
   'providerType.asr': 'ASR',
+  'providerType.speaker': 'Speaker',
   'providerType.llm': 'LLM',
   'providerType.tts': 'TTS',
   'providerType.vision': 'Vision',
@@ -353,6 +354,7 @@ export const en = {
   'providers.testDescription':
     'The scaffold uses provider status as a deterministic mock result until the backend test API is wired.',
   'providers.testHint.vad': 'Test input will be a PCM/audio fixture once the backend test API is connected.',
+  'providers.testHint.speaker': 'PCM16 mono 16 kHz WAV (1–30 seconds). A successful diagnostic does not authorize a speaker.',
   'providers.testHint.asr': 'Test input will be an audio fixture and return a transcript.',
   'providers.testHint.llm': 'Send a short prompt and check the response.',
   'providers.testHint.tts': 'Send text and check the audio output.',
@@ -470,6 +472,7 @@ export const vi: Record<MessageKey, MessageValue> = {
 
   'providerType.vad': 'VAD',
   'providerType.asr': 'ASR',
+  'providerType.speaker': 'Speaker',
   'providerType.llm': 'LLM',
   'providerType.tts': 'TTS',
   'providerType.vision': 'Tầm nhìn',
@@ -764,6 +767,7 @@ export const vi: Record<MessageKey, MessageValue> = {
   'providers.testDescription':
     'Scaffold dùng trạng thái provider làm kết quả mock xác định cho tới khi nối với test API của backend.',
   'providers.testHint.vad': 'Đầu vào kiểm thử sẽ là fixture PCM/audio khi backend test API được nối.',
+  'providers.testHint.speaker': 'PCM16 mono 16 kHz WAV (1–30 seconds). A successful diagnostic does not authorize a speaker.',
   'providers.testHint.asr': 'Đầu vào kiểm thử sẽ là fixture âm thanh và trả về transcript.',
   'providers.testHint.llm': 'Gửi một prompt ngắn và kiểm tra response.',
   'providers.testHint.tts': 'Gửi văn bản và kiểm tra audio output.',

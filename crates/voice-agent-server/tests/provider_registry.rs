@@ -146,6 +146,7 @@ fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapter
             ProviderType::Asr => assert!(registry.asr_factory(descriptor.adapter).is_ok()),
             ProviderType::Llm => assert!(registry.llm_factory(descriptor.adapter).is_ok()),
             ProviderType::Tts => assert!(registry.tts_factory(descriptor.adapter).is_ok()),
+            ProviderType::Speaker => assert!(registry.speaker_factory(descriptor.adapter).is_ok()),
         }
     }
 }

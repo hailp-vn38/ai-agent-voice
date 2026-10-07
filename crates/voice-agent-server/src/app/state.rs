@@ -838,6 +838,7 @@ pub(super) fn loaded_from_provider_set(
                 vision: HashMap::new(),
             },
             runtimes: RuntimeCatalog {
+                speaker: HashMap::new(),
                 vad: HashMap::from([(
                     id.clone(),
                     crate::providers::LoadedVad {

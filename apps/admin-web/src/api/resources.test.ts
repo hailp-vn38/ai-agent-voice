@@ -28,6 +28,17 @@ function expectJsonMutation(init: RequestInit, method: string, body: unknown, re
 }
 
 describe('Admin resource APIs', () => {
+  it('pins Speaker WAV diagnostics to the provider revision without JSON encoding', async () => {
+    const fetch = installFetch()
+    const audio = new Blob(['wav'], { type: 'audio/wav' })
+    await providersApi.testSpeaker('speaker_a', audio, 7)
+    const [url, init] = call(fetch, 0)
+    expect(url).toContain('/providers/speaker_a/test/speaker')
+    expect(init.body).toBe(audio)
+    expect((init.headers as Headers).get('If-Match')).toBe('"7"')
+    expect((init.headers as Headers).get('Content-Type')).toBe('audio/wav')
+  })
+
   afterEach(() => vi.unstubAllGlobals())
 
   it('maps system probes to their text and status endpoints', async () => {

@@ -125,6 +125,8 @@ function toProvider(provider: AdminProvider): ProviderInstance {
     description: providerConfig(provider, 'description'),
     status: providerStatus(provider),
     endpoint: providerConfig(provider, 'endpoint') || undefined,
+    runtime: provider.runtime,
+    desiredRevision: provider.revision,
   }
 }
 

@@ -2,6 +2,7 @@
 import { CheckCircle2, FlaskConical, Pencil, XCircle } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 
+import { providersApi } from '@/api/providers'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ProviderUsageList from '@/components/providers/ProviderUsageList.vue'
 import { Button } from '@/components/ui/button'
@@ -34,6 +35,7 @@ const testSection = ref<HTMLElement>()
 const testHintKeys: Record<ProviderType, MessageKey> = {
   vad: 'providers.testHint.vad',
   asr: 'providers.testHint.asr',
+  speaker: 'providers.testHint.speaker',
   llm: 'providers.testHint.llm',
   tts: 'providers.testHint.tts',
   vision: 'providers.testHint.vision',
@@ -66,7 +68,27 @@ watch(
   },
 )
 
-function runTest() {
+const speakerAudio = ref<File>()
+const speakerResult = ref('')
+const speakerBusy = ref(false)
+const speakerRuntime = computed(() => props.provider?.runtime)
+function chooseSpeakerAudio(event: Event) { speakerAudio.value = (event.target as HTMLInputElement).files?.[0] }
+async function prepareSpeaker() {
+  if (!props.provider) return
+  speakerBusy.value = true
+  try { const result = await providersApi.prepare(props.provider.id); speakerResult.value = JSON.stringify(result, null, 2) }
+  catch (error) { speakerResult.value = error instanceof Error ? error.message : 'Preparation failed' }
+  finally { speakerBusy.value = false }
+}
+async function runTest() {
+  if (props.provider?.type === 'speaker') {
+    if (!speakerAudio.value) return
+    speakerBusy.value = true
+    try { speakerResult.value = JSON.stringify(await providersApi.testSpeaker(props.provider.id, speakerAudio.value, props.provider.desiredRevision ?? 1), null, 2); testResult.value = 'pass' }
+    catch (error) { speakerResult.value = error instanceof Error ? error.message : 'Diagnostic failed'; testResult.value = 'fail' }
+    finally { speakerBusy.value = false }
+    return
+  }
   testResult.value = props.provider?.status === 'ready' ? 'pass' : 'fail'
 }
 </script>
@@ -147,9 +169,15 @@ function runTest() {
           </CardHeader>
           <CardContent class="space-y-3">
             <p class="text-sm text-muted-foreground">{{ testHint }}</p>
-            <textarea v-model="testInput" class="admin-textarea min-h-24" />
+            <template v-if="provider.type === 'speaker'">
+              <p>Desired revision: {{ provider.desiredRevision ?? 'unavailable' }} · Runtime: {{ speakerRuntime?.desired_state ?? 'unavailable' }}</p>
+              <Button size="sm" variant="outline" :disabled="speakerBusy" @click="prepareSpeaker">Prepare</Button>
+              <label class="block">WAV audio <input type="file" accept="audio/wav,.wav" @change="chooseSpeakerAudio" /></label>
+              <pre v-if="speakerResult" class="whitespace-pre-wrap text-xs" aria-live="polite">{{ speakerResult }}</pre>
+            </template>
+            <textarea v-else v-model="testInput" class="admin-textarea min-h-24" />
             <div class="flex flex-wrap items-center gap-3">
-              <Button size="sm" @click="runTest">
+              <Button size="sm" :disabled="speakerBusy || (provider.type === 'speaker' && !speakerAudio)" @click="runTest">
                 <FlaskConical class="size-4" />
                 {{ t('providers.runTest') }}
               </Button>

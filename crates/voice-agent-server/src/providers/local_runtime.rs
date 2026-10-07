@@ -208,7 +208,8 @@ static GIPFORMER_SHERPA_OFFLINE_PLANNER: GipformerSherpaOfflinePlanner =
     GipformerSherpaOfflinePlanner;
 static ZEROTTS_ONNX_PLANNER: ZeroTtsOnnxPlanner = ZeroTtsOnnxPlanner;
 static KOKORO_VI_ONNX_PLANNER: KokoroViOnnxPlanner = KokoroViOnnxPlanner;
-static LOCAL_RUNTIME_ADAPTERS: [&dyn LocalRuntimeAdapter; 5] = [
+static LOCAL_RUNTIME_ADAPTERS: [&dyn LocalRuntimeAdapter; 6] = [
+    &CAMPPLUS_PLANNER,
     &SILERO_ONNX_PLANNER,
     &ZIPFORMER_SHERPA_PLANNER,
     &GIPFORMER_SHERPA_OFFLINE_PLANNER,
@@ -247,5 +248,29 @@ pub fn configured_physical_replicas(
     match plan.physical_capacity() {
         crate::services::provider_runtime::PhysicalCapacity::FollowsLogicalCapacity => None,
         crate::services::provider_runtime::PhysicalCapacity::Replicas(replicas) => Some(replicas),
+    }
+}
+
+struct CampPlusPlanner;
+static CAMPPLUS_PLANNER: CampPlusPlanner = CampPlusPlanner;
+impl LocalRuntimeAdapter for CampPlusPlanner {
+    fn adapter_id(&self) -> &'static str {
+        "campplus_sherpa"
+    }
+    fn physical_plan(
+        &self,
+        config: serde_json::Value,
+    ) -> Result<LocalRuntimePlan, ProviderLoadError> {
+        if !config.is_object() {
+            return Err(ProviderLoadError::Configuration(
+                "invalid speaker config".into(),
+            ));
+        }
+        Ok(LocalRuntimePlan::onnx_with_replicas(
+            self.adapter_id(),
+            "campplus_zh_en_advanced",
+            serde_json::json!({"preprocessing":"pcm16-mono16k-v1"}),
+            1,
+        ))
     }
 }

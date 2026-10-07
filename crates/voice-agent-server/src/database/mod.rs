@@ -1,6 +1,6 @@
 use crate::config::DatabaseConfig;
 use sqlx::{
-    SqlitePool,
+    Connection, SqliteConnection, SqlitePool,
     migrate::{MigrateError, Migrator},
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
@@ -104,6 +104,7 @@ impl Database {
                 .await
                 .map_err(|_| DatabaseError::Unavailable)?;
         }
+        let migration_options = options.clone().foreign_keys(false);
         let pool = SqlitePoolOptions::new()
             .max_connections(config.max_connections)
             .connect_with(options)
@@ -112,7 +113,17 @@ impl Database {
 
         ensure_schema_not_newer_than_binary(&pool).await?;
         if config.migrate_on_start {
-            MIGRATOR.run(&pool).await.map_err(map_migration_error)?;
+            // SQLite cannot toggle foreign_keys inside SQLx's migration transaction. A scoped
+            // startup-only connection permits atomic table rebuilds; the application pool keeps
+            // foreign_keys enabled, and rebuild migrations check all references before commit.
+            let mut connection = SqliteConnection::connect_with(&migration_options)
+                .await
+                .map_err(map_sqlx_error)?;
+            MIGRATOR
+                .run(&mut connection)
+                .await
+                .map_err(map_migration_error)?;
+            connection.close().await.map_err(map_sqlx_error)?;
         } else {
             ensure_schema_is_current(&pool).await?;
         }

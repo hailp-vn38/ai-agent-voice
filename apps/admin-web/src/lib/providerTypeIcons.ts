@@ -6,6 +6,7 @@ import type { ProviderType } from '@/domain/admin'
 export const providerTypeIcons: Record<ProviderType, Component> = {
   vad: Waves,
   asr: Mic,
+  speaker: Mic,
   llm: Brain,
   tts: Volume2,
   vision: Eye,

@@ -88,6 +88,7 @@ impl ProviderAdapterRegistry {
 }
 
 static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
+    super::speaker::descriptor::REGISTRATION,
     super::vad::silero::descriptor::REGISTRATION,
     super::asr::zipformer::descriptor::REGISTRATION,
     super::asr::gipformer::descriptor::REGISTRATION,

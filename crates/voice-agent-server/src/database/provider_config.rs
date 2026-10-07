@@ -29,6 +29,10 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
     }
     match adapter {
         "openai" => canonical::<OpenAi, _>(&value, OpenAi::valid),
+        "campplus_sherpa" => canonical::<crate::config::CampPlusConfig, _>(
+            &value,
+            crate::config::CampPlusConfig::valid,
+        ),
         "silero_onnx" => canonical::<Silero, _>(&value, Silero::valid),
         "zipformer_sherpa" => canonical::<Zipformer, _>(&value, Zipformer::valid),
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),

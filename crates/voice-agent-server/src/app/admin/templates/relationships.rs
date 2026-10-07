@@ -165,7 +165,10 @@ pub(in crate::app::admin) async fn unlink_template_provider(
     Path((key, provider_type)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    if !matches!(provider_type.as_str(), "vad" | "asr" | "llm" | "tts") {
+    if !matches!(
+        provider_type.as_str(),
+        "vad" | "asr" | "llm" | "tts" | "speaker"
+    ) {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     }
     let expected = match expected(request.headers()) {

@@ -1,4 +1,4 @@
-export const providerTypes = ['vad', 'asr', 'llm', 'tts', 'vision'] as const
+export const providerTypes = ['vad', 'asr', 'llm', 'tts', 'speaker', 'vision'] as const
 export type ProviderType = (typeof providerTypes)[number]
 
 export type ProviderStatus = 'ready' | 'disabled' | 'error'
@@ -13,6 +13,8 @@ export interface ProviderInstance {
   model: string
   description: string
   status: ProviderStatus
+  desiredRevision?: number
+  runtime?: import('@/api/types/providers').ProviderRuntime
   endpoint?: string
 }
 

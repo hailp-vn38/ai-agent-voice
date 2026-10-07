@@ -60,6 +60,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
                 .patch(patch_provider)
                 .delete(delete_provider),
         )
+        .route(
+            "/providers/{key}/test/speaker",
+            axum::routing::post(provider_tests::test_speaker_provider),
+        )
         .route("/providers/{key}/templates", get(list_provider_templates))
         .route(
             "/providers/{key}/prepare",

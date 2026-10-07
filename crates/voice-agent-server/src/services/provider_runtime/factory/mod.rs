@@ -126,6 +126,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
         // qualified. DB configuration cannot widen a model or thread envelope.
         if self.local_runtime_plan(snapshot)?.is_some() {
             let allowed = match snapshot.kind.as_str() {
+                "speaker" => snapshot.adapter == "campplus_sherpa",
                 "vad" => self
                     .config
                     .providers
@@ -162,6 +163,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
     }
     fn logical_capacity(&self, snapshot: &DesiredProvider) -> Result<usize, RuntimeError> {
         let capacity = match snapshot.kind.as_str() {
+            "speaker" => 1,
             "vad" => self.config.workers.vad.max_workers,
             "asr" => self.config.workers.asr.max_workers,
             "llm" => self.config.limits.llm_concurrency,
@@ -182,6 +184,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
     }
     fn global_capacity(&self, snapshot: &DesiredProvider) -> Result<Option<usize>, RuntimeError> {
         let capacity = match snapshot.kind.as_str() {
+            "speaker" => 1,
             "vad" => self.config.workers.vad.max_workers,
             "asr" => self.config.workers.asr.max_workers,
             "llm" => self.config.limits.llm_concurrency,
@@ -257,6 +260,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             .flat_map(|r| r.health_flags())
             .chain(catalog.vad.values().flat_map(|r| r.runtime.health_flags()))
             .chain(catalog.tts.values().flat_map(|r| r.health_flags()))
+            .chain(catalog.speaker.values().flat_map(|r| r.health_flags()))
             .collect();
         self.builds.fetch_add(1, Ordering::Relaxed);
         tracing::info!(
@@ -331,6 +335,12 @@ impl RuntimeResource for OwnedRuntimeResource {
         let resident = self.catalog.lock().expect("runtime resource poisoned");
         let resident = resident.as_ref()?;
         let mut view = RuntimeCatalog::default();
+        if let Some(runtime) = resident.speaker.values().next() {
+            view.speaker.insert(
+                snapshot.key.clone(),
+                Arc::new(runtime.logical_view(quota.clone())),
+            );
+        }
         if let Some(runtime) = resident.asr.values().next() {
             view.asr.insert(
                 snapshot.key.clone(),

@@ -1229,6 +1229,35 @@
               "response": []
             },
             {
+              "name": "Test Speaker Provider",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "audio/wav"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{admin_token}}"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{provider_revision}}\""
+                  }
+                ],
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": ""
+                  }
+                },
+                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/speaker",
+                "description": "Managed exact desired revision. Upload PCM16 mono16kHz WAV,1–12 seconds. Returns quality and extractor provenance, never vectors; success does not authorize a Speaker."
+              },
+              "response": []
+            },
+            {
               "name": "Test ASR provider",
               "request": {
                 "method": "POST",

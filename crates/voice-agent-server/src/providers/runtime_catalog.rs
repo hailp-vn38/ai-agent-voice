@@ -35,6 +35,7 @@ impl TryFrom<ProviderType> for DiagnosticRuntimeKind {
             ProviderType::Asr => Ok(Self::Asr),
             ProviderType::Llm => Ok(Self::Llm),
             ProviderType::Tts => Ok(Self::Tts),
+            ProviderType::Speaker => Err(()),
         }
     }
 }
@@ -81,10 +82,20 @@ pub struct RuntimeCatalog {
     pub(crate) asr: HashMap<String, Arc<AsrWorkerRuntime>>,
     pub(crate) llm: HashMap<String, Arc<LlmRuntime>>,
     pub(crate) tts: HashMap<String, Arc<TtsWorkerRuntime>>,
+    pub(crate) speaker: HashMap<String, Arc<super::speaker::SpeakerRuntime>>,
     pub(crate) vision: HashMap<String, Arc<VisionRuntime>>,
 }
 
 impl RuntimeCatalog {
+    pub fn single_speaker(key: String, runtime: Arc<super::speaker::SpeakerRuntime>) -> Self {
+        let mut catalog = Self::default();
+        catalog.speaker.insert(key, runtime);
+        catalog
+    }
+    pub fn speaker(&self, key: &str) -> Option<Arc<super::speaker::SpeakerRuntime>> {
+        self.speaker.get(key).cloned()
+    }
+
     /// Publishes one materializer-owned slot under its immutable provider key.
     /// The caller must retain the resource lease alongside every resolved handle.
     pub fn single_provider(
@@ -120,6 +131,9 @@ impl RuntimeCatalog {
     /// owns its native exit acknowledgement; no Arc reference-count heuristic is used.
     pub(crate) fn shutdown_acknowledged(&self) -> bool {
         let mut acknowledged = self.vision.is_empty();
+        for runtime in self.speaker.values() {
+            acknowledged &= runtime.shutdown_acknowledged();
+        }
         for runtime in self.vad.values() {
             acknowledged &= runtime.runtime.shutdown_acknowledged();
         }

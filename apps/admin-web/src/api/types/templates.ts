@@ -1,6 +1,6 @@
 import type { Page, PageQuery } from './common'
 
-export type TemplateProviderType = 'vad' | 'asr' | 'llm' | 'tts'
+export type TemplateProviderType = 'vad' | 'asr' | 'llm' | 'tts' | 'speaker'
 
 export interface AdminTemplate {
   key: string

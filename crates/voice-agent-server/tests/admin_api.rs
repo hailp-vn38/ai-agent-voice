@@ -2694,3 +2694,352 @@ async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
     assert_eq!(find(&after_second, "loud")["is_default"], false);
     task.abort();
 }
+
+#[tokio::test]
+async fn speaker_provider_is_created_cold_without_exposing_execution_configuration() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let key = create_provider(&client, &format!("{base}/api/admin/providers"), serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}})).await;
+    let response = client
+        .get(format!("{base}/api/admin/providers/{key}"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "speaker");
+    assert!(body["key"].as_str().unwrap().starts_with("speaker_"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(body["config_json"].as_str().unwrap()).unwrap()["min_speech_ms"],
+        2000
+    );
+    assert_eq!(body["runtime_status"], "not_loaded");
+    let diagnostic = client
+        .post(format!("{base}/api/admin/providers/{key}/test/speaker"))
+        .bearer_auth("admin-test-token")
+        .header("If-Match", "\"1\"")
+        .header("Content-Type", "audio/wav")
+        .body(wav_pcm16_mono(16000, 16000))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(diagnostic.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        diagnostic.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "speaker_runtime_manager_required"
+    );
+    for config in [
+        serde_json::json!({"model":"arbitrary"}),
+        serde_json::json!({"num_threads":99}),
+        serde_json::json!({"max_window_ms":6001}),
+        serde_json::json!({"min_speech_ms":5000,"target_speech_ms":1000}),
+    ] {
+        let invalid=client.post(format!("{base}/api/admin/providers")).bearer_auth("admin-test-token").json(&serde_json::json!({"name":"Invalid","type":"speaker","adapter":"campplus_sherpa","config_json":config})).send().await.unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    }
+    task.abort();
+}
+
+struct QualificationSpeaker {
+    slow: bool,
+    calls: usize,
+}
+impl voice_agent_server::providers::speaker::SpeakerProvider for QualificationSpeaker {
+    fn dimension(&self) -> usize {
+        3
+    }
+    fn extract(
+        &mut self,
+        _: &PcmF32Mono,
+    ) -> Result<Vec<f32>, voice_agent_server::providers::speaker::SpeakerError> {
+        if self.slow && self.calls > 0 {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        self.calls += 1;
+        Ok(vec![1.0, 2.0, 3.0])
+    }
+}
+struct QualificationSpeakerResource(Arc<voice_agent_server::providers::speaker::SpeakerRuntime>);
+impl voice_agent_server::services::provider_runtime::RuntimeResource
+    for QualificationSpeakerResource
+{
+    fn unload(&self) -> bool {
+        self.0.shutdown_acknowledged()
+    }
+    fn runtimes_for(
+        &self,
+        snapshot: &voice_agent_server::database::DesiredProvider,
+        quota: voice_agent_server::workers::ProviderRuntimeAdmission,
+    ) -> Option<voice_agent_server::providers::RuntimeCatalog> {
+        Some(
+            voice_agent_server::providers::RuntimeCatalog::single_speaker(
+                snapshot.key.clone(),
+                Arc::new(self.0.logical_view(quota)),
+            ),
+        )
+    }
+}
+struct QualificationSpeakerFactory {
+    slow: bool,
+}
+impl voice_agent_server::services::provider_runtime::RuntimeMaterializer
+    for QualificationSpeakerFactory
+{
+    fn estimated_peak_bytes(
+        &self,
+        _: &voice_agent_server::database::DesiredProvider,
+    ) -> Result<u64, voice_agent_server::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn logical_capacity(
+        &self,
+        _: &voice_agent_server::database::DesiredProvider,
+    ) -> Result<usize, voice_agent_server::services::provider_runtime::RuntimeError> {
+        Ok(1)
+    }
+    fn build(
+        &self,
+        _snapshot: &voice_agent_server::database::DesiredProvider,
+        _: Option<voice_agent_server::services::provider_runtime::PreparedRuntime>,
+        quota: voice_agent_server::workers::ProviderRuntimeAdmission,
+    ) -> Result<
+        Arc<dyn voice_agent_server::services::provider_runtime::RuntimeResource>,
+        voice_agent_server::services::provider_runtime::RuntimeError,
+    > {
+        Ok(Arc::new(QualificationSpeakerResource(Arc::new(
+            voice_agent_server::providers::speaker::SpeakerRuntime::new(
+                Box::new(QualificationSpeaker {
+                    slow: self.slow,
+                    calls: 0,
+                }),
+                quota,
+            )
+            .unwrap(),
+        ))))
+    }
+}
+
+#[tokio::test]
+async fn speaker_diagnostic_is_managed_exact_bounded_and_never_returns_embeddings() {
+    use voice_agent_server::services::{
+        provider_diagnostic::{ProviderDiagnosticLimiter, ProviderDiagnosticService},
+        provider_runtime::{ProviderRuntimeManager, RuntimeLimits},
+    };
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind="127.0.0.1:0"
+public_ws_url="ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad="test"
+asr="test"
+llm="test"
+tts="test"
+[database]
+url="{}"
+[api]
+enabled=true
+admin_token="admin-test-token"
+"#,
+        database_url()
+    ))
+    .unwrap();
+    let database = Database::connect(&config.database).await.unwrap();
+    let mut state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        Some(database),
+    );
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 2,
+            max_waiters: 8,
+            max_resident_bytes: 4,
+            max_resources: 4,
+            max_version_entries: 8,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 100,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(QualificationSpeakerFactory { slow: false }),
+        voice_agent_server::lifecycle::AdmissionGate::open(),
+    )
+    .unwrap();
+    state.provider_diagnostics = Arc::new(
+        ProviderDiagnosticService::new(
+            Arc::new(Default::default()),
+            None,
+            state.database.clone(),
+            ProviderDiagnosticLimiter::new(1),
+            Duration::from_secs(1),
+        )
+        .with_runtime_manager(manager.clone()),
+    );
+    state.provider_runtime_manager = Some(manager);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state))
+            .await
+            .unwrap()
+    });
+    let client = Client::new();
+    let key=create_provider(&client,&format!("{base}/api/admin/providers"),serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}})).await;
+    let provider = format!("{base}/api/admin/providers/{key}");
+    let cold: serde_json::Value = client
+        .get(&provider)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cold["runtime"]["desired_state"], "cold");
+    let mut wav = wav_pcm16_mono(16_000, 16_000);
+    for sample in wav[44..].chunks_exact_mut(2) {
+        sample.copy_from_slice(&2000_i16.to_le_bytes())
+    }
+    let diagnostic = format!("{provider}/test/speaker");
+    let result = client
+        .post(&diagnostic)
+        .header("If-Match", "\"1\"")
+        .bearer_auth("admin-test-token")
+        .header("Content-Type", "audio/wav")
+        .body(wav.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(result.status(), StatusCode::OK);
+    let result: serde_json::Value = result.json().await.unwrap();
+    assert_eq!(result["provenance"]["dimension"], 3);
+    assert_eq!(result["runtime"]["tested_revision"], 1);
+    assert!(
+        result["provenance"]["embedding_space_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("speaker:")
+    );
+    assert!(!result.to_string().contains("embedding\":"));
+    assert_eq!(
+        client
+            .post(&diagnostic)
+            .header("If-Match", "\"1\"")
+            .bearer_auth("admin-test-token")
+            .header("Content-Type", "application/json")
+            .body(wav.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        client
+            .post(&diagnostic)
+            .header("If-Match", "\"1\"")
+            .bearer_auth("admin-test-token")
+            .header("Content-Type", "audio/wav")
+            .body(wav_pcm16_mono(8000, 8000))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        client
+            .post(&diagnostic)
+            .header("If-Match", "\"1\"")
+            .bearer_auth("admin-test-token")
+            .header("Content-Type", "audio/wav")
+            .body(vec![0u8; 524_289])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(
+        client
+            .patch(&provider)
+            .bearer_auth("admin-test-token")
+            .header("If-Match", "\"1\"")
+            .json(&serde_json::json!({"name":"Revised"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let result: serde_json::Value = client
+        .post(&diagnostic)
+        .header("If-Match", "\"2\"")
+        .bearer_auth("admin-test-token")
+        .header("Content-Type", "audio/wav")
+        .body(wav)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(result["runtime"]["tested_revision"], 2);
+    task.abort();
+}
+
+#[tokio::test]
+async fn speaker_waiter_timeout_retains_exact_lease_and_capacity_until_native_completion() {
+    use voice_agent_server::{
+        database::DesiredProvider,
+        providers::speaker::SpeakerError,
+        services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits},
+    };
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 2,
+            max_waiters: 8,
+            max_resident_bytes: 4,
+            max_resources: 4,
+            max_version_entries: 8,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 100,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(QualificationSpeakerFactory { slow: true }),
+        voice_agent_server::lifecycle::AdmissionGate::open(),
+    )
+    .unwrap();
+    let snapshot = DesiredProvider {
+        id: 1,
+        key: "speaker_test".into(),
+        kind: "speaker".into(),
+        adapter: "campplus_sherpa".into(),
+        config_json: "{}".into(),
+        secret_ref: None,
+        revision: 1,
+    };
+    let lease = manager.acquire(snapshot.clone()).await.unwrap();
+    let runtime = lease.runtimes().unwrap().speaker(&snapshot.key).unwrap();
+    let pcm = PcmF32Mono::new(vec![0.1; 16000], 16000);
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(20),
+            runtime.extract(pcm.clone(), lease)
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(manager.accounting().active_leases, 1);
+    let second = manager.acquire(snapshot).await.unwrap();
+    assert!(matches!(
+        runtime.extract(pcm, second).await,
+        Err(SpeakerError::Busy)
+    ));
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(manager.accounting().active_leases, 0);
+    assert_eq!(manager.accounting().physical_inference_usage, 0);
+}

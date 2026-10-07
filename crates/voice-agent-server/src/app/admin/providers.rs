@@ -117,8 +117,8 @@ async fn provider_by(pool: &SqlitePool, key: &str) -> Result<Provider, sqlx::Err
 /// The key never derives from the display name: names repeat, get renamed and carry no slug
 /// rules, so a random suffix keeps every create collision-free without a retry loop. The result
 /// satisfies the `valid_key` rules a client-supplied key once had to, so existing rows, URLs and
-/// template bindings keep working unchanged. `kind` must already be one of the four provider
-/// types, which is what keeps the prefix lowercase.
+/// template bindings keep working unchanged. `kind` must already be a compiled provider
+/// type, which is what keeps the prefix lowercase.
 fn generate_provider_key(kind: &str) -> String {
     format!("{kind}_{}", Uuid::new_v4().simple())
 }
@@ -128,7 +128,10 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
         Err(e) => return e,
     };
     if !valid_text(&body.name, 128, false)
-        || !matches!(body.kind.as_str(), "vad" | "asr" | "llm" | "tts")
+        || !matches!(
+            body.kind.as_str(),
+            "vad" | "asr" | "llm" | "tts" | "speaker"
+        )
         || !adapter_matches_kind(&body.kind, &body.adapter)
         || body
             .secret_ref
@@ -136,6 +139,9 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
             .is_some_and(|v| !valid_secret_ref(v))
     {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    if body.kind == "speaker" && body.secret_ref.is_some() {
+        return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid");
     }
     let provider_key = generate_provider_key(&body.kind);
     let config = match provider_config::validate(&body.adapter, &body.config_json) {
@@ -277,7 +283,7 @@ impl ProviderFilters {
         let kind = query.kind.clone();
         if kind
             .as_deref()
-            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts"))
+            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts" | "speaker"))
         {
             return Err(());
         }
@@ -344,7 +350,7 @@ async fn provider_facets(
     builder.push(" GROUP BY type");
     let counts: Vec<(String, i64)> = builder.build_query_as().fetch_all(pool).await?;
     let mut facets = serde_json::Map::new();
-    for kind in ["vad", "asr", "llm", "tts"] {
+    for kind in ["vad", "asr", "llm", "tts", "speaker"] {
         facets.insert(
             kind.into(),
             Value::from(
@@ -497,6 +503,9 @@ pub(super) async fn patch_provider(
         Some(None) => None,
         None => old_secret,
     };
+    if kind == "speaker" && secret.is_some() {
+        return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid");
+    }
     let enabled = match body.enabled.value() {
         Some(Some(v)) => i64::from(v),
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),

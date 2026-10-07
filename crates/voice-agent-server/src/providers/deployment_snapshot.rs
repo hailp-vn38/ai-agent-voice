@@ -9,6 +9,14 @@ pub fn deployment_provider_snapshot(
     key: &str,
 ) -> Result<DesiredProvider, DatabaseRuntimeFailure> {
     let value = match kind {
+        "speaker" => serde_json::to_value(
+            config
+                .providers
+                .speaker
+                .instances
+                .get(key)
+                .ok_or(DatabaseRuntimeFailure::Configuration)?,
+        ),
         "vad" => serde_json::to_value(
             config
                 .providers

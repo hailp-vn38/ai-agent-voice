@@ -273,6 +273,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             vision: vision_providers,
         },
         runtimes: RuntimeCatalog {
+            speaker: HashMap::new(),
             vad: vad_runtimes,
             asr: asr_runtimes,
             llm: llm_runtimes,

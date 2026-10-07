@@ -358,7 +358,10 @@ pub(super) async fn bind_template_provider(
         Ok(v) => v,
         Err(e) => return e,
     };
-    if !matches!(provider_type.as_str(), "vad" | "asr" | "llm" | "tts") {
+    if !matches!(
+        provider_type.as_str(),
+        "vad" | "asr" | "llm" | "tts" | "speaker"
+    ) {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     }
     let expected = match expected(request.headers()) {
@@ -504,7 +507,7 @@ pub(super) async fn assign_template(
     // incomplete Template would just trade a silent 503 for a differently-silent 503, so an
     // incomplete first assignment stays an ordinary candidate. A failed probe promotes anyway,
     // because the invariant matters more than the optimistic read.
-    let complete: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND p.enabled=1 AND b.provider_type=p.type")
+    let complete: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND p.enabled=1 AND b.provider_type=p.type AND b.provider_type IN ('vad','asr','llm','tts')")
         .bind(template.id).fetch_one(&mut *tx).await.unwrap_or(4);
     let promote: i64 = if complete == 4 {
         sqlx::query_scalar::<_, i64>("SELECT NOT EXISTS(SELECT 1 FROM agent_template_assignments WHERE agent_id=? AND enabled=1 AND is_default=1)")

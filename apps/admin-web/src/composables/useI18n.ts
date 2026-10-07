@@ -24,6 +24,7 @@ const catalogs: Record<Locale, Record<MessageKey, MessageValue>> = { en, vi }
 const providerTypeKeys: Record<ProviderType, MessageKey> = {
   vad: 'providerType.vad',
   asr: 'providerType.asr',
+  speaker: 'providerType.speaker',
   llm: 'providerType.llm',
   tts: 'providerType.tts',
   vision: 'providerType.vision',

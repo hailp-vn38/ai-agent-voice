@@ -105,3 +105,6 @@ impl WorkerRuntimeConfig {
         Ok(())
     }
 }
+
+mod speaker;
+pub use speaker::SpeakerRuntime;

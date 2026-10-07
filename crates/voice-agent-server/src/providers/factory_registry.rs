@@ -92,26 +92,41 @@ pub struct ProviderRegistry {
 
 impl ProviderRegistry {
     pub fn admin_adapters(&self) -> impl Iterator<Item = (ProviderType, &'static str)> + '_ {
-        self.vad
-            .iter()
-            .map(|factory| (ProviderType::Vad, factory.adapter()))
-            .chain(
-                self.asr
-                    .iter()
-                    .map(|factory| (ProviderType::Asr, factory.adapter())),
-            )
-            .chain(
-                self.llm
-                    .iter()
-                    .map(|factory| (ProviderType::Llm, factory.adapter())),
-            )
-            .chain(
-                self.tts
-                    .iter()
-                    .map(|factory| (ProviderType::Tts, factory.adapter())),
-            )
+        std::iter::once((ProviderType::Speaker, "campplus_sherpa")).chain(
+            self.vad
+                .iter()
+                .map(|factory| (ProviderType::Vad, factory.adapter()))
+                .chain(
+                    self.asr
+                        .iter()
+                        .map(|factory| (ProviderType::Asr, factory.adapter())),
+                )
+                .chain(
+                    self.llm
+                        .iter()
+                        .map(|factory| (ProviderType::Llm, factory.adapter())),
+                )
+                .chain(
+                    self.tts
+                        .iter()
+                        .map(|factory| (ProviderType::Tts, factory.adapter())),
+                ),
+        )
     }
 
+    pub fn speaker_factory(
+        &self,
+        adapter: &str,
+    ) -> Result<&'static dyn SpeakerFactory, ProviderLoadError> {
+        if adapter == "campplus_sherpa" {
+            Ok(&CAMPPLUS_FACTORY)
+        } else {
+            Err(ProviderLoadError::UnsupportedAdapter {
+                kind: "Speaker",
+                adapter: adapter.into(),
+            })
+        }
+    }
     pub fn vad_factory(&self, adapter: &str) -> Result<&'static dyn VadFactory, ProviderLoadError> {
         self.vad
             .iter()
@@ -602,6 +617,7 @@ fn resolve<T>(assets: Result<T, AssetError>) -> Result<T, ProviderLoadError> {
 /// Logical requirements come from the compiled adapter contract, never DB internal fields.
 pub fn local_model_identity(adapter: &str) -> Option<&'static str> {
     match adapter {
+        "campplus_sherpa" => Some("campplus_zh_en_advanced"),
         "silero_onnx" => Some("silero_vad_v5"),
         "zipformer_sherpa" => Some("zipformer_vi_streaming"),
         "gipformer_sherpa_offline" => Some("gipformer15_vi_int8"),
@@ -631,4 +647,27 @@ pub(crate) fn effective_local_config(
         object.insert("timeout_ms".into(), runtime.chillaudio.timeout_ms.into());
     }
     Ok(value)
+}
+
+pub trait SpeakerFactory: Send + Sync {
+    fn adapter(&self) -> &'static str;
+    fn build(
+        &self,
+        runtime: &RuntimeConfig,
+    ) -> Result<Box<dyn super::speaker::SpeakerProvider>, ProviderLoadError>;
+}
+struct CampPlusFactory;
+static CAMPPLUS_FACTORY: CampPlusFactory = CampPlusFactory;
+impl SpeakerFactory for CampPlusFactory {
+    fn adapter(&self) -> &'static str {
+        "campplus_sherpa"
+    }
+    fn build(
+        &self,
+        runtime: &RuntimeConfig,
+    ) -> Result<Box<dyn super::speaker::SpeakerProvider>, ProviderLoadError> {
+        validate_threads(self.adapter(), runtime)?;
+        super::speaker::build(runtime.onnx.threads_for(self.adapter()))
+            .map_err(|_| ProviderLoadError::Initialize("CAM++ Speaker"))
+    }
 }
