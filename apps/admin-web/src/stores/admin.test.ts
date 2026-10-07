@@ -21,11 +21,17 @@ describe('admin store', () => {
     agentsApi.list.mockResolvedValue({ items: [{ key: 'agent', name: 'Agent', description: null, enabled: true, revision: 1 }] })
     agentsApi.templates
       .mockResolvedValueOnce({
-        items: [{ key: 'first', name: 'First', language: 'vi-VN', enabled: true, is_default: true }],
+        items: [
+          { key: 'first', name: 'First', language: 'vi-VN', enabled: true, is_default: true },
+          { key: 'next', name: 'Next', language: 'vi-VN', enabled: true, is_default: false },
+        ],
         revision: 1,
       })
       .mockResolvedValueOnce({
-        items: [{ key: 'next', name: 'Next', language: 'vi-VN', enabled: true, is_default: true }],
+        items: [
+          { key: 'first', name: 'First', language: 'vi-VN', enabled: true, is_default: false },
+          { key: 'next', name: 'Next', language: 'vi-VN', enabled: true, is_default: true },
+        ],
         revision: 2,
       })
     templatesApi.list.mockResolvedValue({
