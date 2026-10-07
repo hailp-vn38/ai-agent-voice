@@ -119,10 +119,14 @@ pub(super) async fn handler(
     let session_id = Uuid::new_v4().to_string();
     let transcript = state.transcript_capture(&session_id, &profile);
     let admission_gate = Arc::clone(state.admission_gate());
-    // Ticket 10: resolve Observe before `state` is moved into the upgrade closure. Best-effort:
-    // `None` (policy off, no candidate, any error) leaves the session entirely speaker-free.
+    // Ticket 10: resolve Observe before `state` is moved into the upgrade closure. A `required`
+    // policy that cannot build its gate fails the upgrade closed; anything else leaves the
+    // session entirely speaker-free.
     let speaker_observe =
-        resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await;
+        match resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await {
+            Ok(observe) => observe,
+            Err(response) => return response,
+        };
     let active_turn_limiter = state.active_turn_limiter;
     let pilot_admission = state.pilot_admission;
     let stopping = state.lifecycle.stopping().clone();
@@ -781,11 +785,19 @@ async fn resolve_speaker_observe(
     profile: &crate::session::EffectiveSessionProfile,
     resolved: &crate::providers::ResolvedAgentRuntimes,
     config: &AppConfig,
-) -> Option<Arc<SpeakerObserve>> {
-    let speaker = resolved.speaker.as_ref()?.clone();
-    let template_id = profile.source.template_id()?;
-    let database = state.database.as_ref()?;
-    let lease = profile.switch_catalog.lease_for_speaker(&speaker)?;
+) -> Result<Option<Arc<SpeakerObserve>>, Response> {
+    let Some(speaker) = resolved.speaker.as_ref().cloned() else {
+        return Ok(None);
+    };
+    let Some(template_id) = profile.source.template_id() else {
+        return Ok(None);
+    };
+    let Some(database) = state.database.as_ref() else {
+        return Ok(None);
+    };
+    let Some(lease) = profile.switch_catalog.lease_for_speaker(&speaker) else {
+        return Ok(None);
+    };
     let embedding_space = speaker.embedding_space_id().to_owned();
     let plan = match crate::session::resolve_observe_plan(
         database.pool(),
@@ -795,16 +807,20 @@ async fn resolve_speaker_observe(
     )
     .await
     {
-        Ok(Some(plan)) => plan,
-        // `None` means the policy is off/observe, or a `required` Agent has no exact candidate set.
-        // The policy PUT only enables `required` on qualified calibration, and unlinking a speaker
-        // invalidates the session (ticket 09), so the empty-candidate case is not reachable through
-        // the admin API.
-        // ponytail: fail-closed here if direct DB edits can strand a `required` Agent with no gate.
-        Ok(None) => return None,
+        Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
+        Ok(crate::session::ObserveResolution::Off) => return Ok(None),
+        // A `required` Agent with no resolvable candidate set must not admit ungated.
+        Ok(crate::session::ObserveResolution::RequiredUnavailable) => {
+            warn!("required speaker policy has no candidate set; refusing admission");
+            return Err((
+                StatusCode::FORBIDDEN,
+                "speaker required but no candidate set is available",
+            )
+                .into_response());
+        }
         Err(error) => {
             warn!(%error, "speaker observe plan resolution failed");
-            return None;
+            return Ok(None);
         }
     };
     let enrollment = &config.speaker_recognition.enrollment;
@@ -814,5 +830,7 @@ async fn resolve_speaker_observe(
         min_speech_ms: enrollment.min_speech_ms,
         max_window_ms: enrollment.max_window_ms,
     };
-    Some(Arc::new(SpeakerObserve::new(speaker, lease, plan, quality)))
+    Ok(Some(Arc::new(SpeakerObserve::new(
+        speaker, lease, plan, quality,
+    ))))
 }
