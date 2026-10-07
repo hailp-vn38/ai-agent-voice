@@ -604,6 +604,7 @@ mod tests {
             cleanup_grace: Duration::from_secs(1),
         };
         RuntimeCatalog {
+            speaker: HashMap::new(),
             vad: HashMap::from([(
                 "vad".to_owned(),
                 LoadedVad {

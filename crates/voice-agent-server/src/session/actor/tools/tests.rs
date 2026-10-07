@@ -47,6 +47,7 @@ fn worker() -> WorkerRuntimeConfig {
 fn catalog() -> RuntimeCatalog {
     let segmenter = VadSegmenterConfig::default();
     RuntimeCatalog {
+        speaker: HashMap::new(),
         vad: HashMap::from([
             (
                 "vad".to_owned(),

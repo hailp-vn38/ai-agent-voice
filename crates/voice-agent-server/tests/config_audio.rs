@@ -80,6 +80,7 @@ fn valid_config() -> AppConfig {
                 )]),
             },
             vision: voice_agent_server::config::VisionProvidersConfig::default(),
+            speaker: voice_agent_server::config::SpeakerProvidersConfig::default(),
         },
         workers: WorkersConfig::default(),
         deployment: DeploymentConfig::default(),

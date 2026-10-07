@@ -320,6 +320,7 @@ mod tests {
             cleanup_grace: Duration::from_secs(1),
         };
         let catalog = RuntimeCatalog {
+            speaker: HashMap::new(),
             vad: HashMap::from([(
                 "vad_a".into(),
                 LoadedVad {
