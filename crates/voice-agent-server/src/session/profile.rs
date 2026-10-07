@@ -163,6 +163,7 @@ impl ActiveTemplateProfile {
                 llm: String::new(),
                 tts: String::new(),
                 vision: None,
+                speaker: None,
             },
             revision: 1,
         }
@@ -415,6 +416,7 @@ fn resolve_template(
         llm: bound_key(bound.get("llm").copied(), &defaults.llm)?,
         tts: bound_key(bound.get("tts").copied(), &defaults.tts)?,
         vision: None,
+        speaker: bound.get("speaker").map(|key| (*key).to_owned()),
     };
     // One resolution proves all four slots resolve to runtimes this process actually loaded, and
     // hands the session the exact handles a later switch installs.
@@ -579,9 +581,61 @@ mod tests {
             llm: "llm".into(),
             tts: "tts".into(),
             vision: None,
+            speaker: None,
         };
         let profile = resolve_template(&partial, &loaded_catalog(), &defaults).unwrap();
         assert_eq!(profile.providers, defaults);
+    }
+
+    #[test]
+    fn a_bound_speaker_slot_resolves_without_a_deployment_default() {
+        let mut with_speaker = assignment(true, true, full_bindings());
+        with_speaker.bindings.push(AdmittedProviderBinding {
+            provider_type: "speaker".into(),
+            provider_key: "speaker".into(),
+            provider_enabled: true,
+            snapshot: None,
+        });
+        let profile = resolve_template(
+            &with_speaker,
+            &loaded_catalog(),
+            &config().provider_defaults.effective_bindings(),
+        )
+        .unwrap();
+        assert_eq!(profile.providers.speaker.as_deref(), Some("speaker"));
+        assert!(profile.runtimes.speaker.is_some());
+    }
+
+    #[test]
+    fn an_absent_speaker_slot_has_no_implicit_fallback() {
+        let profile = resolve_template(
+            &assignment(true, true, full_bindings()),
+            &loaded_catalog(),
+            &config().provider_defaults.effective_bindings(),
+        )
+        .unwrap();
+        assert_eq!(profile.providers.speaker, None);
+        assert!(profile.runtimes.speaker.is_none());
+    }
+
+    #[test]
+    fn a_bound_speaker_slot_without_a_loaded_runtime_fails_closed() {
+        let mut with_speaker = assignment(true, true, full_bindings());
+        with_speaker.bindings.push(AdmittedProviderBinding {
+            provider_type: "speaker".into(),
+            provider_key: "missing".into(),
+            provider_enabled: true,
+            snapshot: None,
+        });
+        assert_eq!(
+            resolve_template(
+                &with_speaker,
+                &loaded_catalog(),
+                &config().provider_defaults.effective_bindings(),
+            )
+            .err(),
+            Some(TemplateCandidateError::RuntimeMissing)
+        );
     }
 
     /// One loaded runtime per server default instance id, so a stored binding to any of them
@@ -604,7 +658,7 @@ mod tests {
             cleanup_grace: Duration::from_secs(1),
         };
         RuntimeCatalog {
-            speaker: HashMap::new(),
+            speaker: HashMap::from([("speaker".to_owned(), qualification_speaker_runtime())]),
             vad: HashMap::from([(
                 "vad".to_owned(),
                 LoadedVad {
@@ -649,6 +703,29 @@ mod tests {
             )]),
             vision: HashMap::new(),
         }
+    }
+    /// Minimal extraction-only speaker instance so a bound Template Speaker slot can resolve in a
+    /// unit test without the native CAM++ model.
+    fn qualification_speaker_runtime() -> Arc<crate::providers::speaker::SpeakerRuntime> {
+        struct Qualification;
+        impl crate::providers::speaker::SpeakerProvider for Qualification {
+            fn dimension(&self) -> usize {
+                4
+            }
+            fn extract(
+                &mut self,
+                _: &crate::audio::PcmF32Mono,
+            ) -> Result<Vec<f32>, crate::providers::speaker::SpeakerError> {
+                Ok(vec![1.0, 0.0, 0.0, 0.0])
+            }
+        }
+        Arc::new(
+            crate::providers::speaker::SpeakerRuntime::new(
+                Box::new(Qualification),
+                crate::workers::ProviderRuntimeAdmission::new(1, 1),
+            )
+            .expect("qualification speaker runtime"),
+        )
     }
 
     fn named(id: i64, key: &str, default: bool, enabled: bool) -> AdmittedAssignment {

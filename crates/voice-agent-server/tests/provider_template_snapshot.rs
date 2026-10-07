@@ -75,6 +75,7 @@ fn missing_slots_use_deployment_snapshots_without_replacing_explicit_bindings() 
         llm: "default_llm".into(),
         tts: "default_tts".into(),
         vision: None,
+        speaker: None,
     };
     let deployment = ["vad", "llm"].map(|kind| DesiredProvider {
         id: 0,

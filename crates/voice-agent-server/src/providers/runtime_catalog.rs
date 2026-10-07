@@ -71,6 +71,8 @@ pub struct ResolvedAgentRuntimes {
     pub asr: Arc<AsrWorkerRuntime>,
     pub llm: Arc<LlmRuntime>,
     pub tts: Arc<TtsWorkerRuntime>,
+    /// Optional Template Speaker slot. `None` means the session has no speaker recognition.
+    pub speaker: Option<Arc<super::speaker::SpeakerRuntime>>,
     pub vad_segmenter: VadSegmenterConfig,
     pub vad_pre_roll_samples: u64,
 }
@@ -268,6 +270,15 @@ impl RuntimeCatalog {
         let (vad_segmenter, vad_pre_roll_samples) =
             (loaded_vad.segmenter, loaded_vad.pre_roll_samples);
         let vad = loaded_vad.runtime;
+        let speaker = match &bindings.speaker {
+            Some(key) => Some(self.speaker.get(key).cloned().ok_or_else(|| {
+                RuntimeResolveError::Unknown {
+                    kind: "SPEAKER",
+                    id: key.clone(),
+                }
+            })?),
+            None => None,
+        };
         Ok(ResolvedAgentRuntimes {
             vad,
             asr: self.asr.get(&bindings.asr).cloned().ok_or_else(|| {
@@ -288,6 +299,7 @@ impl RuntimeCatalog {
                     id: bindings.tts.clone(),
                 }
             })?,
+            speaker,
             vad_segmenter,
             vad_pre_roll_samples,
         })
@@ -360,6 +372,7 @@ mod tests {
                 llm: "llm_a".into(),
                 tts: "tts_b".into(),
                 vision: None,
+                speaker: None,
             })
             .unwrap();
         assert_eq!(resolved.tts.provider().adapter(), "unavailable");
@@ -375,6 +388,7 @@ mod tests {
             llm: "llm_a".into(),
             tts: "tts_b".into(),
             vision: None,
+            speaker: None,
         }) else {
             panic!("an unloaded VAD runtime cannot admit a session");
         };

@@ -59,7 +59,7 @@ impl ConfiguredTemplateProfile {
                 || snapshot.revision <= 0
                 || snapshot.key != binding.provider_key
                 || snapshot.kind != binding.provider_type
-                || !["vad", "asr", "llm", "tts"].contains(&snapshot.kind.as_str())
+                || !["vad", "asr", "llm", "tts", "speaker"].contains(&snapshot.kind.as_str())
                 || snapshots
                     .insert(snapshot.kind.as_str(), Arc::clone(snapshot))
                     .is_some()
@@ -90,6 +90,7 @@ impl ConfiguredTemplateProfile {
             llm: key("llm", defaults.map(|value| value.llm.as_str()))?,
             tts: key("tts", defaults.map(|value| value.tts.as_str()))?,
             vision: None,
+            speaker: snapshots.get("speaker").map(|row| row.key.clone()),
         };
         Ok(Self {
             source: ProfileSource::Template {
@@ -135,7 +136,7 @@ impl ConfiguredTemplateProfile {
         manager: &Arc<ProviderRuntimeManager>,
         deadline: tokio::time::Instant,
     ) -> Result<PreparedTemplateProfile, RuntimeError> {
-        let mut leases = Vec::with_capacity(4);
+        let mut leases = Vec::with_capacity(5);
         let mut catalog = RuntimeCatalog::default();
         for snapshot in &self.snapshots {
             let lease = manager
@@ -147,6 +148,7 @@ impl ConfiguredTemplateProfile {
             catalog.asr.extend(resident.asr);
             catalog.llm.extend(resident.llm);
             catalog.tts.extend(resident.tts);
+            catalog.speaker.extend(resident.speaker);
             leases.push(lease);
         }
         for snapshot in &self.deployment_snapshots {
@@ -194,5 +196,72 @@ impl std::fmt::Debug for ConfiguredTemplateProfile {
         f.debug_struct("ConfiguredTemplateProfile")
             .field("versions", &self.provider_versions())
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::AdmittedProviderBinding;
+
+    fn provider(id: i64, kind: &str) -> Arc<DesiredProvider> {
+        Arc::new(DesiredProvider {
+            id,
+            key: kind.to_owned(),
+            kind: kind.to_owned(),
+            adapter: "test".into(),
+            config_json: "{}".into(),
+            secret_ref: None,
+            revision: 1,
+        })
+    }
+
+    fn assignment(kinds: &[&str]) -> AdmittedAssignment {
+        AdmittedAssignment {
+            template_id: 1,
+            template_key: "t".into(),
+            template_name: "T".into(),
+            language: "en".into(),
+            prompt: "hello".into(),
+            template_enabled: true,
+            template_revision: 1,
+            is_default: true,
+            assignment_enabled: true,
+            bindings: kinds
+                .iter()
+                .map(|kind| AdmittedProviderBinding {
+                    provider_type: (*kind).to_owned(),
+                    provider_key: (*kind).to_owned(),
+                    provider_enabled: true,
+                    snapshot: Some(provider(1, kind)),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_speaker_binding_is_admitted_as_an_optional_slot() {
+        let assignment = assignment(&["vad", "asr", "llm", "tts", "speaker"]);
+        let profile = ConfiguredTemplateProfile::from_assignment(&assignment).unwrap();
+        assert_eq!(profile.providers.speaker.as_deref(), Some("speaker"));
+    }
+
+    #[test]
+    fn an_absent_speaker_slot_is_not_filled_from_a_deployment_default() {
+        let assignment = assignment(&["vad", "asr", "llm", "tts"]);
+        let profile = ConfiguredTemplateProfile::from_assignment(&assignment).unwrap();
+        assert_eq!(profile.providers.speaker, None);
+    }
+
+    #[test]
+    fn a_speaker_binding_must_match_the_provider_kind() {
+        let mut assignment = assignment(&["vad", "asr", "llm", "tts"]);
+        assignment.bindings.push(AdmittedProviderBinding {
+            provider_type: "speaker".into(),
+            provider_key: "vad".into(),
+            provider_enabled: true,
+            snapshot: Some(provider(9, "vad")),
+        });
+        assert!(ConfiguredTemplateProfile::from_assignment(&assignment).is_err());
     }
 }

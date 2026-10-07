@@ -99,6 +99,7 @@ impl ProviderDefaultsConfig {
             llm: self.llm.clone(),
             tts: self.tts.clone(),
             vision: self.vision.clone(),
+            speaker: None,
         }
     }
 }
@@ -110,6 +111,9 @@ pub struct EffectiveProviderBindings {
     pub llm: String,
     pub tts: String,
     pub vision: Option<String>,
+    /// Optional Template Speaker slot. There is no deployment default: `None` means the Voice
+    /// Session runs without speaker recognition, never an implicit fallback provider.
+    pub speaker: Option<String>,
 }
 
 #[derive(Clone, Debug)]

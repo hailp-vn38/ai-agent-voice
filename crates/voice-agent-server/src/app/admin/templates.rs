@@ -502,14 +502,15 @@ pub(super) async fn assign_template(
     };
     // An Agent inside the Template mechanism has no path back to server defaults, so leaving it
     // with assignments but no enabled default refuses every one of its devices with a 503. The
-    // first assignment therefore takes the default slot -- but only when it can actually serve as
-    // one, judged by the same structural bar `set_default_template` applies. Promoting an
-    // incomplete Template would just trade a silent 503 for a differently-silent 503, so an
-    // incomplete first assignment stays an ordinary candidate. A failed probe promotes anyway,
-    // because the invariant matters more than the optimistic read.
-    let complete: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND p.enabled=1 AND b.provider_type=p.type AND b.provider_type IN ('vad','asr','llm','tts')")
-        .bind(template.id).fetch_one(&mut *tx).await.unwrap_or(4);
-    let promote: i64 = if complete == 4 {
+    // first assignment therefore takes the default slot whenever it can serve as one: an absent
+    // core slot falls back to the deployment default, so only an explicit *broken* core binding
+    // (disabled provider, or a provider whose type no longer matches the slot) makes the Template
+    // structurally incomplete. The optional Speaker slot is never counted here, so binding a
+    // Speaker provider cannot mask a missing core slot. A failed probe promotes anyway, because
+    // the invariant matters more than the optimistic read.
+    let broken_core: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND b.provider_type IN ('vad','asr','llm','tts') AND (p.enabled!=1 OR b.provider_type!=p.type)")
+        .bind(template.id).fetch_one(&mut *tx).await.unwrap_or(0);
+    let promote: i64 = if broken_core == 0 {
         sqlx::query_scalar::<_, i64>("SELECT NOT EXISTS(SELECT 1 FROM agent_template_assignments WHERE agent_id=? AND enabled=1 AND is_default=1)")
             .bind(agent.id).fetch_one(&mut *tx).await.unwrap_or(1)
     } else {

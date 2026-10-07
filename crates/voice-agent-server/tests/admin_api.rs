@@ -2572,8 +2572,8 @@ async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
         );
     }
 
-    // `assign_template` promotes a first assignment only after it is structurally complete;
-    // explicit `set_default_template` may instead rely on server-default provider slots.
+    // A first assignment takes the default slot unless an explicit core binding is broken;
+    // absent core slots fall back to the server-default providers.
     let mut generated = Vec::new();
     for (name, kind, adapter, config_json) in [
         ("Main VAD", "vad", "silero_onnx", serde_json::json!({})),
@@ -2692,6 +2692,121 @@ async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
     );
     assert_eq!(find(&after_second, "quiet")["is_default"], true);
     assert_eq!(find(&after_second, "loud")["is_default"], false);
+    task.abort();
+}
+
+/// An optional Speaker slot must not make the four-slot core completeness check fail: absent core
+/// slots fall back to the deployment default, so a Template that binds only a partial core plus a
+/// Speaker provider still takes the default slot on its first assignment. A Speaker provider bound
+/// under a core slot is still a type mismatch.
+#[tokio::test]
+async fn first_assignment_with_a_partial_core_and_speaker_slot_becomes_the_default() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let auth = "admin-test-token";
+    let agents = format!("{base}/api/admin/agents");
+    let templates = format!("{base}/api/admin/templates");
+    let providers = format!("{base}/api/admin/providers");
+
+    for (path, body) in [
+        (
+            &agents,
+            serde_json::json!({"key":"kitchen","name":"Kitchen"}),
+        ),
+        (
+            &templates,
+            serde_json::json!({"key":"partial","name":"Partial","language":"vi-VN","prompt":"Nói ngắn gọn"}),
+        ),
+    ] {
+        assert_eq!(
+            client
+                .post(path)
+                .bearer_auth(auth)
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+    }
+
+    let llm = create_provider(
+        &client,
+        &providers,
+        serde_json::json!({
+            "name":"Main LLM", "type":"llm", "adapter":"openai",
+            "config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}
+        }),
+    )
+    .await;
+    let speaker = create_provider(
+        &client,
+        &providers,
+        serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}}),
+    )
+    .await;
+
+    // A Speaker provider may only bind the Speaker slot.
+    let wrong_type = client
+        .put(format!("{templates}/partial/providers/llm"))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"provider_key":speaker}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_type.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        wrong_type.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "invalid_provider"
+    );
+
+    for (revision, (kind, provider_key)) in (1..).zip([("llm", &llm), ("speaker", &speaker)]) {
+        assert_eq!(
+            client
+                .put(format!("{templates}/partial/providers/{kind}"))
+                .bearer_auth(auth)
+                .header("if-match", format!("\"{revision}\""))
+                .json(&serde_json::json!({"provider_key":provider_key}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+
+    assert_eq!(
+        client
+            .put(format!("{agents}/kitchen/templates/partial"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let assignments: serde_json::Value = client
+        .get(format!("{agents}/kitchen/templates"))
+        .bearer_auth(auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let partial = assignments["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "partial")
+        .unwrap();
+    assert_eq!(
+        partial["is_default"], true,
+        "a partial core plus a Speaker slot must still become the default: {assignments}"
+    );
     task.abort();
 }
 

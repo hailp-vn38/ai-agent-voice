@@ -148,6 +148,7 @@ fn admitted_actor(catalog: &RuntimeCatalog) -> SessionActor {
             llm: "llm".to_owned(),
             tts: "tts".to_owned(),
             vision: None,
+            speaker: None,
         })
         .expect("the default bindings resolve");
     let (control_tx, _control_rx) = mpsc::channel(4);
@@ -272,6 +273,7 @@ fn a_switch_that_keeps_the_capture_runtimes_leaves_their_leases_open() {
             llm: "llm".to_owned(),
             tts: "tts".to_owned(),
             vision: None,
+            speaker: None,
         })
         .expect("the default bindings resolve");
     let (control_tx, _control_rx) = mpsc::channel(4);
@@ -411,6 +413,7 @@ fn session_with_external_mcp(external_mcp: SessionExternalMcp) -> SessionActor {
             llm: "llm".to_owned(),
             tts: "tts".to_owned(),
             vision: None,
+            speaker: None,
         })
         .expect("the default bindings resolve");
     let (control_tx, _control_rx) = mpsc::channel(4);
@@ -600,6 +603,7 @@ fn a_session_without_a_catalog_is_never_offered_the_switch_tool() {
             llm: "llm".to_owned(),
             tts: "tts".to_owned(),
             vision: None,
+            speaker: None,
         })
         .expect("the default bindings resolve");
     let (control_tx, _control_rx) = mpsc::channel(4);
