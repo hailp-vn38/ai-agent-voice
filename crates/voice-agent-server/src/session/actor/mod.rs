@@ -1,6 +1,6 @@
 use crate::session::{
     ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ProfileSource, SessionDeviceTools,
-    SessionPhase, TemplateSwitchCatalog, TurnId,
+    SessionPhase, SpeakerObserve, TemplateSwitchCatalog, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -165,6 +165,19 @@ pub struct SessionActor {
     /// The optional Persistent Transcript this Voice Session was bound to at admission.  `None` is
     /// the normal case: capture is opt-in, and it is a one-way hand-off that no turn can fail on.
     transcript: Option<TranscriptCapture>,
+    /// Ticket 10 Observe: the exact selected speaker extractor, its lease and the active Template's
+    /// plan. `None` when the Agent policy is `off`, so the core path retains no utterance PCM and
+    /// runs no speaker inference.
+    speaker_observe: Option<std::sync::Arc<SpeakerObserve>>,
+    /// Whether the client opted into bounded `speaker` status frames. Separate from `pipeline_status`.
+    speaker_status: bool,
+    /// Bounded utterance PCM, retained only while Observe is installed. Cleared at every terminal
+    /// boundary and at every new utterance start; never grows past `OBSERVE_MAX_SAMPLES`.
+    observe_pcm: Vec<f32>,
+    /// At most one Observe extraction in flight. A boundary that arrives while one runs is dropped,
+    /// never queued, so Observe can never apply backpressure to the core path. Shared with the
+    /// detached scoring task, which clears it on completion.
+    observe_in_flight: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The application admission gate.  A Voice Session does not own it and cannot reopen it: it
     /// only asks, so a Tool-round Executor cannot start new work after the application has stopped
     /// accepting it, whether or not this session ever observed the shutdown signal.
@@ -486,6 +499,11 @@ pub enum OutboundMessage {
         request: u64,
         text: String,
     },
+    /// Ticket 10: a bounded Observe state frame. Carries only the bounded state, never identity
+    /// or score, and is sent with the same fire-and-forget backpressure as `PipelineStatus`.
+    SpeakerStatus {
+        text: String,
+    },
     TurnText {
         generation: u64,
         turn_id: TurnId,
@@ -517,6 +535,7 @@ impl OutboundMessage {
         match self {
             Self::Text(text)
             | Self::PipelineStatus { text, .. }
+            | Self::SpeakerStatus { text }
             | Self::TurnText { text, .. }
             | Self::BeginTurn { text, .. }
             | Self::FinishTurn { text, .. }
@@ -532,6 +551,7 @@ mod ingress;
 mod lifecycle;
 mod listening;
 mod mcp;
+mod observe;
 mod pilot;
 mod tools;
 fn normalize_detect_text(input: String) -> Option<String> {

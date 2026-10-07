@@ -333,6 +333,10 @@ impl SessionActor {
                             return false;
                         };
                         self.auto_retention.push(&pcm);
+                        if self.auto_speech_active {
+                            // Ticket 10: retain the utterance PCM for Observe only when scoring is on.
+                            self.observe_retain(pcm.samples());
+                        }
                         match self.vad_runtime.send(
                             lease,
                             VadCommand::Push {
@@ -363,6 +367,8 @@ impl SessionActor {
                         self.cancel_asr();
                         return false;
                     }
+                    // Ticket 10: retain the utterance PCM for Observe only when scoring is on.
+                    self.observe_retain(pcm.samples());
                     let Some((lease, _)) = self.asr_stream else {
                         self.phase = SessionPhase::Ready;
                         return false;

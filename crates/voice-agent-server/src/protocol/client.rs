@@ -31,6 +31,9 @@ pub struct ClientHello {
 pub struct ClientFeatures {
     #[serde(default)]
     pub pipeline_status: bool,
+    /// Ticket 10: opt-in to bounded `speaker` Observe state frames. Off by default.
+    #[serde(default)]
+    pub speaker_status: bool,
     #[serde(default)]
     pub aec: bool,
     #[serde(default)]

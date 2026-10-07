@@ -4,6 +4,7 @@ use thiserror::Error;
 
 mod canonical_downlink;
 pub(crate) mod enrollment;
+pub use enrollment::QualityProfile;
 mod opus;
 mod resampler;
 mod vad_segmenter;

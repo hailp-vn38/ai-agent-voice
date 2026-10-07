@@ -98,6 +98,14 @@ impl RuntimeCatalog {
         self.speaker.get(key).cloned()
     }
 
+    /// True when this catalog holds exactly this speaker handle. Lets a session find the lease that
+    /// keeps a specific selected speaker runtime resident, without re-resolving by key.
+    pub fn holds_speaker(&self, runtime: &Arc<super::speaker::SpeakerRuntime>) -> bool {
+        self.speaker
+            .values()
+            .any(|candidate| Arc::ptr_eq(candidate, runtime))
+    }
+
     /// Publishes one materializer-owned slot under its immutable provider key.
     /// The caller must retain the resource lease alongside every resolved handle.
     pub fn single_provider(

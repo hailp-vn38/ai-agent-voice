@@ -257,6 +257,11 @@ impl SessionActor {
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             // Capture is opt-in, so an actor that is never bound archives nothing.
             transcript: None,
+            // Observe is installed by admission only when the Agent policy is enabled.
+            speaker_observe: None,
+            speaker_status: false,
+            observe_pcm: Vec::new(),
+            observe_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             // An actor built outside an application has nothing to ask, so it starts with a gate
             // that stays open.  Production installs the real one before any turn can start.
             admission_gate: AdmissionGate::open(),
@@ -278,6 +283,21 @@ impl SessionActor {
 
     pub fn with_transcript(mut self, transcript: Option<TranscriptCapture>) -> Self {
         self.transcript = transcript;
+        self
+    }
+
+    /// Installs Observe for this Voice Session (ticket 10).
+    ///
+    /// Admission calls this only after the Agent policy resolved to `observe`/`required` and the
+    /// selected speaker runtime held a lease. The plan is frozen here, so a Template switch later
+    /// in the session does not silently change who a voice is scored against mid-turn.
+    pub fn with_speaker_observe(
+        mut self,
+        observe: Option<std::sync::Arc<SpeakerObserve>>,
+        status_frames: bool,
+    ) -> Self {
+        self.speaker_observe = observe;
+        self.speaker_status = status_frames;
         self
     }
 

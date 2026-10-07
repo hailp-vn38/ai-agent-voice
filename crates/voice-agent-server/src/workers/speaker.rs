@@ -10,6 +10,11 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
+/// Shortest window the resident extractor accepts (1 s at the canonical 16 kHz).
+pub const MIN_WINDOW_SAMPLES: usize = 16_000;
+/// Longest window the resident extractor accepts (6 s at the canonical 16 kHz).
+pub const MAX_WINDOW_SAMPLES: usize = 96_000;
+
 struct Request {
     pcm: PcmF32Mono,
     reply: tokio::sync::oneshot::Sender<Result<Vec<f32>, SpeakerError>>,
@@ -110,6 +115,10 @@ impl SpeakerRuntime {
     pub fn dimension(&self) -> usize {
         self.dimension
     }
+    /// Shortest window [`Self::extract`] accepts. A shorter utterance is not a runtime failure.
+    pub fn min_window_samples(&self) -> usize {
+        MIN_WINDOW_SAMPLES
+    }
     pub fn embedding_space_id(&self) -> &str {
         &self.embedding_space_id
     }
@@ -129,7 +138,7 @@ impl SpeakerRuntime {
         lease: ResourceLease,
     ) -> Result<Vec<f32>, SpeakerError> {
         if pcm.sample_rate_hz() != 16_000
-            || !(16_000..=96_000).contains(&pcm.samples().len())
+            || !(MIN_WINDOW_SAMPLES..=MAX_WINDOW_SAMPLES).contains(&pcm.samples().len())
             || pcm
                 .samples()
                 .iter()

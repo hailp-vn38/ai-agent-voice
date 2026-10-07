@@ -75,6 +75,7 @@ impl SessionActor {
         self.pending_vad_cycle = None;
         self.auto_retention.reset();
         self.vad_segmenter.reset();
+        self.observe_reset();
         self.listening_mode = Some(mode.clone());
         let Some(identity) = self.next_worker_identity() else {
             self.fail_closed();
@@ -276,6 +277,8 @@ impl SessionActor {
             self.complete_recognition();
             return;
         }
+        // Ticket 10: score the utterance on its own thread of execution, concurrently with ASR.
+        self.observe_utterance_boundary();
         let Some((lease, _)) = self.asr_stream else {
             self.release_active_turn();
             return;
@@ -477,6 +480,7 @@ impl SessionActor {
 
     fn open_asr_for_vad_speech_with_retention(&mut self, retained: PcmF32Mono) {
         self.auto_speech_active = true;
+        self.observe_reset();
         let Some(identity) = self.next_worker_identity() else {
             self.fail_closed();
             return;

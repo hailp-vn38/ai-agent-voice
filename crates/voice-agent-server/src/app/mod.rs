@@ -11,7 +11,7 @@ use crate::{
     },
     session::{
         ActiveTurnLimiter, OutboundMessage, SessionActor, SessionEvent, SessionRuntimes,
-        WriterEvent, WriterTurnOutcome,
+        SpeakerObserve, WriterEvent, WriterTurnOutcome,
     },
     workers::{AsrWorkerRuntime, LlmRuntime, TtsWorkerRuntime, VadWorkerRuntime},
 };

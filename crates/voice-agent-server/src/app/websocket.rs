@@ -119,6 +119,10 @@ pub(super) async fn handler(
     let session_id = Uuid::new_v4().to_string();
     let transcript = state.transcript_capture(&session_id, &profile);
     let admission_gate = Arc::clone(state.admission_gate());
+    // Ticket 10: resolve Observe before `state` is moved into the upgrade closure. Best-effort:
+    // `None` (policy off, no candidate, any error) leaves the session entirely speaker-free.
+    let speaker_observe =
+        resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await;
     let active_turn_limiter = state.active_turn_limiter;
     let pilot_admission = state.pilot_admission;
     let stopping = state.lifecycle.stopping().clone();
@@ -148,6 +152,7 @@ pub(super) async fn handler(
                     profile,
                     session_id,
                     transcript,
+                    speaker_observe,
                     admission_gate,
                 },
                 SessionControl {
@@ -283,6 +288,9 @@ struct SocketRuntimes {
     /// capture is off or this session has no database identity, and the actor then archives
     /// nothing at all.
     transcript: Option<crate::database::history::TranscriptCapture>,
+    /// Ticket 10 Observe, resolved at admission. `None` keeps the actor free of speaker inference
+    /// and utterance PCM retention.
+    speaker_observe: Option<Arc<SpeakerObserve>>,
     /// The application admission gate. The actor only asks; the application closes it.
     admission_gate: Arc<crate::lifecycle::AdmissionGate>,
 }
@@ -417,8 +425,14 @@ async fn handle_socket(
             return;
         }
     };
+    // Ticket 10: install Observe only when the Agent policy enables it. Best-effort and
+    // admission-time: a resolution/DB failure degrades to `off`, never fails the session.
     let mut actor = actor
         .with_transcript(runtimes.transcript)
+        .with_speaker_observe(
+            runtimes.speaker_observe.clone(),
+            hello.features.speaker_status,
+        )
         .with_admission_gate(runtimes.admission_gate)
         .with_writer_outcome_probe_opt(writer_probe.clone())
         .with_client_capabilities(
@@ -684,6 +698,7 @@ async fn send_outbound(
         | OutboundMessage::Binary { generation, .. } => Some(*generation),
         OutboundMessage::Text(_)
         | OutboundMessage::PipelineStatus { .. }
+        | OutboundMessage::SpeakerStatus { .. }
         | OutboundMessage::BeginTurn { .. }
         | OutboundMessage::FinishTurn { .. }
         | OutboundMessage::AbortTurn { .. }
@@ -701,6 +716,7 @@ async fn send_outbound(
     let result = match message {
         OutboundMessage::Text(text)
         | OutboundMessage::TurnText { text, .. }
+        | OutboundMessage::SpeakerStatus { text }
         | OutboundMessage::PipelineStatus { text, .. } => {
             let llm_message = serde_json::from_str::<serde_json::Value>(&text)
                 .ok()
@@ -745,4 +761,44 @@ async fn close_direct(sender: &mut futures_util::stream::SplitSink<WebSocket, Me
             reason: "".into(),
         })))
         .await;
+}
+
+/// Ticket 10 admission step: resolve and install Observe for this Voice Session.
+///
+/// Returns `None` (policy `off`, no speaker provider, no resident lease, no enrolled candidate,
+/// or any resolution error) — Observe is best-effort and must never fail an accepted session.
+async fn resolve_speaker_observe(
+    state: &AppState,
+    profile: &crate::session::EffectiveSessionProfile,
+    resolved: &crate::providers::ResolvedAgentRuntimes,
+    config: &AppConfig,
+) -> Option<Arc<SpeakerObserve>> {
+    let speaker = resolved.speaker.as_ref()?.clone();
+    let template_id = profile.source.template_id()?;
+    let database = state.database.as_ref()?;
+    let lease = profile.switch_catalog.lease_for_speaker(&speaker)?;
+    let embedding_space = speaker.embedding_space_id().to_owned();
+    let plan = match crate::session::resolve_observe_plan(
+        database.pool(),
+        profile.agent_id,
+        template_id,
+        &embedding_space,
+    )
+    .await
+    {
+        Ok(Some(plan)) => plan,
+        Ok(None) => return None,
+        Err(error) => {
+            warn!(%error, "speaker observe plan resolution failed");
+            return None;
+        }
+    };
+    let enrollment = &config.speaker_recognition.enrollment;
+    let quality = crate::audio::enrollment::QualityProfile {
+        min_clip_ms: enrollment.min_clip_ms,
+        max_clip_ms: enrollment.max_clip_ms,
+        min_speech_ms: enrollment.min_speech_ms,
+        max_window_ms: enrollment.max_window_ms,
+    };
+    Some(Arc::new(SpeakerObserve::new(speaker, lease, plan, quality)))
 }

@@ -36,6 +36,16 @@ pub enum ProfileSource {
     },
 }
 
+impl ProfileSource {
+    /// The active Template id, or `None` when the session runs on server defaults.
+    pub fn template_id(&self) -> Option<i64> {
+        match self {
+            Self::Template { template_id, .. } => Some(*template_id),
+            Self::ServerDefault => None,
+        }
+    }
+}
+
 /// One enabled Template whose bindings all have Loaded Runtime.  Invalid candidates never enter
 /// the catalog, so a switch can only ever select a profile that already works.
 #[derive(Clone)]
@@ -94,6 +104,23 @@ impl TemplateSwitchCatalog {
     }
     pub fn candidates(&self) -> &[ResolvedTemplateProfile] {
         &self.candidates
+    }
+
+    /// The lease that keeps a specific selected speaker runtime resident, if this session holds it.
+    /// Observe borrows the session's existing lease rather than acquiring a second one.
+    pub(crate) fn lease_for_speaker(
+        &self,
+        runtime: &Arc<crate::workers::SpeakerRuntime>,
+    ) -> Option<ResourceLease> {
+        self.active_leases
+            .iter()
+            .find(|lease| {
+                lease
+                    .runtimes()
+                    .map(|catalog| catalog.holds_speaker(runtime))
+                    .unwrap_or(false)
+            })
+            .cloned()
     }
 
     /// Membership is the whole authorization rule for a switch: an assignment this session never
