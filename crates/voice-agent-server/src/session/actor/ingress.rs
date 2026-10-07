@@ -37,6 +37,7 @@ impl SessionActor {
         while let Ok(event) = self.vad_events.try_recv() {
             self.on_vad_event(event);
         }
+        self.release_pipeline_if_idle();
         self.drain_managed_switch_boundary();
         self.flush_pending_llm_text();
         while self.pending_llm_delta.is_none() && !self.llm_finish_pending {
@@ -86,6 +87,7 @@ impl SessionActor {
     pub(super) fn on_writer_event(&mut self, event: WriterEvent) {
         match event {
             WriterEvent::TurnClosed { turn_id, outcome } => {
+                self.pipeline_writer_pending.remove(&turn_id);
                 if self.current_turn_id() != Some(turn_id) {
                     return;
                 }
@@ -190,6 +192,11 @@ impl SessionActor {
     }
 
     pub fn on_client_message(&mut self, message: ClientMessage) {
+        if matches!(&message, ClientMessage::Listen { session_id, .. } | ClientMessage::Abort { session_id } if self.inbound_session_matches(session_id.as_deref()))
+        {
+            self.pipeline_request
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
         if self.managed_switch_boundary.is_some() {
             if let ClientMessage::Listen { session_id, .. } = &message
                 && self.inbound_session_matches(session_id.as_deref())

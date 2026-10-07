@@ -30,6 +30,8 @@ pub struct ClientHello {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ClientFeatures {
     #[serde(default)]
+    pub pipeline_status: bool,
+    #[serde(default)]
     pub aec: bool,
     #[serde(default)]
     pub mcp: bool,

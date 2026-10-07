@@ -23,3 +23,5 @@ pub use profile::{
 pub use runtime_profile::{ConfiguredTemplateProfile, PreparedTemplateProfile};
 pub use state::SessionPhase;
 pub use turn::{ActiveTurnLimiter, TurnId};
+
+pub mod pilot;

@@ -32,7 +32,10 @@ impl TtsWorkerRuntime {
             let worker = &mut state.workers[worker];
             worker.busy = false;
             worker.stream = None;
-            let _ = worker.command_tx.try_send(WorkerCommand::Reset);
+            worker.reset_pending.store(true, Ordering::Release);
+            let _ = worker.command_tx.try_send(WorkerCommand::Reset {
+                pending: worker.reset_pending.clone(),
+            });
         }
     }
     pub fn start(&self, text: String) -> Result<TtsLease, TtsWorkerError> {

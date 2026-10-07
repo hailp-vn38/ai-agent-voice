@@ -120,6 +120,7 @@ pub(super) async fn handler(
     let transcript = state.transcript_capture(&session_id, &profile);
     let admission_gate = Arc::clone(state.admission_gate());
     let active_turn_limiter = state.active_turn_limiter;
+    let pilot_admission = state.pilot_admission;
     let stopping = state.lifecycle.stopping().clone();
     let writer_probe = state.writer_outcome_probe.clone();
     info!(
@@ -142,6 +143,7 @@ pub(super) async fn handler(
                     vad_segmenter: resolved_runtimes.vad_segmenter,
                     vad_pre_roll_samples: resolved_runtimes.vad_pre_roll_samples,
                     active_turn_limiter,
+                    pilot_admission,
                     writer_probe,
                     profile,
                     session_id,
@@ -270,6 +272,7 @@ struct SocketRuntimes {
     vad_segmenter: VadSegmenterConfig,
     vad_pre_roll_samples: u64,
     active_turn_limiter: Arc<ActiveTurnLimiter>,
+    pilot_admission: crate::session::pilot::PilotAdmission,
     /// Test-only; see [`WriterOutcomeProbe`](crate::session::WriterOutcomeProbe).
     writer_probe: Option<Arc<dyn crate::session::WriterOutcomeProbe>>,
     profile: crate::session::EffectiveSessionProfile,
@@ -377,6 +380,11 @@ async fn handle_socket(
             return;
         }
     };
+    let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
+    let actor = actor.with_pipeline_writer_terminal(pipeline_writer_terminal);
+    let actor =
+        actor.with_pilot_admission(runtimes.pilot_admission, hello.features.pipeline_status);
+    let pipeline_request = actor.pipeline_request_epoch();
     let actor = actor.with_switch_ingress_limits(
         config.limits.session_event_queue,
         config.websocket.max_frame_bytes,
@@ -440,7 +448,7 @@ async fn handle_socket(
                                 deferred_finish = None;
                                 let start_was_sent = active_turn.as_ref().is_some_and(|active| active.start_was_sent);
                                 let stop_was_sent = if start_was_sent {
-                                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                                         let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                                         break;
                                     }
@@ -458,7 +466,7 @@ async fn handle_socket(
                                 report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent: false, stop_was_sent: false }).await;
                             }
                         }
-                        message => if send_outbound(&mut sender, message, &generation_gate).await {
+                        message => if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
                             break;
                         },
                     }
@@ -467,7 +475,7 @@ async fn handle_socket(
                 // lane has had its chance to preempt it.
                 _ = std::future::ready(()), if deferred_finish.is_some() && audio_rx.is_empty() => {
                     let OutboundMessage::FinishTurn { turn_id, text } = deferred_finish.take().expect("checked above") else { unreachable!() };
-                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                         let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                         break;
                     }
@@ -478,7 +486,7 @@ async fn handle_socket(
                     match message {
                         OutboundMessage::BeginTurn { generation, turn_id, text } => {
                             if active_turn.is_none() && generation_gate.admits(generation) {
-                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                                     let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                                     break;
                                 }
@@ -491,7 +499,7 @@ async fn handle_socket(
                             } else if let OutboundMessage::FinishTurn { turn_id, text } = message
                                 && active_turn.as_ref().is_some_and(|active| active.id == turn_id)
                             {
-                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await {
+                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
                                     let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                                     break;
                                 }
@@ -499,7 +507,7 @@ async fn handle_socket(
                                 report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
                             }
                         }
-                        message => if send_outbound(&mut sender, message, &generation_gate).await {
+                        message => if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
                             break;
                         },
                     }
@@ -507,7 +515,7 @@ async fn handle_socket(
                 Some(message) = audio_rx.recv() => {
                     if let OutboundMessage::Binary { turn_id, .. } = &message
                         && active_turn.as_ref().is_some_and(|active| active.start_was_sent && active.id == *turn_id)
-                        && send_outbound(&mut sender, message, &generation_gate).await
+                        && send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await
                     {
                         break;
                     }
@@ -531,7 +539,7 @@ async fn handle_socket(
                 },
                 else => {
                     if let Some(OutboundMessage::FinishTurn { turn_id, text }) = deferred_finish.take()
-                        && send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate).await
+                        && send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await
                     {
                         let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
                         break;
@@ -540,6 +548,7 @@ async fn handle_socket(
                 },
             }
         }
+        let _ = pipeline_writer_done.send(true);
     });
 
     let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
@@ -651,11 +660,18 @@ async fn send_outbound(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     message: OutboundMessage,
     generation_gate: &crate::session::GenerationGate,
+    pipeline_request: &std::sync::atomic::AtomicU64,
 ) -> bool {
+    if let OutboundMessage::PipelineStatus { request, .. } = &message
+        && *request != pipeline_request.load(std::sync::atomic::Ordering::Acquire)
+    {
+        return false;
+    }
     let generation = match &message {
         OutboundMessage::TurnText { generation, .. }
         | OutboundMessage::Binary { generation, .. } => Some(*generation),
         OutboundMessage::Text(_)
+        | OutboundMessage::PipelineStatus { .. }
         | OutboundMessage::BeginTurn { .. }
         | OutboundMessage::FinishTurn { .. }
         | OutboundMessage::AbortTurn { .. }
@@ -671,7 +687,9 @@ async fn send_outbound(
     }
     let closes = matches!(message, OutboundMessage::Close(_));
     let result = match message {
-        OutboundMessage::Text(text) | OutboundMessage::TurnText { text, .. } => {
+        OutboundMessage::Text(text)
+        | OutboundMessage::TurnText { text, .. }
+        | OutboundMessage::PipelineStatus { text, .. } => {
             let llm_message = serde_json::from_str::<serde_json::Value>(&text)
                 .ok()
                 .filter(|value| value["type"] == "llm");

@@ -277,3 +277,27 @@ VOICE_AGENT_LLM_API_KEY
 - mọi limits và queue capacity > 0.
 - `[mcp.external]` toàn bộ field có default, nên bỏ hẳn section cũng là configuration hợp lệ. `per_server_resolution_timeout_ms` và `overall_resolution_budget_ms` phải dương và `overall_resolution_budget_ms >= per_server_resolution_timeout_ms`; `max_concurrent_calls_per_server` nằm trong `1..=64` và đây chính là bound của process-global semaphore per MCP server dùng chung cho mọi session. Operator chỉ cấu hình trong hard ceiling: `max_tools_per_server <= 512`, `max_tools_per_session <= 2_048`, `max_tool_schema_bytes` và `max_external_tool_result_bytes <= 65_536`, `max_tool_description_bytes <= 16_384`, `max_pages_per_server <= 256`. Mọi limit phải dương, và một tổ hợp limit mô tả một `tools/list` page lớn hơn buffer một response thì fail startup thay vì biến thành server lặng lẽ không resolve được.
 - `[mcp.external.network]` bắt buộc có ít nhất một entry trong `allowed_hosts` hoặc `allowed_cidrs`; chỉ HTTPS trừ khi `allow_http_lan = true`, và khi đó destination vẫn phải match allowlist. `allowed_hosts` chỉ nhận hostname pattern hợp lệ và `allowed_cidrs` chỉ nhận CIDR hợp lệ. URL không có userinfo, query string hay fragment; redirect tắt. Validate hostname allowlist, resolve DNS ngay trước connect, và mọi resolved IP cũng phải pass policy để chống DNS rebinding.
+
+### Speaker pilot pipeline envelope
+
+Set `speaker_pilot = true` in `[deployment]` explicitly to limit the entire process
+(all Agents and speaker policy modes) to one Voice Session using the voice pipeline.
+The default is `false`; provider creation does not enable it. Idle WebSockets remain
+connected. Manual capture owns the slot through ASR, LLM, speech delivery and cleanup;
+Auto/Realtime retain it while armed, including after abort and during barge-in.
+Disconnect the armed session to release its slot. Diagnostics and Vision HTTP requests require the pipeline
+slot too; native timeout/quarantine does not make capacity reusable. Restart the
+process to recover quarantined capacity after investigating the native failure.
+
+Pilot Voice Protocol Clients should send `"features":{"pipeline_status":true}` in
+ClientHello. Denied `listen:start` or capacity-dependent `listen:detect` receives
+`{"type":"pipeline","state":"busy","reason":"capacity"}` and keeps the WebSocket
+and control paths. No owner identity is exposed. Retry requires an explicit new
+client action; do not automatically replay microphone audio or typed text. Busy is
+capacity denial, not authentication failure or speaker mismatch. Legacy clients
+receive WebSocket close **1013** when starting work while busy. Required hello/audio
+negotiation and independent feature flags retain their existing contracts.
+
+The retired Reference Client crate has no runtime implementation to change (see
+`voice-reference-client-removal-inventory.md`); the independent WS client in the
+protocol regression gate advertises this capability and checks the wire behavior.

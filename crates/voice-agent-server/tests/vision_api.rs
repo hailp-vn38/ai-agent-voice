@@ -148,3 +148,76 @@ async fn vision_api_rejects_invalid_public_contract_inputs() {
     );
     task.abort();
 }
+
+struct SlowVision {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Semaphore>,
+}
+#[async_trait::async_trait]
+impl VisionProvider for SlowVision {
+    fn adapter(&self) -> &'static str {
+        "slow_vision"
+    }
+    async fn analyze(&self, _: VisionRequest) -> Result<VisionResponse, VisionError> {
+        self.started.notify_one();
+        let _ = self.release.acquire().await.unwrap();
+        Ok(VisionResponse {
+            text: "complete".into(),
+        })
+    }
+}
+async fn explain(base: &str) -> reqwest::Response {
+    reqwest::Client::new()
+        .post(format!("{base}/mcp/vision/explain"))
+        .header("Device-Id", "device")
+        .header("Client-Id", "client")
+        .multipart(
+            reqwest::multipart::Form::new()
+                .part(
+                    "image",
+                    reqwest::multipart::Part::bytes(vec![0xff, 0xd8, 0xff, 0xd9])
+                        .file_name("image.jpg"),
+                )
+                .text("question", "what is this?"),
+        )
+        .send()
+        .await
+        .unwrap()
+}
+#[tokio::test]
+async fn pilot_serializes_vision_requests_even_with_provider_capacity_two() {
+    let mut config = AppConfig::parse_and_resolve(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../config.example.toml"
+    ))
+    .unwrap();
+    config.deployment.speaker_pilot = true;
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let state = AppState::from_provider_set(config, Arc::new(ProviderSet::unavailable()))
+        .with_vision_runtime_for_test(
+            "vision-test",
+            Arc::new(SlowVision {
+                started: started.clone(),
+                release: release.clone(),
+            }),
+            2,
+            Duration::from_secs(1),
+        );
+    let (base, task) = spawn(router_with_state(state)).await;
+    let first_base = base.clone();
+    let first = tokio::spawn(async move { explain(&first_base).await });
+    tokio::time::timeout(Duration::from_secs(1), started.notified())
+        .await
+        .unwrap();
+    let blocked = explain(&base).await;
+    assert_eq!(blocked.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        blocked.json::<serde_json::Value>().await.unwrap()["message"],
+        "voice pipeline is busy"
+    );
+    release.add_permits(1);
+    assert_eq!(first.await.unwrap().status(), reqwest::StatusCode::OK);
+    assert_eq!(explain(&base).await.status(), reqwest::StatusCode::OK);
+    task.abort();
+}

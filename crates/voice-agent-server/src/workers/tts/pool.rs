@@ -37,7 +37,10 @@ pub(super) fn release_terminal(state: &mut State, lease: TtsLease) {
     worker.busy = false;
     if release {
         worker.stream = None;
-        let _ = worker.command_tx.try_send(WorkerCommand::Reset);
+        worker.reset_pending.store(true, Ordering::Release);
+        let _ = worker.command_tx.try_send(WorkerCommand::Reset {
+            pending: worker.reset_pending.clone(),
+        });
     }
 }
 pub(super) fn stop_and_join(workers: &mut [WorkerRecord]) -> bool {
@@ -86,11 +89,12 @@ pub(super) fn worker_loop(
     while let Ok(command) = commands.recv() {
         match command {
             WorkerCommand::Shutdown => break,
-            WorkerCommand::Reset => {
+            WorkerCommand::Reset { pending } => {
                 if worker.reset().is_err() {
                     healthy.store(false, Ordering::Release);
                     break;
                 }
+                pending.store(false, Ordering::Release);
             }
             WorkerCommand::Start {
                 request,
