@@ -538,6 +538,9 @@ impl AppState {
         manager: Arc<crate::services::provider_runtime::ProviderRuntimeManager>,
     ) -> Self {
         self.lifecycle.observe_provider_runtime(&manager);
+        // Cold materialization must admit atomically against active voice/enrollment work,
+        // so the manager shares the one deployment-wide pilot envelope.
+        manager.set_pilot_admission(self.pilot_admission.clone());
         self.provider_diagnostics = Arc::new(
             ProviderDiagnosticService::new(
                 Arc::clone(&self.runtimes),

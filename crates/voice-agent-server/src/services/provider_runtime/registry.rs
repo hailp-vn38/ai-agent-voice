@@ -3,7 +3,10 @@ use super::{
     RuntimeMaterializer, RuntimeResource, RuntimeState, lease::LeaseLifetime,
 };
 use crate::{
-    database::DesiredProvider, lifecycle::AdmissionGate, workers::ProviderRuntimeAdmission,
+    database::DesiredProvider,
+    lifecycle::AdmissionGate,
+    session::pilot::{PilotAdmission, PilotPermit},
+    workers::ProviderRuntimeAdmission,
 };
 use std::{
     collections::HashMap,
@@ -26,6 +29,9 @@ pub struct ProviderRuntimeManager {
     attempts: Arc<Semaphore>,
     waiters: Arc<Semaphore>,
     registry: Mutex<Registry>,
+    // Cold materialization admits against active voice/enrollment work through this
+    // deployment-wide envelope. Unset (tests, pilot disabled) means no gating.
+    pilot: std::sync::OnceLock<PilotAdmission>,
 }
 impl std::fmt::Debug for ProviderRuntimeManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -133,6 +139,7 @@ impl ProviderRuntimeManager {
             builder,
             gate,
             stopping: CancellationToken::new(),
+            pilot: std::sync::OnceLock::new(),
             registry: Mutex::new(Registry {
                 entries: HashMap::new(),
                 evicted: Default::default(),
@@ -156,6 +163,13 @@ impl ProviderRuntimeManager {
             });
         }
         Ok(manager)
+    }
+
+    /// Attach the deployment-wide pilot envelope. Cold materialization then admits
+    /// atomically against active voice/enrollment work: a build only starts while both
+    /// are idle, and both stay busy until the attempt reaches its terminal state.
+    pub fn set_pilot_admission(&self, pilot: PilotAdmission) {
+        let _ = self.pilot.set(pilot);
     }
 
     pub async fn acquire(
@@ -255,7 +269,7 @@ impl ProviderRuntimeManager {
         if global_capacity.is_some_and(|value| !(1..=4096).contains(&value)) {
             return Err(RuntimeError::Configuration);
         }
-        let (mut changes, generation, start, quota) = {
+        let (mut changes, generation, start, quota, cold_permit) = {
             let mut registry = self.registry.lock().expect("runtime registry poisoned");
             let now = Instant::now();
             registry.entries.retain(|_, entry| {
@@ -286,6 +300,7 @@ impl ProviderRuntimeManager {
             {
                 return Err(RuntimeError::Configuration);
             }
+            let mut cold_permit = None;
             let start = if !registry.entries.contains_key(&version) {
                 if registry.entries.len() >= self.limits.max_version_entries {
                     let mut idle_aliases: Vec<_> = registry
@@ -336,6 +351,14 @@ impl ProviderRuntimeManager {
                         .clone()
                         .try_acquire_owned()
                         .map_err(|_| RuntimeError::Busy)?;
+                    // Atomic cold admission: claim the pilot permit before the attempt
+                    // exists. Voice and enrollment are mutually exclusive; if either is
+                    // active this build cannot start and the caller sees busy, not a
+                    // permanent failure. Held until the attempt reaches a terminal state.
+                    cold_permit = match self.pilot.get() {
+                        Some(pilot) => Some(pilot.try_cold().ok_or(RuntimeError::Busy)?),
+                        None => None,
+                    };
                     if registry.evicted.iter().any(|(key, old)| {
                         resource_key
                             .as_ref()
@@ -402,7 +425,13 @@ impl ProviderRuntimeManager {
                 super::RuntimeCounter::Coalesced
             });
             entry.waiters += 1;
-            (entry.changed.subscribe(), entry.generation, start, quota)
+            (
+                entry.changed.subscribe(),
+                entry.generation,
+                start,
+                quota,
+                cold_permit,
+            )
         };
         let _waiter = Waiter {
             manager: Arc::clone(self),
@@ -428,6 +457,7 @@ impl ProviderRuntimeManager {
                         physical_quota,
                         attempt,
                         preclaimed_load,
+                        cold_permit,
                     )
                     .await;
             });
@@ -485,6 +515,7 @@ impl ProviderRuntimeManager {
             .map_err(|_| RuntimeError::Timeout)?
     }
 
+    #[allow(clippy::too_many_arguments)] // cold_permit rides the attempt to its terminal ack.
     async fn build(
         self: Arc<Self>,
         version: ProviderVersion,
@@ -493,6 +524,7 @@ impl ProviderRuntimeManager {
         quota: ProviderRuntimeAdmission,
         attempt: OwnedSemaphorePermit,
         preclaimed_load: Option<OwnedSemaphorePermit>,
+        cold_permit: Option<PilotPermit>,
     ) {
         let started = Instant::now();
         let load = if preclaimed_load.is_some() {
@@ -511,6 +543,7 @@ impl ProviderRuntimeManager {
                 None,
                 Some(attempt),
                 started,
+                cold_permit,
             );
             return;
         }
@@ -559,6 +592,7 @@ impl ProviderRuntimeManager {
                     load,
                     Some(attempt),
                     started,
+                    cold_permit,
                 );
             });
         if spawn.is_err() {
@@ -569,10 +603,12 @@ impl ProviderRuntimeManager {
                 None,
                 None,
                 started,
+                None,
             );
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // cold_permit releases the pilot on terminal ack.
     fn complete(
         &self,
         version: &ProviderVersion,
@@ -581,7 +617,12 @@ impl ProviderRuntimeManager {
         mut load: Option<OwnedSemaphorePermit>,
         mut attempt: Option<OwnedSemaphorePermit>,
         started: Instant,
+        cold_permit: Option<PilotPermit>,
     ) {
+        // Terminal acknowledgement: the cold-preparation right is released before the
+        // terminal state is published, so a waiter that observes Ready/Failed also
+        // observes a free pilot (no window where voice sees a stale busy).
+        drop(cold_permit);
         let metadata = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             outcome.as_ref().ok().map(|resource| {
                 (

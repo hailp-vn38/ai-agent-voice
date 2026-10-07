@@ -871,3 +871,160 @@ async fn installed_identity_drift_and_metadata_panics_quarantine_until_unload_ac
         assert_eq!(manager.accounting().reserved_bytes, 0);
     }
 }
+
+// --- Ticket 04: cold preparation must admit atomically against voice/enrollment ---
+
+struct GatedBuilder {
+    entered: tokio::sync::mpsc::UnboundedSender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+impl RuntimeMaterializer for GatedBuilder {
+    fn estimated_peak_bytes(&self, _: &DesiredProvider) -> Result<u64, RuntimeError> {
+        Ok(10)
+    }
+    fn logical_capacity(&self, _: &DesiredProvider) -> Result<usize, RuntimeError> {
+        Ok(2)
+    }
+    fn build(
+        &self,
+        _: &DesiredProvider,
+        _: Option<PreparedRuntime>,
+        _: voice_agent_server::workers::ProviderRuntimeAdmission,
+    ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+        self.entered.send(()).unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+        Ok(Arc::new(Resource))
+    }
+}
+
+fn gated_manager(
+    entered: tokio::sync::mpsc::UnboundedSender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+) -> Arc<ProviderRuntimeManager> {
+    ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 0,
+            max_waiters: 8,
+            max_resident_bytes: 40,
+            max_resources: 4,
+            max_version_entries: 8,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 100,
+            idle_ttl_ms: 1000,
+        },
+        Arc::new(GatedBuilder {
+            entered,
+            release: std::sync::Mutex::new(release),
+        }),
+        AdmissionGate::open(),
+    )
+    .unwrap()
+}
+
+fn pilot_manager(
+    count: Arc<AtomicUsize>,
+) -> (
+    Arc<ProviderRuntimeManager>,
+    Arc<voice_agent_server::session::pilot::PilotAdmission>,
+) {
+    let manager = manager(count);
+    let pilot = Arc::new(voice_agent_server::session::pilot::PilotAdmission::new(
+        true,
+    ));
+    manager.set_pilot_admission((*pilot).clone());
+    (manager, pilot)
+}
+
+#[tokio::test]
+async fn active_enrollment_refuses_cold_start_as_busy_not_permanent_failure() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let (manager, pilot) = pilot_manager(count.clone());
+    // A voice session holds the envelope; cold prep must refuse with Busy and must not
+    // touch the materializer at all.
+    let voice = pilot.try_voice().unwrap();
+    assert!(matches!(
+        manager.acquire(snapshot(1)).await,
+        Err(RuntimeError::Busy)
+    ));
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    assert_eq!(manager.accounting().reserved_bytes, 0);
+    drop(voice);
+    // Envelope free again: the same cold acquisition now proceeds.
+    let lease = manager.acquire(snapshot(1)).await.unwrap();
+    assert_eq!(lease.version(), &ProviderVersion::database(1, 1));
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn ready_backing_runtime_hot_acquire_keeps_capacity_while_voice_holds_envelope() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let (manager, pilot) = pilot_manager(count.clone());
+    let _first = manager.acquire(snapshot(1)).await.unwrap();
+    // Voice owns the envelope, but the backing runtime is already Ready, so hot
+    // acquisition must reuse it without asking the pilot for cold rights.
+    let voice = pilot.try_voice().unwrap();
+    let hot = manager.acquire(snapshot(1)).await.unwrap();
+    assert_eq!(hot.version(), &ProviderVersion::database(1, 1));
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    drop(voice);
+}
+
+#[tokio::test]
+async fn cold_start_holds_the_envelope_until_terminal_so_voice_sees_busy() {
+    let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let manager = gated_manager(entered, release_rx);
+    let pilot = Arc::new(voice_agent_server::session::pilot::PilotAdmission::new(
+        true,
+    ));
+    manager.set_pilot_admission((*pilot).clone());
+
+    let cold = {
+        let manager = manager.clone();
+        tokio::spawn(async move { manager.acquire(snapshot(1)).await })
+    };
+    entered_rx.recv().await.unwrap();
+    // Cold preparation is in progress: voice admission must be refused while it runs.
+    assert!(pilot.try_voice().is_none());
+
+    release.send(()).unwrap();
+    let lease = cold.await.unwrap().unwrap();
+    assert_eq!(lease.version(), &ProviderVersion::database(1, 1));
+    // Terminal publication releases the envelope: voice now gets in.
+    let voice = pilot
+        .try_voice()
+        .expect("envelope released after cold Ready");
+    drop(voice);
+    drop(lease);
+}
+
+#[tokio::test(start_paused = true)]
+async fn cold_preparation_keeps_envelope_after_waiter_timeout_until_late_completion() {
+    let (entered, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let manager = gated_manager(entered, release_rx);
+    let pilot = Arc::new(voice_agent_server::session::pilot::PilotAdmission::new(
+        true,
+    ));
+    manager.set_pilot_admission((*pilot).clone());
+
+    let caller = {
+        let manager = manager.clone();
+        tokio::spawn(async move { manager.acquire(snapshot(1)).await })
+    };
+    entered_rx.recv().await.unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    assert!(matches!(caller.await.unwrap(), Err(RuntimeError::Timeout)));
+    // The HTTP waiter is gone, but cold preparation still owns the envelope.
+    assert!(pilot.try_voice().is_none());
+
+    release.send(()).unwrap();
+    tokio::time::resume();
+    let lease = manager.acquire(snapshot(1)).await.unwrap();
+    assert_eq!(lease.version(), &ProviderVersion::database(1, 1));
+    assert!(
+        pilot.try_voice().is_some(),
+        "envelope released at terminal acknowledgement"
+    );
+}
