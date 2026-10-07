@@ -222,6 +222,11 @@ impl SessionActor {
         if self.phase != SessionPhase::Listening && !auto_rearming {
             return;
         }
+        if self.speaker_gate_active() {
+            // Required: audio is the only input that can be scored; typed Detect cannot authorize.
+            self.required_refuses_detect();
+            return;
+        }
         let Some(text) = normalize_detect_text(input) else {
             return;
         };
@@ -321,7 +326,10 @@ impl SessionActor {
         match event {
             AsrWorkerEvent::Final { text, .. } if current => {
                 self.asr_stream = None;
-                if let Some(final_text) = self.commit_user_text(normalize_asr_final_text(text)) {
+                let text = normalize_asr_final_text(text);
+                if self.speaker_gate_active() {
+                    self.on_required_final(text);
+                } else if let Some(final_text) = self.commit_user_text(text) {
                     self.begin_speech_delivery(final_text);
                 } else {
                     self.complete_recognition();

@@ -702,7 +702,8 @@ async fn send_outbound(
         | OutboundMessage::BeginTurn { .. }
         | OutboundMessage::FinishTurn { .. }
         | OutboundMessage::AbortTurn { .. }
-        | OutboundMessage::Close(_) => None,
+        | OutboundMessage::Close(_)
+        | OutboundMessage::CloseWithReason { .. } => None,
     };
     if let Some(generation) = generation.filter(|generation| !generation_gate.admits(*generation)) {
         tracing::debug!(
@@ -747,6 +748,14 @@ async fn send_outbound(
                 })))
                 .await
         }
+        OutboundMessage::CloseWithReason { code, reason } => {
+            sender
+                .send(Message::Close(Some(CloseFrame {
+                    code,
+                    reason: reason.into(),
+                })))
+                .await
+        }
     };
     if let Err(ref error) = result {
         warn!(%error, "websocket writer failed");
@@ -787,6 +796,11 @@ async fn resolve_speaker_observe(
     .await
     {
         Ok(Some(plan)) => plan,
+        // `None` means the policy is off/observe, or a `required` Agent has no exact candidate set.
+        // The policy PUT only enables `required` on qualified calibration, and unlinking a speaker
+        // invalidates the session (ticket 09), so the empty-candidate case is not reachable through
+        // the admin API.
+        // ponytail: fail-closed here if direct DB edits can strand a `required` Agent with no gate.
         Ok(None) => return None,
         Err(error) => {
             warn!(%error, "speaker observe plan resolution failed");

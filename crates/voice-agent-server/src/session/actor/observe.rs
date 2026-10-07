@@ -42,6 +42,18 @@ impl SessionActor {
         };
         let samples = std::mem::take(&mut self.observe_pcm);
         if samples.is_empty() {
+            // Required still needs a bounded decision for this turn: no scoreable audio is a
+            // non-answer, never a hold.
+            if self.speaker_gate.is_some() {
+                let identity = crate::session::ObserveIdentity {
+                    operation_id: 0,
+                    turn_id: self.current_turn_id().map(TurnId::get).unwrap_or(0),
+                    generation: self.generation,
+                };
+                let _ = self
+                    .gate_tx
+                    .send(super::speaker::insufficient_audio_diagnostic(identity));
+            }
             return;
         }
         if self.observe_in_flight.load(Ordering::Acquire) {
@@ -66,6 +78,7 @@ impl SessionActor {
         let generation_gate = self.generation_gate.clone();
         let in_flight = self.observe_in_flight.clone();
         let status_frames = self.speaker_status;
+        let gate_tx = self.gate_tx.clone();
         tokio::spawn(async move {
             let diagnostic = observe.observe(identity, &samples).await;
             tracing::info!(
@@ -82,6 +95,9 @@ impl SessionActor {
                 "speaker observe",
             );
             in_flight.store(false, Ordering::Release);
+            // Required turns need the diagnostic on the actor even when no client opted into
+            // status frames. Stale results stay cleanup-only and are dropped there.
+            let _ = gate_tx.send(diagnostic.clone());
             // Stale results are cleanup-only: they never surface, and the latch is already clear.
             if !status_frames || !generation_gate.admits(diagnostic.identity.generation) {
                 return;

@@ -296,7 +296,7 @@ async fn invalid_reload_keeps_the_previous_catalog_published() {
 }
 
 #[tokio::test]
-async fn qualified_reload_clears_calibration_but_required_stays_gated() {
+async fn qualified_reload_makes_required_selectable() {
     let source = temp_path("json");
     fs::write(&source, qualified_catalog(&["kitchen"])).unwrap();
     let (base, task) = server(&database_url(), Some(&source)).await;
@@ -315,14 +315,11 @@ async fn qualified_reload_clears_calibration_but_required_stays_gated() {
 
     assert_eq!(reload(&client, &base, None).await.status(), StatusCode::OK);
 
-    // Calibration is now qualified for this exact candidate set; the fresh-turn gate (ticket 15)
-    // is still missing, so `required` remains unavailable.
+    // Calibration is now qualified for this exact candidate set, so the fresh-turn gate (ticket 15)
+    // makes `required` selectable.
     let body = policy(&client, &base, "kitchen").await;
-    assert_eq!(body["required_available"], false);
-    assert_eq!(
-        body["required_blockers"],
-        serde_json::json!(["speaker_fresh_turn_verification_required"])
-    );
+    assert_eq!(body["required_available"], true);
+    assert_eq!(body["required_blockers"], serde_json::json!([]));
 
     let enable = client
         .put(format!("{base}/api/admin/agents/kitchen/speaker-policy"))
@@ -332,11 +329,7 @@ async fn qualified_reload_clears_calibration_but_required_stays_gated() {
         .send()
         .await
         .unwrap();
-    assert_eq!(enable.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(
-        enable.json::<Value>().await.unwrap()["error"]["code"],
-        "speaker_fresh_turn_verification_required"
-    );
+    assert_eq!(enable.status(), StatusCode::OK);
 
     task.abort();
 }
@@ -379,7 +372,7 @@ async fn reload_revokes_only_the_removed_exact_set() {
 
     assert_eq!(
         policy(&client, &base, "kitchen").await["required_blockers"],
-        serde_json::json!(["speaker_fresh_turn_verification_required"])
+        serde_json::json!([])
     );
     assert_eq!(
         policy(&client, &base, "office").await["required_blockers"],
@@ -404,7 +397,7 @@ async fn new_calibration_revision_does_not_qualify_stale_evidence() {
     assert_eq!(reload(&client, &base, None).await.status(), StatusCode::OK);
     assert_eq!(
         policy(&client, &base, "kitchen").await["required_blockers"],
-        serde_json::json!(["speaker_fresh_turn_verification_required"])
+        serde_json::json!([])
     );
 
     // A contract change is a new calibration revision; evidence qualified under the old revision

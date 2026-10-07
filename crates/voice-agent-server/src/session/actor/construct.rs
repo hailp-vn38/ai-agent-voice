@@ -168,6 +168,7 @@ impl SessionActor {
             .register_session(&session_id, LLM_EVENT_CAPACITY);
         let (external_calls_tx, external_calls) = mpsc::channel(EXTERNAL_CALL_CAPACITY);
         let (device_tools_tx, device_tools_rx) = mpsc::channel(DEVICE_TOOLS_CAPACITY);
+        let (gate_tx, gate_rx) = mpsc::unbounded_channel();
         Ok(Self {
             session_id,
             phase: SessionPhase::Ready,
@@ -262,6 +263,11 @@ impl SessionActor {
             speaker_status: false,
             observe_pcm: Vec::new(),
             observe_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            speaker_gate: None,
+            required_text: None,
+            required_diagnostic: None,
+            gate_tx,
+            gate_rx,
             // An actor built outside an application has nothing to ask, so it starts with a gate
             // that stays open.  Production installs the real one before any turn can start.
             admission_gate: AdmissionGate::open(),
@@ -296,6 +302,10 @@ impl SessionActor {
         observe: Option<std::sync::Arc<SpeakerObserve>>,
         status_frames: bool,
     ) -> Self {
+        self.speaker_gate = observe.as_ref().and_then(|observe| {
+            (observe.plan().policy == crate::session::SpeakerPolicyMode::Required)
+                .then(SpeakerGate::new)
+        });
         self.speaker_observe = observe;
         self.speaker_status = status_frames;
         self

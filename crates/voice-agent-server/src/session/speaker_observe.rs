@@ -65,6 +65,7 @@ pub struct ObservePlan {
     pub template_id: i64,
     pub embedding_space: String,
     pub catalog_revision: i64,
+    pub policy: SpeakerPolicyMode,
     pub candidates: Vec<ObserveCandidate>,
 }
 
@@ -140,6 +141,8 @@ pub struct ObserveDiagnostic {
     pub outcome: SpeakerStatus,
     pub best_speaker_id: Option<i64>,
     pub best_score: Option<f32>,
+    /// Second-best similarity, when the candidate set had more than one scoreable entry.
+    pub runner_up_score: Option<f32>,
 }
 
 impl ObserveDiagnostic {
@@ -201,6 +204,7 @@ impl SpeakerObserve {
             outcome: SpeakerStatus::Unknown,
             best_speaker_id: None,
             best_score: None,
+            runner_up_score: None,
         };
         if samples < 1 {
             diagnostic.outcome = SpeakerStatus::InsufficientAudio;
@@ -232,9 +236,11 @@ impl SpeakerObserve {
         {
             Ok(embedding) => {
                 diagnostic.inference_ms = started.elapsed().as_millis() as u64;
-                if let Some(best) = self.plan.score(&embedding).into_iter().next() {
+                let scored = self.plan.score(&embedding);
+                if let Some(best) = scored.first() {
                     diagnostic.best_speaker_id = Some(best.speaker_id);
                     diagnostic.best_score = Some(best.score);
+                    diagnostic.runner_up_score = scored.get(1).map(|second| second.score);
                     diagnostic.outcome = if best.score >= OBSERVE_VERIFY_THRESHOLD {
                         SpeakerStatus::Verified
                     } else {
@@ -310,6 +316,7 @@ pub async fn resolve_observe_plan(
         template_id,
         embedding_space: embedding_space.to_owned(),
         catalog_revision,
+        policy: mode,
         candidates,
     }))
 }
@@ -324,6 +331,7 @@ mod tests {
             template_id: 3,
             embedding_space: "speaker:abc".into(),
             catalog_revision: 42,
+            policy: SpeakerPolicyMode::Observe,
             candidates: vec![
                 ObserveCandidate {
                     speaker_id: 1,
@@ -383,6 +391,7 @@ mod tests {
             outcome: SpeakerStatus::Verified,
             best_speaker_id: Some(1),
             best_score: Some(0.93),
+            runner_up_score: Some(0.10),
         };
         let text = diagnostic.wire_text();
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();

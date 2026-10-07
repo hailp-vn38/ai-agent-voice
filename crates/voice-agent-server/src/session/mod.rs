@@ -4,6 +4,7 @@ mod generation_gate;
 mod profile;
 mod prompt;
 mod runtime_profile;
+mod speaker_gate;
 mod speaker_observe;
 mod speech_output;
 mod state;
@@ -22,6 +23,9 @@ pub use profile::{
     resolve_effective_session_profile_with_override, resolve_managed_session_profile,
 };
 pub use runtime_profile::{ConfiguredTemplateProfile, PreparedTemplateProfile};
+pub use speaker_gate::{
+    GateDecision, GateReject, SPEAKER_GATE_MARGIN, SPEAKER_GATE_MAX_MISMATCHES, SpeakerGate,
+};
 pub use speaker_observe::{
     ObserveCandidate, ObserveDiagnostic, ObserveIdentity, ObservePlan, ObserveScore,
     SpeakerObserve, SpeakerPolicyMode, SpeakerStatus, resolve_observe_plan,

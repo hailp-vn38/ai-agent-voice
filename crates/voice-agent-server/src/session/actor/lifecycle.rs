@@ -2,6 +2,8 @@ use super::*;
 
 impl SessionActor {
     pub(super) fn complete_recognition(&mut self) {
+        self.required_text = None;
+        self.required_diagnostic = None;
         self.release_active_turn();
         if self.managed_switch_boundary.is_some() {
             return;
@@ -89,6 +91,8 @@ impl SessionActor {
             return;
         }
         self.interrupt_active_turn();
+        self.required_text = None;
+        self.required_diagnostic = None;
         let _ = self.advance_generation();
         self.close_vad();
         self.auto_reset_pending = false;

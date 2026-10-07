@@ -11,12 +11,12 @@ const POLICY_MODES: [&str; 3] = ["off", "observe", "required"];
 const MAX_GRANT_TEMPLATES: usize = 32;
 
 /// Why Agent `required` cannot be enabled yet.  Ticket 14 supplies calibration qualification; the
-/// fresh-turn verification gate (ticket 15) is not built, so `required` still promises an authority
-/// nothing enforces.  Fail closed until that lands.
-/// ponytail: always-block until ticket 15; replace with the real enforcement check then.
+/// `required` is only selectable once the Agent has qualified calibration evidence; the fresh-turn
+/// gate (ticket 15) then enforces per-turn verification at runtime. Without qualification, fail
+/// closed.
 fn required_blockers(qualified: bool) -> Vec<&'static str> {
     if qualified {
-        vec!["speaker_fresh_turn_verification_required"]
+        Vec::new()
     } else {
         vec!["speaker_calibration_required"]
     }

@@ -1,6 +1,7 @@
 use crate::session::{
-    ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ProfileSource, SessionDeviceTools,
-    SessionPhase, SpeakerObserve, TemplateSwitchCatalog, TurnId,
+    ActiveTemplateProfile, ActiveTurnLimiter, GateDecision, GateReject, GenerationGate,
+    ObserveDiagnostic, ProfileSource, SessionDeviceTools, SessionPhase, SpeakerGate,
+    SpeakerObserve, TemplateSwitchCatalog, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -178,6 +179,17 @@ pub struct SessionActor {
     /// never queued, so Observe can never apply backpressure to the core path. Shared with the
     /// detached scoring task, which clears it on completion.
     observe_in_flight: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Ticket 15 Required: the per-WebSocket identity lock and consecutive-denial counter. `None`
+    /// unless the Agent policy is `required`; then no turn reaches history or the LLM without a
+    /// fresh speaker pass for that same turn.
+    speaker_gate: Option<SpeakerGate>,
+    /// The ASR final of the active Required turn, held until the speaker operation resolves.
+    required_text: Option<String>,
+    /// The speaker diagnostic of the active Required turn, held until the ASR final resolves.
+    required_diagnostic: Option<ObserveDiagnostic>,
+    /// Where the detached speaker scoring task reports the diagnostic for the Required gate.
+    gate_tx: mpsc::UnboundedSender<ObserveDiagnostic>,
+    gate_rx: mpsc::UnboundedReceiver<ObserveDiagnostic>,
     /// The application admission gate.  A Voice Session does not own it and cannot reopen it: it
     /// only asks, so a Tool-round Executor cannot start new work after the application has stopped
     /// accepting it, whether or not this session ever observed the shutdown signal.
@@ -528,6 +540,11 @@ pub enum OutboundMessage {
         packet: Vec<u8>,
     },
     Close(u16),
+    /// Ticket 15: a close carrying a bounded, content-free reason (e.g. speaker refusal).
+    CloseWithReason {
+        code: u16,
+        reason: String,
+    },
 }
 
 impl OutboundMessage {
@@ -540,7 +557,7 @@ impl OutboundMessage {
             | Self::BeginTurn { text, .. }
             | Self::FinishTurn { text, .. }
             | Self::AbortTurn { text, .. } => Some(text),
-            Self::Binary { .. } | Self::Close(_) => None,
+            Self::Binary { .. } | Self::Close(_) | Self::CloseWithReason { .. } => None,
         }
     }
 }
@@ -553,6 +570,7 @@ mod listening;
 mod mcp;
 mod observe;
 mod pilot;
+mod speaker;
 mod tools;
 fn normalize_detect_text(input: String) -> Option<String> {
     let text = input.trim();

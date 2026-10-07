@@ -27,6 +27,7 @@ use voice_agent_server::{
     },
     session::{
         ObserveCandidate, ObservePlan, OutboundMessage, SessionActor, SessionPhase, SpeakerObserve,
+        SpeakerPolicyMode,
     },
     workers::{ProviderRuntimeAdmission, SpeakerRuntime},
 };
@@ -98,6 +99,13 @@ impl RuntimeMaterializer for FixedSpeakerFactory {
 }
 
 async fn observe_with(fail: bool) -> (Arc<SpeakerObserve>, ResourceLease) {
+    observe_with_policy(fail, SpeakerPolicyMode::Observe).await
+}
+
+async fn observe_with_policy(
+    fail: bool,
+    policy: SpeakerPolicyMode,
+) -> (Arc<SpeakerObserve>, ResourceLease) {
     let manager = ProviderRuntimeManager::new(
         RuntimeLimits {
             max_parallel_loads: 1,
@@ -132,13 +140,13 @@ async fn observe_with(fail: bool) -> (Arc<SpeakerObserve>, ResourceLease) {
         template_id: 3,
         embedding_space: runtime.embedding_space_id().to_owned(),
         catalog_revision: 42,
+        policy,
         candidates: vec![ObserveCandidate {
             speaker_id: 1,
             key: "alice".into(),
             vector: vec![1.0, 0.0, 0.0],
         }],
     };
-    // Mirrors the pinned extractor: a full 1 s window with speech present.
     let profile = QualityProfile {
         min_clip_ms: 1_000,
         max_clip_ms: 6_000,
@@ -342,5 +350,100 @@ async fn observe_unavailable_runtime_does_not_block_core_path() {
         .find(|v| v["type"] == "speaker" && v["state"] != "verifying")
         .expect("an observe state frame");
     assert_eq!(speaker["state"], "unavailable");
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+}
+
+/// Ticket 15: one manual Required turn with the identity matching the locked candidate commits the
+/// transcript and locks the identity.
+#[tokio::test]
+async fn required_turn_verifies_and_commits() {
+    let (observe, _lease) = observe_with_policy(false, SpeakerPolicyMode::Required).await;
+    let (control, mut messages) = mpsc::channel(8);
+    let (audio, _) = mpsc::channel(1);
+    let providers = providers();
+    let mut actor = SessionActor::new("session".into(), control, audio, CAPTURE_FRAMES, providers)
+        .unwrap()
+        .with_speaker_observe(Some(observe), true);
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    push_uplink(&mut actor);
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+    let messages = drain(&mut actor, &mut messages, true).await;
+
+    // The transcript is only committed after a passing speaker result for the same turn.
+    assert!(messages.iter().any(is_stt_frame));
+    let speaker = messages
+        .iter()
+        .filter_map(|m| m.as_text())
+        .map(|t| serde_json::from_str::<serde_json::Value>(t).unwrap())
+        .find(|v| v["type"] == "speaker" && v["state"] != "verifying")
+        .expect("a required state frame");
+    assert_eq!(speaker["state"], "verified");
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+}
+
+/// Ticket 15: a Required session refuses typed Detect without committing it.
+#[tokio::test]
+async fn required_rejects_detect_without_audio() {
+    let (observe, _lease) = observe_with_policy(false, SpeakerPolicyMode::Required).await;
+    let (control, mut messages) = mpsc::channel(8);
+    let (audio, _) = mpsc::channel(1);
+    let providers = providers();
+    let mut actor = SessionActor::new("session".into(), control, audio, CAPTURE_FRAMES, providers)
+        .unwrap()
+        .with_speaker_observe(Some(observe), true);
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Detect {
+        text: "xin chào".into(),
+    }));
+
+    let mut collected = Vec::new();
+    for _ in 0..200 {
+        actor.pump_workers();
+        while let Ok(message) = messages.try_recv() {
+            collected.push(message);
+        }
+        if collected
+            .iter()
+            .filter_map(|m| m.as_text())
+            .any(|t| t.contains("\"denied\""))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(
+        collected
+            .iter()
+            .filter_map(|m| m.as_text())
+            .any(|t| t.contains("\"denied\"")),
+        "expected a denied state frame"
+    );
+    // Detect text never reached the transcript.
+    assert!(!collected.iter().any(is_stt_frame));
+}
+
+/// Ticket 15: an `off` session is unaffected — Detect still commits.
+#[tokio::test]
+async fn off_session_still_accepts_detect() {
+    let (control, mut messages) = mpsc::channel(8);
+    let (audio, _) = mpsc::channel(1);
+    let providers = providers();
+    let mut actor =
+        SessionActor::new("session".into(), control, audio, CAPTURE_FRAMES, providers).unwrap();
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Manual,
+    }));
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Detect {
+        text: "xin chào".into(),
+    }));
+    let messages = drain(&mut actor, &mut messages, false).await;
+    assert!(messages.iter().any(is_stt_frame));
     assert_eq!(actor.phase(), SessionPhase::Ready);
 }

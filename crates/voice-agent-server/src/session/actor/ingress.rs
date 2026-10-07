@@ -50,6 +50,10 @@ impl SessionActor {
         while let Ok(event) = self.vad_events.try_recv() {
             self.on_vad_event(event);
         }
+        // Required speaker results land out of band and resolve a held transcript.
+        while let Ok(diagnostic) = self.gate_rx.try_recv() {
+            self.on_gate_diagnostic(diagnostic);
+        }
         self.release_pipeline_if_idle();
         self.drain_managed_switch_boundary();
         self.flush_pending_llm_text();
