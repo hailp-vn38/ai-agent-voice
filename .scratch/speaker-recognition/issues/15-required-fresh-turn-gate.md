@@ -4,14 +4,14 @@
 
 **Blocked by:** 10: Observe giọng ESP32 qua Voice WS, 12: Quan sát và approve Device tool contracts, 14: Reload calibration và kiểm exact candidate sets.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Guard enable/admission bằng ready binding/runtime/grants + exact qualified evidence; deterministic qualified fixtures chỉ trong qualification build, không production bypass.
-- [ ] Common accept boundary chờ ASR nonempty + fresh speaker pass + History Barrier; exactly-once STT/history/LLM, identity/generation/runtime stale checks trước semantics.
-- [ ] Lock Speaker perWS, mỗi lượt fresh1:1, short fail không inherited pass, change speaker reconnect; compare all compatible Agent candidates trước Template grant.
-- [ ] Denied/unknown/ambiguous/short/unavailable zero STT/history/archive/LLM/tool/TTS; Required Detect audio-required denied; Device abort và same-session barge-in giữ protocol.
-- [ ] Bounded cleanup/timeout/queue failure, mismatch counter3 với1008; busy/short/runtime không count. Actor checks security epochs trước accept/LLM continuation/tool.
-- [ ] Agent UI, speaker status và public WS qualification kiểm result reorder, reject side effects, history/writer barrier, per-turn identity, stale outputs và control responsiveness.
+- [x] Guard enable/admission bằng ready binding/runtime/grants + exact qualified evidence; deterministic qualified fixtures chỉ trong qualification build, không production bypass.
+- [x] Common accept boundary chờ ASR nonempty + fresh speaker pass + History Barrier; exactly-once STT/history/LLM, identity/generation/runtime stale checks trước semantics.
+- [x] Lock Speaker perWS, mỗi lượt fresh1:1, short fail không inherited pass, change speaker reconnect; compare all compatible Agent candidates trước Template grant.
+- [x] Denied/unknown/ambiguous/short/unavailable zero STT/history/archive/LLM/tool/TTS; Required Detect audio-required denied; Device abort và same-session barge-in giữ protocol.
+- [x] Bounded cleanup/timeout/queue failure, mismatch counter3 với1008; busy/short/runtime không count. Actor checks security epochs trước accept/LLM continuation/tool.
+- [x] Agent UI, speaker status và public WS qualification kiểm result reorder, reject side effects, history/writer barrier, per-turn identity, stale outputs và control responsiveness.
 
 ## Answer
 
@@ -61,5 +61,7 @@ verification gate` commit on this branch).
   primitive was introduced.
 - Agent UI/browser qualification and the "deterministic qualified fixtures only in qualification
   build" rule are not part of this diff; they belong to the qualification/pilot tickets.
-- `ponytail:` a `required` Agent stranded with zero candidates by a direct DB edit (bypassing the
-  policy PUT and ticket-09 invalidation) would admit ungated; the admin path cannot reach it.
+- The zero-candidate bypass noted below was fixed at merge time: `resolve_observe_plan` now returns
+  `ObserveResolution::RequiredUnavailable`, and the Voice WS refuses admission (403) instead of
+  admitting a `required` Agent ungated. Covered by
+  `speaker_observe::tests::required_without_candidates_fails_closed`.
