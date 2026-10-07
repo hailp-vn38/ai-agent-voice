@@ -64,6 +64,11 @@ describe('Admin resource APIs', () => {
     await agentsApi.mcpBindings('a/b')
     await agentsApi.bindMcpServer('a/b', 'm/x', { enabled: true, required: false }, 7)
     await agentsApi.unlinkMcpServer('a/b', 'm/x', 8)
+    await agentsApi.speakerPolicy('a/b')
+    await agentsApi.setSpeakerPolicy('a/b', 'required', 9)
+    await agentsApi.agentSpeakers('a/b')
+    await agentsApi.setAgentSpeaker('a/b', 'spk/x', ['t/1'], 10)
+    await agentsApi.unlinkAgentSpeaker('a/b', 'spk/x', 11)
 
     expect(call(fetch, 0)[0]).toBe('/api/admin/agents?page=1&page_size=50&enabled=true&sort=name')
     expect(call(fetch, 1)[0]).toBe('/api/admin/agents/a%2Fb')
@@ -80,6 +85,12 @@ describe('Admin resource APIs', () => {
     expect(call(fetch, 9)[0]).toBe('/api/admin/agents/a%2Fb/mcp-bindings')
     expectJsonMutation(call(fetch, 10)[1], 'PUT', { enabled: true, required: false }, 7)
     expect(call(fetch, 11)[0]).toBe('/api/admin/agents/a%2Fb/mcp-bindings/m%2Fx')
+    expect(call(fetch, 12)[0]).toBe('/api/admin/agents/a%2Fb/speaker-policy')
+    expectJsonMutation(call(fetch, 13)[1], 'PUT', { mode: 'required' }, 9)
+    expect(call(fetch, 14)[0]).toBe('/api/admin/agents/a%2Fb/speakers?page=1&page_size=50')
+    expectJsonMutation(call(fetch, 15)[1], 'PUT', { template_keys: ['t/1'] }, 10)
+    expect(call(fetch, 16)[0]).toBe('/api/admin/agents/a%2Fb/speakers/spk%2Fx')
+    expect((call(fetch, 16)[1].headers as Headers).get('If-Match')).toBe('"11"')
   })
 
   it('maps device queries and mutations including a false enabled filter', async () => {

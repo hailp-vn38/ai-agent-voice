@@ -126,3 +126,11 @@ export interface SpeakerRecognitionSummary {
   }
   catalog_revision: number
 }
+
+/** One Agent/Template pair that grants a Speaker (`GET /speakers/{key}/bindings`). */
+export interface SpeakerBinding {
+  agent_key: string
+  template_key: string
+}
+
+export interface SpeakerBindingPage extends Page<SpeakerBinding> {}

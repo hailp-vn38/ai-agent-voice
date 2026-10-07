@@ -2,6 +2,12 @@ import { request, requestJson } from './client'
 import type { PutAgentMcpBindingInput, AgentMcpBindings } from './types/mcp'
 import type { AdminAgent, AgentTemplatePage, CreateAgentInput, UpdateAgentInput } from './types/agents'
 import type { Page } from './types/common'
+import type {
+  AgentSpeakerBindingPage,
+  AgentSpeakerPolicy,
+  AgentSpeakerPolicyMode,
+  PutAgentSpeakerBindingResult,
+} from './types/speaker-policy'
 
 function agentPath(key: string) {
   return `/api/admin/agents/${encodeURIComponent(key)}`
@@ -57,5 +63,32 @@ export const agentsApi = {
   },
   async unlinkMcpServer(agentKey: string, mcpServerKey: string, revision: number) {
     await request(`${agentPath(agentKey)}/mcp-bindings/${encodeURIComponent(mcpServerKey)}`, { method: 'DELETE' }, { revision })
+  },
+  speakerPolicy(key: string, signal?: AbortSignal) {
+    return requestJson<AgentSpeakerPolicy>(`${agentPath(key)}/speaker-policy`, {}, { signal })
+  },
+  setSpeakerPolicy(key: string, mode: AgentSpeakerPolicyMode, revision: number) {
+    return requestJson<AgentSpeakerPolicy>(`${agentPath(key)}/speaker-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    }, { revision })
+  },
+  agentSpeakers(key: string, signal?: AbortSignal) {
+    return requestJson<AgentSpeakerBindingPage>(`${agentPath(key)}/speakers?page=1&page_size=50`, {}, { signal })
+  },
+  setAgentSpeaker(agentKey: string, speakerKey: string, templateKeys: string[], revision: number) {
+    return requestJson<PutAgentSpeakerBindingResult>(
+      `${agentPath(agentKey)}/speakers/${encodeURIComponent(speakerKey)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template_keys: templateKeys }),
+      },
+      { revision },
+    )
+  },
+  async unlinkAgentSpeaker(agentKey: string, speakerKey: string, revision: number) {
+    await request(`${agentPath(agentKey)}/speakers/${encodeURIComponent(speakerKey)}`, { method: 'DELETE' }, { revision })
   },
 }

@@ -76,4 +76,11 @@ describe('speakersApi', () => {
     expect(cancelInit.method).toBe('DELETE')
     expect((cancelInit.headers as Headers).get('If-Match')).toBe('"6"')
   })
+
+  it('lists the agents/templates granting a speaker with bounded paging', async () => {
+    const fetch = installFetch()
+    await speakersApi.bindings('a/b')
+
+    expect(call(fetch, 0)[0]).toBe('/api/admin/speakers/a%2Fb/bindings?page=1&page_size=50')
+  })
 })

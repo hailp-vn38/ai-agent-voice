@@ -4,6 +4,7 @@ import type {
   CreateSpeakerInput,
   EnrollmentDraft,
   Speaker,
+  SpeakerBindingPage,
   SpeakerListQuery,
   SpeakerPage,
   SpeakerRecognitionSummary,
@@ -70,5 +71,8 @@ export const speakersApi = {
   },
   async cancelDraft(speakerKey: string, draftId: string, revision: number) {
     await request(draftPath(speakerKey, draftId), { method: 'DELETE' }, { revision })
+  },
+  bindings(key: string, signal?: AbortSignal) {
+    return requestJson<SpeakerBindingPage>(`${speakerPath(key)}/bindings?page=1&page_size=50`, {}, { signal })
   },
 }
