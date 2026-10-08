@@ -31,8 +31,8 @@ const { t } = useI18n()
           v-for="item in group.items"
           :key="item.to"
           :to="item.to"
-          class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          active-class="!border-studio-violet/20 !bg-studio-violet/10 !font-semibold !text-foreground"
+          class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent/65 hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          active-class="!border-studio-violet/35 !bg-studio-violet/15 !font-semibold !text-studio-violet"
           @click="$emit('navigate')"
         >
           <component :is="item.icon" class="size-[18px] shrink-0" aria-hidden="true" />
