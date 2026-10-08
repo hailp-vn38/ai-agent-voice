@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Bot, Boxes, LayoutTemplate, MonitorSmartphone, ArrowUpRight, RefreshCw } from '@lucide/vue'
-import { onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import PageHeader from '@/components/admin/PageHeader.vue'
@@ -8,10 +8,13 @@ import StudioStatCard from '@/components/studio/StudioStatCard.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useAdminStore } from '@/stores/admin'
+import { useAuthStore } from '@/stores/auth'
 import { useServerStore } from '@/stores/server'
 
 const { t } = useI18n()
 const admin = useAdminStore()
+const auth = useAuthStore()
+const countsVisible = computed(() => Boolean(auth.adminToken) && !admin.loading && !admin.error)
 const server = useServerStore()
 const aborter = new AbortController()
 
@@ -23,7 +26,7 @@ onBeforeUnmount(() => aborter.abort())
   <section class="space-y-7">
     <PageHeader :eyebrow="t('overview.eyebrow')" :title="t('overview.title')" :description="t('overview.description')">
       <template #actions>
-        <Button variant="outline" :disabled="admin.loading" @click="admin.refreshAll()">
+        <Button variant="outline" :disabled="admin.loading || !auth.adminToken" @click="admin.refreshAll()">
           <RefreshCw class="size-4" />
           {{ t('common.refresh') }}
         </Button>
@@ -31,10 +34,10 @@ onBeforeUnmount(() => aborter.abort())
     </PageHeader>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StudioStatCard :label="t('nav.agents')" :value="admin.agents.length" :hint="t('overview.registered')" :icon="Bot" />
-      <StudioStatCard :label="t('nav.templates')" :value="admin.templates.length" :hint="t('overview.configurations')" :icon="LayoutTemplate" />
-      <StudioStatCard :label="t('nav.devices')" :value="admin.devices.length" :hint="t('overview.devicesHint')" :icon="MonitorSmartphone" />
-      <StudioStatCard :label="t('nav.providers')" :value="admin.providers.length" :hint="t('overview.catalog')" :icon="Boxes" />
+      <StudioStatCard :label="t('nav.agents')" :value="countsVisible ? admin.agents.length : '—'" :hint="t('overview.registered')" :icon="Bot" />
+      <StudioStatCard :label="t('nav.templates')" :value="countsVisible ? admin.templates.length : '—'" :hint="t('overview.configurations')" :icon="LayoutTemplate" />
+      <StudioStatCard :label="t('nav.devices')" :value="countsVisible ? admin.devices.length : '—'" :hint="t('overview.devicesHint')" :icon="MonitorSmartphone" />
+      <StudioStatCard :label="t('nav.providers')" :value="countsVisible ? admin.providers.length : '—'" :hint="t('overview.catalog')" :icon="Boxes" />
     </div>
 
     <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)]">
