@@ -4,6 +4,7 @@ use super::*;
 use crate::audio::enrollment::{self, QualityProfile, Reject, WavReject};
 use axum::{
     body::{Body, to_bytes},
+    extract::Path,
     http::header,
 };
 use serde::Deserialize;
@@ -327,6 +328,121 @@ pub(super) async fn create_speaker_from_capture(
     }
     match super::speakers::speaker_resource_by_key(pool, &key).await {
         Ok(value) => (StatusCode::CREATED, Json(json!({"speaker": value}))).into_response(),
+        Err(cause) => sql_error(&request, &cause),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplaceVoiceprintBody {
+    capture_id: String,
+}
+
+/// PUT /speakers/{key}/voiceprint — one captured embedding replaces the current
+/// model-space vector without changing the Speaker identity or Agent links.
+pub(super) async fn replace_voiceprint(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let expected_revision = match expected(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    let (request, body): (_, ReplaceVoiceprintBody) = match json(request).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if body.capture_id.is_empty() || body.capture_id.len() > 64 {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    let pool = match db(&state) { Ok(pool) => pool, Err(response) => return response };
+    let Some(runtime) = state.speaker_runtime.as_ref() else {
+        return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable");
+    };
+    let mut tx = match pool.begin().await {
+        Ok(value) => value, Err(cause) => return sql_error(&request, &cause),
+    };
+    let speaker: Option<(i64, i64)> = match sqlx::query_as(
+        "SELECT id,revision FROM speakers WHERE key=?"
+    ).bind(&key).fetch_optional(&mut *tx).await {
+        Ok(value) => value, Err(cause) => return sql_error(&request, &cause),
+    };
+    let Some((speaker_id, revision)) = speaker else {
+        return error(&request, StatusCode::NOT_FOUND, "not_found");
+    };
+    if expected_revision != revision {
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    let capture: Option<CaptureRow> = match sqlx::query_as(
+        "SELECT runtime_id,embedding_space,dims,vector,status,speaker_id,expires_at FROM speaker_quick_captures WHERE id=?"
+    ).bind(&body.capture_id).fetch_optional(&mut *tx).await {
+        Ok(value) => value, Err(cause) => return sql_error(&request, &cause),
+    };
+    let Some(capture) = capture else {
+        return error(&request, StatusCode::NOT_FOUND, "capture_not_found");
+    };
+    if capture.status == "committed" {
+        if capture.speaker_id == Some(speaker_id) {
+            return match super::speakers::speaker_resource_by_key(pool, &key).await {
+                Ok(value) => (StatusCode::OK, Json(serde_json::json!({"speaker":value}))).into_response(),
+                Err(cause) => sql_error(&request, &cause),
+            };
+        }
+        return error(&request, StatusCode::GONE, "capture_consumed");
+    }
+    if capture.status != "accepted" || capture.expires_at <= now() {
+        return error(&request, StatusCode::GONE, "capture_expired");
+    }
+    if capture.runtime_id != state.runtime_id
+        || capture.embedding_space != runtime.embedding_space_id()
+        || capture.dims != runtime.dimension() as i64
+    {
+        return error(&request, StatusCode::CONFLICT, "speaker_embedding_space_changed");
+    }
+    let now = now();
+    let reserved = sqlx::query(
+        "UPDATE speaker_quick_captures SET expires_at=expires_at WHERE id=? AND status='accepted'"
+    ).bind(&body.capture_id).execute(&mut *tx).await;
+    if !matches!(reserved, Ok(ref value) if value.rows_affected() == 1) {
+        return error(&request, StatusCode::CONFLICT, "capture_busy");
+    }
+    let bumped = sqlx::query(
+        "UPDATE speakers SET revision=revision+1,updated_at=? WHERE id=? AND revision=?"
+    ).bind(now).bind(speaker_id).bind(revision).execute(&mut *tx).await;
+    if !matches!(bumped, Ok(ref value) if value.rows_affected() == 1) {
+        return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    let updated = sqlx::query(
+        "INSERT INTO speaker_voiceprints(speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) VALUES (?,?,1,1,'passed',NULL,'builtin',1,?,?,'',?,?) \
+         ON CONFLICT(speaker_id,embedding_space) DO UPDATE SET \
+         revision=speaker_voiceprints.revision+1,sample_count=1,browser_validation_status='passed', \
+         provider_id=NULL,provider_key='builtin',provider_revision=1,dims=excluded.dims,vector=excluded.vector, \
+         calibration_revision='',enrolled_at=excluded.enrolled_at,updated_at=excluded.updated_at"
+    )
+    .bind(speaker_id).bind(&capture.embedding_space)
+    .bind(capture.dims).bind(capture.vector.expect("accepted capture has embedding"))
+    .bind(now).bind(now).execute(&mut *tx).await;
+    if let Err(cause) = updated { return sql_error(&request, &cause); }
+    let consumed = sqlx::query(
+        "UPDATE speaker_quick_captures SET status='committed',vector=NULL,speaker_id=?,committed_at=?,expires_at=? WHERE id=? AND status='accepted'"
+    )
+    .bind(speaker_id).bind(now).bind(now + TOMBSTONE_SECONDS)
+    .bind(&body.capture_id).execute(&mut *tx).await;
+    if !matches!(consumed, Ok(ref value) if value.rows_affected() == 1) {
+        return error(&request, StatusCode::CONFLICT, "capture_busy");
+    }
+    if let Err(cause) = super::speakers::publish_catalog_revision(&mut tx).await {
+        return sql_error(&request, &cause);
+    }
+    if let Err(cause) = audit(&mut *tx, id(&request), "speaker",
+        Some(speaker_id), "reenroll", Some(revision), Some(revision + 1),
+        AuditOutcome::Success, 1).await {
+        return sql_error(&request, &cause);
+    }
+    if let Err(cause) = tx.commit().await { return sql_error(&request, &cause); }
+    match super::speakers::speaker_resource_by_key(pool, &key).await {
+        Ok(value) => (StatusCode::OK, Json(serde_json::json!({"speaker":value}))).into_response(),
         Err(cause) => sql_error(&request, &cause),
     }
 }
