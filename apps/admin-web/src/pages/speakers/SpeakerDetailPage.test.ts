@@ -81,7 +81,7 @@ describe('SpeakerDetailPage', () => {
     })
 
     await flushPromises()
-    expect(wrapper.get('#speaker-edit-form').exists()).toBe(true)
+    expect(wrapper.find('#speaker-edit-form').exists()).toBe(true)
     vi.mocked(speakersApi.update).mockResolvedValue(speaker('spk_a'))
     await wrapper.get('#speaker-edit-form').trigger('submit')
     await flushPromises()
