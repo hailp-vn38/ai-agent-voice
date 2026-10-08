@@ -18,6 +18,10 @@ const countsVisible = computed(() => Boolean(auth.adminToken) && !admin.loading 
 const server = useServerStore()
 const aborter = new AbortController()
 
+async function refresh() {
+  await Promise.all([admin.refreshAll(), server.refresh(aborter.signal)])
+}
+
 onMounted(() => void server.refresh(aborter.signal))
 onBeforeUnmount(() => aborter.abort())
 </script>
@@ -26,7 +30,7 @@ onBeforeUnmount(() => aborter.abort())
   <section class="space-y-7">
     <PageHeader :eyebrow="t('overview.eyebrow')" :title="t('overview.title')" :description="t('overview.description')">
       <template #actions>
-        <Button variant="outline" :disabled="admin.loading || !auth.adminToken" @click="admin.refreshAll()">
+        <Button variant="outline" :disabled="admin.loading || !auth.adminToken" @click="refresh()">
           <RefreshCw class="size-4" />
           {{ t('common.refresh') }}
         </Button>
