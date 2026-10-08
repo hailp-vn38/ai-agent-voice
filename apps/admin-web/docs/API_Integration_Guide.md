@@ -2,9 +2,9 @@
 
 ## Vue Web ↔ Rust Voice Agent Server
 
-**Nguồn contract:** `docs/api/00-all-apis.postman_collection.json` trên branch `dev-test`.
+**Nguồn contract:** `docs/api/00-all-apis.postman_collection.json` của branch triển khai tương ứng và các Rust routes hiện tại. Không giả định collection cũ trên `dev-test` là nguồn duy nhất.
 
-Tài liệu này hướng dẫn coding agent thay mock/localStorage trong Vue Web Admin bằng Admin API thật của Rust server. Phạm vi được chia theo các domain UI chính:
+Tài liệu này ghi nhận việc đồng bộ Vue Web Admin với Admin API thật của Rust server. Migration từ mock/localStorage đã được thực hiện trong code; các ví dụ migration bên dưới là lịch sử, không phải hiện trạng. Phạm vi được chia theo các domain UI chính:
 
 - System
 - Agents
@@ -18,6 +18,8 @@ Tài liệu này hướng dẫn coding agent thay mock/localStorage trong Vue We
 Mục tiêu là giữ UI hiện tại nhưng chuyển **source of truth** sang server/database.
 
 ---
+
+> **Cập nhật 2026-10-08 — Voice Agent Studio:** Xem [component/UX/API map mới](voice-agent-studio-redesign.md). Trang `/overview` lấy management counts từ `useAdminStore`, kết hợp `GET /ready` và `GET /api/admin/system`; trang `/devices` hiển thị registered devices và Enabled/Disabled, **không hiển thị WebSocket online** từ `device.enabled`. Route `/playground` và `/reports`, ephemeral test session, SSE, realtime waveform **chưa có**. Không gọi các endpoint đề xuất như thể đã tồn tại.
 
 # 1. Nguyên tắc bắt buộc
 
@@ -139,7 +141,7 @@ Không silent overwrite dữ liệu mới hơn trên server.
 Khuyến nghị structure:
 
 ```text
-web/src/
+apps/admin-web/src/
 ├── api/
 │   ├── client.ts
 │   ├── errors.ts
