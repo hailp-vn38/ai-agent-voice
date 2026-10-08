@@ -61,6 +61,38 @@ describe('DeviceDetailPage', () => {
     wrapper.unmount()
   })
 
+  it('keeps Delete only in the header menu and requires confirmation before DELETE', async () => {
+    vi.mocked(devicesApi.remove).mockResolvedValue(undefined)
+    const wrapper = shallowMount(DeviceDetailPage, {
+      global: {
+        stubs: {
+          RouterLink: true,
+          ActionMenu: { template: '<div data-detail-actions><slot /></div>' },
+          MenuItem: {
+            emits: ['select'],
+            template: '<button type="button" data-device-delete-option @click="$emit(\'select\')"><slot /></button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-detail-actions]').exists()).toBe(true)
+    expect(wrapper.find('section.studio-panel h2').text()).toBe('Device information')
+    expect(wrapper.findAll('[data-device-delete-option]')).toHaveLength(1)
+    await wrapper.get('[data-device-delete-option]').trigger('click')
+    expect(devicesApi.remove).not.toHaveBeenCalled()
+
+    const dialog = wrapper.findComponent({ name: 'ConfirmDialog' })
+    expect(dialog.props('modelValue')).toBe(true)
+    dialog.vm.$emit('confirm')
+    await flushPromises()
+
+    expect(devicesApi.remove).toHaveBeenCalledWith('device-a', 5)
+    expect(push).toHaveBeenCalledWith({ name: 'devices' })
+    wrapper.unmount()
+  })
+
   it('updates only admission using revision (without falsely reporting WebSocket online)', async () => {
     const wrapper = shallowMount(DeviceDetailPage, {
       global: { stubs: { RouterLink: true } },
