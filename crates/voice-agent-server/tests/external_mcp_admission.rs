@@ -601,11 +601,11 @@ async fn bind_server(
     headers: &str,
     auth: (&str, Option<&str>, Option<&str>),
 ) {
-    let (auth_type, auth_header_name, secret_ref) = auth;
+    let (auth_type, auth_header_name, _secret_ref) = auth;
     let server_id: i64 = sqlx::query_scalar(
-        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,secret_ref,\
+        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,\
          connect_timeout_ms,request_timeout_ms,enabled,created_at,updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, 2000, 2000, 1, 1, 1) RETURNING id",
+         VALUES (?, ?, ?, ?, ?, ?, 2000, 2000, 1, 1, 1) RETURNING id",
     )
     .bind(key)
     .bind(key)
@@ -613,7 +613,6 @@ async fn bind_server(
     .bind(headers)
     .bind(auth_type)
     .bind(auth_header_name)
-    .bind(secret_ref)
     .fetch_one(pool)
     .await
     .unwrap();
