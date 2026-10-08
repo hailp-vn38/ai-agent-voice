@@ -99,6 +99,12 @@ impl SpeakerSwitchGuard {
         &self.authorities
     }
 
+    /// Observe recognition is advisory: a target without a usable Speaker plan remains a valid
+    /// anonymous Template switch. Required keeps the authority checks below.
+    pub fn allows_anonymous_target(&self) -> bool {
+        self.policy == SpeakerPolicyMode::Observe
+    }
+
     /// Refuse unless the target Template keeps the locked Speaker gated. The security epoch is
     /// rechecked here so a revocation between arm and apply still drops the switch.
     pub fn authorize(
@@ -236,5 +242,17 @@ mod tests {
     fn an_unlocked_speaker_needs_only_a_qualified_same_space_target() {
         let guard = guard(vec![("b", authority(2, "space-a", true, &[]))]);
         assert!(guard.authorize("b", None).is_ok());
+    }
+
+    #[test]
+    fn observe_can_switch_to_an_anonymous_target() {
+        let guard = SpeakerSwitchGuard::new(
+            SpeakerPolicyMode::Observe,
+            Arc::from("space-a"),
+            BTreeMap::new(),
+            Arc::new(CancellationToken::new()),
+        );
+
+        assert!(guard.allows_anonymous_target());
     }
 }

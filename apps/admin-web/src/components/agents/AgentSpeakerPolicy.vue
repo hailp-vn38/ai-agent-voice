@@ -32,7 +32,7 @@ const dialogOpen = ref(false)
 const draftSpeakerKey = ref('')
 const draftTemplateKeys = ref<string[]>([])
 
-const modes: AgentSpeakerPolicyMode[] = ['off', 'observe', 'required']
+const modes: AgentSpeakerPolicyMode[] = ['off', 'observe']
 
 const enabledTemplates = computed(() => templates.value.filter((template) => template.enabled !== false))
 const selectedSpeaker = computed(() => speakers.value.find((speaker) => speaker.key === draftSpeakerKey.value))
@@ -153,13 +153,13 @@ watch(() => props.agentId, load, { immediate: true })
 
     <div v-if="policy" class="space-y-2 rounded-md border border-border p-3">
       <p class="text-sm font-medium">{{ t('agentSpeakerPolicy.modeLabel') }}</p>
-      <div class="flex flex-wrap items-center gap-2">
+      <div v-if="policy.mode !== 'required'" class="flex flex-wrap items-center gap-2">
         <Button
           v-for="mode in modes"
           :key="mode"
           size="sm"
           :variant="policy.mode === mode ? 'default' : 'outline'"
-          :disabled="busy || (mode === 'required' && !policy.required_available)"
+          :disabled="busy"
           :data-testid="`speaker-policy-mode-${mode}`"
           @click="setMode(mode)"
         >
@@ -169,7 +169,11 @@ watch(() => props.agentId, load, { immediate: true })
           {{ t('agentSpeakerPolicy.currentMode', { mode: t(`agentSpeakerPolicy.mode.${policy.mode}`) }) }}
         </Badge>
       </div>
-      <div v-if="!policy.required_available" class="text-sm text-muted-foreground" data-testid="required-blockers">
+      <div v-else class="text-sm text-muted-foreground" data-testid="speaker-policy-required-legacy">
+        <p>{{ t('agentSpeakerPolicy.requiredLegacy') }}</p>
+        <p>{{ t('agentSpeakerPolicy.requiredLegacyAction') }}</p>
+      </div>
+      <div v-if="policy.mode !== 'required' && !policy.required_available" class="text-sm text-muted-foreground" data-testid="required-blockers">
         <p>{{ t('agentSpeakerPolicy.requiredUnavailable') }}</p>
         <ul v-if="policy.required_blockers.length" class="ml-5 list-disc">
           <li v-for="blocker in policy.required_blockers" :key="blocker">{{ blockerText(blocker) }}</li>

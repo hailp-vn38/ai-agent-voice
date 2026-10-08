@@ -274,6 +274,9 @@ impl SessionActor {
         let Some(guard) = &self.speaker_switch else {
             return Ok(None);
         };
+        if guard.allows_anonymous_target() {
+            return Ok(None);
+        }
         let locked = self.speaker_gate.as_ref().and_then(SpeakerGate::locked);
         guard.authorize(template_key, locked).map(Some)
     }
@@ -288,9 +291,17 @@ impl SessionActor {
             return;
         };
         let Some(authority) = guard.authorities().get(template_key) else {
+            if guard.allows_anonymous_target() {
+                self.speaker_observe = None;
+                self.observe_reset();
+            }
             return;
         };
         if authority.embedding_space.as_ref() != observe.embedding_space() {
+            if guard.allows_anonymous_target() {
+                self.speaker_observe = None;
+                self.observe_reset();
+            }
             return;
         }
         self.speaker_observe = Some(std::sync::Arc::new(
@@ -334,6 +345,9 @@ impl SessionActor {
             template_key = %candidate.template_key,
             previous_revision,
             revision = self.profile.revision,
+            speaker_recognition_enabled = self.speaker_observe.is_some(),
+            speaker_recognition_ready = self.speaker_observe.is_some(),
+            speaker_authentication_enabled = self.speaker_gate.is_some(),
             "Session profile switched at a turn boundary"
         );
     }

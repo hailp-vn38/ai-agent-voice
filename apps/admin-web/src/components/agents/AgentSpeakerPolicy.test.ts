@@ -83,13 +83,13 @@ describe('AgentSpeakerPolicy', () => {
     })
   })
 
-  it('disables required mode while the qualification gate is missing', async () => {
+  it('keeps a legacy required policy out of the ordinary recognition toggle', async () => {
+    agentsApi.speakerPolicy.mockResolvedValueOnce(policy({ mode: 'required' }))
     const wrapper = mountComponent()
     await flushPromises()
 
-    const required = wrapper.get('[data-testid="speaker-policy-mode-required"]')
-    expect(required.attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="required-blockers"]').text()).toContain('qualified calibration')
+    expect(wrapper.find('[data-testid="speaker-policy-mode-required"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="speaker-policy-required-legacy"]').text()).toContain('Legacy voice authorization active')
   })
 
   it('reports revision conflicts from policy updates', async () => {

@@ -37,11 +37,12 @@ pub enum SpeakerPolicyMode {
 }
 
 impl SpeakerPolicyMode {
-    pub fn parse(raw: &str) -> Self {
+    pub fn parse(raw: &str) -> Option<Self> {
         match raw {
-            "observe" => Self::Observe,
-            "required" => Self::Required,
-            _ => Self::Off,
+            "off" => Some(Self::Off),
+            "observe" => Some(Self::Observe),
+            "required" => Some(Self::Required),
+            _ => None,
         }
     }
 
@@ -295,6 +296,28 @@ pub enum ObserveResolution {
     /// Policy is `required` but no candidate set resolved. Admission MUST fail closed rather
     /// than admit the session ungated.
     RequiredUnavailable,
+    /// A persisted policy value outside the supported contract. Admission must reject rather
+    /// than silently weakening it to `off`.
+    InvalidPolicy,
+}
+
+/// Resolve persisted policy before any runtime dependency. An unrecognised stored value is a
+/// security error at the admission boundary, never an implicit `off` policy.
+pub async fn resolve_speaker_policy(
+    pool: &SqlitePool,
+    agent_id: i64,
+) -> Result<Option<SpeakerPolicyMode>, sqlx::Error> {
+    let mode: Option<String> =
+        sqlx::query_scalar("SELECT mode FROM agent_speaker_policies WHERE agent_id = ?")
+            .bind(agent_id)
+            .fetch_optional(pool)
+            .await?;
+    match mode {
+        Some(raw) => SpeakerPolicyMode::parse(&raw)
+            .map(Some)
+            .ok_or_else(|| sqlx::Error::Protocol("unsupported speaker policy".into())),
+        None => Ok(None),
+    }
 }
 
 /// Resolve the Agent policy and, when Observe is enabled, the active Template's granted
@@ -312,13 +335,16 @@ pub async fn resolve_observe_plan(
 ) -> Result<ObserveResolution, sqlx::Error> {
     use sqlx::Row;
 
-    let mode: Option<String> =
+    let raw_mode: Option<String> =
         sqlx::query_scalar("SELECT mode FROM agent_speaker_policies WHERE agent_id = ?")
             .bind(agent_id)
             .fetch_optional(pool)
             .await?;
-    let Some(mode) = mode.map(|raw| SpeakerPolicyMode::parse(&raw)) else {
+    let Some(raw_mode) = raw_mode else {
         return Ok(ObserveResolution::Off);
+    };
+    let Some(mode) = SpeakerPolicyMode::parse(&raw_mode) else {
+        return Ok(ObserveResolution::InvalidPolicy);
     };
     if !mode.observe_enabled() {
         return Ok(ObserveResolution::Off);
@@ -403,15 +429,19 @@ mod tests {
 
     #[test]
     fn policy_parses_and_gates_off() {
-        assert_eq!(SpeakerPolicyMode::parse("off"), SpeakerPolicyMode::Off);
+        assert_eq!(
+            SpeakerPolicyMode::parse("off"),
+            Some(SpeakerPolicyMode::Off)
+        );
         assert_eq!(
             SpeakerPolicyMode::parse("observe"),
-            SpeakerPolicyMode::Observe
+            Some(SpeakerPolicyMode::Observe)
         );
         assert_eq!(
             SpeakerPolicyMode::parse("required"),
-            SpeakerPolicyMode::Required
+            Some(SpeakerPolicyMode::Required)
         );
+        assert_eq!(SpeakerPolicyMode::parse("unexpected"), None);
         assert!(!SpeakerPolicyMode::Off.observe_enabled());
         assert!(SpeakerPolicyMode::Observe.observe_enabled());
         assert!(SpeakerPolicyMode::Required.observe_enabled());
@@ -526,6 +556,18 @@ mod tests {
                 .await
                 .unwrap(),
             ObserveResolution::RequiredUnavailable
+        ));
+
+        // A corrupt persisted value is not an implicit downgrade to `off`.
+        sqlx::query("UPDATE agent_speaker_policies SET mode = 'unexpected' WHERE agent_id = 7")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
+                .await
+                .unwrap(),
+            ObserveResolution::InvalidPolicy
         ));
     }
 

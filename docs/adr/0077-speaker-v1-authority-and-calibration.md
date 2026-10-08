@@ -2,13 +2,13 @@
 
 ## Status
 
-Accepted design, 2026-10-07; chưa triển khai. Xem [implementation guide](../speaker-recognition-web-enrollment-implementation-guide%20%281%29.md).
+Accepted design, 2026-10-07; cập nhật 2026-10-08. Xem [implementation guide](../speaker-identification-ws-logging-implementation-guide.md).
 
 V1 dùng Speaker Authorization cho trò chuyện, tra cứu thông thường và điều khiển ít hậu quả như đèn hoặc âm lượng. Speaker Match có rủi ro replay/giọng tổng hợp, nên thao tác nhạy cảm như mở khóa hoặc truy cập dữ liệu riêng cần Independent Confirmation; chưa có cơ chế đó thì từ chối. Giữ Device và Admin authentication hiện có. V1 chặn tool nhạy cảm khi chưa có Independent Confirmation theo [ADR 0078](0078-agent-tool-allowlist.md); giọng match không cấp quyền bao quát cho tools.
 
-Required xác minh mới ở từng voice turn, kể cả sau khi khóa Speaker trong Voice Session; chấp nhận từ chối lượt thiếu 2 giây tiếng nói thay vì kế thừa pass để hỗ trợ câu ngắn. Device control `abort` tiếp tục hoạt động theo protocol; câu “dừng” qua ASR vẫn chịu Speaker Gate. Observe dùng để đánh giá tác động hội thoại trước khi bật Required.
+Required xác minh mới ở từng voice turn, kể cả sau khi khóa Speaker trong Voice Session; chấp nhận từ chối lượt thiếu 2 giây tiếng nói thay vì kế thừa pass để hỗ trợ câu ngắn. Device control `abort` tiếp tục hoạt động theo protocol; câu “dừng” qua ASR vẫn chịu Speaker Gate. Observe là nhận dạng advisory theo từng Conversational Turn: match chỉ có thể điều chỉnh cách xưng hô trong prompt tạm thời của turn đó, không xác thực Device, không cấp tool/private-data permission và không được lưu hay tái dùng sang turn khác.
 
-Mốc đầu gồm web enrollment và Observe từ ESP32 qua WS: provider/draft/thu mẫu → Preliminary Calibration → validate/finalize → Observe trên thiết bị. Calibration sơ bộ giải quyết phụ thuộc enrollment nhưng không đủ cấp quyền trong Required. Chỉ cho phép Required sau hiệu chỉnh bằng dữ liệu thực tế và đánh giá độc lập; browser holdout đạt không thay thế điều kiện này.
+Mốc đầu gồm web enrollment và Observe từ ESP32 qua WS: provider/draft/thu mẫu → profile `pending` → Observe trên thiết bị. Quality-accepted quick enrollment chỉ tạo profile provisional; Observe không cần `calibration.json` hay qualification. Chỉ cho phép Required sau hiệu chỉnh bằng dữ liệu thực tế và đánh giá độc lập; browser holdout đạt không thay thế điều kiện này.
 
 Speaker Match chỉ đại diện cho một cửa sổ audio tối đa 6 giây, không chứng minh cùng một người nói toàn bộ utterance. V1 chấp nhận giới hạn này trong phạm vi ít hậu quả; Required chưa xử lý đổi người giữa câu hoặc nói chồng giọng.
 

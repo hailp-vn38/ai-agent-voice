@@ -7,11 +7,19 @@ pub(super) async fn handler(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let config = state.config.clone();
+    let bearer_auth_enabled = !config.auth.token.is_empty();
     // Registered before anything else happens, so the drain can observe and close a connection
     // even if it never reaches the handshake.  The handle is moved into the socket task, which is
     // what keeps this connection counted for exactly as long as it exists.
     let drain = state.register_session();
     if !state.admission_gate().is_open() {
+        log_ws_auth(
+            bearer_auth_enabled,
+            "not_checked",
+            "unavailable",
+            "denied",
+            "shutting_down",
+        );
         return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
     }
     for name in [
@@ -21,6 +29,13 @@ pub(super) async fn handler(
         "authorization",
     ] {
         if headers.get_all(name).iter().count() > 1 {
+            log_ws_auth(
+                bearer_auth_enabled,
+                "not_checked",
+                "not_checked",
+                "denied",
+                "duplicate_protocol_header",
+            );
             return (StatusCode::BAD_REQUEST, "duplicate protocol header").into_response();
         }
     }
@@ -32,13 +47,20 @@ pub(super) async fn handler(
     ) || !header_or_query_present(&headers, "device-id", query.device_id.as_deref())
         || !header_or_query_present(&headers, "client-id", query.client_id.as_deref())
     {
+        log_ws_auth(
+            bearer_auth_enabled,
+            "not_checked",
+            "not_checked",
+            "denied",
+            "invalid_protocol_headers",
+        );
         return (
             StatusCode::BAD_REQUEST,
             "Protocol-Version, Device-Id and Client-Id are required",
         )
             .into_response();
     }
-    if !config.auth.token.is_empty()
+    if bearer_auth_enabled
         && !header_or_query_is(
             &headers,
             header::AUTHORIZATION.as_str(),
@@ -46,27 +68,64 @@ pub(super) async fn handler(
             &format!("Bearer {}", config.auth.token),
         )
     {
+        log_ws_auth(
+            true,
+            "denied",
+            "not_checked",
+            "denied",
+            "invalid_bearer_token",
+        );
         return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
     }
     let device_id = header_or_query_value(&headers, "device-id", query.device_id.as_deref())
         .expect("validated above");
     if !valid_device_identity(device_id) {
+        log_ws_auth(
+            bearer_auth_enabled,
+            bearer_auth_result(bearer_auth_enabled),
+            "denied",
+            "denied",
+            "invalid_device_id",
+        );
         return (StatusCode::BAD_REQUEST, "invalid Device-Id").into_response();
     }
     let client_id = header_or_query_value(&headers, "client-id", query.client_id.as_deref())
         .expect("validated above");
     if !valid_device_identity(client_id) {
+        log_ws_auth(
+            bearer_auth_enabled,
+            bearer_auth_result(bearer_auth_enabled),
+            "denied",
+            "denied",
+            "invalid_client_id",
+        );
         return (StatusCode::BAD_REQUEST, "invalid Client-Id").into_response();
     }
     match super::enrollment::route(&state, device_id, client_id).await {
         Ok(super::enrollment::Route::Voice) => {}
         Ok(super::enrollment::Route::Pending(connection)) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "pending_enrollment",
+                "accepted",
+                "pending_enrollment",
+            );
             return upgrade
                 .max_frame_size(config.websocket.max_frame_bytes.saturating_add(1024))
                 .on_upgrade(move |socket| super::enrollment::run(socket, state, connection, drain))
                 .into_response();
         }
-        Err(response) => return *response,
+        Err(response) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "denied",
+                "denied",
+                "device_route_rejected",
+            );
+            return *response;
+        }
     }
     // One immutable Effective Session Profile per connection.  Resolution is fail-closed: a
     // database-backed Agent whose default Template cannot be materialized is never silently
@@ -74,12 +133,33 @@ pub(super) async fn handler(
     let profile = match state.resolve_session_profile(device_id).await {
         Ok(profile) => profile,
         Err(SessionProfileAdmissionError::Runtime(error)) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "profile_runtime_unavailable",
+            );
             return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
         }
         Err(SessionProfileAdmissionError::Denied) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "denied",
+                "denied",
+                "device_not_admitted",
+            );
             return (StatusCode::FORBIDDEN, "device not admitted").into_response();
         }
         Err(SessionProfileAdmissionError::AdmissionUnavailable) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "device_admission_unavailable",
+            );
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "device admission unavailable",
@@ -91,9 +171,23 @@ pub(super) async fn handler(
                 device_id = %device_id,
                 "the admitted agent has no usable effective session profile"
             );
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "profile_unavailable",
+            );
             return (StatusCode::SERVICE_UNAVAILABLE, "agent profile unavailable").into_response();
         }
         Err(SessionProfileAdmissionError::ShuttingDown) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "shutting_down",
+            );
             return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
         }
     };
@@ -136,6 +230,13 @@ pub(super) async fn handler(
         template = ?profile.source,
         "WebSocket upgrade accepted"
     );
+    log_ws_auth(
+        bearer_auth_enabled,
+        bearer_auth_result(bearer_auth_enabled),
+        "admitted",
+        "accepted",
+        "ok",
+    );
     let max = config.websocket.max_frame_bytes;
     upgrade
         .max_frame_size(max.saturating_add(1024))
@@ -168,6 +269,41 @@ pub(super) async fn handler(
             )
         })
         .into_response()
+}
+
+fn bearer_auth_result(enabled: bool) -> &'static str {
+    if enabled { "accepted" } else { "not_required" }
+}
+
+/// Connection telemetry deliberately has no raw headers, token, Device ID or Client ID.
+fn log_ws_auth(
+    bearer_auth_enabled: bool,
+    bearer_auth_result: &'static str,
+    device_admission_result: &'static str,
+    result: &'static str,
+    reason_code: &'static str,
+) {
+    if result == "accepted" {
+        info!(
+            event = "ws_auth",
+            bearer_auth_enabled,
+            bearer_auth_result,
+            device_admission_result,
+            result,
+            reason_code,
+            "WebSocket authentication decision"
+        );
+    } else {
+        warn!(
+            event = "ws_auth",
+            bearer_auth_enabled,
+            bearer_auth_result,
+            device_admission_result,
+            result,
+            reason_code,
+            "WebSocket authentication decision"
+        );
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -817,16 +953,70 @@ async fn resolve_speaker_observe(
     ),
     Response,
 > {
+    let policy = match state.database.as_ref() {
+        Some(database) => {
+            match crate::session::resolve_speaker_policy(database.pool(), profile.agent_id).await {
+                Ok(Some(policy)) => policy,
+                Ok(None) if profile.agent_id == 0 => crate::session::SpeakerPolicyMode::Off,
+                Ok(None) => crate::session::SpeakerPolicyMode::Off,
+                Err(error) => {
+                    warn!(%error, "speaker policy resolution failed; refusing admission");
+                    return Err((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "speaker policy unavailable",
+                    )
+                        .into_response());
+                }
+            }
+        }
+        None if profile.agent_id == 0 => crate::session::SpeakerPolicyMode::Off,
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "speaker policy unavailable",
+            )
+                .into_response());
+        }
+    };
+    let required = policy == crate::session::SpeakerPolicyMode::Required;
     let Some(speaker) = resolved.speaker.as_ref().cloned() else {
+        if required {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "speaker required but no provider is available",
+            )
+                .into_response());
+        }
         return Ok((None, None));
     };
     let Some(template_id) = profile.source.template_id() else {
+        if required {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "speaker required but no template is available",
+            )
+                .into_response());
+        }
         return Ok((None, None));
     };
     let Some(database) = state.database.as_ref() else {
+        if required {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "speaker required but database is unavailable",
+            )
+                .into_response());
+        }
         return Ok((None, None));
     };
     let Some(lease) = profile.switch_catalog.lease_for_speaker(&speaker) else {
+        if required {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "speaker required but no runtime lease is available",
+            )
+                .into_response());
+        }
         return Ok((None, None));
     };
     let embedding_space = speaker.embedding_space_id().to_owned();
@@ -846,6 +1036,18 @@ async fn resolve_speaker_observe(
             return Err((
                 StatusCode::FORBIDDEN,
                 "speaker required but no candidate set is available",
+            )
+                .into_response());
+        }
+        Ok(crate::session::ObserveResolution::InvalidPolicy) => {
+            warn!("unsupported speaker policy; refusing admission");
+            return Err((StatusCode::FORBIDDEN, "unsupported speaker policy").into_response());
+        }
+        Err(error) if required => {
+            warn!(%error, "required speaker plan resolution failed; refusing admission");
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "speaker required but plan is unavailable",
             )
                 .into_response());
         }
