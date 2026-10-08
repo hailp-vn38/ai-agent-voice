@@ -25,6 +25,8 @@ Không rewrite app, không copy API layer sang page, không chỉnh sửa databa
 | `src/components/studio/VoicePipelineStrip.vue` | Pipeline summary dựa trên Template bindings thực | Đã thêm |
 | `src/views/OverviewView.vue` | Counts từ Pinia + ready, sessions, providers từ server API | Đã thêm |
 | `src/views/DevicesView.vue` | Device fleet dùng read-model có sẵn, không giả online | Đã thêm |
+| `src/stores/server.ts` | Xóa system snapshot khi API lỗi; tránh stale telemetry | Đã sửa |
+| `src/App.vue` | Chỉ render resource routes khi có admin bearer token | Đã sửa |
 | `src/config/navigation.ts` | Nhóm Workspace / Voice & Devices / Infrastructure | Đã sửa |
 | `src/components/SidebarContent.vue` | Branding + nhóm điều hướng | Đã sửa |
 | `src/router/index.ts` | `/` → `/overview`; route `/devices` | Đã sửa |
