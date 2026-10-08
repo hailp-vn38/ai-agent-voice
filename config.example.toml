@@ -177,31 +177,19 @@ max_workers = 2
 command_queue_capacity = 32
 cleanup_grace_ms = 5000
 
+# CAM++ is one built-in runtime; not a Provider/Template binding.
+# Similarity is advisory for personalized conversation, never authentication.
 [speaker_recognition]
-# Bounded deployment limits for speaker profiles and web enrollment drafts.
-# Enrollment is refused outside the `[min_samples, max_samples]` band, and the
-# per-sample WAV body cap applies regardless of Content-Length (chunked-safe).
+similarity_threshold = 0.5
 max_speakers = 256
 max_candidates_per_agent = 32
-max_voiceprint_spaces_per_speaker = 4
-# Fixed deployment path of the calibration catalog reloaded by the Admin route.
-# Never supplied per request; absent means reloads report `speaker_catalog_unavailable`.
-# calibration_source = "runtime/speaker/calibration.json"
 
 [speaker_recognition.enrollment]
-# Clip/window bounds are shared by the browser recorder, the WAV parser and the
-# quality gate so they cannot disagree.
-min_samples = 3
-max_samples = 5
-min_clip_ms = 5000
+min_clip_ms = 2000
 max_clip_ms = 10000
-min_speech_ms = 3000
+min_speech_ms = 1800
 max_window_ms = 6000
-# Draft lifetime. Expired drafts are swept at startup and every five minutes.
-ttl_ms = 1800000
-# Process-wide cap on open (collecting) drafts.
 max_open_enrollments = 16
-# Per-sample WAV body cap for the enrollment routes.
 max_audio_body_bytes = 524288
 
 [deployment]
