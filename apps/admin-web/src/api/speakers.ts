@@ -58,9 +58,15 @@ export const speakersApi = {
       body: JSON.stringify(input),
     })
   },
-  capture(providerKey: string, wav: Blob, revision: number, signal?: AbortSignal) {
-    return requestJson<SpeakerCapture>(`/api/admin/providers/${encodeURIComponent(providerKey)}/speaker-captures`, {
+  capture(wav: Blob, signal?: AbortSignal) {
+    return requestJson<SpeakerCapture>('/api/admin/speakers/captures', {
       method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav, signal,
+    })
+  },
+  replaceVoiceprint(key: string, captureId: string, revision: number, signal?: AbortSignal) {
+    return requestJson<{ speaker: Speaker }>(`${speakerPath(key)}/voiceprint`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ capture_id: captureId }), signal,
     }, { revision })
   },
   createFromCapture(input: CreateSpeakerFromCaptureInput, signal?: AbortSignal) {
