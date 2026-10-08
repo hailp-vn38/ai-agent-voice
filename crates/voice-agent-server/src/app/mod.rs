@@ -405,7 +405,30 @@ async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> 
     .await
     .map_err(|_| BootstrapError::Enrollment)?;
     prepare_speaker_enrollment(state).await;
+    prepare_builtin_speaker(state).await;
     Ok(())
+}
+
+/// Load one CAM++ extractor outside the Tokio reactor. Speaker identification is optional:
+/// its failure must not take down the ordinary voice pipeline.
+async fn prepare_builtin_speaker(state: &mut AppState) {
+    let threads = state.config.runtime.onnx.threads_for("campplus_sherpa");
+    let built = tokio::task::spawn_blocking(move || {
+        let extractor = crate::providers::speaker::build(threads)?;
+        crate::workers::SpeakerRuntime::new(
+            extractor,
+            crate::workers::ProviderRuntimeAdmission::new(1, 1),
+        )
+    })
+    .await;
+    match built {
+        Ok(Ok(runtime)) => {
+            info!(embedding_space = %runtime.embedding_space_id(), "builtin speaker engine ready");
+            state.speaker_runtime = Some(Arc::new(runtime));
+        }
+        Ok(Err(err)) => warn!(reason = %err, "builtin speaker engine unavailable"),
+        Err(err) => warn!(reason = %err, "builtin speaker worker failed to initialize"),
+    }
 }
 
 /// Sweeps expired enrollment drafts at startup, then on a five-minute tick until shutdown. The

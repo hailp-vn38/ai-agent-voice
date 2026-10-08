@@ -41,6 +41,8 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub providers: Arc<ProviderCatalog>,
     pub runtimes: Arc<RuntimeCatalog>,
+    /// One process-owned CAM++ extractor shared by enrollment and voice sessions.
+    pub speaker_runtime: Option<Arc<crate::workers::SpeakerRuntime>>,
     pub provider_runtime_manager:
         Option<Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
     /// One process-wide diagnostic boundary shared by all future Admin provider-test routes.
@@ -664,6 +666,7 @@ impl AppState {
             config,
             providers: Arc::new(loaded.providers),
             runtimes,
+            speaker_runtime: None,
             provider_runtime_manager: None,
             provider_diagnostics,
             worker_supervisor: supervisor,

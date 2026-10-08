@@ -162,7 +162,7 @@ impl ObserveDiagnostic {
 /// resident, the admission-time plan and the quality profile.
 pub struct SpeakerObserve {
     runtime: Arc<SpeakerRuntime>,
-    lease: ResourceLease,
+    lease: Option<ResourceLease>,
     plan: ObservePlan,
     profile: QualityProfile,
     security: Arc<CancellationToken>,
@@ -177,11 +177,22 @@ impl SpeakerObserve {
     ) -> Self {
         Self {
             runtime,
-            lease,
+            lease: Some(lease),
             plan,
             profile,
             // A session admitted without the registry (tests, Observe-only harnesses) is never
             // revoked; real admission attaches the registry token via `with_security`.
+            security: Arc::new(CancellationToken::new()),
+        }
+    }
+
+    /// Built-in speaker engine is process-owned; no database Provider lease is required.
+    pub fn new_builtin(runtime: Arc<SpeakerRuntime>, plan: ObservePlan, profile: QualityProfile) -> Self {
+        Self {
+            runtime,
+            lease: None,
+            plan,
+            profile,
             security: Arc::new(CancellationToken::new()),
         }
     }
@@ -262,11 +273,11 @@ impl SpeakerObserve {
         }
 
         let started = std::time::Instant::now();
-        match self
-            .runtime
-            .extract(analyzed.window, self.lease.clone())
-            .await
-        {
+        let extracted = match &self.lease {
+            Some(lease) => self.runtime.extract(analyzed.window, lease.clone()).await,
+            None => self.runtime.extract_builtin(analyzed.window).await,
+        };
+        match extracted {
             Ok(embedding) => {
                 diagnostic.inference_ms = started.elapsed().as_millis() as u64;
                 let scored = self.plan.score(&embedding);

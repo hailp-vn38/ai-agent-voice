@@ -18,7 +18,7 @@ pub const MAX_WINDOW_SAMPLES: usize = 96_000;
 struct Request {
     pcm: PcmF32Mono,
     reply: tokio::sync::oneshot::Sender<Result<Vec<f32>, SpeakerError>>,
-    _lease: ResourceLease,
+    _lease: Option<ResourceLease>,
     _capacity: ProviderCapacityPermit,
     _slot: tokio::sync::OwnedSemaphorePermit,
 }
@@ -136,6 +136,20 @@ impl SpeakerRuntime {
         &self,
         pcm: PcmF32Mono,
         lease: ResourceLease,
+    ) -> Result<Vec<f32>, SpeakerError> {
+        self.extract_inner(pcm, Some(lease)).await
+    }
+
+    /// The built-in runtime is owned by AppState for the entire process, not by a
+    /// database provider lease. The worker request still owns its capacity/slot.
+    pub async fn extract_builtin(&self, pcm: PcmF32Mono) -> Result<Vec<f32>, SpeakerError> {
+        self.extract_inner(pcm, None).await
+    }
+
+    async fn extract_inner(
+        &self,
+        pcm: PcmF32Mono,
+        lease: Option<ResourceLease>,
     ) -> Result<Vec<f32>, SpeakerError> {
         if pcm.sample_rate_hz() != 16_000
             || !(MIN_WINDOW_SAMPLES..=MAX_WINDOW_SAMPLES).contains(&pcm.samples().len())
