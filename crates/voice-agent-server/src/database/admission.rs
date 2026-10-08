@@ -223,7 +223,7 @@ impl Database {
                 FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id \
                 WHERE ata.agent_id=? AND ata.enabled=1),0) + COALESCE((SELECT SUM(length(CAST(p.key AS BLOB)) + \
                     length(CAST(p.type AS BLOB)) + length(CAST(p.adapter AS BLOB)) + \
-                    length(CAST(p.config_json AS BLOB)) + COALESCE(length(CAST(p.secret_ref AS BLOB)),0)) \
+                    length(CAST(p.config_json AS BLOB))) \
                 FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id \
                 WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1)),0)",
         )
@@ -249,8 +249,8 @@ impl Database {
         if rows.len() > 64 {
             return Err(DeviceAdmissionError::Unavailable);
         }
-        let bindings = sqlx::query_as::<_, (i64, String, i64, String, i64, String, String, String, Option<String>, i64)>(
-            "SELECT b.template_id, b.provider_type, p.id, p.key, p.enabled, p.type, p.adapter, p.config_json, p.secret_ref, p.revision \
+        let bindings = sqlx::query_as::<_, (i64, String, i64, String, i64, String, String, String, i64)>(
+            "SELECT b.template_id, b.provider_type, p.id, p.key, p.enabled, p.type, p.adapter, p.config_json, p.revision \
              FROM template_provider_bindings b \
              JOIN providers p ON p.id = b.provider_id \
              WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments \
@@ -306,10 +306,10 @@ impl Database {
             kind,
             adapter,
             config_json,
-            secret_ref,
             revision,
         ) in bindings
         {
+            let secret_ref = super::secrets::provider_secret_env(&provider_key, &adapter);
             let snapshot = match snapshots.entry(id) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
                 std::collections::hash_map::Entry::Vacant(entry) => {
