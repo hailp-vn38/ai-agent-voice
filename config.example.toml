@@ -226,6 +226,7 @@ library = "runtime/onnxruntime/libonnxruntime.dylib"
 
 # Server-owned execution settings. Admin provider JSON cannot override these.
 [runtime.onnx.threads]
+campplus_sherpa = 1
 silero_onnx = 1
 zipformer_sherpa = 2
 gipformer_sherpa_offline = 4
@@ -286,6 +287,9 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # idle_ttl_ms = 600000
 #
 # [provider_runtime.estimated_peak_bytes]
+# CAM++: 256 MiB covers this Linux host measurement (115992 KiB peak, threads=1, synthetic 1-6s).
+# Remeasure on the deployment host before enabling the runtime manager.
+# campplus_sherpa = 268435456
 # silero_onnx = 134217728
 # gipformer_sherpa_offline = 536870912
 # kokoro_vi_onnx = 3221225472

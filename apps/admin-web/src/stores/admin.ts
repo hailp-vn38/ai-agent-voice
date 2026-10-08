@@ -737,7 +737,7 @@ export const useAdminStore = defineStore('admin', () => {
       const revision = providerRevisions.value[providerId]
       if (!current || revision === undefined) return
       const touchesConfig =
-        patch.model !== undefined || patch.description !== undefined || patch.endpoint !== undefined
+        current.type !== 'speaker' && (patch.model !== undefined || patch.description !== undefined || patch.endpoint !== undefined)
       const provider = await providersApi.update(
         providerId,
         {

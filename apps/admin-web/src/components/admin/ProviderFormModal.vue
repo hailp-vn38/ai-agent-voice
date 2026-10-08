@@ -138,7 +138,7 @@ function submit() {
         </datalist>
       </label>
 
-      <label class="block space-y-1.5">
+      <label v-if="form.type !== 'speaker'" class="block space-y-1.5">
         <span class="text-sm font-medium">{{ t('providers.model') }}</span>
         <input v-model="form.model" class="admin-input font-mono text-sm" />
       </label>
@@ -152,7 +152,7 @@ function submit() {
         </select>
       </label>
 
-      <label class="block space-y-1.5">
+      <label v-if="form.type !== 'speaker'" class="block space-y-1.5">
         <span class="text-sm font-medium">{{ t('providers.endpoint') }}</span>
         <input
           v-model="form.endpoint"
@@ -161,7 +161,7 @@ function submit() {
         />
       </label>
 
-      <label class="block space-y-1.5 sm:col-span-2">
+      <label v-if="form.type !== 'speaker'" class="block space-y-1.5 sm:col-span-2">
         <span class="text-sm font-medium">{{ t('providers.descriptionField') }}</span>
         <textarea v-model="form.description" class="admin-textarea min-h-24" />
       </label>

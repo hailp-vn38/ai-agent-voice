@@ -27,6 +27,9 @@ const form = reactive({ name: '', secret_ref: '', config: {} as Record<string, u
 let requestVersion = 0
 
 const fields = computed(() => descriptor.value?.config_schema?.fields ?? [])
+const config = computed(() => Object.fromEntries(Object.entries(form.config).filter(([key, value]) =>
+  value !== '' || fields.value.some((field) => field.key === key && field.required),
+)))
 const hasSecret = computed(() => descriptor.value?.secret_ref === true || Boolean((descriptor.value as Record<string, unknown> | undefined)?.secret_schema))
 const supportsDiscovery = computed(() => descriptor.value?.supports_discovery === true || Boolean(descriptor.value?.capabilities?.supports_discovery))
 const advancedFields = computed(() => fields.value.filter((field) => field.advanced))
@@ -118,7 +121,7 @@ async function create() {
   if (!descriptor.value || !canCreate.value || validationError.value) return
   submitted.value = true; error.value = null
   try {
-    const provider = await props.create({ name: form.name.trim(), type: type.value, adapter: descriptor.value.adapter, config_json: { ...form.config }, secret_ref: form.secret_ref.trim() || undefined })
+    const provider = await props.create({ name: form.name.trim(), type: type.value, adapter: descriptor.value.adapter, config_json: { ...config.value }, secret_ref: form.secret_ref.trim() || undefined })
     open.value = false; emit('created', provider.key)
   } catch (cause) { error.value = cause } finally { submitted.value = false }
 }
@@ -135,7 +138,7 @@ watch(() => form.config.model, () => { if (step.value === 2 && supportsDiscovery
       <p v-if="error" class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{{ formatApiError(error) }}</p>
 
       <div v-if="step === 1" class="space-y-4">
-        <div><p class="mb-2 text-sm font-medium">Loại provider</p><div class="grid grid-cols-2 gap-2 sm:grid-cols-4"><button v-for="item in ['vad', 'asr', 'llm', 'tts']" :key="item" type="button" :class="['rounded-lg border px-3 py-3 text-sm font-medium uppercase', type === item ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-accent']" @click="changeType(item as TemplateProviderType)">{{ item }}</button></div></div>
+        <div><p class="mb-2 text-sm font-medium">Loại provider</p><div class="grid grid-cols-2 gap-2 sm:grid-cols-4"><button v-for="item in ['vad', 'asr', 'llm', 'tts', 'speaker']" :key="item" type="button" :class="['rounded-lg border px-3 py-3 text-sm font-medium uppercase', type === item ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-accent']" @click="changeType(item as TemplateProviderType)">{{ item }}</button></div></div>
         <div><label class="block space-y-1.5"><span class="text-sm font-medium">Adapter</span><select class="admin-input" :value="descriptor?.adapter ?? ''" :disabled="adapterLoading || !adapters.length" @change="chooseAdapter(adapters.find((adapter) => adapter.adapter === ($event.target as HTMLSelectElement).value) ?? ({ adapter: '', type } as ProviderAdapter))"><option value="">{{ adapterLoading ? 'Đang tải adapter…' : 'Chọn adapter' }}</option><option v-for="adapter in adapters" :key="adapter.adapter" :value="adapter.adapter">{{ adapter.display_name || adapter.name || adapter.adapter }}</option></select></label><p v-if="!adapterLoading && !adapters.length" class="mt-2 text-sm text-muted-foreground">Không có adapter tương thích.</p><p v-else-if="descriptor?.description" class="mt-2 text-xs text-muted-foreground">{{ descriptor.description }}</p></div>
       </div>
 
@@ -147,7 +150,7 @@ watch(() => form.config.model, () => { if (step.value === 2 && supportsDiscovery
         <div v-if="supportsDiscovery" class="flex items-center gap-3"><Button variant="outline" :disabled="discoveryLoading" @click="discover">{{ discoveryLoading ? 'Đang lấy dữ liệu…' : 'Cập nhật model / voice / language' }}</Button><span class="text-xs text-muted-foreground">Nếu lỗi, chỉnh lựa chọn rồi thử lại.</span></div>
       </div>
 
-      <div v-else class="space-y-4"><div class="rounded-lg border p-4 text-sm"><dl class="grid gap-3 sm:grid-cols-2"><div><dt class="text-muted-foreground">Provider</dt><dd>{{ form.name }}</dd></div><div><dt class="text-muted-foreground">Loại / Adapter</dt><dd>{{ type.toUpperCase() }} / {{ descriptor?.name || descriptor?.adapter }}</dd></div><div v-for="(value, key) in form.config" :key="key"><dt class="text-muted-foreground">{{ key }}</dt><dd>{{ value }}</dd></div></dl></div><p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Provider sẽ được lưu vào hệ thống. Sau đó, gắn vào template và restart server để sử dụng.</p><details class="rounded-lg border p-3"><summary class="cursor-pointer text-sm font-medium">Xem JSON gửi lên</summary><pre class="mt-3 overflow-auto text-xs">{{ JSON.stringify({ name: form.name, type, adapter: descriptor?.adapter, config_json: form.config, ...(form.secret_ref ? { secret_ref: form.secret_ref } : {}) }, null, 2) }}</pre></details><p v-if="validationError" class="text-sm text-danger">{{ validationError }}</p></div>
+      <div v-else class="space-y-4"><div class="rounded-lg border p-4 text-sm"><dl class="grid gap-3 sm:grid-cols-2"><div><dt class="text-muted-foreground">Provider</dt><dd>{{ form.name }}</dd></div><div><dt class="text-muted-foreground">Loại / Adapter</dt><dd>{{ type.toUpperCase() }} / {{ descriptor?.name || descriptor?.adapter }}</dd></div><div v-for="(value, key) in config" :key="key"><dt class="text-muted-foreground">{{ key }}</dt><dd>{{ value }}</dd></div></dl></div><p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Provider sẽ được lưu vào hệ thống. Sau đó, gắn vào template và restart server để sử dụng.</p><details class="rounded-lg border p-3"><summary class="cursor-pointer text-sm font-medium">Xem JSON gửi lên</summary><pre class="mt-3 overflow-auto text-xs">{{ JSON.stringify({ name: form.name, type, adapter: descriptor?.adapter, config_json: config, ...(form.secret_ref ? { secret_ref: form.secret_ref } : {}) }, null, 2) }}</pre></details><p v-if="validationError" class="text-sm text-danger">{{ validationError }}</p></div>
     </div>
     <template #footer><div class="flex justify-between gap-2"><Button v-if="step > 1" variant="outline" @click="step === 2 ? backToAdapterSelection() : step--">Quay lại</Button><Button v-else variant="outline" @click="open = false">Hủy</Button><Button v-if="step < 3" :disabled="step === 1 ? !canContinue : Boolean(validationError) || !form.name.trim()" @click="step++">Tiếp tục</Button><Button v-else :disabled="submitted || !canCreate || Boolean(validationError)" @click="create">{{ submitted ? 'Đang tạo…' : 'Tạo provider' }}</Button></div></template>
   </BaseModal>

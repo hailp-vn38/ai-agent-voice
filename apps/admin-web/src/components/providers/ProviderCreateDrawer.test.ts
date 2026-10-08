@@ -13,6 +13,35 @@ const BaseModalStub = { template: '<div><slot /><slot name="footer" /></div>' }
 const ButtonStub = { props: ['disabled', 'type'], template: '<button :disabled="disabled" :type="type || \'button\'"><slot /></button>' }
 
 describe('ProviderCreateDrawer', () => {
+  it('omits cleared optional speaker fields so the API can apply defaults', async () => {
+    adaptersApi.list.mockResolvedValue([{ adapter: 'campplus_sherpa', type: 'speaker' }])
+    adaptersApi.get.mockResolvedValue({ adapter: 'campplus_sherpa', type: 'speaker', config_schema: { fields: [
+      { key: 'calibration_profile', type: 'string', required: false, nullable: true },
+      { key: 'min_speech_ms', type: 'integer', required: false, minimum: 1, maximum: 6000 },
+    ] } })
+    const create = vi.fn().mockResolvedValue({ key: 'speaker_test' })
+    const wrapper = mount(ProviderCreateDrawer, {
+      props: { modelValue: false, initialType: 'speaker', create },
+      global: { stubs: { BaseModal: BaseModalStub, Button: ButtonStub } },
+    })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(wrapper.findAll('button').some((button) => button.text() === 'speaker')).toBe(true)
+    await wrapper.find('select').setValue('campplus_sherpa')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
+    await wrapper.get('input[placeholder="Giọng Mai Chi"]').setValue('Voice')
+    const profile = wrapper.findAll('input[type="text"]')[0]!
+    await profile.setValue('temporary')
+    await profile.setValue('')
+    await wrapper.get('input[type="number"]').setValue('3000')
+    await wrapper.get('input[type="number"]').setValue('')
+    await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === 'Tạo provider')!.trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith({ name: 'Voice', type: 'speaker', adapter: 'campplus_sherpa', config_json: {}, secret_ref: undefined })
+  })
+
   it('does not send a client key and emits the key returned by the server', async () => {
     adaptersApi.list.mockResolvedValue([{ adapter: 'zerotts_onnx', type: 'tts', display_name: 'ZeroTTS' }])
     adaptersApi.get.mockResolvedValue({ adapter: 'zerotts_onnx', type: 'tts', config_schema: { fields: [] } })

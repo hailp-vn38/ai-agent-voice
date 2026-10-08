@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 const agentsApi = vi.hoisted(() => ({ list: vi.fn(), templates: vi.fn(), setDefaultTemplate: vi.fn() }))
 const templatesApi = vi.hoisted(() => ({ list: vi.fn(), providers: vi.fn() }))
-const providersApi = vi.hoisted(() => ({ list: vi.fn() }))
+const providersApi = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn() }))
 const devicesApi = vi.hoisted(() => ({ list: vi.fn() }))
 
 vi.mock('@/api/agents', () => ({ agentsApi }))
@@ -44,6 +44,18 @@ describe('admin store', () => {
     providersApi.list.mockResolvedValue({ items: [] })
     devicesApi.list.mockResolvedValue({ items: [] })
     agentsApi.setDefaultTemplate.mockResolvedValue(undefined)
+  })
+
+  it('preserves speaker config when the metadata form sends generic provider fields', async () => {
+    const provider = { id: 3, key: 'speaker_test', name: 'Voice', type: 'speaker', adapter: 'campplus_sherpa', config_json: '{"min_speech_ms":3000,"target_speech_ms":4000,"max_window_ms":6000}', enabled: 1, revision: 1, runtime_status: 'not_loaded' }
+    providersApi.list.mockResolvedValue({ items: [provider] })
+    providersApi.update.mockResolvedValue({ ...provider, name: 'Renamed', revision: 2 })
+    const store = useAdminStore()
+    await store.loadAll()
+    await store.updateProvider('speaker_test', { name: 'Renamed', model: '', description: 'Voice description', endpoint: undefined, status: 'ready' })
+    expect(providersApi.update).toHaveBeenCalledWith('speaker_test', {
+      name: 'Renamed', adapter: undefined, config_json: undefined, enabled: true,
+    }, 1)
   })
 
   it('updates Agent Detail reactively after the server accepts a new default template', async () => {
