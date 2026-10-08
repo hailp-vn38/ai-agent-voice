@@ -19,8 +19,8 @@ INSERT INTO agents (key,name,created_at,updated_at) VALUES ('agent','Agent',1,1)
 INSERT INTO devices (device_id,agent_id,created_at,updated_at) VALUES ('device',1,1,1);
 INSERT INTO agent_templates (key,name,language,prompt,created_at,updated_at) VALUES ('primary','Primary','vi','prompt',1,1);
 INSERT INTO agent_template_assignments (agent_id,template_id,is_default,created_at) VALUES (1,1,1,1);
-INSERT INTO providers (key,name,type,adapter,config_json,secret_ref,created_at,updated_at)
-VALUES ('llm','LLM','llm','openai','{"base_url":"https://example.test/v1","model":"version-one"}','PRIVATE_SECRET_REFERENCE',1,1);
+INSERT INTO providers (key,name,type,adapter,config_json,created_at,updated_at)
+VALUES ('llm','LLM','llm','openai','{"base_url":"https://example.test/v1","model":"version-one"}',1,1);
 INSERT INTO template_provider_bindings (template_id,provider_type,provider_id,created_at,updated_at) VALUES (1,'llm',1,1,1);
 "#).execute(db.pool()).await.unwrap();
 }
@@ -40,7 +40,7 @@ async fn admission_owns_exact_provider_version_after_patch_and_key_recreation() 
         .clone();
     assert_eq!(old.revision, 1);
     assert_eq!(old.adapter, "openai");
-    assert_eq!(old.secret_ref.as_deref(), Some("PRIVATE_SECRET_REFERENCE"));
+    assert_eq!(old.secret_ref.as_deref(), Some("VOICE_PROVIDER_LLM_API_KEY"));
     sqlx::query("UPDATE providers SET revision=2, config_json=? WHERE key='llm'")
         .bind(r#"{"base_url":"https://example.test/v1","model":"version-two"}"#)
         .execute(db.pool())
@@ -54,7 +54,7 @@ async fn admission_owns_exact_provider_version_after_patch_and_key_recreation() 
     assert_eq!(new.revision, 2);
     assert!(new.config_json.contains("version-two"));
     assert!(old.config_json.contains("version-one"));
-    assert!(!format!("{old:?}").contains("PRIVATE_SECRET_REFERENCE"));
+    assert!(!format!("{old:?}").contains("VOICE_PROVIDER_LLM_API_KEY"));
     assert!(!format!("{old:?}").contains("version-one"));
 
     sqlx::raw_sql(r#"
