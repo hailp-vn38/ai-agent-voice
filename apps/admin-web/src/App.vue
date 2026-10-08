@@ -61,6 +61,6 @@ async function connect() {
         </Button>
       </span>
     </div>
-    <RouterView />
+    <RouterView v-if="auth.adminToken" />
   </AdminShell>
 </template>
