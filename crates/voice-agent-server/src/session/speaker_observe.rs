@@ -165,6 +165,7 @@ pub struct SpeakerObserve {
     lease: Option<ResourceLease>,
     plan: ObservePlan,
     profile: QualityProfile,
+    threshold: f32,
     security: Arc<CancellationToken>,
 }
 
@@ -180,6 +181,7 @@ impl SpeakerObserve {
             lease: Some(lease),
             plan,
             profile,
+            threshold: OBSERVE_VERIFY_THRESHOLD,
             // A session admitted without the registry (tests, Observe-only harnesses) is never
             // revoked; real admission attaches the registry token via `with_security`.
             security: Arc::new(CancellationToken::new()),
@@ -187,12 +189,13 @@ impl SpeakerObserve {
     }
 
     /// Built-in speaker engine is process-owned; no database Provider lease is required.
-    pub fn new_builtin(runtime: Arc<SpeakerRuntime>, plan: ObservePlan, profile: QualityProfile) -> Self {
+    pub fn new_builtin(runtime: Arc<SpeakerRuntime>, plan: ObservePlan, profile: QualityProfile, threshold: f32) -> Self {
         Self {
             runtime,
             lease: None,
             plan,
             profile,
+            threshold,
             security: Arc::new(CancellationToken::new()),
         }
     }
@@ -228,6 +231,7 @@ impl SpeakerObserve {
             lease: self.lease.clone(),
             plan,
             profile: self.profile,
+            threshold: self.threshold,
             security: Arc::clone(&self.security),
         }
     }
@@ -285,7 +289,7 @@ impl SpeakerObserve {
                     diagnostic.best_speaker_id = Some(best.speaker_id);
                     diagnostic.best_score = Some(best.score);
                     diagnostic.runner_up_score = scored.get(1).map(|second| second.score);
-                    diagnostic.outcome = if best.score >= OBSERVE_VERIFY_THRESHOLD {
+                    diagnostic.outcome = if best.score >= self.threshold {
                         SpeakerStatus::Verified
                     } else {
                         SpeakerStatus::Unknown
