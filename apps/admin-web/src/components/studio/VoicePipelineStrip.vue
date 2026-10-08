@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AudioLines, BrainCircuit, Mic, Volume2 } from '@lucide/vue'
+import { ArrowDown, ArrowRight, AudioLines, BrainCircuit, Mic, Volume2 } from '@lucide/vue'
 import { computed } from 'vue'
 
 import type { AgentTemplate, ProviderInstance } from '@/domain/admin'
@@ -31,19 +31,29 @@ const nodes = computed(() => {
 </script>
 
 <template>
-  <div class="grid grid-cols-2 gap-2 lg:grid-cols-4" :aria-label="t('studio.pipeline.title')">
-    <div
-      v-for="node in nodes"
-      :key="node.type"
-      class="rounded-xl border border-border/70 bg-surface p-3"
-    >
-      <div class="mb-3 flex items-center gap-2">
-        <component :is="node.icon" class="size-4 text-studio-cyan" aria-hidden="true" />
-        <span class="text-xs font-semibold tracking-wide">{{ node.label }}</span>
+  <div class="flex flex-col items-stretch gap-1 lg:flex-row lg:gap-0" :aria-label="t('studio.pipeline.title')">
+    <template v-for="(node, index) in nodes" :key="node.type">
+      <div
+        :data-voice-stage="node.type"
+        class="min-w-0 flex-1 rounded-xl border border-border/70 bg-surface p-3"
+      >
+        <div class="mb-3 flex items-center gap-2">
+          <component :is="node.icon" class="size-4 text-studio-cyan" aria-hidden="true" />
+          <span class="text-xs font-semibold tracking-wide">{{ node.label }}</span>
+        </div>
+        <p class="truncate text-xs" :class="node.bound ? 'text-foreground' : 'text-muted-foreground'" :title="node.name">
+          {{ node.name }}
+        </p>
       </div>
-      <p class="truncate text-xs" :class="node.bound ? 'text-foreground' : 'text-muted-foreground'" :title="node.name">
-        {{ node.name }}
-      </p>
-    </div>
+      <div
+        v-if="index < nodes.length - 1"
+        data-voice-flow-arrow
+        class="flex shrink-0 items-center justify-center self-center px-1 py-0.5 text-studio-cyan lg:px-2 lg:py-0"
+        aria-hidden="true"
+      >
+        <ArrowDown data-direction="vertical" class="size-4 lg:hidden" />
+        <ArrowRight data-direction="horizontal" class="hidden size-5 lg:block" />
+      </div>
+    </template>
   </div>
 </template>
