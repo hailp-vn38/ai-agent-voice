@@ -92,8 +92,7 @@ pub struct ProviderRegistry {
 
 impl ProviderRegistry {
     pub fn admin_adapters(&self) -> impl Iterator<Item = (ProviderType, &'static str)> + '_ {
-        std::iter::once((ProviderType::Speaker, "campplus_sherpa")).chain(
-            self.vad
+        self.vad
                 .iter()
                 .map(|factory| (ProviderType::Vad, factory.adapter()))
                 .chain(
@@ -110,8 +109,7 @@ impl ProviderRegistry {
                     self.tts
                         .iter()
                         .map(|factory| (ProviderType::Tts, factory.adapter())),
-                ),
-        )
+                )
     }
 
     pub fn speaker_factory(
