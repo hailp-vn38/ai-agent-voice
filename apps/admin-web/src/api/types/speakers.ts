@@ -1,6 +1,6 @@
 import type { Page, PageQuery } from './common'
 
-export type SpeakerEnrollmentStatus = 'enrolled' | 'unenrolled' | 'draft'
+export type SpeakerEnrollmentStatus = 'enrolled' | 'unenrolled'
 
 export type SpeakerListSort =
   | 'key'
@@ -16,10 +16,6 @@ export interface SpeakerVoiceprint {
   revision: number
   sample_count: number
   embedding_space_id: string
-  enrolled_with_provider_key: string
-  enrolled_with_provider_revision: number
-  browser_validation_status: 'pending' | 'passed' | 'failed'
-  calibration_revision: string
   enrolled_at: number
 }
 
@@ -57,7 +53,6 @@ export interface SpeakerListQuery extends PageQuery {
   sort?: SpeakerListSort
   enabled?: boolean
   enrollment_status?: SpeakerEnrollmentStatus
-  provider_key?: string
 }
 
 export interface CreateSpeakerInput {
@@ -89,71 +84,6 @@ export interface UpdateSpeakerInput {
   enabled?: boolean
 }
 
-export type EnrollmentSampleStatus = 'accepted'
-
-export interface EnrollmentSample {
-  slot: number
-  status: EnrollmentSampleStatus
-  quality: string
-  duration_ms: number
-  speech_ms: number
-}
-
-export type EnrollmentValidationStatus =
-  | 'none'
-  | 'passed'
-  | 'failed'
-  | 'inconsistent'
-  | 'ambiguous'
-
-export interface EnrollmentValidation {
-  status: EnrollmentValidationStatus
-  revision: number
-  calibration_revision: string | null
-  runtime_id: string | null
-  provider_revision: number | null
-  valid_for_current_revision: boolean
-}
-
-export interface EnrollmentDraft {
-  id: string
-  speaker_key: string
-  provider_key: string
-  desired_provider_revision: number
-  loaded_provider_revision: number | null
-  runtime_id: string
-  embedding_space_id: string
-  dimension: number | null
-  revision: number
-  status: 'collecting'
-  base_speaker_revision: number
-  base_voiceprint_revision: number | null
-  expires_at: number
-  validation: EnrollmentValidation
-  samples: EnrollmentSample[]
-}
-
-export interface EnrollmentValidationResult {
-  validation: EnrollmentValidation
-  enrollment: EnrollmentDraft
-  revision: number
-}
-
-export interface EnrollmentFinalizeResult {
-  enrollment: EnrollmentDraft
-  speaker: Speaker
-  activation: {
-    catalog_revision: number
-    new_connections: string
-    existing_connections: string
-  }
-}
-
-export interface CreateEnrollmentDraftInput {
-  provider_key: string
-  expected_provider_revision: number
-}
-
 export interface SpeakerRecognitionEnrollmentConfig {
   content_type: string
   sample_rate: number
@@ -177,7 +107,6 @@ export interface SpeakerRecognitionSummary {
   }
 }
 
-/** Agents in which this Speaker is an identification candidate. */
 /** Agent using the Speaker as an identification candidate. */
 export interface SpeakerBinding {
   agent_key: string
