@@ -37,10 +37,11 @@ impl SessionActor {
         while let Ok(event) = self.vad_events.try_recv() {
             self.on_vad_event(event);
         }
-        // Required speaker results land out of band and resolve a held transcript.
+        // Advisory identification joins an ASR final for this turn, if still valid.
         while let Ok(diagnostic) = self.gate_rx.try_recv() {
-            self.on_gate_diagnostic(diagnostic);
+            self.on_identification_diagnostic(diagnostic);
         }
+        self.expire_identification_wait();
         self.release_pipeline_if_idle();
         self.drain_managed_switch_boundary();
         self.flush_pending_llm_text();
