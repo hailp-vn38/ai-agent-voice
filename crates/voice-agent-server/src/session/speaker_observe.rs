@@ -506,9 +506,9 @@ mod tests {
         for ddl in [
             "CREATE TABLE agent_speaker_policies (agent_id INTEGER, mode TEXT)",
             "CREATE TABLE agent_speaker_candidates (agent_id INTEGER, speaker_id INTEGER)",
-            "CREATE TABLE speakers (id INTEGER, key TEXT, enabled INTEGER)",
+            "CREATE TABLE speakers (id INTEGER, name TEXT, enabled INTEGER)",
             "CREATE TABLE agent_speaker_template_grants (agent_id INTEGER, speaker_id INTEGER, template_id INTEGER)",
-            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, browser_validation_status TEXT NOT NULL DEFAULT 'passed')",
+            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, dims INTEGER, browser_validation_status TEXT NOT NULL DEFAULT 'passed')",
         ] {
             sqlx::query(ddl).execute(&pool).await.unwrap();
         }
