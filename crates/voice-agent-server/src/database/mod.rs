@@ -164,14 +164,17 @@ impl Database {
         Ok(rows
             .into_iter()
             .map(
-                |(id, key, kind, adapter, config_json, revision)| DesiredProvider {
+                |(id, key, kind, adapter, config_json, revision)| {
+                    let secret_ref = secrets::provider_secret_env(&key, &adapter);
+                    DesiredProvider {
                     id,
                     key,
                     kind,
                     adapter,
                     config_json,
-                    secret_ref: secrets::provider_secret_env(&key, &adapter),
+                    secret_ref,
                     revision,
+                }
                 },
             )
             .collect())
