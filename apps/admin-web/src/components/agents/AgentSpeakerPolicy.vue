@@ -1,14 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-
 import { agentsApi } from '@/api/agents'
 import { formatApiError, isApiError } from '@/api/errors'
 import { speakersApi } from '@/api/speakers'
-import type { AgentTemplateLink } from '@/api/types/agents'
 import type {
-  AgentSpeakerBinding,
-  AgentSpeakerPolicy,
-  AgentSpeakerPolicyMode,
+  AgentSpeakerBinding, AgentSpeakerPolicy, AgentSpeakerPolicyMode,
 } from '@/api/types/speaker-policy'
 import type { SpeakerSummary } from '@/api/types/speakers'
 import BaseModal from '@/components/admin/BaseModal.vue'
@@ -18,39 +14,34 @@ import { useI18n } from '@/composables/useI18n'
 
 const props = defineProps<{ agentId: string }>()
 const { t } = useI18n()
-
 const policy = ref<AgentSpeakerPolicy>()
 const bindings = ref<AgentSpeakerBinding[]>([])
-const agentRevision = ref(0)
-const templates = ref<AgentTemplateLink[]>([])
 const speakers = ref<SpeakerSummary[]>([])
+const agentRevision = ref(0)
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
-
 const dialogOpen = ref(false)
 const draftSpeakerKey = ref('')
-const draftTemplateKeys = ref<string[]>([])
-
 const modes: AgentSpeakerPolicyMode[] = ['off', 'observe']
-
-const enabledTemplates = computed(() => templates.value.filter((template) => template.enabled !== false))
-const selectedSpeaker = computed(() => speakers.value.find((speaker) => speaker.key === draftSpeakerKey.value))
+const selectedSpeaker = computed(() => speakers.value.find((item) => item.key === draftSpeakerKey.value))
+const availableSpeakers = computed(() =>
+  speakers.value.filter((item) => !bindings.value.some((binding) => binding.speaker_key === item.key)),
+)
+const displayName = (key: string) => speakers.value.find((item) => item.key === key)?.name ?? key
 
 async function load() {
   loading.value = true
   try {
-    const [policyData, bindingData, templateData, speakerData] = await Promise.all([
+    const [policyData, bindingPage, speakerPage] = await Promise.all([
       agentsApi.speakerPolicy(props.agentId),
       agentsApi.agentSpeakers(props.agentId),
-      agentsApi.templates(props.agentId),
       speakersApi.list({ page: 1, pageSize: 100 }),
     ])
     policy.value = policyData
-    bindings.value = bindingData.items
-    agentRevision.value = bindingData.agent_revision
-    templates.value = templateData.items
-    speakers.value = speakerData.items
+    bindings.value = bindingPage.items
+    agentRevision.value = bindingPage.agent_revision
+    speakers.value = speakerPage.items
     error.value = ''
   } catch (cause) {
     error.value = formatApiError(cause)
@@ -58,7 +49,6 @@ async function load() {
     loading.value = false
   }
 }
-
 async function run(action: () => Promise<unknown>) {
   busy.value = true
   try {
@@ -75,55 +65,20 @@ async function run(action: () => Promise<unknown>) {
     busy.value = false
   }
 }
-
 function setMode(mode: AgentSpeakerPolicyMode) {
   if (!policy.value || policy.value.mode === mode) return
   void run(() => agentsApi.setSpeakerPolicy(props.agentId, mode, policy.value!.revision))
 }
-
-function blockerText(blocker: string) {
-  return blocker === 'speaker_calibration_required'
-    ? t('agentSpeakerPolicy.calibrationRequired')
-    : blocker
-}
-
-function openGrant(speakerKey: string) {
-  draftSpeakerKey.value = speakerKey
-  dialogOpen.value = true
-}
-
-watch(draftSpeakerKey, (key) => {
-  const existing = bindings.value.find((binding) => binding.speaker_key === key)
-  draftTemplateKeys.value = existing ? [...existing.template_keys] : []
-})
-
-function toggleTemplate(key: string) {
-  draftTemplateKeys.value = draftTemplateKeys.value.includes(key)
-    ? draftTemplateKeys.value.filter((candidate) => candidate !== key)
-    : [...draftTemplateKeys.value, key]
-}
-
-function saveGrant() {
+function saveBinding() {
   if (!draftSpeakerKey.value) return
+  const key = draftSpeakerKey.value
   dialogOpen.value = false
-  void run(() =>
-    agentsApi.setAgentSpeaker(props.agentId, draftSpeakerKey.value, draftTemplateKeys.value, agentRevision.value),
-  )
+  draftSpeakerKey.value = ''
+  void run(() => agentsApi.setAgentSpeaker(props.agentId, key, agentRevision.value))
 }
-
-function removeTemplate(binding: AgentSpeakerBinding, templateKey: string) {
-  const remaining = binding.template_keys.filter((key) => key !== templateKey)
-  if (remaining.length === 0) {
-    void run(() => agentsApi.unlinkAgentSpeaker(props.agentId, binding.speaker_key, agentRevision.value))
-  } else {
-    void run(() => agentsApi.setAgentSpeaker(props.agentId, binding.speaker_key, remaining, agentRevision.value))
-  }
-}
-
 function removeBinding(binding: AgentSpeakerBinding) {
   void run(() => agentsApi.unlinkAgentSpeaker(props.agentId, binding.speaker_key, agentRevision.value))
 }
-
 watch(() => props.agentId, load, { immediate: true })
 </script>
 
@@ -134,140 +89,74 @@ watch(() => props.agentId, load, { immediate: true })
         <h2 id="agent-speaker-policy-title" class="text-lg font-semibold">
           {{ t('agentSpeakerPolicy.title') }}
         </h2>
-        <p class="text-sm text-muted-foreground">{{ t('agentSpeakerPolicy.description') }}</p>
+        <p class="text-sm text-muted-foreground">Nhận dạng người nói để cá nhân hóa hội thoại; không dùng để xác thực.</p>
       </div>
-      <Button
-        size="sm"
-        variant="outline"
-        :disabled="loading || busy"
-        data-testid="add-grant"
-        @click="openGrant('')"
-      >
-        {{ t('agentSpeakerPolicy.addGrant') }}
+      <Button size="sm" variant="outline" :disabled="loading || busy"
+        data-testid="add-grant" @click="dialogOpen = true">
+        Thêm người nói
       </Button>
     </header>
-
-    <p v-if="error" role="alert" class="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm">
-      {{ error }}
-    </p>
-
+    <p v-if="error" role="alert" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">{{ error }}</p>
     <div v-if="policy" class="space-y-2 rounded-md border border-border p-3">
-      <p class="text-sm font-medium">{{ t('agentSpeakerPolicy.modeLabel') }}</p>
-      <div v-if="policy.mode !== 'required'" class="flex flex-wrap items-center gap-2">
-        <Button
-          v-for="mode in modes"
-          :key="mode"
-          size="sm"
+      <p class="text-sm font-medium">Speaker Recognition</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <Button v-for="mode in modes" :key="mode" size="sm"
           :variant="policy.mode === mode ? 'default' : 'outline'"
-          :disabled="busy"
-          :data-testid="`speaker-policy-mode-${mode}`"
-          @click="setMode(mode)"
-        >
-          {{ t(`agentSpeakerPolicy.mode.${mode}`) }}
+          :disabled="busy" :data-testid="`speaker-policy-mode-${mode}`"
+          @click="setMode(mode)">
+          {{ mode === 'observe' ? 'Bật nhận dạng' : 'Tắt' }}
         </Button>
         <Badge variant="secondary" data-testid="speaker-policy-current">
-          {{ t('agentSpeakerPolicy.currentMode', { mode: t(`agentSpeakerPolicy.mode.${policy.mode}`) }) }}
+          {{ policy.mode === 'observe' ? 'Identification ON' : 'OFF' }}
         </Badge>
       </div>
-      <div v-else class="text-sm text-muted-foreground" data-testid="speaker-policy-required-legacy">
-        <p>{{ t('agentSpeakerPolicy.requiredLegacy') }}</p>
-        <p>{{ t('agentSpeakerPolicy.requiredLegacyAction') }}</p>
-      </div>
-      <div v-if="policy.mode !== 'required' && !policy.required_available" class="text-sm text-muted-foreground" data-testid="required-blockers">
-        <p>{{ t('agentSpeakerPolicy.requiredUnavailable') }}</p>
-        <ul v-if="policy.required_blockers.length" class="ml-5 list-disc">
-          <li v-for="blocker in policy.required_blockers" :key="blocker">{{ blockerText(blocker) }}</li>
-        </ul>
-      </div>
+      <p class="text-xs text-muted-foreground">Các thay đổi áp dụng khi thiết bị kết nối lại.</p>
     </div>
-
     <div class="space-y-2">
-      <h3 class="text-sm font-medium">{{ t('agentSpeakerPolicy.grants') }}</h3>
+      <h3 class="text-sm font-medium">Người nói thuộc Agent</h3>
       <p v-if="!bindings.length && !loading" class="text-sm text-muted-foreground" data-testid="speaker-grants-empty">
-        {{ t('agentSpeakerPolicy.empty') }}
+        Chưa liên kết người nói.
       </p>
       <ul class="space-y-2">
-        <li
-          v-for="binding in bindings"
-          :key="binding.speaker_key"
-          class="rounded-md border border-border p-3"
-          :data-testid="`speaker-binding-${binding.speaker_key}`"
-        >
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-mono text-sm">{{ binding.speaker_key }}</span>
-            <div class="flex items-center gap-2">
-              <Badge v-if="!binding.usable" variant="danger" data-testid="speaker-binding-not-usable">
-                {{ t('agentSpeakerPolicy.notUsable') }}
-              </Badge>
-              <Badge v-else-if="binding.enabled" variant="success">{{ t('agentSpeakerPolicy.enabled') }}</Badge>
-              <Badge v-else variant="secondary">{{ t('agentSpeakerPolicy.disabled') }}</Badge>
-              <Button size="sm" variant="ghost" :disabled="busy" @click="removeBinding(binding)">
-                {{ t('agentSpeakerPolicy.removeGrant') }}
-              </Button>
-            </div>
+        <li v-for="binding in bindings" :key="binding.speaker_key"
+          class="flex items-center justify-between gap-2 rounded-md border border-border p-3"
+          :data-testid="`speaker-binding-${binding.speaker_key}`">
+          <div>
+            <p class="text-sm font-medium">{{ displayName(binding.speaker_key) }}</p>
+            <p class="font-mono text-xs text-muted-foreground">{{ binding.speaker_key }}</p>
           </div>
-          <div class="mt-2 flex flex-wrap gap-2">
-            <span v-if="!binding.template_keys.length" class="text-sm text-muted-foreground">
-              {{ t('agentSpeakerPolicy.noTemplates') }}
-            </span>
-            <span
-              v-for="templateKey in binding.template_keys"
-              :key="templateKey"
-              class="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs"
-            >
-              {{ templateKey }}
-              <button
-                type="button"
-                class="text-muted-foreground hover:text-foreground"
-                :aria-label="t('agentSpeakerPolicy.removeTemplate', { template: templateKey })"
-                :disabled="busy"
-                @click="removeTemplate(binding, templateKey)"
-              >
-                ×
-              </button>
-            </span>
+          <div class="flex items-center gap-2">
+            <Badge v-if="!binding.usable" variant="danger" data-testid="speaker-binding-not-usable">Chưa có mẫu phù hợp</Badge>
+            <Badge v-else variant="success">Sẵn sàng</Badge>
+            <Button size="sm" variant="ghost" :disabled="busy" @click="removeBinding(binding)">
+              Gỡ
+            </Button>
           </div>
         </li>
       </ul>
     </div>
-
-    <BaseModal v-model="dialogOpen" :title="t('agentSpeakerPolicy.grantDialogTitle')">
+    <BaseModal v-model="dialogOpen" title="Thêm người nói vào Agent">
       <div class="space-y-4">
         <label class="block space-y-1 text-sm">
-          <span class="font-medium">{{ t('agentSpeakerPolicy.speaker') }}</span>
-          <select v-model="draftSpeakerKey" class="w-full rounded-md border border-input bg-background px-2 py-1" data-testid="grant-speaker-select">
-            <option value="">{{ t('agentSpeakerPolicy.selectSpeaker') }}</option>
-            <option v-for="speaker in speakers" :key="speaker.key" :value="speaker.key">
-              {{ speaker.name }} ({{ speaker.key }}){{ speaker.enabled ? '' : ' — disabled' }}
+          <span class="font-medium">Người nói</span>
+          <select v-model="draftSpeakerKey" class="admin-input" data-testid="grant-speaker-select">
+            <option value="">Chọn người nói</option>
+            <option v-for="item in availableSpeakers" :key="item.key" :value="item.key">
+              {{ item.name }} ({{ item.key }})
             </option>
           </select>
         </label>
-
-        <fieldset class="space-y-1 text-sm">
-          <legend class="font-medium">{{ t('agentSpeakerPolicy.templates') }}</legend>
-          <p v-if="!enabledTemplates.length" class="text-muted-foreground">{{ t('agentSpeakerPolicy.noTemplates') }}</p>
-          <label v-for="template in enabledTemplates" :key="template.key" class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              :checked="draftTemplateKeys.includes(template.key)"
-              :disabled="busy"
-              @change="toggleTemplate(template.key)"
-            />
-            <span>{{ template.name || template.key }}</span>
-          </label>
-        </fieldset>
-
-        <p v-if="selectedSpeaker && !selectedSpeaker.enabled" class="text-sm text-danger-foreground" data-testid="grant-speaker-disabled">
-          {{ t('agentSpeakerPolicy.speakerDisabled') }}
-        </p>
-
+        <p v-if="selectedSpeaker && !selectedSpeaker.enabled" class="text-sm text-destructive"
+          data-testid="grant-speaker-disabled">Người nói đang bị tắt.</p>
+      </div>
+      <template #footer>
         <div class="flex justify-end gap-2">
-          <Button variant="outline" @click="dialogOpen = false">{{ t('agentSpeakerPolicy.cancel') }}</Button>
-          <Button :disabled="!draftSpeakerKey || !draftTemplateKeys.length || busy" data-testid="grant-save" @click="saveGrant">
-            {{ t('agentSpeakerPolicy.save') }}
+          <Button variant="outline" @click="dialogOpen = false">Hủy</Button>
+          <Button :disabled="!draftSpeakerKey || busy" data-testid="grant-save" @click="saveBinding">
+            Liên kết
           </Button>
         </div>
-      </div>
+      </template>
     </BaseModal>
   </section>
 </template>
