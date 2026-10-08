@@ -150,6 +150,15 @@ token = "set-deployment-token-here"
 # [runtime.kokoro_vi]
 # g2p_executable = "runtime/kokoro-vi/kokoro_vi_g2p"
 
+# Managed CAM++ speaker recognizer (speaker recognition V1). Templates and Agents
+# reference this instance by key; it is never a mandatory pipeline slot. Its assets
+# are resolved by the worker through the provider runtime, same as ASR/TTS.
+[providers.speaker.instances.campplus_default]
+adapter = "campplus_sherpa"
+min_speech_ms = 3000
+target_speech_ms = 4000
+max_window_ms = 6000
+
 [tts]
 # Voice: maximum wait for first/next non-empty PCM; diagnostics: total synthesis budget.
 timeout_ms = 15000
@@ -176,6 +185,33 @@ cleanup_grace_ms = 5000
 max_workers = 2
 command_queue_capacity = 32
 cleanup_grace_ms = 5000
+
+[speaker_recognition]
+# Bounded deployment limits for speaker profiles and web enrollment drafts.
+# Enrollment is refused outside the `[min_samples, max_samples]` band, and the
+# per-sample WAV body cap applies regardless of Content-Length (chunked-safe).
+max_speakers = 256
+max_candidates_per_agent = 32
+max_voiceprint_spaces_per_speaker = 4
+# Fixed deployment path of the calibration catalog reloaded by the Admin route.
+# Never supplied per request; absent means reloads report `speaker_catalog_unavailable`.
+# calibration_source = "runtime/speaker/calibration.json"
+
+[speaker_recognition.enrollment]
+# Clip/window bounds are shared by the browser recorder, the WAV parser and the
+# quality gate so they cannot disagree.
+min_samples = 3
+max_samples = 5
+min_clip_ms = 5000
+max_clip_ms = 10000
+min_speech_ms = 3000
+max_window_ms = 6000
+# Draft lifetime. Expired drafts are swept at startup and every five minutes.
+ttl_ms = 1800000
+# Process-wide cap on open (collecting) drafts.
+max_open_enrollments = 16
+# Per-sample WAV body cap for the enrollment routes.
+max_audio_body_bytes = 524288
 
 [deployment]
 # Explicit pilot: one active voice pipeline process-wide; idle sockets remain connected.
