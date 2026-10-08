@@ -29,7 +29,7 @@ const { t, providerTypeLabel } = useI18n()
 
 const ALL = 'all'
 
-const SETUP_TYPES: TemplateProviderType[] = ['vad', 'asr', 'llm', 'tts', 'speaker']
+const SETUP_TYPES: TemplateProviderType[] = ['vad', 'asr', 'llm', 'tts']
 
 function isSetupType(type?: ProviderType): type is TemplateProviderType {
   return SETUP_TYPES.includes(type as TemplateProviderType)
