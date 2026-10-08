@@ -245,77 +245,31 @@ pub(super) fn with_etag(response: Response, revision: i64) -> Response {
     response
 }
 
-/// `GET /speaker-recognition` — bounded enrollment config and runtime capability summary.
-pub(super) async fn summary(State(state): State<AppState>, request: Request) -> Response {
-    let pool = match db(&state) {
-        Ok(pool) => pool,
-        Err(response) => return response,
-    };
+/// GET /speaker-recognition — the server-owned CAM++ extractor and capture limits.
+pub(super) async fn summary(State(state): State<AppState>, _request: Request) -> Response {
     let config = &state.config.speaker_recognition;
-    let providers = sqlx::query_as::<_, (i64, String, String, i64)>(
-        "SELECT id,key,adapter,revision FROM providers WHERE type='speaker' ORDER BY key",
-    )
-    .fetch_all(pool)
-    .await;
-    let providers = match providers {
-        Ok(rows) => rows,
-        Err(error_value) => return sql_error(&request, &error_value),
-    };
-
-    let mut catalog_revision = 0_i64;
-    let mut provider_entries = Vec::with_capacity(providers.len());
-    for (id, key, adapter, revision) in providers {
-        catalog_revision = catalog_revision.max(revision);
-        let ready = state
-            .provider_runtime_manager
-            .as_ref()
-            .is_some_and(|manager| {
-                manager
-                    .inspect(id, revision)
-                    .ready_revisions
-                    .contains(&revision)
-            });
-        provider_entries.push(json!({
-            "provider_key": key,
-            "provider_revision": revision,
-            "adapter": adapter,
-            "state": if ready { "loaded" } else { "cold" },
-        }));
-    }
-
-    let available = state.provider_runtime_manager.is_some();
     let enrollment = &config.enrollment;
-    let calibration = match speaker_calibration::status(pool).await {
-        Ok(calibration) => calibration,
-        Err(error_value) => return sql_error(&request, &error_value),
-    };
+    let runtime = state.speaker_runtime.as_ref();
     Json(json!({
-        "available": available,
-        "runtime_mode": if available { "managed" } else { "unavailable" },
-        "providers": provider_entries,
+        "available": runtime.is_some(),
+        "embedding_space_id": runtime.map(|runtime| runtime.embedding_space_id()),
+        "dimension": runtime.map(|runtime| runtime.dimension()),
         "enrollment": {
             "content_type": "audio/wav",
             "sample_rate": 16_000,
             "channels": 1,
             "bits_per_sample": 16,
-            "min_samples": enrollment.min_samples,
-            "max_samples": enrollment.max_samples,
             "min_clip_ms": enrollment.min_clip_ms,
             "max_clip_ms": enrollment.max_clip_ms,
             "min_speech_ms": enrollment.min_speech_ms,
             "max_window_ms": enrollment.max_window_ms,
-            "ttl_ms": enrollment.ttl_ms,
-            "max_body_bytes": enrollment.max_audio_body_bytes,
+            "max_body_bytes": enrollment.max_audio_body_bytes
         },
         "limits": {
             "max_speakers": config.max_speakers,
-            "max_voiceprint_spaces_per_speaker": config.max_voiceprint_spaces_per_speaker,
-            "max_candidates_per_agent": config.max_candidates_per_agent,
-        },
-        "catalog_revision": catalog_revision,
-        "calibration": calibration,
-    }))
-    .into_response()
+            "max_candidates_per_agent": config.max_candidates_per_agent
+        }
+    })).into_response()
 }
 
 /// `GET /speakers` — paginated Speaker list.
