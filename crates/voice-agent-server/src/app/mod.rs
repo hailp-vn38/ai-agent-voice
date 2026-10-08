@@ -115,10 +115,7 @@ pub fn router_with_state(state: AppState) -> Router {
                 .options(ota::options)
                 .layer(middleware::from_fn(ota::cors_response)),
         )
-        .route(
-            "/voice/v1/",
-            get(websocket::handler).layer(cors::layer()),
-        );
+        .route("/voice/v1/", get(websocket::handler).layer(cors::layer()));
     let router = if state.config.database.devices.enrollment.enabled {
         router
             .route(
@@ -417,7 +414,8 @@ async fn prepare_builtin_speaker(state: &mut AppState) {
     let built = tokio::task::spawn_blocking(move || {
         crate::providers::assets::ProviderAssetManager::ensure_assets(
             &crate::providers::speaker::assets::ASSETS,
-        ).map_err(|_| crate::providers::speaker::SpeakerError::Unavailable)?;
+        )
+        .map_err(|_| crate::providers::speaker::SpeakerError::Unavailable)?;
         let extractor = crate::providers::speaker::build(threads)?;
         crate::workers::SpeakerRuntime::new(
             extractor,

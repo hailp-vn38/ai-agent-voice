@@ -950,17 +950,15 @@ async fn resolve_speaker_observe(
     let Some(database) = state.database.as_ref() else {
         return Ok((None, None));
     };
-    let policy = match crate::session::resolve_speaker_policy(
-        database.pool(),
-        profile.agent_id,
-    ).await {
-        Ok(Some(mode)) => mode,
-        Ok(None) => crate::session::SpeakerPolicyMode::Off,
-        Err(cause) => {
-            warn!(%cause, "speaker identification preference unavailable");
-            return Ok((None, None));
-        }
-    };
+    let policy =
+        match crate::session::resolve_speaker_policy(database.pool(), profile.agent_id).await {
+            Ok(Some(mode)) => mode,
+            Ok(None) => crate::session::SpeakerPolicyMode::Off,
+            Err(cause) => {
+                warn!(%cause, "speaker identification preference unavailable");
+                return Ok((None, None));
+            }
+        };
     let enabled = policy == crate::session::SpeakerPolicyMode::Observe;
     let runtime = state.speaker_runtime.as_ref();
     if !enabled || runtime.is_none() {
@@ -975,8 +973,13 @@ async fn resolve_speaker_observe(
     }
     let runtime = runtime.expect("checked built-in speaker runtime availability");
     let plan = match crate::session::resolve_observe_plan(
-        database.pool(), profile.agent_id, 0, runtime.embedding_space_id(),
-    ).await {
+        database.pool(),
+        profile.agent_id,
+        0,
+        runtime.embedding_space_id(),
+    )
+    .await
+    {
         Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
         Ok(_) => {
             info!(agent_key = %profile.agent_key, speaker_enabled = true,
@@ -1009,7 +1012,10 @@ async fn resolve_speaker_observe(
     };
     Ok((
         Some(Arc::new(SpeakerObserve::new_builtin(
-            Arc::clone(runtime), plan, quality, config.speaker_recognition.similarity_threshold,
+            Arc::clone(runtime),
+            plan,
+            quality,
+            config.speaker_recognition.similarity_threshold,
         ))),
         None,
     ))

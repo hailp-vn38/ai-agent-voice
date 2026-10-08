@@ -199,7 +199,9 @@ fn one_to_n_genuine_failure_splits_misidentification_and_rejection() {
 fn zero_error_298_trials_is_preliminary_299_passes() {
     let mut input = qualified_input();
     // Drop one impostor 1:N trial so the FAR denominator is 298.
-    input.trials.retain(|trial| trial.sample_code != "far1n-298");
+    input
+        .trials
+        .retain(|trial| trial.sample_code != "far1n-298");
     let report = build_report(input).expect("report");
     let far = check(&report, Check::FalseAcceptOneToN);
     assert_eq!(far.trials, 298);
@@ -247,9 +249,11 @@ fn all_error_trials_fail() {
     assert_eq!(far.errors, 5);
     assert_eq!(far.status, CheckStatus::Fail);
     assert_eq!(report.qualification, QualificationStatus::Failed);
-    assert!(report
-        .blocking_reasons
-        .contains(&BlockingReason::CheckFailed(Check::FalseAcceptOneToN)));
+    assert!(
+        report
+            .blocking_reasons
+            .contains(&BlockingReason::CheckFailed(Check::FalseAcceptOneToN))
+    );
 }
 
 #[test]
@@ -258,7 +262,10 @@ fn duplicate_sample_code_is_rejected() {
     let duplicate = input.trials[0].clone();
     input.trials.push(duplicate);
     let error = build_report(input).expect_err("duplicate must fail");
-    assert_eq!(error, EvaluationError::DuplicateSampleCode("far1n-000".into()));
+    assert_eq!(
+        error,
+        EvaluationError::DuplicateSampleCode("far1n-000".into())
+    );
 }
 
 #[test]
@@ -267,9 +274,11 @@ fn held_out_reused_for_tuning_is_preliminary() {
     input.protocol.tuning_epoch = 5;
     let report = build_report(input).expect("report");
     assert_eq!(report.qualification, QualificationStatus::Preliminary);
-    assert!(report
-        .blocking_reasons
-        .contains(&BlockingReason::HeldOutReusedForTuning));
+    assert!(
+        report
+            .blocking_reasons
+            .contains(&BlockingReason::HeldOutReusedForTuning)
+    );
 }
 
 #[test]
@@ -278,9 +287,11 @@ fn evaluation_session_overlapping_enrollment_is_flagged() {
     input.protocol.enrollment_sessions.insert("eval-s01".into());
     let report = build_report(input).expect("report");
     assert_eq!(report.qualification, QualificationStatus::Preliminary);
-    assert!(report
-        .blocking_reasons
-        .contains(&BlockingReason::EvaluationSessionOverlapsEnrollment));
+    assert!(
+        report
+            .blocking_reasons
+            .contains(&BlockingReason::EvaluationSessionOverlapsEnrollment)
+    );
 }
 
 #[test]
@@ -288,7 +299,11 @@ fn unpinned_scope_is_flagged() {
     let mut input = qualified_input();
     input.scope.threads = 0;
     let report = build_report(input).expect("report");
-    assert!(report.blocking_reasons.contains(&BlockingReason::UnpinnedScope));
+    assert!(
+        report
+            .blocking_reasons
+            .contains(&BlockingReason::UnpinnedScope)
+    );
 }
 
 #[test]
@@ -298,7 +313,11 @@ fn failing_latency_blocks_qualification() {
     let report = build_report(input).expect("report");
     assert_eq!(report.latency.inference_status, CheckStatus::Fail);
     assert_eq!(report.qualification, QualificationStatus::Failed);
-    assert!(report.blocking_reasons.contains(&BlockingReason::LatencyFailed));
+    assert!(
+        report
+            .blocking_reasons
+            .contains(&BlockingReason::LatencyFailed)
+    );
 }
 
 #[test]

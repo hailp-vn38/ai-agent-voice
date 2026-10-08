@@ -27,7 +27,10 @@ fn database_url() -> String {
     format!(
         "sqlite://{}",
         std::env::temp_dir()
-            .join(format!("voice-agent-revocation-{}.db", uuid::Uuid::new_v4()))
+            .join(format!(
+                "voice-agent-revocation-{}.db",
+                uuid::Uuid::new_v4()
+            ))
             .display()
     )
 }
@@ -164,9 +167,17 @@ async fn create_template(client: &Client, base: &str, key: &str) {
     assert_eq!(response.status(), StatusCode::CREATED);
 }
 
-async fn assign_template(client: &Client, base: &str, agent: &str, template: &str, revision: i64) -> i64 {
+async fn assign_template(
+    client: &Client,
+    base: &str,
+    agent: &str,
+    template: &str,
+    revision: i64,
+) -> i64 {
     let response = client
-        .put(format!("{base}/api/admin/agents/{agent}/templates/{template}"))
+        .put(format!(
+            "{base}/api/admin/agents/{agent}/templates/{template}"
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", format!("\"{revision}\""))
         .send()
@@ -228,7 +239,10 @@ async fn disabling_a_speaker_cancels_only_sessions_that_pinned_it() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    assert!(pinned_alice.is_cancelled(), "disabled speaker session stays live");
+    assert!(
+        pinned_alice.is_cancelled(),
+        "disabled speaker session stays live"
+    );
     assert!(!pinned_bob.is_cancelled(), "unrelated session must survive");
     h.task.abort();
 }
@@ -242,7 +256,10 @@ async fn purging_a_voiceprint_cancels_dependent_sessions() {
 
     let revision = speaker_revision(&client, &h.base, "alice").await;
     let response = client
-        .post(format!("{}/api/admin/speakers/alice/voiceprint/purge", h.base))
+        .post(format!(
+            "{}/api/admin/speakers/alice/voiceprint/purge",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", format!("\"{revision}\""))
         .json(&serde_json::json!({"confirm": "PURGE_SPEAKER_VOICEPRINT"}))
@@ -264,7 +281,10 @@ async fn adding_a_new_speaker_does_not_close_an_existing_snapshot() {
     // A brand new, qualified speaker is an *addition*: the old qualified snapshot is unchanged.
     create_speaker(&client, &h.base, "carol").await;
 
-    assert!(!pinned.is_cancelled(), "addition must not close an old snapshot");
+    assert!(
+        !pinned.is_cancelled(),
+        "addition must not close an old snapshot"
+    );
     h.task.abort();
 }
 
@@ -275,10 +295,14 @@ async fn unlinking_a_grant_cancels_the_agents_sessions() {
     let agent_revision = create_agent(&client, &h.base, "kitchen").await;
     create_speaker(&client, &h.base, "alice").await;
     create_template(&client, &h.base, "default").await;
-    let agent_revision = assign_template(&client, &h.base, "kitchen", "default", agent_revision).await;
+    let agent_revision =
+        assign_template(&client, &h.base, "kitchen", "default", agent_revision).await;
     // Grant then pin, so the session represents an admitted grant snapshot.
     let response = client
-        .put(format!("{}/api/admin/agents/kitchen/speakers/alice", h.base))
+        .put(format!(
+            "{}/api/admin/agents/kitchen/speakers/alice",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", format!("\"{agent_revision}\""))
         .json(&serde_json::json!({"template_keys": ["default"]}))
@@ -300,7 +324,10 @@ async fn unlinking_a_grant_cancels_the_agents_sessions() {
         .as_i64()
         .unwrap();
     let response = client
-        .delete(format!("{}/api/admin/agents/kitchen/speakers/alice", h.base))
+        .delete(format!(
+            "{}/api/admin/agents/kitchen/speakers/alice",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", format!("\"{revision}\""))
         .send()
@@ -352,8 +379,14 @@ async fn disabling_a_template_cancels_sessions_that_pinned_it() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    assert!(pinned_default.is_cancelled(), "disabled template session stays live");
-    assert!(!pinned_other.is_cancelled(), "unrelated template session must survive");
+    assert!(
+        pinned_default.is_cancelled(),
+        "disabled template session stays live"
+    );
+    assert!(
+        !pinned_other.is_cancelled(),
+        "unrelated template session must survive"
+    );
     h.task.abort();
 }
 
@@ -365,7 +398,10 @@ async fn turning_the_policy_off_cancels_agent_sessions() {
     create_speaker(&client, &h.base, "alice").await;
     // Move the Agent to `observe` so the transition to `off` is a real revocation.
     let response = client
-        .put(format!("{}/api/admin/agents/kitchen/speaker-policy", h.base))
+        .put(format!(
+            "{}/api/admin/agents/kitchen/speaker-policy",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", "\"1\"")
         .json(&serde_json::json!({"mode": "observe"}))
@@ -376,7 +412,10 @@ async fn turning_the_policy_off_cancels_agent_sessions() {
     let pinned = h.pin(1, 1, "alice").await;
 
     let response = client
-        .put(format!("{}/api/admin/agents/kitchen/speaker-policy", h.base))
+        .put(format!(
+            "{}/api/admin/agents/kitchen/speaker-policy",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", "\"2\"")
         .json(&serde_json::json!({"mode": "off"}))
@@ -399,7 +438,10 @@ async fn reducing_a_grant_cancels_sessions_but_adding_one_does_not() {
     agent_revision = assign_template(&client, &h.base, "kitchen", "default", agent_revision).await;
     agent_revision = assign_template(&client, &h.base, "kitchen", "extra", agent_revision).await;
     let response = client
-        .put(format!("{}/api/admin/agents/kitchen/speakers/alice", h.base))
+        .put(format!(
+            "{}/api/admin/agents/kitchen/speakers/alice",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", format!("\"{agent_revision}\""))
         .json(&serde_json::json!({"template_keys": ["default"]}))
@@ -412,7 +454,10 @@ async fn reducing_a_grant_cancels_sessions_but_adding_one_does_not() {
     // Adding a Template is an expansion: it applies to new sessions only, the pinned one survives.
     let pinned = h.pin(1, 1, "alice").await;
     let response = client
-        .put(format!("{}/api/admin/agents/kitchen/speakers/alice", h.base))
+        .put(format!(
+            "{}/api/admin/agents/kitchen/speakers/alice",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", format!("\"{agent_revision}\""))
         .json(&serde_json::json!({"template_keys": ["default", "extra"]}))
@@ -420,12 +465,18 @@ async fn reducing_a_grant_cancels_sessions_but_adding_one_does_not() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(!pinned.is_cancelled(), "grant addition must not close a snapshot");
+    assert!(
+        !pinned.is_cancelled(),
+        "grant addition must not close a snapshot"
+    );
     let agent_revision = fetch_agent_revision(&client, &h.base, "kitchen").await;
 
     // Removing a Template is a reduction: the pinned session no longer holds that right.
     let response = client
-        .put(format!("{}/api/admin/agents/kitchen/speakers/alice", h.base))
+        .put(format!(
+            "{}/api/admin/agents/kitchen/speakers/alice",
+            h.base
+        ))
         .bearer_auth(TOKEN)
         .header("if-match", format!("\"{agent_revision}\""))
         .json(&serde_json::json!({"template_keys": ["default"]}))
@@ -433,7 +484,10 @@ async fn reducing_a_grant_cancels_sessions_but_adding_one_does_not() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(pinned.is_cancelled(), "grant reduction must revoke the snapshot");
+    assert!(
+        pinned.is_cancelled(),
+        "grant reduction must revoke the snapshot"
+    );
     h.task.abort();
 }
 
@@ -454,7 +508,10 @@ async fn patching_an_agent_cancels_its_sessions() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(pinned.is_cancelled(), "agent update must revoke its sessions");
+    assert!(
+        pinned.is_cancelled(),
+        "agent update must revoke its sessions"
+    );
     h.task.abort();
 }
 
@@ -468,6 +525,9 @@ async fn a_dropped_session_is_not_kept_alive_by_the_registry() {
     drop(pinned);
     // Re-registering prunes the dead weak entry rather than holding the token alive.
     let _live = h.pin(1, 1, "alice").await;
-    assert!(weak.upgrade().is_none(), "registry leaked a strong reference");
+    assert!(
+        weak.upgrade().is_none(),
+        "registry leaked a strong reference"
+    );
     h.task.abort();
 }

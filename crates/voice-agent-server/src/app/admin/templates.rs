@@ -363,10 +363,7 @@ pub(super) async fn bind_template_provider(
         Ok(v) => v,
         Err(e) => return e,
     };
-    if !matches!(
-        provider_type.as_str(),
-        "vad" | "asr" | "llm" | "tts"
-    ) {
+    if !matches!(provider_type.as_str(), "vad" | "asr" | "llm" | "tts") {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     }
     let expected = match expected(request.headers()) {

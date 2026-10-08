@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::benchmark::{summarize, MetricSummary};
+use crate::benchmark::{MetricSummary, summarize};
 
 pub use binomial::{min_zero_error_trials, upper_bound};
 
@@ -605,7 +605,10 @@ fn forbidden_value(text: &str) -> Option<String> {
     if text.len() >= 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Some("hex digest".into());
     }
-    if text.len() >= 80 && text.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'=' || byte == b'/' || byte == b'+')
+    if text.len() >= 80
+        && text.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || byte == b'=' || byte == b'/' || byte == b'+'
+        })
     {
         return Some("base64 blob".into());
     }

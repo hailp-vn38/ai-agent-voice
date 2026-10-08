@@ -118,7 +118,9 @@ pub struct EffectiveProviderBindings {
     pub speaker: Option<String>,
 }
 
-const fn default_speaker_similarity_threshold() -> f32 { 0.5 }
+const fn default_speaker_similarity_threshold() -> f32 {
+    0.5
+}
 
 /// Bounded deployment limits for Speaker profiles and web enrollment drafts.
 #[derive(Clone, Debug, Deserialize)]

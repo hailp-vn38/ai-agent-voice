@@ -34,10 +34,7 @@ struct CaptureRow {
     expires_at: i64,
 }
 
-pub(super) async fn create_capture(
-    State(state): State<AppState>,
-    request: Request,
-) -> Response {
+pub(super) async fn create_capture(State(state): State<AppState>, request: Request) -> Response {
     if request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -131,14 +128,28 @@ pub(super) async fn create_capture(
         }
     };
     let Some(runtime) = state.speaker_runtime.as_ref() else {
-        return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable");
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "speaker_unavailable",
+        );
     };
     let mut vector = match runtime.extract_builtin(analyzed.window).await {
         Ok(vector) => vector,
         Err(crate::providers::speaker::SpeakerError::Busy) => {
-            return error(&request, StatusCode::TOO_MANY_REQUESTS, "speaker_runtime_busy");
+            return error(
+                &request,
+                StatusCode::TOO_MANY_REQUESTS,
+                "speaker_runtime_busy",
+            );
         }
-        Err(_) => return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable"),
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "speaker_unavailable",
+            );
+        }
     };
     let dimension = runtime.dimension();
     let embedding_space_id = runtime.embedding_space_id().to_owned();
@@ -162,8 +173,16 @@ pub(super) async fn create_capture(
         Ok(tx) => tx,
         Err(cause) => return sql_error(&request, &cause),
     };
-    let active: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM speaker_quick_captures WHERE status='accepted' AND expires_at>?")
-        .bind(created_at).fetch_one(&mut *tx).await { Ok(value) => value, Err(cause) => return sql_error(&request, &cause) };
+    let active: i64 = match sqlx::query_scalar(
+        "SELECT COUNT(*) FROM speaker_quick_captures WHERE status='accepted' AND expires_at>?",
+    )
+    .bind(created_at)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(value) => value,
+        Err(cause) => return sql_error(&request, &cause),
+    };
     if active >= config.max_open_enrollments as i64 {
         return error(&request, StatusCode::CONFLICT, "enrollment_quota_exceeded");
     }
@@ -248,12 +267,20 @@ pub(super) async fn create_speaker_from_capture(
     }
     // The captured vector must target the currently active built-in model.
     let Some(runtime) = state.speaker_runtime.as_ref() else {
-        return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable");
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "speaker_unavailable",
+        );
     };
     if capture.embedding_space != runtime.embedding_space_id()
         || capture.dims != runtime.dimension() as i64
     {
-        return error(&request, StatusCode::CONFLICT, "speaker_embedding_space_changed");
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "speaker_embedding_space_changed",
+        );
     }
     let count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM speakers")
         .fetch_one(&mut *tx)
@@ -356,18 +383,30 @@ pub(super) async fn replace_voiceprint(
     if body.capture_id.is_empty() || body.capture_id.len() > 64 {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     }
-    let pool = match db(&state) { Ok(pool) => pool, Err(response) => return response };
+    let pool = match db(&state) {
+        Ok(pool) => pool,
+        Err(response) => return response,
+    };
     let Some(runtime) = state.speaker_runtime.as_ref() else {
-        return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable");
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "speaker_unavailable",
+        );
     };
     let mut tx = match pool.begin().await {
-        Ok(value) => value, Err(cause) => return sql_error(&request, &cause),
+        Ok(value) => value,
+        Err(cause) => return sql_error(&request, &cause),
     };
-    let speaker: Option<(i64, i64)> = match sqlx::query_as(
-        "SELECT id,revision FROM speakers WHERE key=?"
-    ).bind(&key).fetch_optional(&mut *tx).await {
-        Ok(value) => value, Err(cause) => return sql_error(&request, &cause),
-    };
+    let speaker: Option<(i64, i64)> =
+        match sqlx::query_as("SELECT id,revision FROM speakers WHERE key=?")
+            .bind(&key)
+            .fetch_optional(&mut *tx)
+            .await
+        {
+            Ok(value) => value,
+            Err(cause) => return sql_error(&request, &cause),
+        };
     let Some((speaker_id, revision)) = speaker else {
         return error(&request, StatusCode::NOT_FOUND, "not_found");
     };
@@ -386,7 +425,9 @@ pub(super) async fn replace_voiceprint(
         if capture.speaker_id == Some(speaker_id) {
             drop(tx);
             return match super::speakers::speaker_resource_by_key(pool, &key).await {
-                Ok(value) => (StatusCode::OK, Json(serde_json::json!({"speaker":value}))).into_response(),
+                Ok(value) => {
+                    (StatusCode::OK, Json(serde_json::json!({"speaker":value}))).into_response()
+                }
                 Err(cause) => sql_error(&request, &cause),
             };
         }
@@ -399,18 +440,30 @@ pub(super) async fn replace_voiceprint(
         || capture.embedding_space != runtime.embedding_space_id()
         || capture.dims != runtime.dimension() as i64
     {
-        return error(&request, StatusCode::CONFLICT, "speaker_embedding_space_changed");
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "speaker_embedding_space_changed",
+        );
     }
     let now = now();
     let reserved = sqlx::query(
-        "UPDATE speaker_quick_captures SET expires_at=expires_at WHERE id=? AND status='accepted'"
-    ).bind(&body.capture_id).execute(&mut *tx).await;
+        "UPDATE speaker_quick_captures SET expires_at=expires_at WHERE id=? AND status='accepted'",
+    )
+    .bind(&body.capture_id)
+    .execute(&mut *tx)
+    .await;
     if !matches!(reserved, Ok(ref value) if value.rows_affected() == 1) {
         return error(&request, StatusCode::CONFLICT, "capture_busy");
     }
     let bumped = sqlx::query(
-        "UPDATE speakers SET revision=revision+1,updated_at=? WHERE id=? AND revision=?"
-    ).bind(now).bind(speaker_id).bind(revision).execute(&mut *tx).await;
+        "UPDATE speakers SET revision=revision+1,updated_at=? WHERE id=? AND revision=?",
+    )
+    .bind(now)
+    .bind(speaker_id)
+    .bind(revision)
+    .execute(&mut *tx)
+    .await;
     if !matches!(bumped, Ok(ref value) if value.rows_affected() == 1) {
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
@@ -424,7 +477,9 @@ pub(super) async fn replace_voiceprint(
     .bind(speaker_id).bind(&capture.embedding_space)
     .bind(capture.dims).bind(capture.vector.expect("accepted capture has embedding"))
     .bind(now).bind(now).execute(&mut *tx).await;
-    if let Err(cause) = updated { return sql_error(&request, &cause); }
+    if let Err(cause) = updated {
+        return sql_error(&request, &cause);
+    }
     let consumed = sqlx::query(
         "UPDATE speaker_quick_captures SET status='committed',vector=NULL,speaker_id=?,committed_at=?,expires_at=? WHERE id=? AND status='accepted'"
     )
@@ -436,12 +491,24 @@ pub(super) async fn replace_voiceprint(
     if let Err(cause) = super::speakers::publish_catalog_revision(&mut tx).await {
         return sql_error(&request, &cause);
     }
-    if let Err(cause) = audit(&mut *tx, id(&request), "speaker",
-        Some(speaker_id), "reenroll", Some(revision), Some(revision + 1),
-        AuditOutcome::Success, 1).await {
+    if let Err(cause) = audit(
+        &mut *tx,
+        id(&request),
+        "speaker",
+        Some(speaker_id),
+        "reenroll",
+        Some(revision),
+        Some(revision + 1),
+        AuditOutcome::Success,
+        1,
+    )
+    .await
+    {
         return sql_error(&request, &cause);
     }
-    if let Err(cause) = tx.commit().await { return sql_error(&request, &cause); }
+    if let Err(cause) = tx.commit().await {
+        return sql_error(&request, &cause);
+    }
     match super::speakers::speaker_resource_by_key(pool, &key).await {
         Ok(value) => (StatusCode::OK, Json(serde_json::json!({"speaker":value}))).into_response(),
         Err(cause) => sql_error(&request, &cause),

@@ -124,14 +124,14 @@ impl SessionActor {
             self.deliver_identified(text, Some(diagnostic));
         } else {
             self.identification_text = Some(text);
-            self.identification_deadline = Some(
-                std::time::Instant::now() + std::time::Duration::from_millis(750)
-            );
+            self.identification_deadline =
+                Some(std::time::Instant::now() + std::time::Duration::from_millis(750));
         }
     }
 
     pub(super) fn on_identification_diagnostic(&mut self, diagnostic: ObserveDiagnostic) {
-        if self.identification_finished || self.speaker_observe.is_none()
+        if self.identification_finished
+            || self.speaker_observe.is_none()
             || diagnostic.identity.generation != self.generation
             || Some(diagnostic.identity.turn_id) != self.current_turn_id().map(TurnId::get)
         {
@@ -145,8 +145,9 @@ impl SessionActor {
     }
 
     pub(super) fn expire_identification_wait(&mut self) {
-        if self.identification_deadline.is_some_and(|deadline|
-            std::time::Instant::now() >= deadline)
+        if self
+            .identification_deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
         {
             self.identification_deadline = None;
             if let Some(text) = self.identification_text.take() {
@@ -165,7 +166,11 @@ impl SessionActor {
             if diagnostic.outcome != crate::session::SpeakerStatus::Verified {
                 return None;
             }
-            self.speaker_observe.as_ref()?.plan().candidates.iter()
+            self.speaker_observe
+                .as_ref()?
+                .plan()
+                .candidates
+                .iter()
                 .find(|candidate| Some(candidate.speaker_id) == diagnostic.best_speaker_id)
                 .map(|candidate| candidate.key.clone())
         });

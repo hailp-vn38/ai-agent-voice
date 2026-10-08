@@ -456,9 +456,15 @@ async fn revoked_snapshot_closes_the_ingress_loop_before_accepting() {
     let security = observe.security_token();
     let (control, mut messages) = mpsc::channel(8);
     let (audio, _) = mpsc::channel(1);
-    let actor = SessionActor::new("session".into(), control, audio, CAPTURE_FRAMES, providers())
-        .unwrap()
-        .with_speaker_observe(Some(observe), true);
+    let actor = SessionActor::new(
+        "session".into(),
+        control,
+        audio,
+        CAPTURE_FRAMES,
+        providers(),
+    )
+    .unwrap()
+    .with_speaker_observe(Some(observe), true);
     let (ingress_tx, ingress_rx) = mpsc::channel(8);
     let handle = tokio::spawn(actor.run(ingress_rx));
 

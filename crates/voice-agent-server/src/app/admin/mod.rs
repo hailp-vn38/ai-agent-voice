@@ -128,7 +128,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/history/purge", axum::routing::post(purge_history))
         .route("/speaker-recognition", get(speakers::summary))
         .route("/speakers", get(speakers::list).post(speakers::create))
-        .route("/speakers/captures", axum::routing::post(speaker_quick::create_capture))
+        .route(
+            "/speakers/captures",
+            axum::routing::post(speaker_quick::create_capture),
+        )
         .route(
             "/speakers/from-capture",
             axum::routing::post(speaker_quick::create_speaker_from_capture),
@@ -139,7 +142,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
                 .patch(speakers::patch)
                 .delete(speakers::delete),
         )
-        .route("/speakers/{key}/voiceprint", put(speaker_quick::replace_voiceprint))
+        .route(
+            "/speakers/{key}/voiceprint",
+            put(speaker_quick::replace_voiceprint),
+        )
         .route(
             "/speakers/{key}/voiceprint/purge",
             axum::routing::post(speakers::purge),

@@ -93,9 +93,7 @@ impl RuntimeMaterializer for ScriptedFactory {
     }
 }
 
-async fn runtime_with(
-    embeddings: Vec<[f32; 3]>,
-) -> (Arc<SpeakerRuntime>, ResourceLease) {
+async fn runtime_with(embeddings: Vec<[f32; 3]>) -> (Arc<SpeakerRuntime>, ResourceLease) {
     // `SpeakerRuntime::new` consumes one warmup extraction before the queue is exposed.
     let mut all = vec![[1.0, 0.0, 0.0]];
     all.extend(embeddings);
@@ -162,7 +160,10 @@ async fn decide(
 ) -> TrialOutcome {
     let pcm = PcmF32Mono::new(vec![0.1; 16_000], 16_000);
     let extracted = runtime.extract(pcm, lease.clone()).await.unwrap();
-    assert_eq!(extracted, embedding, "runtime returned the scripted embedding");
+    assert_eq!(
+        extracted, embedding,
+        "runtime returned the scripted embedding"
+    );
     let best = plan
         .score(&extracted)
         .into_iter()
@@ -175,12 +176,7 @@ async fn decide(
     }
 }
 
-fn trial(
-    sample: &str,
-    path: Path,
-    ground_truth: GroundTruth,
-    outcome: TrialOutcome,
-) -> Trial {
+fn trial(sample: &str, path: Path, ground_truth: GroundTruth, outcome: TrialOutcome) -> Trial {
     Trial {
         sample_code: sample.into(),
         session_code: "eval-s01".into(),
@@ -221,11 +217,11 @@ async fn production_scoring_classifies_trials_into_the_report() {
     let bob = [0.0, 1.0, 0.0];
     // Order matches the trials below.
     let (runtime, lease) = runtime_with(vec![
-        alice,             // genuine alice -> match alice
-        bob,               // genuine alice, wrong embedding -> match bob (misidentification)
-        [0.0, 0.0, 1.0],   // genuine alice, orthogonal -> reject (pure rejection)
-        [0.0, 0.0, 1.0],   // impostor -> reject (true rejection)
-        bob,               // impostor -> match bob (false accept)
+        alice,           // genuine alice -> match alice
+        bob,             // genuine alice, wrong embedding -> match bob (misidentification)
+        [0.0, 0.0, 1.0], // genuine alice, orthogonal -> reject (pure rejection)
+        [0.0, 0.0, 1.0], // impostor -> reject (true rejection)
+        bob,             // impostor -> match bob (false accept)
     ])
     .await;
     let plan = plan(&runtime, &[("alice", alice), ("bob", bob)]);
@@ -239,11 +235,42 @@ async fn production_scoring_classifies_trials_into_the_report() {
     ];
 
     let trials = vec![
-        trial("t1", Path::OneToN, GroundTruth::Genuine { identity: "alice".into() }, outcomes[0].clone()),
-        trial("t2", Path::OneToN, GroundTruth::Genuine { identity: "alice".into() }, outcomes[1].clone()),
-        trial("t3", Path::OneToN, GroundTruth::Genuine { identity: "alice".into() }, outcomes[2].clone()),
-        trial("t4", Path::OneToN, GroundTruth::Impostor, outcomes[3].clone()),
-        trial("t5", Path::OneToN, GroundTruth::Impostor, outcomes[4].clone()),
+        trial(
+            "t1",
+            Path::OneToN,
+            GroundTruth::Genuine {
+                identity: "alice".into(),
+            },
+            outcomes[0].clone(),
+        ),
+        trial(
+            "t2",
+            Path::OneToN,
+            GroundTruth::Genuine {
+                identity: "alice".into(),
+            },
+            outcomes[1].clone(),
+        ),
+        trial(
+            "t3",
+            Path::OneToN,
+            GroundTruth::Genuine {
+                identity: "alice".into(),
+            },
+            outcomes[2].clone(),
+        ),
+        trial(
+            "t4",
+            Path::OneToN,
+            GroundTruth::Impostor,
+            outcomes[3].clone(),
+        ),
+        trial(
+            "t5",
+            Path::OneToN,
+            GroundTruth::Impostor,
+            outcomes[4].clone(),
+        ),
     ];
     let (protocol, scope) = pin();
     let report: EvaluationReport = build_report(ReportInput {

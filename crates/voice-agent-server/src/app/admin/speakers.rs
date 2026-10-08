@@ -269,7 +269,8 @@ pub(super) async fn summary(State(state): State<AppState>, _request: Request) ->
             "max_speakers": config.max_speakers,
             "max_candidates_per_agent": config.max_candidates_per_agent
         }
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// `GET /speakers` — paginated Speaker list.

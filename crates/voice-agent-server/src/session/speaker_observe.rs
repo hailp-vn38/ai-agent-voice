@@ -189,7 +189,12 @@ impl SpeakerObserve {
     }
 
     /// Built-in speaker engine is process-owned; no database Provider lease is required.
-    pub fn new_builtin(runtime: Arc<SpeakerRuntime>, plan: ObservePlan, profile: QualityProfile, threshold: f32) -> Self {
+    pub fn new_builtin(
+        runtime: Arc<SpeakerRuntime>,
+        plan: ObservePlan,
+        profile: QualityProfile,
+        threshold: f32,
+    ) -> Self {
         Self {
             runtime,
             lease: None,
@@ -345,7 +350,8 @@ pub async fn resolve_observe_plan(
     embedding_space: &str,
 ) -> Result<ObserveResolution, sqlx::Error> {
     use sqlx::Row;
-    let mode = resolve_speaker_policy(pool, agent_id).await?
+    let mode = resolve_speaker_policy(pool, agent_id)
+        .await?
         .unwrap_or(SpeakerPolicyMode::Off);
     if mode == SpeakerPolicyMode::Off {
         return Ok(ObserveResolution::Off);
@@ -360,35 +366,40 @@ pub async fn resolve_observe_plan(
          FROM agent_speaker_candidates c \
          JOIN speakers s ON s.id=c.speaker_id AND s.enabled=1 \
          JOIN speaker_voiceprints v ON v.speaker_id=s.id AND v.embedding_space=? \
-         WHERE c.agent_id=? ORDER BY s.id"
+         WHERE c.agent_id=? ORDER BY s.id",
     )
     .bind(embedding_space)
     .bind(agent_id)
     .fetch_all(pool)
     .await?;
-    let candidates: Vec<ObserveCandidate> = rows.into_iter().filter_map(|row| {
-        let vector_bytes: Vec<u8> = row.get("vector");
-        let dimension: i64 = row.get("dims");
-        let vector = enrollment::decode_embedding(&vector_bytes);
-        if dimension <= 0 || vector.len() != dimension as usize
-            || enrollment::validate_embedding(&vector, dimension as usize).is_err()
-        {
-            return None;
-        }
-        Some(ObserveCandidate {
-            speaker_id: row.get("speaker_id"),
-            // The identification-only label is the enrolled person's name.
-            // It is not a credential and must never be used for authorization.
-            key: row.get("key"),
-            vector,
+    let candidates: Vec<ObserveCandidate> = rows
+        .into_iter()
+        .filter_map(|row| {
+            let vector_bytes: Vec<u8> = row.get("vector");
+            let dimension: i64 = row.get("dims");
+            let vector = enrollment::decode_embedding(&vector_bytes);
+            if dimension <= 0
+                || vector.len() != dimension as usize
+                || enrollment::validate_embedding(&vector, dimension as usize).is_err()
+            {
+                return None;
+            }
+            Some(ObserveCandidate {
+                speaker_id: row.get("speaker_id"),
+                // The identification-only label is the enrolled person's name.
+                // It is not a credential and must never be used for authorization.
+                key: row.get("key"),
+                vector,
+            })
         })
-    }).collect();
+        .collect();
     if candidates.is_empty() {
         return Ok(ObserveResolution::Off);
     }
     let catalog_revision: i64 =
         sqlx::query_scalar("SELECT revision FROM speaker_catalog WHERE id=1")
-        .fetch_one(pool).await?;
+            .fetch_one(pool)
+            .await?;
     Ok(ObserveResolution::Plan(ObservePlan {
         agent_id,
         template_id: 0,

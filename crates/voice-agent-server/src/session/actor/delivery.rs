@@ -43,7 +43,11 @@ impl SessionActor {
         // This label is untrusted, advisory data. It never enters history,
         // transcript, tool authorization or a later turn.
         if let Some(name) = self.speaker_name_for_turn.take() {
-            let display: String = name.chars().filter(|ch| !ch.is_control()).take(96).collect();
+            let display: String = name
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(96)
+                .collect();
             let payload = serde_json::json!({ "display_name": display });
             self.llm_messages.push(ChatMessage::System {
                 content: format!(

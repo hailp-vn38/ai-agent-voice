@@ -93,23 +93,23 @@ pub struct ProviderRegistry {
 impl ProviderRegistry {
     pub fn admin_adapters(&self) -> impl Iterator<Item = (ProviderType, &'static str)> + '_ {
         self.vad
-                .iter()
-                .map(|factory| (ProviderType::Vad, factory.adapter()))
-                .chain(
-                    self.asr
-                        .iter()
-                        .map(|factory| (ProviderType::Asr, factory.adapter())),
-                )
-                .chain(
-                    self.llm
-                        .iter()
-                        .map(|factory| (ProviderType::Llm, factory.adapter())),
-                )
-                .chain(
-                    self.tts
-                        .iter()
-                        .map(|factory| (ProviderType::Tts, factory.adapter())),
-                )
+            .iter()
+            .map(|factory| (ProviderType::Vad, factory.adapter()))
+            .chain(
+                self.asr
+                    .iter()
+                    .map(|factory| (ProviderType::Asr, factory.adapter())),
+            )
+            .chain(
+                self.llm
+                    .iter()
+                    .map(|factory| (ProviderType::Llm, factory.adapter())),
+            )
+            .chain(
+                self.tts
+                    .iter()
+                    .map(|factory| (ProviderType::Tts, factory.adapter())),
+            )
     }
 
     pub fn speaker_factory(

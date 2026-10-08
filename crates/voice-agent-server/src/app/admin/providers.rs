@@ -128,10 +128,7 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
         Err(e) => return e,
     };
     if !valid_text(&body.name, 128, false)
-        || !matches!(
-            body.kind.as_str(),
-            "vad" | "asr" | "llm" | "tts"
-        )
+        || !matches!(body.kind.as_str(), "vad" | "asr" | "llm" | "tts")
         || !adapter_matches_kind(&body.kind, &body.adapter)
         || body
             .secret_ref
