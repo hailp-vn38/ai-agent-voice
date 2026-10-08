@@ -160,8 +160,6 @@ url = "{}"
 [api]
 enabled = {}
 admin_token = "admin-test-token"
-[mcp.external.network]
-allowed_hosts = ["mcp.example.test"]
 "#,
             database_uri, api_enabled
         ),
@@ -1771,6 +1769,38 @@ async fn admin_relationship_reads_and_unlinks_are_revisioned_public_contracts() 
 }
 
 #[tokio::test]
+async fn external_mcp_http_can_be_created_and_updated_without_network_configuration() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let servers = format!("{base}/api/admin/mcp-servers");
+    let created = client
+        .post(&servers)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({
+            "key": "http_mcp", "name": "HTTP MCP",
+            "url": "http://192.168.1.157:8080/mcp", "auth": {"type": "none"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let updated = client
+        .patch(format!("{servers}/http_mcp"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"url": "http://127.0.0.1:8080/mcp"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    assert_eq!(
+        updated.json::<serde_json::Value>().await.unwrap()["url"],
+        "http://127.0.0.1:8080/mcp"
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
     let (base, task) = server(true).await;
     let client = Client::new();
@@ -1791,7 +1821,7 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
         client
             .post(&servers)
             .bearer_auth(auth)
-            .json(&serde_json::json!({"key":"outside","name":"Outside","url":"https://outside.example.test/","auth":{"type":"none"}}))
+            .json(&serde_json::json!({"key":"outside","name":"Outside","url":"ftp://outside.example.test/","auth":{"type":"none"}}))
             .send()
             .await
             .unwrap()

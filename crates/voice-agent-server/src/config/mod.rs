@@ -789,12 +789,9 @@ impl Default for ExternalMcpLimitsConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExternalMcpNetworkConfig {
-    #[serde(default)]
-    pub allow_http_lan: bool,
+    /// Optional hostname allowlist. An empty list accepts any HTTP/HTTPS destination.
     #[serde(default)]
     pub allowed_hosts: Vec<String>,
-    #[serde(default)]
-    pub allowed_cidrs: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]

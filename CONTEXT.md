@@ -468,8 +468,8 @@ Transaction Admin tạo Device enabled, consume đúng một Device Enrollment v
 _Avoid_: WebSocket admission, runtime warmup, online presence
 
 **External MCP Network Policy**:
-Allowlist hostname/CIDR và scheme policy kiểm soát destination outbound của External MCP sau DNS resolution.
-_Avoid_: arbitrary admin URL, hostname-only validation, redirect destination trust
+Policy kiểm soát URL HTTP/HTTPS và allowlist hostname tùy chọn của External MCP; mặc định chấp nhận mọi host.
+_Avoid_: mandatory LAN/CIDR configuration, redirect destination trust
 
 **External MCP Authentication**:
 Auth configuration có kiểu `none`, `bearer` hoặc một header an toàn, kết hợp Secret Reference deployment-owned để inject credential lúc request.

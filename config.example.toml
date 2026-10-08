@@ -306,10 +306,7 @@ max_tool_description_bytes = 4096
 max_external_tool_result_bytes = 16384
 max_pages_per_server = 32
 
-# A destination must match an allowlist entry after DNS resolution. HTTPS is the
-# only scheme unless `allow_http_lan` is enabled for an explicitly LAN-scoped
-# deployment; redirects are never followed.
+# HTTP and HTTPS work by default. Optionally restrict destinations by hostname.
+# An empty allowed_hosts list accepts any host; redirects are never followed.
 [mcp.external.network]
-allow_http_lan = false
 allowed_hosts = []
-allowed_cidrs = []

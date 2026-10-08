@@ -441,19 +441,6 @@ fn database_url() -> String {
     )
 }
 
-/// Loopback has to be named by the operator, exactly as a LAN range would be: these tests prove the
-/// documented HTTP exception is usable on a single host, not that the policy can be skipped.
-fn external_mcp_config() -> ExternalMcpConfig {
-    ExternalMcpConfig {
-        network: ExternalMcpNetworkConfig {
-            allow_http_lan: true,
-            allowed_hosts: vec![],
-            allowed_cidrs: vec!["127.0.0.0/8".into()],
-        },
-        ..ExternalMcpConfig::default()
-    }
-}
-
 fn config(url: String) -> AppConfig {
     let address: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
     let mut providers = ProvidersConfig::default();
@@ -494,7 +481,7 @@ fn config(url: String) -> AppConfig {
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: McpConfig {
-            external: external_mcp_config(),
+            external: ExternalMcpConfig::default(),
             ..McpConfig::default()
         },
         vision: VisionConfig::default(),
@@ -1081,14 +1068,11 @@ async fn external_mcp_outbound_policy_refuses_unlisted_destinations_and_redirect
     voice.task.abort();
     redirecting.task.abort();
 
-    // 2. A destination outside the allowlist is refused before a request exists.  The operator's
-    //    allowlist names loopback; this deployment names neither loopback nor anything else.
+    // 2. An explicitly configured hostname allowlist rejects an unlisted destination.
     let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
     let mut app_config = config(database_url());
     app_config.mcp.external.network = ExternalMcpNetworkConfig {
-        allow_http_lan: true,
-        allowed_hosts: vec![],
-        allowed_cidrs: vec!["10.0.0.0/8".into()],
+        allowed_hosts: vec!["mcp.example.test".into()],
     };
     let voice = start_with_config(app_config, ConstantSecrets(None)).await;
     let pool = voice.database().await;
@@ -1200,7 +1184,8 @@ async fn external_mcp_diagnostics_stay_bounded_classes() {
             .to_string(),
         "external_mcp_secret_resolution_failed:secret_resolver_unavailable"
     );
-    let manager = ExternalMcpManager::new(&external_mcp_config()).expect("the transport builds");
+    let manager =
+        ExternalMcpManager::new(&ExternalMcpConfig::default()).expect("the transport builds");
     assert_eq!(manager.limiter().capacity(), 16);
 }
 

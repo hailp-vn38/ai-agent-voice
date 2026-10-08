@@ -181,7 +181,6 @@ impl ExternalMcpClient {
         let policy_http = PolicyHttpClient::new(
             endpoint.clone(),
             http.clone(),
-            network.clone(),
             response_byte_cap(limits).ok_or_else(usable)?,
         );
         Ok(Self {

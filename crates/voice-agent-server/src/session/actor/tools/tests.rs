@@ -376,9 +376,7 @@ fn admitted_external_mcp() -> SessionExternalMcp {
         std::time::Duration::from_secs(1),
         reqwest::Client::new(),
         crate::config::ExternalMcpNetworkConfig {
-            allow_http_lan: false,
             allowed_hosts: vec!["mcp.internal.test".into()],
-            allowed_cidrs: vec![],
         },
         &crate::config::ExternalMcpLimitsConfig::default(),
         Arc::new(crate::telemetry::TracingTelemetry),
@@ -756,9 +754,7 @@ async fn gated_snapshot(
         std::time::Duration::from_secs(2),
         reqwest::Client::new(),
         crate::config::ExternalMcpNetworkConfig {
-            allow_http_lan: true,
             allowed_hosts: vec![],
-            allowed_cidrs: vec!["127.0.0.0/8".into()],
         },
         &crate::config::ExternalMcpLimitsConfig::default(),
         telemetry,

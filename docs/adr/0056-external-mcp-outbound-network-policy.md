@@ -1,21 +1,14 @@
-# ADR 0056 — External MCP outbound bắt buộc network policy
+# ADR 0056 — External MCP outbound network policy
 
 ## Status
 
-Accepted
+Accepted; revised 2026-10-08 theo yêu cầu cho phép HTTP mà không cần cấu hình LAN/CIDR.
 
-External MCP destination phải match hostname/CIDR allowlist sau DNS resolution; HTTPS luôn dùng normal certificate-chain và hostname validation, không có insecure TLS bypass; HTTP cần explicit LAN enable. URL không có userinfo/query/fragment, automatic redirects tắt, và logging chỉ giữ MCP server key, error kind, scheme. Auth chỉ là typed none/bearer/header với Secret Reference opaque; static headers được canonicalize, protected headers bị block, request assembly inject typed auth sau static/standard header và không có generic post-auth insertion. Điều này ngăn Admin API biến database record thành arbitrary HTTP client.
+External MCP chấp nhận HTTP và HTTPS mặc định, bao gồm LAN và loopback. Không còn `allow_http_lan` hoặc `allowed_cidrs`; deployment dùng config cũ phải xóa hai field này trước khi khởi động vì config từ chối unknown fields.
 
-## Loopback nằm trong LAN scope của HTTP exception
+`allowed_hosts` là allowlist hostname tùy chọn: rỗng thì mọi host được chấp nhận; có entry thì destination phải match exact hostname hoặc wildcard subdomain. Không áp IP/CIDR policy sau DNS resolution. Admin có thể chọn destination mà server truy cập được; HTTP truyền dữ liệu và credential không mã hóa. Đây là trade-off được chọn để thêm MCP trực tiếp qua Admin API mà không phải cấu hình LAN/CIDR ngoài ứng dụng.
 
-Loopback (`127.0.0.0/8` và `::1/128`) là một phần của private scope mà `allow_http_lan` mở ra, vì MCP server trong homelab thường chạy cùng host với agent. Điều này **không** tạo bypass nào: một HTTP loopback destination chỉ hợp lệ khi **cả hai** điều kiện đều đúng —
-
-1. `mcp.external.network.allow_http_lan = true`; và
-2. operator đã ghi tường minh destination đó vào allowlist: một IP literal phải match `allowed_cidrs`, một hostname phải match `allowed_hosts`.
-
-Cùng một destination phải vẫn vượt qua validation sau DNS resolution, nên một hostname resolve ra ngoài allowlisted range bị từ chối ngay trước khi connect. Không có test-only bypass, và loopback không thay thế cho allowlist: allowlist rỗng thì loopback cũng bị từ chối.
-
-Hệ quả thực thi: host phải được so khớp bằng **typed host** (`url::Host::Domain | Ipv4 | Ipv6`), không phải `Url::host_str`, vì `host_str` render IPv6 literal dạng `[::1]` và một chuỗi bracket không bao giờ match CIDR nào.
+HTTPS vẫn validate certificate-chain và hostname, không có insecure TLS bypass. URL không có userinfo/query/fragment; automatic redirects tắt. Logging chỉ giữ MCP server key, error kind, scheme. Auth chỉ là typed none/bearer/header với Secret Reference opaque; static headers được canonicalize, protected headers bị block, request assembly inject typed auth sau static/standard header và không có generic post-auth insertion.
 
 ## Metrics
 

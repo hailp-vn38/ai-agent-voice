@@ -436,9 +436,7 @@ async fn readiness_never_discovers_external_mcp() {
     app_config.mcp = McpConfig {
         external: ExternalMcpConfig {
             network: ExternalMcpNetworkConfig {
-                allow_http_lan: true,
                 allowed_hosts: vec![],
-                allowed_cidrs: vec!["127.0.0.0/8".into()],
             },
             ..ExternalMcpConfig::default()
         },

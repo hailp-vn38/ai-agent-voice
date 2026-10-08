@@ -1,9 +1,8 @@
 //! The only HTTP route RMCP may use for External MCP.
 //!
 //! RMCP owns JSON-RPC, lifecycle, pagination and SSE framing.  This adapter deliberately owns
-//! only deployment policy: each request is DNS/CIDR revalidated immediately before it leaves the
-//! process, redirects remain disabled by the caller-owned reqwest client, and credentials never
-//! escape the resolved session snapshot.
+//! only HTTP response handling: redirects remain disabled by the caller-owned reqwest client,
+//! and credentials never escape the resolved session snapshot.
 
 use std::{
     collections::HashMap,
@@ -25,8 +24,6 @@ use rmcp::{
 use sse_stream::{Error as SseError, Sse, SseStream};
 use url::Url;
 
-use crate::{config::ExternalMcpNetworkConfig, database::external_mcp_policy};
-
 use super::transport::{ReadRejection, read_bounded};
 
 #[derive(Debug, thiserror::Error)]
@@ -38,7 +35,6 @@ pub(crate) struct AdapterError;
 pub(crate) struct PolicyHttpClient {
     endpoint: Url,
     http: reqwest::Client,
-    network: ExternalMcpNetworkConfig,
     response_cap: usize,
     auth_failed: Arc<AtomicBool>,
     invalid_response: Arc<AtomicBool>,
@@ -46,16 +42,10 @@ pub(crate) struct PolicyHttpClient {
 }
 
 impl PolicyHttpClient {
-    pub(crate) fn new(
-        endpoint: Url,
-        http: reqwest::Client,
-        network: ExternalMcpNetworkConfig,
-        response_cap: usize,
-    ) -> Self {
+    pub(crate) fn new(endpoint: Url, http: reqwest::Client, response_cap: usize) -> Self {
         Self {
             endpoint,
             http,
-            network,
             response_cap,
             auth_failed: Arc::new(AtomicBool::new(false)),
             invalid_response: Arc::new(AtomicBool::new(false)),
@@ -79,9 +69,6 @@ impl PolicyHttpClient {
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, StreamableHttpError<AdapterError>> {
-        external_mcp_policy::resolve_and_validate(&self.endpoint, &self.network)
-            .await
-            .map_err(|_| StreamableHttpError::Client(AdapterError))?;
         request
             .send()
             .await

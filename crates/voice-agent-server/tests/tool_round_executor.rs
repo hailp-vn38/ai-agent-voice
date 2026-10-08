@@ -543,13 +543,8 @@ fn config_with_external(
         barge_in: BargeInConfig::default(),
         mcp: McpConfig {
             external: ExternalMcpConfig {
-                // Loopback has to be named by the operator, exactly as a LAN range would be: these
-                // tests prove the documented HTTP exception is usable, not that policy can be
-                // skipped.
                 network: ExternalMcpNetworkConfig {
-                    allow_http_lan: true,
                     allowed_hosts: vec![],
-                    allowed_cidrs: vec!["127.0.0.0/8".into()],
                 },
                 limits: ExternalMcpLimitsConfig::default(),
                 ..external

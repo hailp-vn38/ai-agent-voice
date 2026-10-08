@@ -312,10 +312,9 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
             || !host
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'*'))
-    }) || network.allowed_cidrs.iter().any(|cidr| !valid_cidr(cidr))
-    {
+    }) {
         return Err(ConfigError::Validation(
-            "External MCP network allowlist must contain valid host patterns and CIDRs".into(),
+            "External MCP network allowlist must contain valid host patterns".into(),
         ));
     }
     validate_external_mcp(&config.mcp.external)
@@ -393,18 +392,6 @@ fn validate_external_mcp(external: &crate::config::ExternalMcpConfig) -> Result<
         ));
     }
     Ok(())
-}
-
-fn valid_cidr(value: &str) -> bool {
-    let Some((address, prefix)) = value.split_once('/') else {
-        return false;
-    };
-    let Ok(address) = address.parse::<std::net::IpAddr>() else {
-        return false;
-    };
-    prefix
-        .parse::<u8>()
-        .is_ok_and(|prefix| prefix <= if address.is_ipv4() { 32 } else { 128 })
 }
 
 fn validate_workers(config: &AppConfig) -> Result<(), ConfigError> {
