@@ -933,18 +933,12 @@ async fn close_direct(sender: &mut futures_util::stream::SplitSink<WebSocket, Me
         .await;
 }
 
-/// Ticket 10 admission step: resolve and install Observe for this Voice Session.
-///
-/// Returns `None` (policy `off`, no speaker provider, no resident lease, no enrolled candidate,
-/// or any resolution error) — Observe is best-effort and must never fail an accepted session.
-#[expect(
-    clippy::result_large_err,
-    reason = "the caller returns the HTTP response directly at the WebSocket admission boundary"
-)]
+/// Install optional, Agent-scoped speaker identification. No voice-based admission
+/// or tool gate exists: inference failures do not interrupt the ordinary pipeline.
 async fn resolve_speaker_observe(
     state: &AppState,
     profile: &crate::session::EffectiveSessionProfile,
-    resolved: &crate::providers::ResolvedAgentRuntimes,
+    _resolved: &crate::providers::ResolvedAgentRuntimes,
     config: &AppConfig,
 ) -> Result<
     (
@@ -953,109 +947,59 @@ async fn resolve_speaker_observe(
     ),
     Response,
 > {
-    let policy = match state.database.as_ref() {
-        Some(database) => {
-            match crate::session::resolve_speaker_policy(database.pool(), profile.agent_id).await {
-                Ok(Some(policy)) => policy,
-                Ok(None) if profile.agent_id == 0 => crate::session::SpeakerPolicyMode::Off,
-                Ok(None) => crate::session::SpeakerPolicyMode::Off,
-                Err(error) => {
-                    warn!(%error, "speaker policy resolution failed; refusing admission");
-                    return Err((
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "speaker policy unavailable",
-                    )
-                        .into_response());
-                }
-            }
-        }
-        None if profile.agent_id == 0 => crate::session::SpeakerPolicyMode::Off,
-        None => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                "speaker policy unavailable",
-            )
-                .into_response());
-        }
-    };
-    let required = policy == crate::session::SpeakerPolicyMode::Required;
-    let Some(speaker) = resolved.speaker.as_ref().cloned() else {
-        if required {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "speaker required but no provider is available",
-            )
-                .into_response());
-        }
-        return Ok((None, None));
-    };
-    let Some(template_id) = profile.source.template_id() else {
-        if required {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "speaker required but no template is available",
-            )
-                .into_response());
-        }
-        return Ok((None, None));
-    };
     let Some(database) = state.database.as_ref() else {
-        if required {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "speaker required but database is unavailable",
-            )
-                .into_response());
-        }
         return Ok((None, None));
     };
-    let Some(lease) = profile.switch_catalog.lease_for_speaker(&speaker) else {
-        if required {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "speaker required but no runtime lease is available",
-            )
-                .into_response());
-        }
-        return Ok((None, None));
-    };
-    let embedding_space = speaker.embedding_space_id().to_owned();
-    let plan = match crate::session::resolve_observe_plan(
+    let policy = match crate::session::resolve_speaker_policy(
         database.pool(),
         profile.agent_id,
-        template_id,
-        &embedding_space,
-    )
-    .await
-    {
-        Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
-        Ok(crate::session::ObserveResolution::Off) => return Ok((None, None)),
-        // A `required` Agent with no resolvable candidate set must not admit ungated.
-        Ok(crate::session::ObserveResolution::RequiredUnavailable) => {
-            warn!("required speaker policy has no candidate set; refusing admission");
-            return Err((
-                StatusCode::FORBIDDEN,
-                "speaker required but no candidate set is available",
-            )
-                .into_response());
-        }
-        Ok(crate::session::ObserveResolution::InvalidPolicy) => {
-            warn!("unsupported speaker policy; refusing admission");
-            return Err((StatusCode::FORBIDDEN, "unsupported speaker policy").into_response());
-        }
-        Err(error) if required => {
-            warn!(%error, "required speaker plan resolution failed; refusing admission");
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                "speaker required but plan is unavailable",
-            )
-                .into_response());
-        }
-        Err(error) => {
-            warn!(%error, "speaker observe plan resolution failed");
+    ).await {
+        Ok(Some(mode)) => mode,
+        Ok(None) => crate::session::SpeakerPolicyMode::Off,
+        Err(cause) => {
+            warn!(%cause, "speaker identification preference unavailable");
             return Ok((None, None));
         }
     };
+    let enabled = policy == crate::session::SpeakerPolicyMode::Observe;
+    let runtime = state.speaker_runtime.as_ref();
+    if !enabled || runtime.is_none() {
+        info!(
+            agent_key = %profile.agent_key,
+            speaker_enabled = enabled,
+            engine_available = runtime.is_some(),
+            candidate_count = 0,
+            "ws speaker identification configuration"
+        );
+        return Ok((None, None));
+    }
+    let runtime = runtime.expect("checked built-in speaker runtime availability");
+    let plan = match crate::session::resolve_observe_plan(
+        database.pool(), profile.agent_id, 0, runtime.embedding_space_id(),
+    ).await {
+        Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
+        Ok(_) => {
+            info!(agent_key = %profile.agent_key, speaker_enabled = true,
+                engine_available = true, candidate_count = 0,
+                "ws speaker identification configuration");
+            return Ok((None, None));
+        }
+        Err(cause) => {
+            warn!(%cause, "speaker candidates unavailable, continuing without identification");
+            return Ok((None, None));
+        }
+    };
+    if plan.candidates.len() > config.speaker_recognition.max_candidates_per_agent {
+        warn!(agent_key = %profile.agent_key, "speaker candidate cap exceeded");
+        return Ok((None, None));
+    }
+    info!(
+        agent_key = %profile.agent_key,
+        speaker_enabled = true,
+        engine_available = true,
+        candidate_count = plan.candidates.len(),
+        "ws speaker identification configuration"
+    );
     let enrollment = &config.speaker_recognition.enrollment;
     let quality = crate::audio::enrollment::QualityProfile {
         min_clip_ms: enrollment.min_clip_ms,
@@ -1063,90 +1007,8 @@ async fn resolve_speaker_observe(
         min_speech_ms: enrollment.min_speech_ms,
         max_window_ms: enrollment.max_window_ms,
     };
-    tracing::info!(
-        agent_key = %profile.agent_key,
-        template_id,
-        policy = ?plan.policy,
-        embedding_space = %plan.embedding_space,
-        candidate_count = plan.candidates.len(),
-        "speaker voiceprint observe activated",
-    );
-    // Pin the exact snapshot this session may use. Any later mutation that revokes one of these
-    // dependencies cancels the token; the WebSocket closes 1008 and the actor rechecks before
-    // every dispatch, so a stale pass cannot restore authority.
-    let speakers = plan.candidates.iter().map(|c| c.speaker_id).collect();
-    let candidate_set_digest = crate::database::speaker_candidate_set::candidate_set_digest(
-        database.pool(),
-        profile.agent_id,
-        &profile.agent_key,
-    )
-    .await
-    .ok();
-    let security =
-        database
-            .tool_security
-            .register_speaker(crate::database::tool_security::SpeakerDeps {
-                agent: profile.agent_id,
-                template: template_id,
-                speakers,
-                candidate_set_digest: candidate_set_digest.clone(),
-            });
-    // Ticket 17: resolve, while a database handle is still in hand, the exact grant + Voiceprint
-    // authority for every candidate Template the session may switch to. The actor then gates a
-    // locked speaker against this frozen authority at arm and apply without touching the database.
-    let qualified =
-        crate::app::admin::agent_qualified(database.pool(), profile.agent_id, &profile.agent_key)
-            .await;
-    let mut authorities = std::collections::BTreeMap::new();
-    // ponytail: one observe-plan query per warm candidate Template at admission, so the actor can
-    // gate a switch without a database handle. Bounded by the Agent's enabled Templates; if that
-    // fan-out ever matters, resolve the requested target lazily in the switch preparation task.
-    for candidate in profile.switch_catalog.candidates() {
-        if candidate.template_id == template_id {
-            continue;
-        }
-        let Some(target_speaker) = candidate.runtimes.speaker.as_ref() else {
-            continue;
-        };
-        let target_space = target_speaker.embedding_space_id().to_owned();
-        let Ok(crate::session::ObserveResolution::Plan(target_plan)) =
-            crate::session::resolve_observe_plan(
-                database.pool(),
-                profile.agent_id,
-                candidate.template_id,
-                &target_space,
-            )
-            .await
-        else {
-            continue;
-        };
-        let candidates = target_plan
-            .candidates
-            .iter()
-            .map(|candidate| candidate.speaker_id)
-            .collect();
-        authorities.insert(
-            candidate.template_key.clone(),
-            Arc::new(crate::session::SwitchSpeakerAuthority {
-                template_id: candidate.template_id,
-                embedding_space: Arc::from(target_space.as_str()),
-                candidate_set_digest: candidate_set_digest.clone(),
-                qualified,
-                candidates,
-                plan: target_plan,
-            }),
-        );
-    }
-    let switch = crate::session::SpeakerSwitchGuard::new(
-        plan.policy,
-        Arc::from(embedding_space.as_str()),
-        authorities,
-        Arc::clone(&security),
-    );
     Ok((
-        Some(Arc::new(
-            SpeakerObserve::new(speaker, lease, plan, quality).with_security(security),
-        )),
-        Some(Arc::new(switch)),
+        Some(Arc::new(SpeakerObserve::new_builtin(Arc::clone(runtime), plan, quality))),
+        None,
     ))
 }
