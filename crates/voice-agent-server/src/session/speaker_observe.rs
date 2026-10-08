@@ -331,81 +331,63 @@ pub async fn resolve_speaker_policy(
     }
 }
 
-/// Resolve the Agent policy and, when Observe is enabled, the active Template's granted
-/// candidates with a published voiceprint in the selected runtime's embedding space.
-///
-/// Returns [`ObserveResolution::Off`] for `off`, a missing policy, or an `observe` policy with
-/// an empty candidate set. A `required` policy with no candidate set resolves to
-/// [`ObserveResolution::RequiredUnavailable`] so the caller can refuse admission instead of
-/// silently admitting ungated.
+/// Resolve Agent-scoped candidates in the current built-in embedding space.
+/// The Template parameter is retained temporarily for existing call sites, but
+/// identification no longer depends on a Template or grant.
 pub async fn resolve_observe_plan(
     pool: &SqlitePool,
     agent_id: i64,
-    template_id: i64,
+    _template_id: i64,
     embedding_space: &str,
 ) -> Result<ObserveResolution, sqlx::Error> {
     use sqlx::Row;
-
-    let raw_mode: Option<String> =
-        sqlx::query_scalar("SELECT mode FROM agent_speaker_policies WHERE agent_id = ?")
-            .bind(agent_id)
-            .fetch_optional(pool)
-            .await?;
-    let Some(raw_mode) = raw_mode else {
-        return Ok(ObserveResolution::Off);
-    };
-    let Some(mode) = SpeakerPolicyMode::parse(&raw_mode) else {
-        return Ok(ObserveResolution::InvalidPolicy);
-    };
-    if !mode.observe_enabled() {
+    let mode = resolve_speaker_policy(pool, agent_id).await?
+        .unwrap_or(SpeakerPolicyMode::Off);
+    if mode == SpeakerPolicyMode::Off {
         return Ok(ObserveResolution::Off);
     }
-
+    if mode == SpeakerPolicyMode::Required {
+        // Existing required records must have been migrated to 'off'. Never
+        // revive the removed voice-based authentication behavior.
+        return Ok(ObserveResolution::Off);
+    }
     let rows = sqlx::query(
-        "SELECT s.id AS speaker_id, s.key AS key, v.vector AS vector,
-                v.browser_validation_status AS validation_status
-           FROM agent_speaker_candidates c
-           JOIN speakers s ON s.id = c.speaker_id AND s.enabled = 1
-           JOIN agent_speaker_template_grants g
-             ON g.agent_id = c.agent_id AND g.speaker_id = c.speaker_id AND g.template_id = ?
-           JOIN speaker_voiceprints v
-             ON v.speaker_id = c.speaker_id AND v.embedding_space = ?
-          WHERE c.agent_id = ?",
+        "SELECT s.id AS speaker_id,s.name AS key,v.vector AS vector,v.dims AS dims \
+         FROM agent_speaker_candidates c \
+         JOIN speakers s ON s.id=c.speaker_id AND s.enabled=1 \
+         JOIN speaker_voiceprints v ON v.speaker_id=s.id AND v.embedding_space=? \
+         WHERE c.agent_id=? ORDER BY s.id"
     )
-    .bind(template_id)
     .bind(embedding_space)
     .bind(agent_id)
     .fetch_all(pool)
     .await?;
-
-    let required_has_provisional = mode == SpeakerPolicyMode::Required
-        && rows
-            .iter()
-            .any(|row| row.get::<String, _>("validation_status") != "passed");
-    let candidates: Vec<ObserveCandidate> = rows
-        .into_iter()
-        .map(|row| ObserveCandidate {
+    let candidates: Vec<ObserveCandidate> = rows.into_iter().filter_map(|row| {
+        let vector_bytes: Vec<u8> = row.get("vector");
+        let dimension: i64 = row.get("dims");
+        let vector = enrollment::decode_embedding(&vector_bytes);
+        if dimension <= 0 || vector.len() != dimension as usize
+            || enrollment::validate_embedding(&vector, dimension as usize).is_err()
+        {
+            return None;
+        }
+        Some(ObserveCandidate {
             speaker_id: row.get("speaker_id"),
+            // The identification-only label is the enrolled person's name.
+            // It is not a credential and must never be used for authorization.
             key: row.get("key"),
-            vector: enrollment::decode_embedding(&row.get::<Vec<u8>, _>("vector")),
+            vector,
         })
-        .collect();
-    if candidates.is_empty() || required_has_provisional {
-        return Ok(if mode == SpeakerPolicyMode::Required {
-            ObserveResolution::RequiredUnavailable
-        } else {
-            ObserveResolution::Off
-        });
+    }).collect();
+    if candidates.is_empty() {
+        return Ok(ObserveResolution::Off);
     }
-
     let catalog_revision: i64 =
-        sqlx::query_scalar("SELECT revision FROM speaker_catalog WHERE id = 1")
-            .fetch_one(pool)
-            .await?;
-
+        sqlx::query_scalar("SELECT revision FROM speaker_catalog WHERE id=1")
+        .fetch_one(pool).await?;
     Ok(ObserveResolution::Plan(ObservePlan {
         agent_id,
-        template_id,
+        template_id: 0,
         embedding_space: embedding_space.to_owned(),
         catalog_revision,
         policy: mode,
