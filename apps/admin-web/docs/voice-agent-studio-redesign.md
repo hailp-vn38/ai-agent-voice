@@ -23,6 +23,7 @@ Không rewrite app, không copy API layer sang page, không chỉnh sửa databa
 | `src/components/studio/StudioStatCard.vue` | Card KPI tái sử dụng, không chứa logic API | Đã thêm |
 | `src/components/studio/StudioTabs.vue` | Tab Agent Studio có keyboard/ARIA | Đã thêm |
 | `src/components/studio/VoicePipelineStrip.vue` | Pipeline summary dựa trên Template bindings thực | Đã thêm |
+| `src/components/studio/VoicePipelineStrip.test.ts` | Test unbound/default và explicit Provider bindings | Đã thêm |
 | `src/views/OverviewView.vue` | Counts từ Pinia + ready, sessions, providers từ server API | Đã thêm |
 | `src/views/DevicesView.vue` | Device fleet dùng read-model có sẵn, không giả online | Đã thêm |
 | `src/stores/server.ts` | Xóa system snapshot khi API lỗi; tránh stale telemetry | Đã sửa |
@@ -105,6 +106,7 @@ Không hiển thị `0` khi API chưa trả số. Dùng em dash / Unknown cho `n
 - `src/stores/admin.ts::toDevice` hiện đặt `status` bằng `device.enabled ? 'online' : 'offline'`. Đây **không phải trạng thái WebSocket**.
 - UI Devices mới **dịch đúng ý nghĩa** thành Enabled/Disabled (quyền admission), không gắn chấm xanh `Online`.
 - Thao tác add/edit/delete vẫn từ Agent Detail → `AgentDeviceList` và Admin APIs, dùng revision/`If-Match` có sẵn.
+- `AgentDeviceRow.vue` và `DeviceFormModal.vue` dùng labels Enabled/Disabled. `lastSeen` trống không render thời gian giả.
 - Để có Online/Offline thật, bổ sung trường độc lập `connection_status` từ server; sau đó đổi view-model để không overload `status`. Việc chuẩn hóa tên field `DeviceStatus` là ticket backend/frontend riêng, không đổi public API trong P0.
 
 ### Agent Studio
