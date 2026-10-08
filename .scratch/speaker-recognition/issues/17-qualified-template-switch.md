@@ -4,7 +4,7 @@
 
 **Blocked by:** 16: Thu hồi quyền và vô hiệu hóa WS bị ảnh hưởng.
 
-**Status:** done
+**Status:** resolved
 
 - [x] Target dùng đúng admission-time DesiredProvider; preparation ngoài actor, không query latest configuration hoặc preload mọi candidate.
 - [x] Kiểm locked-speaker grant, epoch, target-space Voiceprint và exact qualification trước arm và apply; không fallback, auto-enroll hoặc downgrade.
