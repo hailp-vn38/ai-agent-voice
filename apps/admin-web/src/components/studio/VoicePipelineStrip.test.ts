@@ -17,6 +17,24 @@ const template: AgentTemplate = {
 }
 
 describe('VoicePipelineStrip', () => {
+  it('shows the provider execution order with three responsive arrows', () => {
+    setLocale('vi')
+    const wrapper = mount(VoicePipelineStrip, { props: { template, providers: [] } })
+
+    const stages = wrapper.findAll('[data-voice-stage]')
+    expect(stages.map((stage) => stage.attributes('data-voice-stage'))).toEqual([
+      'vad', 'asr', 'llm', 'tts',
+    ])
+
+    const connectors = wrapper.findAll('[data-voice-flow-arrow]')
+    expect(connectors).toHaveLength(3)
+    for (const connector of connectors) {
+      expect(connector.find('[data-direction="horizontal"]').exists()).toBe(true)
+      expect(connector.find('[data-direction="vertical"]').exists()).toBe(true)
+      expect(connector.attributes('aria-hidden')).toBe('true')
+    }
+  })
+
   it('displays server default for every unbound slot, without pretending a provider is ready', () => {
     setLocale('en')
     const wrapper = mount(VoicePipelineStrip, { props: { template, providers: [] } })
