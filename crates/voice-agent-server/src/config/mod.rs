@@ -118,10 +118,14 @@ pub struct EffectiveProviderBindings {
     pub speaker: Option<String>,
 }
 
+const fn default_speaker_similarity_threshold() -> f32 { 0.5 }
+
 /// Bounded deployment limits for Speaker profiles and web enrollment drafts.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpeakerRecognitionConfig {
+    #[serde(default = "default_speaker_similarity_threshold")]
+    pub similarity_threshold: f32,
     #[serde(default = "default_speaker_max_speakers")]
     pub max_speakers: usize,
     #[serde(default = "default_speaker_max_candidates_per_agent")]
@@ -139,6 +143,7 @@ pub struct SpeakerRecognitionConfig {
 impl Default for SpeakerRecognitionConfig {
     fn default() -> Self {
         Self {
+            similarity_threshold: default_speaker_similarity_threshold(),
             max_speakers: default_speaker_max_speakers(),
             max_candidates_per_agent: default_speaker_max_candidates_per_agent(),
             max_voiceprint_spaces_per_speaker: default_speaker_max_voiceprint_spaces(),
