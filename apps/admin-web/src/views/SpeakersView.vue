@@ -53,7 +53,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const result = await speakersApi.list({ page: page.value, pageSize, sort: '-updated_at' }, controller.signal)
+    const result = await speakersApi.list({ page: page.value, pageSize, sort: 'updated_at' }, controller.signal)
     if (controller.signal.aborted) return
     items.value = result.items
     total.value = result.total
