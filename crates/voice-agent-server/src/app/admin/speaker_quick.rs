@@ -1,11 +1,9 @@
-//! The two-operation Admin boundary for quick Speaker enrollment.
+//! The two-operation Admin boundary for built-in Speaker enrollment.
 
 use super::*;
 use crate::audio::enrollment::{self, QualityProfile, Reject, WavReject};
-use crate::services::provider_diagnostic::ProviderDiagnosticRequestError;
 use axum::{
     body::{Body, to_bytes},
-    extract::Path,
     http::header,
 };
 use serde::Deserialize;
@@ -25,16 +23,7 @@ struct CommitBody {
 }
 
 #[derive(sqlx::FromRow)]
-struct ProviderRow {
-    id: i64,
-    revision: i64,
-    enabled: i64,
-}
-
-#[derive(sqlx::FromRow)]
 struct CaptureRow {
-    provider_id: Option<i64>,
-    provider_revision: i64,
     runtime_id: String,
     embedding_space: String,
     dims: i64,
@@ -46,7 +35,6 @@ struct CaptureRow {
 
 pub(super) async fn create_capture(
     State(state): State<AppState>,
-    Path(provider_key): Path<String>,
     request: Request,
 ) -> Response {
     if request
@@ -61,10 +49,6 @@ pub(super) async fn create_capture(
             "unsupported_audio_format",
         );
     }
-    let revision = match expected(request.headers()) {
-        Ok(value) => value,
-        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
-    };
     let (parts, body) = request.into_parts();
     let request = Request::from_parts(parts, Body::empty());
     let body = match to_bytes(body, MAX_QUICK_CAPTURE_BODY).await {
@@ -83,15 +67,6 @@ pub(super) async fn create_capture(
     let pool = match db(&state) {
         Ok(pool) => pool,
         Err(response) => return response,
-    };
-    let provider = match provider(pool, &provider_key).await {
-        Ok(Some(provider)) if provider.enabled != 0 && provider.revision == revision => provider,
-        Ok(Some(provider)) if provider.enabled == 0 => {
-            return error(&request, StatusCode::CONFLICT, "provider_disabled");
-        }
-        Ok(Some(_)) => return error(&request, StatusCode::CONFLICT, "provider_revision_conflict"),
-        Ok(None) => return error(&request, StatusCode::NOT_FOUND, "provider_not_found"),
-        Err(cause) => return sql_error(&request, &cause),
     };
     let (pcm, duration_ms) = match enrollment::parse_wav(&body) {
         Ok(value) => value,
@@ -154,22 +129,25 @@ pub(super) async fn create_capture(
             );
         }
     };
-    let result = match state
-        .provider_diagnostics
-        .extract_speaker_embedding(&provider_key, revision, analyzed.window)
-        .await
-    {
-        Ok(value) => value,
-        Err(cause) => return diagnostic_error(&request, cause),
+    let Some(runtime) = state.speaker_runtime.as_ref() else {
+        return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable");
     };
-    if enrollment::validate_embedding(&result.embedding, result.dimension).is_err() {
+    let mut vector = match runtime.extract_builtin(analyzed.window).await {
+        Ok(vector) => vector,
+        Err(crate::providers::speaker::SpeakerError::Busy) => {
+            return error(&request, StatusCode::TOO_MANY_REQUESTS, "speaker_runtime_busy");
+        }
+        Err(_) => return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable"),
+    };
+    let dimension = runtime.dimension();
+    let embedding_space_id = runtime.embedding_space_id().to_owned();
+    if enrollment::validate_embedding(&vector, dimension).is_err() {
         return error(
             &request,
             StatusCode::SERVICE_UNAVAILABLE,
             "speaker_invalid_embedding",
         );
     }
-    let mut vector = result.embedding;
     if !enrollment::normalize(&mut vector) {
         return error(
             &request,
@@ -183,13 +161,20 @@ pub(super) async fn create_capture(
         Ok(tx) => tx,
         Err(cause) => return sql_error(&request, &cause),
     };
-    let active: i64 = match sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM speaker_enrollment_drafts WHERE status='collecting' AND expires_at>?) + (SELECT COUNT(*) FROM speaker_quick_captures WHERE status='accepted' AND expires_at>?)")
-        .bind(created_at).bind(created_at).fetch_one(&mut *tx).await { Ok(value) => value, Err(cause) => return sql_error(&request, &cause) };
+    let active: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM speaker_quick_captures WHERE status='accepted' AND expires_at>?")
+        .bind(created_at).fetch_one(&mut *tx).await { Ok(value) => value, Err(cause) => return sql_error(&request, &cause) };
     if active >= config.max_open_enrollments as i64 {
         return error(&request, StatusCode::CONFLICT, "enrollment_quota_exceeded");
     }
-    let written = sqlx::query("INSERT INTO speaker_quick_captures (id,provider_id,provider_revision,runtime_id,embedding_space,dims,vector,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,'accepted',?,?)")
-        .bind(&id).bind(provider.id).bind(revision).bind(&state.runtime_id).bind(&result.embedding_space_id).bind(result.dimension as i64).bind(enrollment::encode_embedding(&vector)).bind(created_at).bind(created_at + CAPTURE_TTL_SECONDS).execute(&mut *tx).await;
+    let written = sqlx::query("INSERT INTO speaker_quick_captures (id,runtime_id,embedding_space,dims,vector,status,created_at,expires_at) VALUES (?,?,?,?,?,'accepted',?,?)")
+        .bind(&id)
+        .bind(&state.runtime_id)
+        .bind(&embedding_space_id)
+        .bind(dimension as i64)
+        .bind(enrollment::encode_embedding(&vector))
+        .bind(created_at)
+        .bind(created_at + CAPTURE_TTL_SECONDS)
+        .execute(&mut *tx).await;
     if written.is_err() || tx.commit().await.is_err() {
         return error(
             &request,
@@ -225,7 +210,7 @@ pub(super) async fn create_speaker_from_capture(
         Ok(tx) => tx,
         Err(cause) => return sql_error(&request, &cause),
     };
-    let capture = match sqlx::query_as::<_, CaptureRow>("SELECT provider_id,provider_revision,runtime_id,embedding_space,dims,vector,status,speaker_id,expires_at FROM speaker_quick_captures WHERE id=?").bind(&body.capture_id).fetch_optional(&mut *tx).await {
+    let capture = match sqlx::query_as::<_, CaptureRow>("SELECT runtime_id,embedding_space,dims,vector,status,speaker_id,expires_at FROM speaker_quick_captures WHERE id=?").bind(&body.capture_id).fetch_optional(&mut *tx).await {
         Ok(Some(value)) => value, Ok(None) => return error(&request, StatusCode::NOT_FOUND, "capture_not_found"), Err(cause) => return sql_error(&request, &cause),
     };
     if capture.status == "committed" {
@@ -260,24 +245,16 @@ pub(super) async fn create_speaker_from_capture(
             "capture_runtime_incompatible",
         );
     }
-    let provider_id = match capture.provider_id {
-        Some(value) => value,
-        None => return error(&request, StatusCode::CONFLICT, "provider_changed"),
+    // The captured vector must target the currently active built-in model.
+    let Some(runtime) = state.speaker_runtime.as_ref() else {
+        return error(&request, StatusCode::SERVICE_UNAVAILABLE, "speaker_unavailable");
     };
-    let current: Option<(i64,)> = match sqlx::query_as(
-        "SELECT revision FROM providers WHERE id=? AND type='speaker' AND enabled=1",
-    )
-    .bind(provider_id)
-    .fetch_optional(&mut *tx)
-    .await
+    if capture.embedding_space != runtime.embedding_space_id()
+        || capture.dims != runtime.dimension() as i64
     {
-        Ok(value) => value,
-        Err(cause) => return sql_error(&request, &cause),
-    };
-    if current.is_none_or(|value| value.0 != capture.provider_revision) {
-        return error(&request, StatusCode::CONFLICT, "provider_revision_conflict");
+        return error(&request, StatusCode::CONFLICT, "speaker_embedding_space_changed");
     }
-    let count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM speakers")
+    let count: i64 = match    let count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM speakers")
         .fetch_one(&mut *tx)
         .await
     {
@@ -302,8 +279,16 @@ pub(super) async fn create_speaker_from_capture(
     }
     let speaker_id = match sqlx::query("INSERT INTO speakers (key,name,description,enabled,revision,created_at,updated_at) VALUES (?,?,?,1,1,?,?)").bind(&key).bind(&body.name).bind(body.description.as_deref()).bind(time).bind(time).execute(&mut *tx).await { Ok(result) => result.last_insert_rowid(), Err(cause) => return mutation_sql_error(&request, &cause) };
     let vector = capture.vector.expect("accepted capture has vector");
-    let voiceprint = sqlx::query("INSERT INTO speaker_voiceprints (speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) SELECT ?,?,1,1,'pending',p.id,p.key,?,?,?, 'quick-v1',?,? FROM providers p WHERE p.id=?")
-        .bind(speaker_id).bind(&capture.embedding_space).bind(capture.provider_revision).bind(capture.dims).bind(vector).bind(time).bind(time).bind(provider_id).execute(&mut *tx).await;
+    let voiceprint = sqlx::query(
+        "INSERT INTO speaker_voiceprints (speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) VALUES (?,?,1,1,'passed',NULL,'builtin',1,?,?,'',?,?)"
+    )
+        .bind(speaker_id)
+        .bind(&capture.embedding_space)
+        .bind(capture.dims)
+        .bind(vector)
+        .bind(time)
+        .bind(time)
+        .execute(&mut *tx).await;
     let committed = sqlx::query("UPDATE speaker_quick_captures SET status='committed',vector=NULL,speaker_id=?,committed_at=?,expires_at=? WHERE id=? AND status='accepted'")
         .bind(speaker_id)
         .bind(time)
@@ -346,13 +331,6 @@ pub(super) async fn create_speaker_from_capture(
     }
 }
 
-async fn provider(pool: &SqlitePool, key: &str) -> Result<Option<ProviderRow>, sqlx::Error> {
-    sqlx::query_as("SELECT id,revision,enabled FROM providers WHERE key=? AND type='speaker'")
-        .bind(key)
-        .fetch_optional(pool)
-        .await
-}
-
 pub(super) async fn cleanup_expired_captures(pool: &SqlitePool) {
     let time = now();
     let _ = sqlx::query("DELETE FROM speaker_quick_captures WHERE (status='accepted' AND expires_at<=?) OR (status='committed' AND expires_at<=?)")
@@ -360,39 +338,6 @@ pub(super) async fn cleanup_expired_captures(pool: &SqlitePool) {
         .bind(time)
         .execute(pool)
         .await;
-}
-
-fn diagnostic_error(request: &Request, cause: ProviderDiagnosticRequestError) -> Response {
-    match cause {
-        ProviderDiagnosticRequestError::NotFound => {
-            error(request, StatusCode::NOT_FOUND, "provider_not_found")
-        }
-        ProviderDiagnosticRequestError::Disabled => {
-            error(request, StatusCode::CONFLICT, "provider_disabled")
-        }
-        ProviderDiagnosticRequestError::RevisionConflict => {
-            error(request, StatusCode::CONFLICT, "provider_revision_conflict")
-        }
-        ProviderDiagnosticRequestError::Runtime(
-            crate::services::provider_runtime::RuntimeError::Busy,
-        ) => error(
-            request,
-            StatusCode::TOO_MANY_REQUESTS,
-            "provider_runtime_busy",
-        ),
-        ProviderDiagnosticRequestError::Runtime(
-            crate::services::provider_runtime::RuntimeError::Timeout,
-        ) => error(
-            request,
-            StatusCode::GATEWAY_TIMEOUT,
-            "speaker_inference_timeout",
-        ),
-        _ => error(
-            request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "speaker_runtime_unavailable",
-        ),
-    }
 }
 
 #[cfg(test)]
