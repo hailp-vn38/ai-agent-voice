@@ -84,10 +84,10 @@ function submit() {
         <input v-model="form.deviceId" class="admin-input font-mono text-sm" required />
       </label>
       <label class="block space-y-1.5">
-        <span class="text-sm font-medium">{{ t('providers.status') }}</span>
+        <span class="text-sm font-medium">{{ t('devices.admission') }}</span>
         <select v-model="form.status" class="admin-input">
-          <option value="online">{{ t('status.device.online') }}</option>
-          <option value="offline">{{ t('status.device.offline') }}</option>
+          <option value="online">{{ t('devices.enabled') }}</option>
+          <option value="offline">{{ t('devices.disabled') }}</option>
         </select>
       </label>
 
