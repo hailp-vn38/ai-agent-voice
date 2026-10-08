@@ -2695,12 +2695,10 @@ async fn first_assignment_to_an_agent_becomes_its_enabled_default() {
     task.abort();
 }
 
-/// An optional Speaker slot must not make the four-slot core completeness check fail: absent core
-/// slots fall back to the deployment default, so a Template that binds only a partial core plus a
-/// Speaker provider still takes the default slot on its first assignment. A Speaker provider bound
-/// under a core slot is still a type mismatch.
+/// Absent core slots fall back to the deployment default, so a partial core Template remains
+/// assignable. Speaker is built in and has no Provider or Template slot.
 #[tokio::test]
-async fn first_assignment_with_a_partial_core_and_speaker_slot_becomes_the_default() {
+async fn first_assignment_with_a_partial_core_becomes_the_default() {
     let (base, task) = server(true).await;
     let client = Client::new();
     let auth = "admin-test-token";
@@ -2740,42 +2738,39 @@ async fn first_assignment_with_a_partial_core_and_speaker_slot_becomes_the_defau
         }),
     )
     .await;
-    let speaker = create_provider(
-        &client,
-        &providers,
-        serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}}),
-    )
-    .await;
-
-    // A Speaker provider may only bind the Speaker slot.
-    let wrong_type = client
-        .put(format!("{templates}/partial/providers/llm"))
+    let speaker_provider = client
+        .post(&providers)
         .bearer_auth(auth)
-        .header("if-match", "\"1\"")
-        .json(&serde_json::json!({"provider_key":speaker}))
+        .json(&serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}}))
         .send()
         .await
         .unwrap();
-    assert_eq!(wrong_type.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(speaker_provider.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        wrong_type.json::<serde_json::Value>().await.unwrap()["error"]["code"],
-        "invalid_provider"
+        speaker_provider.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "validation_failed"
     );
-
-    for (revision, (kind, provider_key)) in (1..).zip([("llm", &llm), ("speaker", &speaker)]) {
-        assert_eq!(
-            client
-                .put(format!("{templates}/partial/providers/{kind}"))
-                .bearer_auth(auth)
-                .header("if-match", format!("\"{revision}\""))
-                .json(&serde_json::json!({"provider_key":provider_key}))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::OK
-        );
-    }
+    let speaker_slot = client
+        .put(format!("{templates}/partial/providers/speaker"))
+        .bearer_auth(auth)
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"provider_key":llm}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(speaker_slot.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        client
+            .put(format!("{templates}/partial/providers/llm"))
+            .bearer_auth(auth)
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"provider_key":llm}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
 
     assert_eq!(
         client
@@ -2805,103 +2800,25 @@ async fn first_assignment_with_a_partial_core_and_speaker_slot_becomes_the_defau
         .unwrap();
     assert_eq!(
         partial["is_default"], true,
-        "a partial core plus a Speaker slot must still become the default: {assignments}"
-    );
-
-    // Unlinking the Speaker slot is a CAS on the Template revision, and once unbound the provider
-    // can be conditionally deleted.
-    let before_unlink = client
-        .get(format!("{templates}/partial/providers"))
-        .bearer_auth(auth)
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-    assert_eq!(
-        before_unlink["bindings"]["speaker"]["provider_key"],
-        speaker
-    );
-    let revision = before_unlink["revision"].as_i64().unwrap();
-    assert_eq!(
-        client
-            .delete(format!("{templates}/partial/providers/speaker"))
-            .bearer_auth(auth)
-            .header("if-match", format!("\"{revision}\""))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    let after_unlink = client
-        .get(format!("{templates}/partial/providers"))
-        .bearer_auth(auth)
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-    assert!(after_unlink["bindings"]["speaker"].is_null());
-    assert_eq!(
-        client
-            .delete(format!("{providers}/{speaker}"))
-            .bearer_auth(auth)
-            .header("if-match", "\"1\"")
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::NO_CONTENT
+        "a partial core template must still become the default: {assignments}"
     );
     task.abort();
 }
 
 #[tokio::test]
-async fn speaker_provider_is_created_cold_without_exposing_execution_configuration() {
+async fn speaker_provider_creation_is_rejected() {
     let (base, task) = server(true).await;
     let client = Client::new();
-    let key = create_provider(&client, &format!("{base}/api/admin/providers"), serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}})).await;
     let response = client
-        .get(format!("{base}/api/admin/providers/{key}"))
+        .post(format!("{base}/api/admin/providers"))
         .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}}))
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["type"], "speaker");
-    assert!(body["key"].as_str().unwrap().starts_with("speaker_"));
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(body["config_json"].as_str().unwrap()).unwrap()["min_speech_ms"],
-        2000
-    );
-    assert_eq!(body["runtime_status"], "not_loaded");
-    let diagnostic = client
-        .post(format!("{base}/api/admin/providers/{key}/test/speaker"))
-        .bearer_auth("admin-test-token")
-        .header("If-Match", "\"1\"")
-        .header("Content-Type", "audio/wav")
-        .body(wav_pcm16_mono(16000, 16000))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(diagnostic.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(
-        diagnostic.json::<serde_json::Value>().await.unwrap()["error"]["code"],
-        "speaker_runtime_manager_required"
-    );
-    for config in [
-        serde_json::json!({"model":"arbitrary"}),
-        serde_json::json!({"num_threads":99}),
-        serde_json::json!({"max_window_ms":6001}),
-        serde_json::json!({"min_speech_ms":5000,"target_speech_ms":1000}),
-    ] {
-        let invalid=client.post(format!("{base}/api/admin/providers")).bearer_auth("admin-test-token").json(&serde_json::json!({"name":"Invalid","type":"speaker","adapter":"campplus_sherpa","config_json":config})).send().await.unwrap();
-        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
-    }
+    assert_eq!(body["error"]["code"], "validation_failed");
     task.abort();
 }
 
@@ -2985,176 +2902,17 @@ impl voice_agent_server::services::provider_runtime::RuntimeMaterializer
 }
 
 #[tokio::test]
-async fn speaker_diagnostic_is_managed_exact_bounded_and_never_returns_embeddings() {
-    use voice_agent_server::services::{
-        provider_diagnostic::{ProviderDiagnosticLimiter, ProviderDiagnosticService},
-        provider_runtime::{ProviderRuntimeManager, RuntimeLimits},
-    };
-    let config: AppConfig = toml::from_str(&format!(
-        r#"
-[server]
-bind="127.0.0.1:0"
-public_ws_url="ws://127.0.0.1:0/voice/v1/"
-[provider_defaults]
-vad="test"
-asr="test"
-llm="test"
-tts="test"
-[database]
-url="{}"
-[api]
-enabled=true
-admin_token="admin-test-token"
-"#,
-        database_url()
-    ))
-    .unwrap();
-    let database = Database::connect(&config.database).await.unwrap();
-    let mut state = AppState::from_provider_set_with_database(
-        config,
-        Arc::new(ProviderSet::unavailable()),
-        Some(database),
-    );
-    let manager = ProviderRuntimeManager::new(
-        RuntimeLimits {
-            max_parallel_loads: 1,
-            max_pending_loads: 2,
-            max_waiters: 8,
-            max_resident_bytes: 4,
-            max_resources: 4,
-            max_version_entries: 8,
-            admission_timeout_ms: 1000,
-            failure_cooldown_ms: 100,
-            idle_ttl_ms: 1000,
-        },
-        Arc::new(QualificationSpeakerFactory { slow: false }),
-        voice_agent_server::lifecycle::AdmissionGate::open(),
-    )
-    .unwrap();
-    state.provider_diagnostics = Arc::new(
-        ProviderDiagnosticService::new(
-            Arc::new(Default::default()),
-            None,
-            state.database.clone(),
-            ProviderDiagnosticLimiter::new(1),
-            Duration::from_secs(1),
-        )
-        .with_runtime_manager(manager.clone()),
-    );
-    state.provider_runtime_manager = Some(manager);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async move {
-        axum::serve(listener, router_with_state(state))
-            .await
-            .unwrap()
-    });
-    let client = Client::new();
-    let key=create_provider(&client,&format!("{base}/api/admin/providers"),serde_json::json!({"type":"speaker","adapter":"campplus_sherpa","name":"Voice","config_json":{}})).await;
-    let provider = format!("{base}/api/admin/providers/{key}");
-    let cold: serde_json::Value = client
-        .get(&provider)
+async fn speaker_provider_diagnostic_route_is_not_exposed() {
+    let (base, task) = server(true).await;
+    let response = Client::new()
+        .post(format!("{base}/api/admin/providers/missing/test/speaker"))
         .bearer_auth("admin-test-token")
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
-    assert_eq!(cold["runtime"]["desired_state"], "cold");
-    let mut wav = wav_pcm16_mono(16_000, 16_000);
-    let (samples, _) = wav[44..].as_chunks_mut::<2>();
-    for sample in samples {
-        sample.copy_from_slice(&2000_i16.to_le_bytes())
-    }
-    let diagnostic = format!("{provider}/test/speaker");
-    let result = client
-        .post(&diagnostic)
-        .header("If-Match", "\"1\"")
-        .bearer_auth("admin-test-token")
-        .header("Content-Type", "audio/wav")
-        .body(wav.clone())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(result.status(), StatusCode::OK);
-    let result: serde_json::Value = result.json().await.unwrap();
-    assert_eq!(result["provenance"]["dimension"], 3);
-    assert_eq!(result["runtime"]["tested_revision"], 1);
-    assert!(
-        result["provenance"]["embedding_space_id"]
-            .as_str()
-            .unwrap()
-            .starts_with("speaker:")
-    );
-    assert!(!result.to_string().contains("embedding\":"));
-    assert_eq!(
-        client
-            .post(&diagnostic)
-            .header("If-Match", "\"1\"")
-            .bearer_auth("admin-test-token")
-            .header("Content-Type", "application/json")
-            .body(wav.clone())
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        client
-            .post(&diagnostic)
-            .header("If-Match", "\"1\"")
-            .bearer_auth("admin-test-token")
-            .header("Content-Type", "audio/wav")
-            .body(wav_pcm16_mono(8000, 8000))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        client
-            .post(&diagnostic)
-            .header("If-Match", "\"1\"")
-            .bearer_auth("admin-test-token")
-            .header("Content-Type", "audio/wav")
-            .body(vec![0u8; 524_289])
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::PAYLOAD_TOO_LARGE
-    );
-    assert_eq!(
-        client
-            .patch(&provider)
-            .bearer_auth("admin-test-token")
-            .header("If-Match", "\"1\"")
-            .json(&serde_json::json!({"name":"Revised"}))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    let result: serde_json::Value = client
-        .post(&diagnostic)
-        .header("If-Match", "\"2\"")
-        .bearer_auth("admin-test-token")
-        .header("Content-Type", "audio/wav")
-        .body(wav)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(result["runtime"]["tested_revision"], 2);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     task.abort();
 }
-
 #[tokio::test]
 async fn speaker_waiter_timeout_retains_exact_lease_and_capacity_until_native_completion() {
     use voice_agent_server::{
