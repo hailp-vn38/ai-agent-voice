@@ -2,6 +2,8 @@
 
 Bộ tài liệu kiến trúc và phát triển cho một voice-agent server Rust tối giản với WebSocket protocol v1.
 
+Docker cho web/server, test và production: xem [hướng dẫn Docker](docs/docker.md).
+
 ## Mục tiêu
 
 Dự án không port bất kỳ reference implementation nào theo kiểu 1:1. Thay vào đó, dự án định nghĩa **wire protocol + behavior cốt lõi** của riêng mình và xây kiến trúc Rust nhỏ, rõ ràng, dễ kiểm thử và dễ thay provider.

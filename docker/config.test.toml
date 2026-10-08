@@ -1,0 +1,31 @@
+[server]
+bind = "0.0.0.0:8000"
+public_ws_url = "ws://web:8080/voice/v1/"
+
+[auth]
+token = "docker-test-voice"
+
+[api]
+enabled = true
+admin_token = "docker-test-admin"
+
+[database]
+url = "sqlite://data/voice-agent.db"
+
+[provider_defaults]
+vad = "test_vad"
+asr = "test_asr"
+llm = "test_llm"
+tts = "test_tts"
+
+[providers.vad.instances.test_vad]
+adapter = "qualification_vad"
+
+[providers.asr.instances.test_asr]
+adapter = "qualification_asr"
+
+[providers.llm.instances.test_llm]
+adapter = "qualification_llm"
+
+[providers.tts.instances.test_tts]
+adapter = "qualification_tts"

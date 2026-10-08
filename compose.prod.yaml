@@ -1,0 +1,27 @@
+services:
+  server:
+    restart: unless-stopped
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    env_file: ./docker/secrets.env
+    volumes:
+      - type: bind
+        source: ./docker/config.prod.toml
+        target: /app/config.toml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/storage/ai-agent-voice/docker/prod/data
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/storage/ai-agent-voice/docker/prod/models
+        target: /app/models
+        bind:
+          create_host_path: false
+
+  web:
+    restart: unless-stopped
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"

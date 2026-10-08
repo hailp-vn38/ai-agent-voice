@@ -1,6 +1,8 @@
 reference/
 /target/
 /config.toml
+/docker/config.prod.toml
+/docker/secrets.env
 models/
 /runtime/**
 .DS_Store

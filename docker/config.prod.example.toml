@@ -1,0 +1,45 @@
+# Copy to config.prod.toml, set credentials and the client-visible WebSocket URL.
+[server]
+bind = "0.0.0.0:8000"
+public_ws_url = "ws://127.0.0.1:8080/voice/v1/"
+
+[auth]
+token = "REPLACE_WITH_VOICE_TOKEN"
+
+[api]
+enabled = true
+admin_token = "REPLACE_WITH_ADMIN_TOKEN"
+
+[database]
+url = "sqlite://data/voice-agent.db"
+
+[shutdown]
+grace_ms = 15000
+
+[runtime.onnx]
+library = "/app/runtime/onnxruntime/libonnxruntime.so"
+
+[provider_defaults]
+vad = "silero_default"
+asr = "gipformer_vi"
+llm = "openai_primary"
+tts = "zerotts_maichi"
+
+[providers.vad.instances.silero_default]
+adapter = "silero_onnx"
+
+[providers.asr.instances.gipformer_vi]
+adapter = "gipformer_sherpa_offline"
+decoding_method = "modified_beam_search"
+max_active_paths = 4
+
+[providers.llm.instances.openai_primary]
+adapter = "openai"
+api_key = "REPLACE_WITH_PROVIDER_KEY"
+base_url = "https://api.openai.com/v1"
+model = "REPLACE_WITH_MODEL_NAME"
+
+[providers.tts.instances.zerotts_maichi]
+adapter = "zerotts_onnx"
+voice = "maichi"
+delivery_mode = "stream"
