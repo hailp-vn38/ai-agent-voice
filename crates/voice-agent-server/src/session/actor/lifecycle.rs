@@ -2,6 +2,11 @@ use super::*;
 
 impl SessionActor {
     pub(super) fn complete_recognition(&mut self) {
+        self.identification_text = None;
+        self.identification_diagnostic = None;
+        self.identification_deadline = None;
+        self.identification_finished = true;
+        self.speaker_name_for_turn = None;
         self.required_text = None;
         self.required_diagnostic = None;
         self.release_active_turn();
@@ -93,6 +98,11 @@ impl SessionActor {
         self.interrupt_active_turn();
         self.required_text = None;
         self.required_diagnostic = None;
+        self.identification_text = None;
+        self.identification_diagnostic = None;
+        self.identification_deadline = None;
+        self.identification_finished = true;
+        self.speaker_name_for_turn = None;
         let _ = self.advance_generation();
         self.close_vad();
         self.auto_reset_pending = false;
