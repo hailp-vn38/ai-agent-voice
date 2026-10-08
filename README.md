@@ -56,6 +56,9 @@ trên host lần đầu.
 
 ## Admin Web tùy chọn
 
+UI Voice Agent Studio đã có Overview, Devices và Agent Workbench; xem [hướng dẫn component và kết nối API](apps/admin-web/docs/voice-agent-studio-redesign.md) để phân biệt các phần đã triển khai với Playground/Reports còn ở giai đoạn thiết kế.
+
+
 Vue Admin nằm trong workspace tại [`apps/admin-web/`](apps/admin-web/). Khởi động
 server với `api.enabled=true`, sau đó ở terminal khác chạy:
 
