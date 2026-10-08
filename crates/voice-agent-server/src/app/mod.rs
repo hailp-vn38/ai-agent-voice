@@ -251,6 +251,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
         secret_resolver,
         lifecycle,
     );
+    prepare_builtin_speaker(&mut state).await;
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
 }
@@ -394,6 +395,7 @@ async fn managed_startup(
             prewarm.template(id).await;
         }
     }
+    prepare_builtin_speaker(&mut state).await;
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
 }
@@ -405,7 +407,6 @@ async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> 
     .await
     .map_err(|_| BootstrapError::Enrollment)?;
     prepare_speaker_enrollment(state).await;
-    prepare_builtin_speaker(state).await;
     Ok(())
 }
 
