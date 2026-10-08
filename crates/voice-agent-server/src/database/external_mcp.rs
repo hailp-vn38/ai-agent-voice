@@ -2,7 +2,7 @@
 //!
 //! This is the only SQL behind External MCP discovery.  It copies the Agent's enabled bindings
 //! and their desired server configuration out of SQLite before any network work begins, so a
-//! credential reference is read once, resolved once, and never again on a hot path.
+//! the credential name is derived at admission and resolved once off the hot path.
 
 use thiserror::Error;
 
@@ -10,8 +10,8 @@ use super::{Database, DatabaseError, map_sqlx_error};
 
 /// One enabled MCP server an Agent publishes, copied verbatim from its desired configuration.
 ///
-/// It still holds an opaque [`SecretRef`](super::secrets::SecretRef) as text and no secret value:
-/// resolution belongs to the deployment, and it happens after this snapshot exists.
+/// The optional in-memory reference is derived from server identity and auth mode;
+/// no credential reference or value is read from SQLite.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmittedMcpServer {
     pub id: i64,
@@ -57,14 +57,13 @@ impl Database {
                 String,
                 String,
                 Option<String>,
-                Option<String>,
                 i64,
                 i64,
                 i64,
             ),
         >(
             "SELECT m.id, m.key, m.url, m.headers_json, m.auth_type, m.auth_header_name, \
-                    m.secret_ref, m.connect_timeout_ms, m.request_timeout_ms, m.revision \
+                    m.connect_timeout_ms, m.request_timeout_ms, m.revision \
              FROM agent_mcp_bindings b JOIN mcp_servers m ON m.id = b.mcp_server_id \
              WHERE b.agent_id = ? AND b.enabled = 1 AND m.enabled = 1 ORDER BY m.key",
         )
@@ -82,7 +81,6 @@ impl Database {
                     headers_json,
                     auth_type,
                     auth_header_name,
-                    secret_ref,
                     connect_timeout_ms,
                     request_timeout_ms,
                     revision,
@@ -93,7 +91,7 @@ impl Database {
                     headers_json,
                     auth_type,
                     auth_header_name,
-                    secret_ref,
+                    secret_ref: super::secrets::mcp_secret_env(&key, &auth_type),
                     connect_timeout_ms,
                     request_timeout_ms,
                     revision,
