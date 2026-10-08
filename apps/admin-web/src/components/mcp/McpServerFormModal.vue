@@ -6,7 +6,7 @@ import BaseModal from '@/components/admin/BaseModal.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
-const props = defineProps<{ server?: AdminMcpServer; saving: boolean }>()
+const props = defineProps<{ server?: AdminMcpServer; saving: boolean; serverError?: string }>()
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{ save: [payload: CreateMcpServerInput | UpdateMcpServerInput] }>()
 const { t } = useI18n()
@@ -105,7 +105,7 @@ function submit() {
 <template>
   <BaseModal v-model="open" :title="server ? t('mcp.edit') : t('mcp.create')" :description="t('mcp.formHint')">
     <form class="space-y-4" @submit.prevent="submit">
-      <p v-if="error" role="alert" class="rounded-lg border border-danger/40 p-3 text-sm text-danger">{{ error }}</p>
+      <p v-if="error || serverError" role="alert" class="rounded-lg border border-danger/40 p-3 text-sm text-danger">{{ error || serverError }}</p>
       <div class="grid gap-3 sm:grid-cols-2">
         <label v-if="!server" class="block space-y-1.5">
           <span class="text-sm font-medium">{{ t('mcp.key') }}</span>
