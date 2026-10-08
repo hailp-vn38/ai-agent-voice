@@ -85,6 +85,7 @@ onBeforeUnmount(() => aborter.abort())
             { to: '/templates', label: t('nav.templates') },
             { to: '/speakers', label: t('nav.speakers') },
             { to: '/devices', label: t('nav.devices') },
+            { to: '/mcp', label: t('nav.mcp') },
           ]" :key="item.to" :to="item.to" class="flex items-center justify-between rounded-lg border border-border/70 px-4 py-3 text-sm transition-colors hover:bg-accent">
             {{ item.label }}
             <ArrowUpRight class="size-4 text-muted-foreground" aria-hidden="true" />
