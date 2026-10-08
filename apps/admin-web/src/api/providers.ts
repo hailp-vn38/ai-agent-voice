@@ -54,9 +54,6 @@ export const providersApi = {
   testVad(key: string, signal?: AbortSignal) {
     return requestJson<VadDiagnosticResult>(`${providerPath(key)}/test/vad`, { method: 'POST' }, { signal })
   },
-  testSpeaker(key: string, audio: Blob, revision: number, signal?: AbortSignal) {
-    return requestJson<unknown>(`${providerPath(key)}/test/speaker`, { method: 'POST', body: audio, headers: { 'Content-Type': 'audio/wav', 'If-Match': `"${revision}"` } }, { signal })
-  },
   testAsr(key: string, input: AsrDiagnosticInput, signal?: AbortSignal) {
     return requestJson<unknown>(`${providerPath(key)}/test/asr`, {
       method: 'POST',
