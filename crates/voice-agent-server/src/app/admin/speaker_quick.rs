@@ -384,6 +384,7 @@ pub(super) async fn replace_voiceprint(
     };
     if capture.status == "committed" {
         if capture.speaker_id == Some(speaker_id) {
+            drop(tx);
             return match super::speakers::speaker_resource_by_key(pool, &key).await {
                 Ok(value) => (StatusCode::OK, Json(serde_json::json!({"speaker":value}))).into_response(),
                 Err(cause) => sql_error(&request, &cause),
