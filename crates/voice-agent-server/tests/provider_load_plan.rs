@@ -106,17 +106,16 @@ async fn insert_provider(
     pool: &SqlitePool,
     key: &str,
     config_json: &str,
-    secret_ref: Option<&str>,
+    _secret_ref: Option<&str>,
     enabled: bool,
 ) -> i64 {
     sqlx::query(
-        "INSERT INTO providers (key,name,type,adapter,config_json,secret_ref,enabled,created_at,updated_at) \
-         VALUES (?, ?, 'llm', 'openai', ?, ?, ?, 1, 1)",
+        "INSERT INTO providers (key,name,type,adapter,config_json,enabled,created_at,updated_at) \
+         VALUES (?, ?, 'llm', 'openai', ?, ?, 1, 1)",
     )
     .bind(key)
     .bind(key)
     .bind(config_json)
-    .bind(secret_ref)
     .bind(i64::from(enabled))
     .execute(pool)
     .await
