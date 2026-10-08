@@ -10,6 +10,7 @@ export interface ProviderInstance {
   name: string
   type: ProviderType
   adapter: string
+  credentialEnv?: string
   model: string
   description: string
   status: ProviderStatus
