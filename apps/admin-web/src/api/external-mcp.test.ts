@@ -12,7 +12,7 @@ describe('External MCP Admin contract', () => {
       items: [{
         key: 'weather', name: 'Weather', transport: 'streamable_http',
         url: 'https://example.com/mcp', headers: {},
-        auth: { type: 'bearer', has_secret_ref: true },
+        auth: { type: 'bearer' },
         connect_timeout_ms: 5000, request_timeout_ms: 30000,
         enabled: true, revision: 2, created_at: 1, updated_at: 1,
       }],
@@ -23,7 +23,7 @@ describe('External MCP Admin contract', () => {
     }))
     vi.stubGlobal('fetch', fetch)
     const result = await mcpApi.list()
-    expect(result.items[0]?.auth).toEqual({ type: 'bearer', has_secret_ref: true })
+    expect(result.items[0]?.auth).toEqual({ type: 'bearer' })
     expect(result.total).toBeUndefined()
     expect(fetch.mock.calls[0]?.[0]).toBe('/api/admin/mcp-servers?page=1&page_size=50')
   })
