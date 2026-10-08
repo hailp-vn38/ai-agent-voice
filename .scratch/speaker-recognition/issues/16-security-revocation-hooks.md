@@ -4,7 +4,7 @@
 
 **Blocked by:** 08: Re-enroll, nhiều embedding spaces và purge, 15: Required xác minh mới ở từng voice turn.
 
-**Status:** done
+**Status:** resolved
 
 - [x] Wire tất cả relevant Speaker/Agent/Template/provider/grant/policy handlers vào consistent mutation/catalog/security publication; không chỉ API Speaker mới.
 - [x] Re-enroll/disable/purge/reduce grants/unlink/contract/evidence revoke invalidates đúng dependencies; no mode downgrade, no profile hot reload.
