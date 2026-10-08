@@ -120,13 +120,14 @@ async fn snapshots(
         .filter_map(|(id, key, kind, adapter, raw, revision)| {
             let config_json =
                 crate::database::provider_config::validate_raw(&adapter, &raw).ok()?;
+            let secret_ref = crate::database::secrets::provider_secret_env(&key, &adapter);
             Some(DesiredProvider {
                 id,
                 key,
                 kind,
                 adapter,
                 config_json,
-                secret_ref: crate::database::secrets::provider_secret_env(&key, &adapter),
+                secret_ref,
                 revision,
             })
         })
