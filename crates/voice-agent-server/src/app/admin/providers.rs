@@ -130,7 +130,7 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
     if !valid_text(&body.name, 128, false)
         || !matches!(
             body.kind.as_str(),
-            "vad" | "asr" | "llm" | "tts" | "speaker"
+            "vad" | "asr" | "llm" | "tts"
         )
         || !adapter_matches_kind(&body.kind, &body.adapter)
         || body
@@ -283,7 +283,7 @@ impl ProviderFilters {
         let kind = query.kind.clone();
         if kind
             .as_deref()
-            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts" | "speaker"))
+            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts"))
         {
             return Err(());
         }
@@ -350,7 +350,7 @@ async fn provider_facets(
     builder.push(" GROUP BY type");
     let counts: Vec<(String, i64)> = builder.build_query_as().fetch_all(pool).await?;
     let mut facets = serde_json::Map::new();
-    for kind in ["vad", "asr", "llm", "tts", "speaker"] {
+    for kind in ["vad", "asr", "llm", "tts"] {
         facets.insert(
             kind.into(),
             Value::from(
