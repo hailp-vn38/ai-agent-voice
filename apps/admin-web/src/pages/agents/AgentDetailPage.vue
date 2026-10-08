@@ -12,6 +12,8 @@ import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmen
 import AgentHeader from '@/components/agents/AgentHeader.vue'
 import AgentTemplateSwitcher from '@/components/agents/AgentTemplateSwitcher.vue'
 import AiPipeline from '@/components/pipeline/AiPipeline.vue'
+import StudioTabs, { type AgentStudioTab } from '@/components/studio/StudioTabs.vue'
+import VoicePipelineStrip from '@/components/studio/VoicePipelineStrip.vue'
 import AgentFormModal from '@/components/admin/AgentFormModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import DeviceFormModal from '@/components/admin/DeviceFormModal.vue'
@@ -39,6 +41,7 @@ const templates = computed(() => store.getTemplatesForAgent(agentId.value))
 const availableTemplates = computed(() => store.getAvailableTemplatesForAgent(agentId.value))
 const devices = computed(() => store.devicesForAgent(agentId.value))
 
+const activeTab = ref<AgentStudioTab>('studio')
 const selectedTemplateId = ref<string | null>(null)
 const settingDefaultTemplate = ref(false)
 const setDefaultError = ref<string | null>(null)
@@ -350,6 +353,9 @@ async function confirmDeleteDevice() {
       @delete-agent="deleteAgentOpen = true"
     />
 
+    <StudioTabs v-model="activeTab" />
+
+    <div v-if="activeTab === 'studio'" id="studio-panel-studio" role="tabpanel" aria-labelledby="studio-tab-studio" class="space-y-4">
     <template v-if="selectedTemplate">
       <AgentTemplateSwitcher
         :agent="agent"
@@ -365,6 +371,11 @@ async function confirmDeleteDevice() {
       <p v-if="setDefaultError" role="alert" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
         {{ setDefaultError }}
       </p>
+
+      <section class="studio-panel space-y-3 p-4 sm:p-5" aria-label="Voice AI pipeline summary">
+        <h2 class="text-sm font-semibold">{{ t('studio.pipeline.title') }}</h2>
+        <VoicePipelineStrip :template="selectedTemplate" :providers="store.providers" />
+      </section>
 
       <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <AiPipeline
@@ -432,15 +443,23 @@ async function confirmDeleteDevice() {
       </div>
     </div>
 
-    <AgentToolAllowlist :agent-id="agentId" />
-    <AgentSpeakerPolicy :agent-id="agentId" />
-    <AgentDeviceList
-      :devices="devices"
-      :effective-template-by-id="store.getEffectiveDeviceTemplateById"
-      @add="openAddDevice"
-      @edit="openEditDevice"
-      @delete="deleteDeviceTarget = $event"
-    />
+    </div>
+
+    <div v-if="activeTab === 'tools'" id="studio-panel-tools" role="tabpanel" aria-labelledby="studio-tab-tools" class="studio-panel p-5">
+      <AgentToolAllowlist :agent-id="agentId" />
+    </div>
+    <div v-if="activeTab === 'speakers'" id="studio-panel-speakers" role="tabpanel" aria-labelledby="studio-tab-speakers" class="studio-panel p-5">
+      <AgentSpeakerPolicy :agent-id="agentId" />
+    </div>
+    <div v-if="activeTab === 'devices'" id="studio-panel-devices" role="tabpanel" aria-labelledby="studio-tab-devices" class="studio-panel p-5">
+      <AgentDeviceList
+        :devices="devices"
+        :effective-template-by-id="store.getEffectiveDeviceTemplateById"
+        @add="openAddDevice"
+        @edit="openEditDevice"
+        @delete="deleteDeviceTarget = $event"
+      />
+    </div>
 
     <AgentFormModal v-model="agentModalOpen" :agent="agent" @save="store.updateAgent(agent.id, $event)" />
     <TemplateFormDialog
