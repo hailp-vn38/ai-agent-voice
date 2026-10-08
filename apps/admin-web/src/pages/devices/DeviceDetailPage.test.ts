@@ -77,7 +77,7 @@ describe('DeviceDetailPage', () => {
     })
     await flushPromises()
 
-    expect(wrapper.get('[data-detail-actions]').exists()).toBe(true)
+    expect(wrapper.find('[data-detail-actions]').exists()).toBe(true)
     expect(wrapper.find('section.studio-panel h2').text()).toBe('Device information')
     expect(wrapper.findAll('[data-device-delete-option]')).toHaveLength(1)
     await wrapper.get('[data-device-delete-option]').trigger('click')
