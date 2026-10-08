@@ -84,17 +84,20 @@ impl Database {
                     connect_timeout_ms,
                     request_timeout_ms,
                     revision,
-                )| AdmittedMcpServer {
+                )| {
+                    let secret_ref = super::secrets::mcp_secret_env(&key, &auth_type);
+                    AdmittedMcpServer {
                     id,
                     key,
                     url,
                     headers_json,
                     auth_type,
                     auth_header_name,
-                    secret_ref: super::secrets::mcp_secret_env(&key, &auth_type),
+                    secret_ref,
                     connect_timeout_ms,
                     request_timeout_ms,
                     revision,
+                }
                 },
             )
             .collect())
