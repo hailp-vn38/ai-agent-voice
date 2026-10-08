@@ -65,14 +65,6 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
                 .patch(patch_provider)
                 .delete(delete_provider),
         )
-        .route(
-            "/providers/{key}/test/speaker",
-            axum::routing::post(provider_tests::test_speaker_provider),
-        )
-        .route(
-            "/providers/{key}/speaker-captures",
-            axum::routing::post(speaker_quick::create_capture),
-        )
         .route("/providers/{key}/templates", get(list_provider_templates))
         .route(
             "/providers/{key}/prepare",
@@ -136,6 +128,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/history/purge", axum::routing::post(purge_history))
         .route("/speaker-recognition", get(speakers::summary))
         .route("/speakers", get(speakers::list).post(speakers::create))
+        .route("/speakers/captures", axum::routing::post(speaker_quick::create_capture))
         .route(
             "/speakers/from-capture",
             axum::routing::post(speaker_quick::create_speaker_from_capture),
@@ -146,29 +139,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
                 .patch(speakers::patch)
                 .delete(speakers::delete),
         )
-        .route(
-            "/speakers/{key}/enrollments",
-            axum::routing::post(speakers::create_draft),
-        )
+        .route("/speakers/{key}/voiceprint", put(speaker_quick::replace_voiceprint))
         .route(
             "/speakers/{key}/voiceprint/purge",
             axum::routing::post(speakers::purge),
-        )
-        .route(
-            "/speakers/{key}/enrollments/{id}",
-            get(speakers::get_draft).delete(speakers::cancel_draft),
-        )
-        .route(
-            "/speakers/{key}/enrollments/{id}/samples/{slot}",
-            put(speakers::put_sample).delete(speakers::delete_sample),
-        )
-        .route(
-            "/speakers/{key}/enrollments/{id}/validate",
-            axum::routing::post(speakers::validate_holdout),
-        )
-        .route(
-            "/speakers/{key}/enrollments/{id}/finalize",
-            axum::routing::post(speakers::finalize),
         )
         .route(
             "/agents/{key}/speaker-policy",
@@ -185,10 +159,6 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route(
             "/speakers/{key}/bindings",
             get(speaker_policy::list_speaker_bindings),
-        )
-        .route(
-            "/speaker-recognition/reload",
-            axum::routing::post(speaker_calibration::reload),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
