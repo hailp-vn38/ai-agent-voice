@@ -67,6 +67,7 @@ async function load(reset = true) {
 }
 
 function createServer() {
+  error.value = ''
   editing.value = undefined
   formOpen.value = true
 }
@@ -115,8 +116,8 @@ async function toggleServer(server: AdminMcpServer) {
     notice.value = t('mcp.changedApproval')
     await load()
   } catch (cause) {
-    error.value = formatApiError(cause)
     if (isApiError(cause) && cause.code === 'revision_conflict') await load()
+    error.value = formatApiError(cause)
   } finally {
     saving.value = false
   }
@@ -133,8 +134,8 @@ async function removeServer() {
     notice.value = t('mcp.removed')
     await load()
   } catch (cause) {
-    error.value = formatApiError(cause)
     if (isApiError(cause) && cause.code === 'revision_conflict') await load()
+    error.value = formatApiError(cause)
   } finally {
     saving.value = false
   }
@@ -227,7 +228,7 @@ onBeforeUnmount(() => controller.abort())
       {{ t('mcp.manageAgents') }} <ArrowRight class="size-4" aria-hidden="true" />
     </RouterLink>
 
-    <McpServerFormModal v-model="formOpen" :server="editing" :saving="saving" @save="saveServer" />
+    <McpServerFormModal v-model="formOpen" :server="editing" :saving="saving" :server-error="error" @save="saveServer" />
     <ConfirmDialog
       v-model="confirmDeleteOpen"
       :title="t('mcp.deleteTitle', { name: deleteTarget?.name ?? '' })"
