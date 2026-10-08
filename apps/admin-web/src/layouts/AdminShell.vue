@@ -52,7 +52,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <main class="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
+      <main class="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
         <slot />
       </main>
     </div>
