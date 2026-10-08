@@ -1,4 +1,4 @@
-# Voice Agent Admin Web
+# Voice Agent Studio (Admin Web)
 
 Standalone management UI for `voice-agent-server`. The Vue application is outside Core V1 and must not own Voice Session state.
 
@@ -40,7 +40,21 @@ of silently overwriting someone else's change.
 
 ## Pages
 
+### Overview — `/overview` (default `/`)
+
+- Source-backed counts for Agents, Templates, Providers and registered Devices from `useAdminStore`.
+- `GET /ready` and `GET /api/admin/system` for readiness, active sessions and provider runtime aggregates.
+- Unknown values display an em dash; no fake device online count or voice telemetry.
+
+### Devices — `/devices`
+
+- Search registered devices and follow their Agent links; shows effective Template and administrative Enabled/Disabled.
+- Device create/edit/delete remain on Agent Detail; live WS connection state is not available here.
+
+
 ### Agents — `/agents`
+
+- Agent Detail now uses the Studio / External Tools / Speakers / Devices tabs with a pipeline summary.
 
 - Agent cards with the default template, provider chips, device count and add-device action.
 - Create agent dialog.
@@ -93,6 +107,12 @@ of silently overwriting someone else's change.
 - Rust server health, readiness and basic transport information.
 - Management entity counts.
 - Reload-from-server action.
+
+## Redesign and connection contract
+
+See [Voice Agent Studio redesign and API alignment](docs/voice-agent-studio-redesign.md). This guide records implemented P0/P1 components separately from planned Playground/Reports APIs. Playground, Reports, live device status and audio telemetry are not implemented by this UI foundation.
+
+The theme defaults to dark for new visitors; the explicit saved light/dark preference remains authoritative. The existing Vue API clients, Pinia read model and Rust database ownership are unchanged.
 
 ## Languages
 
