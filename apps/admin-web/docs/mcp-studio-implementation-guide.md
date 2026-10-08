@@ -17,7 +17,7 @@ Admin
   │
   ▼
 /mcp → POST /api/admin/mcp-servers
-  │    Persist desired configuration (global), auth via server-owned SecretRef
+  │    Persist non-secret desired configuration, auth token from server deployment environment
   ▼
 /agents/:id → External Tools
   │ PUT /api/admin/agents/:agent_key/mcp-bindings/:mcp_key
@@ -45,7 +45,7 @@ Tool call accepted / blocked
 | Component | Vai trò |
 |---|---|
 | `src/views/McpServersView.vue` | Danh mục toàn cục; filters trên entries đã tải; pagination incremental; mutation refresh |
-| `src/components/mcp/McpServerFormModal.vue` | Form tạo/sửa, authentication SecretRef, header replacement explicit |
+| `src/components/mcp/McpServerFormModal.vue` | Form tạo/sửa auth mode, hiển thị env name (read-only); không chỉnh secret/headers |
 | `src/components/agents/AgentMcpBindings.vue` | Agent ↔ Server bindings, Agent revision và quyền bật/tắt |
 | `src/components/agents/AgentToolAllowlist.vue` | Tool contract review đúng fingerprint/revisions; không hiện auth source |
 | `src/api/mcp.ts` | MCP Server CRUD qua centralized HTTP |
@@ -74,16 +74,15 @@ Create payload:
   "key": "weather",
   "name": "Weather Service",
   "url": "https://example.com/mcp",
-  "headers": {},
-  "auth": {"type": "bearer", "secret_ref": "MCP_WEATHER_TOKEN"},
+  "auth": {"type": "bearer"},
   "connect_timeout_ms": 5000,
   "request_timeout_ms": 30000
 }
 ```
 
-`McpAuthInput` dùng khi ghi: `none`, `bearer+secret_ref`, `header+header_name+secret_ref`. Server kiểm tra key, name, URL theo network policy, headers, SecretRef và timeout. V1 chỉ `streamable_http`.
+`McpAuthInput` dùng khi ghi: `none`, `bearer`, `header+header_name`. Server kiểm tra key, name, URL theo network policy và timeout. Không nhận `secret_ref` hoặc header tùy ý. Token được cấu hình qua `VOICE_MCP_<SERVER_KEY>_TOKEN` trong môi trường server. V1 chỉ `streamable_http`.
 
-**GET che SecretRef**:
+**GET chỉ trả metadata xác thực và `credential_env`**:
 
 ```json
 {
@@ -92,7 +91,8 @@ Create payload:
   "transport": "streamable_http",
   "url": "https://example.com/mcp",
   "headers": {},
-  "auth": {"type": "bearer", "has_secret_ref": true},
+  "auth": {"type": "bearer"},
+  "credential_env": "VOICE_MCP_WEATHER_TOKEN",
   "connect_timeout_ms": 5000,
   "request_timeout_ms": 30000,
   "enabled": true,
@@ -102,7 +102,7 @@ Create payload:
 }
 ```
 
-Ví dụ timestamp/response ở trên để mô tả **schema**, không phải response từ một server đang chạy. Do đó không dùng `McpAuthInput` làm GET type. Khi edit: `auth: undefined` → giữ secret; chỉ gửi `auth` khi người quản trị **chủ động** thay, nhập SecretRef mới. Form không prefill plaintext hoặc SecretRef đã che. `headers` cũng không prefill giá trị, chỉ cho thay thế có chủ ý, tránh sao chép credentials khi edit.
+Ví dụ timestamp/response ở trên để mô tả **schema**, không phải response từ một server đang chạy. Do đó không dùng `McpAuthInput` làm GET type. Khi edit: `auth: undefined` → giữ nguyên auth mode; chỉ gửi `auth` khi người quản trị chủ động thay. Không có input credential hay headers; hiển thị `credential_env` chỉ đọc.
 
 **Paging quan trọng:** Rust `GET /mcp-servers` hiện trả `{ items, page, page_size, max_page_size }` **không có** `total`/ `total_pages`. Rust query chỉ `ORDER BY key LIMIT/OFFSET`; `enabled` query hiện **không áp filter**. UI lọc client-side **trên những trang đã tải**, dùng nút Load more khi response đầy `page_size`, không hiện tổng giả hay `online` giả.
 
@@ -162,8 +162,8 @@ Observation chỉ chứng minh server đã quan sát contract khi discovery hoà
 
 - `DELETE /api/admin/mcp-servers/{key}` cần `If-Match: "<mcp_revision>"`.
 - Khi còn `agent_mcp_bindings`, backend trả `409 mcp_server_in_use`: không auto-unlink/cascade; hướng dẫn người quản trị gỡ từng Agent rồi mới xóa.
-- Khi URL/auth/headers hoặc enabled thay đổi, server có thể invalidate approvals. UI thông báo rõ, không tự khôi phục approve.
-- Network policy (SSRF), SecretRef và tool security guard đều do backend enforce; web không vượt qua.
+- Khi URL/auth hoặc enabled thay đổi, server có thể invalidate approvals. UI thông báo rõ, không tự khôi phục approve.
+- Network policy (SSRF), deployment-owned credential resolution và tool security guard đều do backend enforce; web không vượt qua.
 
 ## 5. UX định nghĩa
 
@@ -193,8 +193,8 @@ npm run build
 
 Kiểm tra:
 
-- Tạo MCP auth none, bearer, header; SecretRef chỉ ở request, không prefill trên GET.
-- Edit không chọn đổi auth/headers: PATCH không chứa `auth`/`headers`.
+- Tạo MCP auth none, bearer, header; không request/response nào gửi secret value hoặc `secret_ref`.
+- Edit không chọn đổi auth: PATCH không chứa `auth`; PATCH luôn không có `headers`.
 - Pagination/trạng thái: không đọc `total` hoặc hiểu `enabled` là Online; tìm kiếm chỉ trên đã tải.
 - Agent Bind: request dùng `If-Match` từ Agent GET; `required:false`; conflict 409 hiển thị và refetch.
 - Tool Review: đúng observed_revision/fingerprint/approval revision; `contract_conflict` refetch; approval không tự mở Sensitive tools.
