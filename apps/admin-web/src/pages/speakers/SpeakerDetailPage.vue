@@ -85,12 +85,14 @@ async function saveEdit() {
   saving.value = true
   error.value = ''
   try {
-    speaker.value = await speakersApi.update(speaker.value.key, {
+    await speakersApi.update(speaker.value.key, {
       name: editForm.value.name.trim(),
       description: editForm.value.description.trim() || null,
       enabled: editForm.value.enabled,
     }, speaker.value.revision)
+    // PATCH returns empty voiceprint/draft arrays; GET restores the full detail projection.
     editOpen.value = false
+    await load()
   } catch (cause) {
     error.value = formatApiError(cause)
   } finally {
