@@ -1280,35 +1280,6 @@
               "response": []
             },
             {
-              "name": "Test Speaker Provider",
-              "request": {
-                "method": "POST",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "audio/wav"
-                  },
-                  {
-                    "key": "Authorization",
-                    "value": "Bearer {{admin_token}}"
-                  },
-                  {
-                    "key": "If-Match",
-                    "value": "\"{{provider_revision}}\""
-                  }
-                ],
-                "body": {
-                  "mode": "file",
-                  "file": {
-                    "src": ""
-                  }
-                },
-                "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/speaker",
-                "description": "Managed exact desired revision. Upload PCM16 mono16kHz WAV,1–12 seconds. Returns quality and extractor provenance, never vectors; success does not authorize a Speaker."
-              },
-              "response": []
-            },
-            {
               "name": "Test ASR provider",
               "request": {
                 "method": "POST",
@@ -1947,7 +1918,7 @@
                 "method": "GET",
                 "header": [],
                 "url": "{{base_url}}/api/admin/speaker-recognition",
-                "description": "Bounded Speaker enrollment config and runtime capability summary. Returns available, runtime_mode, resident providers, enrollment clip/sample/ttl bounds, deployment limits and catalog_revision.",
+                "description": "Built-in CAM++ server capability, embedding space, audio bounds and quota; no mutable Speaker Provider or calibration.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -2105,26 +2076,51 @@
           ]
         },
         {
-          "name": "Enrollment drafts",
+          "name": "One-sample enrollment",
           "item": [
             {
-              "name": "Start enrollment draft (If-Match speaker)",
+              "name": "Extract one Speaker WAV",
               "request": {
                 "method": "POST",
                 "header": [
                   {
                     "key": "Content-Type",
-                    "value": "application/json",
-                    "type": "text"
-                  },
-                  {
-                    "key": "If-Match",
-                    "value": "\"{{speaker_revision}}\"",
-                    "type": "text"
+                    "value": "audio/wav"
                   }
                 ],
-                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments",
-                "description": "Open a bounded draft pinned to one exact Speaker provider revision. Requires If-Match: \"<speaker revision>\". Body: provider_key and expected_provider_revision. Errors: 409 enrollment_in_progress (body error.enrollment_id), 409 enrollment_quota_exceeded, 409 provider_revision_conflict, 409 provider_disabled, 503 provider_runtime_unavailable. Response is 201 with the draft and ETag: \"<draft revision>\".",
+                "url": "{{base_url}}/api/admin/speakers/captures",
+                "description": "Upload PCM16 mono16kHz WAV; server extracts a bounded embedding and holds it for 10 minutes; no Provider key, revision, or voice authentication.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": ""
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Create Speaker from capture",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/from-capture",
+                "description": "Creates Speaker and one voiceprint atomically, idempotent by capture ID.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -2137,7 +2133,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"provider_key\": \"{{speaker_provider_key}}\",\n  \"expected_provider_revision\": 1\n}",
+                  "raw": "{\n  \"capture_id\": \"{{capture_id}}\",\n  \"name\": \"Người nói\",\n  \"description\": \"\"\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -2148,143 +2144,21 @@
               "response": []
             },
             {
-              "name": "Get enrollment draft",
-              "request": {
-                "method": "GET",
-                "header": [],
-                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}",
-                "description": "Resume a draft. A compatible draft created by another process incarnation is repinned to the current runtime and its revision is bumped. Returns 410 enrollment_expired for an expired draft, 409 enrollment_runtime_incompatible when the pinned provider revision/space no longer matches, and 404 enrollment_not_found otherwise.",
-                "auth": {
-                  "type": "bearer",
-                  "bearer": [
-                    {
-                      "key": "token",
-                      "value": "{{admin_token}}",
-                      "type": "string"
-                    }
-                  ]
-                }
-              },
-              "response": []
-            },
-            {
-              "name": "Cancel enrollment draft (If-Match draft)",
-              "request": {
-                "method": "DELETE",
-                "header": [
-                  {
-                    "key": "If-Match",
-                    "value": "\"{{enrollment_draft_revision}}\"",
-                    "type": "text"
-                  }
-                ],
-                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}",
-                "description": "Cancel a collecting draft and release its quota slot. Requires If-Match: \"<draft revision>\". Returns 204.",
-                "auth": {
-                  "type": "bearer",
-                  "bearer": [
-                    {
-                      "key": "token",
-                      "value": "{{admin_token}}",
-                      "type": "string"
-                    }
-                  ]
-                }
-              },
-              "response": []
-            },
-            {
-              "name": "Upload enrollment sample",
+              "name": "Replace Speaker voiceprint",
               "request": {
                 "method": "PUT",
                 "header": [
                   {
                     "key": "Content-Type",
-                    "value": "audio/wav",
-                    "type": "text"
+                    "value": "application/json"
                   },
                   {
                     "key": "If-Match",
-                    "value": "\"{{enrollment_draft_revision}}\"",
-                    "type": "text"
+                    "value": "\"{{speaker_revision}}\""
                   }
                 ],
-                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}/samples/{{sample_slot}}",
-                "description": "Store one PCM WAV sample (>= speaker_recognition.min_clip_ms). Requires If-Match: \"<draft revision>\"; the response ETag is the next draft revision. Errors: 409 enrollment_sample_duplicate, 409 enrollment_invalid_audio, 409 enrollment_revision_conflict, 413 enrollment_sample_too_large.",
-                "auth": {
-                  "type": "bearer",
-                  "bearer": [
-                    {
-                      "key": "token",
-                      "value": "{{admin_token}}",
-                      "type": "string"
-                    }
-                  ]
-                },
-                "body": {
-                  "mode": "file",
-                  "file": {
-                    "src": ""
-                  }
-                }
-              },
-              "response": []
-            },
-            {
-              "name": "Validate enrollment holdout",
-              "request": {
-                "method": "POST",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "audio/wav",
-                    "type": "text"
-                  },
-                  {
-                    "key": "If-Match",
-                    "value": "\"{{enrollment_draft_revision}}\"",
-                    "type": "text"
-                  }
-                ],
-                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}/validate",
-                "description": "Score one held-out WAV against the draft's samples with the exact pinned provider revision. Requires If-Match: \"<draft revision>\". Errors: 409 enrollment_holdout_duplicate, 409 enrollment_holdout_rejected, 409 enrollment_runtime_incompatible. Response: validation.status (passed|failed) and the next revision.",
-                "auth": {
-                  "type": "bearer",
-                  "bearer": [
-                    {
-                      "key": "token",
-                      "value": "{{admin_token}}",
-                      "type": "string"
-                    }
-                  ]
-                },
-                "body": {
-                  "mode": "file",
-                  "file": {
-                    "src": ""
-                  }
-                }
-              },
-              "response": []
-            },
-            {
-              "name": "Finalize enrollment draft (If-Match draft)",
-              "request": {
-                "method": "POST",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "application/json",
-                    "type": "text"
-                  },
-                  {
-                    "key": "If-Match",
-                    "value": "\"{{enrollment_draft_revision}}\"",
-                    "type": "text"
-                  }
-                ],
-                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}/finalize",
-                "description": "Commit a validated draft into a new published voiceprint and bump the speaker revision. Requires If-Match: \"<draft revision>\". Body: expected_speaker_revision. Errors: 409 enrollment_not_validated, 409 speaker_revision_conflict, 409 provider_revision_conflict. Response: enrollment.status=committed, activation.catalog_revision, and the speaker without raw vectors.",
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/voiceprint",
+                "description": "Re-enroll existing Speaker from capture. If-Match is Speaker revision; Agent bindings and name remain.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -2297,12 +2171,216 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"expected_speaker_revision\": 1\n}",
+                  "raw": "{\n  \"capture_id\": \"{{capture_id}}\"\n}",
                   "options": {
                     "raw": {
                       "language": "json"
                     }
                   }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Purge Speaker voiceprints",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{speaker_revision}}\""
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/voiceprint/purge",
+                "description": "Delete voiceprint(s) but keep metadata.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"confirm\": \"PURGE_SPEAKER_VOICEPRINT\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Agent speaker identification",
+          "item": [
+            {
+              "name": "Get Agent identification toggle",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/speaker-policy",
+                "description": "Mode off|observe; observe means advisory identity for a turn, never authorization.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Set Agent identification toggle",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{speaker_policy_revision}}\""
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/speaker-policy",
+                "description": "Toggle identification; no Required mode or calibration.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"mode\": \"observe\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List Agent speakers",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/speakers?page=1&page_size=50",
+                "description": "Agent-scoped candidates; independent of Template grants.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Add Speaker to Agent",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\""
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/speakers/{{speaker_key}}",
+                "description": "Direct link with empty JSON body.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Remove Speaker from Agent",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{agent_revision}}\""
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/agents/{{agent_key}}/speakers/{{speaker_key}}",
+                "description": "Unlink candidate; recognition snapshot applies at reconnect.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "List Speaker Agent bindings",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/bindings?page=1&page_size=50",
+                "description": "Returns Agent keys, never Template grants.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
                 }
               },
               "response": []
@@ -2454,17 +2532,12 @@
       "type": "string"
     },
     {
-      "key": "speaker_provider_key",
-      "value": "speaker_0123",
-      "type": "string"
-    },
-    {
-      "key": "enrollment_draft_id",
+      "key": "capture_id",
       "value": "",
       "type": "string"
     },
     {
-      "key": "enrollment_draft_revision",
+      "key": "speaker_policy_revision",
       "value": "1",
       "type": "string"
     }
