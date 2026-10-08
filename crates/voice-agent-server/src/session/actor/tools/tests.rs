@@ -769,7 +769,36 @@ async fn gated_snapshot(
         .initialize()
         .await
         .expect("the fixture completes the RMCP initialize lifecycle before a call");
-    SessionExternalMcp::new(vec![resolved_server("weather", "Forecast", client)])
+    let database = crate::database::Database::connect(&crate::config::DatabaseConfig {
+        url: "sqlite::memory:".into(),
+        max_connections: 1,
+        ..Default::default()
+    })
+    .await
+    .expect("the fixture database migrates");
+    sqlx::raw_sql(
+        r#"
+INSERT INTO agents (id,key,name,created_at,updated_at) VALUES (2,'agent','Agent',1,1);
+INSERT INTO mcp_servers (id,key,name,url,created_at,updated_at) VALUES (1,'weather','Weather','http://fixture.test/mcp',1,1);
+INSERT INTO agent_mcp_bindings (agent_id,mcp_server_id,created_at) VALUES (2,1,1);
+INSERT INTO external_tool_observations (server_id,original_name,description,input_schema,fingerprint,server_revision,observed_at) VALUES (1,'Forecast','forecast','{}','fixture',1,1);
+INSERT INTO agent_external_tool_allowlist (agent_id,server_id,original_name,fingerprint,allowed,sensitive) VALUES (2,1,'Forecast','fixture',1,0);
+"#,
+    )
+    .execute(database.pool())
+    .await
+    .expect("the fixture allowlist is admitted");
+    let mut catalog = SessionExternalMcp::new(vec![resolved_server("weather", "Forecast", client)]);
+    catalog.guard = Some(crate::database::tool_security::ExternalToolGuard {
+        database,
+        agent_id: 2,
+        close: Arc::new(tokio_util::sync::CancellationToken::new()),
+        contracts: Arc::new(std::collections::HashMap::from([(
+            ("weather".to_owned(), "Forecast".to_owned()),
+            (1, "fixture".to_owned()),
+        )])),
+    });
+    catalog
 }
 
 fn counted(telemetry: &Arc<crate::telemetry::RecordingTelemetry>, metric: &str) -> usize {
