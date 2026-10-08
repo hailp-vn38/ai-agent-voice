@@ -246,9 +246,9 @@ impl ProviderDiagnosticService {
             .database
             .as_ref()
             .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-        let (id, provider_key, provider_type, adapter, config, secret_ref, revision, enabled):
-            (i64, String, String, String, Option<String>, Option<String>, i64, i64) = sqlx::query_as(
-            "SELECT id,key,type,adapter,CASE WHEN length(CAST(config_json AS BLOB))<=65536 THEN config_json ELSE NULL END,CASE WHEN length(CAST(secret_ref AS BLOB))<=256 THEN secret_ref ELSE NULL END,revision,enabled FROM providers WHERE key=? AND length(CAST(key AS BLOB))<=128 AND length(CAST(type AS BLOB))<=16 AND length(CAST(adapter AS BLOB))<=64 AND (secret_ref IS NULL OR length(CAST(secret_ref AS BLOB))<=256)"
+        let (id, provider_key, provider_type, adapter, config, revision, enabled):
+            (i64, String, String, String, Option<String>, i64, i64) = sqlx::query_as(
+            "SELECT id,key,type,adapter,CASE WHEN length(CAST(config_json AS BLOB))<=65536 THEN config_json ELSE NULL END,revision,enabled FROM providers WHERE key=? AND length(CAST(key AS BLOB))<=128 AND length(CAST(type AS BLOB))<=16 AND length(CAST(adapter AS BLOB))<=64"
         ).bind(key).fetch_one(database.pool()).await.map_err(|error| match error {
             sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
             _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
@@ -265,7 +265,7 @@ impl ProviderDiagnosticService {
             kind: provider_type,
             adapter,
             config_json: config.ok_or(RuntimeError::Configuration)?,
-            secret_ref,
+            secret_ref: crate::database::secrets::provider_secret_env(&provider_key, &adapter),
             revision,
         })
     }
