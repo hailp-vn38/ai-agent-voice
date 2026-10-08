@@ -199,7 +199,7 @@ Kiểm tra:
 - Agent Bind: request dùng `If-Match` từ Agent GET; `required:false`; conflict 409 hiển thị và refetch.
 - Tool Review: đúng observed_revision/fingerprint/approval revision; `contract_conflict` refetch; approval không tự mở Sensitive tools.
 - Delete blocked nếu còn binding; không auto-unlink.
-- Navigation `/mcp`, responsive mobile, vi/en, keyboard, contrast.
+- Navigation `/mcp` (cả sidebar và Overview quick actions), responsive mobile, vi/en, keyboard, contrast.
 - Regression với Agent/Template/Provider/Device/Speaker hiện tại.
 
 > **Chưa có:** MCP Server connect/test API trực tiếp từ Admin; live online status; manual discovery endpoint; history tool latency report. Để thêm chúng phải cập nhật Rust API/contract trước, không hiện trạng thái giả trong Vue.
