@@ -254,7 +254,7 @@ pub(super) async fn create_speaker_from_capture(
     {
         return error(&request, StatusCode::CONFLICT, "speaker_embedding_space_changed");
     }
-    let count: i64 = match    let count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM speakers")
+    let count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM speakers")
         .fetch_one(&mut *tx)
         .await
     {
