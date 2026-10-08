@@ -499,10 +499,9 @@ mod tests {
         }
     }
 
-    /// A `required` policy with no candidate set must not degrade to "nothing to run"; it must
-    /// signal that admission has to fail closed.
+    /// A missing, disabled or legacy Required policy never gates conversation.
     #[tokio::test]
-    async fn required_without_candidates_fails_closed() {
+    async fn no_candidates_never_gate_conversation() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         for ddl in [
             "CREATE TABLE agent_speaker_policies (agent_id INTEGER, mode TEXT)",
@@ -554,7 +553,7 @@ mod tests {
             ObserveResolution::Off
         ));
 
-        // `required` with no candidates → admission must fail closed.
+        // Legacy Required becomes inert; migration downgrades it to OFF.
         sqlx::query("UPDATE agent_speaker_policies SET mode = 'required' WHERE agent_id = 7")
             .execute(&pool)
             .await
@@ -563,7 +562,7 @@ mod tests {
             resolve_observe_plan(&pool, 7, 3, "speaker:abc")
                 .await
                 .unwrap(),
-            ObserveResolution::RequiredUnavailable
+            ObserveResolution::Off
         ));
 
         // A corrupt persisted value is not an implicit downgrade to `off`.
@@ -571,46 +570,47 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(matches!(
+        assert!(
             resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::InvalidPolicy
-        ));
+                .await.is_err()
+        );
     }
 
     #[tokio::test]
-    async fn required_with_a_provisional_candidate_fails_closed() {
+    async fn observe_uses_agent_candidates_without_template_grants_or_holdout() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         for ddl in [
             "CREATE TABLE agent_speaker_policies (agent_id INTEGER, mode TEXT)",
             "CREATE TABLE agent_speaker_candidates (agent_id INTEGER, speaker_id INTEGER)",
-            "CREATE TABLE speakers (id INTEGER, key TEXT, enabled INTEGER)",
-            "CREATE TABLE agent_speaker_template_grants (agent_id INTEGER, speaker_id INTEGER, template_id INTEGER)",
-            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, browser_validation_status TEXT)",
+            "CREATE TABLE speakers (id INTEGER, name TEXT, enabled INTEGER)",
+            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, dims INTEGER, browser_validation_status TEXT)",
             "CREATE TABLE speaker_catalog (id INTEGER, revision INTEGER)",
         ] {
             sqlx::query(ddl).execute(&pool).await.unwrap();
         }
         for sql in [
-            "INSERT INTO agent_speaker_policies VALUES (7, 'required')",
-            "INSERT INTO speakers VALUES (1, 'owner', 1)",
+            "INSERT INTO agent_speaker_policies VALUES (7, 'observe')",
+            "INSERT INTO speakers VALUES (1, 'Owner', 1)",
             "INSERT INTO agent_speaker_candidates VALUES (7, 1)",
-            "INSERT INTO agent_speaker_template_grants VALUES (7, 1, 3)",
             "INSERT INTO speaker_catalog VALUES (1, 1)",
         ] {
             sqlx::query(sql).execute(&pool).await.unwrap();
         }
-        sqlx::query("INSERT INTO speaker_voiceprints VALUES (1, 'speaker:abc', ?, 'pending')")
+        sqlx::query("INSERT INTO speaker_voiceprints VALUES (1, 'speaker:abc', ?, 2, 'pending')")
             .bind(enrollment::encode_embedding(&[1.0, 0.0]))
             .execute(&pool)
             .await
             .unwrap();
-        assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::RequiredUnavailable
-        ));
+        // No Template grants are present at all; this is an Agent identification list.
+        let ObserveResolution::Plan(plan) =
+            resolve_observe_plan(&pool, 7, 999, "speaker:abc").await.unwrap()
+        else {
+            panic!("an Agent-scoped compatible voiceprint should be usable");
+        };
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].key, "Owner");
+        assert_eq!(plan.template_id, 0);
+        assert_eq!(plan.score(&[1.0, 0.0])[0].speaker_id, 1);
     }
+
 }
