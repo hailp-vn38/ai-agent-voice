@@ -10,19 +10,6 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     description: "Local speaker embeddings; matching does not grant authorization.",
     config_schema: ProviderConfigSchema {
         fields: &[
-            crate::providers::descriptor::ProviderConfigField {
-                nullable: true,
-                ..field(
-                    "calibration_profile",
-                    "Calibration profile",
-                    ConfigFieldType::String,
-                    false,
-                    None,
-                    None,
-                    None,
-                    Some(128),
-                )
-            },
             field(
                 "min_speech_ms",
                 "Minimum speech (ms)",
@@ -76,6 +63,31 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
 };
 pub static REGISTRATION: ProviderAdapterRegistration =
     ProviderAdapterRegistration::local(&DESCRIPTOR, None, Some(&super::assets::ASSETS));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_only_optional_window_controls_with_server_defaults() {
+        let keys: Vec<_> = DESCRIPTOR
+            .config_schema
+            .fields
+            .iter()
+            .map(|field| field.key)
+            .collect();
+        assert_eq!(keys, ["min_speech_ms", "target_speech_ms", "max_window_ms"]);
+        let config: crate::config::CampPlusConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            (
+                config.min_speech_ms,
+                config.target_speech_ms,
+                config.max_window_ms
+            ),
+            (2_000, 4_000, 6_000)
+        );
+    }
+}
 
 /// Deterministic, model-free speaker adapter compiled only into the qualification
 /// build (ADR 0068). It is remote: there are no assets for the runtime manager to

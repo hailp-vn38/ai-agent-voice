@@ -115,7 +115,10 @@ pub fn router_with_state(state: AppState) -> Router {
                 .options(ota::options)
                 .layer(middleware::from_fn(ota::cors_response)),
         )
-        .route("/voice/v1/", get(websocket::handler));
+        .route(
+            "/voice/v1/",
+            get(websocket::handler).layer(cors::layer()),
+        );
     let router = if state.config.database.devices.enrollment.enabled {
         router
             .route(

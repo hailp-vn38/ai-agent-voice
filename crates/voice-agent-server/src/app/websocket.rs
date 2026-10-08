@@ -861,6 +861,14 @@ async fn resolve_speaker_observe(
         min_speech_ms: enrollment.min_speech_ms,
         max_window_ms: enrollment.max_window_ms,
     };
+    tracing::info!(
+        agent_key = %profile.agent_key,
+        template_id,
+        policy = ?plan.policy,
+        embedding_space = %plan.embedding_space,
+        candidate_count = plan.candidates.len(),
+        "speaker voiceprint observe activated",
+    );
     // Pin the exact snapshot this session may use. Any later mutation that revokes one of these
     // dependencies cancels the token; the WebSocket closes 1008 and the actor rechecks before
     // every dispatch, so a stale pass cannot restore authority.

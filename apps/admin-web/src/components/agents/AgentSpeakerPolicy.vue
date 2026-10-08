@@ -81,6 +81,12 @@ function setMode(mode: AgentSpeakerPolicyMode) {
   void run(() => agentsApi.setSpeakerPolicy(props.agentId, mode, policy.value!.revision))
 }
 
+function blockerText(blocker: string) {
+  return blocker === 'speaker_calibration_required'
+    ? t('agentSpeakerPolicy.calibrationRequired')
+    : blocker
+}
+
 function openGrant(speakerKey: string) {
   draftSpeakerKey.value = speakerKey
   dialogOpen.value = true
@@ -166,7 +172,7 @@ watch(() => props.agentId, load, { immediate: true })
       <div v-if="!policy.required_available" class="text-sm text-muted-foreground" data-testid="required-blockers">
         <p>{{ t('agentSpeakerPolicy.requiredUnavailable') }}</p>
         <ul v-if="policy.required_blockers.length" class="ml-5 list-disc">
-          <li v-for="blocker in policy.required_blockers" :key="blocker">{{ blocker }}</li>
+          <li v-for="blocker in policy.required_blockers" :key="blocker">{{ blockerText(blocker) }}</li>
         </ul>
       </div>
     </div>
@@ -253,7 +259,7 @@ watch(() => props.agentId, load, { immediate: true })
 
         <div class="flex justify-end gap-2">
           <Button variant="outline" @click="dialogOpen = false">{{ t('agentSpeakerPolicy.cancel') }}</Button>
-          <Button :disabled="!draftSpeakerKey || busy" data-testid="grant-save" @click="saveGrant">
+          <Button :disabled="!draftSpeakerKey || !draftTemplateKeys.length || busy" data-testid="grant-save" @click="saveGrant">
             {{ t('agentSpeakerPolicy.save') }}
           </Button>
         </div>

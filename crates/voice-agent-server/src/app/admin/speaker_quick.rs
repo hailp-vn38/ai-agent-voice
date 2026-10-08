@@ -289,22 +289,30 @@ pub(super) async fn create_speaker_from_capture(
     }
     let key = format!("spk_{}", Uuid::new_v4().simple());
     let time = now();
-    let reserved = sqlx::query("UPDATE speaker_quick_captures SET status='committed',vector=NULL,committed_at=?,expires_at=? WHERE id=? AND status='accepted'")
-        .bind(time).bind(time + TOMBSTONE_SECONDS).bind(&body.capture_id).execute(&mut *tx).await;
+    // This no-op update obtains SQLite's write reservation without violating the committed-row
+    // constraint before the new Speaker ID exists.
+    let reserved = sqlx::query(
+        "UPDATE speaker_quick_captures SET expires_at=expires_at WHERE id=? AND status='accepted'",
+    )
+    .bind(&body.capture_id)
+    .execute(&mut *tx)
+    .await;
     if !matches!(reserved, Ok(ref result) if result.rows_affected() == 1) {
         return error(&request, StatusCode::CONFLICT, "capture_busy");
     }
     let speaker_id = match sqlx::query("INSERT INTO speakers (key,name,description,enabled,revision,created_at,updated_at) VALUES (?,?,?,1,1,?,?)").bind(&key).bind(&body.name).bind(body.description.as_deref()).bind(time).bind(time).execute(&mut *tx).await { Ok(result) => result.last_insert_rowid(), Err(cause) => return mutation_sql_error(&request, &cause) };
     let vector = capture.vector.expect("accepted capture has vector");
-    let voiceprint = sqlx::query("INSERT INTO speaker_voiceprints (speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) SELECT ?,?,1,1,'pending',p.id,p.key,?,?,?,?, 'quick-v1',?,? FROM providers p WHERE p.id=?")
+    let voiceprint = sqlx::query("INSERT INTO speaker_voiceprints (speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) SELECT ?,?,1,1,'pending',p.id,p.key,?,?,?, 'quick-v1',?,? FROM providers p WHERE p.id=?")
         .bind(speaker_id).bind(&capture.embedding_space).bind(capture.provider_revision).bind(capture.dims).bind(vector).bind(time).bind(time).bind(provider_id).execute(&mut *tx).await;
-    let linked = sqlx::query("UPDATE speaker_quick_captures SET speaker_id=? WHERE id=?")
+    let committed = sqlx::query("UPDATE speaker_quick_captures SET status='committed',vector=NULL,speaker_id=?,committed_at=?,expires_at=? WHERE id=? AND status='accepted'")
         .bind(speaker_id)
+        .bind(time)
+        .bind(time + TOMBSTONE_SECONDS)
         .bind(&body.capture_id)
         .execute(&mut *tx)
         .await;
     if voiceprint.is_err()
-        || linked.is_err()
+        || !matches!(committed, Ok(ref result) if result.rows_affected() == 1)
         || super::speakers::publish_catalog_revision(&mut tx)
             .await
             .is_err()
@@ -384,5 +392,67 @@ fn diagnostic_error(request: &Request, cause: ProviderDiagnosticRequestError) ->
             StatusCode::SERVICE_UNAVAILABLE,
             "speaker_runtime_unavailable",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::SqlitePool;
+
+    #[tokio::test]
+    async fn reservation_keeps_the_capture_accepted_until_a_speaker_is_linked() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE speaker_quick_captures (
+                id TEXT PRIMARY KEY, status TEXT NOT NULL, vector BLOB, speaker_id INTEGER,
+                expires_at INTEGER NOT NULL, committed_at INTEGER,
+                CHECK ((status='accepted' AND vector IS NOT NULL AND speaker_id IS NULL AND committed_at IS NULL)
+                    OR (status='committed' AND vector IS NULL AND speaker_id IS NOT NULL AND committed_at IS NOT NULL))
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO speaker_quick_captures (id,status,vector,expires_at) VALUES ('capture','accepted',X'01',1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let reserved = sqlx::query("UPDATE speaker_quick_captures SET expires_at=expires_at WHERE id='capture' AND status='accepted'")
+            .execute(&pool)
+            .await;
+        assert!(
+            reserved.is_ok(),
+            "reservation must retain a valid accepted row"
+        );
+        let committed = sqlx::query("UPDATE speaker_quick_captures SET status='committed',vector=NULL,speaker_id=1,committed_at=2 WHERE id='capture' AND status='accepted'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(committed.rows_affected(), 1);
+    }
+
+    #[tokio::test]
+    async fn quick_voiceprint_insert_matches_its_columns() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for ddl in [
+            "CREATE TABLE providers (id INTEGER PRIMARY KEY, key TEXT, revision INTEGER, type TEXT, enabled INTEGER)",
+            "CREATE TABLE speakers (id INTEGER PRIMARY KEY, key TEXT, name TEXT, description TEXT, enabled INTEGER, revision INTEGER, created_at INTEGER, updated_at INTEGER)",
+            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, revision INTEGER, sample_count INTEGER, browser_validation_status TEXT, provider_id INTEGER, provider_key TEXT, provider_revision INTEGER, dims INTEGER, vector BLOB, calibration_revision TEXT, enrolled_at INTEGER, updated_at INTEGER)",
+        ] {
+            sqlx::query(ddl).execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO providers VALUES (1, 'speaker', 1, 'speaker', 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO speakers VALUES (1, 'spk_test', 'Owner', NULL, 1, 1, 1, 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let inserted = sqlx::query("INSERT INTO speaker_voiceprints (speaker_id,embedding_space,revision,sample_count,browser_validation_status,provider_id,provider_key,provider_revision,dims,vector,calibration_revision,enrolled_at,updated_at) SELECT ?,?,1,1,'pending',p.id,p.key,?,?,?, 'quick-v1',?,? FROM providers p WHERE p.id=?")
+            .bind(1).bind("space").bind(1).bind(3).bind(vec![1_u8; 12]).bind(1).bind(1).bind(1)
+            .execute(&pool).await.unwrap();
+        assert_eq!(inserted.rows_affected(), 1);
     }
 }

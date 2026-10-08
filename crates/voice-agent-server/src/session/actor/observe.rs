@@ -81,6 +81,17 @@ impl SessionActor {
         let gate_tx = self.gate_tx.clone();
         tokio::spawn(async move {
             let diagnostic = observe.observe(identity, &samples).await;
+            let recognized_speaker = (diagnostic.outcome
+                == crate::session::SpeakerStatus::Verified)
+                .then(|| {
+                    observe
+                        .plan()
+                        .candidates
+                        .iter()
+                        .find(|candidate| Some(candidate.speaker_id) == diagnostic.best_speaker_id)
+                        .map(|candidate| candidate.key.as_str())
+                })
+                .flatten();
             tracing::info!(
                 operation_id = diagnostic.identity.operation_id,
                 turn_id = diagnostic.identity.turn_id,
@@ -91,6 +102,8 @@ impl SessionActor {
                 speech_ms = diagnostic.speech_ms,
                 inference_ms = diagnostic.inference_ms,
                 state = diagnostic.outcome.as_str(),
+                recognized = recognized_speaker.is_some(),
+                speaker_key = recognized_speaker.unwrap_or("none"),
                 best_score = diagnostic.best_score,
                 "speaker observe",
             );

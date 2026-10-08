@@ -1,6 +1,6 @@
 # Speaker Provider CAM++
 
-Create a Provider with `type: "speaker"`, `adapter: "campplus_sherpa"` through the existing Admin API. The server generates its key. Typed config accepts nullable `calibration_profile` and bounded `min_speech_ms` (2000), `target_speech_ms` (4000), `max_window_ms` (6000), with minimum ≤ target ≤ maximum ≤ 6000. Model paths, revisions, downloads and threads cannot be set by Admin JSON. Local `secret_ref` is rejected.
+Create a Provider with `type: "speaker"`, `adapter: "campplus_sherpa"` through the existing Admin API. The server generates its key. The descriptor exposes bounded optional `min_speech_ms`, `target_speech_ms` and `max_window_ms`; omitting them uses server defaults of 2000, 4000 and 6000 respectively, with minimum ≤ target ≤ maximum ≤ 6000. Model paths, revisions, downloads and threads cannot be set by Admin JSON. Local `secret_ref` is rejected.
 
 The deployment runtime manager must be enabled and declare a conservative `estimated_peak_bytes.campplus_sherpa` budget. `[runtime.onnx.threads] campplus_sherpa = 1` controls execution width. One extractor serves compatible logical revisions under existing logical, physical and global accounting. GET/capabilities show cached state without model loading. POST `/api/admin/providers/{key}/prepare` prepares the exact desired revision.
 
@@ -36,4 +36,3 @@ Admin manages Speaker profiles and their enrollment drafts under `/api/admin/spe
 - `DELETE /api/admin/speakers/{key}/enrollments/{id}` cancels a collecting draft with `If-Match: "<draft revision>"` and releases the quota slot.
 
 Drafts are bounded by `[speaker_recognition.enrollment] ttl_ms`; expired drafts have their sample blobs dropped at startup and on a five-minute sweep, and their rows are removed once the tombstone window passes. Draft inspection and reconciliation expose only metadata: no audio, vector or digest bytes.
-

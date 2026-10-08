@@ -109,6 +109,20 @@ async fn lan_browser_preflight_and_authenticated_requests() {
         );
     }
     let response = client
+        .get(format!("{base}/voice/v1/"))
+        .header("Origin", "http://192.168.1.157:8006")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("http://192.168.1.157:8006"),
+        "voice WebSocket handshake errors must remain visible to LAN browser clients"
+    );
+    let response = client
         .request(Method::OPTIONS, format!("{base}/voice/ota/"))
         .header("Origin", origin)
         .header("Access-Control-Request-Method", "GET")

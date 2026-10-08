@@ -34,7 +34,7 @@ function policy(overrides: Record<string, unknown> = {}) {
     speaker_change: 'per_utterance',
     text_turns: 'per_utterance',
     required_available: false,
-    required_blockers: ['qualification_pending'],
+    required_blockers: ['speaker_calibration_required'],
     ...overrides,
   }
 }
@@ -89,7 +89,7 @@ describe('AgentSpeakerPolicy', () => {
 
     const required = wrapper.get('[data-testid="speaker-policy-mode-required"]')
     expect(required.attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="required-blockers"]').text()).toContain('qualification_pending')
+    expect(wrapper.get('[data-testid="required-blockers"]').text()).toContain('qualified calibration')
   })
 
   it('reports revision conflicts from policy updates', async () => {
@@ -116,6 +116,22 @@ describe('AgentSpeakerPolicy', () => {
     await flushPromises()
 
     expect(agentsApi.setAgentSpeaker).toHaveBeenCalledWith('agent', 'alice', ['first', 'next'], 7)
+  })
+
+  it('requires a template before saving a speaker grant', async () => {
+    speakersApi.list.mockResolvedValue({
+      items: [{ key: 'bob', name: 'Bob', enabled: true }],
+      page: 1,
+      page_size: 100,
+      total: 1,
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="add-grant"]').trigger('click')
+    await wrapper.get('select').setValue('bob')
+
+    expect(wrapper.get('[data-testid="grant-save"]').attributes('disabled')).toBeDefined()
   })
 
   it('removes a speaker grant when the last template is removed', async () => {
