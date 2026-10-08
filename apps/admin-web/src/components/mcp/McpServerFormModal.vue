@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 import type { AdminMcpServer, CreateMcpServerInput, McpAuthInput, UpdateMcpServerInput } from '@/api/types/mcp'
 import BaseModal from '@/components/admin/BaseModal.vue'
@@ -21,6 +21,11 @@ const form = reactive({
   headerName: '',
   connectTimeoutMs: 5000,
   requestTimeoutMs: 30000,
+})
+
+const credentialHint = computed(() => {
+  const key = (form.key.trim() || props.server?.key || '').toUpperCase()
+  return `VOICE_MCP_${key || '<SERVER_KEY>'}_TOKEN`
 })
 
 watch([open, () => props.server], () => {
@@ -125,7 +130,7 @@ function submit() {
         </label>
       </div>
       <p v-if="form.auth === 'bearer' || form.auth === 'header'" class="rounded-lg border border-border/70 p-3 text-xs text-muted-foreground">
-        Token được cấp trên server qua <code>VOICE_MCP_{{ form.key.trim().toUpperCase() || server?.key.toUpperCase() }}_TOKEN</code>.
+        Token được cấp trên server qua <code>{{ credentialHint }}</code>.
         Web và SQLite không lưu hoặc đọc giá trị token.
       </p>
       <div class="flex justify-end gap-2">
