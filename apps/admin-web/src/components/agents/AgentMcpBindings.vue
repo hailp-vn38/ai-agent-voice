@@ -69,8 +69,8 @@ async function changeBinding(serverKey: string, enabled: boolean | null) {
     message.value = t('mcp.bindingSaved')
     emit('changed')
   } catch (cause) {
-    error.value = formatApiError(cause)
     if (isApiError(cause) && cause.code === 'revision_conflict') await load()
+    error.value = formatApiError(cause)
   } finally {
     busy.value = false
   }
