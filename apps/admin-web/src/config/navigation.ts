@@ -1,4 +1,4 @@
-import { Bot, Boxes, Cpu, LayoutDashboard, LayoutTemplate, Mic, Server } from '@lucide/vue'
+import { Bot, Boxes, Cpu, LayoutDashboard, LayoutTemplate, Mic, Server, Workflow } from '@lucide/vue'
 
 import type { MessageKey } from '@/i18n/messages'
 
@@ -22,6 +22,7 @@ export const navigationGroups = [
     label: 'nav.group.infrastructure',
     items: [
       { label: 'nav.providers', to: '/providers', icon: Boxes },
+      { label: 'nav.mcp', to: '/mcp', icon: Workflow },
       { label: 'nav.system', to: '/system', icon: Server },
     ],
   },

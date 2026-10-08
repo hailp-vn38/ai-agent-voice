@@ -119,6 +119,13 @@ Không hiển thị `0` khi API chưa trả số. Dùng em dash / Unknown cho `n
 - Mutations chạy qua store/API hiện có: `If-Match` revision, 409 conflict → reload, không silent overwrite.
 - Provider không có binding: giao diện tóm tắt ghi `Server default`, **không suy ra tên Provider hay khẳng định runtime đã loaded**.
 
+### External MCP Studio (đã bổ sung)
+
+- Sidebar Infrastructure → `/mcp` dùng `McpServersView.vue` và `McpServerFormModal.vue` để quản lý MCP catalog toàn cục.
+- Agent Detail → External Tools dùng `AgentMcpBindings.vue` + `AgentToolAllowlist.vue`. Binding chỉ cho phép server cung cấp tool; approval từng observed contract vẫn do Agent review.
+- Kết nối bằng Admin API hiện có; authentication SecretRef bị redact, revision riêng cho MCP Server, Agent bindings, tool approvals.
+- Không giả online/test/discovery runtime. [Đọc hướng dẫn MCP Studio và ma trận API](mcp-studio-implementation-guide.md).
+
 ## 5. Endpoint contract và môi trường
 
 Không thay thế những API hiện hữu trong `apps/admin-web/docs/API_Integration_Guide.md` và `docs/api/00-all-apis.postman_collection.json`.

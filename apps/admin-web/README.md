@@ -52,6 +52,13 @@ of silently overwriting someone else's change.
 - Device create/edit/delete remain on Agent Detail; live WS connection state is not available here.
 
 
+### External MCP — `/mcp`
+
+- Global MCP Server catalog with create/edit/enable/disable/delete and incremental loading.
+- Streamable HTTP configuration and server-resolved SecretRef authentication; existing auth secrets are redacted in GET responses and are not prefilled.
+- Filter/search operate on loaded catalog pages; Enabled is not a live connection status.
+- Agent Detail → External Tools now includes MCP bindings (revisioned against Agent) and observed tool contract reviews. See [MCP Studio implementation guide](docs/mcp-studio-implementation-guide.md).
+
 ### Agents — `/agents`
 
 - Agent Detail now uses the Studio / External Tools / Speakers / Devices tabs with a pipeline summary.

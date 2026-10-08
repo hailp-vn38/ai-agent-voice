@@ -57,7 +57,10 @@ export function formatApiError(error: unknown): string {
     provider_runtime_timeout: 'Runtime provider phản hồi quá lâu.',
     provider_revision_conflict: 'Provider đã thay đổi phiên bản; hãy tải lại.',
     provider_disabled: 'Provider đang bị tắt.',
-    mcp_server_in_use: 'MCP server vẫn còn dependency và chưa thể xoá.',
+    mcp_server_in_use: 'MCP server vẫn còn liên kết Agent; cần unlink trước khi xóa.',
+    invalid_mcp_server: 'MCP Server không tồn tại.',
+    required_unsupported: 'Chế độ MCP binding Required chưa được hỗ trợ.',
+    contract_conflict: 'Tool contract đã thay đổi; cần tải lại observation trước khi duyệt.',
     database_unavailable: 'Database hiện không khả dụng.',
     database_busy: 'Database đang bận; hãy thử lại sau.',
   }
