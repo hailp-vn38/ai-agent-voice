@@ -1,6 +1,6 @@
 # Speaker Recognition V1 — Web Enrollment, ESP32 Observe and Qualified Required
 
-Status: ready-for-agent
+Status: resolved (all 19 tickets merged into integration/speaker-recognition)
 Date: 2026-10-07
 Baseline: main at 28caaa92becd9efc2c492eba7906b902b9220b63
 Sources: implementation guide, discussion Q1–Q25, and ADR 0077–0081.
