@@ -10,6 +10,8 @@ export interface AdminDevice {
   metadata_json: string | null
   enabled: number
   revision: number
+  created_at?: number
+  updated_at?: number
 }
 
 export interface DeviceListQuery extends PageQuery {
