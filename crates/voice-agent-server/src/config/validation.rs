@@ -512,6 +512,7 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 instance.adapter()
             ))
         })?;
+        #[allow(irrefutable_let_patterns)] // Qualification builds add another LLM variant.
         let LlmInstanceConfig::Openai(openai) = instance else {
             #[cfg(feature = "qualification-providers")]
             {

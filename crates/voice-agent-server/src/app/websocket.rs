@@ -801,6 +801,10 @@ async fn close_direct(sender: &mut futures_util::stream::SplitSink<WebSocket, Me
 ///
 /// Returns `None` (policy `off`, no speaker provider, no resident lease, no enrolled candidate,
 /// or any resolution error) — Observe is best-effort and must never fail an accepted session.
+#[expect(
+    clippy::result_large_err,
+    reason = "the caller returns the HTTP response directly at the WebSocket admission boundary"
+)]
 async fn resolve_speaker_observe(
     state: &AppState,
     profile: &crate::session::EffectiveSessionProfile,

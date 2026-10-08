@@ -513,14 +513,12 @@ impl AppState {
             if let Some(source) = servers
                 .iter()
                 .find(|source| source.key == excluded.server_key)
-            {
-                if database
+                && database
                     .block_external_observation(source.id)
                     .await
                     .is_err()
-                {
-                    return SessionExternalMcp::default();
-                }
+            {
+                return SessionExternalMcp::default();
             }
         }
         let guard = match database

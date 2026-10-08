@@ -333,13 +333,14 @@ pub(super) async fn patch_mcp_server(
             );
         }
     };
+    let headers_json = Value::Object(headers.clone()).to_string();
     let source_changed = old.url != url
-        || old.headers_json != Value::Object(headers.clone()).to_string()
+        || old.headers_json != headers_json
         || old.auth_type != auth_type
         || old.auth_header_name != auth_header_name
         || old.secret_ref != secret_ref
         || old.enabled != enabled;
-    let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,headers_json=?,auth_type=?,auth_header_name=?,secret_ref=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(Value::Object(headers).to_string()).bind(auth_type).bind(auth_header_name).bind(secret_ref).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
+    let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,headers_json=?,auth_type=?,auth_header_name=?,secret_ref=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(headers_json).bind(auth_type).bind(auth_header_name).bind(secret_ref).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
     if !updated {
         let _ = tx.rollback().await;
         audit_conflict(pool, id(&request).into(), "mcp_server", old.id, expected).await;

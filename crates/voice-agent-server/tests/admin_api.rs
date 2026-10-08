@@ -3063,7 +3063,8 @@ admin_token="admin-test-token"
         .unwrap();
     assert_eq!(cold["runtime"]["desired_state"], "cold");
     let mut wav = wav_pcm16_mono(16_000, 16_000);
-    for sample in wav[44..].chunks_exact_mut(2) {
+    let (samples, _) = wav[44..].as_chunks_mut::<2>();
+    for sample in samples {
         sample.copy_from_slice(&2000_i16.to_le_bytes())
     }
     let diagnostic = format!("{provider}/test/speaker");

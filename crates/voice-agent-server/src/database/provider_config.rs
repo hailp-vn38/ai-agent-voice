@@ -139,9 +139,11 @@ impl Silero {
         true
     }
 }
+#[cfg(feature = "qualification-providers")]
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
+#[cfg(feature = "qualification-providers")]
 impl Empty {
     fn valid(&self) -> bool {
         true

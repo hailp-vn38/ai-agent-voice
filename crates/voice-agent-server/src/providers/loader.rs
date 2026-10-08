@@ -16,6 +16,7 @@ use crate::{
 /// One millisecond of VAD timing is exactly 16 samples at the 16 kHz capture rate, so the
 /// deployment TOML and a database provider describe segmentation with the same numbers.
 pub(crate) fn vad_timing(instance: &VadInstanceConfig) -> (VadSegmenterConfig, u64) {
+    #[allow(irrefutable_let_patterns)] // Qualification builds add another VAD variant.
     let VadInstanceConfig::SileroOnnx(config) = instance else {
         return (
             VadSegmenterConfig {
@@ -130,7 +131,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         let factory = registry.vad_factory(instance.adapter())?;
         ensure_assets(instance.adapter())?;
         let provider = factory.build(instance, &config.runtime)?;
-        let (segmenter, pre_roll_samples) = vad_timing(&instance);
+        let (segmenter, pre_roll_samples) = vad_timing(instance);
         vad_runtimes.insert(
             id.clone(),
             LoadedVad {

@@ -217,6 +217,7 @@ impl VadFactory for SileroOnnxFactory {
         runtime: &RuntimeConfig,
     ) -> Result<Arc<dyn VadProvider>, ProviderLoadError> {
         validate_threads(self.adapter(), runtime)?;
+        #[allow(irrefutable_let_patterns)] // Qualification builds add another VAD variant.
         let VadInstanceConfig::SileroOnnx(_) = config else {
             return Err(ProviderLoadError::Configuration(
                 "silero factory received qualification config".into(),
@@ -367,6 +368,7 @@ impl LlmFactory for OpenAiFactory {
     }
 
     fn build(&self, config: &LlmInstanceConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError> {
+        #[allow(irrefutable_let_patterns)] // Qualification builds add another LLM variant.
         let LlmInstanceConfig::Openai(options) = config else {
             return Err(ProviderLoadError::Configuration(
                 "OpenAI factory received qualification config".into(),

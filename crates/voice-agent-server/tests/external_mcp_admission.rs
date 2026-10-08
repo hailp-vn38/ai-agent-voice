@@ -726,14 +726,13 @@ async fn external_mcp_admission_snapshot_is_fresh_bounded_and_immutable() {
     server.task.abort();
 }
 
-/// The modern stateful variant is an SSE lifecycle, not a stateless JSON fixture wearing an SSE
-/// content type: RMCP must retain the identity minted at initialize for its notification,
-/// discovery and later tool invocation.
-
 // ---------------------------------------------------------------------------
 // Fail-soft
 // ---------------------------------------------------------------------------
 
+/// The modern stateful variant is an SSE lifecycle, not a stateless JSON fixture wearing an SSE
+/// content type: RMCP must retain the identity minted at initialize for its notification,
+/// discovery and later tool invocation.
 /// A credential that does not resolve excludes its server and discloses nothing.
 #[tokio::test]
 async fn external_mcp_secret_failure_excludes_its_server_and_redacts_its_reason() {
