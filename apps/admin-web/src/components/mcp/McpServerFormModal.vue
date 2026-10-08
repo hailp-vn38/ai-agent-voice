@@ -13,15 +13,12 @@ const { t } = useI18n()
 
 type AuthSelection = 'unchanged' | 'none' | 'bearer' | 'header'
 const error = ref('')
-const replaceHeaders = ref(false)
 const form = reactive({
   key: '',
   name: '',
   url: '',
   auth: 'none' as AuthSelection,
-  secretRef: '',
   headerName: '',
-  headersJson: '{}',
   connectTimeoutMs: 5000,
   requestTimeoutMs: 30000,
 })
@@ -33,36 +30,19 @@ watch([open, () => props.server], () => {
   form.name = existing?.name ?? ''
   form.url = existing?.url ?? ''
   form.auth = existing ? 'unchanged' : 'none'
-  form.secretRef = ''
   form.headerName = existing?.auth.type === 'header' ? existing.auth.header_name : ''
-  // Deliberately do not populate/edit stored header values from the read response.
-  form.headersJson = '{}'
   form.connectTimeoutMs = existing?.connect_timeout_ms ?? 5000
   form.requestTimeoutMs = existing?.request_timeout_ms ?? 30000
-  replaceHeaders.value = !existing
   error.value = ''
 }, { immediate: true })
-
-function parseHeaders(): Record<string, string> | undefined {
-  try {
-    const raw: unknown = JSON.parse(form.headersJson)
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
-    if (!Object.entries(raw).every(([key, value]) => /^[a-z0-9-]+$/.test(key) && typeof value === 'string')) return undefined
-    return raw as Record<string, string>
-  } catch {
-    return undefined
-  }
-}
 
 function authentication(): McpAuthInput | undefined {
   if (form.auth === 'none') return { type: 'none' }
   if (form.auth === 'unchanged') return undefined
-  const secretRef = form.secretRef.trim()
-  if (!secretRef) return undefined
-  if (form.auth === 'bearer') return { type: 'bearer', secret_ref: secretRef }
+  if (form.auth === 'bearer') return { type: 'bearer' }
   const headerName = form.headerName.trim()
   if (!/^[a-z0-9-]+$/.test(headerName)) return undefined
-  return { type: 'header', header_name: headerName, secret_ref: secretRef }
+  return { type: 'header', header_name: headerName }
 }
 
 function submit() {
@@ -77,11 +57,6 @@ function submit() {
     error.value = t('mcp.validation.fields')
     return
   }
-  const headers = replaceHeaders.value ? parseHeaders() : undefined
-  if (replaceHeaders.value && !headers) {
-    error.value = t('mcp.validation.headers')
-    return
-  }
   const auth = authentication()
   if (form.auth !== 'unchanged' && !auth) {
     error.value = t('mcp.validation.auth')
@@ -92,7 +67,6 @@ function submit() {
     url: form.url.trim(),
     connect_timeout_ms: form.connectTimeoutMs,
     request_timeout_ms: form.requestTimeoutMs,
-    ...(headers ? { headers } : {}),
   }
   if (props.server) {
     emit('save', { ...base, ...(auth ? { auth } : {}) })
@@ -137,35 +111,23 @@ function submit() {
           <select v-model="form.auth" class="admin-input">
             <option v-if="server" value="unchanged">{{ t('mcp.authKeep') }}</option>
             <option value="none">{{ t('mcp.authNone') }}</option>
-            <option value="bearer">Bearer (SecretRef)</option>
-            <option value="header">Header (SecretRef)</option>
+            <option value="bearer">Bearer (server environment)</option>
+            <option value="header">Header (server environment)</option>
           </select>
         </label>
         <p v-if="server" class="text-xs text-muted-foreground">
           {{ t('mcp.authCurrent') }}: {{ server.auth.type }}
-          {{ server.auth.type !== 'none' ? t('mcp.authRedacted') : '' }}
+          {{ server.credential_env ? '— ' + server.credential_env : '' }}
         </p>
         <label v-if="form.auth === 'header'" class="block space-y-1.5">
           <span class="text-sm font-medium">{{ t('mcp.headerName') }}</span>
           <input v-model="form.headerName" class="admin-input font-mono" placeholder="x-api-key" />
         </label>
-        <label v-if="form.auth === 'bearer' || form.auth === 'header'" class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('mcp.secretRef') }}</span>
-          <input v-model="form.secretRef" class="admin-input font-mono" autocomplete="off" placeholder="MCP_API_TOKEN" />
-          <span class="block text-xs text-muted-foreground">{{ t('mcp.secretHint') }}</span>
-        </label>
       </div>
-      <div class="rounded-xl border border-border/70 p-4 space-y-3">
-        <label class="flex items-center gap-2 text-sm font-medium">
-          <input v-model="replaceHeaders" type="checkbox" :disabled="!server" />
-          {{ server ? t('mcp.replaceHeaders') : t('mcp.headers') }}
-        </label>
-        <label v-if="replaceHeaders" class="block space-y-1.5">
-          <span class="text-xs text-muted-foreground">{{ t('mcp.headersHint') }}</span>
-          <textarea v-model="form.headersJson" class="admin-textarea min-h-24 font-mono text-xs" spellcheck="false" />
-        </label>
-        <p v-else-if="server" class="text-xs text-muted-foreground">{{ t('mcp.headersKeep') }}</p>
-      </div>
+      <p v-if="form.auth === 'bearer' || form.auth === 'header'" class="rounded-lg border border-border/70 p-3 text-xs text-muted-foreground">
+        Token được cấp trên server qua <code>VOICE_MCP_{{ form.key.trim().toUpperCase() || server?.key.toUpperCase() }}_TOKEN</code>.
+        Web và SQLite không lưu hoặc đọc giá trị token.
+      </p>
       <div class="flex justify-end gap-2">
         <Button type="button" variant="outline" :disabled="saving" @click="open = false">{{ t('common.cancel') }}</Button>
         <Button type="submit" :disabled="saving">{{ saving ? t('common.loading') : t('common.save') }}</Button>
