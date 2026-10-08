@@ -150,15 +150,6 @@ token = "set-deployment-token-here"
 # [runtime.kokoro_vi]
 # g2p_executable = "runtime/kokoro-vi/kokoro_vi_g2p"
 
-# Managed CAM++ speaker recognizer (speaker recognition V1). Templates and Agents
-# reference this instance by key; it is never a mandatory pipeline slot. Its assets
-# are resolved by the worker through the provider runtime, same as ASR/TTS.
-[providers.speaker.instances.campplus_default]
-adapter = "campplus_sherpa"
-min_speech_ms = 3000
-target_speech_ms = 4000
-max_window_ms = 6000
-
 [tts]
 # Voice: maximum wait for first/next non-empty PCM; diagnostics: total synthesis budget.
 timeout_ms = 15000
