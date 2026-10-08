@@ -19,6 +19,12 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.devices' },
   },
   {
+    path: '/devices/:deviceId',
+    name: 'device-detail',
+    component: () => import('@/pages/devices/DeviceDetailPage.vue'),
+    meta: { titleKey: 'nav.devices' },
+  },
+  {
     path: '/agents',
     name: 'agents',
     component: () => import('@/views/AgentsView.vue'),
