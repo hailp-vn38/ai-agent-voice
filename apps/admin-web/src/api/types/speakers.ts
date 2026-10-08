@@ -159,40 +159,28 @@ export interface SpeakerRecognitionEnrollmentConfig {
   sample_rate: number
   channels: number
   bits_per_sample: number
-  min_samples: number
-  max_samples: number
   min_clip_ms: number
   max_clip_ms: number
   min_speech_ms: number
   max_window_ms: number
-  ttl_ms: number
   max_body_bytes: number
-}
-
-export interface SpeakerRecognitionProvider {
-  provider_key: string
-  provider_revision: number
-  adapter: string
-  state: string
 }
 
 export interface SpeakerRecognitionSummary {
   available: boolean
-  runtime_mode: string
-  providers: SpeakerRecognitionProvider[]
+  embedding_space_id: string | null
+  dimension: number | null
   enrollment: SpeakerRecognitionEnrollmentConfig
   limits: {
     max_speakers: number
-    max_voiceprint_spaces_per_speaker: number
     max_candidates_per_agent: number
   }
-  catalog_revision: number
 }
 
-/** One Agent/Template pair that grants a Speaker (`GET /speakers/{key}/bindings`). */
+/** Agents in which this Speaker is an identification candidate. */
+/** Agent using the Speaker as an identification candidate. */
 export interface SpeakerBinding {
   agent_key: string
-  template_key: string
 }
 
 export interface SpeakerBindingPage extends Page<SpeakerBinding> {}
