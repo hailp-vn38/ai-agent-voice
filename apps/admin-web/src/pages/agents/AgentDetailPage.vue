@@ -12,7 +12,7 @@ import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmen
 import AgentHeader from '@/components/agents/AgentHeader.vue'
 import AgentTemplateSwitcher from '@/components/agents/AgentTemplateSwitcher.vue'
 import AiPipeline from '@/components/pipeline/AiPipeline.vue'
-import StudioTabs, { type AgentStudioTab } from '@/components/studio/StudioTabs.vue'
+import StudioTabs from '@/components/studio/StudioTabs.vue'
 import VoicePipelineStrip from '@/components/studio/VoicePipelineStrip.vue'
 import AgentFormModal from '@/components/admin/AgentFormModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
@@ -41,7 +41,7 @@ const templates = computed(() => store.getTemplatesForAgent(agentId.value))
 const availableTemplates = computed(() => store.getAvailableTemplatesForAgent(agentId.value))
 const devices = computed(() => store.devicesForAgent(agentId.value))
 
-const activeTab = ref<AgentStudioTab>('studio')
+const activeTab = ref<'studio' | 'tools' | 'speakers' | 'devices'>('studio')
 const selectedTemplateId = ref<string | null>(null)
 const settingDefaultTemplate = ref(false)
 const setDefaultError = ref<string | null>(null)
