@@ -36,7 +36,7 @@ describe('AgentHeader option A', () => {
     const wrapper = render()
     expect(wrapper.get('h1').text()).toBe('home')
     expect(wrapper.text()).toContain(agent.description)
-    expect(wrapper.get('svg[viewBox="0 0 48 48"]').exists()).toBe(true)
+    expect(wrapper.find('svg[viewBox="0 0 48 48"]').exists()).toBe(true)
     expect(wrapper.get('dl').text()).toContain('2 templates')
     expect(wrapper.get('dl').text()).toContain('1 device')
   })
