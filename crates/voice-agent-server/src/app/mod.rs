@@ -414,6 +414,9 @@ async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> 
 async fn prepare_builtin_speaker(state: &mut AppState) {
     let threads = state.config.runtime.onnx.threads_for("campplus_sherpa");
     let built = tokio::task::spawn_blocking(move || {
+        crate::providers::assets::ProviderAssetManager::ensure_assets(
+            &crate::providers::speaker::assets::ASSETS,
+        ).map_err(|_| crate::providers::speaker::SpeakerError::Unavailable)?;
         let extractor = crate::providers::speaker::build(threads)?;
         crate::workers::SpeakerRuntime::new(
             extractor,
