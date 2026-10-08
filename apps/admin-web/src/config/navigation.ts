@@ -32,4 +32,6 @@ export const navigationGroups = [
 }[]
 
 /** Backward-compatible flat list for existing consumers. */
-export const navigation = navigationGroups.flatMap((group) => group.items)
+export const navigation: readonly { label: MessageKey; to: string; icon: unknown }[] = navigationGroups.flatMap(
+  (group) => [...group.items] as { label: MessageKey; to: string; icon: unknown }[],
+)

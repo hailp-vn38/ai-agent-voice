@@ -7,8 +7,6 @@ impl SessionActor {
         self.identification_deadline = None;
         self.identification_finished = true;
         self.speaker_name_for_turn = None;
-        self.required_text = None;
-        self.required_diagnostic = None;
         self.release_active_turn();
         if self.managed_switch_boundary.is_some() {
             return;
@@ -96,8 +94,6 @@ impl SessionActor {
             return;
         }
         self.interrupt_active_turn();
-        self.required_text = None;
-        self.required_diagnostic = None;
         self.identification_text = None;
         self.identification_diagnostic = None;
         self.identification_deadline = None;

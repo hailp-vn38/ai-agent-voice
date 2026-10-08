@@ -28,17 +28,6 @@ function expectJsonMutation(init: RequestInit, method: string, body: unknown, re
 }
 
 describe('Admin resource APIs', () => {
-  it('pins Speaker WAV diagnostics to the provider revision without JSON encoding', async () => {
-    const fetch = installFetch()
-    const audio = new Blob(['wav'], { type: 'audio/wav' })
-    await providersApi.testSpeaker('speaker_a', audio, 7)
-    const [url, init] = call(fetch, 0)
-    expect(url).toContain('/providers/speaker_a/test/speaker')
-    expect(init.body).toBe(audio)
-    expect((init.headers as Headers).get('If-Match')).toBe('"7"')
-    expect((init.headers as Headers).get('Content-Type')).toBe('audio/wav')
-  })
-
   afterEach(() => vi.unstubAllGlobals())
 
   it('maps system probes to their text and status endpoints', async () => {
@@ -65,9 +54,9 @@ describe('Admin resource APIs', () => {
     await agentsApi.bindMcpServer('a/b', 'm/x', { enabled: true, required: false }, 7)
     await agentsApi.unlinkMcpServer('a/b', 'm/x', 8)
     await agentsApi.speakerPolicy('a/b')
-    await agentsApi.setSpeakerPolicy('a/b', 'required', 9)
+    await agentsApi.setSpeakerPolicy('a/b', 'observe', 9)
     await agentsApi.agentSpeakers('a/b')
-    await agentsApi.setAgentSpeaker('a/b', 'spk/x', ['t/1'], 10)
+    await agentsApi.setAgentSpeaker('a/b', 'spk/x', 10)
     await agentsApi.unlinkAgentSpeaker('a/b', 'spk/x', 11)
 
     expect(call(fetch, 0)[0]).toBe('/api/admin/agents?page=1&page_size=50&enabled=true&sort=name')
@@ -86,9 +75,9 @@ describe('Admin resource APIs', () => {
     expectJsonMutation(call(fetch, 10)[1], 'PUT', { enabled: true, required: false }, 7)
     expect(call(fetch, 11)[0]).toBe('/api/admin/agents/a%2Fb/mcp-bindings/m%2Fx')
     expect(call(fetch, 12)[0]).toBe('/api/admin/agents/a%2Fb/speaker-policy')
-    expectJsonMutation(call(fetch, 13)[1], 'PUT', { mode: 'required' }, 9)
+    expectJsonMutation(call(fetch, 13)[1], 'PUT', { mode: 'observe' }, 9)
     expect(call(fetch, 14)[0]).toBe('/api/admin/agents/a%2Fb/speakers?page=1&page_size=50')
-    expectJsonMutation(call(fetch, 15)[1], 'PUT', { template_keys: ['t/1'] }, 10)
+    expectJsonMutation(call(fetch, 15)[1], 'PUT', {}, 10)
     expect(call(fetch, 16)[0]).toBe('/api/admin/agents/a%2Fb/speakers/spk%2Fx')
     expect((call(fetch, 16)[1].headers as Headers).get('If-Match')).toBe('"11"')
   })

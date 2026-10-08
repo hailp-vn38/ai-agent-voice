@@ -1,7 +1,6 @@
 use crate::session::{
-    ActiveTemplateProfile, ActiveTurnLimiter, GateDecision, GateReject, GenerationGate,
-    ObserveDiagnostic, ProfileSource, SessionPhase, SpeakerGate, SpeakerObserve,
-    SpeakerSwitchGuard, TemplateSwitchCatalog, TurnId,
+    ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ObserveDiagnostic, ProfileSource,
+    SessionPhase, SpeakerObserve, TemplateSwitchCatalog, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -175,18 +174,6 @@ pub struct SessionActor {
     /// never queued, so Observe can never apply backpressure to the core path. Shared with the
     /// detached scoring task, which clears it on completion.
     observe_in_flight: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Ticket 15 Required: the per-WebSocket identity lock and consecutive-denial counter. `None`
-    /// unless the Agent policy is `required`; then no turn reaches history or the LLM without a
-    /// fresh speaker pass for that same turn.
-    speaker_gate: Option<SpeakerGate>,
-    /// Ticket 17: admission-time authority to switch the locked Speaker onto another Template.
-    /// `None` when the Agent policy is `off`, so a speaker-free session keeps membership as the
-    /// whole switch rule.
-    speaker_switch: Option<std::sync::Arc<SpeakerSwitchGuard>>,
-    /// The ASR final of the active Required turn, held until the speaker operation resolves.
-    required_text: Option<String>,
-    /// The speaker diagnostic of the active Required turn, held until the ASR final resolves.
-    required_diagnostic: Option<ObserveDiagnostic>,
     /// ASR text waits for a best-effort speaker result for no more than 750 ms.
     identification_text: Option<String>,
     identification_diagnostic: Option<ObserveDiagnostic>,
@@ -194,7 +181,7 @@ pub struct SessionActor {
     identification_finished: bool,
     /// Ephemeral display name consumed exactly once while constructing the LLM prompt.
     speaker_name_for_turn: Option<String>,
-    /// Where the detached speaker scoring task reports the diagnostic for the Required gate.
+    /// Where the detached speaker scoring task reports the diagnostic for the current turn.
     gate_tx: mpsc::UnboundedSender<ObserveDiagnostic>,
     gate_rx: mpsc::UnboundedReceiver<ObserveDiagnostic>,
     /// The application admission gate.  A Voice Session does not own it and cannot reopen it: it

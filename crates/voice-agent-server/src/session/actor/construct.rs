@@ -258,10 +258,6 @@ impl SessionActor {
             speaker_status: false,
             observe_pcm: Vec::new(),
             observe_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            speaker_gate: None,
-            speaker_switch: None,
-            required_text: None,
-            required_diagnostic: None,
             identification_text: None,
             identification_diagnostic: None,
             identification_deadline: None,
@@ -295,31 +291,15 @@ impl SessionActor {
 
     /// Installs Observe for this Voice Session (ticket 10).
     ///
-    /// Admission calls this only after the Agent policy resolved to `observe`/`required` and the
-    /// selected speaker runtime held a lease. The plan is frozen here; ticket 17 only retargets it
-    /// at a normal turn boundary after the switch authority accepted the target Template.
+    /// Admission calls this only after the Agent policy resolved to `observe`. The plan is frozen
+    /// for the lifetime of the connection.
     pub fn with_speaker_observe(
         mut self,
         observe: Option<std::sync::Arc<SpeakerObserve>>,
         status_frames: bool,
     ) -> Self {
-        self.speaker_gate = observe.as_ref().and_then(|observe| {
-            (observe.plan().policy == crate::session::SpeakerPolicyMode::Required)
-                .then(SpeakerGate::new)
-        });
         self.speaker_observe = observe;
         self.speaker_status = status_frames;
-        self
-    }
-
-    /// Installs the ticket 17 switch authority for a speaker-enabled Voice Session. Admission
-    /// resolves one authority per candidate Template while it still holds a database handle;
-    /// `None` keeps membership as the whole switch rule for a speaker-free session.
-    pub fn with_speaker_switch(
-        mut self,
-        guard: Option<std::sync::Arc<SpeakerSwitchGuard>>,
-    ) -> Self {
-        self.speaker_switch = guard;
         self
     }
 

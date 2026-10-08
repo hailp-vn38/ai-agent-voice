@@ -213,10 +213,8 @@ pub(super) async fn handler(
     let session_id = Uuid::new_v4().to_string();
     let transcript = state.transcript_capture(&session_id, &profile);
     let admission_gate = Arc::clone(state.admission_gate());
-    // Ticket 10: resolve Observe before `state` is moved into the upgrade closure. A `required`
-    // policy that cannot build its gate fails the upgrade closed; anything else leaves the
-    // session entirely speaker-free.
-    let (speaker_observe, speaker_switch) =
+    // Resolve the immutable, Agent-scoped candidate snapshot before the upgrade closure owns state.
+    let speaker_observe =
         match resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await {
             Ok(resolved) => resolved,
             Err(response) => return response,
@@ -258,7 +256,6 @@ pub(super) async fn handler(
                     session_id,
                     transcript,
                     speaker_observe,
-                    speaker_switch,
                     admission_gate,
                 },
                 SessionControl {
@@ -432,9 +429,6 @@ struct SocketRuntimes {
     /// Ticket 10 Observe, resolved at admission. `None` keeps the actor free of speaker inference
     /// and utterance PCM retention.
     speaker_observe: Option<Arc<SpeakerObserve>>,
-    /// Ticket 17 switch authority, resolved at admission while the database handle is still in
-    /// hand. `None` keeps membership as the whole switch rule for a speaker-free session.
-    speaker_switch: Option<Arc<crate::session::SpeakerSwitchGuard>>,
     /// The application admission gate. The actor only asks; the application closes it.
     admission_gate: Arc<crate::lifecycle::AdmissionGate>,
 }
@@ -585,7 +579,6 @@ async fn handle_socket(
             runtimes.speaker_observe.clone(),
             hello.features.speaker_status,
         )
-        .with_speaker_switch(runtimes.speaker_switch.clone())
         .with_admission_gate(runtimes.admission_gate)
         .with_writer_outcome_probe_opt(writer_probe.clone())
         .with_client_capabilities(
@@ -940,15 +933,9 @@ async fn resolve_speaker_observe(
     profile: &crate::session::EffectiveSessionProfile,
     _resolved: &crate::providers::ResolvedAgentRuntimes,
     config: &AppConfig,
-) -> Result<
-    (
-        Option<Arc<SpeakerObserve>>,
-        Option<Arc<crate::session::SpeakerSwitchGuard>>,
-    ),
-    Response,
-> {
+) -> Result<Option<Arc<SpeakerObserve>>, Response> {
     let Some(database) = state.database.as_ref() else {
-        return Ok((None, None));
+        return Ok(None);
     };
     let policy =
         match crate::session::resolve_speaker_policy(database.pool(), profile.agent_id).await {
@@ -956,7 +943,7 @@ async fn resolve_speaker_observe(
             Ok(None) => crate::session::SpeakerPolicyMode::Off,
             Err(cause) => {
                 warn!(%cause, "speaker identification preference unavailable");
-                return Ok((None, None));
+                return Ok(None);
             }
         };
     let enabled = policy == crate::session::SpeakerPolicyMode::Observe;
@@ -969,7 +956,7 @@ async fn resolve_speaker_observe(
             candidate_count = 0,
             "ws speaker identification configuration"
         );
-        return Ok((None, None));
+        return Ok(None);
     }
     let runtime = runtime.expect("checked built-in speaker runtime availability");
     let plan = match crate::session::resolve_observe_plan(
@@ -985,16 +972,16 @@ async fn resolve_speaker_observe(
             info!(agent_key = %profile.agent_key, speaker_enabled = true,
                 engine_available = true, candidate_count = 0,
                 "ws speaker identification configuration");
-            return Ok((None, None));
+            return Ok(None);
         }
         Err(cause) => {
             warn!(%cause, "speaker candidates unavailable, continuing without identification");
-            return Ok((None, None));
+            return Ok(None);
         }
     };
     if plan.candidates.len() > config.speaker_recognition.max_candidates_per_agent {
         warn!(agent_key = %profile.agent_key, "speaker candidate cap exceeded");
-        return Ok((None, None));
+        return Ok(None);
     }
     info!(
         agent_key = %profile.agent_key,
@@ -1010,13 +997,10 @@ async fn resolve_speaker_observe(
         min_speech_ms: enrollment.min_speech_ms,
         max_window_ms: enrollment.max_window_ms,
     };
-    Ok((
-        Some(Arc::new(SpeakerObserve::new_builtin(
-            Arc::clone(runtime),
-            plan,
-            quality,
-            config.speaker_recognition.similarity_threshold,
-        ))),
-        None,
-    ))
+    Ok(Some(Arc::new(SpeakerObserve::new_builtin(
+        Arc::clone(runtime),
+        plan,
+        quality,
+        config.speaker_recognition.similarity_threshold,
+    ))))
 }

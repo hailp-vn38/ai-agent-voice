@@ -222,11 +222,6 @@ impl SessionActor {
         if self.phase != SessionPhase::Listening && !auto_rearming {
             return;
         }
-        if self.speaker_gate_active() {
-            // Required: audio is the only input that can be scored; typed Detect cannot authorize.
-            self.required_refuses_detect();
-            return;
-        }
         let Some(text) = normalize_detect_text(input) else {
             return;
         };

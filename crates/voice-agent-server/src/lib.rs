@@ -11,7 +11,6 @@ pub mod protocol;
 pub mod providers;
 pub mod services;
 pub mod session;
-pub mod speaker_evaluation;
 pub mod startup_handshake;
 pub mod telemetry;
 pub mod tools;

@@ -184,13 +184,10 @@ mod mcp_servers;
 mod provider_adapters;
 mod provider_tests;
 mod providers;
+mod speaker_policy;
 mod speaker_quick;
 mod speakers;
 mod system;
-pub(crate) use speakers::cleanup_expired_drafts as cleanup_expired_speaker_drafts;
-mod speaker_calibration;
-pub(crate) use speaker_calibration::agent_qualified;
-mod speaker_policy;
 mod templates;
 mod tool_allowlist;
 
