@@ -327,8 +327,8 @@ impl SessionActor {
             AsrWorkerEvent::Final { text, .. } if current => {
                 self.asr_stream = None;
                 let text = normalize_asr_final_text(text);
-                if self.speaker_gate_active() {
-                    self.on_required_final(text);
+                if self.speaker_observe.is_some() {
+                    self.on_identification_final(text);
                 } else if let Some(final_text) = self.commit_user_text(text) {
                     self.begin_speech_delivery(final_text);
                 } else {
