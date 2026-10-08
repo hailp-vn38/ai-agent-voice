@@ -572,7 +572,8 @@ mod tests {
             .unwrap();
         assert!(
             resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await.is_err()
+                .await
+                .is_err()
         );
     }
 
@@ -602,8 +603,9 @@ mod tests {
             .await
             .unwrap();
         // No Template grants are present at all; this is an Agent identification list.
-        let ObserveResolution::Plan(plan) =
-            resolve_observe_plan(&pool, 7, 999, "speaker:abc").await.unwrap()
+        let ObserveResolution::Plan(plan) = resolve_observe_plan(&pool, 7, 999, "speaker:abc")
+            .await
+            .unwrap()
         else {
             panic!("an Agent-scoped compatible voiceprint should be usable");
         };
@@ -612,5 +614,4 @@ mod tests {
         assert_eq!(plan.template_id, 0);
         assert_eq!(plan.score(&[1.0, 0.0])[0].speaker_id, 1);
     }
-
 }
