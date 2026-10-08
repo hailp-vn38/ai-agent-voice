@@ -116,6 +116,11 @@ function runTest() {
                 {{ provider.model || t('providers.modelMissing') }}
               </dd>
             </div>
+            <div v-if="provider.credentialEnv" class="sm:col-span-2">
+              <dt class="text-xs tracking-wide text-muted-foreground uppercase">Credential trên server</dt>
+              <dd class="mt-1 break-all font-mono text-xs">{{ provider.credentialEnv }}</dd>
+              <p class="mt-1 text-xs text-muted-foreground">Đặt biến môi trường này trước khi chuẩn bị lại runtime. Không nhập key trên web.</p>
+            </div>
             <div v-if="endpoint" class="sm:col-span-2">
               <dt class="text-xs tracking-wide text-muted-foreground uppercase">
                 {{ t('providers.endpoint') }}
