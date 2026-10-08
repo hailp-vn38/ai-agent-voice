@@ -84,10 +84,10 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
           <pre class="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-words font-mono">{{ JSON.stringify(tool.input_schema, null, 2) }}</pre>
         </details>
         <div class="mt-4 flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" :disabled="busy || loading || (tool.allowed && !tool.sensitive)" @click="review(tool, true, false)">
+          <Button size="sm" variant="outline" :disabled="busy || loading || tool.sensitive || tool.allowed" @click="review(tool, true, false)">
             {{ t('mcp.approve') }}
           </Button>
-          <Button size="sm" variant="outline" :disabled="busy || loading || (!tool.allowed && !tool.sensitive)" @click="review(tool, false, false)">
+          <Button size="sm" variant="outline" :disabled="busy || loading || tool.sensitive || !tool.allowed" @click="review(tool, false, false)">
             {{ t('mcp.revoke') }}
           </Button>
           <Button v-if="!tool.sensitive" size="sm" variant="outline" :disabled="busy || loading" @click="review(tool, false, true)">
