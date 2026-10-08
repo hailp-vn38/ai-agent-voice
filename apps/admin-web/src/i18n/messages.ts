@@ -12,7 +12,7 @@ export type MessageValue = string | PluralMessage
 export const en = {
   'app.brand': 'Voice Agent Studio',
   'app.subtitle': 'Build · Test · Operate',
-  'app.documentTitle': '{page} - Voice Agent',
+  'app.documentTitle': '{page} - Voice Agent Studio',
   'app.theme': 'Theme',
   'app.themeToggle': 'Toggle color theme',
   'app.language': 'Language',
@@ -578,7 +578,7 @@ export type MessageKey = keyof typeof en
 export const vi: Record<MessageKey, MessageValue> = {
   'app.brand': 'Voice Agent Studio',
   'app.subtitle': 'Build · Test · Operate',
-  'app.documentTitle': '{page} - Voice Agent',
+  'app.documentTitle': '{page} - Voice Agent Studio',
   'app.theme': 'Giao diện',
   'app.themeToggle': 'Đổi giao diện sáng/tối',
   'app.language': 'Ngôn ngữ',
