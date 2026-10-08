@@ -18,25 +18,17 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <article
-    class="studio-panel group cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:border-studio-violet/40 hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-    tabindex="0"
-    role="link"
-    :aria-label="agent.name"
-    @click="emit('open')"
-    @keydown.enter.prevent="emit('open')"
-    @keydown.space.prevent="emit('open')"
-  >
-    <div class="flex items-start gap-3">
-      <div class="flex size-12 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
+  <article class="studio-panel group p-5 transition-all hover:-translate-y-0.5 hover:border-studio-violet/40 hover:shadow-lg">
+    <button type="button" class="flex w-full items-start gap-3 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" :aria-label="agent.name" @click="emit('open')">
+      <span class="flex size-12 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
         <Bot class="size-6" aria-hidden="true" />
-      </div>
-      <div class="min-w-0 flex-1">
-        <h2 class="truncate text-lg font-semibold">{{ agent.name }}</h2>
-        <p class="mt-1 line-clamp-2 min-h-10 text-sm text-muted-foreground">{{ agent.description || '—' }}</p>
-      </div>
+      </span>
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-lg font-semibold">{{ agent.name }}</span>
+        <span class="mt-1 block min-h-10 text-sm text-muted-foreground">{{ agent.description || '—' }}</span>
+      </span>
       <ArrowUpRight class="size-4 shrink-0 text-muted-foreground transition group-hover:text-studio-violet" aria-hidden="true" />
-    </div>
+    </button>
 
     <div class="mt-5 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
       <span class="inline-flex items-center gap-1.5">
@@ -63,7 +55,7 @@ const { t } = useI18n()
     </div>
 
     <div class="mt-5 flex justify-end">
-      <Button size="sm" variant="outline" @click.stop="emit('addDevice')" @keydown.enter.stop @keydown.space.stop>
+      <Button size="sm" variant="outline" @click.stop="emit('addDevice')">
         <Plus class="size-4" aria-hidden="true" />
         {{ t('agentDevices.add') }}
       </Button>
