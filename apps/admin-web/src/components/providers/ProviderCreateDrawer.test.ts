@@ -39,7 +39,7 @@ describe('ProviderCreateDrawer', () => {
     await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
     await wrapper.findAll('button').find((button) => button.text() === 'Tạo provider')!.trigger('click')
     await flushPromises()
-    expect(create).toHaveBeenCalledWith({ name: 'Voice', type: 'speaker', adapter: 'campplus_sherpa', config_json: {}, secret_ref: undefined })
+    expect(create).toHaveBeenCalledWith({ name: 'Voice', type: 'speaker', adapter: 'campplus_sherpa', config_json: {} })
   })
 
   it('does not send a client key and emits the key returned by the server', async () => {
@@ -70,7 +70,6 @@ describe('ProviderCreateDrawer', () => {
       type: 'tts',
       adapter: 'zerotts_onnx',
       config_json: {},
-      secret_ref: undefined,
     })
     expect(wrapper.emitted('created')).toEqual([['tts_6eb737d745d74285ab916b723eed3671']])
   })
