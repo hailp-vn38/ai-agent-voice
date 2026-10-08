@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from '@/composables/useI18n'
 
-export type AgentStudioTab = 'studio' | 'tools' | 'speakers' | 'devices'
+type AgentStudioTab = 'studio' | 'tools' | 'speakers' | 'devices'
 
 defineProps<{ modelValue: AgentStudioTab }>()
 const emit = defineEmits<{ 'update:modelValue': [tab: AgentStudioTab] }>()
