@@ -158,19 +158,19 @@ impl Database {
     /// Reads desired state only.  Caller chooses whether an outcome is required, optional, or
     /// unbound; this database seam never constructs a provider or resolves a secret.
     pub async fn enabled_provider_rows(&self) -> Result<Vec<DesiredProvider>, DatabaseError> {
-        let rows = sqlx::query_as::<_, (i64, String, String, String, String, Option<String>, i64)>(
-            "SELECT id,key,type,adapter,config_json,secret_ref,revision FROM providers WHERE enabled=1 ORDER BY id",
+        let rows = sqlx::query_as::<_, (i64, String, String, String, String, i64)>(
+            "SELECT id,key,type,adapter,config_json,revision FROM providers WHERE enabled=1 ORDER BY id",
         ).fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
         Ok(rows
             .into_iter()
             .map(
-                |(id, key, kind, adapter, config_json, secret_ref, revision)| DesiredProvider {
+                |(id, key, kind, adapter, config_json, revision)| DesiredProvider {
                     id,
                     key,
                     kind,
                     adapter,
                     config_json,
-                    secret_ref,
+                    secret_ref: secrets::provider_secret_env(&key, &adapter),
                     revision,
                 },
             )
