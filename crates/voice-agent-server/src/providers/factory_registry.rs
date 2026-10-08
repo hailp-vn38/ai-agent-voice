@@ -204,6 +204,10 @@ impl VadFactory for SileroOnnxFactory {
             VadInstanceConfig::SileroOnnx(_) => {
                 Ok(local_model_identity(self.adapter()).expect("compiled local adapter"))
             }
+            #[cfg(feature = "qualification-providers")]
+            VadInstanceConfig::QualificationVad(_) => Err(ProviderLoadError::Configuration(
+                "silero factory received qualification config".into(),
+            )),
         }
     }
 
@@ -213,7 +217,11 @@ impl VadFactory for SileroOnnxFactory {
         runtime: &RuntimeConfig,
     ) -> Result<Arc<dyn VadProvider>, ProviderLoadError> {
         validate_threads(self.adapter(), runtime)?;
-        let VadInstanceConfig::SileroOnnx(_) = config;
+        let VadInstanceConfig::SileroOnnx(_) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "silero factory received qualification config".into(),
+            ));
+        };
         let assets = resolve(silero_assets::resolve_assets())?;
         Ok(Arc::new(
             LoadedSileroVad::load(
@@ -231,6 +239,108 @@ struct GipformerSherpaOfflineFactory;
 
 struct OpenAiFactory;
 struct OpenAiVisionFactory;
+#[cfg(feature = "qualification-providers")]
+struct QualificationVadFactory;
+#[cfg(feature = "qualification-providers")]
+struct QualificationAsrFactory;
+#[cfg(feature = "qualification-providers")]
+struct QualificationLlmFactory;
+#[cfg(feature = "qualification-providers")]
+struct QualificationTtsFactory;
+
+#[cfg(feature = "qualification-providers")]
+impl VadFactory for QualificationVadFactory {
+    fn adapter(&self) -> &'static str {
+        "qualification_vad"
+    }
+    fn model_identity<'a>(&self, _: &'a VadInstanceConfig) -> Result<&'a str, ProviderLoadError> {
+        Err(ProviderLoadError::Configuration(
+            "qualification VAD has no model".into(),
+        ))
+    }
+    fn build(
+        &self,
+        config: &VadInstanceConfig,
+        _: &RuntimeConfig,
+    ) -> Result<Arc<dyn VadProvider>, ProviderLoadError> {
+        match config {
+            VadInstanceConfig::QualificationVad(_) => {
+                Ok(Arc::new(super::vad::qualification::QualificationVad))
+            }
+            _ => Err(ProviderLoadError::Configuration(
+                "qualification VAD received another config".into(),
+            )),
+        }
+    }
+}
+#[cfg(feature = "qualification-providers")]
+impl AsrFactory for QualificationAsrFactory {
+    fn adapter(&self) -> &'static str {
+        "qualification_asr"
+    }
+    fn model_identity<'a>(&self, _: &'a AsrInstanceConfig) -> Result<&'a str, ProviderLoadError> {
+        Err(ProviderLoadError::Configuration(
+            "qualification ASR has no model".into(),
+        ))
+    }
+    fn build(
+        &self,
+        config: &AsrInstanceConfig,
+        _: &RuntimeConfig,
+        _: usize,
+    ) -> Result<Arc<dyn AsrProvider>, ProviderLoadError> {
+        match config {
+            AsrInstanceConfig::QualificationAsr(_) => {
+                Ok(Arc::new(super::asr::qualification::QualificationAsr))
+            }
+            _ => Err(ProviderLoadError::Configuration(
+                "qualification ASR received another config".into(),
+            )),
+        }
+    }
+}
+#[cfg(feature = "qualification-providers")]
+impl LlmFactory for QualificationLlmFactory {
+    fn adapter(&self) -> &'static str {
+        "qualification_llm"
+    }
+    fn build(&self, config: &LlmInstanceConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError> {
+        match config {
+            LlmInstanceConfig::QualificationLlm(_) => {
+                Ok(Arc::new(super::llm::qualification::QualificationLlm))
+            }
+            _ => Err(ProviderLoadError::Configuration(
+                "qualification LLM received another config".into(),
+            )),
+        }
+    }
+}
+#[cfg(feature = "qualification-providers")]
+impl TtsFactory for QualificationTtsFactory {
+    fn adapter(&self) -> &'static str {
+        "qualification_tts"
+    }
+    fn model_identity<'a>(
+        &self,
+        _: &'a TtsInstanceConfig,
+    ) -> Result<Option<&'a str>, ProviderLoadError> {
+        Ok(None)
+    }
+    fn build(
+        &self,
+        config: &TtsInstanceConfig,
+        _: &RuntimeConfig,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        match config {
+            TtsInstanceConfig::QualificationTts(_) => {
+                Ok(Arc::new(super::tts::qualification::QualificationTts))
+            }
+            _ => Err(ProviderLoadError::Configuration(
+                "qualification TTS received another config".into(),
+            )),
+        }
+    }
+}
 
 impl VisionFactory for OpenAiVisionFactory {
     fn adapter(&self) -> &'static str {
@@ -257,7 +367,11 @@ impl LlmFactory for OpenAiFactory {
     }
 
     fn build(&self, config: &LlmInstanceConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError> {
-        let LlmInstanceConfig::Openai(options) = config;
+        let LlmInstanceConfig::Openai(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "OpenAI factory received qualification config".into(),
+            ));
+        };
         if options.model.trim().is_empty() {
             return Err(ProviderLoadError::Configuration(
                 "OpenAI model is required".into(),
@@ -573,22 +687,44 @@ static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
 static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
-static VAD_FACTORIES: [&dyn VadFactory; 1] = [&SILERO_ONNX_FACTORY];
-static ASR_FACTORIES: [&dyn AsrFactory; 2] =
-    [&ZIPFORMER_SHERPA_FACTORY, &GIPFORMER_SHERPA_OFFLINE_FACTORY];
-static LLM_FACTORIES: [&dyn LlmFactory; 1] = [&OPENAI_FACTORY];
-static TTS_FACTORIES: [&dyn TtsFactory; 3] = [
+#[cfg(feature = "qualification-providers")]
+static QUALIFICATION_VAD_FACTORY: QualificationVadFactory = QualificationVadFactory;
+#[cfg(feature = "qualification-providers")]
+static QUALIFICATION_ASR_FACTORY: QualificationAsrFactory = QualificationAsrFactory;
+#[cfg(feature = "qualification-providers")]
+static QUALIFICATION_LLM_FACTORY: QualificationLlmFactory = QualificationLlmFactory;
+#[cfg(feature = "qualification-providers")]
+static QUALIFICATION_TTS_FACTORY: QualificationTtsFactory = QualificationTtsFactory;
+static VAD_FACTORIES: &[&dyn VadFactory] = &[
+    &SILERO_ONNX_FACTORY,
+    #[cfg(feature = "qualification-providers")]
+    &QUALIFICATION_VAD_FACTORY,
+];
+static ASR_FACTORIES: &[&dyn AsrFactory] = &[
+    &ZIPFORMER_SHERPA_FACTORY,
+    &GIPFORMER_SHERPA_OFFLINE_FACTORY,
+    #[cfg(feature = "qualification-providers")]
+    &QUALIFICATION_ASR_FACTORY,
+];
+static LLM_FACTORIES: &[&dyn LlmFactory] = &[
+    &OPENAI_FACTORY,
+    #[cfg(feature = "qualification-providers")]
+    &QUALIFICATION_LLM_FACTORY,
+];
+static TTS_FACTORIES: &[&dyn TtsFactory] = &[
     &ZEROTTS_ONNX_FACTORY,
     &CHILLAUDIO_WS_FACTORY,
     &KOKORO_VI_ONNX_FACTORY,
+    #[cfg(feature = "qualification-providers")]
+    &QUALIFICATION_TTS_FACTORY,
 ];
-static VISION_FACTORIES: [&dyn VisionFactory; 1] = [&OPENAI_VISION_FACTORY];
+static VISION_FACTORIES: &[&dyn VisionFactory] = &[&OPENAI_VISION_FACTORY];
 static COMPILED_PROVIDER_REGISTRY: ProviderRegistry = ProviderRegistry {
-    vad: &VAD_FACTORIES,
-    asr: &ASR_FACTORIES,
-    llm: &LLM_FACTORIES,
-    tts: &TTS_FACTORIES,
-    vision: &VISION_FACTORIES,
+    vad: VAD_FACTORIES,
+    asr: ASR_FACTORIES,
+    llm: LLM_FACTORIES,
+    tts: TTS_FACTORIES,
+    vision: VISION_FACTORIES,
 };
 
 pub fn compiled_provider_registry() -> &'static ProviderRegistry {

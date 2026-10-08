@@ -19,6 +19,7 @@
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
@@ -60,29 +61,18 @@ url = "sqlite://{database}?mode=rwc"
 enabled = true
 admin_token = "{TOKEN}"
 [provider_defaults]
-vad = "silero_default"
-asr = "gipformer_vi"
-llm = "openai_primary"
-tts = "chillaudio_default"
-[providers.vad.instances.silero_default]
-adapter = "silero_onnx"
-min_speech_ms = 180
-end_silence_ms = 600
-pre_roll_ms = 300
-speech_threshold = 0.50
-exit_threshold = 0.35
-[providers.asr.instances.gipformer_vi]
-adapter = "gipformer_sherpa_offline"
-decoding_method = "modified_beam_search"
-max_active_paths = 4
-[providers.llm.instances.openai_primary]
-adapter = "openai"
-api_key = ""
-base_url = "https://api.openai.com/v1"
-model = "model-name"
-[providers.tts.instances.chillaudio_default]
-adapter = "chillaudio_ws"
-token = "set-deployment-token-here"
+vad = "qualification_vad_default"
+asr = "qualification_asr_default"
+llm = "qualification_llm_default"
+tts = "qualification_tts_default"
+[providers.vad.instances.qualification_vad_default]
+adapter = "qualification_vad"
+[providers.asr.instances.qualification_asr_default]
+adapter = "qualification_asr"
+[providers.llm.instances.qualification_llm_default]
+adapter = "qualification_llm"
+[providers.tts.instances.qualification_tts_default]
+adapter = "qualification_tts"
 [deployment]
 speaker_pilot = false
 profile = "development-noncommercial"
@@ -102,6 +92,10 @@ idle_ttl_ms = 600000
 
 [provider_runtime.estimated_peak_bytes]
 qualification_speaker = 67108864
+qualification_vad = 67108864
+qualification_asr = 67108864
+qualification_llm = 67108864
+qualification_tts = 67108864
 "#,
         database = database.display(),
     );
@@ -114,20 +108,32 @@ impl Harness {
     /// Graceful shutdown: SIGTERM the process and wait for it to exit. A hard
     /// kill would hide drain bugs, so the restart phase exercises the real
     /// shutdown path.
-    fn stop_gracefully(&mut self) {
+    fn stop_gracefully(&mut self) -> Result<(), String> {
         let pid = self.child.id().to_string();
-        let _ = Command::new("kill").arg("-TERM").arg(&pid).status();
+        let status = Command::new("kill")
+            .arg("-TERM")
+            .arg(&pid)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if !status.success() {
+            return Err("SIGTERM failed".into());
+        }
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             match self.child.try_wait() {
-                Ok(Some(_)) => return,
+                Ok(Some(status)) if status.success() || status.code().is_none() => return Ok(()),
+                Ok(Some(status)) => {
+                    return Err(format!(
+                        "server exited unsuccessfully after SIGTERM: {status}"
+                    ));
+                }
                 Ok(None) if std::time::Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 _ => {
                     let _ = self.child.kill();
                     let _ = self.child.wait();
-                    return;
+                    return Err("server did not stop gracefully before deadline".into());
                 }
             }
         }
@@ -166,7 +172,10 @@ fn start_qualification_server(root: &Path) -> Harness {
     Harness {
         child,
         base_url: format!("http://{address}"),
-        http: Client::new(),
+        http: Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .expect("qualification HTTP client"),
     }
 }
 
@@ -217,9 +226,7 @@ async fn create_speaker_provider(h: &Harness) -> String {
         .to_owned()
 }
 
-#[tokio::test]
-#[ignore = "requires the qualification-providers build of the production binary"]
-async fn enrollment_publishes_a_qualification_voiceprint() {
+async fn run_enrollment_scenario() {
     let root = std::env::temp_dir().join(format!("qualification-harness-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let mut server = start_qualification_server(&root);
@@ -325,8 +332,10 @@ async fn enrollment_publishes_a_qualification_voiceprint() {
     // Controlled restart: the same database + config must republish the same
     // voiceprint. This is the only check that the qualification artifact is
     // durable across the production process boundary.
-    server.stop_gracefully();
-    let restarted = start_qualification_server(&root);
+    server
+        .stop_gracefully()
+        .expect("server must shut down gracefully");
+    let mut restarted = start_qualification_server(&root);
     let persisted: Value = restarted
         .http
         .get(format!("{}/api/admin/speakers/owner", restarted.base_url))
@@ -350,7 +359,18 @@ async fn enrollment_publishes_a_qualification_voiceprint() {
 
     write_qualification_report(&persisted);
 
+    restarted
+        .stop_gracefully()
+        .expect("restarted server must shut down gracefully");
     std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+#[ignore = "requires the qualification-providers build of the production binary"]
+async fn enrollment_publishes_a_qualification_voiceprint() {
+    tokio::time::timeout(Duration::from_secs(180), run_enrollment_scenario())
+        .await
+        .expect("qualification deadline exceeded");
 }
 
 /// Machine-readable, privacy-safe Mandatory Qualification result. It records
@@ -386,10 +406,17 @@ fn write_qualification_report(persisted_speaker: &Value) {
         },
         "speaker_revision": persisted_speaker["revision"]
     });
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.scratch/speaker-recognition/evidence/pilot-handoff-qualification.json");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    let directory = std::env::var_os("QUALIFICATION_REPORT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("qualification-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("report.json");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap()
+        .write_all(&serde_json::to_vec_pretty(&report).unwrap())
+        .unwrap();
 }

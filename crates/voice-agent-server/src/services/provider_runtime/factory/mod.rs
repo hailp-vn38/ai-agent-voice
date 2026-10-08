@@ -59,10 +59,9 @@ impl FactoryMaterializer {
             return Err(RuntimeError::Configuration);
         }
         let native = estimates.keys().any(|adapter| {
-            !matches!(
-                adapter.as_str(),
-                "openai" | "chillaudio_ws" | "qualification_speaker"
-            )
+            crate::providers::compiled_provider_adapter_registry()
+                .assets(adapter)
+                .is_some()
         });
         let kokoro = estimates.contains_key("kokoro_vi_onnx");
         let onnx_fingerprint = native
@@ -411,7 +410,9 @@ fn vad_timing(snapshot: &DesiredProvider) -> Option<(crate::audio::VadSegmenterC
     }
     let configuration =
         serde_json::from_str::<crate::config::SileroOnnxConfig>(&snapshot.config_json).ok()?;
-    Some(crate::providers::vad_timing(&configuration))
+    Some(crate::providers::vad_timing(
+        &crate::config::VadInstanceConfig::SileroOnnx(configuration),
+    ))
 }
 
 impl FactoryMaterializer {

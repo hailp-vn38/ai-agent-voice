@@ -44,6 +44,10 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
         "kokoro_vi_onnx" => canonical::<Kokoro, _>(&value, Kokoro::valid),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
+        #[cfg(feature = "qualification-providers")]
+        "qualification_vad" | "qualification_asr" | "qualification_llm" | "qualification_tts" => {
+            canonical::<Empty, _>(&value, Empty::valid)
+        }
         _ => Err(ProviderConfigError::Invalid),
     }
 }
@@ -131,6 +135,14 @@ impl OpenAi {
 #[serde(deny_unknown_fields)]
 struct Silero {}
 impl Silero {
+    fn valid(&self) -> bool {
+        true
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Empty {}
+impl Empty {
     fn valid(&self) -> bool {
         true
     }

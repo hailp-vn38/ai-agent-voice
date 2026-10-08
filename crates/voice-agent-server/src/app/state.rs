@@ -932,8 +932,7 @@ pub(super) fn loaded_from_provider_set(
             cleanup_grace: Duration::from_millis(config.workers.tts.cleanup_grace_ms),
         },
     ));
-    let (segmenter, pre_roll) =
-        crate::providers::vad_timing(config.providers.vad.instances[&id].silero_onnx());
+    let (segmenter, pre_roll) = crate::providers::vad_timing(&config.providers.vad.instances[&id]);
     (
         config,
         LoadedProviders {

@@ -119,20 +119,32 @@ impl std::fmt::Debug for SecretString {
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum LlmInstanceConfig {
     Openai(OpenAiConfig),
+    #[cfg(feature = "qualification-providers")]
+    QualificationLlm(QualificationConfig),
 }
 
 impl LlmInstanceConfig {
     pub const fn adapter(&self) -> &'static str {
         match self {
             Self::Openai(_) => "openai",
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationLlm(_) => "qualification_llm",
         }
     }
     pub fn openai(&self) -> &OpenAiConfig {
         match self {
             Self::Openai(config) => config,
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationLlm(_) => unreachable!("qualification LLM has no OpenAI config"),
         }
     }
 }
+
+/// Empty, deterministic configuration used only by the compile-time qualification adapters.
+#[cfg(feature = "qualification-providers")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationConfig {}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "adapter", rename_all = "snake_case")]
@@ -178,6 +190,8 @@ pub enum TtsInstanceConfig {
     ChillAudioWs(ChillAudioWsConfig),
     #[serde(rename = "kokoro_vi_onnx")]
     KokoroViOnnx(KokoroViOnnxConfig),
+    #[cfg(feature = "qualification-providers")]
+    QualificationTts(QualificationConfig),
 }
 
 impl TtsInstanceConfig {
@@ -186,6 +200,8 @@ impl TtsInstanceConfig {
             Self::ZeroTtsOnnx(_) => "zerotts_onnx",
             Self::ChillAudioWs(_) => "chillaudio_ws",
             Self::KokoroViOnnx(_) => "kokoro_vi_onnx",
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationTts(_) => "qualification_tts",
         }
     }
     pub const fn preload(&self) -> bool {
@@ -193,6 +209,8 @@ impl TtsInstanceConfig {
             Self::ZeroTtsOnnx(config) => config.preload,
             Self::ChillAudioWs(config) => config.preload,
             Self::KokoroViOnnx(config) => config.preload,
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationTts(_) => false,
         }
     }
 }
@@ -202,15 +220,23 @@ impl TtsInstanceConfig {
 pub enum VadInstanceConfig {
     #[serde(rename = "silero_onnx")]
     SileroOnnx(SileroOnnxConfig),
+    #[cfg(feature = "qualification-providers")]
+    QualificationVad(QualificationConfig),
 }
 
 impl VadInstanceConfig {
     pub const fn adapter(&self) -> &'static str {
-        "silero_onnx"
+        match self {
+            Self::SileroOnnx(_) => "silero_onnx",
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationVad(_) => "qualification_vad",
+        }
     }
     pub fn silero_onnx(&self) -> &SileroOnnxConfig {
         match self {
             Self::SileroOnnx(config) => config,
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationVad(_) => unreachable!("qualification VAD has no Silero config"),
         }
     }
 }
@@ -256,6 +282,8 @@ pub enum AsrInstanceConfig {
     #[serde(rename = "zipformer_sherpa")]
     ZipformerSherpa(ZipformerSherpaConfig),
     GipformerSherpaOffline(GipformerSherpaOfflineConfig),
+    #[cfg(feature = "qualification-providers")]
+    QualificationAsr(QualificationConfig),
 }
 
 impl AsrInstanceConfig {
@@ -263,12 +291,16 @@ impl AsrInstanceConfig {
         match self {
             Self::ZipformerSherpa(_) => "zipformer_sherpa",
             Self::GipformerSherpaOffline(_) => "gipformer_sherpa_offline",
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationAsr(_) => "qualification_asr",
         }
     }
     pub fn model(&self) -> &str {
         match self {
             Self::ZipformerSherpa(config) => &config.model,
             Self::GipformerSherpaOffline(config) => &config.model,
+            #[cfg(feature = "qualification-providers")]
+            Self::QualificationAsr(_) => "qualification",
         }
     }
 }

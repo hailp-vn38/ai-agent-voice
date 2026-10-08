@@ -18,3 +18,23 @@ jobs:
         run: cargo test -p voice-agent-server --test device_admission --test database_bootstrap --test ws_protocol
       - run: cargo test --workspace
         if: ${{ always() && !cancelled() }}
+  qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Run mandatory qualification
+        env:
+          QUALIFICATION_REPORT_DIR: ${{ runner.temp }}/qualification-reports
+        run: |
+          cargo test -p voice-agent-server \
+            --features qualification-providers \
+            --test qualification_harness \
+            -- --ignored --nocapture
+      - name: Upload qualification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-reports
+          path: ${{ runner.temp }}/qualification-reports/

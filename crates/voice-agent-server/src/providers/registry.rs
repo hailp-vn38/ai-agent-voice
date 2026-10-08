@@ -91,6 +91,14 @@ static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
     super::speaker::descriptor::REGISTRATION,
     #[cfg(feature = "qualification-providers")]
     super::speaker::descriptor::QUALIFICATION_REGISTRATION,
+    #[cfg(feature = "qualification-providers")]
+    super::vad::qualification::REGISTRATION,
+    #[cfg(feature = "qualification-providers")]
+    super::asr::qualification::REGISTRATION,
+    #[cfg(feature = "qualification-providers")]
+    super::llm::qualification::REGISTRATION,
+    #[cfg(feature = "qualification-providers")]
+    super::tts::qualification::REGISTRATION,
     super::vad::silero::descriptor::REGISTRATION,
     super::asr::zipformer::descriptor::REGISTRATION,
     super::asr::gipformer::descriptor::REGISTRATION,

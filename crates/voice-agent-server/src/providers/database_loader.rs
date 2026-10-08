@@ -339,7 +339,7 @@ fn materialize_one(
             };
             let factory = registry.vad_factory(instance.adapter()).map_err(|_| ())?;
             let provider = factory.build(&instance, &config.runtime).map_err(|_| ())?;
-            let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
+            let (segmenter, pre_roll_samples) = vad_timing(&instance);
             loaded.runtimes.vad.insert(
                 row.key.clone(),
                 LoadedVad {
@@ -401,7 +401,11 @@ fn materialize_one(
                     secret.as_ref().map(|value| value.expose()),
                 )?
             };
-            let timeout = Duration::from_millis(instance.openai().timeout_ms);
+            let timeout = Duration::from_millis(match &instance {
+                LlmInstanceConfig::Openai(config) => config.timeout_ms,
+                #[cfg(feature = "qualification-providers")]
+                LlmInstanceConfig::QualificationLlm(_) => 15_000,
+            });
             let provider = registry
                 .llm_factory(instance.adapter())
                 .map_err(|_| ())?

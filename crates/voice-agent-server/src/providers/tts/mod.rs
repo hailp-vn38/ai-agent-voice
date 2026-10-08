@@ -11,6 +11,8 @@ use thiserror::Error;
 pub(crate) mod chillaudio;
 mod file_delivery;
 pub mod kokoro_vi;
+#[cfg(feature = "qualification-providers")]
+pub mod qualification;
 pub mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
 /// Compatibility exports for native ZeroTTS tooling.

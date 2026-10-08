@@ -1,3 +1,5 @@
+#[cfg(feature = "qualification-providers")]
+pub mod qualification;
 pub mod silero;
 mod traits;
 

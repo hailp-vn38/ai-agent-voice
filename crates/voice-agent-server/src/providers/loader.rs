@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
     audio::VadSegmenterConfig,
-    config::{AppConfig, SileroOnnxConfig},
+    config::{AppConfig, VadInstanceConfig},
     providers::{
         LoadedVad, ProviderCatalog, ProviderLoadError, RuntimeCatalog, TtsBinding,
         compiled_provider_registry,
@@ -15,7 +15,18 @@ use crate::{
 
 /// One millisecond of VAD timing is exactly 16 samples at the 16 kHz capture rate, so the
 /// deployment TOML and a database provider describe segmentation with the same numbers.
-pub(crate) fn vad_timing(config: &SileroOnnxConfig) -> (VadSegmenterConfig, u64) {
+pub(crate) fn vad_timing(instance: &VadInstanceConfig) -> (VadSegmenterConfig, u64) {
+    let VadInstanceConfig::SileroOnnx(config) = instance else {
+        return (
+            VadSegmenterConfig {
+                speech_threshold: 0.5,
+                exit_threshold: 0.35,
+                min_speech_samples: 512,
+                end_silence_samples: 512,
+            },
+            0,
+        );
+    };
     (
         VadSegmenterConfig {
             speech_threshold: config.speech_threshold,
@@ -119,7 +130,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         let factory = registry.vad_factory(instance.adapter())?;
         ensure_assets(instance.adapter())?;
         let provider = factory.build(instance, &config.runtime)?;
-        let (segmenter, pre_roll_samples) = vad_timing(instance.silero_onnx());
+        let (segmenter, pre_roll_samples) = vad_timing(&instance);
         vad_runtimes.insert(
             id.clone(),
             LoadedVad {
@@ -304,6 +315,8 @@ fn deployment_tts_replicas(
         TtsInstanceConfig::ZeroTtsOnnx(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::ChillAudioWs(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::KokoroViOnnx(config) => serde_json::to_value(config).ok()?,
+        #[cfg(feature = "qualification-providers")]
+        TtsInstanceConfig::QualificationTts(config) => serde_json::to_value(config).ok()?,
     };
     crate::providers::configured_physical_replicas(instance.adapter(), value, runtime)
 }

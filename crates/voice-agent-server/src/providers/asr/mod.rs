@@ -1,4 +1,6 @@
 pub(crate) mod gipformer;
+#[cfg(feature = "qualification-providers")]
+pub mod qualification;
 mod traits;
 pub(crate) mod zipformer;
 

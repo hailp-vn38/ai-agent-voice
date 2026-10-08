@@ -7,6 +7,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub(crate) mod openai;
+#[cfg(feature = "qualification-providers")]
+pub mod qualification;
 
 pub type LlmEventStream = Pin<Box<dyn Stream<Item = Result<LlmEvent, LlmError>> + Send>>;
 

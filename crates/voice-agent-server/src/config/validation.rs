@@ -452,7 +452,7 @@ fn validate_workers(config: &AppConfig) -> Result<(), ConfigError> {
 }
 
 fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
-    use crate::config::TtsInstanceConfig;
+    use crate::config::{LlmInstanceConfig, TtsInstanceConfig};
     let registry = crate::providers::compiled_provider_registry();
     for (id, instance) in &config.providers.vad.instances {
         validate_instance_id(id)?;
@@ -462,17 +462,17 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 instance.adapter()
             ))
         })?;
-        let vad = instance.silero_onnx();
-        if vad.min_speech_ms == 0
-            || vad.end_silence_ms == 0
-            || vad.pre_roll_ms > config.audio.max_utterance_ms
-            || vad.num_threads <= 0
-            || !vad.speech_threshold.is_finite()
-            || !vad.exit_threshold.is_finite()
-            || !(0.0..=1.0).contains(&vad.exit_threshold)
-            || vad.exit_threshold >= vad.speech_threshold
-            || vad.speech_threshold > 1.0
-            || vad.model.trim().is_empty()
+        if let crate::config::VadInstanceConfig::SileroOnnx(vad) = instance
+            && (vad.min_speech_ms == 0
+                || vad.end_silence_ms == 0
+                || vad.pre_roll_ms > config.audio.max_utterance_ms
+                || vad.num_threads <= 0
+                || !vad.speech_threshold.is_finite()
+                || !vad.exit_threshold.is_finite()
+                || !(0.0..=1.0).contains(&vad.exit_threshold)
+                || vad.exit_threshold >= vad.speech_threshold
+                || vad.speech_threshold > 1.0
+                || vad.model.trim().is_empty())
         {
             return Err(ConfigError::Validation(format!(
                 "VAD instance `{id}` has invalid thresholds, durations, or model identity"
@@ -525,6 +525,8 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                     "Gipformer ASR instance `{id}` has invalid model identity or runtime options"
                 )));
             }
+            #[cfg(feature = "qualification-providers")]
+            crate::config::AsrInstanceConfig::QualificationAsr(_) => {}
             _ => {}
         }
     }
@@ -536,7 +538,14 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 instance.adapter()
             ))
         })?;
-        let openai = instance.openai();
+        let LlmInstanceConfig::Openai(openai) = instance else {
+            #[cfg(feature = "qualification-providers")]
+            {
+                continue;
+            }
+            #[cfg(not(feature = "qualification-providers"))]
+            unreachable!();
+        };
         let http_allowed = openai.base_url.scheme() == "http"
             && match openai.base_url.host_str() {
                 Some("localhost") => true,
@@ -600,6 +609,8 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                     "Kokoro Vietnamese instance `{id}` has invalid model, voice, language, threads, or speed"
                 )));
             }
+            #[cfg(feature = "qualification-providers")]
+            TtsInstanceConfig::QualificationTts(_) => {}
             _ => {}
         }
     }
