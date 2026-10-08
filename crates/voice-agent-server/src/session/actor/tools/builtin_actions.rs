@@ -56,6 +56,16 @@ impl SessionActor {
             self.complete_tool_call(call, Err("no_active_turn"));
             return;
         };
+        if let Err(reject) = self.authorize_speaker_switch(&args.template) {
+            tracing::warn!(
+                event = "session_profile_switch_rejected",
+                reason = reject.reason(),
+                template_key = %args.template,
+                "A template switch would not keep the locked speaker gated"
+            );
+            self.complete_tool_call(call, Err(reject.reason()));
+            return;
+        }
         if let Some(configuration) = self
             .switch_catalog
             .cold
@@ -215,6 +225,17 @@ impl SessionActor {
             .managed_switch_boundary
             .take()
             .expect("prepared boundary checked");
+        let template_key = prepared.configuration.template_key().to_owned();
+        if let Err(reject) = self.authorize_speaker_switch(&template_key) {
+            tracing::warn!(
+                event = "session_profile_switch_dropped",
+                reason = reject.reason(),
+                %template_key,
+                "A prepared template switch would not keep the locked speaker gated"
+            );
+            self.complete_recognition();
+            return;
+        }
         if install_candidate_runtimes(self, &prepared.runtimes).is_err() {
             self.complete_recognition();
             return;
@@ -235,8 +256,46 @@ impl SessionActor {
         self.profile.providers = configuration.providers;
         self.profile.revision = self.profile.revision.saturating_add(1);
         self.switch_catalog.active_leases = prepared.leases;
+        self.install_switch_speaker(&template_key);
         self.complete_recognition();
         self.replay_switch_ingress();
+    }
+
+    /// Ticket 17: the SessionActor keeps no database handle, so the target Template's authority
+    /// is read from the guard admission installed. `None` means the session is speaker-free and
+    /// membership is the whole switch rule.
+    pub(in super::super) fn authorize_speaker_switch(
+        &self,
+        template_key: &str,
+    ) -> Result<
+        Option<std::sync::Arc<crate::session::SwitchSpeakerAuthority>>,
+        crate::session::SwitchReject,
+    > {
+        let Some(guard) = &self.speaker_switch else {
+            return Ok(None);
+        };
+        let locked = self.speaker_gate.as_ref().and_then(SpeakerGate::locked);
+        guard.authorize(template_key, locked).map(Some)
+    }
+
+    /// Ticket 17: install the target Template's frozen Observe plan so the next turn scores the
+    /// locked Speaker anew on it. The runtime and lease are unchanged because the authority is
+    /// only accepted in the session's own embedding space.
+    fn install_switch_speaker(&mut self, template_key: &str) {
+        let (Some(guard), Some(observe)) =
+            (self.speaker_switch.as_ref(), self.speaker_observe.as_ref())
+        else {
+            return;
+        };
+        let Some(authority) = guard.authorities().get(template_key) else {
+            return;
+        };
+        if authority.embedding_space.as_ref() != observe.embedding_space() {
+            return;
+        }
+        self.speaker_observe = Some(std::sync::Arc::new(
+            observe.retargeted(authority.plan.clone()),
+        ));
     }
 
     /// The only place a Template change becomes effective.
@@ -249,6 +308,15 @@ impl SessionActor {
             );
             return;
         };
+        if let Err(reject) = self.authorize_speaker_switch(template_key) {
+            tracing::warn!(
+                event = "session_profile_switch_dropped",
+                reason = reject.reason(),
+                template_key,
+                "A scheduled template switch would not keep the locked speaker gated"
+            );
+            return;
+        }
         if let Err(error) = install_candidate_runtimes(self, &candidate.runtimes) {
             tracing::warn!(
                 event = "session_profile_switch_failed",
@@ -260,6 +328,7 @@ impl SessionActor {
         }
         let previous_revision = self.profile.revision;
         self.profile.switched_to(&candidate);
+        self.install_switch_speaker(template_key);
         tracing::info!(
             event = "session_profile_switched",
             template_key = %candidate.template_key,

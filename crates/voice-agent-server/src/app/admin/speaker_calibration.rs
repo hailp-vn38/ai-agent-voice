@@ -353,6 +353,15 @@ impl Qualification {
     }
 }
 
+/// Whether the Agent's exact current candidate set is calibrated and qualified. Used by ticket 17
+/// to freeze a candidate Template's switch authority at admission.
+pub(crate) async fn agent_qualified(pool: &SqlitePool, agent_id: i64, agent_key: &str) -> bool {
+    qualification(pool, agent_id, agent_key)
+        .await
+        .map(|qualification| qualification.is_qualified())
+        .unwrap_or(false)
+}
+
 pub(super) async fn qualification(
     pool: &SqlitePool,
     agent_id: i64,

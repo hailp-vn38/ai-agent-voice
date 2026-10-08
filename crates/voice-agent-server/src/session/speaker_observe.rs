@@ -208,6 +208,18 @@ impl SpeakerObserve {
         &self.plan.embedding_space
     }
 
+    /// Ticket 17: the same runtime, lease and security epoch, scoring against a target Template's
+    /// frozen plan. Used only after the switch authority accepted the target in this space.
+    pub fn retargeted(&self, plan: ObservePlan) -> Self {
+        Self {
+            runtime: Arc::clone(&self.runtime),
+            lease: self.lease.clone(),
+            plan,
+            profile: self.profile,
+            security: Arc::clone(&self.security),
+        }
+    }
+
     /// Score one utterance. Best-effort: any runtime/quality failure becomes a bounded state,
     /// never an error the caller has to handle.
     pub async fn observe(&self, identity: ObserveIdentity, pcm: &[f32]) -> ObserveDiagnostic {

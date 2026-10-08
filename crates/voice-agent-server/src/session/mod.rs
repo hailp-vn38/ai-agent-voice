@@ -8,6 +8,7 @@ mod speaker_gate;
 mod speaker_observe;
 mod speech_output;
 mod state;
+mod switch_authority;
 mod turn;
 
 pub use actor::{
@@ -32,6 +33,7 @@ pub use speaker_observe::{
     OBSERVE_VERIFY_THRESHOLD,
 };
 pub use state::SessionPhase;
+pub use switch_authority::{SpeakerSwitchGuard, SwitchReject, SwitchSpeakerAuthority};
 pub use turn::{ActiveTurnLimiter, TurnId};
 
 pub mod pilot;

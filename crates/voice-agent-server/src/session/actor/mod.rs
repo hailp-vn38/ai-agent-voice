@@ -1,7 +1,7 @@
 use crate::session::{
     ActiveTemplateProfile, ActiveTurnLimiter, GateDecision, GateReject, GenerationGate,
     ObserveDiagnostic, ProfileSource, SessionDeviceTools, SessionPhase, SpeakerGate,
-    SpeakerObserve, TemplateSwitchCatalog, TurnId,
+    SpeakerObserve, SpeakerSwitchGuard, TemplateSwitchCatalog, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -183,6 +183,10 @@ pub struct SessionActor {
     /// unless the Agent policy is `required`; then no turn reaches history or the LLM without a
     /// fresh speaker pass for that same turn.
     speaker_gate: Option<SpeakerGate>,
+    /// Ticket 17: admission-time authority to switch the locked Speaker onto another Template.
+    /// `None` when the Agent policy is `off`, so a speaker-free session keeps membership as the
+    /// whole switch rule.
+    speaker_switch: Option<std::sync::Arc<SpeakerSwitchGuard>>,
     /// The ASR final of the active Required turn, held until the speaker operation resolves.
     required_text: Option<String>,
     /// The speaker diagnostic of the active Required turn, held until the ASR final resolves.

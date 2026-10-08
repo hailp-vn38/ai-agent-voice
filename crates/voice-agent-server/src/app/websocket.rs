@@ -122,9 +122,9 @@ pub(super) async fn handler(
     // Ticket 10: resolve Observe before `state` is moved into the upgrade closure. A `required`
     // policy that cannot build its gate fails the upgrade closed; anything else leaves the
     // session entirely speaker-free.
-    let speaker_observe =
+    let (speaker_observe, speaker_switch) =
         match resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await {
-            Ok(observe) => observe,
+            Ok(resolved) => resolved,
             Err(response) => return response,
         };
     let active_turn_limiter = state.active_turn_limiter;
@@ -157,6 +157,7 @@ pub(super) async fn handler(
                     session_id,
                     transcript,
                     speaker_observe,
+                    speaker_switch,
                     admission_gate,
                 },
                 SessionControl {
@@ -295,6 +296,9 @@ struct SocketRuntimes {
     /// Ticket 10 Observe, resolved at admission. `None` keeps the actor free of speaker inference
     /// and utterance PCM retention.
     speaker_observe: Option<Arc<SpeakerObserve>>,
+    /// Ticket 17 switch authority, resolved at admission while the database handle is still in
+    /// hand. `None` keeps membership as the whole switch rule for a speaker-free session.
+    speaker_switch: Option<Arc<crate::session::SpeakerSwitchGuard>>,
     /// The application admission gate. The actor only asks; the application closes it.
     admission_gate: Arc<crate::lifecycle::AdmissionGate>,
 }
@@ -445,6 +449,7 @@ async fn handle_socket(
             runtimes.speaker_observe.clone(),
             hello.features.speaker_status,
         )
+        .with_speaker_switch(runtimes.speaker_switch.clone())
         .with_admission_gate(runtimes.admission_gate)
         .with_writer_outcome_probe_opt(writer_probe.clone())
         .with_client_capabilities(
@@ -801,18 +806,24 @@ async fn resolve_speaker_observe(
     profile: &crate::session::EffectiveSessionProfile,
     resolved: &crate::providers::ResolvedAgentRuntimes,
     config: &AppConfig,
-) -> Result<Option<Arc<SpeakerObserve>>, Response> {
+) -> Result<
+    (
+        Option<Arc<SpeakerObserve>>,
+        Option<Arc<crate::session::SpeakerSwitchGuard>>,
+    ),
+    Response,
+> {
     let Some(speaker) = resolved.speaker.as_ref().cloned() else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let Some(template_id) = profile.source.template_id() else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let Some(database) = state.database.as_ref() else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let Some(lease) = profile.switch_catalog.lease_for_speaker(&speaker) else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let embedding_space = speaker.embedding_space_id().to_owned();
     let plan = match crate::session::resolve_observe_plan(
@@ -824,7 +835,7 @@ async fn resolve_speaker_observe(
     .await
     {
         Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
-        Ok(crate::session::ObserveResolution::Off) => return Ok(None),
+        Ok(crate::session::ObserveResolution::Off) => return Ok((None, None)),
         // A `required` Agent with no resolvable candidate set must not admit ungated.
         Ok(crate::session::ObserveResolution::RequiredUnavailable) => {
             warn!("required speaker policy has no candidate set; refusing admission");
@@ -836,7 +847,7 @@ async fn resolve_speaker_observe(
         }
         Err(error) => {
             warn!(%error, "speaker observe plan resolution failed");
-            return Ok(None);
+            return Ok((None, None));
         }
     };
     let enrollment = &config.speaker_recognition.enrollment;
@@ -864,9 +875,64 @@ async fn resolve_speaker_observe(
                 agent: profile.agent_id,
                 template: template_id,
                 speakers,
-                candidate_set_digest,
+                candidate_set_digest: candidate_set_digest.clone(),
             });
-    Ok(Some(Arc::new(
-        SpeakerObserve::new(speaker, lease, plan, quality).with_security(security),
-    )))
+    // Ticket 17: resolve, while a database handle is still in hand, the exact grant + Voiceprint
+    // authority for every candidate Template the session may switch to. The actor then gates a
+    // locked speaker against this frozen authority at arm and apply without touching the database.
+    let qualified =
+        crate::app::admin::agent_qualified(database.pool(), profile.agent_id, &profile.agent_key)
+            .await;
+    let mut authorities = std::collections::BTreeMap::new();
+    // ponytail: one observe-plan query per warm candidate Template at admission, so the actor can
+    // gate a switch without a database handle. Bounded by the Agent's enabled Templates; if that
+    // fan-out ever matters, resolve the requested target lazily in the switch preparation task.
+    for candidate in profile.switch_catalog.candidates() {
+        if candidate.template_id == template_id {
+            continue;
+        }
+        let Some(target_speaker) = candidate.runtimes.speaker.as_ref() else {
+            continue;
+        };
+        let target_space = target_speaker.embedding_space_id().to_owned();
+        let Ok(crate::session::ObserveResolution::Plan(target_plan)) =
+            crate::session::resolve_observe_plan(
+                database.pool(),
+                profile.agent_id,
+                candidate.template_id,
+                &target_space,
+            )
+            .await
+        else {
+            continue;
+        };
+        let candidates = target_plan
+            .candidates
+            .iter()
+            .map(|candidate| candidate.speaker_id)
+            .collect();
+        authorities.insert(
+            candidate.template_key.clone(),
+            Arc::new(crate::session::SwitchSpeakerAuthority {
+                template_id: candidate.template_id,
+                embedding_space: Arc::from(target_space.as_str()),
+                candidate_set_digest: candidate_set_digest.clone(),
+                qualified,
+                candidates,
+                plan: target_plan,
+            }),
+        );
+    }
+    let switch = crate::session::SpeakerSwitchGuard::new(
+        plan.policy,
+        Arc::from(embedding_space.as_str()),
+        authorities,
+        Arc::clone(&security),
+    );
+    Ok((
+        Some(Arc::new(
+            SpeakerObserve::new(speaker, lease, plan, quality).with_security(security),
+        )),
+        Some(Arc::new(switch)),
+    ))
 }

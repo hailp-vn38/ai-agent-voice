@@ -123,8 +123,9 @@ impl TemplateSwitchCatalog {
             .cloned()
     }
 
-    /// Membership is the whole authorization rule for a switch: an assignment this session never
-    /// admitted, or one it excluded as invalid, simply is not here.
+    /// Membership is the first authorization rule for a switch: an assignment this session never
+    /// admitted, or one it excluded as invalid, simply is not here. Ticket 17 adds the locked
+    /// Speaker's target-Template grant on top, enforced by the actor's switch authority.
     pub fn find(&self, template_key: &str) -> Option<&ResolvedTemplateProfile> {
         self.candidates
             .iter()
