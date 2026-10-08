@@ -40,8 +40,8 @@ async function review(tool: ObservedExternalTool, allowed: boolean, sensitive: b
     }, tool.revision)
     await load()
   } catch (cause) {
-    error.value = formatApiError(cause)
     if (isApiError(cause) && ['revision_conflict', 'contract_conflict'].includes(cause.code)) await load()
+    error.value = formatApiError(cause)
   } finally {
     busy.value = false
   }
@@ -90,8 +90,11 @@ watch(() => props.agentId, () => { void load() }, { immediate: true })
           <Button size="sm" variant="outline" :disabled="busy || loading || (!tool.allowed && !tool.sensitive)" @click="review(tool, false, false)">
             {{ t('mcp.revoke') }}
           </Button>
-          <Button size="sm" variant="outline" :disabled="busy || loading || tool.sensitive" @click="review(tool, false, true)">
+          <Button v-if="!tool.sensitive" size="sm" variant="outline" :disabled="busy || loading" @click="review(tool, false, true)">
             {{ t('mcp.markSensitive') }}
+          </Button>
+          <Button v-else size="sm" variant="outline" :disabled="busy || loading" @click="review(tool, false, false)">
+            {{ t('mcp.clearSensitive') }}
           </Button>
         </div>
       </article>
