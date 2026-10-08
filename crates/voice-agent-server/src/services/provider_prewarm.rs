@@ -112,14 +112,15 @@ async fn snapshots(
     template: Option<i64>,
 ) -> Vec<DesiredProvider> {
     // Bounds are checked in SQL before copying persisted text. The one SELECT ends before build.
-    type PrewarmRow = (i64, String, String, String, String, Option<String>, i64);
+    type PrewarmRow = (i64, String, String, String, String, i64);
     let rows: Vec<PrewarmRow> = sqlx::query_as(
-        "SELECT DISTINCT p.id,p.key,p.type,p.adapter,p.config_json,p.secret_ref,p.revision FROM providers p JOIN template_provider_bindings b ON b.provider_id=p.id JOIN agent_templates t ON t.id=b.template_id WHERE p.enabled=1 AND t.enabled=1 AND (? IS NULL OR (p.id=? AND p.revision=?)) AND (? IS NULL OR t.id=?) AND length(CAST(p.config_json AS BLOB))<=65536 AND length(CAST(p.key AS BLOB))<=128 AND length(CAST(p.type AS BLOB))<=16 AND length(CAST(p.adapter AS BLOB))<=64 AND (p.secret_ref IS NULL OR length(CAST(p.secret_ref AS BLOB))<=256) LIMIT 4"
+        "SELECT DISTINCT p.id,p.key,p.type,p.adapter,p.config_json,p.revision FROM providers p JOIN template_provider_bindings b ON b.provider_id=p.id JOIN agent_templates t ON t.id=b.template_id WHERE p.enabled=1 AND t.enabled=1 AND (? IS NULL OR (p.id=? AND p.revision=?)) AND (? IS NULL OR t.id=?) AND length(CAST(p.config_json AS BLOB))<=65536 AND length(CAST(p.key AS BLOB))<=128 AND length(CAST(p.type AS BLOB))<=16 AND length(CAST(p.adapter AS BLOB))<=64 LIMIT 4"
     ).bind(provider.map(|v|v.0)).bind(provider.map(|v|v.0)).bind(provider.map(|v|v.1)).bind(template).bind(template).fetch_all(database.pool()).await.unwrap_or_default();
     rows.into_iter()
-        .filter_map(|(id, key, kind, adapter, raw, secret_ref, revision)| {
+        .filter_map(|(id, key, kind, adapter, raw, revision)| {
             let config_json =
                 crate::database::provider_config::validate_raw(&adapter, &raw).ok()?;
+            let secret_ref = crate::database::secrets::provider_secret_env(&key, &adapter);
             Some(DesiredProvider {
                 id,
                 key,

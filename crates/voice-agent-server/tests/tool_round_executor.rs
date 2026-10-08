@@ -619,9 +619,9 @@ async fn seed(url: &str, external_url: &str) {
         .await
         .unwrap();
     let server_id: i64 = sqlx::query_scalar(
-        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,secret_ref,\
+        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,\
          connect_timeout_ms,request_timeout_ms,enabled,created_at,updated_at) \
-         VALUES ('weather','Weather',?,'{}','bearer',NULL,'TOKEN',5000,5000,1,1,1) RETURNING id",
+         VALUES ('weather','Weather',?,'{}','bearer',NULL,5000,5000,1,1,1) RETURNING id",
     )
     .bind(external_url)
     .fetch_one(&pool)

@@ -1344,8 +1344,7 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
         .bearer_auth(auth)
         .json(&serde_json::json!({
             "name":"LLM", "type":"llm", "adapter":"openai",
-            "config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8},
-            "secret_ref":"LLM_SECRET"
+            "config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8}
         }))
         .send()
         .await
@@ -1353,8 +1352,25 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
     assert_eq!(llm.status(), StatusCode::CREATED);
     let llm = llm.json::<serde_json::Value>().await.unwrap();
     let llm_key = llm["key"].as_str().expect("a key is generated").to_owned();
-    assert_eq!(llm["has_secret_ref"], true);
+    assert_eq!(
+        llm["credential_env"],
+        format!("VOICE_PROVIDER_{}_API_KEY", llm_key.to_ascii_uppercase())
+    );
     assert!(llm.get("secret_ref").is_none());
+    // Old clients must not be able to store an operator-chosen secret reference.
+    let old_provider_payload = client
+        .post(&provider_url)
+        .bearer_auth(auth)
+        .json(&serde_json::json!({
+            "name":"Legacy", "type":"llm", "adapter":"openai",
+            "config_json":{"base_url":"https://example.test/v1","model":"test"},
+            "secret_ref":"LEGACY_SECRET"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_provider_payload.status(), StatusCode::BAD_REQUEST);
+
     assert_eq!(llm["runtime_status"], "not_loaded");
     assert_eq!(llm["runtime_matches_desired"], false);
     assert_eq!(llm["requires_restart"], true);
@@ -1829,25 +1845,63 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
         StatusCode::BAD_REQUEST
     );
     assert_eq!(client.post(&servers).bearer_auth(auth).json(&serde_json::json!({"key":"bad","name":"Bad","url":"https://mcp.example.test/?token=secret","headers":{"authorization":"nope"},"auth":{"type":"none"}})).send().await.unwrap().status(), StatusCode::BAD_REQUEST);
-    let created = client.post(&servers).bearer_auth(auth).json(&serde_json::json!({"key":"weather","name":"Weather","url":"https://mcp.example.test/tools","headers":{"x-client":"voice-agent"},"auth":{"type":"header","header_name":"x-api-key","secret_ref":"MCP_WEATHER_KEY"}})).send().await.unwrap();
+    let created = client.post(&servers).bearer_auth(auth).json(&serde_json::json!({"key":"weather","name":"Weather","url":"https://mcp.example.test/tools","auth":{"type":"header","header_name":"x-api-key"}})).send().await.unwrap();
     assert_eq!(created.status(), StatusCode::CREATED);
     let server: serde_json::Value = created.json().await.unwrap();
     assert_eq!(
         server["auth"],
-        serde_json::json!({"type":"header","header_name":"x-api-key","has_secret_ref":true})
+        serde_json::json!({"type":"header","header_name":"x-api-key"})
     );
     assert!(server.get("secret_ref").is_none());
+    assert_eq!(server["credential_env"], "VOICE_MCP_WEATHER_TOKEN");
+    // No secret or arbitrary header ingress survives in MCP Admin mutations.
+    for rejected in [
+        serde_json::json!({"key":"legacy","name":"Legacy MCP","url":"https://mcp.example.test/mcp","auth":{"type":"bearer","secret_ref":"LEGACY_TOKEN"}}),
+        serde_json::json!({"key":"legacy_none","name":"Legacy MCP","url":"https://mcp.example.test/mcp","auth":{"type":"none","secret_ref":"LEGACY_TOKEN"}}),
+        serde_json::json!({"key":"legacy_header","name":"Legacy MCP","url":"https://mcp.example.test/mcp","auth":{"type":"header","header_name":"x-api-key","secret_ref":"LEGACY_TOKEN"}}),
+        serde_json::json!({"key":"headers","name":"Headers MCP","url":"https://mcp.example.test/mcp","headers":{"x-api-key":"plaintext"},"auth":{"type":"none"}}),
+    ] {
+        assert_eq!(
+            client
+                .post(&servers)
+                .bearer_auth(auth)
+                .json(&rejected)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
     assert_eq!(
         client
             .post(&servers)
             .bearer_auth(auth)
-            .json(&serde_json::json!({"key":"unsafe_auth","name":"Unsafe auth","url":"https://mcp.example.test/","auth":{"type":"header","header_name":"authorization","secret_ref":"MCP_WEATHER_KEY"}}))
+            .json(&serde_json::json!({"key":"unsafe_auth","name":"Unsafe auth","url":"https://mcp.example.test/","auth":{"type":"header","header_name":"authorization"}}))
             .send()
             .await
             .unwrap()
             .status(),
         StatusCode::BAD_REQUEST
     );
+    for legacy_auth in [
+        serde_json::json!({"type":"none","secret_ref":"LEGACY_TOKEN"}),
+        serde_json::json!({"type":"bearer","secret_ref":"LEGACY_TOKEN"}),
+        serde_json::json!({"type":"header","header_name":"x-api-key","secret_ref":"LEGACY_TOKEN"}),
+    ] {
+        assert_eq!(
+            client
+                .patch(format!("{servers}/weather"))
+                .bearer_auth(auth)
+                .header("if-match", "\"1\"")
+                .json(&serde_json::json!({"auth":legacy_auth}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
     for header in ["proxy-authenticate", "www-authenticate", "keep-alive"] {
         assert_eq!(
             client

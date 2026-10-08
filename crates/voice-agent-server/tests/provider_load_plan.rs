@@ -6,14 +6,17 @@ use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 use url::Url;
 use voice_agent_server::{
-    app::{BootstrapError, bootstrap_with_providers},
+    app::{BootstrapError, bootstrap_with_providers, bootstrap_with_providers_and_secret_resolver},
     config::{
         AdminApiConfig, AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig,
         DeploymentConfig, LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig,
         ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig, VisionConfig,
         WebsocketConfig, WorkersConfig,
     },
-    database::Database,
+    database::{
+        Database,
+        secrets::{SecretRef, SecretResolveError, SecretResolver, SecretValue},
+    },
     providers::ProviderSet,
 };
 
@@ -106,17 +109,16 @@ async fn insert_provider(
     pool: &SqlitePool,
     key: &str,
     config_json: &str,
-    secret_ref: Option<&str>,
+    _secret_ref: Option<&str>,
     enabled: bool,
 ) -> i64 {
     sqlx::query(
-        "INSERT INTO providers (key,name,type,adapter,config_json,secret_ref,enabled,created_at,updated_at) \
-         VALUES (?, ?, 'llm', 'openai', ?, ?, ?, 1, 1)",
+        "INSERT INTO providers (key,name,type,adapter,config_json,enabled,created_at,updated_at) \
+         VALUES (?, ?, 'llm', 'openai', ?, ?, 1, 1)",
     )
     .bind(key)
     .bind(key)
     .bind(config_json)
-    .bind(secret_ref)
     .bind(i64::from(enabled))
     .execute(pool)
     .await
@@ -191,6 +193,29 @@ async fn serve(url: String) -> (String, JoinHandle<()>) {
     (format!("http://{address}"), task)
 }
 
+/// A deterministic resolver exercises a valid deployment-owned secret without
+/// mutating process environment variables from parallel async tests.
+struct TestSecrets;
+impl SecretResolver for TestSecrets {
+    fn resolve(&self, _: &SecretRef) -> Result<SecretValue, SecretResolveError> {
+        Ok(SecretValue::new("test-key".into()))
+    }
+}
+
+async fn serve_with_credentials(url: String) -> (String, JoinHandle<()>) {
+    let router = bootstrap_with_providers_and_secret_resolver(
+        config(url),
+        Arc::new(ProviderSet::unavailable()),
+        Arc::new(TestSecrets),
+    )
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), task)
+}
+
 async fn provider_view(base: &str, key: &str) -> serde_json::Value {
     Client::new()
         .get(format!("{base}/api/admin/providers/{key}"))
@@ -211,7 +236,7 @@ async fn a_required_default_template_provider_failure_refuses_to_start() {
     let template = insert_template(&pool, "primary").await;
     let provider = insert_provider(
         &pool,
-        "db-llm",
+        "db_llm",
         VALID_LLM_CONFIG,
         Some("VOICE_AGENT_TEST_ABSENT_SECRET"),
         true,
@@ -234,7 +259,7 @@ async fn an_optional_non_default_provider_failure_starts_and_reports_unavailable
     let template = insert_template(&pool, "secondary").await;
     let provider = insert_provider(
         &pool,
-        "db-llm",
+        "db_llm",
         VALID_LLM_CONFIG,
         Some("VOICE_AGENT_TEST_ABSENT_SECRET"),
         true,
@@ -245,7 +270,7 @@ async fn an_optional_non_default_provider_failure_starts_and_reports_unavailable
 
     let (base, task) = serve(url).await;
     let response = Client::new()
-        .get(format!("{base}/api/admin/providers/db-llm"))
+        .get(format!("{base}/api/admin/providers/db_llm"))
         .bearer_auth(ADMIN_TOKEN)
         .send()
         .await
@@ -268,7 +293,7 @@ async fn an_unbound_provider_is_validated_without_resolving_its_secret_or_loadin
     let pool = seeded(url.clone()).await;
     insert_provider(
         &pool,
-        "db-llm",
+        "db_llm",
         VALID_LLM_CONFIG,
         Some("VOICE_AGENT_TEST_ABSENT_SECRET"),
         true,
@@ -276,7 +301,7 @@ async fn an_unbound_provider_is_validated_without_resolving_its_secret_or_loadin
     .await;
 
     let (base, task) = serve(url).await;
-    let view = provider_view(&base, "db-llm").await;
+    let view = provider_view(&base, "db_llm").await;
     assert_eq!(
         view["runtime_status"], "not_loaded",
         "an unbound provider must skip secret resolution and runtime build: {view}"
@@ -288,10 +313,10 @@ async fn an_unbound_provider_is_validated_without_resolving_its_secret_or_loadin
 async fn an_unbound_provider_with_invalid_config_does_not_block_boot() {
     let url = database_url();
     let pool = seeded(url.clone()).await;
-    insert_provider(&pool, "db-llm", INVALID_LLM_CONFIG, None, true).await;
+    insert_provider(&pool, "db_llm", INVALID_LLM_CONFIG, None, true).await;
 
     let (base, task) = serve(url).await;
-    let view = provider_view(&base, "db-llm").await;
+    let view = provider_view(&base, "db_llm").await;
     assert_eq!(view["runtime_status"], "unavailable");
     assert_eq!(view["runtime_matches_desired"], false);
     task.abort();
@@ -305,7 +330,7 @@ async fn a_provider_bound_only_by_a_disabled_agent_stays_out_of_the_load_plan() 
     let template = insert_template(&pool, "primary").await;
     let provider = insert_provider(
         &pool,
-        "db-llm",
+        "db_llm",
         VALID_LLM_CONFIG,
         Some("VOICE_AGENT_TEST_ABSENT_SECRET"),
         true,
@@ -315,7 +340,7 @@ async fn a_provider_bound_only_by_a_disabled_agent_stays_out_of_the_load_plan() 
     bind_llm(&pool, template, provider).await;
 
     let (base, task) = serve(url).await;
-    let view = provider_view(&base, "db-llm").await;
+    let view = provider_view(&base, "db_llm").await;
     assert_eq!(
         view["runtime_status"], "not_loaded",
         "a disabled agent cannot make a provider required: {view}"
@@ -347,12 +372,12 @@ async fn an_optional_non_default_provider_that_loads_becomes_a_usable_candidate(
     let pool = seeded(url.clone()).await;
     let agent = insert_agent(&pool, "agent", true).await;
     let template = insert_template(&pool, "secondary").await;
-    let provider = insert_provider(&pool, "db-llm", VALID_LLM_CONFIG, None, true).await;
+    let provider = insert_provider(&pool, "db_llm", VALID_LLM_CONFIG, None, true).await;
     assign(&pool, agent, template, false, true).await;
     bind_llm(&pool, template, provider).await;
 
-    let (base, task) = serve(url).await;
-    let view = provider_view(&base, "db-llm").await;
+    let (base, task) = serve_with_credentials(url).await;
+    let view = provider_view(&base, "db_llm").await;
     assert_eq!(
         view["runtime_status"], "loaded",
         "an optional provider is still attempted at startup: {view}"
@@ -367,23 +392,23 @@ async fn a_loaded_database_provider_reports_desired_versus_loaded_revision() {
     let pool = seeded(url.clone()).await;
     let agent = insert_agent(&pool, "agent", true).await;
     let template = insert_template(&pool, "primary").await;
-    let provider = insert_provider(&pool, "db-llm", VALID_LLM_CONFIG, None, true).await;
+    let provider = insert_provider(&pool, "db_llm", VALID_LLM_CONFIG, None, true).await;
     assign(&pool, agent, template, true, true).await;
     bind_llm(&pool, template, provider).await;
 
-    let (base, task) = serve(url).await;
-    let loaded = provider_view(&base, "db-llm").await;
+    let (base, task) = serve_with_credentials(url).await;
+    let loaded = provider_view(&base, "db_llm").await;
     assert_eq!(loaded["runtime_status"], "loaded");
     assert_eq!(loaded["runtime_matches_desired"], true);
     assert_eq!(loaded["requires_restart"], false);
 
     // A desired revision written after startup never reaches the running process: the loaded
     // runtime keeps serving while Admin is told a restart is required.
-    sqlx::query("UPDATE providers SET revision = revision + 1 WHERE key = 'db-llm'")
+    sqlx::query("UPDATE providers SET revision = revision + 1 WHERE key = 'db_llm'")
         .execute(&pool)
         .await
         .unwrap();
-    let stale = provider_view(&base, "db-llm").await;
+    let stale = provider_view(&base, "db_llm").await;
     assert_eq!(stale["runtime_status"], "loaded");
     assert_eq!(stale["runtime_matches_desired"], false);
     assert_eq!(stale["requires_restart"], true);

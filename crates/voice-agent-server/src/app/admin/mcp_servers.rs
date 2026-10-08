@@ -1,6 +1,5 @@
 //! Admin mcp servers resources.
 use super::agents::get_agent_by;
-use super::providers::valid_secret_ref;
 use super::*;
 
 #[derive(FromRow)]
@@ -9,10 +8,8 @@ struct McpServerRow {
     key: String,
     name: String,
     url: String,
-    headers_json: String,
     auth_type: String,
     auth_header_name: Option<String>,
-    secret_ref: Option<String>,
     connect_timeout_ms: i64,
     request_timeout_ms: i64,
     enabled: i64,
@@ -21,24 +18,18 @@ struct McpServerRow {
     updated_at: i64,
 }
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum McpAuth {
-    None,
-    Bearer {
-        secret_ref: String,
-    },
-    Header {
-        header_name: String,
-        secret_ref: String,
-    },
+    None {},
+    Bearer {},
+    Header { header_name: String },
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateMcpServer {
     key: String,
     name: String,
     url: String,
-    #[serde(default)]
-    headers: serde_json::Map<String, Value>,
     auth: McpAuth,
     #[serde(default = "default_connect_timeout")]
     connect_timeout_ms: u64,
@@ -46,6 +37,7 @@ struct CreateMcpServer {
     request_timeout_ms: u64,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PatchMcpServer {
     #[serde(default)]
     key: Patch<String>,
@@ -53,8 +45,6 @@ struct PatchMcpServer {
     name: Patch<String>,
     #[serde(default)]
     url: Patch<String>,
-    #[serde(default)]
-    headers: Patch<Value>,
     #[serde(default)]
     auth: Patch<McpAuth>,
     #[serde(default)]
@@ -107,30 +97,14 @@ fn protected_header(value: &str) -> bool {
             | "authorization"
     )
 }
-fn valid_headers(headers: &serde_json::Map<String, Value>) -> bool {
-    serde_json::to_vec(headers).is_ok_and(|raw| raw.len() <= 16 * 1024)
-        && headers.iter().all(|(name, value)| {
-            valid_header_name(name)
-                && !protected_header(name)
-                && value
-                    .as_str()
-                    .is_some_and(|v| v.len() <= 4096 && !v.bytes().any(|b| b < 0x20 || b == 0x7f))
-        })
-}
-fn auth_parts(auth: McpAuth) -> Option<(String, Option<String>, Option<String>)> {
+fn auth_parts(auth: McpAuth) -> Option<(String, Option<String>)> {
     match auth {
-        McpAuth::None => Some(("none".into(), None, None)),
-        McpAuth::Bearer { secret_ref } if valid_secret_ref(&secret_ref) => {
-            Some(("bearer".into(), None, Some(secret_ref)))
-        }
-        McpAuth::Header {
-            header_name,
-            secret_ref,
-        } if valid_header_name(&header_name)
-            && !protected_header(&header_name)
-            && valid_secret_ref(&secret_ref) =>
+        McpAuth::None {} => Some(("none".into(), None)),
+        McpAuth::Bearer {} => Some(("bearer".into(), None)),
+        McpAuth::Header { header_name }
+            if valid_header_name(&header_name) && !protected_header(&header_name) =>
         {
-            Some(("header".into(), Some(header_name), Some(secret_ref)))
+            Some(("header".into(), Some(header_name)))
         }
         _ => None,
     }
@@ -139,32 +113,30 @@ fn valid_mcp_url(url: &str, state: &AppState) -> bool {
     external_mcp_policy::valid_desired_url(url, &state.config.mcp.external.network)
 }
 fn mcp_json(row: McpServerRow) -> Value {
-    let headers: Value =
-        serde_json::from_str(&row.headers_json).unwrap_or(Value::Object(Default::default()));
     let auth = match row.auth_type.as_str() {
-        "bearer" => serde_json::json!({"type":"bearer","has_secret_ref":row.secret_ref.is_some()}),
+        "bearer" => serde_json::json!({"type":"bearer"}),
         "header" => {
-            serde_json::json!({"type":"header","header_name":row.auth_header_name,"has_secret_ref":row.secret_ref.is_some()})
+            serde_json::json!({"type":"header","header_name":row.auth_header_name})
         }
         _ => serde_json::json!({"type":"none"}),
     };
-    serde_json::json!({"key":row.key,"name":row.name,"transport":"streamable_http","url":row.url,"headers":headers,"auth":auth,"connect_timeout_ms":row.connect_timeout_ms,"request_timeout_ms":row.request_timeout_ms,"enabled":row.enabled != 0,"revision":row.revision,"created_at":row.created_at,"updated_at":row.updated_at})
+    let credential_env = crate::database::secrets::mcp_secret_env(&row.key, &row.auth_type);
+    serde_json::json!({"key":row.key,"name":row.name,"transport":"streamable_http","url":row.url,"headers":{},"auth":auth,"credential_env":credential_env,"connect_timeout_ms":row.connect_timeout_ms,"request_timeout_ms":row.request_timeout_ms,"enabled":row.enabled != 0,"revision":row.revision,"created_at":row.created_at,"updated_at":row.updated_at})
 }
 async fn mcp_by(pool: &SqlitePool, key: &str) -> Result<McpServerRow, sqlx::Error> {
-    sqlx::query_as("SELECT id,key,name,url,headers_json,auth_type,auth_header_name,secret_ref,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at FROM mcp_servers WHERE key=?").bind(key).fetch_one(pool).await
+    sqlx::query_as("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at FROM mcp_servers WHERE key=?").bind(key).fetch_one(pool).await
 }
 pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (_, CreateMcpServer) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let Some((auth_type, auth_header_name, secret_ref)) = auth_parts(body.auth) else {
+    let Some((auth_type, auth_header_name)) = auth_parts(body.auth) else {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     };
     if !valid_key(&body.key)
         || !valid_text(&body.name, 128, false)
         || !valid_mcp_url(&body.url, &state)
-        || !valid_headers(&body.headers)
         || !(1..=60_000).contains(&body.connect_timeout_ms)
         || !(1..=120_000).contains(&body.request_timeout_ms)
     {
@@ -186,8 +158,7 @@ pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Re
             );
         }
     };
-    let headers_json = Value::Object(body.headers).to_string();
-    let result = sqlx::query("INSERT INTO mcp_servers(key,name,url,headers_json,auth_type,auth_header_name,secret_ref,connect_timeout_ms,request_timeout_ms,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(&body.key).bind(&body.name).bind(&body.url).bind(headers_json).bind(auth_type).bind(auth_header_name).bind(secret_ref).bind(body.connect_timeout_ms as i64).bind(body.request_timeout_ms as i64).bind(now()).bind(now()).execute(&mut *tx).await;
+    let result = sqlx::query("INSERT INTO mcp_servers(key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(&body.key).bind(&body.name).bind(&body.url).bind(auth_type).bind(auth_header_name).bind(body.connect_timeout_ms as i64).bind(body.request_timeout_ms as i64).bind(now()).bind(now()).execute(&mut *tx).await;
     let resource_id = match result {
         Ok(v) => v.last_insert_rowid(),
         Err(e) => return mutation_sql_error(&request, &e),
@@ -246,7 +217,7 @@ pub(super) async fn list_mcp_servers(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match sqlx::query_as::<_,McpServerRow>("SELECT id,key,name,url,headers_json,auth_type,auth_header_name,secret_ref,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at FROM mcp_servers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await {Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(mcp_json).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
+    match sqlx::query_as::<_,McpServerRow>("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at FROM mcp_servers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await {Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(mcp_json).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
 }
 pub(super) async fn patch_mcp_server(
     State(state): State<AppState>,
@@ -289,22 +260,13 @@ pub(super) async fn patch_mcp_server(
         Some(_) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
         None => old.url.clone(),
     };
-    let headers = match body.headers.value() {
-        Some(Some(Value::Object(v))) if valid_headers(&v) => v,
-        Some(_) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
-        None => serde_json::from_str(&old.headers_json).unwrap_or_default(),
-    };
-    let (auth_type, auth_header_name, secret_ref) = match body.auth.value() {
+    let (auth_type, auth_header_name) = match body.auth.value() {
         Some(Some(auth)) => match auth_parts(auth) {
             Some(v) => v,
             None => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
         },
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
-        None => (
-            old.auth_type.clone(),
-            old.auth_header_name.clone(),
-            old.secret_ref.clone(),
-        ),
+        None => (old.auth_type.clone(), old.auth_header_name.clone()),
     };
     let connect_timeout = match body.connect_timeout_ms.value() {
         Some(Some(v)) if (1..=60_000).contains(&v) => v as i64,
@@ -333,14 +295,11 @@ pub(super) async fn patch_mcp_server(
             );
         }
     };
-    let headers_json = Value::Object(headers.clone()).to_string();
     let source_changed = old.url != url
-        || old.headers_json != headers_json
         || old.auth_type != auth_type
         || old.auth_header_name != auth_header_name
-        || old.secret_ref != secret_ref
         || old.enabled != enabled;
-    let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,headers_json=?,auth_type=?,auth_header_name=?,secret_ref=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(headers_json).bind(auth_type).bind(auth_header_name).bind(secret_ref).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
+    let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,auth_type=?,auth_header_name=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(auth_type).bind(auth_header_name).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
     if !updated {
         let _ = tx.rollback().await;
         audit_conflict(pool, id(&request).into(), "mcp_server", old.id, expected).await;

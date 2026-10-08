@@ -53,7 +53,7 @@ Chia form thành hai nhóm.
 |---|---|
 | Thông tin provider | Tên hiển thị, key |
 | Cấu hình adapter | Dựng theo `config_schema.fields` |
-| Credential, nếu cần | Tên biến môi trường trong `secret_ref` |
+| Credential, nếu cần | Biến môi trường do server suy ra từ resource key; không có input API key/secret_ref |
 
 Ví dụ TTS ZeroTTS:
 
@@ -105,7 +105,7 @@ Với adapter không hỗ trợ discovery, dùng dữ liệu static hoặc input
 
 Không dùng `/providers/{key}/capabilities` ở bước này vì provider chưa có runtime.
 
-Với credential, label nên là **“Biến môi trường chứa API key/token”**, kèm ví dụ `OPENAI_API_KEY`. Form gửi tên biến qua `secret_ref`; giá trị secret được thiết lập trên server.
+Credential do deployment quản lý. Không hiển thị input API key/secret_ref ở form và không gửi tên biến lên Admin API. Sau khi tạo Provider, GET trả `credential_env` (ví dụ `VOICE_PROVIDER_LLM_ABC_API_KEY`) để người vận hành tự cấu hình trên server.
 
 **4. Bước 3 — Kiểm tra và tạo**
 

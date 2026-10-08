@@ -1,13 +1,13 @@
 export type McpAuthInput =
   | { type: 'none' }
-  | { type: 'bearer'; secret_ref: string }
-  | { type: 'header'; header_name: string; secret_ref: string }
+  | { type: 'bearer' }
+  | { type: 'header'; header_name: string }
 
-/** Admin API redacts secret refs on reads. Never send this representation back as an auth mutation. */
+/** Only auth metadata is persisted. Credential lookup is deployment-owned. */
 export type McpAuthDisplay =
   | { type: 'none' }
-  | { type: 'bearer'; has_secret_ref: boolean }
-  | { type: 'header'; header_name: string; has_secret_ref: boolean }
+  | { type: 'bearer' }
+  | { type: 'header'; header_name: string }
 
 export interface AdminMcpServer {
   key: string
@@ -15,6 +15,8 @@ export interface AdminMcpServer {
   transport: 'streamable_http'
   url: string
   headers: Record<string, string>
+  /** Read-only deployment environment variable for bearer/header authentication. */
+  credential_env: string | null
   auth: McpAuthDisplay
   connect_timeout_ms: number
   request_timeout_ms: number
@@ -44,7 +46,6 @@ export interface CreateMcpServerInput {
   key: string
   name: string
   url: string
-  headers?: Record<string, string>
   auth: McpAuthInput
   connect_timeout_ms?: number
   request_timeout_ms?: number
@@ -53,7 +54,6 @@ export interface CreateMcpServerInput {
 export interface UpdateMcpServerInput {
   name?: string
   url?: string
-  headers?: Record<string, string>
   auth?: McpAuthInput
   connect_timeout_ms?: number
   request_timeout_ms?: number

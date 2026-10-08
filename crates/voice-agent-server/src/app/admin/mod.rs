@@ -1,7 +1,6 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
 use super::AppState;
-use crate::database::secrets::SecretRef;
 use crate::database::{external_mcp_policy, provider_config};
 use axum::{
     Json, Router,

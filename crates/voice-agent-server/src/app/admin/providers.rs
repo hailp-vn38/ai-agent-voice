@@ -15,7 +15,6 @@ struct Provider {
     revision: i64,
     created_at: i64,
     updated_at: i64,
-    has_secret_ref: bool,
 }
 fn provider_response(
     provider: Provider,
@@ -38,6 +37,8 @@ fn provider_response(
         crate::providers::DatabaseRuntimeStatus::Unavailable => "unavailable",
         crate::providers::DatabaseRuntimeStatus::Loaded => "loaded",
     };
+    let credential_env =
+        crate::database::secrets::provider_secret_env(&provider.key, &provider.adapter);
     let mut response = serde_json::to_value(provider).expect("Provider is serializable");
     let object = response
         .as_object_mut()
@@ -51,6 +52,10 @@ fn provider_response(
         Value::Bool(matches_desired),
     );
     object.insert("requires_restart".into(), Value::Bool(!matches_desired));
+    object.insert(
+        "credential_env".into(),
+        serde_json::to_value(credential_env).unwrap(),
+    );
     response
 }
 fn managed_provider_response(provider: Provider, state: &AppState) -> Value {
@@ -66,7 +71,10 @@ fn managed_provider_response(provider: Provider, state: &AppState) -> Value {
         RuntimeState::Failed | RuntimeState::Quarantined => "unavailable",
         _ => "not_loaded",
     };
+    let credential_env =
+        crate::database::secrets::provider_secret_env(&provider.key, &provider.adapter);
     let mut response = serde_json::to_value(provider).expect("Provider is serializable");
+    response["credential_env"] = serde_json::to_value(credential_env).unwrap();
     response["runtime_status"] = Value::String(status.into());
     response["runtime_matches_desired"] = Value::Bool(ready);
     response["requires_restart"] = Value::Bool(false);
@@ -85,10 +93,9 @@ struct CreateProvider {
     kind: String,
     adapter: String,
     config_json: Value,
-    #[serde(default)]
-    secret_ref: Option<String>,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PatchProvider {
     #[serde(default)]
     key: Patch<String>,
@@ -99,18 +106,13 @@ struct PatchProvider {
     #[serde(default)]
     config_json: Patch<Value>,
     #[serde(default)]
-    secret_ref: Patch<String>,
-    #[serde(default)]
     enabled: Patch<bool>,
-}
-pub(super) fn valid_secret_ref(value: &str) -> bool {
-    SecretRef::parse(value.into()).is_ok()
 }
 fn adapter_matches_kind(kind: &str, adapter: &str) -> bool {
     crate::providers::admin_provider_adapter_matches_kind(kind, adapter)
 }
 async fn provider_by(pool: &SqlitePool, key: &str) -> Result<Provider, sqlx::Error> {
-    sqlx::query_as("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers WHERE key=?").bind(key).fetch_one(pool).await
+    sqlx::query_as("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at FROM providers WHERE key=?").bind(key).fetch_one(pool).await
 }
 /// Mints the immutable identity for a new provider as `{provider_type}_{uuid32}`.
 ///
@@ -130,15 +132,8 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
     if !valid_text(&body.name, 128, false)
         || !matches!(body.kind.as_str(), "vad" | "asr" | "llm" | "tts")
         || !adapter_matches_kind(&body.kind, &body.adapter)
-        || body
-            .secret_ref
-            .as_ref()
-            .is_some_and(|v| !valid_secret_ref(v))
     {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
-    }
-    if body.kind == "speaker" && body.secret_ref.is_some() {
-        return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid");
     }
     let provider_key = generate_provider_key(&body.kind);
     let config = match provider_config::validate(&body.adapter, &body.config_json) {
@@ -159,7 +154,7 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
             );
         }
     };
-    let r=sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,secret_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").bind(&provider_key).bind(&body.name).bind(&body.kind).bind(&body.adapter).bind(config).bind(&body.secret_ref).bind(now()).bind(now()).execute(&mut *tx).await;
+    let r=sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").bind(&provider_key).bind(&body.name).bind(&body.kind).bind(&body.adapter).bind(config).bind(now()).bind(now()).execute(&mut *tx).await;
     let provider_id = match r {
         Ok(v) => v.last_insert_rowid(),
         Err(e) => return mutation_sql_error(&request, &e),
@@ -242,7 +237,7 @@ pub(super) async fn list_providers(
         Err(value) => return sql_error(&request, &value),
     };
     let mut builder = QueryBuilder::<Sqlite>::new(
-        "SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,secret_ref IS NOT NULL AS has_secret_ref FROM providers",
+        "SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at FROM providers",
     );
     append_provider_filters(&mut builder, &filters, true);
     builder
@@ -444,27 +439,20 @@ pub(super) async fn patch_provider(
         Ok(v) => v,
         Err(e) => return e,
     };
-    type ProviderRow = (
-        i64,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        i64,
-        i64,
-    );
-    let old: Result<ProviderRow, _> =
-        sqlx::query_as("SELECT id,name,type,adapter,config_json,secret_ref,enabled,revision FROM providers WHERE key=?")
-            .bind(&key).fetch_one(pool).await;
-    let (provider_id, old_name, kind, old_adapter, old_config, old_secret, old_enabled, revision) =
-        match old {
-            Ok(v) => v,
-            Err(sqlx::Error::RowNotFound) => {
-                return error(&request, StatusCode::NOT_FOUND, "not_found");
-            }
-            Err(e) => return sql_error(&request, &e),
-        };
+    type ProviderRow = (i64, String, String, String, String, i64, i64);
+    let old: Result<ProviderRow, _> = sqlx::query_as(
+        "SELECT id,name,type,adapter,config_json,enabled,revision FROM providers WHERE key=?",
+    )
+    .bind(&key)
+    .fetch_one(pool)
+    .await;
+    let (provider_id, old_name, kind, old_adapter, old_config, old_enabled, revision) = match old {
+        Ok(v) => v,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
+        Err(e) => return sql_error(&request, &e),
+    };
     if revision != expected {
         audit_conflict(pool, id(&request).into(), "provider", provider_id, expected).await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
@@ -494,15 +482,6 @@ pub(super) async fn patch_provider(
         Ok(v) => v,
         Err(_) => return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid"),
     };
-    let secret = match body.secret_ref.value() {
-        Some(Some(v)) if valid_secret_ref(&v) => Some(v),
-        Some(Some(_)) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
-        Some(None) => None,
-        None => old_secret,
-    };
-    if kind == "speaker" && secret.is_some() {
-        return error(&request, StatusCode::BAD_REQUEST, "provider_config_invalid");
-    }
     let enabled = match body.enabled.value() {
         Some(Some(v)) => i64::from(v),
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
@@ -518,8 +497,8 @@ pub(super) async fn patch_provider(
             );
         }
     };
-    let changed = sqlx::query("UPDATE providers SET name=?,adapter=?,config_json=?,secret_ref=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?")
-        .bind(name).bind(adapter).bind(config).bind(secret).bind(enabled).bind(now()).bind(provider_id).bind(expected)
+    let changed = sqlx::query("UPDATE providers SET name=?,adapter=?,config_json=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?")
+        .bind(name).bind(adapter).bind(config).bind(enabled).bind(now()).bind(provider_id).bind(expected)
         .execute(&mut *tx).await.map(|v| v.rows_affected() == 1).unwrap_or(false);
     if !changed {
         let _ = tx.rollback().await;
@@ -584,7 +563,6 @@ mod provider_runtime_tests {
             revision: 4,
             created_at: 0,
             updated_at: 0,
-            has_secret_ref: false,
         };
         let snapshot = DatabaseRuntimeSnapshot::from_states([(
             "llm-main".into(),

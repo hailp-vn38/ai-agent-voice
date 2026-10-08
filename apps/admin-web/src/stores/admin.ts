@@ -121,6 +121,7 @@ function toProvider(provider: AdminProvider): ProviderInstance {
     name: provider.name,
     type: provider.type as ProviderType,
     adapter: provider.adapter,
+    credentialEnv: provider.credential_env ?? undefined,
     model: providerConfig(provider, 'model'),
     description: providerConfig(provider, 'description'),
     status: providerStatus(provider),

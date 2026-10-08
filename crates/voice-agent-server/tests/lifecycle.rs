@@ -358,9 +358,9 @@ async fn an_unreachable_external_mcp_server_does_not_make_the_process_unready() 
         probe.local_addr().unwrap().port()
     };
     let server_id: i64 = sqlx::query_scalar(
-        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,secret_ref,\
+        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,\
          connect_timeout_ms,request_timeout_ms,enabled,created_at,updated_at) \
-         VALUES ('weather','Weather',?,'{}','none',NULL,NULL, 500, 500, 1, 1, 1) RETURNING id",
+         VALUES ('weather','Weather',?,'{}','none',NULL, 500, 500, 1, 1, 1) RETURNING id",
     )
     .bind(format!("http://127.0.0.1:{dead_port}/mcp"))
     .fetch_one(&pool)
@@ -446,9 +446,9 @@ async fn readiness_never_discovers_external_mcp() {
     let pool = voice.database().await;
     seed(&pool).await;
     let server_id: i64 = sqlx::query_scalar(
-        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,secret_ref,\
+        "INSERT INTO mcp_servers (key,name,url,headers_json,auth_type,auth_header_name,\
          connect_timeout_ms,request_timeout_ms,enabled,created_at,updated_at) \
-         VALUES ('weather','Weather',?,'{}','none',NULL,NULL, 500, 500, 1, 1, 1) RETURNING id",
+         VALUES ('weather','Weather',?,'{}','none',NULL, 500, 500, 1, 1, 1) RETURNING id",
     )
     .bind(format!("http://{address}/mcp"))
     .fetch_one(&pool)

@@ -1271,13 +1271,12 @@ Example:
     "timeout_ms": 30000,
     "max_tokens": 1024
   },
-  "secret_ref": "OPENAI_API_KEY"
 }
 ```
 
-Không gửi secret value thật trong `config_json` nếu server contract dùng `secret_ref`.
+Không gửi secret value hay `secret_ref` trong `config_json` hoặc payload API. Biến môi trường được suy ra từ provider key và adapter.
 
-`secret_ref` là tên environment/deployment secret reference.
+Không còn `secret_ref` trong Admin API; đọc `credential_env` (read-only) từ Provider detail, ví dụ `VOICE_PROVIDER_LLM_ABC_API_KEY`.
 
 ---
 
@@ -1562,7 +1561,6 @@ Create example:
   "key": "weather",
   "name": "Weather MCP",
   "url": "https://mcp.example.com/mcp",
-  "headers": {},
   "auth": {
     "type": "none"
   },
@@ -1577,15 +1575,15 @@ Auth support:
 
 ```text
 none
-bearer + secret_ref
-header + header_name + secret_ref
+bearer (không tham số secret)
+header + header_name (không tham số secret)
 ```
 
 Không lưu secret plaintext vào Web state dài hạn.
 
 ---
 
-> **MCP Studio cập nhật 2026-10-08:** Trang `/mcp` đã được thêm vào navigation. [Hướng dẫn UX + Rust wire contract](mcp-studio-implementation-guide.md) là tài liệu hiện hành cho create/edit/bind/review. Lưu ý: `GET /mcp-servers` trả `items/page/page_size/max_page_size` **không có** `total`; query `enabled` hiện chưa lọc. `GET /mcp-servers/:key` trả `auth.has_secret_ref` đã redact, **không trả `secret_ref`**; không dùng response này làm write DTO.
+> **MCP Studio cập nhật 2026-10-08:** Trang `/mcp` đã được thêm vào navigation. [Hướng dẫn UX + Rust wire contract](mcp-studio-implementation-guide.md) là tài liệu hiện hành cho create/edit/bind/review. Lưu ý: `GET /mcp-servers` trả `items/page/page_size/max_page_size` **không có** `total`; query `enabled` hiện chưa lọc. `GET /mcp-servers/:key` trả `auth.type`, `credential_env` (read-only) và `headers: {}`; không còn `secret_ref`. Create/PATCH không nhận headers hoặc secret references.
 
 ## 15.2 Agent MCP Binding
 
