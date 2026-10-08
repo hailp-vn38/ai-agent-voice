@@ -6,6 +6,7 @@
 - Summary shows registered devices and administratively enabled devices. Search and Agent/admission filters apply to the **entire loaded inventory**, not only one server page.
 - The backend has no device text search and no reliable \`total\` in the list projection. \`DevicesView.vue\` loads consecutive 100-record pages up to a safety bound of 100 pages; if more devices exist, it displays an explicit error rather than silently claiming the result is complete.
 - \`/devices/:deviceId\` fetches by immutable **hardware device_id** using \`devicesApi.get\` on each route-param change; URL refresh does not require the previous list state. Rendering includes HTTP loading/error/404 states.
+- Delete device appears in the top-right overflow menu on Device Detail and shared Device Cards. There is no separate bottom Danger Zone. A confirmation dialog still precedes the revision-protected DELETE.
 - Device Detail contains identity (with copyable ID, creation and update dates), related Agent and effective Template, admission switch, edit modal and confirmed delete. Agent and Template links are references, not additional permission grants.
 - Edit supports changing name/description, Agent and optional linked Template override. Switching Agent clears the Template override to avoid using one that is not linked to the new Agent.
 - Add device uses the existing claim-code flow: select an Agent on Devices Page, then use the existing \`ClaimDeviceEnrollmentModal\` to enter the 6-digit code. It does not require manual hardware-ID entry.
