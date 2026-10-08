@@ -201,7 +201,6 @@ impl RuntimeMaterializer for FactoryMaterializer {
         prepared: Option<PreparedRuntime>,
         quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
-        let started = Instant::now();
         if snapshot.id == 0
             && crate::providers::deployment_provider_snapshot(
                 &self.config,
@@ -266,15 +265,7 @@ impl RuntimeMaterializer for FactoryMaterializer {
             .collect();
         self.builds.fetch_add(1, Ordering::Relaxed);
         tracing::info!(
-            adapter = %snapshot.adapter,
-            kind = %snapshot.kind,
-            artifact_prepare_ms = timings.artifact_prepare.as_millis(),
-            artifact_verify_ms = timings.artifact_verify.as_millis(),
-            provider_contract_ms = timings.provider_contract.as_millis(),
-            worker_session_init_ms = readiness.initialization.as_millis(),
-            worker_warmup_ms = readiness.warmup.as_millis(),
-            runtime_total_ms = started.elapsed().as_millis(),
-            physical_replicas = physical_capacity,
+            provider = %snapshot.adapter,
             "provider runtime materialized"
         );
         Ok(Arc::new(OwnedRuntimeResource {

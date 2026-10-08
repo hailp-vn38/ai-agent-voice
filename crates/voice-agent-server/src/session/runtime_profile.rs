@@ -142,7 +142,7 @@ impl ConfiguredTemplateProfile {
             let lease = manager
                 .acquire_until(snapshot.as_ref().clone(), deadline)
                 .await?;
-            log_provider_loaded(snapshot, lease.version(), "database");
+            log_provider_loaded(snapshot);
             let resident = lease.runtimes().ok_or(RuntimeError::Unavailable)?;
             catalog.vad.extend(resident.vad);
             catalog.asr.extend(resident.asr);
@@ -155,7 +155,7 @@ impl ConfiguredTemplateProfile {
             let lease = manager
                 .acquire_deployment_until(snapshot.clone(), deadline)
                 .await?;
-            log_provider_loaded(snapshot, lease.version(), "deployment");
+            log_provider_loaded(snapshot);
             let resident = lease.runtimes().ok_or(RuntimeError::Unavailable)?;
             catalog.vad.extend(resident.vad);
             catalog.asr.extend(resident.asr);
@@ -174,19 +174,11 @@ impl ConfiguredTemplateProfile {
     }
 }
 
-/// Names the provider a Voice Session just acquired, by kind and instance key.
-///
-/// A session loads up to four providers, and several sessions can share one physical runtime, so
-/// without the kind and key an operator reading the log cannot tell which provider a line refers
-/// to, nor whether this connection was the one that paid for the load.
-fn log_provider_loaded(snapshot: &DesiredProvider, version: &ProviderVersion, source: &str) {
+/// Names the provider a Voice Session just acquired, by type and configured name.
+fn log_provider_loaded(snapshot: &DesiredProvider) {
     tracing::info!(
         provider_kind = %snapshot.kind,
-        provider_key = %snapshot.key,
-        adapter = %snapshot.adapter,
-        provider_revision = snapshot.revision,
-        source,
-        ?version,
+        provider_name = %snapshot.key,
         "voice session loaded provider"
     );
 }

@@ -170,9 +170,12 @@ pub fn router_with_state(state: AppState) -> Router {
         .with_state(state)
         // Never include query parameters here: browser compatibility may carry an auth token.
         .layer(
-            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-                tracing::info_span!("http_request", method = %request.method(), path = request.uri().path())
-            }),
+            TraceLayer::new_for_http()
+                .on_request(())
+                .on_response(())
+                .make_span_with(|request: &Request<_>| {
+                    tracing::debug_span!("http_request", method = %request.method(), path = request.uri().path())
+                }),
         )
 }
 
