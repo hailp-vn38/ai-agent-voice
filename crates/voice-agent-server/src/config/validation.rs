@@ -121,7 +121,10 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
 
 fn validate_speaker_recognition(config: &AppConfig) -> Result<(), ConfigError> {
     let speaker = &config.speaker_recognition;
-    if !(1..=4096).contains(&speaker.max_speakers)
+    if !speaker.similarity_threshold.is_finite()
+        || !(0.0..=1.0).contains(&speaker.similarity_threshold)
+        || speaker.similarity_threshold == 0.0
+        || !(1..=4096).contains(&speaker.max_speakers)
         || !(1..=256).contains(&speaker.max_candidates_per_agent)
         || !(1..=16).contains(&speaker.max_voiceprint_spaces_per_speaker)
     {
