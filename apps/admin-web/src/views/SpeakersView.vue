@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 import { formatApiError } from '@/api/errors'
 import { speakersApi } from '@/api/speakers'
 import type { SpeakerSummary } from '@/api/types/speakers'
-import QuickSpeakerEnrollment from '@/components/speakers/QuickSpeakerEnrollment.vue'
+import SpeakerEnrollmentWizard from '@/components/speakers/SpeakerEnrollmentWizard.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
@@ -25,7 +25,7 @@ const error = ref('')
 const search = ref('')
 
 const createOpen = ref(false)
-const quickOpen = ref(false)
+const enrollmentOpen = ref(false)
 const saving = ref(false)
 const form = ref({ key: '', name: '', description: '' })
 const deleteTarget = ref<SpeakerSummary | undefined>()
@@ -66,9 +66,10 @@ function openCreate() {
   createOpen.value = true
 }
 
-async function quickCreated() {
-  quickOpen.value = false
+async function enrollmentCompleted(created: { key: string }) {
+  enrollmentOpen.value = false
   await load()
+  await router.push({ name: 'speaker-detail', params: { speakerKey: created.key } })
 }
 
 async function submitCreate() {
@@ -116,7 +117,7 @@ onMounted(load)
           <RefreshCw class="size-4" />
           {{ t('common.refresh') }}
         </Button>
-        <Button @click="quickOpen = true">
+        <Button @click="enrollmentOpen = true">
           <Plus class="size-4" />
           {{ t('speakers.create') }}
         </Button>
@@ -141,7 +142,7 @@ onMounted(load)
 
     <div v-else-if="filtered.length === 0" class="rounded-lg border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
       <p>{{ t('speakers.empty') }}</p>
-      <Button class="mt-4" @click="quickOpen = true"><Plus class="size-4" />{{ t('speakers.create') }}</Button>
+      <Button class="mt-4" @click="enrollmentOpen = true"><Plus class="size-4" />{{ t('speakers.create') }}</Button>
     </div>
 
     <div v-else class="overflow-hidden rounded-lg border">
@@ -190,7 +191,7 @@ onMounted(load)
       </Button>
     </div>
 
-    <QuickSpeakerEnrollment v-model:open="quickOpen" @created="quickCreated" />
+    <SpeakerEnrollmentWizard v-model:open="enrollmentOpen" @completed="enrollmentCompleted" />
 
     <BaseModal v-model="createOpen" :title="t('speakers.createTitle')">
       <form class="space-y-4" @submit.prevent="submitCreate">

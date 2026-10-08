@@ -145,11 +145,13 @@ export const speakersApi = {
     draftId: string,
     expectedSpeakerRevision: number,
     revision: number,
+    signal?: AbortSignal,
   ) {
     return requestJson<EnrollmentFinalizeResult>(`${draftPath(speakerKey, draftId)}/finalize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ expected_speaker_revision: expectedSpeakerRevision }),
+      signal,
     }, { revision })
   },
 }

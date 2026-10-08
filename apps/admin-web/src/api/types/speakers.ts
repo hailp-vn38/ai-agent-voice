@@ -18,7 +18,7 @@ export interface SpeakerVoiceprint {
   embedding_space_id: string
   enrolled_with_provider_key: string
   enrolled_with_provider_revision: number
-  browser_validation_status: string
+  browser_validation_status: 'pending' | 'passed' | 'failed'
   calibration_revision: string
   enrolled_at: number
 }
