@@ -77,13 +77,13 @@ export const agentsApi = {
   agentSpeakers(key: string, signal?: AbortSignal) {
     return requestJson<AgentSpeakerBindingPage>(`${agentPath(key)}/speakers?page=1&page_size=50`, {}, { signal })
   },
-  setAgentSpeaker(agentKey: string, speakerKey: string, templateKeys: string[], revision: number) {
+  setAgentSpeaker(agentKey: string, speakerKey: string, revision: number) {
     return requestJson<PutAgentSpeakerBindingResult>(
       `${agentPath(agentKey)}/speakers/${encodeURIComponent(speakerKey)}`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ template_keys: templateKeys }),
+        body: JSON.stringify({}),
       },
       { revision },
     )
