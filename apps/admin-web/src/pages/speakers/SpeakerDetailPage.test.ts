@@ -1,4 +1,5 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import { setLocale } from '@/composables/useI18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive } from 'vue'
 
@@ -43,6 +44,7 @@ describe('SpeakerDetailPage', () => {
   beforeEach(() => {
     route.params.speakerKey = 'spk_a'
     route.query.edit = undefined
+    setLocale('en')
     vi.clearAllMocks()
     vi.mocked(speakersApi.get).mockImplementation(async (key) => speaker(key))
   })
@@ -64,15 +66,28 @@ describe('SpeakerDetailPage', () => {
     wrapper.unmount()
   })
 
-  it('opens editing when navigated from the card using the edit query', async () => {
+  it('opens the edit dialog from the card query and reloads full data after PATCH', async () => {
     route.query.edit = '1'
     const wrapper = shallowMount(SpeakerDetailPage, {
-      global: { stubs: { RouterLink: true } },
+      global: {
+        stubs: {
+          RouterLink: true,
+          BaseModal: {
+            props: ['modelValue'],
+            template: '<div v-if="modelValue"><slot /><slot name="footer" /></div>',
+          },
+        },
+      },
     })
 
     await flushPromises()
-    expect(wrapper.findComponent({ name: 'BaseModal' }).exists()).toBe(true)
-    expect(wrapper.vm).toBeTruthy()
+    expect(wrapper.get('#speaker-edit-form').exists()).toBe(true)
+    vi.mocked(speakersApi.update).mockResolvedValue(speaker('spk_a'))
+    await wrapper.get('#speaker-edit-form').trigger('submit')
+    await flushPromises()
+    expect(speakersApi.update).toHaveBeenCalledTimes(1)
+    // PATCH responds with empty voiceprint/draft projections: the UI must GET again.
+    expect(speakersApi.get).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 })
