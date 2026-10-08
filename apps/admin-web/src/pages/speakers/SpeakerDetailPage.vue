@@ -35,7 +35,6 @@ const voiceprintCount = computed(() => speaker.value?.voiceprints.length ?? 0)
 const speakerStatusKey = computed(() => {
   if (!speaker.value?.enabled) return 'speakers.disabled' as const
   if (voiceprintCount.value > 0) return 'speakers.voiceSaved' as const
-  if (speaker.value.enrollment_drafts.length) return 'speakers.statusDraft' as const
   return 'speakers.statusUnenrolled' as const
 })
 
@@ -61,14 +60,15 @@ async function load() {
   error.value = ''
   try {
     if (!speakerKey.value) throw new Error('Invalid speaker key')
-    const [result, summary] = await Promise.all([
-      speakersApi.get(speakerKey.value, controller.signal),
-      speakersApi.summary(controller.signal),
-    ])
+    void speakersApi.summary(controller.signal).then((summary) => {
+      if (!controller.signal.aborted) {
+        currentSpace.value = summary.embedding_space_id
+        engineAvailable.value = summary.available
+      }
+    }).catch(() => {})
+    const result = await speakersApi.get(speakerKey.value, controller.signal)
     if (controller.signal.aborted) return
     speaker.value = result
-    currentSpace.value = summary.embedding_space_id
-    engineAvailable.value = summary.available
     if (route.query.edit === '1') {
       openEdit()
       void router.replace({
@@ -97,7 +97,7 @@ async function saveEdit() {
       description: editForm.value.description.trim() || null,
       enabled: editForm.value.enabled,
     }, speaker.value.revision)
-    // PATCH returns empty voiceprint/draft arrays; GET restores the full detail projection.
+    // PATCH returns empty voiceprints; GET restores the full detail projection.
     editOpen.value = false
     await load()
   } catch (cause) {
@@ -253,17 +253,6 @@ onBeforeUnmount(() => activeRequest?.abort())
           <p class="mt-4 text-xs leading-relaxed text-muted-foreground">{{ t('speakers.identityNotice') }}</p>
         </section>
       </div>
-
-      <section v-if="speaker.enrollment_drafts.length" class="studio-panel flex flex-wrap items-center justify-between gap-3 p-5">
-        <div>
-          <h2 class="text-sm font-semibold">{{ t('speakers.drafts') }}</h2>
-          <p class="mt-1 text-sm text-muted-foreground">{{ t('speakers.draftNotice') }}</p>
-        </div>
-        <Button variant="outline" @click="enrollOpen = true">
-          {{ t('speakers.resumeDraft') }}
-          <ChevronRight class="size-4" aria-hidden="true" />
-        </Button>
-      </section>
 
       <details class="studio-panel group min-w-0 p-5">
         <summary class="flex cursor-pointer list-none items-center justify-between gap-2 text-sm font-semibold">

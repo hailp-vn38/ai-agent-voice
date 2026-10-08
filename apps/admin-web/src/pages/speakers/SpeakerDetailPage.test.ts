@@ -35,7 +35,6 @@ function speaker(key: string): Speaker {
     enabled: true,
     revision: 1,
     voiceprints: [],
-    enrollment_drafts: [],
     created_at: 1_760_000_000,
     updated_at: 1_760_000_000,
   }
@@ -65,6 +64,7 @@ describe('SpeakerDetailPage', () => {
     await flushPromises()
     expect(speakersApi.get).toHaveBeenCalledWith('spk_a', expect.any(AbortSignal))
     expect(wrapper.text()).toContain('spk_a')
+    expect(wrapper.find('[aria-busy="true"]').exists()).toBe(false)
 
     route.params.speakerKey = 'spk_b'
     await flushPromises()
@@ -106,7 +106,7 @@ describe('SpeakerDetailPage', () => {
     await wrapper.get('#speaker-edit-form').trigger('submit')
     await flushPromises()
     expect(speakersApi.update).toHaveBeenCalledTimes(1)
-    // PATCH responds with empty voiceprint/draft projections: the UI must GET again.
+    // PATCH responds with empty voiceprints: the UI must GET again.
     expect(speakersApi.get).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })

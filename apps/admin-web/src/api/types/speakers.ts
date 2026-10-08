@@ -19,13 +19,6 @@ export interface SpeakerVoiceprint {
   enrolled_at: number
 }
 
-export interface SpeakerEnrollmentDraftSummary {
-  id: string
-  status: 'collecting'
-  revision: number
-  expires_at: number
-}
-
 export interface Speaker {
   key: string
   name: string
@@ -33,7 +26,6 @@ export interface Speaker {
   enabled: boolean
   revision: number
   voiceprints: SpeakerVoiceprint[]
-  enrollment_drafts: SpeakerEnrollmentDraftSummary[]
   created_at: number
   updated_at: number
 }

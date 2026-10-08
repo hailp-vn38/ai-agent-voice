@@ -11,7 +11,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
+  <div class="flex h-full w-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
     <div class="flex h-20 shrink-0 items-center gap-3 border-b border-border/60 px-5">
       <div class="studio-logo flex size-10 items-center justify-center rounded-xl">
         <AudioWaveform class="size-5" aria-hidden="true" />
