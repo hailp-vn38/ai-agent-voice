@@ -22,7 +22,8 @@ export interface AdminProvider {
   revision: number
   created_at: number
   updated_at: number
-  has_secret_ref: boolean
+  /** Deployment env var name, never a stored key or editable reference. */
+  credential_env: string | null
   runtime_status: 'not_loaded' | 'unavailable' | 'loaded'
   runtime_matches_desired: boolean
   requires_restart: boolean
@@ -45,14 +46,12 @@ export interface CreateProviderInput {
   type: TemplateProviderType
   adapter: string
   config_json: Record<string, unknown>
-  secret_ref?: string
 }
 
 export interface UpdateProviderInput {
   name?: string
   adapter?: string
   config_json?: Record<string, unknown>
-  secret_ref?: string | null
   enabled?: boolean
 }
 
