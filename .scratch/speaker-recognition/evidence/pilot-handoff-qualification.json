@@ -1,0 +1,29 @@
+{
+  "build": "qualification-providers",
+  "mandatory": {
+    "checks": [
+      "startup handshake artifact is nonce-bound and machine-readable",
+      "admin enrollment is reachable through the public HTTP boundary",
+      "deterministic qualification speaker loads on demand without a model",
+      "holdout validation gates finalize",
+      "published voiceprint survives a controlled process restart"
+    ],
+    "result": "pass"
+  },
+  "optional_runtime_evidence": {
+    "missing_prerequisites": [
+      "real CAM++ model assets and a recorded speaker corpus",
+      "ESP32 Observe hardware on the target machine"
+    ],
+    "required_activation": "unavailable",
+    "result": "not_run"
+  },
+  "privacy": {
+    "contains_audio": false,
+    "contains_credentials": false,
+    "contains_embeddings": false
+  },
+  "scenario": "speaker-enrollment-observe-v1",
+  "schema_version": 1,
+  "speaker_revision": 1
+}

@@ -76,3 +76,36 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
 };
 pub static REGISTRATION: ProviderAdapterRegistration =
     ProviderAdapterRegistration::local(&DESCRIPTOR, None, Some(&super::assets::ASSETS));
+
+/// Deterministic, model-free speaker adapter compiled only into the qualification
+/// build (ADR 0068). It is remote: there are no assets for the runtime manager to
+/// prepare, and it is intentionally absent from the local runtime adapter registry.
+#[cfg(feature = "qualification-providers")]
+pub static QUALIFICATION_DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    adapter: "qualification_speaker",
+    provider_type: ProviderType::Speaker,
+    display_name: "Qualification Speaker",
+    description: "Deterministic speaker embeddings for Mandatory Qualification; never production.",
+    config_schema: ProviderConfigSchema { fields: &[] },
+    capabilities: ProviderCapabilities {
+        models: None,
+        voices: None,
+        languages: None,
+        streaming: Some(false),
+        offline: Some(true),
+        tool_calling: None,
+        vision: None,
+        input_sample_rates: Some(&[16_000]),
+        channels: Some(&[1]),
+        provider_output_sample_rates: None,
+        voice_delivery_sample_rates: None,
+    },
+    discovery: CapabilityDiscoveryMode {
+        models: DiscoverySource::Unsupported,
+        voices: DiscoverySource::Unsupported,
+        languages: DiscoverySource::Unsupported,
+    },
+};
+#[cfg(feature = "qualification-providers")]
+pub static QUALIFICATION_REGISTRATION: ProviderAdapterRegistration =
+    ProviderAdapterRegistration::remote(&QUALIFICATION_DESCRIPTOR, None);

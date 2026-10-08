@@ -121,6 +121,10 @@ impl ProviderRegistry {
         if adapter == "campplus_sherpa" {
             Ok(&CAMPPLUS_FACTORY)
         } else {
+            #[cfg(feature = "qualification-providers")]
+            if adapter == "qualification_speaker" {
+                return Ok(&QUALIFICATION_SPEAKER_FACTORY);
+            }
             Err(ProviderLoadError::UnsupportedAdapter {
                 kind: "Speaker",
                 adapter: adapter.into(),
@@ -669,5 +673,25 @@ impl SpeakerFactory for CampPlusFactory {
         validate_threads(self.adapter(), runtime)?;
         super::speaker::build(runtime.onnx.threads_for(self.adapter()))
             .map_err(|_| ProviderLoadError::Initialize("CAM++ Speaker"))
+    }
+}
+
+/// Compile-time Qualification Speaker factory (ADR 0068). No ONNX threads, no
+/// model files; the deterministic provider is the whole product.
+#[cfg(feature = "qualification-providers")]
+struct QualificationSpeakerFactory;
+#[cfg(feature = "qualification-providers")]
+static QUALIFICATION_SPEAKER_FACTORY: QualificationSpeakerFactory = QualificationSpeakerFactory;
+#[cfg(feature = "qualification-providers")]
+impl SpeakerFactory for QualificationSpeakerFactory {
+    fn adapter(&self) -> &'static str {
+        "qualification_speaker"
+    }
+    fn build(
+        &self,
+        _runtime: &RuntimeConfig,
+    ) -> Result<Box<dyn super::speaker::SpeakerProvider>, ProviderLoadError> {
+        super::speaker::qualification::build(1)
+            .map_err(|_| ProviderLoadError::Initialize("Qualification Speaker"))
     }
 }

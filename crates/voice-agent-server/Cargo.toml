@@ -7,6 +7,10 @@ license.workspace = true
 [features]
 real-model-gate = []
 real-vision-gate = []
+# Compile-time Qualification Providers (ADR 0068). Not default, not release;
+# enables deterministic speaker adapter `qualification_speaker` so the
+# Integration Harness can drive the production entrypoint without models.
+qualification-providers = []
 
 [[bin]]
 name = "voice-agent-server"

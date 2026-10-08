@@ -2192,6 +2192,120 @@
                 }
               },
               "response": []
+            },
+            {
+              "name": "Upload enrollment sample",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "audio/wav",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{enrollment_draft_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}/samples/{{sample_slot}}",
+                "description": "Store one PCM WAV sample (>= speaker_recognition.min_clip_ms). Requires If-Match: \"<draft revision>\"; the response ETag is the next draft revision. Errors: 409 enrollment_sample_duplicate, 409 enrollment_invalid_audio, 409 enrollment_revision_conflict, 413 enrollment_sample_too_large.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": ""
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Validate enrollment holdout",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "audio/wav",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{enrollment_draft_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}/validate",
+                "description": "Score one held-out WAV against the draft's samples with the exact pinned provider revision. Requires If-Match: \"<draft revision>\". Errors: 409 enrollment_holdout_duplicate, 409 enrollment_holdout_rejected, 409 enrollment_runtime_incompatible. Response: validation.status (passed|failed) and the next revision.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "file",
+                  "file": {
+                    "src": ""
+                  }
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Finalize enrollment draft (If-Match draft)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "\"{{enrollment_draft_revision}}\"",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}/enrollments/{{enrollment_draft_id}}/finalize",
+                "description": "Commit a validated draft into a new published voiceprint and bump the speaker revision. Requires If-Match: \"<draft revision>\". Body: expected_speaker_revision. Errors: 409 enrollment_not_validated, 409 speaker_revision_conflict, 409 provider_revision_conflict. Response: enrollment.status=committed, activation.catalog_revision, and the speaker without raw vectors.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"expected_speaker_revision\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": []
             }
           ]
         }

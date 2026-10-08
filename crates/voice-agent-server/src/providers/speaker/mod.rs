@@ -1,6 +1,8 @@
 //! CAM++ extraction only; matching and authorization belong to domain services.
 pub mod assets;
 pub mod descriptor;
+#[cfg(feature = "qualification-providers")]
+pub mod qualification;
 
 use crate::audio::PcmF32Mono;
 pub use crate::workers::SpeakerRuntime;

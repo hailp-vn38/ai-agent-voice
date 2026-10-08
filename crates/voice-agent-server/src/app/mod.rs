@@ -210,12 +210,15 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     config.validate().map_err(|_| BootstrapError::Provider)?;
     // Every local provider this deployment declares gets its model files on disk before the server
     // binds, whether or not its runtime is built yet. Files already present are reused, so this
-    // costs nothing after the first start and never hashes a model.
-    let declared = config.clone();
-    tokio::task::spawn_blocking(move || ensure_declared_assets(&declared))
-        .await
-        .map_err(|_| BootstrapError::Provider)?
-        .map_err(|_| BootstrapError::Provider)?;
+    // costs nothing after the first start and never hashes a model. The qualification build is
+    // deliberately model-free, so it skips the download pass entirely.
+    if !cfg!(feature = "qualification-providers") {
+        let declared = config.clone();
+        tokio::task::spawn_blocking(move || ensure_declared_assets(&declared))
+            .await
+            .map_err(|_| BootstrapError::Provider)?
+            .map_err(|_| BootstrapError::Provider)?;
+    }
     if config.provider_runtime.is_some() {
         return managed_startup(config, database, secret_resolver, lifecycle).await;
     }
@@ -368,18 +371,26 @@ async fn managed_startup(
     state = state.with_runtime_manager(manager.clone());
     let startup_deadline =
         tokio::time::Instant::now() + Duration::from_millis(runtime_config.startup_timeout_ms);
-    for (kind, key) in startup_providers(&config) {
-        let snapshot = crate::providers::deployment_provider_snapshot(&config, &kind, &key)
-            .map_err(|_| BootstrapError::Provider)?;
-        let lease = manager
-            .acquire_deployment_until(snapshot.clone(), startup_deadline)
-            .await
-            .map_err(|_| BootstrapError::Provider)?;
-        manager
-            .retain_deployment(lease.version())
-            .map_err(|_| BootstrapError::Provider)?;
-        state.deployment_snapshots.push(snapshot);
-        drop(lease);
+    // The qualification build boots with deterministic, model-free providers; it
+    // never materializes the deployment defaults. Enrollment still loads its
+    // speaker provider on demand through the same manager.
+    // ponytail: the harness declares real adapters as defaults but skips building
+    // them. Add qualification_vad/asr/llm/tts (ADR 0068) when the Voice WS Observe
+    // slice must run through the production process.
+    if !cfg!(feature = "qualification-providers") {
+        for (kind, key) in startup_providers(&config) {
+            let snapshot = crate::providers::deployment_provider_snapshot(&config, &kind, &key)
+                .map_err(|_| BootstrapError::Provider)?;
+            let lease = manager
+                .acquire_deployment_until(snapshot.clone(), startup_deadline)
+                .await
+                .map_err(|_| BootstrapError::Provider)?;
+            manager
+                .retain_deployment(lease.version())
+                .map_err(|_| BootstrapError::Provider)?;
+            state.deployment_snapshots.push(snapshot);
+            drop(lease);
+        }
     }
     if let (Some(database), Some(prewarm)) = (&state.database, &state.provider_prewarm) {
         let defaults: Vec<(i64,)> = sqlx::query_as("SELECT DISTINCT t.id FROM agent_templates t JOIN agent_template_assignments a ON a.template_id=t.id JOIN agents g ON g.id=a.agent_id WHERE a.enabled=1 AND a.is_default=1 AND t.enabled=1 AND g.enabled=1 LIMIT 256").fetch_all(database.pool()).await.map_err(|_| BootstrapError::Provider)?;

@@ -58,9 +58,12 @@ impl FactoryMaterializer {
         {
             return Err(RuntimeError::Configuration);
         }
-        let native = estimates
-            .keys()
-            .any(|adapter| !matches!(adapter.as_str(), "openai" | "chillaudio_ws"));
+        let native = estimates.keys().any(|adapter| {
+            !matches!(
+                adapter.as_str(),
+                "openai" | "chillaudio_ws" | "qualification_speaker"
+            )
+        });
         let kokoro = estimates.contains_key("kokoro_vi_onnx");
         let onnx_fingerprint = native
             .then(|| execution_file_fingerprint(&config.runtime.onnx.library, 512 * 1024 * 1024))
