@@ -39,8 +39,13 @@ export const useServerStore = defineStore('server', () => {
     const [ready, system] = await Promise.allSettled([systemApi.ready(signal), systemApi.status(signal)])
     if (signal?.aborted) return
     readiness.value = ready.status === 'fulfilled' && ready.value.trim() === 'ready' ? 'online' : 'offline'
-    if (system.status === 'fulfilled') status.value = system.value
-    else lastError.value = system.reason
+    if (system.status === 'fulfilled') {
+      status.value = system.value
+    } else {
+      // Never retain stale admin-only runtime figures after an API failure.
+      status.value = null
+      lastError.value = system.reason
+    }
   }
 
   async function refresh(signal?: AbortSignal) {
