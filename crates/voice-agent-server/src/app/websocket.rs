@@ -1008,7 +1008,9 @@ async fn resolve_speaker_observe(
         max_window_ms: enrollment.max_window_ms,
     };
     Ok((
-        Some(Arc::new(SpeakerObserve::new_builtin(Arc::clone(runtime), plan, quality))),
+        Some(Arc::new(SpeakerObserve::new_builtin(
+            Arc::clone(runtime), plan, quality, config.speaker_recognition.similarity_threshold,
+        ))),
         None,
     ))
 }
