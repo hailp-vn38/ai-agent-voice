@@ -37,7 +37,8 @@ export function useMicrophoneRecorder() {
 
   function append(channels: Float32Array[]) {
     const mono = downmixToMono(channels, channels.length)
-    const remaining = Math.floor((limits.maxClipMs * TARGET_SAMPLE_RATE) / 1000) - frameCount
+    const inputRate = context.value?.sampleRate ?? TARGET_SAMPLE_RATE
+    const remaining = Math.floor((limits.maxClipMs * inputRate) / 1000) - frameCount
     if (remaining <= 0) return
     const slice = mono.length > remaining ? mono.subarray(0, remaining) : mono
     frames.push(slice.slice())

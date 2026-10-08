@@ -112,4 +112,16 @@ describe('speakersApi', () => {
     expect(deleteInit.method).toBe('DELETE')
     expect((deleteInit.headers as Headers).get('If-Match')).toBe('"8"')
   })
+
+  it('captures audio before atomically creating a speaker', async () => {
+    const fetch = installFetch()
+    const wav = new Blob(['wav'], { type: 'audio/wav' })
+    await speakersApi.capture('spk/a', wav, 4)
+    await speakersApi.createFromCapture({ capture_id: 'capture', name: 'Owner' })
+
+    expect(call(fetch, 0)[0]).toBe('/api/admin/providers/spk%2Fa/speaker-captures')
+    expect((call(fetch, 0)[1].headers as Headers).get('If-Match')).toBe('"4"')
+    expect(call(fetch, 1)[0]).toBe('/api/admin/speakers/from-capture')
+    expect(call(fetch, 1)[1].body).toBe(JSON.stringify({ capture_id: 'capture', name: 'Owner' }))
+  })
 })

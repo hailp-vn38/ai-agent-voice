@@ -444,7 +444,7 @@ onMounted(load)
             <span>{{ t('speakers.provider') }}: {{ voiceprint.enrolled_with_provider_key }}@{{ voiceprint.enrolled_with_provider_revision }}</span>
             <span>{{ t('speakers.sampleCount') }}: {{ voiceprint.sample_count }}</span>
             <span class="text-muted-foreground">
-              {{ voiceprint.browser_validation_status === 'passed' ? t('speakers.validationPassed') : t('speakers.validation') }}
+              {{ voiceprint.browser_validation_status === 'passed' ? t('speakers.validationPassed') : voiceprint.browser_validation_status === 'pending' ? 'Provisional — chưa xác minh đầy đủ' : t('speakers.validation') }}
             </span>
           </li>
         </ul>

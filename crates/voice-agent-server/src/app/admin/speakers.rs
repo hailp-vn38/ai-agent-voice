@@ -1002,8 +1002,10 @@ pub(super) async fn create_draft(
             .into_response();
     }
     let open_drafts: i64 = match sqlx::query_scalar(
-        "SELECT COUNT(*) FROM speaker_enrollment_drafts WHERE status='collecting' AND expires_at>?",
+        "SELECT (SELECT COUNT(*) FROM speaker_enrollment_drafts WHERE status='collecting' AND expires_at>?) + \
+         (SELECT COUNT(*) FROM speaker_quick_captures WHERE status='accepted' AND expires_at>?)",
     )
+    .bind(now())
     .bind(now())
     .fetch_one(pool)
     .await
@@ -1037,6 +1039,27 @@ pub(super) async fn create_draft(
             );
         }
     };
+    let active: i64 = match sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM speaker_enrollment_drafts WHERE status='collecting' AND expires_at>?) + \
+         (SELECT COUNT(*) FROM speaker_quick_captures WHERE status='accepted' AND expires_at>?)",
+    )
+    .bind(time)
+    .bind(time)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(value) => value,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
+    if active
+        >= state
+            .config
+            .speaker_recognition
+            .enrollment
+            .max_open_enrollments as i64
+    {
+        return error(&request, StatusCode::CONFLICT, "enrollment_quota_exceeded");
+    }
     let base_voiceprint_revision =
         match current_voiceprint_revision(pool, speaker.id, &embedding_space).await {
             Ok(revision) => revision,
@@ -2063,7 +2086,7 @@ async fn current_voiceprint_revision(
 /// Advances the published speaker catalog revision, which is the security-invalidation signal
 /// subscribers watch. Replace, disable and purge all route through here; the epoch/WS propagation
 /// lands in ticket 16, so ticket 08 only has to move the revision.
-async fn publish_catalog_revision(
+pub(super) async fn publish_catalog_revision(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar::<_, i64>(
@@ -2265,6 +2288,14 @@ async fn get_speaker_by(pool: &SqlitePool, key: &str) -> Result<SpeakerRow, sqlx
     .await
 }
 
+pub(super) async fn speaker_resource_by_key(
+    pool: &SqlitePool,
+    key: &str,
+) -> Result<Value, sqlx::Error> {
+    let speaker = get_speaker_by(pool, key).await?;
+    Ok(speaker_resource_value(pool, &speaker).await)
+}
+
 async fn speaker_resource_value(pool: &SqlitePool, speaker: &SpeakerRow) -> Value {
     let voiceprints = load_voiceprints(pool, speaker.id, None)
         .await
@@ -2444,6 +2475,7 @@ pub(crate) async fn cleanup_expired_drafts(pool: &SqlitePool) {
     .bind(cutoff - TOMBSTONE_SECONDS)
     .execute(pool)
     .await;
+    super::speaker_quick::cleanup_expired_captures(pool).await;
 }
 
 #[cfg(test)]

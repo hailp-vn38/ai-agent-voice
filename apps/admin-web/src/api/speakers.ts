@@ -1,6 +1,8 @@
 import { request, requestJson, withQuery } from './client'
 import type {
   CreateEnrollmentDraftInput,
+  CreateSpeakerFromCaptureInput,
+  CreateSpeakerFromCaptureResult,
   CreateSpeakerInput,
   EnrollmentDraft,
   EnrollmentFinalizeResult,
@@ -10,6 +12,7 @@ import type {
   SpeakerListQuery,
   SpeakerPage,
   SpeakerRecognitionSummary,
+  SpeakerCapture,
   UpdateSpeakerInput,
 } from './types/speakers'
 
@@ -53,6 +56,16 @@ export const speakersApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
+    })
+  },
+  capture(providerKey: string, wav: Blob, revision: number, signal?: AbortSignal) {
+    return requestJson<SpeakerCapture>(`/api/admin/providers/${encodeURIComponent(providerKey)}/speaker-captures`, {
+      method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav, signal,
+    }, { revision })
+  },
+  createFromCapture(input: CreateSpeakerFromCaptureInput, signal?: AbortSignal) {
+    return requestJson<CreateSpeakerFromCaptureResult>('/api/admin/speakers/from-capture', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
     })
   },
   update(key: string, input: UpdateSpeakerInput, revision: number) {

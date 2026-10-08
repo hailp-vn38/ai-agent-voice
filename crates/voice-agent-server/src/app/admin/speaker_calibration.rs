@@ -11,7 +11,9 @@
 //! See ADR 0079 and ADR 0081, and the implementation guide §4.2, §6.2.
 
 use super::*;
-use crate::database::speaker_candidate_set::{candidate_set, candidate_set_digest, hex};
+use crate::database::speaker_candidate_set::{
+    candidate_set, candidate_set_digest, hex, required_eligible,
+};
 use axum::body::to_bytes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -392,7 +394,7 @@ pub(super) async fn qualification(
     .await?
         > 0;
     Ok(Qualification {
-        evidence,
+        evidence: evidence && required_eligible(pool, agent_id).await?,
         qualified_profile,
     })
 }

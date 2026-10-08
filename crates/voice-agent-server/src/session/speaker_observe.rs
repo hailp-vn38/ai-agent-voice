@@ -325,7 +325,8 @@ pub async fn resolve_observe_plan(
     }
 
     let rows = sqlx::query(
-        "SELECT s.id AS speaker_id, s.key AS key, v.vector AS vector
+        "SELECT s.id AS speaker_id, s.key AS key, v.vector AS vector,
+                v.browser_validation_status AS validation_status
            FROM agent_speaker_candidates c
            JOIN speakers s ON s.id = c.speaker_id AND s.enabled = 1
            JOIN agent_speaker_template_grants g
@@ -340,6 +341,10 @@ pub async fn resolve_observe_plan(
     .fetch_all(pool)
     .await?;
 
+    let required_has_provisional = mode == SpeakerPolicyMode::Required
+        && rows
+            .iter()
+            .any(|row| row.get::<String, _>("validation_status") != "passed");
     let candidates: Vec<ObserveCandidate> = rows
         .into_iter()
         .map(|row| ObserveCandidate {
@@ -348,7 +353,7 @@ pub async fn resolve_observe_plan(
             vector: enrollment::decode_embedding(&row.get::<Vec<u8>, _>("vector")),
         })
         .collect();
-    if candidates.is_empty() {
+    if candidates.is_empty() || required_has_provisional {
         return Ok(if mode == SpeakerPolicyMode::Required {
             ObserveResolution::RequiredUnavailable
         } else {
@@ -397,7 +402,8 @@ mod tests {
     }
 
     #[test]
-    fn policy_parses_and_gates_off() {        assert_eq!(SpeakerPolicyMode::parse("off"), SpeakerPolicyMode::Off);
+    fn policy_parses_and_gates_off() {
+        assert_eq!(SpeakerPolicyMode::parse("off"), SpeakerPolicyMode::Off);
         assert_eq!(
             SpeakerPolicyMode::parse("observe"),
             SpeakerPolicyMode::Observe
@@ -465,7 +471,7 @@ mod tests {
             "CREATE TABLE agent_speaker_candidates (agent_id INTEGER, speaker_id INTEGER)",
             "CREATE TABLE speakers (id INTEGER, key TEXT, enabled INTEGER)",
             "CREATE TABLE agent_speaker_template_grants (agent_id INTEGER, speaker_id INTEGER, template_id INTEGER)",
-            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB)",
+            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, browser_validation_status TEXT NOT NULL DEFAULT 'passed')",
         ] {
             sqlx::query(ddl).execute(&pool).await.unwrap();
         }
@@ -483,14 +489,18 @@ mod tests {
 
         // Missing policy → nothing to run.
         assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc").await.unwrap(),
+            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
+                .await
+                .unwrap(),
             ObserveResolution::Off
         ));
 
         // `off` → nothing to run.
         set_mode("off").await;
         assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc").await.unwrap(),
+            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
+                .await
+                .unwrap(),
             ObserveResolution::Off
         ));
 
@@ -500,7 +510,9 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc").await.unwrap(),
+            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
+                .await
+                .unwrap(),
             ObserveResolution::Off
         ));
 
@@ -510,7 +522,44 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc").await.unwrap(),
+            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
+                .await
+                .unwrap(),
+            ObserveResolution::RequiredUnavailable
+        ));
+    }
+
+    #[tokio::test]
+    async fn required_with_a_provisional_candidate_fails_closed() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for ddl in [
+            "CREATE TABLE agent_speaker_policies (agent_id INTEGER, mode TEXT)",
+            "CREATE TABLE agent_speaker_candidates (agent_id INTEGER, speaker_id INTEGER)",
+            "CREATE TABLE speakers (id INTEGER, key TEXT, enabled INTEGER)",
+            "CREATE TABLE agent_speaker_template_grants (agent_id INTEGER, speaker_id INTEGER, template_id INTEGER)",
+            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, browser_validation_status TEXT)",
+            "CREATE TABLE speaker_catalog (id INTEGER, revision INTEGER)",
+        ] {
+            sqlx::query(ddl).execute(&pool).await.unwrap();
+        }
+        for sql in [
+            "INSERT INTO agent_speaker_policies VALUES (7, 'required')",
+            "INSERT INTO speakers VALUES (1, 'owner', 1)",
+            "INSERT INTO agent_speaker_candidates VALUES (7, 1)",
+            "INSERT INTO agent_speaker_template_grants VALUES (7, 1, 3)",
+            "INSERT INTO speaker_catalog VALUES (1, 1)",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO speaker_voiceprints VALUES (1, 'speaker:abc', ?, 'pending')")
+            .bind(enrollment::encode_embedding(&[1.0, 0.0]))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
+                .await
+                .unwrap(),
             ObserveResolution::RequiredUnavailable
         ));
     }

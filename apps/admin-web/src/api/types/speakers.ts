@@ -66,6 +66,23 @@ export interface CreateSpeakerInput {
   description?: string
 }
 
+export interface SpeakerCapture {
+  status: 'accepted'
+  capture_id: string
+  quality: { duration_ms: number; speech_ms: number }
+  expires_at: number
+}
+
+export interface CreateSpeakerFromCaptureInput {
+  capture_id: string
+  name: string
+  description?: string
+}
+
+export interface CreateSpeakerFromCaptureResult {
+  speaker: Speaker
+}
+
 export interface UpdateSpeakerInput {
   name?: string
   description?: string | null

@@ -24,6 +24,7 @@ pub(super) const MAX_ASR_TEST_BODY: usize = 5 * 1024 * 1024;
 /// JSON cap would reject every valid clip. The route itself still enforces
 /// `speaker.max_audio_body_bytes` (512 KiB) and the 12s duration cap.
 pub(super) const MAX_SPEAKER_SAMPLE_BODY: usize = 512 * 1024;
+pub(super) const MAX_QUICK_CAPTURE_BODY: usize = 4 * 1024 * 1024;
 const PAGE_DEFAULT: u32 = 50;
 const PAGE_MAX: u32 = 200;
 
@@ -67,6 +68,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route(
             "/providers/{key}/test/speaker",
             axum::routing::post(provider_tests::test_speaker_provider),
+        )
+        .route(
+            "/providers/{key}/speaker-captures",
+            axum::routing::post(speaker_quick::create_capture),
         )
         .route("/providers/{key}/templates", get(list_provider_templates))
         .route(
@@ -131,6 +136,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/history/purge", axum::routing::post(purge_history))
         .route("/speaker-recognition", get(speakers::summary))
         .route("/speakers", get(speakers::list).post(speakers::create))
+        .route(
+            "/speakers/from-capture",
+            axum::routing::post(speaker_quick::create_speaker_from_capture),
+        )
         .route(
             "/speakers/{key}",
             get(speakers::get)
@@ -199,6 +208,7 @@ mod mcp_servers;
 mod provider_adapters;
 mod provider_tests;
 mod providers;
+mod speaker_quick;
 mod speakers;
 mod system;
 pub(crate) use speakers::cleanup_expired_drafts as cleanup_expired_speaker_drafts;
@@ -251,6 +261,8 @@ async fn transport(request: Request, next: Next) -> Response {
     if is_mutation {
         let max_body = if request.uri().path().ends_with("/test/asr") {
             MAX_ASR_TEST_BODY
+        } else if request.uri().path().ends_with("/speaker-captures") {
+            MAX_QUICK_CAPTURE_BODY
         } else if request.uri().path().contains("/enrollments/")
             && request.uri().path().contains("/samples/")
         {

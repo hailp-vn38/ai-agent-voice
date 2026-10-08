@@ -22,9 +22,9 @@ pub async fn candidate_set(
     .await?;
     let mut entries = Vec::with_capacity(candidates.len());
     for (speaker_id, speaker_key) in candidates {
-        let voiceprints = sqlx::query_as::<_, (String, i64, String, i64, i64, String)>(
+        let voiceprints = sqlx::query_as::<_, (String, i64, String, i64, i64, String, String)>(
             "SELECT embedding_space,revision,provider_key,provider_revision,dims,\
-             calibration_revision FROM speaker_voiceprints WHERE speaker_id=? \
+             calibration_revision,browser_validation_status FROM speaker_voiceprints WHERE speaker_id=? \
              ORDER BY embedding_space",
         )
         .bind(speaker_id)
@@ -33,7 +33,15 @@ pub async fn candidate_set(
         let voiceprints = voiceprints
             .into_iter()
             .map(
-                |(space, revision, provider_key, provider_revision, dimensions, calibration)| {
+                |(
+                    space,
+                    revision,
+                    provider_key,
+                    provider_revision,
+                    dimensions,
+                    calibration,
+                    validation_status,
+                )| {
                     serde_json::json!({
                         "space": space,
                         "revision": revision,
@@ -41,6 +49,7 @@ pub async fn candidate_set(
                         "provider_revision": provider_revision,
                         "dimensions": dimensions,
                         "calibration_revision": calibration,
+                        "browser_validation_status": validation_status,
                     })
                 },
             )
@@ -73,6 +82,19 @@ pub async fn candidate_set(
             "scoring": "cosine",
         },
     }))
+}
+
+/// `required` accepts only candidate sets whose voiceprints completed Full Enrollment.
+pub async fn required_eligible(pool: &SqlitePool, agent_id: i64) -> Result<bool, sqlx::Error> {
+    let non_passed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_speaker_candidates c \
+         JOIN speaker_voiceprints v ON v.speaker_id=c.speaker_id \
+         WHERE c.agent_id=? AND v.browser_validation_status <> 'passed'",
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(non_passed == 0)
 }
 
 /// SHA-256 of the canonical JSON, used to match an admitted session against a calibration reload
