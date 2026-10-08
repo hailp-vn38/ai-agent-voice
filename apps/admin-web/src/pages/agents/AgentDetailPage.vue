@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
 import type { ClaimDeviceEnrollmentInput } from '@/api/types/devices'
 import AgentToolAllowlist from '@/components/agents/AgentToolAllowlist.vue'
+import AgentMcpBindings from '@/components/agents/AgentMcpBindings.vue'
 import AgentSpeakerPolicy from '@/components/agents/AgentSpeakerPolicy.vue'
 import AgentDeviceList from '@/components/agents/AgentDeviceList.vue'
 import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmentModal.vue'
@@ -42,6 +43,7 @@ const availableTemplates = computed(() => store.getAvailableTemplatesForAgent(ag
 const devices = computed(() => store.devicesForAgent(agentId.value))
 
 const activeTab = ref<'studio' | 'tools' | 'speakers' | 'devices'>('studio')
+const toolReviewKey = ref(0)
 const selectedTemplateId = ref<string | null>(null)
 const settingDefaultTemplate = ref(false)
 const setDefaultError = ref<string | null>(null)
@@ -445,8 +447,13 @@ async function confirmDeleteDevice() {
 
     </div>
 
-    <div v-if="activeTab === 'tools'" id="studio-panel-tools" role="tabpanel" aria-labelledby="studio-tab-tools" class="studio-panel p-5">
-      <AgentToolAllowlist :agent-id="agentId" />
+    <div v-if="activeTab === 'tools'" id="studio-panel-tools" role="tabpanel" aria-labelledby="studio-tab-tools" class="space-y-5">
+      <section class="studio-panel p-5">
+        <AgentMcpBindings :agent-id="agentId" @changed="toolReviewKey += 1" />
+      </section>
+      <section class="studio-panel p-5">
+        <AgentToolAllowlist :key="toolReviewKey" :agent-id="agentId" />
+      </section>
     </div>
     <div v-if="activeTab === 'speakers'" id="studio-panel-speakers" role="tabpanel" aria-labelledby="studio-tab-speakers" class="studio-panel p-5">
       <AgentSpeakerPolicy :agent-id="agentId" />
