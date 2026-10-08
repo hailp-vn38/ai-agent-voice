@@ -1585,7 +1585,11 @@ Không lưu secret plaintext vào Web state dài hạn.
 
 ---
 
+> **MCP Studio cập nhật 2026-10-08:** Trang `/mcp` đã được thêm vào navigation. [Hướng dẫn UX + Rust wire contract](mcp-studio-implementation-guide.md) là tài liệu hiện hành cho create/edit/bind/review. Lưu ý: `GET /mcp-servers` trả `items/page/page_size/max_page_size` **không có** `total`; query `enabled` hiện chưa lọc. `GET /mcp-servers/:key` trả `auth.has_secret_ref` đã redact, **không trả `secret_ref`**; không dùng response này làm write DTO.
+
 ## 15.2 Agent MCP Binding
+
+> **Response thực từ Rust:** `GET /agents/:key/mcp-bindings` trả `{ "items": [{ "server_key": "weather", "enabled": true, "required": false }] }` (không phải `bindings`, không có `revision`). Lấy revision qua `GET /agents/:key`. Tool review dùng `GET/PUT /agents/:key/tool-allowlist`, `If-Match` từ **item.revision**, không dùng Agent revision. Chỉ External MCP cần allowlist.
 
 ```http
 GET    /api/admin/agents/{agent_key}/mcp-bindings
