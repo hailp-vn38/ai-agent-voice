@@ -365,7 +365,7 @@ pub(super) async fn bind_template_provider(
     };
     if !matches!(
         provider_type.as_str(),
-        "vad" | "asr" | "llm" | "tts" | "speaker"
+        "vad" | "asr" | "llm" | "tts"
     ) {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     }
