@@ -32,6 +32,8 @@
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-accent: oklch(0.94 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
+  --studio-violet: #7c3aed;
+  --studio-cyan: #0891b2;
 }
 
 .dark {
@@ -62,9 +64,13 @@
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0.005 265);
   --sidebar-accent-foreground: oklch(0.985 0 0);
+  --studio-violet: #a78bfa;
+  --studio-cyan: #22d3ee;
 }
 
 @theme inline {
+  --color-studio-violet: var(--studio-violet);
+  --color-studio-cyan: var(--studio-cyan);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -137,5 +143,24 @@
 
   .admin-menu-item {
     @apply flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground;
+  }
+}
+
+/* Voice Agent Studio primitives. Keep the existing semantic color tokens. */
+@layer components {
+  .studio-panel {
+    @apply rounded-2xl border border-border/70 bg-card shadow-sm;
+  }
+
+  .studio-logo {
+    color: white;
+    background: linear-gradient(135deg, #7c3aed, #0891b2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-panel, .studio-logo {
+    transition: none !important;
+    animation: none !important;
   }
 }
