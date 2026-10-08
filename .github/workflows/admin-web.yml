@@ -1,0 +1,33 @@
+name: admin-web
+
+on:
+  push:
+    paths:
+      - 'apps/admin-web/**'
+      - '.github/workflows/admin-web.yml'
+  pull_request:
+    paths:
+      - 'apps/admin-web/**'
+      - '.github/workflows/admin-web.yml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/admin-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/admin-web/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --progress=false
+      - name: Typecheck Vue and TypeScript
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build production web
+        run: npm run build
