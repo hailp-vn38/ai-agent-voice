@@ -6,14 +6,14 @@ use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 use url::Url;
 use voice_agent_server::{
-    app::{BootstrapError, bootstrap_with_providers},
+    app::{BootstrapError, bootstrap_with_providers, bootstrap_with_providers_and_secret_resolver},
     config::{
         AdminApiConfig, AppConfig, AudioConfig, AuthConfig, BargeInConfig, DatabaseConfig,
         DeploymentConfig, LimitsConfig, LlmConfig, McpConfig, ProviderDefaultsConfig,
         ProvidersConfig, RuntimeConfig, ServerConfig, SpeechOutputConfig, TtsConfig, VisionConfig,
         WebsocketConfig, WorkersConfig,
     },
-    database::Database,
+    database::{Database, secrets::{SecretRef, SecretResolveError, SecretResolver, SecretValue}},
     providers::ProviderSet,
 };
 
@@ -190,6 +190,29 @@ async fn serve(url: String) -> (String, JoinHandle<()>) {
     (format!("http://{address}"), task)
 }
 
+/// A deterministic resolver exercises a valid deployment-owned secret without
+/// mutating process environment variables from parallel async tests.
+struct TestSecrets;
+impl SecretResolver for TestSecrets {
+    fn resolve(&self, _: &SecretRef) -> Result<SecretValue, SecretResolveError> {
+        Ok(SecretValue::new("test-key".into()))
+    }
+}
+
+async fn serve_with_credentials(url: String) -> (String, JoinHandle<()>) {
+    let router = bootstrap_with_providers_and_secret_resolver(
+        config(url),
+        Arc::new(ProviderSet::unavailable()),
+        Arc::new(TestSecrets),
+    )
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), task)
+}
+
 async fn provider_view(base: &str, key: &str) -> serde_json::Value {
     Client::new()
         .get(format!("{base}/api/admin/providers/{key}"))
@@ -350,7 +373,7 @@ async fn an_optional_non_default_provider_that_loads_becomes_a_usable_candidate(
     assign(&pool, agent, template, false, true).await;
     bind_llm(&pool, template, provider).await;
 
-    let (base, task) = serve(url).await;
+    let (base, task) = serve_with_credentials(url).await;
     let view = provider_view(&base, "db-llm").await;
     assert_eq!(
         view["runtime_status"], "loaded",
@@ -370,7 +393,7 @@ async fn a_loaded_database_provider_reports_desired_versus_loaded_revision() {
     assign(&pool, agent, template, true, true).await;
     bind_llm(&pool, template, provider).await;
 
-    let (base, task) = serve(url).await;
+    let (base, task) = serve_with_credentials(url).await;
     let loaded = provider_view(&base, "db-llm").await;
     assert_eq!(loaded["runtime_status"], "loaded");
     assert_eq!(loaded["runtime_matches_desired"], true);
