@@ -187,6 +187,13 @@ pub struct SessionActor {
     required_text: Option<String>,
     /// The speaker diagnostic of the active Required turn, held until the ASR final resolves.
     required_diagnostic: Option<ObserveDiagnostic>,
+    /// ASR text waits for a best-effort speaker result for no more than 750 ms.
+    identification_text: Option<String>,
+    identification_diagnostic: Option<ObserveDiagnostic>,
+    identification_deadline: Option<std::time::Instant>,
+    identification_finished: bool,
+    /// Ephemeral display name consumed exactly once while constructing the LLM prompt.
+    speaker_name_for_turn: Option<String>,
     /// Where the detached speaker scoring task reports the diagnostic for the Required gate.
     gate_tx: mpsc::UnboundedSender<ObserveDiagnostic>,
     gate_rx: mpsc::UnboundedReceiver<ObserveDiagnostic>,
