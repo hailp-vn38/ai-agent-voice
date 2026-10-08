@@ -13,9 +13,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{ edit: [device: Device]; delete: [device: Device] }>()
 
-const { t, deviceStatusLabel, formatDateTime, formatRelative } = useI18n()
+const { t, formatDateTime, formatRelative } = useI18n()
 
-const online = computed(() => props.device.status === 'online')
+// The current Device read-model maps admission enabled onto the legacy online string.
+const admissionEnabled = computed(() => props.device.status === 'online')
 const isOverride = computed(() => props.device.templateId !== undefined)
 const relativeLastSeen = computed(() => formatRelative(props.device.lastSeen))
 const absoluteLastSeen = computed(() => formatDateTime(props.device.lastSeen))
@@ -26,14 +27,16 @@ const absoluteLastSeen = computed(() => formatDateTime(props.device.lastSeen))
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
       <span
         class="size-2 shrink-0 rounded-full"
-        :class="online ? 'bg-success' : 'bg-muted-foreground/40'"
+        :class="admissionEnabled ? 'bg-success' : 'bg-muted-foreground/40'"
         aria-hidden="true"
       />
       <p class="min-w-0 flex-1 truncate text-sm font-medium">{{ device.name }}</p>
       <p class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <span>{{ deviceStatusLabel(device.status) }}</span>
-        <span aria-hidden="true">·</span>
-        <span :title="absoluteLastSeen">{{ relativeLastSeen }}</span>
+        <span>{{ admissionEnabled ? t('devices.enabled') : t('devices.disabled') }}</span>
+        <template v-if="device.lastSeen">
+          <span aria-hidden="true">·</span>
+          <span :title="absoluteLastSeen">{{ relativeLastSeen }}</span>
+        </template>
       </p>
       <ActionMenu class="shrink-0" :label="t('common.actions')" panel-width="11rem">
         <MenuItem @select="emit('edit', device)">{{ t('agentDevices.edit') }}</MenuItem>
