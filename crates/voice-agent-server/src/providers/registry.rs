@@ -88,9 +88,6 @@ impl ProviderAdapterRegistry {
 }
 
 static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
-    super::speaker::descriptor::REGISTRATION,
-    #[cfg(feature = "qualification-providers")]
-    super::speaker::descriptor::QUALIFICATION_REGISTRATION,
     #[cfg(feature = "qualification-providers")]
     super::vad::qualification::REGISTRATION,
     #[cfg(feature = "qualification-providers")]
