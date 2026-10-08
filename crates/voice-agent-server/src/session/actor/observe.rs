@@ -37,6 +37,11 @@ impl SessionActor {
     /// can be attributed and dropped if the session moved on. The PCM is drained here: whatever was
     /// retained belongs to exactly this boundary.
     pub(super) fn observe_utterance_boundary(&mut self) {
+        self.identification_text = None;
+        self.identification_diagnostic = None;
+        self.identification_deadline = None;
+        self.identification_finished = false;
+        self.speaker_name_for_turn = None;
         let Some(observe) = self.speaker_observe.as_ref().cloned() else {
             return;
         };
