@@ -2059,7 +2059,7 @@
                   }
                 ],
                 "url": "{{base_url}}/api/admin/speakers/{{speaker_key}}",
-                "description": "Conditional hard delete. Requires If-Match: \"<speaker revision>\". Returns 204, or 409 speaker_in_use while a voiceprint, agent candidate or open draft still references the speaker.",
+                "description": "Conditional hard delete. Requires If-Match: \"<speaker revision>\". Deletes the profile and its owned voiceprints and captures. Returns 204, or 409 speaker_in_use while an agent candidate still references the speaker.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [

@@ -234,7 +234,7 @@ async fn transport(request: Request, next: Next) -> Response {
     if is_mutation {
         let max_body = if request.uri().path().ends_with("/test/asr") {
             MAX_ASR_TEST_BODY
-        } else if request.uri().path().ends_with("/speaker-captures") {
+        } else if request.uri().path().ends_with("/speakers/captures") {
             MAX_QUICK_CAPTURE_BODY
         } else if request.uri().path().contains("/enrollments/")
             && request.uri().path().contains("/samples/")

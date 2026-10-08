@@ -24,6 +24,10 @@ bump ngầm của owner, hay history purge ngầm. History vẫn chỉ bị xóa
   không chặn xóa: FK cascade chỉ xóa row liên kết của Agent, còn Template global vẫn giữ nguyên và
   tiếp tục dùng được bởi Agent khác.
 - Device bị chặn bởi History Message.
+- Speaker bị chặn bởi Agent Speaker Candidate. Sau khi unlink khỏi mọi Agent, xóa Speaker
+  dọn voiceprint và dữ liệu enrollment thuộc hồ sơ trong cùng transaction; đây không phải
+  cascade-unlink Agent. Xóa cũng publish Speaker Catalog revision và invalidate session đã
+  pin Speaker. `voiceprint/purge` vẫn là thao tác riêng để xóa mẫu mà giữ hồ sơ.
 
 `DELETE /api/admin/agents/{key}/mcp-bindings/{server_key}` là unlink tường minh; mutation
 increment revision của Agent và audit action `unlink_mcp_binding`.

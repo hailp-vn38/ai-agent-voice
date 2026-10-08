@@ -27,9 +27,9 @@ impl SpeakerProvider for TestEmbedding {
     }
 }
 
-fn wav() -> Vec<u8> {
-    // 5 seconds at 16kHz, mono PCM16 — no raw sample is persisted after capture.
-    let len = 16_000 * 5;
+fn wav(seconds: usize) -> Vec<u8> {
+    // Mono PCM16 at 16kHz — no raw sample is persisted after capture.
+    let len = 16_000 * seconds;
     let data_bytes = (len * 2) as u32;
     let mut out = Vec::with_capacity(44 + len * 2);
     out.extend_from_slice(b"RIFF");
@@ -51,7 +51,7 @@ fn wav() -> Vec<u8> {
     out
 }
 
-async fn harness() -> (String, tokio::task::JoinHandle<()>) {
+async fn harness() -> (String, tokio::task::JoinHandle<()>, sqlx::SqlitePool) {
     let db_path = std::env::temp_dir().join(format!("speaker-builtin-{}.db", uuid::Uuid::new_v4()));
     let path = std::env::temp_dir().join(format!("speaker-builtin-{}.toml", uuid::Uuid::new_v4()));
     let config_file = format!(
@@ -81,6 +81,7 @@ max_window_ms = 6000
     let config = AppConfig::parse_and_resolve(&path).unwrap();
     fs::remove_file(&path).unwrap();
     let db = Database::connect(&config.database).await.unwrap();
+    let pool = db.pool().clone();
     let mut state = AppState::from_provider_set_with_database(
         config,
         Arc::new(ProviderSet::unavailable()),
@@ -96,12 +97,12 @@ max_window_ms = 6000
             .await
             .unwrap();
     });
-    (base, handle)
+    (base, handle, pool)
 }
 
 #[tokio::test]
 async fn single_capture_registers_and_reenrolls_without_a_provider() {
-    let (base, task) = harness().await;
+    let (base, task, pool) = harness().await;
     let client = Client::new();
     let summary: Value = client
         .get(format!("{base}/api/admin/speaker-recognition"))
@@ -119,7 +120,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
         .post(format!("{base}/api/admin/speakers/captures"))
         .bearer_auth(TOKEN)
         .header("content-type", "audio/wav")
-        .body(wav())
+        .body(wav(5))
         .send()
         .await
         .unwrap();
@@ -196,7 +197,7 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
         .post(format!("{base}/api/admin/speakers/captures"))
         .bearer_auth(TOKEN)
         .header("content-type", "audio/wav")
-        .body(wav())
+        .body(wav(5))
         .send()
         .await
         .unwrap();
@@ -212,12 +213,103 @@ async fn single_capture_registers_and_reenrolls_without_a_provider() {
         .await
         .unwrap();
     assert_eq!(updated.status(), StatusCode::OK);
+    let updated: Value = updated.json().await.unwrap();
+    let revision = updated["speaker"]["revision"].as_i64().unwrap();
+    let speaker_url = format!("{base}/api/admin/speakers/{key}");
+    let blocked = client
+        .delete(&speaker_url)
+        .bearer_auth(TOKEN)
+        .header("if-match", format!("\"{revision}\""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        blocked.json::<Value>().await.unwrap()["error"]["code"],
+        "speaker_in_use"
+    );
+
+    let unlinked = client
+        .delete(format!("{base}/api/admin/agents/home/speakers/{key}"))
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"2\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unlinked.status(), StatusCode::OK);
+
+    let stale = client
+        .delete(&speaker_url)
+        .bearer_auth(TOKEN)
+        .header("if-match", "\"1\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        stale.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
+
+    let catalog_revision: i64 =
+        sqlx::query_scalar("SELECT revision FROM speaker_catalog WHERE id=1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let deleted = client
+        .delete(&speaker_url)
+        .bearer_auth(TOKEN)
+        .header("if-match", format!("\"{revision}\""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM speaker_voiceprints) + (SELECT COUNT(*) FROM speaker_quick_captures)",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(remaining, 0);
+    let next_catalog_revision: i64 =
+        sqlx::query_scalar("SELECT revision FROM speaker_catalog WHERE id=1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(next_catalog_revision, catalog_revision + 1);
+
+    assert_eq!(
+        client
+            .get(&speaker_url)
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // A retry of either consumed capture must never recreate a deleted Speaker.
+    for capture_id in [
+        captured["capture_id"].clone(),
+        second_capture["capture_id"].clone(),
+    ] {
+        let retry = client
+            .post(format!("{base}/api/admin/speakers/from-capture"))
+            .bearer_auth(TOKEN)
+            .json(&serde_json::json!({"capture_id": capture_id, "name": "Owner"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            retry.json::<Value>().await.unwrap()["error"]["code"],
+            "capture_not_found"
+        );
+    }
     task.abort();
 }
 
 #[tokio::test]
 async fn required_authentication_and_template_provider_api_are_not_available() {
-    let (base, task) = harness().await;
+    let (base, task, _) = harness().await;
     let client = Client::new();
     client
         .post(format!("{base}/api/admin/agents"))
@@ -253,5 +345,37 @@ async fn required_authentication_and_template_provider_api_are_not_available() {
         .await
         .unwrap();
     assert_eq!(reload.status(), StatusCode::NOT_FOUND);
+    task.abort();
+}
+
+#[tokio::test]
+async fn capture_accepts_wav_above_json_limit_but_enforces_audio_limit() {
+    let (base, task, _) = harness().await;
+    let client = Client::new();
+    let audio = wav(9);
+    assert!(audio.len() > 256 * 1024);
+    let captured = client
+        .post(format!("{base}/api/admin/speakers/captures"))
+        .bearer_auth(TOKEN)
+        .header("content-type", "audio/wav")
+        .body(audio)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(captured.status(), StatusCode::CREATED);
+
+    let oversized = client
+        .post(format!("{base}/api/admin/speakers/captures"))
+        .bearer_auth(TOKEN)
+        .header("content-type", "audio/wav")
+        .body(vec![0; 512 * 1024 + 1])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        oversized.json::<Value>().await.unwrap()["error"]["code"],
+        "request_too_large"
+    );
     task.abort();
 }

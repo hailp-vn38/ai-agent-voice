@@ -468,7 +468,7 @@ pub(super) async fn patch(
     }
 }
 
-/// `DELETE /speakers/{key}` — conditional hard delete; refused while referenced.
+/// `DELETE /speakers/{key}` — remove profile and owned voiceprints after unlinking Agents.
 pub(super) async fn delete(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -501,39 +501,46 @@ pub(super) async fn delete(
         .await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(cause) => return sql_error(&request, &cause),
+    };
     let in_use: i64 = match sqlx::query_scalar(
-        "SELECT (SELECT COUNT(*) FROM speaker_voiceprints WHERE speaker_id=?)+(SELECT COUNT(*) FROM agent_speaker_candidates WHERE speaker_id=?)",
+        "SELECT COUNT(*) FROM agent_speaker_candidates WHERE speaker_id=?",
     )
     .bind(old.id)
-    .bind(old.id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     {
         Ok(value) => value,
-        Err(error_value) => return sql_error(&request, &error_value),
+        Err(cause) => return sql_error(&request, &cause),
     };
     if in_use > 0 {
         return error(&request, StatusCode::CONFLICT, "speaker_in_use");
     }
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
+    // Committed captures require a non-null speaker_id; remove them before the FK sets it null.
+    if let Err(cause) = sqlx::query("DELETE FROM speaker_quick_captures WHERE speaker_id=?")
+        .bind(old.id)
+        .execute(&mut *tx)
+        .await
+    {
+        return sql_error(&request, &cause);
+    }
     let result = sqlx::query("DELETE FROM speakers WHERE id=? AND revision=?")
         .bind(old.id)
         .bind(expected)
         .execute(&mut *tx)
         .await;
-    let deleted = matches!(result, Ok(outcome) if outcome.rows_affected() == 1);
+    let deleted = match result {
+        Ok(outcome) => outcome.rows_affected() == 1,
+        Err(cause) => return sql_error(&request, &cause),
+    };
     if !deleted {
         let _ = tx.rollback().await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
+    }
+    if let Err(cause) = publish_catalog_revision(&mut tx).await {
+        return sql_error(&request, &cause);
     }
     if audit(
         &mut *tx,
@@ -555,6 +562,9 @@ pub(super) async fn delete(
             StatusCode::SERVICE_UNAVAILABLE,
             "database_unavailable",
         );
+    }
+    if let Some(security) = security(&state) {
+        security.invalidate_speaker(old.id);
     }
     StatusCode::NO_CONTENT.into_response()
 }

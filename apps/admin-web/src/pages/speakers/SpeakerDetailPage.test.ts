@@ -74,6 +74,18 @@ describe('SpeakerDetailPage', () => {
     wrapper.unmount()
   })
 
+  it('shows the speaker when the non-critical recognition summary is still loading', async () => {
+    vi.mocked(speakersApi.summary).mockImplementation(() => new Promise(() => {}))
+
+    const wrapper = shallowMount(SpeakerDetailPage, {
+      global: { stubs: { RouterLink: true } },
+    })
+
+    await flushPromises()
+    expect(wrapper.text()).toContain('spk_a')
+    wrapper.unmount()
+  })
+
   it('opens the edit dialog from the card query and reloads full data after PATCH', async () => {
     route.query.edit = '1'
     const wrapper = shallowMount(SpeakerDetailPage, {

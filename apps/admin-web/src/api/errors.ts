@@ -46,7 +46,7 @@ export function formatApiError(error: unknown): string {
     speaker_not_found: 'Không tìm thấy người nói.',
     speaker_key_conflict: 'Đã tồn tại người nói với khoá này.',
     speaker_quota_exceeded: 'Đã đạt giới hạn số người nói.',
-    speaker_in_use: 'Người nói vẫn còn voiceprint, ứng viên agent hoặc bản nháp nên chưa thể xoá.',
+    speaker_in_use: 'Người nói vẫn còn liên kết với agent. Hãy gỡ khỏi tất cả agent trước khi xoá.',
     enrollment_in_progress: 'Người nói đang có một bản nháp ghi danh mở.',
     enrollment_quota_exceeded: 'Đã đạt giới hạn số bản nháp ghi danh đang mở.',
     enrollment_expired: 'Bản nháp ghi danh đã hết hạn.',
