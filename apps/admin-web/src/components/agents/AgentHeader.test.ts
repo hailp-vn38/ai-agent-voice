@@ -37,8 +37,10 @@ describe('AgentHeader option A', () => {
     expect(wrapper.get('h1').text()).toBe('home')
     expect(wrapper.text()).toContain(agent.description)
     expect(wrapper.find('svg[viewBox="0 0 48 48"]').exists()).toBe(true)
-    expect(wrapper.get('dl').text()).toContain('2 templates')
-    expect(wrapper.get('dl').text()).toContain('1 device')
+    expect(wrapper.get('[data-agent-metadata]').text()).toContain('2 templates')
+    expect(wrapper.get('[data-agent-metadata]').text()).toContain('1 device')
+    expect(wrapper.get('[data-agent-header]').classes()).toContain('py-3')
+    expect(wrapper.get('[data-agent-header]').find('.border-t').exists()).toBe(false)
   })
 
   it('preserves all existing Agent Detail actions', async () => {
@@ -55,6 +57,7 @@ describe('AgentHeader option A', () => {
   it('wraps long names and shows a Voice AI fallback when description is empty', () => {
     const wrapper = render({ ...agent, name: 'Long Agent '.repeat(15), description: '' })
     expect(wrapper.get('h1').classes()).toContain('break-words')
+    expect(wrapper.get('h1').classes()).toContain('line-clamp-2')
     expect(wrapper.text()).toContain('Voice AI Agent')
   })
 })
