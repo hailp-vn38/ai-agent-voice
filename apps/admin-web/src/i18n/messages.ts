@@ -576,7 +576,7 @@ export const en = {
 export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
-  'app.brand': 'Voice Agent',
+  'app.brand': 'Voice Agent Studio',
   'app.subtitle': 'Build · Test · Operate',
   'app.documentTitle': '{page} - Voice Agent',
   'app.theme': 'Giao diện',
