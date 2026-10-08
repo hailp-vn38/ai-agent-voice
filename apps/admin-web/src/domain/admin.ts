@@ -1,5 +1,5 @@
-export const providerTypes = ['vad', 'asr', 'llm', 'tts', 'speaker', 'vision'] as const
-export type ProviderType = (typeof providerTypes)[number]
+export const providerTypes = ['vad', 'asr', 'llm', 'tts', 'vision'] as const
+export type ProviderType = (typeof providerTypes)[number] | 'speaker' // legacy deserialization only
 
 export type ProviderStatus = 'ready' | 'disabled' | 'error'
 export type DeviceStatus = 'online' | 'offline'
