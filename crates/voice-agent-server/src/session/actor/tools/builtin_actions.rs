@@ -215,7 +215,6 @@ impl SessionActor {
             .managed_switch_boundary
             .take()
             .expect("prepared boundary checked");
-        let template_key = prepared.configuration.template_key().to_owned();
         if install_candidate_runtimes(self, &prepared.runtimes).is_err() {
             self.complete_recognition();
             return;

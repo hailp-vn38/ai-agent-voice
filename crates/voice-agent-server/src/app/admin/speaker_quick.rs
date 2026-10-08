@@ -515,15 +515,6 @@ pub(super) async fn replace_voiceprint(
     }
 }
 
-pub(super) async fn cleanup_expired_captures(pool: &SqlitePool) {
-    let time = now();
-    let _ = sqlx::query("DELETE FROM speaker_quick_captures WHERE (status='accepted' AND expires_at<=?) OR (status='committed' AND expires_at<=?)")
-        .bind(time)
-        .bind(time)
-        .execute(pool)
-        .await;
-}
-
 #[cfg(test)]
 mod tests {
     use sqlx::SqlitePool;

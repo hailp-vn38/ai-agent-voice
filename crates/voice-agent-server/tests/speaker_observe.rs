@@ -353,11 +353,10 @@ async fn observe_unavailable_runtime_does_not_block_core_path() {
     assert_eq!(actor.phase(), SessionPhase::Ready);
 }
 
-/// Ticket 15: one manual Required turn with the identity matching the locked candidate commits the
-/// transcript and locks the identity.
+/// A matching Observe turn reports its result without gating the transcript.
 #[tokio::test]
-async fn required_turn_verifies_and_commits() {
-    let (observe, _lease) = observe_with_policy(false, SpeakerPolicyMode::Required).await;
+async fn observe_turn_verifies_and_commits() {
+    let (observe, _lease) = observe_with_policy(false, SpeakerPolicyMode::Observe).await;
     let (control, mut messages) = mpsc::channel(8);
     let (audio, _) = mpsc::channel(1);
     let providers = providers();
@@ -379,15 +378,15 @@ async fn required_turn_verifies_and_commits() {
         .filter_map(|m| m.as_text())
         .map(|t| serde_json::from_str::<serde_json::Value>(t).unwrap())
         .find(|v| v["type"] == "speaker" && v["state"] != "verifying")
-        .expect("a required state frame");
+        .expect("an observe state frame");
     assert_eq!(speaker["state"], "verified");
     assert_eq!(actor.phase(), SessionPhase::Ready);
 }
 
-/// Ticket 15: a Required session refuses typed Detect without committing it.
+/// Observe never makes typed Detect an authentication boundary.
 #[tokio::test]
-async fn required_rejects_detect_without_audio() {
-    let (observe, _lease) = observe_with_policy(false, SpeakerPolicyMode::Required).await;
+async fn observe_accepts_detect_without_audio() {
+    let (observe, _lease) = observe_with_policy(false, SpeakerPolicyMode::Observe).await;
     let (control, mut messages) = mpsc::channel(8);
     let (audio, _) = mpsc::channel(1);
     let providers = providers();
@@ -411,7 +410,7 @@ async fn required_rejects_detect_without_audio() {
         if collected
             .iter()
             .filter_map(|m| m.as_text())
-            .any(|t| t.contains("\"denied\""))
+            .any(|t| t.contains("\"stt\""))
         {
             break;
         }
@@ -421,11 +420,10 @@ async fn required_rejects_detect_without_audio() {
         collected
             .iter()
             .filter_map(|m| m.as_text())
-            .any(|t| t.contains("\"denied\"")),
-        "expected a denied state frame"
+            .any(|t| t.contains("\"stt\"")),
+        "expected Detect text to reach the transcript"
     );
-    // Detect text never reached the transcript.
-    assert!(!collected.iter().any(is_stt_frame));
+    assert!(collected.iter().any(is_stt_frame));
 }
 
 /// Ticket 15: an `off` session is unaffected — Detect still commits.

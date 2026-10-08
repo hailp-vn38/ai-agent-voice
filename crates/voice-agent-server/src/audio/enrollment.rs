@@ -9,9 +9,6 @@ use std::io::Cursor;
 
 use super::PcmF32Mono;
 
-/// Pinned preprocessing the recorder must produce. Bumping this invalidates stored samples.
-pub const PREPROCESSING_CONTRACT: &str = "pcm16-mono16k-v1";
-
 /// Exact sample rate enrollment accepts.
 pub const SAMPLE_RATE_HZ: u32 = 16_000;
 /// Hard cap on decoded clip length; longer WAVs are refused before inference.
@@ -290,7 +287,8 @@ pub fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
 /// `None` when fewer than two vectors are supplied or any pair is incomputable (dimension
 /// mismatch / degenerate). The floor is the enrollment consistency signal: every recording must
 /// agree with every other one, not merely with the running mean.
-pub fn pairwise_min_cosine(vectors: &[Vec<f32>]) -> Option<f32> {
+#[cfg(test)]
+fn pairwise_min_cosine(vectors: &[Vec<f32>]) -> Option<f32> {
     if vectors.len() < 2 {
         return None;
     }
@@ -306,7 +304,8 @@ pub fn pairwise_min_cosine(vectors: &[Vec<f32>]) -> Option<f32> {
 /// Equal-weight centroid of normalized vectors, re-normalized to the unit sphere.
 ///
 /// `None` for an empty set, a dimension mismatch, or a degenerate mean (vectors that cancel).
-pub fn centroid(vectors: &[Vec<f32>]) -> Option<Vec<f32>> {
+#[cfg(test)]
+fn centroid(vectors: &[Vec<f32>]) -> Option<Vec<f32>> {
     let dims = vectors.first()?.len();
     if dims == 0 {
         return None;
@@ -322,28 +321,6 @@ pub fn centroid(vectors: &[Vec<f32>]) -> Option<Vec<f32>> {
     }
     normalize(&mut mean).then_some(mean)
 }
-
-/// Pinned preliminary calibration used while no deployment catalog is loaded.
-///
-/// Ticket 14 (ADR 0077 / ADR 0079) replaces this with the reloaded deployment catalog; until then
-/// a voiceprint is published with `browser_validation_status = passed`, i.e. "enrolled, not yet
-/// verified on an ESP32".
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Calibration {
-    /// Revision recorded alongside a validated voiceprint.
-    pub revision: &'static str,
-    /// Minimum cosine between the holdout and the sample centroid for a pass.
-    pub accept_threshold: f32,
-    /// Minimum pairwise cosine across registration samples.
-    pub consistency_threshold: f32,
-}
-
-// ponytail: fixed pilot thresholds; ticket 14 swaps in the reloaded deployment catalog.
-pub const PRELIMINARY_CALIBRATION: Calibration = Calibration {
-    revision: "vi_esp32_pilot_v1",
-    accept_threshold: 0.45,
-    consistency_threshold: 0.50,
-};
 
 #[cfg(test)]
 mod tests {

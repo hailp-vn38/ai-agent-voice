@@ -106,23 +106,6 @@ impl TemplateSwitchCatalog {
         &self.candidates
     }
 
-    /// The lease that keeps a specific selected speaker runtime resident, if this session holds it.
-    /// Observe borrows the session's existing lease rather than acquiring a second one.
-    pub(crate) fn lease_for_speaker(
-        &self,
-        runtime: &Arc<crate::workers::SpeakerRuntime>,
-    ) -> Option<ResourceLease> {
-        self.active_leases
-            .iter()
-            .find(|lease| {
-                lease
-                    .runtimes()
-                    .map(|catalog| catalog.holds_speaker(runtime))
-                    .unwrap_or(false)
-            })
-            .cloned()
-    }
-
     /// Membership is the first authorization rule for a switch: an assignment this session never
     /// admitted, or one it excluded as invalid, simply is not here. Ticket 17 adds the locked
     /// Speaker's target-Template grant on top, enforced by the actor's switch authority.
