@@ -24,21 +24,8 @@ impl SessionActor {
         self.drain_provider_events();
     }
 
-    pub(super) fn drain_device_tools_completions(&mut self) {
-        while let Ok(completion) = self.device_tools_rx.try_recv() {
-            self.apply_device_tools_discovery(
-                completion.discovered,
-                &completion.contracts,
-                completion.participating,
-            );
-        }
-    }
-
     fn drain_provider_events(&mut self) {
         self.expire_mcp_requests();
-        // Device discovery completes out of band; applying it only ever changes the catalog, so it
-        // needs no ordering relative to the call outcomes below.
-        self.drain_device_tools_completions();
         // External Tool Calls complete out of band, so their results are collected before anything
         // else: applying one can start the next call of the round, or the next round's LLM request,
         // and both belong in this same drain rather than in the next tick.

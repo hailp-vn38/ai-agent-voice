@@ -288,44 +288,18 @@ fn validate_capacity(config: &AppConfig) -> Result<(), ConfigError> {
         ));
     }
     validate_tool_rounds(&config.llm.tools)?;
-    if config.mcp.call_timeout_ms == 0
-        || config.mcp.discovery_timeout_ms == 0
-        || config
-            .mcp
-            .allowed_tools
-            .iter()
-            .any(|name| name.trim().is_empty())
-        || {
-            let mut names = std::collections::HashSet::new();
-            !config
-                .mcp
-                .allowed_tools
-                .iter()
-                .all(|name| names.insert(name))
-        }
-    {
-        return Err(ConfigError::Validation(
-            "MCP timeouts and allowlist must be valid".into(),
-        ));
-    }
-    if config
-        .mcp
-        .allowed_tools
-        .iter()
-        .any(|name| crate::tools::device_mcp::is_dangerous_tool(name))
-    {
-        return Err(ConfigError::Validation(
-            "MCP allowlist must not contain dangerous tools".into(),
-        ));
+    if config.mcp.call_timeout_ms == 0 || config.mcp.discovery_timeout_ms == 0 {
+        return Err(ConfigError::Validation("MCP timeouts must be valid".into()));
     }
     let mut policy_names = std::collections::HashSet::new();
-    if config.mcp.tool_policy.iter().any(|policy| {
-        policy.name.trim().is_empty()
-            || crate::tools::device_mcp::is_dangerous_tool(&policy.name)
-            || !policy_names.insert(&policy.name)
-    }) {
+    if config
+        .mcp
+        .tool_policy
+        .iter()
+        .any(|policy| policy.name.trim().is_empty() || !policy_names.insert(&policy.name))
+    {
         return Err(ConfigError::Validation(
-            "MCP tool policy names must be unique, non-empty, and non-dangerous".into(),
+            "MCP tool policy names must be unique and non-empty".into(),
         ));
     }
     let network = &config.mcp.external.network;

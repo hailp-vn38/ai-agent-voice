@@ -292,24 +292,13 @@ impl ExternalMcpClient {
     /// `budget` is what the caller's turn has left.  It bounds the wait for a call permit as well
     /// as the request itself, so a saturated server cannot spend time this turn does not have — and
     /// when the budget runs out before a permit exists, the request is never sent.
-    pub async fn call_tool(
-        &self,
-        limiter: &ExternalMcpCallLimiter,
-        tool: &super::registry::ResolvedExternalTool,
-        arguments: &Value,
-        budget: Duration,
-    ) -> Result<ExternalToolOutcome, ExternalMcpError> {
-        self.call_tool_guarded(limiter, tool, arguments, budget, None)
-            .await
-    }
-
     pub async fn call_tool_guarded(
         &self,
         limiter: &ExternalMcpCallLimiter,
         tool: &super::registry::ResolvedExternalTool,
         arguments: &Value,
         budget: Duration,
-        guard: Option<&crate::database::tool_security::ExternalToolGuard>,
+        guard: &crate::database::tool_security::ExternalToolGuard,
     ) -> Result<ExternalToolOutcome, ExternalMcpError> {
         // The permit is taken before the request exists.  A caller that runs out of budget waiting
         // sends nothing, which is its own observation and not a call.
@@ -330,14 +319,9 @@ impl ExternalMcpClient {
                 .as_object()
                 .cloned()
                 .ok_or(ExternalMcpError::ToolInvalidResponse)?;
-            let publication = match guard {
-                Some(guard) => Some(guard.database.tool_security.publication.read().await),
-                None => None,
-            };
-            if let Some(guard) = guard {
-                if !guard.allows(&self.server_key, &tool.original_name).await {
-                    return Err(ExternalMcpError::ToolUnavailable);
-                }
+            let publication = guard.database.tool_security.publication.read().await;
+            if !guard.allows(&self.server_key, &tool.original_name).await {
+                return Err(ExternalMcpError::ToolUnavailable);
             }
             let params =
                 CallToolRequestParams::new(tool.original_name.clone()).with_arguments(arguments);

@@ -1,6 +1,6 @@
 use super::*;
 use crate::tools::device_mcp::{
-    LlmVisibleTool, McpIncoming, McpOutgoing, parse_tools_page, reviewed_tools, visible_tools,
+    LlmVisibleTool, McpIncoming, McpOutgoing, parse_tools_page, visible_tools,
 };
 
 impl SessionActor {
@@ -79,92 +79,13 @@ impl SessionActor {
         );
     }
 
-    /// Ends one complete, validated `tools/list` walk successfully: copy the evidence, then choose
-    /// the session's LLM-visible set.
-    ///
-    /// The catalog is always closed to pending calls first, so a session never serves the previous
-    /// (or a partial) catalog while review runs.  A session under review re-derives it from the
-    /// admitted snapshot asynchronously; an unprotected session builds it synchronously.
+    /// Ends one complete, validated `tools/list` walk successfully.
     fn complete_tools_discovery(&mut self) {
         let discovered = std::mem::take(&mut self.mcp.discovered);
-        let Some(guard) = self.device_tools.guard.clone() else {
-            self.mcp.visible = visible_tools(discovered, &self.mcp.allowed_tools);
-            self.mcp.ready = true;
-            self.trace_visible_tools();
+        let Some(visible) = visible_tools(discovered) else {
+            self.mcp_discovery_failed();
             return;
         };
-        self.mcp.ready = false;
-        self.mcp.visible.clear();
-        let database = guard.database.clone();
-        let tx = self.device_tools_tx.clone();
-        let device = guard.device_id;
-        let agent = guard.agent_id;
-        let participating = guard.participating;
-        let session_id = self.session_id.clone();
-        tokio::spawn(async move {
-            let changed =
-                crate::database::device_tool_allowlist::observe(&database, device, &discovered)
-                    .await;
-            let (changed, conflicted) = changed.unwrap_or((false, false));
-            if changed && conflicted {
-                // A conflicting valid observation is not a new right: close the affected sessions.
-                database.tool_security.invalidate_device(device);
-            }
-            // Ticket 13: this complete walk is a member of the Device's open recovery batch, if any.
-            // A resolved batch adopts the agreed contract, so existing approvals no longer match and
-            // the affected sessions close rather than serve a superseded right.
-            if let Some(resolution) = crate::database::device_tool_recovery::record(
-                database.pool(),
-                device,
-                &session_id,
-                &discovered,
-            )
-            .await
-            .unwrap_or(None)
-                && resolution.state == crate::database::device_tool_recovery::BatchState::Reviewable
-                && resolution.changed
-            {
-                database.tool_security.invalidate_device(device);
-            }
-            let contracts =
-                crate::database::device_tool_allowlist::load_admitted(&database, agent, device)
-                    .await
-                    .map(|(_, contracts)| contracts)
-                    .unwrap_or_default();
-            let _ = tx
-                .send(DeviceToolsCompletion {
-                    discovered,
-                    contracts,
-                    participating,
-                })
-                .await;
-        });
-    }
-
-    /// Applies a completed async discovery.  `contracts` is the admitted snapshot that was current
-    /// when the walk's evidence was recorded; a concurrent removal reads here as a fingerprint
-    /// mismatch, so drift is denied rather than served.
-    pub(super) fn apply_device_tools_discovery(
-        &mut self,
-        discovered: Vec<DiscoveredTool>,
-        contracts: &std::collections::HashMap<String, String>,
-        participating: bool,
-    ) {
-        if !participating {
-            // Legacy behavior for an Agent that does not participate in review: the deployment's
-            // Device allowlist still gates what is published.
-            self.mcp.visible = visible_tools(discovered, &self.mcp.allowed_tools);
-            self.mcp.ready = true;
-            self.trace_visible_tools();
-            return;
-        }
-        let (visible, drift) = reviewed_tools(discovered, contracts);
-        if drift {
-            tracing::warn!(
-                event = "device_tool_contract_drift",
-                "Device tool contract drifted from the approved one; denying it"
-            );
-        }
         self.mcp.visible = visible;
         self.mcp.ready = true;
         self.trace_visible_tools();

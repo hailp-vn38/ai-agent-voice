@@ -128,17 +128,5 @@ impl Drop for SessionActor {
         self.vad_runtime.unregister_session(&self.session_id);
         self.llm_runtime.unregister_session(&self.session_id);
         self.retain_pipeline_until_cleanup();
-        // Ticket 13: a Session that drops while its Device has an open recovery batch can no longer
-        // contribute a complete observation, so fail the batch rather than leave it half-collected.
-        if let Some(guard) = self.device_tools.guard.clone()
-            && let Ok(handle) = tokio::runtime::Handle::try_current()
-        {
-            let database = guard.database.clone();
-            let device = guard.device_id;
-            handle.spawn(async move {
-                let _ =
-                    crate::database::device_tool_recovery::fail_open(database.pool(), device).await;
-            });
-        }
     }
 }

@@ -20,16 +20,8 @@ impl Database {
         agent: i64,
         desired: &[AdmittedMcpServer],
         resolved: &mut [ResolvedExternalMcp],
-    ) -> Result<Option<ExternalToolGuard>, sqlx::Error> {
+    ) -> Result<ExternalToolGuard, sqlx::Error> {
         let _publication = self.tool_security.publication.write().await;
-        let mode = sqlx::query_scalar::<_, String>(
-            "SELECT mode FROM agent_speaker_policies WHERE agent_id=?",
-        )
-        .bind(agent)
-        .fetch_optional(self.pool())
-        .await?
-        .unwrap_or_else(|| "off".into());
-        let participating = mode != "off";
         let mut contracts = HashMap::new();
         let mut ids = Vec::new();
         for server in resolved {
@@ -91,10 +83,10 @@ impl Database {
                     .bind(source.id).bind(&tool.original_name).bind(&tool.description).bind(tool.input_schema.to_string()).bind(&fingerprint).bind(source.revision).execute(&mut *tx).await?;
                 let allowed = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_external_tool_allowlist WHERE agent_id=? AND server_id=? AND original_name=? AND fingerprint=? AND allowed=1 AND sensitive=0")
                     .bind(agent).bind(source.id).bind(&tool.original_name).bind(&fingerprint).fetch_one(&mut *tx).await? == 1;
-                if !participating || allowed {
+                if allowed {
                     approved.push(tool.clone());
                 }
-                if participating && allowed {
+                if allowed {
                     contracts.insert(
                         (source.key.clone(), tool.original_name.clone()),
                         (source.id, fingerprint),
@@ -107,11 +99,11 @@ impl Database {
             }
             server.tools = Arc::from(approved);
         }
-        Ok(participating.then(|| ExternalToolGuard {
+        Ok(ExternalToolGuard {
             database: self.clone(),
             agent_id: agent,
             close: self.tool_security.register(agent, ids),
             contracts: Arc::new(contracts),
-        }))
+        })
     }
 }

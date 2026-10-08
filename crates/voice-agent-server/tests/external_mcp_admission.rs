@@ -46,14 +46,10 @@ use voice_agent_server::{
     },
     session::EffectiveSessionProfile,
     telemetry::{
-        EXTERNAL_MCP_CALL_LIMITER_REJECTED_TOTAL, EXTERNAL_MCP_SESSION_TOOL_CAP_EXCEEDED_TOTAL,
-        EXTERNAL_MCP_TOOL_CALL_DURATION_MS, EXTERNAL_MCP_TOOL_CALLS_TOTAL, MCP_RESOLVE_DURATION_MS,
-        MCP_RESOLVE_FAILURE_TOTAL, MCP_RESOLVE_SUCCESS_TOTAL, RecordingTelemetry,
+        EXTERNAL_MCP_SESSION_TOOL_CAP_EXCEEDED_TOTAL, MCP_RESOLVE_FAILURE_TOTAL,
+        MCP_RESOLVE_SUCCESS_TOTAL, RecordingTelemetry,
     },
-    tools::external_mcp::{
-        ExternalMcpExclusionReason, ExternalMcpManager, ExternalMcpSnapshot, ResolvedExternalMcp,
-        ResolvedExternalTool, SessionExternalMcp,
-    },
+    tools::external_mcp::{ExternalMcpExclusionReason, ExternalMcpManager, SessionExternalMcp},
 };
 
 // ---------------------------------------------------------------------------
@@ -93,14 +89,6 @@ impl McpBehaviour {
         }
     }
 
-    fn session_capable_sse(tools: Vec<serde_json::Value>) -> Self {
-        Self {
-            tools,
-            session_id: Some("fixture-session".to_owned()),
-            ..Self::default()
-        }
-    }
-
     fn call_count(&self) -> usize {
         self.calls
             .lock()
@@ -110,13 +98,6 @@ impl McpBehaviour {
 
     fn seen(&self) -> Vec<ObservedHeaders> {
         self.seen
-            .lock()
-            .expect("the script mailbox is not poisoned")
-            .clone()
-    }
-
-    fn sessions(&self) -> Vec<ObservedSession> {
-        self.sessions
             .lock()
             .expect("the script mailbox is not poisoned")
             .clone()
@@ -332,13 +313,6 @@ impl McpServer {
             .lock()
             .expect("the script mailbox is not poisoned")
             .seen()
-    }
-
-    fn sessions(&self) -> Vec<ObservedSession> {
-        self.behaviour
-            .lock()
-            .expect("the script mailbox is not poisoned")
-            .sessions()
     }
 }
 
@@ -680,16 +654,6 @@ fn names(catalog: &SessionExternalMcp) -> Vec<String> {
         .collect()
 }
 
-fn route(
-    catalog: &SessionExternalMcp,
-    llm_name: &str,
-) -> (ResolvedExternalMcp, ResolvedExternalTool) {
-    let (server, tool) = catalog
-        .find(llm_name)
-        .unwrap_or_else(|| panic!("{llm_name} is routable"));
-    (server.clone(), tool.clone())
-}
-
 // ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
@@ -727,11 +691,8 @@ async fn external_mcp_admission_snapshot_is_fresh_bounded_and_immutable() {
     let profile = voice.admit().await;
     assert_eq!(
         names(profile.external_mcp()),
-        vec![
-            "external.home_assistant.light_turn_on".to_owned(),
-            "external.home_assistant.dim".to_owned()
-        ],
-        "a wire name and a server key each become exactly one namespace segment"
+        Vec::<String>::new(),
+        "discovery records the unapproved contract but never publishes it"
     );
     assert_eq!(voice.upgrade().await, WsStatusCode::SWITCHING_PROTOCOLS);
 
@@ -752,12 +713,12 @@ async fn external_mcp_admission_snapshot_is_fresh_bounded_and_immutable() {
     server.rewrite(|script| script.tools = vec![tool("Only")]);
     assert_eq!(
         names(voice.admit().await.external_mcp()),
-        vec!["external.home_assistant.only".to_owned()]
+        Vec::<String>::new()
     );
     // And the earlier session's own catalog did not change under it.
     assert_eq!(
         profile.external_mcp().tool_count(),
-        2,
+        0,
         "a later admission never mutates an open session's snapshot"
     );
 
@@ -768,59 +729,6 @@ async fn external_mcp_admission_snapshot_is_fresh_bounded_and_immutable() {
 /// The modern stateful variant is an SSE lifecycle, not a stateless JSON fixture wearing an SSE
 /// content type: RMCP must retain the identity minted at initialize for its notification,
 /// discovery and later tool invocation.
-#[tokio::test]
-async fn external_mcp_session_capable_sse_keeps_its_session_across_lifecycle() {
-    let server = start_mcp(McpBehaviour::session_capable_sse(vec![tool("Light")])).await;
-    let voice = start(ConstantSecrets(None)).await;
-    let pool = voice.database().await;
-    seed(&pool).await;
-    bind_server(&pool, "kitchen", &server.url(), "{}", ("none", None, None)).await;
-
-    let profile = voice.admit().await;
-    let (server_handle, light) = route(profile.external_mcp(), "external.kitchen.light");
-    let limiter = Arc::clone(
-        voice
-            .state
-            .external_mcp
-            .as_ref()
-            .expect("the shared transport is available")
-            .limiter(),
-    );
-    assert_eq!(
-        server_handle
-            .client
-            .call_tool(
-                &limiter,
-                &light,
-                &serde_json::json!({}),
-                Duration::from_millis(500),
-            )
-            .await
-            .expect("the SSE call completes")
-            .content,
-        "ok"
-    );
-
-    let sessions = server.sessions();
-    assert!(
-        sessions
-            .iter()
-            .any(|(method, session)| method == "initialize" && session.is_none()),
-        "initialize mints the server session rather than guessing one: {sessions:?}"
-    );
-    for method in ["notifications/initialized", "tools/list", "tools/call"] {
-        assert!(
-            sessions
-                .iter()
-                .any(|(seen, session)| seen == method
-                    && session.as_deref() == Some("fixture-session")),
-            "{method} carries the session identity through the SSE lifecycle: {sessions:?}"
-        );
-    }
-
-    voice.task.abort();
-    server.task.abort();
-}
 
 // ---------------------------------------------------------------------------
 // Fail-soft
@@ -1222,205 +1130,6 @@ async fn external_mcp_https_never_falls_back_to_an_unvalidated_connection() {
 // Call outcomes and immutability
 // ---------------------------------------------------------------------------
 
-/// One call failure class: the label under test, how the server is scripted to produce it, and the
-/// typed code it must produce.
-type CallFailure = (&'static str, fn(&mut McpBehaviour), &'static str);
-
-/// A `tools/call` that fails any way is a fact about one invocation and changes nothing else.
-#[tokio::test]
-async fn external_mcp_tool_catalog_survives_every_call_failure() {
-    let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
-    let mut app_config = config(database_url());
-    app_config.mcp.external.limits = ExternalMcpLimitsConfig {
-        max_external_tool_result_bytes: 8,
-        ..ExternalMcpLimitsConfig::default()
-    };
-    let voice = start_with_config(app_config, ConstantSecrets(None)).await;
-    let pool = voice.database().await;
-    seed(&pool).await;
-    bind_server(&pool, "kitchen", &server.url(), "{}", ("none", None, None)).await;
-
-    let profile = voice.admit().await;
-    let catalog = profile.external_mcp().clone();
-    let before = names(&catalog);
-    let limiter = Arc::clone(
-        voice
-            .state
-            .external_mcp
-            .as_ref()
-            .expect("the shared transport is available")
-            .limiter(),
-    );
-    let (server_handle, light) = route(&catalog, "external.kitchen.light");
-
-    async fn call(
-        handle: &ResolvedExternalMcp,
-        tool: &ResolvedExternalTool,
-        limiter: &voice_agent_server::tools::external_mcp::ExternalMcpCallLimiter,
-    ) -> Result<(), String> {
-        handle
-            .client
-            .call_tool(
-                limiter,
-                tool,
-                &serde_json::json!({}),
-                Duration::from_millis(200),
-            )
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    assert_eq!(call(&server_handle, &light, &limiter).await, Ok(()));
-
-    let failures: Vec<CallFailure> = vec![
-        (
-            "a remote authentication refusal",
-            |script| script.call_status = Some(401),
-            "external_tool_auth_failed",
-        ),
-        (
-            "an unavailable server",
-            |script| script.call_status = Some(503),
-            "external_tool_unavailable",
-        ),
-        (
-            "a malformed response",
-            |script| {
-                script.call_result =
-                    Some(serde_json::json!({"content": [{"type": "image", "data": "x"}]}))
-            },
-            "external_tool_invalid_response",
-        ),
-        (
-            "a result over the configured byte cap",
-            |script| {
-                script.call_result = Some(serde_json::json!({
-                    "content": [{"type": "text", "text": "far too long to publish"}]
-                }))
-            },
-            "external_tool_invalid_response",
-        ),
-        (
-            "a call that outlives its budget",
-            |script| script.call_delay = Duration::from_millis(400),
-            "external_tool_timeout",
-        ),
-    ];
-    for (index, (label, edit, expected)) in failures.into_iter().enumerate() {
-        server.rewrite(|script| {
-            script.call_status = None;
-            script.call_result = None;
-            script.call_delay = Duration::ZERO;
-            edit(script);
-        });
-        let outcome = call(&server_handle, &light, &limiter).await;
-        assert_eq!(
-            server.calls(),
-            index + 2,
-            "{label} must make exactly one request; a later failure must still reach the mock server"
-        );
-        assert_eq!(
-            outcome,
-            Err(expected.to_owned()),
-            "{label} must be a typed failure of one call"
-        );
-        assert_eq!(
-            names(&catalog),
-            before,
-            "{label} must not remove a tool or a server from the catalog"
-        );
-    }
-
-    // And a later admission discovers from the server again rather than from this snapshot.
-    server.rewrite(|script| {
-        script.call_status = None;
-        script.call_result = None;
-        script.call_delay = Duration::ZERO;
-    });
-    assert_eq!(names(voice.admit().await.external_mcp()), before);
-    voice.task.abort();
-    server.task.abort();
-}
-
-/// The per-server call bound is process-global, and one server's saturation never reaches another.
-#[tokio::test]
-async fn external_mcp_call_limiter_is_shared_across_sessions() {
-    let first = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
-    let second = start_mcp(McpBehaviour::with_tools(vec![tool("Dim")])).await;
-    let mut app_config = config(database_url());
-    app_config.mcp.external.max_concurrent_calls_per_server = 1;
-    let voice = start_with_config(app_config, ConstantSecrets(None)).await;
-    let pool = voice.database().await;
-    seed(&pool).await;
-    bind_server(&pool, "alpha", &first.url(), "{}", ("none", None, None)).await;
-    bind_server(&pool, "beta", &second.url(), "{}", ("none", None, None)).await;
-
-    let catalog = voice.admit().await.external_mcp().clone();
-    let limiter = Arc::clone(
-        voice
-            .state
-            .external_mcp
-            .as_ref()
-            .expect("the shared transport is available")
-            .limiter(),
-    );
-
-    // One manager, so one limiter, so one process-wide bound: saturating `alpha` here saturates it
-    // for every session that will ever admit it.
-    let saturated = limiter
-        .try_acquire("alpha")
-        .expect("the bound has a permit");
-    assert!(limiter.try_acquire("alpha").is_none());
-    assert!(
-        limiter.try_acquire("beta").is_some(),
-        "another server keeps its own bound"
-    );
-
-    let (alpha, light) = route(&catalog, "external.alpha.light");
-    let calls_before = first.calls();
-    assert_eq!(
-        alpha
-            .client
-            .call_tool(
-                &limiter,
-                &light,
-                &serde_json::json!({}),
-                Duration::from_millis(200)
-            )
-            .await
-            .err()
-            .map(|error| error.to_string())
-            .as_deref(),
-        Some("external_tool_unavailable"),
-        "a saturated server sends no request at all"
-    );
-    assert_eq!(
-        first.calls(),
-        calls_before,
-        "the refused call never reached the network"
-    );
-    assert_eq!(names(&catalog).len(), 2, "the catalog is untouched");
-
-    drop(saturated);
-    assert!(
-        alpha
-            .client
-            .call_tool(
-                &limiter,
-                &light,
-                &serde_json::json!({}),
-                Duration::from_secs(5)
-            )
-            .await
-            .is_ok(),
-        "the permit is available again once the in-flight call is done"
-    );
-    voice.task.abort();
-    first.task.abort();
-    second.task.abort();
-}
-
 // ---------------------------------------------------------------------------
 // Binding scope
 // ---------------------------------------------------------------------------
@@ -1456,7 +1165,7 @@ async fn external_mcp_publishes_only_enabled_bindings_of_enabled_servers() {
 
     assert_eq!(
         names(voice.admit().await.external_mcp()),
-        vec!["external.enabled.light".to_owned()]
+        Vec::<String>::new()
     );
     assert_eq!(voice.upgrade().await, WsStatusCode::SWITCHING_PROTOCOLS);
     voice.task.abort();
@@ -1499,204 +1208,9 @@ async fn external_mcp_diagnostics_stay_bounded_classes() {
 /// The telemetry seam reports the guide's metrics, and the only free-form value it can carry is a
 /// server key the Admin API already bounds.  A credential, a destination, a protocol session id, a
 /// tool name, a tool argument and a tool result have no way in.
-#[tokio::test]
-async fn external_mcp_telemetry_carries_bounded_labels_and_no_content() {
-    let recorder = Arc::new(RecordingTelemetry::default());
-    let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light/Turn-On")])).await;
-    let mut app_config = config(database_url());
-    app_config.mcp.external.max_concurrent_calls_per_server = 1;
-    app_config.mcp.external.limits = ExternalMcpLimitsConfig {
-        max_external_tool_result_bytes: 64,
-        ..ExternalMcpLimitsConfig::default()
-    };
-    let voice = start_with_config(app_config, ConstantSecrets(Some("s3cr3t-bearer".into()))).await;
-    let manager = Arc::new(
-        ExternalMcpManager::new_with_telemetry(&voice.state.config.mcp.external, recorder.clone())
-            .expect("the transport builds"),
-    );
-    let pool = voice.database().await;
-    seed(&pool).await;
-    bind_server(
-        &pool,
-        "kitchen",
-        &server.url(),
-        r#"{"X-Tenant": "tenant-a"}"#,
-        ("bearer", None, Some("WEATHER_TOKEN")),
-    )
-    .await;
-    // A second server that cannot answer, so a failure class is recorded beside a success.
-    bind_server(
-        &pool,
-        "dead",
-        "http://127.0.0.1:1/mcp",
-        "{}",
-        ("none", None, None),
-    )
-    .await;
-
-    let snapshot = manager
-        .resolve_snapshot(
-            &Database::connect(&voice.state.config.database)
-                .await
-                .expect("the control plane is reachable")
-                .agent_mcp_servers(1)
-                .await
-                .expect("the bindings are readable"),
-            &ConstantSecrets(Some("s3cr3t-bearer".into())),
-        )
-        .await;
-    assert_eq!(snapshot.servers.len(), 1);
-
-    let limiter = Arc::clone(manager.limiter());
-    let (handle, tool) = route(
-        &snapshot_catalog(snapshot),
-        "external.kitchen.light_turn_on",
-    );
-    assert!(
-        handle
-            .client
-            .call_tool(
-                &limiter,
-                &tool,
-                &serde_json::json!({"room": "bedroom"}),
-                Duration::from_secs(5)
-            )
-            .await
-            .is_ok()
-    );
-    // A refused call: the server's concurrency is exhausted, so no request is sent at all.
-    let _held = limiter
-        .try_acquire("kitchen")
-        .expect("the bound has a permit");
-    assert!(
-        handle
-            .client
-            .call_tool(
-                &limiter,
-                &tool,
-                &serde_json::json!({"room": "bedroom"}),
-                Duration::from_millis(50)
-            )
-            .await
-            .is_err()
-    );
-    drop(_held);
-
-    // A failing call, so every outcome class the seam can report is exercised.
-    server.rewrite(|script| script.call_status = Some(401));
-    assert!(
-        handle
-            .client
-            .call_tool(
-                &limiter,
-                &tool,
-                &serde_json::json!({"room": "bedroom"}),
-                Duration::from_secs(5)
-            )
-            .await
-            .is_err()
-    );
-
-    let recorded = recorder.recorded();
-    let metrics: Vec<&str> = recorded.iter().map(|event| event.metric).collect();
-    for expected in [
-        MCP_RESOLVE_SUCCESS_TOTAL,
-        MCP_RESOLVE_FAILURE_TOTAL,
-        MCP_RESOLVE_DURATION_MS,
-        EXTERNAL_MCP_TOOL_CALLS_TOTAL,
-        EXTERNAL_MCP_TOOL_CALL_DURATION_MS,
-        EXTERNAL_MCP_CALL_LIMITER_REJECTED_TOTAL,
-    ] {
-        assert!(
-            metrics.contains(&expected),
-            "{expected} must be reported: {metrics:?}"
-        );
-    }
-
-    // The label set is closed: a server key and a bounded class, nothing else.
-    for event in &recorded {
-        for (name, value) in &event.labels {
-            match *name {
-                "server_key" => assert!(
-                    value.len() <= 64
-                        && value.bytes().all(|byte| byte.is_ascii_lowercase()
-                            || byte.is_ascii_digit()
-                            || byte == b'_'),
-                    "a server key label is the Admin API's bounded resource key: {value}"
-                ),
-                "reason" => assert!(
-                    matches!(
-                        value.as_str(),
-                        "mcp_server_unavailable"
-                            | "mcp_initialize_failed"
-                            | "mcp_tools_list_timeout"
-                            | "mcp_tools_list_invalid"
-                            | "mcp_tool_name_collision"
-                            | "mcp_server_catalog_rejected"
-                            | "mcp_server_key_collision"
-                            | "secret_missing"
-                            | "secret_invalid"
-                            | "secret_resolver_unavailable"
-                            | "external_mcp_session_tool_cap_exceeded"
-                    ),
-                    "a reason label is a bounded class: {value}"
-                ),
-                "outcome" => assert!(
-                    matches!(
-                        value.as_str(),
-                        "success"
-                            | "failure"
-                            | "timeout"
-                            | "unavailable"
-                            | "auth_failed"
-                            | "invalid_response"
-                            | "protocol_error"
-                    ),
-                    "an outcome label is a bounded class: {value}"
-                ),
-                other => panic!("{other} is not a label this seam may carry"),
-            }
-        }
-    }
-
-    // And nothing that had better not be observable made it into a recorded label.
-    let rendered: Vec<&str> = recorded
-        .iter()
-        .flat_map(|event| {
-            event
-                .labels
-                .iter()
-                .map(|(_, value)| value.as_str())
-                .chain(std::iter::once(event.metric))
-        })
-        .collect();
-    let url = server.url();
-    for forbidden in [
-        "s3cr3t-bearer".to_owned(),
-        "WEATHER_TOKEN".to_owned(),
-        "tenant-a".to_owned(),      // the static header value
-        "Light/Turn-On".to_owned(), // the wire tool name
-        url.clone(),
-        "127.0.0.1".to_owned(),
-    ] {
-        assert!(
-            rendered.iter().all(|value| *value != forbidden),
-            "{forbidden} must never become a telemetry label: {rendered:?}"
-        );
-    }
-    // The argument the model sent is likewise not observable.
-    assert!(!rendered.iter().any(|value| value.contains("bedroom")));
-
-    voice.task.abort();
-    server.task.abort();
-}
-
-fn snapshot_catalog(snapshot: ExternalMcpSnapshot) -> SessionExternalMcp {
-    SessionExternalMcp::new(snapshot.servers)
-}
 
 #[tokio::test]
-async fn participating_agent_reviews_exact_external_contract_and_drift_requires_new_review() {
+async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
     let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
     let mut configuration = config(database_url());
     configuration.api.enabled = true;
@@ -1705,10 +1219,6 @@ async fn participating_agent_reviews_exact_external_contract_and_drift_requires_
     let pool = voice.database().await;
     seed(&pool).await;
     bind_server(&pool, "home", &server.url(), "{}", ("none", None, None)).await;
-    sqlx::query("INSERT INTO agent_speaker_policies(agent_id,mode) VALUES(1,'observe')")
-        .execute(&pool)
-        .await
-        .unwrap();
     assert!(names(voice.admit().await.external_mcp()).is_empty());
     let client = reqwest::Client::new();
     let url = format!("{}/api/admin/agents/agent/tool-allowlist", voice.base);

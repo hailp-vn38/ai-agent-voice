@@ -709,8 +709,6 @@ pub struct McpConfig {
     #[serde(default = "default_mcp_discovery_timeout_ms")]
     pub discovery_timeout_ms: u64,
     #[serde(default)]
-    pub allowed_tools: Vec<String>,
-    #[serde(default)]
     pub result_delivery: McpResultDelivery,
     #[serde(default)]
     pub tool_policy: Vec<McpToolPolicy>,
@@ -814,7 +812,6 @@ impl Default for McpConfig {
             enabled: default_mcp_enabled(),
             call_timeout_ms: default_mcp_call_timeout_ms(),
             discovery_timeout_ms: default_mcp_discovery_timeout_ms(),
-            allowed_tools: Vec::new(),
             result_delivery: McpResultDelivery::default(),
             tool_policy: Vec::new(),
             external: ExternalMcpConfig::default(),

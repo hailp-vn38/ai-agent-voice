@@ -209,15 +209,6 @@ impl ActiveTemplateProfile {
     }
 }
 
-#[derive(Clone, Default)]
-/// The Device tool review this Voice Session was admitted under.
-///
-/// Admission resolves it once, beside the External MCP snapshot, and nothing replaces it mid
-/// session: a Template switch changes prompt, language and providers, not tool rights.
-pub struct SessionDeviceTools {
-    pub guard: Option<std::sync::Arc<crate::database::tool_security::DeviceToolGuard>>,
-}
-
 #[derive(Clone)]
 pub struct EffectiveSessionProfile {
     pub selected_runtimes: Option<ResolvedAgentRuntimes>,
@@ -234,8 +225,6 @@ pub struct EffectiveSessionProfile {
     /// Filled in by admission after the External MCP snapshot resolves.  The synchronous
     /// resolver cannot produce it, so it is always empty here and never read from.
     external_mcp: SessionExternalMcp,
-    /// Filled in by admission after the Device review resolves, for the same reason.
-    device_tools: SessionDeviceTools,
 }
 
 /// Coarse admission outcome.  The client only ever learns "unavailable"; the reason stays internal
@@ -261,7 +250,6 @@ impl EffectiveSessionProfile {
             // An Agent without assignments must not advertise a switch capability it cannot honor.
             switch_catalog: TemplateSwitchCatalog::default(),
             external_mcp: SessionExternalMcp::default(),
-            device_tools: SessionDeviceTools::default(),
         })
     }
 
@@ -277,16 +265,6 @@ impl EffectiveSessionProfile {
 
     pub fn external_mcp(&self) -> &SessionExternalMcp {
         &self.external_mcp
-    }
-
-    /// Attaches the Device tool review this session was admitted under.
-    pub fn with_device_tools(mut self, device_tools: SessionDeviceTools) -> Self {
-        self.device_tools = device_tools;
-        self
-    }
-
-    pub fn device_tools(&self) -> &SessionDeviceTools {
-        &self.device_tools
     }
 
     /// Splits the resolved profile into the snapshot a session installs and the candidate list it
@@ -418,7 +396,6 @@ pub fn resolve_effective_session_profile_with_override(
         revision: 1,
         switch_catalog,
         external_mcp: SessionExternalMcp::default(),
-        device_tools: SessionDeviceTools::default(),
     })
 }
 
@@ -1043,6 +1020,5 @@ pub async fn resolve_managed_session_profile(
             active_leases: prepared.leases,
         },
         external_mcp: SessionExternalMcp::default(),
-        device_tools: SessionDeviceTools::default(),
     })
 }

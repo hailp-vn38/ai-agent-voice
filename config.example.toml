@@ -297,8 +297,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 enabled = true
 call_timeout_ms = 30000
 discovery_timeout_ms = 10000
-# Omit `allowed_tools` to expose the non-dangerous tools announced by the client.
-# Set it only to restrict a deployment to an explicit subset.
+# Every valid unique tool announced by an admitted Device is exposed to that Device session.
 # Tool results normally return to the LLM before final TTS.
 result_delivery = "llm_then_tts"
 # Per-tool overrides use the original MCP wire name. `direct_tts` only speaks

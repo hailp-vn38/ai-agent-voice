@@ -1,9 +1,8 @@
 //! Typed, transport-free Device MCP vocabulary.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct McpRequestId(pub u64);
@@ -138,86 +137,38 @@ pub fn sanitize_tool_name(name: &str) -> String {
         .collect()
 }
 
-pub fn is_dangerous_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "self.reboot" | "self.reset" | "self.factory_reset" | "self.upgrade_firmware"
-    ) || name.starts_with("shell.")
-        || name.starts_with("command.")
-        || name.starts_with("exec.")
-}
-
-pub fn visible_tools(
-    discovered: Vec<DiscoveredTool>,
-    allowed: &HashSet<String>,
-) -> Vec<LlmVisibleTool> {
-    let candidate: Vec<_> = discovered
-        .into_iter()
-        .filter(|tool| {
-            (allowed.is_empty() || allowed.contains(&tool.original_name))
-                && !is_dangerous_tool(&tool.original_name)
-        })
-        .collect();
-    to_visible(candidate)
-}
-
-/// Fingerprint of the parts that define a Device tool contract, so a description or schema change
-/// makes a saved approval stale instead of silently widening it.
-pub fn contract_fingerprint(tool: &DiscoveredTool) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(tool.original_name.as_bytes());
-    hasher.update([0]);
-    hasher.update(tool.description.as_bytes());
-    hasher.update([0]);
-    hasher.update(tool.input_schema.to_string().as_bytes());
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-/// Review-filtered Device tools: only a discovered tool whose `original_name` was approved at this
-/// exact fingerprint becomes visible, so an unreviewed tool is denied by default and an approved
-/// name that now advertises a different contract is drift rather than a new right.
-pub fn reviewed_tools(
-    discovered: Vec<DiscoveredTool>,
-    contracts: &HashMap<String, String>,
-) -> (Vec<LlmVisibleTool>, bool) {
-    let mut drift = false;
-    let mut candidate = Vec::new();
-    for tool in discovered {
-        match contracts.get(&tool.original_name) {
-            Some(fingerprint)
-                if fingerprint == &contract_fingerprint(&tool)
-                    && !is_dangerous_tool(&tool.original_name) =>
-            {
-                candidate.push(tool)
-            }
-            Some(_) => drift = true,
-            None => {}
+/// Converts a complete Device discovery only when every original and LLM-visible name is unique.
+/// An ambiguous catalog has no safe `tools/call` target, so callers must reject the whole walk.
+pub fn visible_tools(discovered: Vec<DiscoveredTool>) -> Option<Vec<LlmVisibleTool>> {
+    let mut original_names = HashMap::<&str, usize>::new();
+    let mut llm_names = HashMap::<String, usize>::new();
+    for tool in &discovered {
+        *original_names.entry(&tool.original_name).or_default() += 1;
+        let llm_name = sanitize_tool_name(&tool.original_name);
+        if llm_name.is_empty() {
+            return None;
         }
+        *llm_names.entry(llm_name).or_default() += 1;
     }
-    (to_visible(candidate), drift)
+    if original_names.values().any(|count| *count != 1)
+        || llm_names.values().any(|count| *count != 1)
+    {
+        return None;
+    }
+    Some(to_visible(discovered))
 }
 
 fn to_visible(candidate: Vec<DiscoveredTool>) -> Vec<LlmVisibleTool> {
-    let mut names = HashMap::<String, usize>::new();
-    for tool in &candidate {
-        *names
-            .entry(sanitize_tool_name(&tool.original_name))
-            .or_default() += 1;
-    }
     candidate
         .into_iter()
-        .filter_map(|tool| {
+        .map(|tool| {
             let llm_name = sanitize_tool_name(&tool.original_name);
-            (names[&llm_name] == 1).then_some(LlmVisibleTool {
+            LlmVisibleTool {
                 llm_name,
                 original_name: tool.original_name,
                 description: tool.description,
                 input_schema: tool.input_schema,
-            })
+            }
         })
         .collect()
 }

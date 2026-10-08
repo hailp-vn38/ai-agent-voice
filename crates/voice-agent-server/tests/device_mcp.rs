@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use serde_json::json;
 use voice_agent_server::tools::device_mcp::{
     DiscoveredTool, McpIncoming, McpOutgoing, McpRequestId, parse_incoming, sanitize_tool_name,
@@ -7,54 +5,60 @@ use voice_agent_server::tools::device_mcp::{
 };
 
 #[test]
-fn sanitizer_is_stable_and_collision_drops_all_ambiguous_tools() {
+fn sanitizer_is_stable_and_collision_rejects_the_whole_catalog() {
     assert_eq!(sanitize_tool_name("test.set_value"), "test_set_value");
-    let allowed = HashSet::from(["a.b".to_owned(), "a_b".to_owned(), "test.echo".to_owned()]);
-    let visible = visible_tools(
-        vec![
-            DiscoveredTool {
-                original_name: "a.b".into(),
-                description: String::new(),
-                input_schema: json!({}),
-            },
-            DiscoveredTool {
-                original_name: "a_b".into(),
-                description: String::new(),
-                input_schema: json!({}),
-            },
-            DiscoveredTool {
-                original_name: "test.echo".into(),
-                description: String::new(),
-                input_schema: json!({}),
-            },
-        ],
-        &allowed,
-    );
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].llm_name, "test_echo");
-    assert_eq!(visible[0].original_name, "test.echo");
+    let visible = visible_tools(vec![
+        DiscoveredTool {
+            original_name: "a.b".into(),
+            description: String::new(),
+            input_schema: json!({}),
+        },
+        DiscoveredTool {
+            original_name: "a_b".into(),
+            description: String::new(),
+            input_schema: json!({}),
+        },
+        DiscoveredTool {
+            original_name: "test.echo".into(),
+            description: String::new(),
+            input_schema: json!({}),
+        },
+    ]);
+    assert!(visible.is_none());
 }
 
 #[test]
-fn discovered_tools_are_visible_without_a_configured_allowlist() {
-    let visible = visible_tools(
-        vec![
-            DiscoveredTool {
-                original_name: "test.echo".into(),
-                description: String::new(),
-                input_schema: json!({}),
-            },
-            DiscoveredTool {
-                original_name: "self.reboot".into(),
-                description: String::new(),
-                input_schema: json!({}),
-            },
-        ],
-        &HashSet::new(),
-    );
+fn discovered_tools_include_formerly_denied_names() {
+    let visible = visible_tools(vec![
+        DiscoveredTool {
+            original_name: "test.echo".into(),
+            description: String::new(),
+            input_schema: json!({}),
+        },
+        DiscoveredTool {
+            original_name: "self.reboot".into(),
+            description: String::new(),
+            input_schema: json!({}),
+        },
+    ]);
 
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].original_name, "test.echo");
+    let visible = visible.expect("unique catalog is visible");
+    assert_eq!(visible.len(), 2);
+    assert!(
+        visible
+            .iter()
+            .any(|tool| tool.original_name == "self.reboot")
+    );
+}
+
+#[test]
+fn duplicate_original_name_rejects_the_whole_catalog() {
+    let tool = DiscoveredTool {
+        original_name: "test.echo".into(),
+        description: String::new(),
+        input_schema: json!({}),
+    };
+    assert!(visible_tools(vec![tool.clone(), tool]).is_none());
 }
 
 #[test]

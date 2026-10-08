@@ -6,7 +6,6 @@ import { useRoute, useRouter } from 'vue-router'
 import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
 import type { ClaimDeviceEnrollmentInput } from '@/api/types/devices'
 import AgentToolAllowlist from '@/components/agents/AgentToolAllowlist.vue'
-import AgentDeviceToolAllowlist from '@/components/agents/AgentDeviceToolAllowlist.vue'
 import AgentSpeakerPolicy from '@/components/agents/AgentSpeakerPolicy.vue'
 import AgentDeviceList from '@/components/agents/AgentDeviceList.vue'
 import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmentModal.vue'
@@ -434,7 +433,6 @@ async function confirmDeleteDevice() {
     </div>
 
     <AgentToolAllowlist :agent-id="agentId" />
-    <AgentDeviceToolAllowlist :agent-id="agentId" />
     <AgentSpeakerPolicy :agent-id="agentId" />
     <AgentDeviceList
       :devices="devices"

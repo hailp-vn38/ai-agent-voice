@@ -6,6 +6,11 @@
 > Implementation language: Rust
 > Status: implementation guide for Phase 6
 
+> Authorization details in this historical guide are superseded by
+> [MCP Tool Authorization Refactor](mcp-tool-authorization-refactor-implementation-guide.md):
+> admitted Devices expose valid unique discovered tools directly; External MCP always requires
+> Agent approval.
+
 ---
 
 ## 1. Mục tiêu Phase 6
@@ -606,9 +611,8 @@ Policy V1:
 
 ```text
 not announced by client -> unavailable
-dangerous tool          -> deny
-announced tool          -> allow
-configured allowlist    -> restrict to that subset when present
+valid unique announced tool -> allow
+duplicate or sanitized-name collision -> unavailable
 ```
 
 Config:
@@ -618,35 +622,17 @@ Config:
 enabled = true
 call_timeout_ms = 30000
 
-# Optional deployment restriction. Omit to use the client catalog.
-# allowed_tools = ["test.echo", "test.get_value", "test.set_value"]
+# Every valid unique tool from this admitted Device's discovery is available.
 ```
 
 Policy phải check **original device name**, không check sanitized LLM name.
 
 ---
 
-## 12.2 Dangerous deny list
+## 12.2 Device authority
 
-Dù accidentally nằm trong allowlist, các tool nguy hiểm vẫn bị deny ở V1:
-
-```text
-self.reboot
-self.reset
-self.factory_reset
-self.upgrade_firmware
-shell.*
-command.*
-exec.*
-```
-
-Không chỉ match exact name; có thể implement:
-
-```rust
-fn is_dangerous_tool(name: &str) -> bool
-```
-
-V1 không có user confirmation UI, do đó không expose loại tool này cho LLM.
+Device tool names are not an authorization signal. An admitted Device may expose names such as
+`self.reboot` or `shell.*`; protocol validation, session isolation and turn limits remain enforced.
 
 ---
 
@@ -1528,12 +1514,6 @@ enabled = true
 call_timeout_ms = 30000
 discovery_timeout_ms = 10000
 
-allowed_tools = [
-    "self.get_device_status",
-    "self.audio_speaker.set_volume",
-    "self.screen.set_brightness",
-]
-
 [llm]
 max_history_messages = 20
 prompt_budget_tokens = 12000
@@ -1548,7 +1528,6 @@ pub struct McpConfig {
     pub enabled: bool,
     pub call_timeout_ms: u64,
     pub discovery_timeout_ms: u64,
-    pub allowed_tools: Vec<String>,
 }
 
 pub struct LlmConfig {
@@ -1571,16 +1550,7 @@ discovery_timeout_ms > 0
 max_tool_depth > 0
 max_tool_result_chars > 0
 prompt_budget_tokens > 0
-allowed_tools contains non-empty strings
-allowed_tools has no duplicate exact original names
 ```
-
-Dangerous names trong allowlist:
-
-- có thể fail startup;
-- hoặc silently deny.
-
-Khuyến nghị **fail startup** để config error lộ rõ.
 
 ---
 
@@ -2751,7 +2721,7 @@ Exit criteria:
 
 - A Voice Protocol Client advertising features.mcp=true completes
   ServerHello → initialize → paginated tools/list.
-- Only server-allowlisted non-dangerous discovered tools become LLM-visible.
+- Every valid unique discovered tool becomes LLM-visible in its admitted Device session.
 - Sanitized LLM tool names map deterministically back to original device names,
   with collisions rejected rather than overwritten.
 - tools/call is correlated by numeric request id, bounded by timeout, never

@@ -158,8 +158,7 @@ cleanup_grace_ms = 5000
 [mcp]
 enabled = true
 call_timeout_ms = 30000
-# Optional: when omitted, use the non-dangerous catalog announced by the client.
-# allowed_tools = ["test.echo", "test.get_value", "test.set_value"]
+# Every valid unique tool announced by an admitted Device is available in that Device session.
 result_delivery = "llm_then_tts"
 
 # Lookup uses the original MCP name. Direct TTS requires a successful plain-text result.

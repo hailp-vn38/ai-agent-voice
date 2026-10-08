@@ -12,8 +12,8 @@ use crate::{
     },
     services::provider_diagnostic::{ProviderDiagnosticLimiter, ProviderDiagnosticService},
     session::{
-        ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable, SessionDeviceTools,
-        WriterOutcomeProbe, resolve_effective_session_profile_with_override,
+        ActiveTurnLimiter, EffectiveSessionProfile, ProfileUnavailable, WriterOutcomeProbe,
+        resolve_effective_session_profile_with_override,
     },
     telemetry::TracingTelemetry,
     tools::external_mcp::{ExternalMcpManager, ExternalMcpSnapshot, SessionExternalMcp},
@@ -420,53 +420,7 @@ impl AppState {
             .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)?
         };
         let profile = self.prepare_server_default(profile).await?;
-        let device_tools = self
-            .resolve_device_tools(database, graph.agent.id, graph.device_db_id)
-            .await;
-        Ok(profile
-            .with_external_mcp(self.resolve_external_mcp(graph.agent.id).await)
-            .with_device_tools(device_tools))
-    }
-
-    /// Admission resolves the Device review once and for all: the Agent's explicit approvals for
-    /// this exact Device incarnation become the only Device tools this session may publish, and the
-    /// registered token lets a later revocation or conflicting discovery close it.
-    async fn resolve_device_tools(
-        &self,
-        database: &Database,
-        agent_id: i64,
-        device_id: i64,
-    ) -> SessionDeviceTools {
-        let (participating, contracts) =
-            match crate::database::device_tool_allowlist::load_admitted(
-                database, agent_id, device_id,
-            )
-            .await
-            {
-                Ok(resolved) => resolved,
-                Err(error) => {
-                    // Fail closed: an unreadable review admits nothing, it does not fall back to
-                    // publishing everything.
-                    tracing::warn!(
-                        event = "device_tool_review_unavailable",
-                        error = %error,
-                        "Device tool review could not be read; admitting no Device tools"
-                    );
-                    (true, std::collections::HashMap::new())
-                }
-            };
-        SessionDeviceTools {
-            guard: Some(std::sync::Arc::new(
-                crate::database::tool_security::DeviceToolGuard {
-                    database: database.clone(),
-                    agent_id,
-                    device_id,
-                    participating,
-                    close: database.tool_security.register_device(device_id),
-                    contracts: std::sync::Arc::new(contracts),
-                },
-            )),
-        }
+        Ok(profile.with_external_mcp(self.resolve_external_mcp(graph.agent.id).await))
     }
 
     async fn prepare_server_default(
@@ -577,7 +531,7 @@ impl AppState {
             Err(_) => return SessionExternalMcp::default(),
         };
         let mut catalog = SessionExternalMcp::new(resolved);
-        catalog.guard = guard;
+        catalog.guard = Some(guard);
         catalog
     }
 
