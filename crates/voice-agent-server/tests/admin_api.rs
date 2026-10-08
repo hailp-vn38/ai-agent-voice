@@ -1354,6 +1354,20 @@ async fn templates_and_provider_desired_configuration_are_bounded_and_restart_ho
     let llm_key = llm["key"].as_str().expect("a key is generated").to_owned();
     assert_eq!(llm["credential_env"], format!("VOICE_PROVIDER_{}_API_KEY", llm_key.to_ascii_uppercase()));
     assert!(llm.get("secret_ref").is_none());
+    // Old clients must not be able to store an operator-chosen secret reference.
+    let old_provider_payload = client
+        .post(&provider_url)
+        .bearer_auth(auth)
+        .json(&serde_json::json!({
+            "name":"Legacy", "type":"llm", "adapter":"openai",
+            "config_json":{"base_url":"https://example.test/v1","model":"test"},
+            "secret_ref":"LEGACY_SECRET"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_provider_payload.status(), StatusCode::BAD_REQUEST);
+
     assert_eq!(llm["runtime_status"], "not_loaded");
     assert_eq!(llm["runtime_matches_desired"], false);
     assert_eq!(llm["requires_restart"], true);
@@ -1837,6 +1851,16 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
     );
     assert!(server.get("secret_ref").is_none());
     assert_eq!(server["credential_env"], "VOICE_MCP_WEATHER_TOKEN");
+    // No secret or arbitrary header ingress survives in MCP Admin mutations.
+    for rejected in [
+        serde_json::json!({"key":"legacy","name":"Legacy MCP","url":"https://mcp.example.test/mcp","auth":{"type":"bearer","secret_ref":"LEGACY_TOKEN"}}),
+        serde_json::json!({"key":"headers","name":"Headers MCP","url":"https://mcp.example.test/mcp","headers":{"x-api-key":"plaintext"},"auth":{"type":"none"}})
+    ] {
+        assert_eq!(
+            client.post(&servers).bearer_auth(auth).json(&rejected).send().await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
     assert_eq!(
         client
             .post(&servers)
