@@ -102,3 +102,36 @@ impl SecretResolver for EnvSecretResolver {
             .map_err(|_| SecretResolveError::Unavailable)
     }
 }
+
+#[cfg(test)]
+mod deployment_name_tests {
+    use super::*;
+
+    #[test]
+    fn provider_credentials_are_derived_only_for_remote_adapters() {
+        assert_eq!(
+            provider_secret_env("llm_abc123", "openai").as_deref(),
+            Some("VOICE_PROVIDER_LLM_ABC123_API_KEY")
+        );
+        assert_eq!(
+            provider_secret_env("tts_v1", "chillaudio_ws").as_deref(),
+            Some("VOICE_PROVIDER_TTS_V1_API_KEY")
+        );
+        assert!(provider_secret_env("vad_local", "silero_onnx").is_none());
+        assert!(provider_secret_env("INVALID-NAME", "openai").is_none());
+    }
+
+    #[test]
+    fn mcp_credentials_are_derived_only_for_authenticated_servers() {
+        assert_eq!(
+            mcp_secret_env("weather", "bearer").as_deref(),
+            Some("VOICE_MCP_WEATHER_TOKEN")
+        );
+        assert_eq!(
+            mcp_secret_env("home_automation", "header").as_deref(),
+            Some("VOICE_MCP_HOME_AUTOMATION_TOKEN")
+        );
+        assert!(mcp_secret_env("weather", "none").is_none());
+        assert!(mcp_secret_env("foo-bar", "bearer").is_none());
+    }
+}
