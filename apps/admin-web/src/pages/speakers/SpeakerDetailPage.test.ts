@@ -1,0 +1,78 @@
+import { flushPromises, shallowMount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { reactive } from 'vue'
+
+import { speakersApi } from '@/api/speakers'
+import type { Speaker } from '@/api/types/speakers'
+import SpeakerDetailPage from './SpeakerDetailPage.vue'
+
+const route = reactive({
+  params: { speakerKey: 'spk_a' },
+  query: { edit: undefined as string | undefined },
+})
+
+vi.mock('vue-router', () => ({
+  useRoute: () => route,
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}))
+
+vi.mock('@/api/speakers', () => ({
+  speakersApi: {
+    get: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+    purgeVoiceprint: vi.fn(),
+  },
+}))
+
+function speaker(key: string): Speaker {
+  return {
+    key,
+    name: key,
+    description: null,
+    enabled: true,
+    revision: 1,
+    voiceprints: [],
+    enrollment_drafts: [],
+    created_at: 1_760_000_000,
+    updated_at: 1_760_000_000,
+  }
+}
+
+describe('SpeakerDetailPage', () => {
+  beforeEach(() => {
+    route.params.speakerKey = 'spk_a'
+    route.query.edit = undefined
+    vi.clearAllMocks()
+    vi.mocked(speakersApi.get).mockImplementation(async (key) => speaker(key))
+  })
+
+  it('loads the speaker from a direct URL, then reloads on a param-only navigation', async () => {
+    const wrapper = shallowMount(SpeakerDetailPage, {
+      global: { stubs: { RouterLink: true } },
+    })
+
+    await flushPromises()
+    expect(speakersApi.get).toHaveBeenCalledWith('spk_a', expect.any(AbortSignal))
+    expect(wrapper.text()).toContain('spk_a')
+
+    route.params.speakerKey = 'spk_b'
+    await flushPromises()
+    expect(speakersApi.get).toHaveBeenLastCalledWith('spk_b', expect.any(AbortSignal))
+    expect(wrapper.text()).toContain('spk_b')
+
+    wrapper.unmount()
+  })
+
+  it('opens editing when navigated from the card using the edit query', async () => {
+    route.query.edit = '1'
+    const wrapper = shallowMount(SpeakerDetailPage, {
+      global: { stubs: { RouterLink: true } },
+    })
+
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'BaseModal' }).exists()).toBe(true)
+    expect(wrapper.vm).toBeTruthy()
+    wrapper.unmount()
+  })
+})
