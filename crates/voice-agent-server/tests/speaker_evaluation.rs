@@ -20,7 +20,7 @@ use voice_agent_server::{
         PreparedRuntime, ProviderRuntimeManager, ResourceLease, RuntimeError, RuntimeLimits,
         RuntimeMaterializer, RuntimeResource,
     },
-    session::{OBSERVE_VERIFY_THRESHOLD, ObserveCandidate, ObservePlan},
+    session::{OBSERVE_VERIFY_THRESHOLD, ObserveCandidate, ObservePlan, SpeakerPolicyMode},
     speaker_evaluation::{
         Check, CheckStatus, EvaluationReport, GroundTruth, LatencySamples, Path, ProtocolPin,
         QualificationStatus, ReportInput, ScopePin, Trial, TrialOutcome, build_report,
@@ -140,6 +140,7 @@ fn plan(runtime: &SpeakerRuntime, candidates: &[(&str, [f32; 3])]) -> ObservePla
         template_id: 3,
         embedding_space: runtime.embedding_space_id().to_owned(),
         catalog_revision: 42,
+        policy: SpeakerPolicyMode::Observe,
         candidates: candidates
             .iter()
             .enumerate()
