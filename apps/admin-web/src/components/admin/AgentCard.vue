@@ -18,8 +18,16 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <article class="studio-panel group p-5 transition-all hover:-translate-y-0.5 hover:border-studio-violet/40 hover:shadow-lg">
-    <button type="button" class="flex w-full items-start gap-3 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" :aria-label="agent.name" @click="emit('open')">
+  <article class="studio-panel group relative cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:border-studio-violet/40 hover:shadow-lg">
+    <!-- One real button covers the card, while Add Device remains a separate button above it. -->
+    <button
+      data-agent-card-open
+      type="button"
+      class="absolute inset-0 z-10 cursor-pointer rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      :aria-label="agent.name"
+      @click="emit('open')"
+    ></button>
+    <div class="flex w-full items-start gap-3 text-left">
       <span class="flex size-12 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
         <Bot class="size-6" aria-hidden="true" />
       </span>
@@ -28,7 +36,7 @@ const { t } = useI18n()
         <span class="mt-1 block min-h-10 text-sm text-muted-foreground">{{ agent.description || '—' }}</span>
       </span>
       <ArrowUpRight class="size-4 shrink-0 text-muted-foreground transition group-hover:text-studio-violet" aria-hidden="true" />
-    </button>
+    </div>
 
     <div class="mt-5 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
       <span class="inline-flex items-center gap-1.5">
@@ -55,7 +63,7 @@ const { t } = useI18n()
     </div>
 
     <div class="mt-5 flex justify-end">
-      <Button size="sm" variant="outline" @click.stop="emit('addDevice')">
+      <Button data-agent-card-add-device class="relative z-20 cursor-pointer" size="sm" variant="outline" @click.stop="emit('addDevice')">
         <Plus class="size-4" aria-hidden="true" />
         {{ t('agentDevices.add') }}
       </Button>
