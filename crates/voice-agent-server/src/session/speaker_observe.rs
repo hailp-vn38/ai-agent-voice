@@ -33,7 +33,6 @@ pub const OBSERVE_VERIFY_THRESHOLD: f32 = 0.5;
 pub enum SpeakerPolicyMode {
     Off,
     Observe,
-    Required,
 }
 
 impl SpeakerPolicyMode {
@@ -41,12 +40,11 @@ impl SpeakerPolicyMode {
         match raw {
             "off" => Some(Self::Off),
             "observe" => Some(Self::Observe),
-            "required" => Some(Self::Required),
             _ => None,
         }
     }
 
-    /// `true` when the session must run Observe inference (observe or required).
+    /// `true` when the session should run best-effort identification.
     pub fn observe_enabled(self) -> bool {
         !matches!(self, Self::Off)
     }
@@ -313,9 +311,6 @@ pub enum ObserveResolution {
     Off,
     /// A frozen plan to score against.
     Plan(ObservePlan),
-    /// Policy is `required` but no candidate set resolved. Admission MUST fail closed rather
-    /// than admit the session ungated.
-    RequiredUnavailable,
     /// A persisted policy value outside the supported contract. Admission must reject rather
     /// than silently weakening it to `off`.
     InvalidPolicy,
@@ -354,11 +349,6 @@ pub async fn resolve_observe_plan(
         .await?
         .unwrap_or(SpeakerPolicyMode::Off);
     if mode == SpeakerPolicyMode::Off {
-        return Ok(ObserveResolution::Off);
-    }
-    if mode == SpeakerPolicyMode::Required {
-        // Existing required records must have been migrated to 'off'. Never
-        // revive the removed voice-based authentication behavior.
         return Ok(ObserveResolution::Off);
     }
     let rows = sqlx::query(
@@ -445,14 +435,9 @@ mod tests {
             SpeakerPolicyMode::parse("observe"),
             Some(SpeakerPolicyMode::Observe)
         );
-        assert_eq!(
-            SpeakerPolicyMode::parse("required"),
-            Some(SpeakerPolicyMode::Required)
-        );
         assert_eq!(SpeakerPolicyMode::parse("unexpected"), None);
         assert!(!SpeakerPolicyMode::Off.observe_enabled());
         assert!(SpeakerPolicyMode::Observe.observe_enabled());
-        assert!(SpeakerPolicyMode::Required.observe_enabled());
     }
 
     #[test]
@@ -497,120 +482,5 @@ mod tests {
                 "wire frame leaked {forbidden}: {text}"
             );
         }
-    }
-
-    /// A `required` policy with no candidate set must not degrade to "nothing to run"; it must
-    /// signal that admission has to fail closed.
-    #[tokio::test]
-    async fn required_without_candidates_fails_closed() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        for ddl in [
-            "CREATE TABLE agent_speaker_policies (agent_id INTEGER, mode TEXT)",
-            "CREATE TABLE agent_speaker_candidates (agent_id INTEGER, speaker_id INTEGER)",
-            "CREATE TABLE speakers (id INTEGER, key TEXT, enabled INTEGER)",
-            "CREATE TABLE agent_speaker_template_grants (agent_id INTEGER, speaker_id INTEGER, template_id INTEGER)",
-            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, browser_validation_status TEXT NOT NULL DEFAULT 'passed')",
-        ] {
-            sqlx::query(ddl).execute(&pool).await.unwrap();
-        }
-
-        let set_mode = |mode: &'static str| {
-            let pool = pool.clone();
-            async move {
-                sqlx::query("INSERT INTO agent_speaker_policies (agent_id, mode) VALUES (7, ?)")
-                    .bind(mode)
-                    .execute(&pool)
-                    .await
-                    .unwrap();
-            }
-        };
-
-        // Missing policy → nothing to run.
-        assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::Off
-        ));
-
-        // `off` → nothing to run.
-        set_mode("off").await;
-        assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::Off
-        ));
-
-        // `observe` with no candidates → nothing to run (unchanged behaviour).
-        sqlx::query("UPDATE agent_speaker_policies SET mode = 'observe' WHERE agent_id = 7")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::Off
-        ));
-
-        // `required` with no candidates → admission must fail closed.
-        sqlx::query("UPDATE agent_speaker_policies SET mode = 'required' WHERE agent_id = 7")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::RequiredUnavailable
-        ));
-
-        // A corrupt persisted value is not an implicit downgrade to `off`.
-        sqlx::query("UPDATE agent_speaker_policies SET mode = 'unexpected' WHERE agent_id = 7")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::InvalidPolicy
-        ));
-    }
-
-    #[tokio::test]
-    async fn required_with_a_provisional_candidate_fails_closed() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        for ddl in [
-            "CREATE TABLE agent_speaker_policies (agent_id INTEGER, mode TEXT)",
-            "CREATE TABLE agent_speaker_candidates (agent_id INTEGER, speaker_id INTEGER)",
-            "CREATE TABLE speakers (id INTEGER, key TEXT, enabled INTEGER)",
-            "CREATE TABLE agent_speaker_template_grants (agent_id INTEGER, speaker_id INTEGER, template_id INTEGER)",
-            "CREATE TABLE speaker_voiceprints (speaker_id INTEGER, embedding_space TEXT, vector BLOB, browser_validation_status TEXT)",
-            "CREATE TABLE speaker_catalog (id INTEGER, revision INTEGER)",
-        ] {
-            sqlx::query(ddl).execute(&pool).await.unwrap();
-        }
-        for sql in [
-            "INSERT INTO agent_speaker_policies VALUES (7, 'required')",
-            "INSERT INTO speakers VALUES (1, 'owner', 1)",
-            "INSERT INTO agent_speaker_candidates VALUES (7, 1)",
-            "INSERT INTO agent_speaker_template_grants VALUES (7, 1, 3)",
-            "INSERT INTO speaker_catalog VALUES (1, 1)",
-        ] {
-            sqlx::query(sql).execute(&pool).await.unwrap();
-        }
-        sqlx::query("INSERT INTO speaker_voiceprints VALUES (1, 'speaker:abc', ?, 'pending')")
-            .bind(enrollment::encode_embedding(&[1.0, 0.0]))
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(matches!(
-            resolve_observe_plan(&pool, 7, 3, "speaker:abc")
-                .await
-                .unwrap(),
-            ObserveResolution::RequiredUnavailable
-        ));
     }
 }
