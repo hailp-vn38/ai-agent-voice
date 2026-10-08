@@ -4,8 +4,20 @@ import { translate } from '@/composables/useI18n'
 import type { MessageKey } from '@/i18n/messages'
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/agents' },
-  { path: '/dashboard', redirect: '/system' },
+  { path: '/', redirect: '/overview' },
+  { path: '/dashboard', redirect: '/overview' },
+  {
+    path: '/overview',
+    name: 'overview',
+    component: () => import('@/views/OverviewView.vue'),
+    meta: { titleKey: 'nav.overview' },
+  },
+  {
+    path: '/devices',
+    name: 'devices',
+    component: () => import('@/views/DevicesView.vue'),
+    meta: { titleKey: 'nav.devices' },
+  },
   {
     path: '/agents',
     name: 'agents',
@@ -54,7 +66,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SystemView.vue'),
     meta: { titleKey: 'nav.system' },
   },
-  { path: '/:pathMatch(.*)*', redirect: '/agents' },
+  { path: '/:pathMatch(.*)*', redirect: '/overview' },
 ]
 
 export const router = createRouter({
