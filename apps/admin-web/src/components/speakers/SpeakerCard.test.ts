@@ -1,7 +1,8 @@
 import { mount, RouterLinkStub } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { SpeakerSummary } from '@/api/types/speakers'
+import { setLocale } from '@/composables/useI18n'
 import SpeakerCard from './SpeakerCard.vue'
 
 const speaker: SpeakerSummary = {
@@ -21,6 +22,7 @@ function renderCard(item: SpeakerSummary = speaker) {
 }
 
 describe('SpeakerCard', () => {
+  beforeEach(() => setLocale('en'))
   it('makes the entire card open the detail route without displaying the technical key', () => {
     const wrapper = renderCard()
 
