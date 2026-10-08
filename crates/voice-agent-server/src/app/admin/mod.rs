@@ -347,6 +347,18 @@ fn db(state: &AppState) -> Result<&SqlitePool, Response> {
             .into_response()
     })
 }
+
+/// The shared security registry, used by every mutating handler to revoke the live Voice Sessions
+/// that pinned the changed dependency.
+fn security(
+    state: &AppState,
+) -> Option<std::sync::Arc<crate::database::tool_security::ToolSecurity>> {
+    state
+        .database
+        .as_ref()
+        .map(|db| std::sync::Arc::clone(&db.tool_security))
+}
+
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

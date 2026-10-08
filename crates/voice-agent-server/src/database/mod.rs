@@ -17,6 +17,7 @@ pub mod history;
 pub mod load_plan;
 pub mod provider_config;
 pub mod secrets;
+pub mod speaker_candidate_set;
 pub mod tool_allowlist;
 pub mod tool_security;
 

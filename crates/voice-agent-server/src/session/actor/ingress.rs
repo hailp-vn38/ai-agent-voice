@@ -161,10 +161,20 @@ impl SessionActor {
                 }
                 event = ingress.recv() => match event {
                     Some(SessionEvent::ClientMessage(message)) => {
+                        if self.speaker_security_revoked() {
+                            self.begin_application_shutdown();
+                            let _ = self.urgent_tx.send(OutboundMessage::Close(1008)).await;
+                            break;
+                        }
                         self.apply_reported_turn_outcomes();
                         self.on_client_message(message)
                     }
                     Some(SessionEvent::ClientAudio(payload)) => {
+                        if self.speaker_security_revoked() {
+                            self.begin_application_shutdown();
+                            let _ = self.urgent_tx.send(OutboundMessage::Close(1008)).await;
+                            break;
+                        }
                         self.apply_reported_turn_outcomes();
                         self.on_binary(payload);
                     }
@@ -285,6 +295,14 @@ impl SessionActor {
 
     pub(super) fn inbound_session_matches(&self, session_id: Option<&str>) -> bool {
         matches!(session_id, None | Some("")) || session_id == Some(&self.session_id)
+    }
+
+    /// Security epoch recheck: a revoked Speaker/grant/policy/template snapshot never restores
+    /// authority, even if a message raced ahead of the close.
+    fn speaker_security_revoked(&self) -> bool {
+        self.speaker_observe
+            .as_ref()
+            .is_some_and(|observe| observe.security_cancelled())
     }
 }
 

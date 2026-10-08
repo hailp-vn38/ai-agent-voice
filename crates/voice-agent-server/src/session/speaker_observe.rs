@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+use tokio_util::sync::CancellationToken;
 
 use crate::audio::PcmF32Mono;
 use crate::audio::enrollment::{self, QualityProfile};
@@ -163,6 +164,7 @@ pub struct SpeakerObserve {
     lease: ResourceLease,
     plan: ObservePlan,
     profile: QualityProfile,
+    security: Arc<CancellationToken>,
 }
 
 impl SpeakerObserve {
@@ -177,7 +179,25 @@ impl SpeakerObserve {
             lease,
             plan,
             profile,
+            // A session admitted without the registry (tests, Observe-only harnesses) is never
+            // revoked; real admission attaches the registry token via `with_security`.
+            security: Arc::new(CancellationToken::new()),
         }
+    }
+
+    /// Attaches the registry token that revokes this session when a Speaker/grant/policy/template
+    /// mutation invalidates its snapshot.
+    pub fn with_security(mut self, security: Arc<CancellationToken>) -> Self {
+        self.security = security;
+        self
+    }
+
+    pub fn security_token(&self) -> Arc<CancellationToken> {
+        Arc::clone(&self.security)
+    }
+
+    pub fn security_cancelled(&self) -> bool {
+        self.security.is_cancelled()
     }
 
     pub fn plan(&self) -> &ObservePlan {

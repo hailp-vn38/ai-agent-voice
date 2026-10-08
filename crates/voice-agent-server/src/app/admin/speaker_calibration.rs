@@ -11,6 +11,7 @@
 //! See ADR 0079 and ADR 0081, and the implementation guide §4.2, §6.2.
 
 use super::*;
+use crate::database::speaker_candidate_set::{candidate_set, candidate_set_digest, hex};
 use axum::body::to_bytes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -201,6 +202,13 @@ pub(super) async fn reload(State(state): State<AppState>, request: Request) -> R
     if let Err(error_value) = transaction.commit().await {
         return sql_error(&request, &error_value);
     }
+    // The reload revoked exact candidate sets; close the sessions admitted under them so a stale
+    // pass cannot restore evidence the catalog no longer carries. Kept sets stay live.
+    if let Some(security) = security(&state) {
+        for digest in &revoked {
+            security.invalidate_candidate_set(digest);
+        }
+    }
 
     let evidence = rows
         .iter()
@@ -333,75 +341,6 @@ async fn evidence_rows(
     Ok(rows)
 }
 
-/// Canonical JSON for an Agent's exact candidate set: candidate identities, voiceprint revisions
-/// and spaces, per-Template grants, and the pinned preprocessing/audio/scoring contract.
-pub(super) async fn candidate_set(
-    pool: &SqlitePool,
-    agent_id: i64,
-    agent_key: &str,
-) -> Result<serde_json::Value, sqlx::Error> {
-    let candidates = sqlx::query_as::<_, (i64, String)>(
-        "SELECT c.speaker_id, s.key FROM agent_speaker_candidates c \
-         JOIN speakers s ON s.id=c.speaker_id WHERE c.agent_id=? ORDER BY s.key",
-    )
-    .bind(agent_id)
-    .fetch_all(pool)
-    .await?;
-    let mut entries = Vec::with_capacity(candidates.len());
-    for (speaker_id, speaker_key) in candidates {
-        let voiceprints = sqlx::query_as::<_, (String, i64, String, i64, i64, String)>(
-            "SELECT embedding_space,revision,provider_key,provider_revision,dims,\
-             calibration_revision FROM speaker_voiceprints WHERE speaker_id=? \
-             ORDER BY embedding_space",
-        )
-        .bind(speaker_id)
-        .fetch_all(pool)
-        .await?;
-        let voiceprints = voiceprints
-            .into_iter()
-            .map(
-                |(space, revision, provider_key, provider_revision, dimensions, calibration)| {
-                    serde_json::json!({
-                        "space": space,
-                        "revision": revision,
-                        "provider_key": provider_key,
-                        "provider_revision": provider_revision,
-                        "dimensions": dimensions,
-                        "calibration_revision": calibration,
-                    })
-                },
-            )
-            .collect::<Vec<_>>();
-        let grants = sqlx::query_scalar::<_, String>(
-            "SELECT t.key FROM agent_speaker_template_grants g \
-             JOIN agent_templates t ON t.id=g.template_id \
-             WHERE g.agent_id=? AND g.speaker_id=? ORDER BY t.key",
-        )
-        .bind(agent_id)
-        .bind(speaker_id)
-        .fetch_all(pool)
-        .await?;
-        entries.push(serde_json::json!({
-            "speaker": speaker_key,
-            "templates": grants,
-            "voiceprints": voiceprints,
-        }));
-    }
-    Ok(serde_json::json!({
-        "agent": agent_key,
-        "candidates": entries,
-        // ponytail: contract pinned as a constant; read live provider/audio descriptors if the
-        // recognition pipeline (tickets 10–13) exposes them and drift becomes a real risk.
-        "contract": {
-            "preprocessing": "pcm16-mono16k-v1",
-            "sample_rate": 16_000,
-            "channels": 1,
-            "bits_per_sample": 16,
-            "scoring": "cosine",
-        },
-    }))
-}
-
 /// Whether the Agent's exact current candidate set is qualified under the published catalog.
 pub(super) struct Qualification {
     pub(super) evidence: bool,
@@ -433,10 +372,7 @@ pub(super) async fn qualification(
     let profiles: Vec<CalibrationProfile> =
         serde_json::from_str(&profiles_json).unwrap_or_default();
     let qualified_profile = profiles.iter().any(|profile| profile.status == "qualified");
-    let candidate_set = candidate_set(pool, agent_id, agent_key).await?;
-    let candidate_set_json = serde_json::to_string(&candidate_set)
-        .map_err(|_| sqlx::Error::Protocol("candidate set is not serializable".into()))?;
-    let digest = hex(Sha256::digest(candidate_set_json.as_bytes()));
+    let digest = candidate_set_digest(pool, agent_id, agent_key).await?;
     let evidence = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM speaker_calibration_evidence \
          WHERE calibration_revision=? AND candidate_set_digest=?",
@@ -489,12 +425,4 @@ pub(super) async fn status(pool: &SqlitePool) -> Result<serde_json::Value, sqlx:
         "profiles": profiles,
         "evidence_sets": evidence_sets,
     }))
-}
-
-fn hex(bytes: impl AsRef<[u8]>) -> String {
-    bytes
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }

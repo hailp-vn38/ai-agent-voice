@@ -26,8 +26,8 @@ use voice_agent_server::{
         RuntimeMaterializer, RuntimeResource,
     },
     session::{
-        ObserveCandidate, ObservePlan, OutboundMessage, SessionActor, SessionPhase, SpeakerObserve,
-        SpeakerPolicyMode,
+        ObserveCandidate, ObservePlan, OutboundMessage, SessionActor, SessionEvent, SessionPhase,
+        SpeakerObserve, SpeakerPolicyMode,
     },
     workers::{ProviderRuntimeAdmission, SpeakerRuntime},
 };
@@ -446,4 +446,44 @@ async fn off_session_still_accepts_detect() {
     let messages = drain(&mut actor, &mut messages, false).await;
     assert!(messages.iter().any(is_stt_frame));
     assert_eq!(actor.phase(), SessionPhase::Ready);
+}
+
+/// Ticket 16: a revoked Speaker snapshot never restores authority. Even if a client message races
+/// the WebSocket close, the actor's ingress recheck closes 1008 before accepting it.
+#[tokio::test]
+async fn revoked_snapshot_closes_the_ingress_loop_before_accepting() {
+    let (observe, _lease) = observe_with(false).await;
+    let security = observe.security_token();
+    let (control, mut messages) = mpsc::channel(8);
+    let (audio, _) = mpsc::channel(1);
+    let actor = SessionActor::new("session".into(), control, audio, CAPTURE_FRAMES, providers())
+        .unwrap()
+        .with_speaker_observe(Some(observe), true);
+    let (ingress_tx, ingress_rx) = mpsc::channel(8);
+    let handle = tokio::spawn(actor.run(ingress_rx));
+
+    security.cancel();
+    ingress_tx
+        .send(SessionEvent::ClientMessage(ClientMessage::listen(
+            ListenCommand::Start {
+                mode: ListenMode::Manual,
+            },
+        )))
+        .await
+        .unwrap();
+
+    let mut closed = false;
+    for _ in 0..2_000 {
+        while let Ok(message) = messages.try_recv() {
+            if matches!(message, OutboundMessage::Close(1008)) {
+                closed = true;
+            }
+        }
+        if closed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(closed, "a revoked snapshot must close 1008 before dispatch");
+    handle.abort();
 }

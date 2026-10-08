@@ -346,6 +346,11 @@ pub(super) async fn patch_template(
             "database_unavailable",
         );
     }
+    // The Template revision is part of the session's frozen snapshot; drop sessions pinned to it
+    // so the next admission observes the new prompt/language/enabled state instead of hot-reloading.
+    if let Some(security) = security(&state) {
+        security.invalidate_template_speakers(old.id);
+    }
     get_template(State(state), Path(key), request).await
 }
 

@@ -112,7 +112,7 @@ pub(super) async fn put_policy(
         Ok(agent) => agent,
         Err(error_value) => return agent_lookup_error(&request, &error_value),
     };
-    let (_, current) = match policy_state(pool, agent.id).await {
+    let (previous_mode, current) = match policy_state(pool, agent.id).await {
         Ok(state) => state,
         Err(error_value) => return sql_error(&request, &error_value),
     };
@@ -186,6 +186,13 @@ pub(super) async fn put_policy(
     }
     if let Err(error_value) = tx.commit().await {
         return sql_error(&request, &error_value);
+    }
+    // A policy mode change re-scopes every session on this Agent: drop them so the next voice turn
+    // re-admits under the new mode instead of keeping authority from the old snapshot.
+    if previous_mode != body.mode
+        && let Some(security) = security(&state)
+    {
+        security.invalidate_agent_speakers(agent.id);
     }
     let qualified = match speaker_calibration::qualification(pool, agent.id, &agent.key).await {
         Ok(qualification) => qualification.is_qualified(),
@@ -292,6 +299,18 @@ pub(super) async fn put_agent_speaker(
             Err(error_value) => return sql_error(&request, &error_value),
         }
     }
+    // Old grants, to tell a reduction (which revokes sessions) from an addition (which does not).
+    let previous_templates = match sqlx::query_scalar::<_, i64>(
+        "SELECT template_id FROM agent_speaker_template_grants WHERE agent_id = ? AND speaker_id = ?",
+    )
+    .bind(agent.id)
+    .bind(speaker_id)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(ids) => ids,
+        Err(error_value) => return sql_error(&request, &error_value),
+    };
 
     let already_bound: bool = match sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM agent_speaker_candidates WHERE agent_id = ? AND speaker_id = ?",
@@ -391,6 +410,15 @@ pub(super) async fn put_agent_speaker(
     }
     if let Err(error_value) = tx.commit().await {
         return sql_error(&request, &error_value);
+    }
+    // A reduction removes authority an admitted session pinned; an addition only applies to new
+    // sessions. Revoke only when a previously granted Template was dropped.
+    if previous_templates
+        .iter()
+        .any(|template| !template_ids.contains(template))
+        && let Some(security) = security(&state)
+    {
+        security.invalidate_speaker(speaker_id);
     }
     with_etag(
         Json(binding_body(
@@ -499,8 +527,9 @@ pub(super) async fn delete_agent_speaker(
     }
     // Removing a grant changes the authority of already-admitted sessions; drop them so the next
     // voice turn re-admits under the reduced grant set.
-    if let Some(database) = state.database.as_ref() {
-        database.tool_security.invalidate_agent(agent.id);
+    if let Some(security) = security(&state) {
+        security.invalidate_agent(agent.id);
+        security.invalidate_agent_speakers(agent.id);
     }
     with_etag(
         Json(serde_json::json!({

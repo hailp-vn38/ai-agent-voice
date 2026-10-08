@@ -328,6 +328,13 @@ async fn handle_socket(
         .as_ref()
         .map(|g| g.close.clone())
         .unwrap_or_else(|| Arc::new(CancellationToken::new()));
+    // The Speaker/grant/policy/template snapshot this session pinned. Cancelled by the registry on
+    // any mutation that revokes it, exactly like the external tool guard above.
+    let speaker_security_close = runtimes
+        .speaker_observe
+        .as_ref()
+        .map(|observe| observe.security_token())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
     let writer_probe = runtimes.writer_probe;
     let session_id = runtimes.session_id;
     let stopping = control.stopping.clone();
@@ -338,6 +345,7 @@ async fn handle_socket(
     let first = tokio::select! {
         _ = stopping.cancelled() => return,
         _ = tool_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
+        _ = speaker_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
     };
     let hello = match first {
@@ -589,6 +597,14 @@ async fn handle_socket(
                 let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
                 break;
             }
+            // A Speaker/grant/policy/template mutation revoked this session's snapshot. Same close
+            // as the external-tool path: no new dispatch, close 1008, terminal event. If the mailbox
+            // is gone the send fails and this loop simply ends, which is the shutdown escape path.
+            _ = speaker_security_close.cancelled() => {
+                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
+                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
+                break;
+            }
             _ = drain_close.cancelled() => {
                 info!("controlled close issued at the shutdown grace deadline");
                 let _ = ingress_tx.send(SessionEvent::Shutdown).await;
@@ -830,7 +846,27 @@ async fn resolve_speaker_observe(
         min_speech_ms: enrollment.min_speech_ms,
         max_window_ms: enrollment.max_window_ms,
     };
-    Ok(Some(Arc::new(SpeakerObserve::new(
-        speaker, lease, plan, quality,
-    ))))
+    // Pin the exact snapshot this session may use. Any later mutation that revokes one of these
+    // dependencies cancels the token; the WebSocket closes 1008 and the actor rechecks before
+    // every dispatch, so a stale pass cannot restore authority.
+    let speakers = plan.candidates.iter().map(|c| c.speaker_id).collect();
+    let candidate_set_digest = crate::database::speaker_candidate_set::candidate_set_digest(
+        database.pool(),
+        profile.agent_id,
+        &profile.agent_key,
+    )
+    .await
+    .ok();
+    let security =
+        database
+            .tool_security
+            .register_speaker(crate::database::tool_security::SpeakerDeps {
+                agent: profile.agent_id,
+                template: template_id,
+                speakers,
+                candidate_set_digest,
+            });
+    Ok(Some(Arc::new(
+        SpeakerObserve::new(speaker, lease, plan, quality).with_security(security),
+    )))
 }

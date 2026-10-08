@@ -704,6 +704,10 @@ pub(super) async fn patch(
             "database_unavailable",
         );
     }
+    // The commit published a security invalidation: revoke every session that pinned this speaker.
+    if let Some(security) = security(&state) {
+        security.invalidate_speaker(old.id);
+    }
     match get_speaker_by(pool, &key).await {
         Ok(speaker) => with_etag(
             Json(speaker_resource(&speaker, Vec::new(), Vec::new())).into_response(),
@@ -919,6 +923,9 @@ pub(super) async fn purge(
             StatusCode::SERVICE_UNAVAILABLE,
             "database_unavailable",
         );
+    }
+    if let Some(security) = security(&state) {
+        security.invalidate_speaker(old.id);
     }
     match get_speaker_by(pool, &key).await {
         Ok(speaker) => with_etag(
@@ -1974,6 +1981,11 @@ pub(super) async fn finalize(
             StatusCode::SERVICE_UNAVAILABLE,
             "database_unavailable",
         );
+    }
+    // Finalize replaces (or creates) the voiceprint: revoke sessions that pinned the old one. A
+    // first enrolment is an addition, so no existing session depends on it and nothing is closed.
+    if let Some(security) = security(&state) {
+        security.invalidate_speaker(speaker.id);
     }
     let revision = expected + 1;
     let refreshed_speaker = match get_speaker_by(pool, &key).await {

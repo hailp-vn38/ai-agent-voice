@@ -279,6 +279,10 @@ pub(super) async fn patch_agent(
             "database_unavailable",
         );
     };
+    // An Agent update re-scopes its sessions' profile snapshot; close them rather than hot-reload.
+    if let Some(security) = security(&state) {
+        security.invalidate_agent_speakers(old.id);
+    }
     get_agent_by(pool, &key)
         .await
         .map(|v| Json(v).into_response())
@@ -367,6 +371,10 @@ async fn patch_agent_enabled(
             "database_unavailable",
         );
     };
+    // Disabling (or re-enabling) an Agent re-scopes its sessions; close them rather than hot-reload.
+    if let Some(security) = security(state) {
+        security.invalidate_agent_speakers(old.id);
+    }
     get_agent_by(pool, key)
         .await
         .map(|v| Json(v).into_response())
