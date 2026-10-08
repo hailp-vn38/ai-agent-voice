@@ -10,6 +10,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import VoiceDeviceIcon from '@/components/icons/VoiceDeviceIcon.vue'
 import { displayDeviceDate } from '@/components/devices/presentation'
+import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useAdminStore } from '@/stores/admin'
@@ -198,7 +199,13 @@ onBeforeUnmount(() => activeRequest?.abort())
           <Button variant="outline" :disabled="loading || saving" @click="load">
             <RefreshCw class="size-4" aria-hidden="true" /> {{ t('common.refresh') }}
           </Button>
-          <Button @click="openEdit"><Pencil class="size-4" aria-hidden="true" />{{ t('agentDevices.edit') }}</Button>
+          <Button :disabled="saving" @click="openEdit"><Pencil class="size-4" aria-hidden="true" />{{ t('agentDevices.edit') }}</Button>
+          <ActionMenu :label="t('common.actions')" panel-width="12rem" :disabled="saving">
+            <MenuItem variant="danger" @select="deleteOpen = true">
+              <Trash2 class="size-4 shrink-0" aria-hidden="true" />
+              {{ t('agentDevices.delete') }}
+            </MenuItem>
+          </ActionMenu>
         </div>
       </header>
 
@@ -282,15 +289,6 @@ onBeforeUnmount(() => activeRequest?.abort())
         </button>
       </section>
 
-      <section class="studio-panel flex items-center justify-between gap-4 p-5">
-        <div>
-          <h2 class="text-sm font-semibold">{{ t('deviceDetail.danger') }}</h2>
-          <p class="mt-1 text-xs text-muted-foreground">{{ t('deviceDetail.deleteHint') }}</p>
-        </div>
-        <Button variant="outline" :disabled="saving" class="shrink-0 text-danger-foreground" @click="deleteOpen = true">
-          <Trash2 class="size-4" aria-hidden="true" />{{ t('agentDevices.delete') }}
-        </Button>
-      </section>
     </template>
 
     <BaseModal v-model="editOpen" :title="t('agentDevices.edit')" width-class="max-w-xl">
