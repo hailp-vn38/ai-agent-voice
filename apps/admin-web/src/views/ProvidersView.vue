@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { Plus, Search } from '@lucide/vue'
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import type { TemplateProviderType } from '@/api/types/templates'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
-import ProviderDetailModal from '@/components/admin/ProviderDetailModal.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
 import LinkProviderTemplateDialog from '@/components/providers/LinkProviderTemplateDialog.vue'
 import ProviderCatalogCard from '@/components/providers/ProviderCatalogCard.vue'
@@ -25,6 +25,7 @@ import { providerTypeIcons } from '@/lib/providerTypeIcons'
 import { useAdminStore } from '@/stores/admin'
 
 const store = useAdminStore()
+const router = useRouter()
 const { t, providerTypeLabel } = useI18n()
 
 const ALL = 'all'
@@ -41,8 +42,6 @@ const statusFilter = ref<string>(ALL)
 
 const createOpen = ref(false)
 const createType = ref<TemplateProviderType | undefined>()
-const detailOpen = ref(false)
-const focusTest = ref(false)
 const linkOpen = ref(false)
 const selectedProvider = ref<ProviderInstance | undefined>()
 const editingProvider = ref<ProviderInstance | undefined>()
@@ -81,10 +80,6 @@ function usageFor(providerId: string): ProviderUsageEntry[] {
     agentNames: store.getAgentsUsingTemplate(template.id).map((agent) => agent.name),
   }))
 }
-
-const selectedUsage = computed(() =>
-  selectedProvider.value ? usageFor(selectedProvider.value.id) : [],
-)
 
 const editingUsageCount = computed(() =>
   editingProvider.value ? store.getProviderTemplateCount(editingProvider.value.id) : 0,
@@ -158,32 +153,25 @@ function openCreate(type?: ProviderType) {
 
 /** A saved provider is not ready to use yet, so it lands on detail, not the catalog. */
 function openCreatedProvider(key: string) {
-  const created = store.getProvider(key)
   createType.value = undefined
-  if (created) openDetail(created)
+  void router.push({ name: 'provider-detail', params: { key } })
 }
 
 function openDetail(provider: ProviderInstance) {
-  selectedProvider.value = provider
-  focusTest.value = false
-  detailOpen.value = true
+  void router.push({ name: 'provider-detail', params: { key: provider.id } })
 }
 
-/** The card's Test action opens detail and puts the test section in view. */
+/** The card's Test action opens the detail page, with its test panel in the primary column. */
 function openTest(provider: ProviderInstance) {
-  selectedProvider.value = provider
-  focusTest.value = true
-  detailOpen.value = true
+  openDetail(provider)
 }
 
 function openEdit(provider: ProviderInstance) {
-  detailOpen.value = false
   editingProvider.value = provider
 }
 
 function openLink(provider: ProviderInstance) {
   selectedProvider.value = provider
-  detailOpen.value = false
   linkOpen.value = true
 }
 
@@ -343,14 +331,6 @@ function providerNameById(id?: string) {
       :providers="store.providers"
       :usage-count="editingUsageCount"
       @save="saveProvider"
-    />
-
-    <ProviderDetailModal
-      v-model="detailOpen"
-      :provider="selectedProvider"
-      :usage="selectedUsage"
-      :focus-test="focusTest"
-      @edit="openEdit"
     />
 
     <LinkProviderTemplateDialog
