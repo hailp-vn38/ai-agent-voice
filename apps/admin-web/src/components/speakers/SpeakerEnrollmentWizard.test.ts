@@ -47,7 +47,7 @@ describe('SpeakerEnrollmentWizard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('6–9 giây')
-    expect(wrapper.get('[data-voice-recording-dock]').exists()).toBe(true)
+    expect(wrapper.find('[data-voice-recording-dock]').exists()).toBe(true)
     expect(wrapper.findAll('.voice-dock-action')).toHaveLength(1)
     await wrapper.get('.voice-dock-action').trigger('click')
     await flushPromises()

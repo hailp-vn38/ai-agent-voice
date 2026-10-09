@@ -104,7 +104,7 @@ it('uses the waveform dock for create-provider draft ASR without saving a provid
   const draft = { type: 'asr' as const, adapter: 'whisper', config_json: { model: 'base' } }
   const wrapper = mount(ProviderTestPanel, { props: { type: 'asr', draft } })
 
-  expect(wrapper.get('[data-voice-recording-dock]').exists()).toBe(true)
+  expect(wrapper.find('[data-voice-recording-dock]').exists()).toBe(true)
   expect(wrapper.get('[data-run-test]').attributes('disabled')).toBeDefined()
   await wrapper.get('.voice-dock-action').trigger('click')
   await flushPromises()
@@ -113,7 +113,7 @@ it('uses the waveform dock for create-provider draft ASR without saving a provid
   elapsedMs.value = 1_200
   await flushPromises()
   expect(wrapper.text()).toContain('00:01')
-  expect(wrapper.get('.voice-dock-secondary').exists()).toBe(true)
+  expect(wrapper.find('.voice-dock-secondary').exists()).toBe(true)
   await wrapper.get('.voice-dock-action').trigger('click')
   await flushPromises()
   await wrapper.get('[data-run-test]').trigger('click')
