@@ -546,7 +546,11 @@ impl SessionActor {
 /// Bounded, untrusted metadata of the matched Speaker for the current turn only.
 fn speaker_system_message(profile: &crate::session::SpeakerContext) -> ChatMessage {
     let clean = |value: &str, max_chars: usize| -> String {
-        value.chars().filter(|ch| !ch.is_control()).take(max_chars).collect()
+        value
+            .chars()
+            .filter(|ch| !ch.is_control())
+            .take(max_chars)
+            .collect()
     };
     let payload = serde_json::json!({
         "display_name": clean(&profile.name, 96),
