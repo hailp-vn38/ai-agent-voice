@@ -161,11 +161,6 @@ function openDetail(provider: ProviderInstance) {
   void router.push({ name: 'provider-detail', params: { key: provider.id } })
 }
 
-/** The card's Test action opens the detail page, with its test panel in the primary column. */
-function openTest(provider: ProviderInstance) {
-  openDetail(provider)
-}
-
 function openEdit(provider: ProviderInstance) {
   editingProvider.value = provider
 }
@@ -263,7 +258,6 @@ function providerNameById(id?: string) {
             :provider="provider"
             :usage="usageFor(provider.id)"
             @open="openDetail(provider)"
-            @test="openTest(provider)"
             @edit="openEdit(provider)"
             @link="openLink(provider)"
             @duplicate="store.duplicateProvider(provider.id)"

@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { FlaskConical } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
 import ProviderActionsMenu from '@/components/providers/ProviderActionsMenu.vue'
 import ProviderUsageList from '@/components/providers/ProviderUsageList.vue'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useI18n } from '@/composables/useI18n'
 import type { ProviderInstance, ProviderUsageEntry } from '@/domain/admin'
@@ -18,7 +16,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   open: []
-  test: []
   edit: []
   link: []
   duplicate: []
@@ -59,13 +56,23 @@ const statusTone = computed(() => {
           <component :is="typeIcon" class="size-3.5 shrink-0" aria-hidden="true" />
           <span class="font-medium tracking-wide uppercase">{{ providerTypeLabel(provider.type) }}</span>
         </div>
-        <span
-          class="inline-flex shrink-0 items-center gap-1.5 text-xs"
-          :class="statusTone"
-        >
-          <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
-          {{ providerStatusLabel(provider.status) }}
-        </span>
+        <div class="flex shrink-0 items-center gap-1">
+          <span
+            class="inline-flex items-center gap-1.5 text-xs"
+            :class="statusTone"
+          >
+            <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
+            {{ providerStatusLabel(provider.status) }}
+          </span>
+          <ProviderActionsMenu
+            :provider="provider"
+            @view="emit('open')"
+            @edit="emit('edit')"
+            @link="emit('link')"
+            @duplicate="emit('duplicate')"
+            @delete="emit('delete')"
+          />
+        </div>
       </div>
 
       <div class="min-w-0">
@@ -112,21 +119,6 @@ const statusTone = computed(() => {
           :provider-name="provider.name"
           :usage="usage"
           @navigate="emit('open')"
-        />
-      </div>
-
-      <div class="flex items-center justify-end gap-2">
-        <Button size="sm" variant="outline" :aria-label="t('providers.runTest')" @click.stop="emit('test')">
-          <FlaskConical class="size-3.5" />
-          {{ t('providers.testAction') }}
-        </Button>
-        <ProviderActionsMenu
-          :provider="provider"
-          @view="emit('open')"
-          @edit="emit('edit')"
-          @link="emit('link')"
-          @duplicate="emit('duplicate')"
-          @delete="emit('delete')"
         />
       </div>
     </CardContent>

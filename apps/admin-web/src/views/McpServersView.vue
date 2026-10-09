@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Link2, Pencil, Plus, RefreshCw, Search, Server, ShieldCheck, Trash2 } from '@lucide/vue'
+import { ArrowRight, Link2, Pencil, Plus, Power, RefreshCw, Search, Server, ShieldCheck, Trash2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
@@ -9,6 +9,7 @@ import type { AdminMcpServer, CreateMcpServerInput, UpdateMcpServerInput } from 
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import McpServerFormModal from '@/components/mcp/McpServerFormModal.vue'
+import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
@@ -194,13 +195,13 @@ onBeforeUnmount(() => controller.abort())
     </div>
 
     <div v-if="visible.length" class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-      <article v-for="server in visible" :key="server.key" class="studio-panel flex flex-col gap-4 p-5">
+      <article v-for="server in visible" :key="server.key" class="studio-panel relative flex flex-col gap-4 p-5">
         <RouterLink :to="`/mcp/${encodeURIComponent(server.key)}`" class="flex flex-1 cursor-pointer flex-col gap-5 rounded-lg outline-none hover:text-studio-violet focus-visible:ring-2 focus-visible:ring-ring" @keydown.space.prevent="$router.push(`/mcp/${encodeURIComponent(server.key)}`)">
         <div class="flex items-start justify-between gap-3">
           <span class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
             <Server class="size-5" aria-hidden="true" />
           </span>
-          <span class="rounded-full border px-2.5 py-1 text-xs" :class="server.enabled ? 'border-success/40 text-success' : 'border-border text-muted-foreground'">
+          <span class="mr-8 rounded-full border px-2.5 py-1 text-xs" :class="server.enabled ? 'border-success/40 text-success' : 'border-border text-muted-foreground'">
             {{ server.enabled ? t('mcp.enabled') : t('mcp.disabled') }}
           </span>
         </div>
@@ -217,17 +218,18 @@ onBeforeUnmount(() => controller.abort())
         </div>
         <p class="text-xs text-muted-foreground">{{ t('mcp.configNotice') }}</p>
         </RouterLink>
-        <div class="mt-auto flex flex-wrap items-center gap-2 border-t border-border/70 pt-4">
-          <Button size="sm" variant="outline" :disabled="saving" @click="editServer(server)">
-            <Pencil class="size-3.5" aria-hidden="true" />{{ t('common.edit') }}
-          </Button>
-          <Button size="sm" variant="outline" :disabled="saving" @click="toggleServer(server)">
-            {{ server.enabled ? t('mcp.disable') : t('mcp.enable') }}
-          </Button>
-          <Button size="sm" variant="ghost" :disabled="saving" @click="deleteTarget = server">
-            <Trash2 class="size-3.5" aria-hidden="true" />{{ t('common.delete') }}
-          </Button>
-        </div>
+        <ActionMenu class="absolute top-5 right-5" :label="t('common.actions')" :disabled="saving">
+          <MenuItem @select="editServer(server)">
+            <Pencil class="size-4 shrink-0" aria-hidden="true" />{{ t('common.edit') }}
+          </MenuItem>
+          <MenuItem @select="toggleServer(server)">
+            <Power class="size-4 shrink-0" aria-hidden="true" />{{ server.enabled ? t('mcp.disable') : t('mcp.enable') }}
+          </MenuItem>
+          <div class="my-1 h-px bg-border" role="separator" />
+          <MenuItem variant="danger" @select="deleteTarget = server">
+            <Trash2 class="size-4 shrink-0" aria-hidden="true" />{{ t('common.delete') }}
+          </MenuItem>
+        </ActionMenu>
       </article>
     </div>
     <div v-else-if="loading" class="studio-panel p-10 text-center text-sm text-muted-foreground">{{ t('common.loading') }}</div>
