@@ -990,17 +990,18 @@ async fn resolve_speaker_observe(
         candidate_count = plan.candidates.len(),
         "ws speaker identification configuration"
     );
-    let enrollment = &config.speaker_recognition.enrollment;
+    let observe_config = &config.speaker_recognition.observe;
     let quality = crate::audio::enrollment::QualityProfile {
-        min_clip_ms: enrollment.min_clip_ms,
-        max_clip_ms: enrollment.max_clip_ms,
-        min_speech_ms: enrollment.min_speech_ms,
-        max_window_ms: enrollment.max_window_ms,
+        min_clip_ms: observe_config.min_clip_ms,
+        max_clip_ms: 6_000, // Observe PCM buffer hard cap.
+        min_speech_ms: observe_config.min_speech_ms,
+        max_window_ms: observe_config.max_window_ms,
     };
     Ok(Some(Arc::new(SpeakerObserve::new_builtin(
         Arc::clone(runtime),
         plan,
         quality,
         config.speaker_recognition.similarity_threshold,
+        observe_config.join_timeout_ms,
     ))))
 }

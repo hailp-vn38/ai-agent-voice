@@ -184,6 +184,12 @@ similarity_threshold = 0.5
 max_speakers = 256
 max_candidates_per_agent = 32
 
+[speaker_recognition.observe]
+min_clip_ms = 1000
+min_speech_ms = 800
+max_window_ms = 6000
+join_timeout_ms = 10000
+
 [speaker_recognition.enrollment]
 min_clip_ms = 2000
 max_clip_ms = 10000

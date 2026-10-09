@@ -136,6 +136,9 @@ pub struct SpeakerRecognitionConfig {
     pub max_voiceprint_spaces_per_speaker: usize,
     #[serde(default)]
     pub enrollment: SpeakerEnrollmentConfig,
+    /// Live WS quality and ASR/Speaker join, independent of Enrollment quality.
+    #[serde(default)]
+    pub observe: SpeakerObserveConfig,
     /// Fixed deployment path of the calibration catalog reloaded by the Admin route. Never
     /// supplied per request; absent means reloads report `speaker_catalog_unavailable`.
     #[serde(default)]
@@ -150,7 +153,33 @@ impl Default for SpeakerRecognitionConfig {
             max_candidates_per_agent: default_speaker_max_candidates_per_agent(),
             max_voiceprint_spaces_per_speaker: default_speaker_max_voiceprint_spaces(),
             enrollment: SpeakerEnrollmentConfig::default(),
+            observe: SpeakerObserveConfig::default(),
             calibration_source: None,
+        }
+    }
+}
+
+/// Live-turn quality and ASR/Speaker join budget, distinct from enrollment.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeakerObserveConfig {
+    #[serde(default = "default_speaker_observe_min_clip_ms")]
+    pub min_clip_ms: u64,
+    #[serde(default = "default_speaker_observe_min_speech_ms")]
+    pub min_speech_ms: u64,
+    #[serde(default = "default_speaker_observe_max_window_ms")]
+    pub max_window_ms: u64,
+    #[serde(default = "default_speaker_observe_join_timeout_ms")]
+    pub join_timeout_ms: u64,
+}
+
+impl Default for SpeakerObserveConfig {
+    fn default() -> Self {
+        Self {
+            min_clip_ms: default_speaker_observe_min_clip_ms(),
+            min_speech_ms: default_speaker_observe_min_speech_ms(),
+            max_window_ms: default_speaker_observe_max_window_ms(),
+            join_timeout_ms: default_speaker_observe_join_timeout_ms(),
         }
     }
 }

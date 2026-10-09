@@ -49,6 +49,18 @@ pub(super) fn default_speaker_max_candidates_per_agent() -> usize {
 pub(super) fn default_speaker_max_voiceprint_spaces() -> usize {
     4
 }
+pub(super) fn default_speaker_observe_min_clip_ms() -> u64 {
+    1_000
+}
+pub(super) fn default_speaker_observe_min_speech_ms() -> u64 {
+    800
+}
+pub(super) fn default_speaker_observe_max_window_ms() -> u64 {
+    6_000
+}
+pub(super) fn default_speaker_observe_join_timeout_ms() -> u64 {
+    10_000
+}
 pub(super) fn default_speaker_min_samples() -> usize {
     3
 }
