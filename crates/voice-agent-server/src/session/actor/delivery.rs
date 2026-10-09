@@ -146,12 +146,14 @@ impl SessionActor {
         info!(
             event = "llm_operation_started",
             profile_source,
-            system_prompt_bytes = self.llm_messages.first().and_then(|message| {
-                match message {
+            system_prompt_bytes = self
+                .llm_messages
+                .first()
+                .and_then(|message| match message {
                     ChatMessage::System { content } => Some(content.len()),
                     _ => None,
-                }
-            }).unwrap_or(0),
+                })
+                .unwrap_or(0),
             tool_count,
             "LLM operation started"
         );
