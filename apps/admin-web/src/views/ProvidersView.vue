@@ -161,7 +161,7 @@ function openDetail(provider: ProviderInstance) {
   void router.push({ name: 'provider-detail', params: { key: provider.id } })
 }
 
-/** The card's Test action opens detail and puts the test section in view. */
+/** The card's Test action opens the detail page, with its test panel in the primary column. */
 function openTest(provider: ProviderInstance) {
   openDetail(provider)
 }
