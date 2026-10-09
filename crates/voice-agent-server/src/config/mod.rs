@@ -355,7 +355,7 @@ fn validate_prompt_template(template: &str) -> Result<(), ConfigError> {
         };
         let end = token_start + end_relative;
         match &template[token_start..end] {
-            "agent_name" | "language" => {}
+            "agent_name" | "language" | "speakers_info" => {}
             "persona" => persona_seen = true,
             _ => {
                 return Err(ConfigError::Validation(
@@ -422,8 +422,11 @@ mod agent_template_tests {
     use super::validate_prompt_template;
 
     #[test]
-    fn accepts_only_the_three_literal_placeholders() {
-        assert!(validate_prompt_template("{{persona}} {{agent_name}} {{language}}").is_ok());
+    fn accepts_only_the_supported_literal_placeholders() {
+        assert!(
+            validate_prompt_template("{{persona}} {{agent_name}} {{language}} {{speakers_info}}")
+                .is_ok()
+        );
         for invalid in [
             "{{persona}} {{ persona }}",
             "{{persona}} {{foo}}",
