@@ -30,8 +30,8 @@ export function assertCredentialTransport() {
   }
 }
 
-export function jsonRequest(method: string, body: unknown): RequestInit {
-  if (body && typeof body === 'object' && 'api_key' in body && body.api_key !== undefined) assertCredentialTransport()
+export function jsonRequest(method: string, body: unknown, options: { allowHttpCredentials?: boolean } = {}): RequestInit {
+  if (!options.allowHttpCredentials && body && typeof body === 'object' && 'api_key' in body && body.api_key !== undefined) assertCredentialTransport()
   return {
     method,
     headers: { 'Content-Type': 'application/json' },

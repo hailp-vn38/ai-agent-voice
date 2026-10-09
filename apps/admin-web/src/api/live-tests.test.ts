@@ -24,12 +24,11 @@ it('uses separate connection and discovery routes for saved and draft MCP', asyn
   await mcpApi.discoverSavedTools('weather')
   expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/admin/mcp-tests/connection', '/api/admin/mcp-tests/discover', '/api/admin/mcp-servers/weather/test/connection', '/api/admin/mcp-servers/weather/test/discover'])
 })
-it('blocks nested draft credentials over LAN HTTP before fetch', () => {
+it('blocks Provider draft credentials over LAN HTTP before fetch', () => {
   vi.stubGlobal('location', { href: 'http://192.168.1.2/' })
   const fetch = vi.fn()
   vi.stubGlobal('fetch', fetch)
   expect(() => providersApi.testDraftLlm({ type: 'llm', adapter: 'openai', config_json: {}, api_key: 'secret' }, { text: 'hi' })).toThrow('HTTPS')
-  expect(() => mcpApi.testDraftConnection({ key: 'test', url: 'http://localhost/mcp', auth: { type: 'bearer' }, api_key: 'secret' })).toThrow('HTTPS')
   expect(fetch).not.toHaveBeenCalled()
 })
 
@@ -52,4 +51,24 @@ it('returns TTS response timing with an actual WAV blob and rejects mislabeled a
   vi.stubGlobal('fetch', fetch)
   await expect(providersApi.testDraftTts({ type: 'tts', adapter: 'zerotts_onnx', config_json: {} }, { text: 'hello' })).resolves.toMatchObject({ elapsedMs: 42, audio: { type: 'audio/wav' } })
   await expect(providersApi.testTtsAudio('saved', { text: 'hello' })).rejects.toThrow('invalid_audio_response')
+})
+
+it('allows MCP credentials over non-loopback HTTP for create, edit, connection and discovery', async () => {
+  vi.stubGlobal('location', { href: 'http://192.168.1.2/' })
+  const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}')))
+  vi.stubGlobal('fetch', fetch)
+  const server = { key: 'test', url: 'http://192.168.1.3/mcp', auth: { type: 'bearer' as const }, api_key: 'test-secret' }
+  await mcpApi.create({ ...server, name: 'Test MCP' })
+  await mcpApi.update('test', { api_key: server.api_key }, 3)
+  await mcpApi.testDraftConnection(server)
+  await mcpApi.discoverDraftTools(server)
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/api/admin/mcp-servers', '/api/admin/mcp-servers/test',
+    '/api/admin/mcp-tests/connection', '/api/admin/mcp-tests/discover',
+  ])
+  const requests = fetch.mock.calls.map(([, init]) => init)
+  expect(JSON.parse(requests[0].body).api_key).toBe(server.api_key)
+  expect(JSON.parse(requests[1].body).api_key).toBe(server.api_key)
+  expect(requests[1].headers.get('If-Match')).toBe('"3"')
+  for (const request of requests.slice(2)) expect(JSON.parse(request.body).server).toEqual(server)
 })
