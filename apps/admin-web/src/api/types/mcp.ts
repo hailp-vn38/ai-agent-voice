@@ -81,3 +81,30 @@ export interface PutAgentMcpBindingInput {
   /** Unsupported by Rust server: always false. */
   required: false
 }
+
+export interface McpProbeConfig {
+  key: string
+  url: string
+  auth: McpAuthInput
+  connect_timeout_ms?: number
+  request_timeout_ms?: number
+  api_key?: string
+  saved_credential?: { key: string; expected_revision: number }
+}
+export interface McpProbeResult {
+  test_source: 'draft' | 'saved'
+  status: 'success'
+  connected_at_test_time: true
+  elapsed_ms: number
+}
+export interface McpToolDescription {
+  original_name: string
+  llm_name: string
+  description: string
+  input_schema: Record<string, unknown>
+}
+export interface McpDiscoveryResult extends McpProbeResult {
+  complete: true
+  tools: McpToolDescription[]
+  dropped_tools: number
+}

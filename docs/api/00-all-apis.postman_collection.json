@@ -1431,6 +1431,117 @@
               "response": []
             }
           ]
+        },
+        {
+          "name": "Draft Provider Diagnostics",
+          "item": [
+            {
+              "name": "Test draft LLM",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/provider-tests/llm",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"provider\": {\n    \"type\": \"llm\",\n    \"adapter\": \"openai\",\n    \"config_json\": {\n      \"base_url\": \"https://api.example.com/v1\",\n      \"model\": \"demo\",\n      \"timeout_ms\": 30000\n    },\n    \"api_key\": \"<ephemeral-example-key>\"\n  },\n  \"input\": {\n    \"text\": \"Xin chào\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Real one-turn inference. No resource or credential is persisted. Returns result.text, metrics.elapsed_ms and test_source=draft.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Test draft TTS",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/provider-tests/tts",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"provider\": {\n    \"type\": \"tts\",\n    \"adapter\": \"zerotts_onnx\",\n    \"config_json\": {\n      \"voice\": \"maichi\",\n      \"language\": \"vi-VN\"\n    }\n  },\n  \"input\": {\n    \"text\": \"Xin chào\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Returns actual audio/wav with X-Provider-Test-Elapsed-Ms and X-Provider-Test-Source=draft. Local adapter must have deployment runtime budgets.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Test draft ASR",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": "{{base_url}}/api/admin/provider-tests/asr",
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "provider",
+                      "type": "text",
+                      "value": "{\"type\": \"asr\", \"adapter\": \"zipformer_sherpa\", \"config_json\": {}}"
+                    },
+                    {
+                      "key": "audio",
+                      "type": "file",
+                      "src": [],
+                      "contentType": "audio/wav"
+                    }
+                  ]
+                },
+                "description": "Multipart with exactly provider JSON and audio (mono PCM16 WAV, advertised sample rate, max 30 seconds / 5 MiB). No audio persistence.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
         }
       ]
     },
@@ -1657,6 +1768,151 @@
                 ],
                 "url": "{{base_url}}/api/admin/agents/{{agent_key}}/mcp-bindings/{{mcp_server_key}}",
                 "description": "Physically removes the Agent MCP Binding, increments the Agent revision and returns 204. Unlink this before deleting an MCP Server.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "MCP Diagnostics",
+          "item": [
+            {
+              "name": "Draft MCP connection",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/mcp-tests/connection",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"server\": {\n    \"key\": \"weather\",\n    \"url\": \"https://mcp.example.com/mcp\",\n    \"auth\": {\n      \"type\": \"bearer\"\n    },\n    \"api_key\": \"<ephemeral-example-token>\",\n    \"connect_timeout_ms\": 5000,\n    \"request_timeout_ms\": 30000\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Manual read-only probe. Initialize only; zero tools/list. Never tools/call, Agent binding, approval or observed contract publication. For unsaved edits, replace api_key with saved_credential={key,expected_revision}; auth/header must remain compatible.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Saved MCP connection",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/mcp-servers/{{mcp_server_key}}/test/connection",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Manual probe of a saved server (including disabled servers); credentials resolve server-side. No desired revision, Agent approval or session catalog changes.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Draft MCP discover",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/mcp-tests/discover",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"server\": {\n    \"key\": \"weather\",\n    \"url\": \"https://mcp.example.com/mcp\",\n    \"auth\": {\n      \"type\": \"bearer\"\n    },\n    \"api_key\": \"<ephemeral-example-token>\",\n    \"connect_timeout_ms\": 5000,\n    \"request_timeout_ms\": 30000\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Manual read-only probe. Initialize and all tools/list pages; only a complete validated catalog is returned. Never tools/call, Agent binding, approval or observed contract publication. For unsaved edits, replace api_key with saved_credential={key,expected_revision}; auth/header must remain compatible.",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{admin_token}}",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Saved MCP discover",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": "{{base_url}}/api/admin/mcp-servers/{{mcp_server_key}}/test/discover",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Manual probe of a saved server (including disabled servers); credentials resolve server-side. No desired revision, Agent approval or session catalog changes.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [

@@ -528,7 +528,7 @@ _Avoid_: server module, Admin API handler, direct SQLite/config editor, Voice Se
 _Avoid_: message, partial exchange
 
 **ProviderVersion**:
-Identity của một Database Desired Configuration của Provider Instance tại đúng desired revision, phân biệt source và không tái sử dụng sau delete/recreate. Voice Session sử dụng version đã snapshot tại admission.
+Identity của đúng nguồn và phiên bản cấu hình Provider dùng khi cấp runtime. Với Provider Instance đã lưu, phiên bản ứng với desired revision và không tái sử dụng sau delete/recreate; với Provider Test Draft, identity chỉ thuộc lần kiểm thử. Voice Session giữ version đã snapshot tại admission.
 _Avoid_: provider key alone, latest mutable provider, Session Profile Revision
 
 **Runtime Resource Key**:
@@ -596,3 +596,15 @@ _Avoid_: Resource Lease, Active Turn Permit, speaker inference permit
 **Reviewed Tool Contract**:
 Contract quan sát được của một tool mà admin đã đánh giá, gồm identity nguồn, tên gốc, input schema, description có ảnh hưởng cách sử dụng và cấu hình nguồn liên quan. Review mất hiệu lực khi server quan sát contract thay đổi; không chứng minh hành vi implementation bên ngoài giữ nguyên.
 _Avoid_: tool name alone, remote implementation attestation, secret value fingerprint
+
+**Provider Test Draft**:
+Cấu hình Provider chưa được lưu, được sử dụng cho một lần kiểm tra inference thủ công. Kết quả không xác lập readiness của Provider Instance đang được Agent sử dụng.
+_Avoid_: temporary Provider Instance, production readiness test
+
+**MCP Connection Probe**:
+Quan sát thủ công khả năng bắt tay với một External MCP server tại thời điểm kiểm tra; không khẳng định server có tool hay đang sẵn sàng cho Agent.
+_Avoid_: connected flag, Agent availability
+
+**MCP Tool Discovery**:
+Quan sát đầy đủ danh mục tool do một External MCP server công bố tại thời điểm kiểm tra. Danh mục này không phải Reviewed Tool Contract hoặc Agent Tool Allowlist.
+_Avoid_: tool approval, approved catalog

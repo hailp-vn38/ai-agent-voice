@@ -195,6 +195,7 @@ onBeforeUnmount(() => controller.abort())
 
     <div v-if="visible.length" class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
       <article v-for="server in visible" :key="server.key" class="studio-panel flex flex-col gap-4 p-5">
+        <RouterLink :to="`/mcp/${encodeURIComponent(server.key)}`" class="flex flex-1 cursor-pointer flex-col gap-5 rounded-lg outline-none hover:text-studio-violet focus-visible:ring-2 focus-visible:ring-ring" @keydown.space.prevent="$router.push(`/mcp/${encodeURIComponent(server.key)}`)">
         <div class="flex items-start justify-between gap-3">
           <span class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
             <Server class="size-5" aria-hidden="true" />
@@ -203,18 +204,19 @@ onBeforeUnmount(() => controller.abort())
             {{ server.enabled ? t('mcp.enabled') : t('mcp.disabled') }}
           </span>
         </div>
-        <RouterLink :to="`/mcp/${encodeURIComponent(server.key)}`" class="min-w-0 cursor-pointer rounded-lg outline-none hover:text-studio-violet focus-visible:ring-2 focus-visible:ring-ring" @keydown.space.prevent="$router.push(`/mcp/${encodeURIComponent(server.key)}`)">
+        <div class="min-w-0">
           <h2 class="truncate text-lg font-semibold" :title="server.name">{{ server.name }}</h2>
           <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ server.key }}</p>
           <p class="mt-3 truncate text-xs text-muted-foreground" :title="safeEndpoint(server.url)">{{ safeEndpoint(server.url) }}</p>
           <span class="mt-3 inline-flex items-center gap-1 text-xs text-studio-violet">{{ t('diagnostics.viewDetails') }} <ArrowRight class="size-3" aria-hidden="true" /></span>
-        </RouterLink>
+        </div>
         <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span class="rounded-md bg-surface px-2 py-1">Streamable HTTP</span>
           <span class="rounded-md bg-surface px-2 py-1">{{ t('mcp.auth') }}: {{ server.auth.type }}</span>
           <span v-if="server.credential" class="rounded-md bg-surface px-2 py-1 font-mono">{{ server.credential.masked_key }} · {{ server.credential.status }}</span>
         </div>
         <p class="text-xs text-muted-foreground">{{ t('mcp.configNotice') }}</p>
+        </RouterLink>
         <div class="mt-auto flex flex-wrap items-center gap-2 border-t border-border/70 pt-4">
           <Button size="sm" variant="outline" :disabled="saving" @click="editServer(server)">
             <Pencil class="size-3.5" aria-hidden="true" />{{ t('common.edit') }}

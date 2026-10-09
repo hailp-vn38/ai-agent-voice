@@ -60,6 +60,17 @@ pub trait RuntimeMaterializer: Send + Sync {
     ) -> Result<Option<PreparedRuntime>, RuntimeError> {
         Ok(None)
     }
+    /// Request-scoped credentials remain owned by the manager's native attempt.
+    fn build_draft(
+        &self,
+        snapshot: &DesiredProvider,
+        prepared: Option<PreparedRuntime>,
+        quota: ProviderRuntimeAdmission,
+        secrets: &dyn crate::database::secrets::SecretResolver,
+    ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+        let _ = (snapshot, prepared, quota, secrets);
+        Err(RuntimeError::Configuration)
+    }
     /// `prepared` carries whatever `prepare_artifacts` already resolved. A build that receives
     /// `None` must resolve the model itself, but may still reuse an already-trusted process result.
     fn build(

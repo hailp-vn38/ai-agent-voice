@@ -18,6 +18,8 @@ pub(super) fn layer() -> CorsLayer {
         .expose_headers([
             header::ETAG,
             header::HeaderName::from_static("x-request-id"),
+            header::HeaderName::from_static("x-provider-test-elapsed-ms"),
+            header::HeaderName::from_static("x-provider-test-source"),
         ])
 }
 

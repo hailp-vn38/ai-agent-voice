@@ -187,3 +187,58 @@ async fn timeout_quarantines_the_exact_operation_when_acknowledgement_is_missing
         Err(ProviderDiagnosticError::Busy)
     ));
 }
+
+struct CancelAckOperation {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    cancelled: Arc<tokio::sync::Notify>,
+}
+#[async_trait::async_trait]
+impl ProviderDiagnosticOperation for CancelAckOperation {
+    type Output = ();
+    async fn execute(
+        &mut self,
+        _: CancellationToken,
+    ) -> Result<(), ProviderDiagnosticOperationError> {
+        self.started.notify_one();
+        std::future::pending().await
+    }
+    fn cancel_exact(&mut self) {
+        self.cancelled.notify_one();
+    }
+    async fn await_terminal_acknowledgement(&mut self) -> bool {
+        self.release.notified().await;
+        true
+    }
+    fn quarantine_exact(&mut self) {}
+}
+#[tokio::test]
+async fn cancelled_waiter_keeps_diagnostic_admission_until_terminal_acknowledgement() {
+    let service = Arc::new(service(7));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let cancelled = Arc::new(tokio::sync::Notify::new());
+    let operation = CancelAckOperation {
+        started: started.clone(),
+        release: release.clone(),
+        cancelled: cancelled.clone(),
+    };
+    let owned = service.clone();
+    let pending = tokio::spawn(async move {
+        owned
+            .execute(target(7), operation, Duration::from_secs(1))
+            .await
+    });
+    started.notified().await;
+    pending.abort();
+    tokio::time::timeout(Duration::from_secs(1), cancelled.notified())
+        .await
+        .expect("cancel exact operation after waiter leaves");
+    assert!(matches!(
+        service.begin(target(7)),
+        Err(ProviderDiagnosticError::Busy)
+    ));
+    release.notify_one();
+    tokio::task::yield_now().await;
+    assert!(service.begin(target(7)).is_ok());
+}

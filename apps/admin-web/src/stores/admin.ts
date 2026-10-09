@@ -101,17 +101,14 @@ function providerStatus(provider: AdminProvider): ProviderStatus {
   return 'ready'
 }
 
-function providerConfig(provider: AdminProvider, field: string): string {
-  let config: Record<string, unknown>
+function providerConfiguration(provider: AdminProvider): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(provider.config_json)
-    config = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {}
-  } catch {
-    config = {}
-  }
-  const value = config[field]
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch { return {} }
+}
+function providerConfig(provider: AdminProvider, field: string): string {
+  const value = providerConfiguration(provider)[field]
   return typeof value === 'string' ? value : ''
 }
 
@@ -123,10 +120,11 @@ function toProvider(provider: AdminProvider): ProviderInstance {
     adapter: provider.adapter,
     credentialEnv: provider.credential_env ?? undefined,
     credential: provider.credential,
+    configJson: providerConfiguration(provider),
     model: providerConfig(provider, 'model'),
     description: providerConfig(provider, 'description'),
     status: providerStatus(provider),
-    endpoint: providerConfig(provider, 'endpoint') || undefined,
+    endpoint: providerConfig(provider, 'base_url') || providerConfig(provider, 'endpoint') || undefined,
     runtime: provider.runtime,
     desiredRevision: provider.revision,
   }
@@ -750,13 +748,9 @@ export const useAdminStore = defineStore('admin', () => {
           name: patch.name,
           api_key: patch.apiKey,
           adapter: patch.adapter,
-          config_json: touchesConfig
-            ? toProviderConfig({
-                model: patch.model ?? current.model,
-                description: patch.description ?? current.description,
-                endpoint: patch.endpoint ?? current.endpoint,
-              })
-            : undefined,
+          config_json: patch.configJson ?? (touchesConfig
+            ? { ...current.configJson, ...(patch.model !== undefined ? { model: patch.model } : {}), ...(patch.description !== undefined ? { description: patch.description } : {}), ...(patch.endpoint !== undefined ? { endpoint: patch.endpoint } : {}) }
+            : undefined),
           enabled: patch.status === undefined ? undefined : patch.status !== 'disabled',
         },
         revision,

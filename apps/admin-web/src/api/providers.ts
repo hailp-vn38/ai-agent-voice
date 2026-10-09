@@ -1,6 +1,8 @@
-import { jsonRequest, request, requestBlob, requestJson, withQuery } from './client'
+import { assertCredentialTransport, requestAudio, jsonRequest, request, requestBlob, requestJson, withQuery } from './client'
 import type {
   AdminProvider,
+  ProviderTestDraft,
+  ProviderTextTestResult,
   AsrDiagnosticInput,
   CreateProviderInput,
   LlmDiagnosticInput,
@@ -20,6 +22,24 @@ function providerPath(key: string) {
 }
 
 export const providersApi = {
+  testDraftLlm(provider: ProviderTestDraft, input: { text: string }, signal?: AbortSignal) {
+    if (provider.api_key) assertCredentialTransport()
+    return requestJson<ProviderTextTestResult>('/api/admin/provider-tests/llm', jsonRequest('POST', { provider, input }), { signal })
+  },
+  testDraftTts(provider: ProviderTestDraft, input: TtsDiagnosticInput, signal?: AbortSignal) {
+    if (provider.api_key) assertCredentialTransport()
+    return requestAudio('/api/admin/provider-tests/tts', jsonRequest('POST', { provider, input }), { signal })
+  },
+  testDraftAsr(provider: ProviderTestDraft, audio: Blob, signal?: AbortSignal) {
+    if (provider.api_key) assertCredentialTransport()
+    const body = new FormData()
+    body.append('provider', JSON.stringify(provider))
+    body.append('audio', audio, 'clip.wav')
+    return requestJson<ProviderTextTestResult>('/api/admin/provider-tests/asr', { method: 'POST', body }, { signal })
+  },
+  testTtsAudio(key: string, input: TtsDiagnosticInput, signal?: AbortSignal) {
+    return requestAudio(`${providerPath(key)}/test/tts`, jsonRequest('POST', input), { signal })
+  },
   list(query: ProviderListQuery = {}, signal?: AbortSignal) {
     return requestJson<ProviderPage>(withQuery(providersPath, {
       page: query.page ?? 1,
@@ -55,14 +75,14 @@ export const providersApi = {
     return requestJson<VadDiagnosticResult>(`${providerPath(key)}/test/vad`, { method: 'POST' }, { signal })
   },
   testAsr(key: string, input: AsrDiagnosticInput, signal?: AbortSignal) {
-    return requestJson<unknown>(`${providerPath(key)}/test/asr`, {
+    return requestJson<ProviderTextTestResult>(`${providerPath(key)}/test/asr`, {
       method: 'POST',
       headers: { 'Content-Type': 'audio/wav' },
       body: input.audio,
     }, { signal })
   },
   testLlm(key: string, input: LlmDiagnosticInput, signal?: AbortSignal) {
-    return requestJson<unknown>(`${providerPath(key)}/test/llm`, jsonRequest('POST', input), { signal })
+    return requestJson<ProviderTextTestResult>(`${providerPath(key)}/test/llm`, jsonRequest('POST', input), { signal })
   },
   testTts(key: string, input: TtsDiagnosticInput, signal?: AbortSignal) {
     return requestBlob(`${providerPath(key)}/test/tts`, jsonRequest('POST', input), { signal })

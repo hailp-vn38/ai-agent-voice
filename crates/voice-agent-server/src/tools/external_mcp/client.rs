@@ -198,6 +198,16 @@ impl ExternalMcpClient {
         })
     }
 
+    pub(super) async fn close(&mut self) {
+        if let Some(session) = self.rmcp.take() {
+            let _ = tokio::time::timeout(
+                self.connect_timeout.min(Duration::from_secs(1)),
+                session.cancel(),
+            )
+            .await;
+        }
+    }
+
     pub fn server_key(&self) -> &str {
         &self.server_key
     }

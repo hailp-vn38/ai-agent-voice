@@ -158,7 +158,7 @@ fn load_one(
     let (status, outcome) = match requirement {
         ProviderLoadRequirement::Unbound => (
             DatabaseRuntimeStatus::NotLoaded,
-            desired_value(row).map(|_| ()),
+            desired_value(row, ProviderSource::Database).map(|_| ()),
         ),
         ProviderLoadRequirement::Required | ProviderLoadRequirement::Optional => (
             DatabaseRuntimeStatus::Loaded,
@@ -256,21 +256,30 @@ pub fn materialize_provider_with_admission(
     Ok(loaded.runtimes)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderSource {
+    Database,
+    Deployment,
+    Draft,
+}
+
 pub(crate) fn materialize_provider_from_artifacts(
     config: &AppConfig,
     row: &DesiredProvider,
     secrets: &dyn SecretResolver,
     quota: ProviderRuntimeAdmission,
     physical_capacity: usize,
+    source: ProviderSource,
 ) -> Result<RuntimeCatalog, DatabaseRuntimeFailure> {
     let mut loaded = empty_loaded();
-    materialize_one(
+    materialize_one_from_source(
         config,
         row,
         secrets,
         &mut loaded,
         Some(quota),
         Some(physical_capacity),
+        source,
     )?;
     Ok(loaded.runtimes)
 }
@@ -283,9 +292,26 @@ fn materialize_one(
     quota: Option<ProviderRuntimeAdmission>,
     physical: Option<usize>,
 ) -> Result<(), DatabaseRuntimeFailure> {
+    let source = if row.id == 0 {
+        ProviderSource::Deployment
+    } else {
+        ProviderSource::Database
+    };
+    materialize_one_from_source(config, row, secrets, loaded, quota, physical, source)
+}
+
+fn materialize_one_from_source(
+    config: &AppConfig,
+    row: &DesiredProvider,
+    secrets: &dyn SecretResolver,
+    loaded: &mut LoadedProviders,
+    quota: Option<ProviderRuntimeAdmission>,
+    physical: Option<usize>,
+    source: ProviderSource,
+) -> Result<(), DatabaseRuntimeFailure> {
     let mut value = super::factory_registry::effective_local_config(
         &row.adapter,
-        desired_value(row)?,
+        desired_value(row, source)?,
         &config.runtime,
     )
     .map_err(|_| DatabaseRuntimeFailure::Configuration)?;
@@ -326,7 +352,7 @@ fn materialize_one(
         }
         "vad" => {
             reject_secret(row, secret.as_ref())?;
-            let instance: VadInstanceConfig = if row.id == 0 {
+            let instance: VadInstanceConfig = if source == ProviderSource::Deployment {
                 config
                     .providers
                     .vad
@@ -386,7 +412,7 @@ fn materialize_one(
             loaded.providers.asr.insert(row.key.clone(), provider);
         }
         "llm" => {
-            let instance: LlmInstanceConfig = if row.id == 0 {
+            let instance: LlmInstanceConfig = if source == ProviderSource::Deployment {
                 config
                     .providers
                     .llm
@@ -424,7 +450,7 @@ fn materialize_one(
             loaded.providers.llm.insert(row.key.clone(), provider);
         }
         "tts" => {
-            let instance = if row.id == 0 {
+            let instance = if source == ProviderSource::Deployment {
                 config
                     .providers
                     .tts
@@ -474,14 +500,17 @@ fn tts_binding(instance: &TtsInstanceConfig) -> TtsBinding {
     }
 }
 
-fn desired_value(row: &DesiredProvider) -> Result<Value, DatabaseRuntimeFailure> {
+fn desired_value(
+    row: &DesiredProvider,
+    source: ProviderSource,
+) -> Result<Value, DatabaseRuntimeFailure> {
     if !crate::providers::compiled_provider_adapter_registry()
         .get(&row.adapter)
         .is_some_and(|descriptor| descriptor.provider_type.as_str() == row.kind)
     {
         return Err(DatabaseRuntimeFailure::Configuration);
     }
-    if row.id == 0 {
+    if source == ProviderSource::Deployment {
         if row.config_json.len() > provider_config::MAX_PROVIDER_CONFIG_BYTES {
             return Err(DatabaseRuntimeFailure::Configuration);
         }

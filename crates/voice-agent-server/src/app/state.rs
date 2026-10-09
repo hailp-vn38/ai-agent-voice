@@ -819,7 +819,10 @@ fn shared_external_mcp(
         Arc::new(TracingTelemetry),
         Arc::clone(gate),
     ) {
-        Ok(manager) => Some(Arc::new(manager)),
+        Ok(manager) => Some(Arc::new(manager.with_probe_limits(
+            config.api.mcp_tests.max_concurrency,
+            Duration::from_millis(config.api.mcp_tests.timeout_ms),
+        ))),
         Err(error) => {
             tracing::warn!(
                 event = "external_mcp_transport_unavailable",

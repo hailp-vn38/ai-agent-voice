@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 
 import type { AdminMcpServer, CreateMcpServerInput, McpAuthInput, UpdateMcpServerInput } from '@/api/types/mcp'
+import McpDiagnosticPanel from './McpDiagnosticPanel.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -50,6 +51,17 @@ function authentication(): McpAuthInput | undefined {
   if (!/^[a-z0-9-]+$/.test(headerName)) return undefined
   return { type: 'header', header_name: headerName }
 }
+
+const probeDraft = computed(() => {
+  const auth = form.auth === 'unchanged' ? props.server?.auth : authentication()
+  if (!auth) return undefined
+  const compatible = props.server && JSON.stringify(auth) === JSON.stringify(props.server.auth)
+  return {
+    key: form.key.trim(), url: form.url.trim(), auth,
+    connect_timeout_ms: form.connectTimeoutMs, request_timeout_ms: form.requestTimeoutMs,
+    ...(form.apiKey && auth.type !== 'none' ? { api_key: form.apiKey } : compatible && auth.type !== 'none' ? { saved_credential: { key: props.server!.key, expected_revision: props.server!.revision } } : {}),
+  }
+})
 
 function submit() {
   error.value = ''
@@ -136,6 +148,8 @@ function submit() {
         <input v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
         <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server; sau khi lưu chỉ hiển thị phần đã che.</small>
       </label>
+      <p v-if="probeDraft?.url.startsWith('http:') && probeDraft.auth.type !== 'none'" class="text-xs text-warning">{{ t('diagnostics.httpWarning') }}</p>
+      <McpDiagnosticPanel v-if="open && probeDraft" :draft="probeDraft" />
       <div class="flex justify-end gap-2">
         <Button type="button" variant="outline" :disabled="saving" @click="open = false">{{ t('common.cancel') }}</Button>
         <Button type="submit" :disabled="saving">{{ saving ? t('common.loading') : t('common.save') }}</Button>

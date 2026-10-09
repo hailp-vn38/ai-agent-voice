@@ -1013,6 +1013,8 @@ pub struct AdminApiConfig {
     pub admin_token: String,
     #[serde(default)]
     pub provider_tests: ProviderTestsConfig,
+    #[serde(default)]
+    pub mcp_tests: ProviderTestsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]

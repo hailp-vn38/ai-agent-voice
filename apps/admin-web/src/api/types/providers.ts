@@ -141,3 +141,19 @@ export interface ProviderPrepareResult {
   desired_revision: number
   runtime: ProviderRuntime
 }
+
+/** Credentials are write-only and live only in the open form. */
+export interface ProviderTestDraft {
+  type: TemplateProviderType
+  adapter: string
+  config_json: Record<string, unknown>
+  api_key?: string
+  saved_credential?: { key: string; expected_revision: number }
+}
+export interface ProviderTextTestResult {
+  test_source?: 'draft' | 'saved'
+  type: 'llm' | 'asr'
+  status: 'success'
+  result: { text: string; language?: string }
+  metrics: { elapsed_ms: number; audio_duration_ms?: number; rtf?: number }
+}

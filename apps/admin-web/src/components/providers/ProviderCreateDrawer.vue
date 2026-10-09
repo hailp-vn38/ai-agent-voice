@@ -5,6 +5,8 @@ import { formatApiError } from '@/api/errors'
 import type { AdminProvider, CreateProviderInput, ProviderAdapter, ProviderConfigField } from '@/api/types/providers'
 import type { TemplateProviderType } from '@/api/types/templates'
 import { Button } from '@/components/ui/button'
+import ProviderTestPanel from './ProviderTestPanel.vue'
+import { useI18n } from '@/composables/useI18n'
 import BaseModal from '@/components/admin/BaseModal.vue'
 
 const open = defineModel<boolean>({ required: true })
@@ -15,6 +17,7 @@ const props = defineProps<{
   initialType?: TemplateProviderType
 }>()
 
+const { t } = useI18n()
 const step = ref(1)
 const type = ref<TemplateProviderType>(props.initialType ?? 'tts')
 const adapters = ref<ProviderAdapter[]>([])
@@ -149,7 +152,7 @@ watch(() => form.config.model, () => { if (step.value === 2 && supportsDiscovery
         <div v-if="supportsDiscovery" class="flex items-center gap-3"><Button variant="outline" :disabled="discoveryLoading" @click="discover">{{ discoveryLoading ? 'Đang lấy dữ liệu…' : 'Cập nhật model / voice / language' }}</Button><span class="text-xs text-muted-foreground">Nếu lỗi, chỉnh lựa chọn rồi thử lại.</span></div>
       </div>
 
-      <div v-else class="space-y-4"><div class="rounded-lg border p-4 text-sm"><dl class="grid gap-3 sm:grid-cols-2"><div><dt class="text-muted-foreground">Provider</dt><dd>{{ form.name }}</dd></div><div><dt class="text-muted-foreground">Loại / Adapter</dt><dd>{{ type.toUpperCase() }} / {{ descriptor?.name || descriptor?.adapter }}</dd></div><div v-for="(value, key) in config" :key="key"><dt class="text-muted-foreground">{{ key }}</dt><dd>{{ value }}</dd></div></dl></div><p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Provider sẽ được lưu vào hệ thống. Sau đó, gắn vào template và restart server để sử dụng.</p><details class="rounded-lg border p-3"><summary class="cursor-pointer text-sm font-medium">Xem JSON gửi lên</summary><pre class="mt-3 overflow-auto text-xs">{{ JSON.stringify({ name: form.name, type, adapter: descriptor?.adapter, config_json: config }, null, 2) }}</pre></details><p v-if="validationError" class="text-sm text-danger">{{ validationError }}</p></div>
+      <div v-else class="space-y-4"><h3 class="font-semibold">{{ t('diagnostics.testReview') }}</h3><ProviderTestPanel v-if="open && descriptor && ['asr','llm','tts'].includes(type)" :type="type" :adapter="descriptor.adapter" :capabilities="descriptor.capabilities" :draft="{ type, adapter: descriptor.adapter, config_json: config, ...(form.apiKey ? { api_key: form.apiKey } : {}) }" /><div class="rounded-lg border p-4 text-sm"><dl class="grid gap-3 sm:grid-cols-2"><div><dt class="text-muted-foreground">Provider</dt><dd>{{ form.name }}</dd></div><div><dt class="text-muted-foreground">Loại / Adapter</dt><dd>{{ type.toUpperCase() }} / {{ descriptor?.name || descriptor?.adapter }}</dd></div><div v-for="(value, key) in config" :key="key"><dt class="text-muted-foreground">{{ key }}</dt><dd>{{ value }}</dd></div></dl></div><p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{{ t('diagnostics.prepareHint') }}</p><details class="rounded-lg border p-3"><summary class="cursor-pointer text-sm font-medium">Xem JSON gửi lên</summary><pre class="mt-3 overflow-auto text-xs">{{ JSON.stringify({ name: form.name, type, adapter: descriptor?.adapter, config_json: config }, null, 2) }}</pre></details><p v-if="validationError" class="text-sm text-danger">{{ validationError }}</p></div>
     </div>
     <template #footer><div class="flex justify-between gap-2"><Button v-if="step > 1" variant="outline" @click="step === 2 ? backToAdapterSelection() : step--">Quay lại</Button><Button v-else variant="outline" @click="open = false">Hủy</Button><Button v-if="step < 3" :disabled="step === 1 ? !canContinue : Boolean(validationError) || !form.name.trim()" @click="step++">Tiếp tục</Button><Button v-else :disabled="submitted || !canCreate || Boolean(validationError)" @click="create">{{ submitted ? 'Đang tạo…' : 'Tạo provider' }}</Button></div></template>
   </BaseModal>

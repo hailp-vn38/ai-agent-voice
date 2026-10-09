@@ -1,4 +1,5 @@
 pub mod client;
+pub(crate) mod diagnostic;
 pub mod manager;
 pub mod registry;
 mod rmcp_adapter;

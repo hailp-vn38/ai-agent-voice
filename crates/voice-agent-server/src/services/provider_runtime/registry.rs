@@ -192,7 +192,7 @@ impl ProviderRuntimeManager {
         let version = ProviderVersion::database(snapshot.id, snapshot.revision);
         for _ in 0..=self.limits.max_resources {
             match self
-                .acquire_version_until(snapshot.clone(), version.clone(), deadline, None)
+                .acquire_version_until(snapshot.clone(), version.clone(), deadline, None, None)
                 .await
             {
                 Err(RuntimeError::MemoryPressure) => {
@@ -221,8 +221,43 @@ impl ProviderRuntimeManager {
             },
             revision: 1,
         };
-        self.acquire_version_until(snapshot, version, deadline, None)
+        self.acquire_version_until(snapshot, version, deadline, None, None)
             .await
+    }
+
+    pub async fn acquire_draft_until(
+        self: &Arc<Self>,
+        snapshot: DesiredProvider,
+        secrets: Arc<dyn crate::database::secrets::SecretResolver>,
+        deadline: Instant,
+    ) -> Result<ResourceLease, RuntimeError> {
+        if !bounded_snapshot(&snapshot) || snapshot.id != 0 || snapshot.revision != 1 {
+            return Err(RuntimeError::Configuration);
+        }
+        let version = ProviderVersion {
+            identity: super::ProviderIdentity::Draft(uuid::Uuid::new_v4()),
+            revision: 1,
+        };
+        for _ in 0..=self.limits.max_resources {
+            match self
+                .acquire_version_until(
+                    snapshot.clone(),
+                    version.clone(),
+                    deadline,
+                    None,
+                    Some(secrets.clone()),
+                )
+                .await
+            {
+                Err(RuntimeError::MemoryPressure) => {
+                    if self.evict_pressure_until(deadline).await? == 0 {
+                        return Err(RuntimeError::MemoryPressure);
+                    }
+                }
+                outcome => return outcome,
+            }
+        }
+        Err(RuntimeError::MemoryPressure)
     }
 
     async fn acquire_version_until(
@@ -231,6 +266,7 @@ impl ProviderRuntimeManager {
         version: ProviderVersion,
         deadline: Instant,
         preclaimed_load: Option<OwnedSemaphorePermit>,
+        draft_secrets: Option<Arc<dyn crate::database::secrets::SecretResolver>>,
     ) -> Result<ResourceLease, RuntimeError> {
         if Instant::now() >= deadline {
             return Err(RuntimeError::Timeout);
@@ -458,6 +494,7 @@ impl ProviderRuntimeManager {
                         attempt,
                         preclaimed_load,
                         cold_permit,
+                        draft_secrets,
                     )
                     .await;
             });
@@ -525,6 +562,7 @@ impl ProviderRuntimeManager {
         attempt: OwnedSemaphorePermit,
         preclaimed_load: Option<OwnedSemaphorePermit>,
         cold_permit: Option<PilotPermit>,
+        draft_secrets: Option<Arc<dyn crate::database::secrets::SecretResolver>>,
     ) {
         let started = Instant::now();
         let load = if preclaimed_load.is_some() {
@@ -582,7 +620,12 @@ impl ProviderRuntimeManager {
                     // A build only resolves paths, so skipping this would hand it a model that is
                     // not on disk and fail the request instead of fetching it.
                     let prepared = builder.prepare_artifacts(&snapshot)?;
-                    builder.build(&snapshot, prepared, quota)
+                    match draft_secrets {
+                        Some(secrets) => {
+                            builder.build_draft(&snapshot, prepared, quota, secrets.as_ref())
+                        }
+                        None => builder.build(&snapshot, prepared, quota),
+                    }
                 }))
                 .unwrap_or(Err(RuntimeError::Quarantined));
                 manager.complete(
@@ -785,8 +828,14 @@ impl ProviderRuntimeManager {
         if !bounded_snapshot(&snapshot) || snapshot.id <= 0 || snapshot.revision <= 0 {
             return Err(RuntimeError::Configuration);
         }
-        self.acquire_version_until(snapshot, version, self.admission_deadline(), Some(load))
-            .await
+        self.acquire_version_until(
+            snapshot,
+            version,
+            self.admission_deadline(),
+            Some(load),
+            None,
+        )
+        .await
     }
 
     pub fn retain_deployment(&self, version: &ProviderVersion) -> Result<(), RuntimeError> {
@@ -1090,5 +1139,5 @@ fn bounded_snapshot(snapshot: &DesiredProvider) -> bool {
         && snapshot
             .secret_ref
             .as_ref()
-            .is_none_or(|value| value.len() <= 256)
+            .is_none_or(|value| crate::database::secrets::SecretRef::parse(value.clone()).is_ok())
 }

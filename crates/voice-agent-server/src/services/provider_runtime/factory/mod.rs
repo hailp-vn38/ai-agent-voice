@@ -201,7 +201,39 @@ impl RuntimeMaterializer for FactoryMaterializer {
         prepared: Option<PreparedRuntime>,
         quota: ProviderRuntimeAdmission,
     ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
-        if snapshot.id == 0
+        let source = if snapshot.id == 0 {
+            crate::providers::ProviderSource::Deployment
+        } else {
+            crate::providers::ProviderSource::Database
+        };
+        self.build_source(snapshot, prepared, quota, source, self.secrets.as_ref())
+    }
+    fn build_draft(
+        &self,
+        snapshot: &DesiredProvider,
+        prepared: Option<PreparedRuntime>,
+        quota: ProviderRuntimeAdmission,
+        secrets: &dyn SecretResolver,
+    ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+        self.build_source(
+            snapshot,
+            prepared,
+            quota,
+            crate::providers::ProviderSource::Draft,
+            secrets,
+        )
+    }
+}
+impl FactoryMaterializer {
+    fn build_source(
+        &self,
+        snapshot: &DesiredProvider,
+        prepared: Option<PreparedRuntime>,
+        quota: ProviderRuntimeAdmission,
+        source: crate::providers::ProviderSource,
+        secrets: &dyn SecretResolver,
+    ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+        if source == crate::providers::ProviderSource::Deployment
             && crate::providers::deployment_provider_snapshot(
                 &self.config,
                 &snapshot.kind,
@@ -224,9 +256,10 @@ impl RuntimeMaterializer for FactoryMaterializer {
         let catalog = crate::providers::materialize_provider_from_artifacts(
             &self.config,
             snapshot,
-            self.secrets.as_ref(),
+            secrets,
             quota.clone(),
             physical_capacity,
+            source,
         )
         .map_err(|failure| match failure {
             DatabaseRuntimeFailure::Configuration => RuntimeError::Configuration,

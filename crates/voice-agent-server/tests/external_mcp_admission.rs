@@ -60,6 +60,7 @@ use voice_agent_server::{
 /// re-discover, or did it reuse what it saw last time?" is observable rather than assumed.
 #[derive(Clone, Default)]
 struct McpBehaviour {
+    initialize_gate: Option<Arc<tokio::sync::Notify>>,
     tools: Vec<serde_json::Value>,
     /// Tools per `tools/list` page; `0` means one unbounded page.
     page_size: usize,
@@ -172,15 +173,20 @@ async fn mcp_endpoint(
         // response to a request that was never made.
         "" => StatusCode::ACCEPTED.into_response(),
         method if method.starts_with("notifications/") => StatusCode::ACCEPTED.into_response(),
-        "initialize" => streamable_response(
-            id,
-            serde_json::json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "scripted", "version": "1"}
-            }),
-            script.session_id.as_deref(),
-        ),
+        "initialize" => {
+            if let Some(gate) = &script.initialize_gate {
+                gate.notified().await;
+            }
+            streamable_response(
+                id,
+                serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "scripted", "version": "1"}
+                }),
+                script.session_id.as_deref(),
+            )
+        }
         "tools/list" => {
             if let Some(target) = script.redirect_tools_list_to.as_deref() {
                 return (
@@ -1410,6 +1416,234 @@ async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotati
         server.seen().is_empty(),
         "encrypted records cannot be moved between resources"
     );
+    voice.task.abort();
+    server.task.abort();
+}
+
+#[tokio::test]
+async fn admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_complete() {
+    for session_id in [None, Some("probe-session".to_owned())] {
+        let behaviour = McpBehaviour {
+            session_id,
+            page_size: 1,
+            ..McpBehaviour::with_tools(vec![tool("Light"), tool("Dim")])
+        };
+        let observed = behaviour.sessions.clone();
+        let calls = behaviour.calls.clone();
+        let server = start_mcp(behaviour).await;
+        let mut configuration = config(database_url());
+        configuration.api.enabled = true;
+        configuration.api.admin_token = "probe-token".into();
+        let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+        let client = reqwest::Client::new();
+        let draft = serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"bearer"},"api_key":"ephemeral-probe-key"}});
+        let connection = client
+            .post(format!("{}/api/admin/mcp-tests/connection", voice.base))
+            .bearer_auth("probe-token")
+            .json(&draft)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(connection.status(), StatusCode::OK);
+        let result: serde_json::Value = connection.json().await.unwrap();
+        assert_eq!(result["connected_at_test_time"], true);
+        assert!(result.get("tools").is_none());
+        assert!(
+            !observed
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(method, _)| method == "tools/list")
+        );
+        let discovery = client
+            .post(format!("{}/api/admin/mcp-tests/discover", voice.base))
+            .bearer_auth("probe-token")
+            .json(&draft)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(discovery.status(), StatusCode::OK);
+        let result: serde_json::Value = discovery.json().await.unwrap();
+        assert_eq!(result["complete"], true);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(result["tools"][0]["llm_name"], "external.home.light");
+        assert!(!result.to_string().contains("ephemeral-probe-key"));
+        assert_eq!(calls.lock().unwrap().len(), 0);
+        let resources: serde_json::Value = client
+            .get(format!("{}/api/admin/mcp-servers", voice.base))
+            .bearer_auth("probe-token")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(resources["items"].as_array().unwrap().is_empty());
+        voice.task.abort();
+        server.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn manual_saved_probes_keep_disabled_config_and_credentials_and_reject_stale_reuse() {
+    let server = start_mcp(McpBehaviour::default()).await;
+    let mut configuration = config(database_url());
+    configuration.api.enabled = true;
+    configuration.api.admin_token = "probe-token".into();
+    let cipher =
+        voice_agent_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
+    let voice = start_with_config(configuration, cipher).await;
+    let client = reqwest::Client::new();
+    let create = client.post(format!("{}/api/admin/mcp-servers", voice.base)).bearer_auth("probe-token").json(&serde_json::json!({"key":"home","name":"Home","url":server.url(),"auth":{"type":"bearer"},"api_key":"saved-probe-secret"})).send().await.unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let disable = client
+        .patch(format!("{}/api/admin/mcp-servers/home", voice.base))
+        .bearer_auth("probe-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"enabled":false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disable.status(), StatusCode::OK);
+    let before: serde_json::Value = disable.json().await.unwrap();
+    for route in ["connection", "discover"] {
+        let response = client
+            .post(format!(
+                "{}/api/admin/mcp-servers/home/test/{route}",
+                voice.base
+            ))
+            .bearer_auth("probe-token")
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(result["test_source"], "saved");
+        if route == "discover" {
+            assert_eq!(result["tools"], serde_json::json!([]));
+            assert_eq!(result["complete"], true);
+        }
+        assert!(!result.to_string().contains("saved-probe-secret"));
+    }
+    assert!(
+        server
+            .behaviour
+            .lock()
+            .unwrap()
+            .seen()
+            .iter()
+            .any(|(auth, _)| auth.as_deref() == Some("Bearer saved-probe-secret"))
+    );
+    let traffic = server.behaviour.lock().unwrap().seen().len();
+    for (credential, status) in [
+        (
+            serde_json::json!({"key":"home","expected_revision":1}),
+            StatusCode::CONFLICT,
+        ),
+        (
+            serde_json::json!({"key":"other","expected_revision":2}),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let response = client.post(format!("{}/api/admin/mcp-tests/connection",voice.base)).bearer_auth("probe-token").json(&serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"bearer"},"saved_credential":credential}})).send().await.unwrap();
+        assert_eq!(response.status(), status);
+    }
+    assert_eq!(server.behaviour.lock().unwrap().seen().len(), traffic);
+    let after: serde_json::Value = client
+        .get(format!("{}/api/admin/mcp-servers/home", voice.base))
+        .bearer_auth("probe-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(server.behaviour.lock().unwrap().call_count(), 0);
+    voice.task.abort();
+    server.task.abort();
+}
+
+#[tokio::test]
+async fn manual_discovery_rejects_an_invalid_later_page_without_partial_catalog() {
+    let server = start_mcp(McpBehaviour {
+        page_size: 1,
+        ..McpBehaviour::with_tools(vec![tool("Light"), recursive_tool()])
+    })
+    .await;
+    let mut configuration = config(database_url());
+    configuration.api.enabled = true;
+    configuration.api.admin_token = "probe-token".into();
+    let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/admin/mcp-tests/discover", voice.base))
+        .bearer_auth("probe-token")
+        .json(
+            &serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"none"}}}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let result: serde_json::Value = response.json().await.unwrap();
+    assert!(result.get("tools").is_none());
+    assert_eq!(server.behaviour.lock().unwrap().call_count(), 0);
+    voice.task.abort();
+    server.task.abort();
+}
+
+#[tokio::test]
+async fn manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shutdown() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let behaviour = McpBehaviour {
+        initialize_gate: Some(gate.clone()),
+        ..Default::default()
+    };
+    let observed = behaviour.sessions.clone();
+    let server = start_mcp(behaviour).await;
+    let mut configuration = config(database_url());
+    configuration.api.enabled = true;
+    configuration.api.admin_token = "probe-token".into();
+    configuration.api.mcp_tests.max_concurrency = 1;
+    let voice = start_with_config(configuration, ConstantSecrets(None)).await;
+    let url = format!("{}/api/admin/mcp-tests/connection", voice.base);
+    let draft =
+        serde_json::json!({"server":{"key":"home","url":server.url(),"auth":{"type":"none"}}});
+    let client = reqwest::Client::new();
+    let request = client.post(&url).bearer_auth("probe-token").json(&draft);
+    let pending = tokio::spawn(async move { request.send().await });
+    timeout(Duration::from_secs(1), async {
+        while !observed
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(method, _)| method == "initialize")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    pending.abort();
+    let overloaded = client
+        .post(&url)
+        .bearer_auth("probe-token")
+        .json(&draft)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(overloaded.status(), StatusCode::TOO_MANY_REQUESTS);
+    voice.state.lifecycle.gate().close();
+    let stopping = client
+        .post(&url)
+        .bearer_auth("probe-token")
+        .json(&draft)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stopping.status(), StatusCode::SERVICE_UNAVAILABLE);
+    gate.notify_one();
     voice.task.abort();
     server.task.abort();
 }

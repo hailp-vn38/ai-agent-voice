@@ -266,6 +266,9 @@ impl SessionExternalMcp {
 /// never touches that server at all.
 pub struct ExternalMcpManager {
     http: reqwest::Client,
+    pub(super) gate: Arc<AdmissionGate>,
+    pub(super) probe_permits: Arc<tokio::sync::Semaphore>,
+    pub(super) probe_timeout: Duration,
     limiter: Arc<ExternalMcpCallLimiter>,
     /// Process-owned, so every session and every server reports into the same counters.
     telemetry: Arc<dyn Telemetry>,
@@ -325,6 +328,9 @@ impl ExternalMcpManager {
             .build()?;
         Ok(Self {
             http,
+            gate: gate.clone(),
+            probe_permits: Arc::new(tokio::sync::Semaphore::new(2)),
+            probe_timeout: Duration::from_secs(30),
             limiter: Arc::new(ExternalMcpCallLimiter::with_gate(
                 config.max_concurrent_calls_per_server,
                 gate,
@@ -481,50 +487,9 @@ impl ExternalMcpManager {
                 ExternalMcpExclusionReason::ServerKeyCollision,
             ));
         }
-        let reference = match &server.secret_ref {
-            None => None,
-            Some(raw) => match SecretRef::parse(raw.clone()) {
-                // An unreadable reference is the same class as a missing one: the operator pointed
-                // at something that cannot be read, and the reference itself never becomes a
-                // diagnostic.
-                Err(_) => {
-                    return Err(Excluded::for_server(
-                        &server_key,
-                        ExternalMcpExclusionReason::SecretResolutionFailed("secret_invalid"),
-                    ));
-                }
-                Ok(reference) => Some(reference),
-            },
-        };
-        let mut client = match ExternalMcpClient::connect(
-            &server_key,
-            &server.url,
-            &server.headers_json,
-            &server.auth_type,
-            server.auth_header_name.as_deref(),
-            reference.as_ref(),
-            Duration::from_millis(server.connect_timeout_ms.max(1) as u64),
-            Duration::from_millis(server.request_timeout_ms.max(1) as u64),
-            self.http.clone(),
-            self.network.clone(),
-            &self.limits,
-            Arc::clone(&self.telemetry),
-            secrets,
-        ) {
-            Ok(client) => client,
-            Err(ConnectFailure::Secret(reason)) => {
-                return Err(Excluded::for_server(
-                    &server_key,
-                    ExternalMcpExclusionReason::SecretResolutionFailed(reason),
-                ));
-            }
-            Err(ConnectFailure::Unusable) => {
-                return Err(Excluded::for_server(
-                    &server_key,
-                    ExternalMcpExclusionReason::ServerUnavailable,
-                ));
-            }
-        };
+        let mut client = self
+            .connect_client(server, secrets)
+            .map_err(|reason| Excluded::for_server(&server_key, reason))?;
         let call_timeout = client.call_timeout();
         let walk = async {
             client
@@ -560,6 +525,86 @@ impl ExternalMcpManager {
             call_timeout,
             limiter: Arc::clone(&self.limiter),
         })
+    }
+
+    pub(super) fn connect_client(
+        &self,
+        server: &AdmittedMcpServer,
+        secrets: &dyn SecretResolver,
+    ) -> Result<ExternalMcpClient, ExternalMcpExclusionReason> {
+        let reference = match &server.secret_ref {
+            None => None,
+            Some(raw) => match SecretRef::parse(raw.clone()) {
+                // An unreadable reference is the same class as a missing one: the operator pointed
+                // at something that cannot be read, and the reference itself never becomes a
+                // diagnostic.
+                Err(_) => {
+                    return Err(ExternalMcpExclusionReason::SecretResolutionFailed(
+                        "secret_invalid",
+                    ));
+                }
+                Ok(reference) => Some(reference),
+            },
+        };
+        match ExternalMcpClient::connect(
+            &server.key,
+            &server.url,
+            &server.headers_json,
+            &server.auth_type,
+            server.auth_header_name.as_deref(),
+            reference.as_ref(),
+            Duration::from_millis(server.connect_timeout_ms.max(1) as u64),
+            Duration::from_millis(server.request_timeout_ms.max(1) as u64),
+            self.http.clone(),
+            self.network.clone(),
+            &self.limits,
+            Arc::clone(&self.telemetry),
+            secrets,
+        ) {
+            Ok(client) => Ok(client),
+            Err(ConnectFailure::Secret(reason)) => {
+                Err(ExternalMcpExclusionReason::SecretResolutionFailed(reason))
+            }
+            Err(ConnectFailure::Unusable) => Err(ExternalMcpExclusionReason::ServerUnavailable),
+        }
+    }
+
+    pub(crate) fn with_probe_limits(mut self, concurrency: usize, timeout: Duration) -> Self {
+        self.probe_permits = Arc::new(tokio::sync::Semaphore::new(concurrency));
+        self.probe_timeout = timeout
+            .min(self.per_server_timeout)
+            .min(self.overall_budget);
+        self
+    }
+
+    pub(super) async fn probe_catalog(
+        &self,
+        server: &AdmittedMcpServer,
+        secrets: &dyn SecretResolver,
+        discover: bool,
+    ) -> Result<Option<PublishedCatalog>, ExternalMcpExclusionReason> {
+        let mut client = self.connect_client(server, secrets)?;
+        let work = async {
+            client
+                .initialize()
+                .await
+                .map_err(ExternalMcpExclusionReason::from)?;
+            if discover {
+                self.walk_catalog(&client).await.map(Some)
+            } else {
+                Ok(None)
+            }
+        };
+        let result = tokio::time::timeout(
+            self.probe_timeout
+                .min(self.per_server_timeout)
+                .min(self.overall_budget),
+            work,
+        )
+        .await
+        .map_err(|_| ExternalMcpExclusionReason::ToolsListTimeout);
+        client.close().await;
+        result?
     }
 
     /// `initialize` was accepted; now walk every page of the catalog and validate it whole.
@@ -622,6 +667,7 @@ impl ExternalMcpManager {
         }
         Ok(PublishedCatalog {
             namespace,
+            dropped_tools: catalog.dropped(),
             tools: catalog.tools().to_vec(),
         })
     }
@@ -650,9 +696,10 @@ impl Excluded {
     }
 }
 
-struct PublishedCatalog {
-    namespace: String,
-    tools: Vec<ResolvedExternalTool>,
+pub(super) struct PublishedCatalog {
+    pub(super) namespace: String,
+    pub(super) dropped_tools: usize,
+    pub(super) tools: Vec<ResolvedExternalTool>,
 }
 
 /// Server keys that share one normalized namespace segment.  Grouping is ordered by key, so the

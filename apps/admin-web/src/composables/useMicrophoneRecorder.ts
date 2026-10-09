@@ -18,6 +18,9 @@ const WORKLET_NAME = 'enrollment-capture'
 
 export function useMicrophoneRecorder() {
   const recording = ref(false)
+  const paused = ref(false)
+  const starting = ref(false)
+  let generation = 0
   const elapsedMs = ref(0)
   const level = ref(0)
   const error = ref('')
@@ -29,13 +32,13 @@ export function useMicrophoneRecorder() {
 
   let frames: Float32Array[] = []
   let frameCount = 0
-  let startedAt = 0
-  let tick: ReturnType<typeof setInterval> | undefined
+    let tick: ReturnType<typeof setInterval> | undefined
   let autoStop: ReturnType<typeof setTimeout> | undefined
   let limits: RecorderLimits = { minClipMs: 0, maxClipMs: 10_000 }
   let onAutoStop: (() => void) | undefined
 
   function append(channels: Float32Array[]) {
+    if (paused.value) return
     const mono = downmixToMono(channels, channels.length)
     const inputRate = context.value?.sampleRate ?? TARGET_SAMPLE_RATE
     const remaining = Math.floor((limits.maxClipMs * inputRate) / 1000) - frameCount
@@ -49,7 +52,11 @@ export function useMicrophoneRecorder() {
   }
 
   async function start(config: RecorderLimits, onStop?: () => void) {
+    if (starting.value || recording.value) return
+    const attempt = ++generation
+    starting.value = true
     error.value = ''
+    paused.value = false
     limits = config
     onAutoStop = onStop
     frames = []
@@ -65,10 +72,12 @@ export function useMicrophoneRecorder() {
           autoGainControl: true,
         },
       })
+      if (attempt !== generation) { media.getTracks().forEach((track) => track.stop()); return }
       stream.value = media
       const audio = new AudioContext()
       context.value = audio
       await audio.audioWorklet.addModule(WORKLET_URL)
+      if (attempt !== generation) return
       const capture = new AudioWorkletNode(audio, WORKLET_NAME)
       node.value = capture
       capture.port.onmessage = (event: MessageEvent<Float32Array[]>) => append(event.data)
@@ -80,16 +89,27 @@ export function useMicrophoneRecorder() {
       mute.gain.value = 0
       capture.connect(mute).connect(audio.destination)
 
-      startedAt = performance.now()
       recording.value = true
       tick = setInterval(() => {
-        elapsedMs.value = Math.round(performance.now() - startedAt)
+        elapsedMs.value = Math.round(frameCount * 1000 / audio.sampleRate)
       }, 100)
       autoStop = setTimeout(() => onAutoStop?.(), limits.maxClipMs)
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : 'microphone_unavailable'
-      dispose()
+      if (attempt === generation) {
+        error.value = cause instanceof Error ? cause.message : 'microphone_unavailable'
+        dispose()
+      }
+    } finally {
+      if (attempt === generation) starting.value = false
     }
+  }
+
+  function togglePause() {
+    if (!recording.value) return
+    paused.value = !paused.value
+    if (autoStop !== undefined) clearTimeout(autoStop)
+    level.value = 0
+    if (!paused.value) autoStop = setTimeout(() => onAutoStop?.(), Math.max(0, limits.maxClipMs - elapsedMs.value))
   }
 
   /** Stop capture and return the encoded clip, or `undefined` if nothing usable was captured. */
@@ -109,7 +129,10 @@ export function useMicrophoneRecorder() {
   }
 
   function dispose() {
+    generation += 1
+    starting.value = false
     recording.value = false
+    paused.value = false
     if (tick !== undefined) clearInterval(tick)
     if (autoStop !== undefined) clearTimeout(autoStop)
     tick = undefined
@@ -129,5 +152,5 @@ export function useMicrophoneRecorder() {
 
   onBeforeUnmount(dispose)
 
-  return { recording, elapsedMs, level, error, start, stop, dispose }
+  return { starting, recording, paused, togglePause, elapsedMs, level, error, start, stop, dispose }
 }

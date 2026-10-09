@@ -221,10 +221,12 @@ pub(super) async fn test_asr_provider(
     .into_response()
 }
 
-fn parse_asr_wav(body: &[u8]) -> Option<(crate::audio::PcmF32Mono, u64)> {
+pub(super) fn parse_asr_wav(body: &[u8]) -> Option<(crate::audio::PcmF32Mono, u64)> {
     let mut reader = hound::WavReader::new(Cursor::new(body)).ok()?;
     let spec = reader.spec();
-    if spec.channels != 1
+    if spec.sample_rate == 0
+        || spec.sample_rate > 192_000
+        || spec.channels != 1
         || spec.bits_per_sample != 16
         || spec.sample_format != hound::SampleFormat::Int
     {
@@ -251,7 +253,7 @@ fn parse_asr_wav(body: &[u8]) -> Option<(crate::audio::PcmF32Mono, u64)> {
     ))
 }
 
-fn request_error_response(
+pub(super) fn request_error_response(
     request: &Request,
     error_value: ProviderDiagnosticRequestError,
 ) -> Response {

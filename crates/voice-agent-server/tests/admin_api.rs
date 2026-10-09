@@ -3455,3 +3455,93 @@ async fn failed_success_audit_rolls_back_each_new_desired_resource() {
     }
     task.abort();
 }
+
+#[tokio::test]
+async fn draft_tests_reject_invalid_sources_without_creating_resources() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    for (route, body) in [
+        (
+            "provider-tests/llm",
+            serde_json::json!({"provider":{"type":"llm","adapter":"openai","config_json":{"api_key":"must-not-leak"}},"input":{"text":"hello"}}),
+        ),
+        (
+            "mcp-tests/connection",
+            serde_json::json!({"server":{"key":"test","url":"http://localhost/mcp","auth":{"type":"none"},"api_key":"must-not-leak"}}),
+        ),
+    ] {
+        let response = client
+            .post(format!("{base}/api/admin/{route}"))
+            .bearer_auth("admin-test-token")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{route}");
+        assert!(!response.text().await.unwrap().contains("must-not-leak"));
+    }
+    for resource in ["providers", "mcp-servers"] {
+        let response: serde_json::Value = client
+            .get(format!("{base}/api/admin/{resource}"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(response["items"].as_array().unwrap().is_empty());
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let provider = r#"{"type":"asr","adapter":"zipformer_sherpa","config_json":{}}"#;
+    let malformed = reqwest::multipart::Form::new()
+        .text("provider", provider)
+        .text("provider", provider);
+    let response = client
+        .post(format!("{base}/api/admin/provider-tests/asr"))
+        .bearer_auth("admin-test-token")
+        .multipart(malformed)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let form = reqwest::multipart::Form::new()
+        .text("provider", provider)
+        .part(
+            "audio",
+            reqwest::multipart::Part::bytes(vec![0; 44])
+                .mime_str("audio/wav")
+                .unwrap(),
+        );
+    let response = client
+        .post(format!("{base}/api/admin/provider-tests/asr"))
+        .bearer_auth("admin-test-token")
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let form = reqwest::multipart::Form::new()
+        .text("provider", provider)
+        .part(
+            "audio",
+            reqwest::multipart::Part::bytes(vec![0; 5 * 1024 * 1024 + 1])
+                .mime_str("audio/wav")
+                .unwrap(),
+        );
+    let response = client
+        .post(format!("{base}/api/admin/provider-tests/asr"))
+        .bearer_auth("admin-test-token")
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    task.abort();
+}

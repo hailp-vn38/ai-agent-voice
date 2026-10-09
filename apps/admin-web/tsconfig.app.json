@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": true,
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "jsx": "preserve",
     "strict": true,
     "baseUrl": ".",

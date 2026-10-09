@@ -65,6 +65,6 @@ pub use vision::{
 mod deployment_snapshot;
 pub use deployment_snapshot::deployment_provider_snapshot;
 
-pub(crate) use database_loader::materialize_provider_from_artifacts;
+pub(crate) use database_loader::{ProviderSource, materialize_provider_from_artifacts};
 
 pub(crate) use factory_registry::effective_local_config;

@@ -1,6 +1,7 @@
-import { jsonRequest, request, requestJson, withQuery } from './client'
+import { assertCredentialTransport, jsonRequest, request, requestJson, withQuery } from './client'
 import type {
   AdminMcpServer,
+  McpProbeConfig, McpProbeResult, McpDiscoveryResult,
   CreateMcpServerInput,
   McpServerListQuery,
   McpServerPage,
@@ -14,6 +15,20 @@ function mcpServerPath(key: string) {
 }
 
 export const mcpApi = {
+  testDraftConnection(server: McpProbeConfig, signal?: AbortSignal) {
+    if (server.api_key) assertCredentialTransport()
+    return requestJson<McpProbeResult>('/api/admin/mcp-tests/connection', jsonRequest('POST', { server }), { signal })
+  },
+  discoverDraftTools(server: McpProbeConfig, signal?: AbortSignal) {
+    if (server.api_key) assertCredentialTransport()
+    return requestJson<McpDiscoveryResult>('/api/admin/mcp-tests/discover', jsonRequest('POST', { server }), { signal })
+  },
+  testSavedConnection(key: string, signal?: AbortSignal) {
+    return requestJson<McpProbeResult>(`${mcpServerPath(key)}/test/connection`, jsonRequest('POST', {}), { signal })
+  },
+  discoverSavedTools(key: string, signal?: AbortSignal) {
+    return requestJson<McpDiscoveryResult>(`${mcpServerPath(key)}/test/discover`, jsonRequest('POST', {}), { signal })
+  },
   list(query: McpServerListQuery = {}, signal?: AbortSignal) {
     return requestJson<McpServerPage>(withQuery(mcpServersPath, {
       page: query.page ?? 1,

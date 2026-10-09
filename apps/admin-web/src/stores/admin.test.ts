@@ -110,3 +110,14 @@ describe('admin store', () => {
     expect(renderedBindings).toEqual(['', 'tts', ''])
   })
 })
+
+it('preserves adapter-specific config when editing a provider model', async () => {
+  setActivePinia(createPinia())
+  const provider = { id: 2, key: 'llm_config', name: 'LLM', type: 'llm', adapter: 'openai', config_json: '{"model":"old","base_url":"https://example.test/v1","timeout_ms":17000}', enabled: 1, revision: 4, runtime_status: 'not_loaded' }
+  providersApi.list.mockResolvedValue({ items: [provider] })
+  providersApi.update.mockResolvedValue({ ...provider, revision: 5 })
+  const store = useAdminStore()
+  await store.loadAll()
+  await store.updateProvider('llm_config', { model: 'new' })
+  expect(providersApi.update).toHaveBeenCalledWith('llm_config', expect.objectContaining({ config_json: { model: 'new', base_url: 'https://example.test/v1', timeout_ms: 17000 } }), 4)
+})

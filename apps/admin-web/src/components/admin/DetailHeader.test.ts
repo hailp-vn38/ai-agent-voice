@@ -15,8 +15,8 @@ describe('DetailHeader', () => {
     })
 
     expect(wrapper.get('[data-detail-header]').text()).toContain('Home')
-    expect(wrapper.get('[data-header-icon]').exists()).toBe(true)
-    expect(wrapper.get('[data-header-action]').exists()).toBe(true)
+    expect(wrapper.find('[data-header-icon]').exists()).toBe(true)
+    expect(wrapper.find('[data-header-action]').exists()).toBe(true)
     await wrapper.get('[data-detail-back]').trigger('click')
     expect(wrapper.emitted('back')).toEqual([[]])
   })

@@ -3,6 +3,7 @@
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderIdentity {
     Database(i64),
+    Draft(uuid::Uuid),
     Deployment { kind: String, key: String },
 }
 

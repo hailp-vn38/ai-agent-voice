@@ -4,3 +4,6 @@ pub mod provider_diagnostic;
 pub mod provider_runtime;
 
 pub mod provider_prewarm;
+
+pub mod provider_test;
+pub(crate) mod test_credentials;

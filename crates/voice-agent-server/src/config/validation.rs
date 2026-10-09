@@ -109,6 +109,13 @@ fn validate_admin_api(config: &AppConfig) -> Result<(), ConfigError> {
             "api.enabled requires a non-empty admin_token".into(),
         ));
     }
+    if !(1..=8).contains(&config.api.mcp_tests.max_concurrency)
+        || !(1000..=120_000).contains(&config.api.mcp_tests.timeout_ms)
+    {
+        return Err(ConfigError::Validation(
+            "api.mcp_tests bounds are invalid".into(),
+        ));
+    }
     if !(1..=8).contains(&config.api.provider_tests.max_concurrency)
         || !(1_000..=120_000).contains(&config.api.provider_tests.timeout_ms)
     {

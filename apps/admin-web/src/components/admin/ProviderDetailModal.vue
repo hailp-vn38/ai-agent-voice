@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { CheckCircle2, FlaskConical, Pencil, XCircle } from '@lucide/vue'
+import { Pencil } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { providersApi } from '@/api/providers'
+import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ProviderUsageList from '@/components/providers/ProviderUsageList.vue'
 import { Button } from '@/components/ui/button'
@@ -28,8 +29,6 @@ const emit = defineEmits<{ edit: [provider: ProviderInstance] }>()
 
 const { t, providerTypeLabel, providerStatusLabel } = useI18n()
 
-const testInput = ref('Xin chào, hãy kiểm tra provider này.')
-const testResult = ref<'idle' | 'pass' | 'fail'>('idle')
 const testSection = ref<HTMLElement>()
 
 const testHintKeys: Record<ProviderType, MessageKey> = {
@@ -51,12 +50,6 @@ const statusTone = computed(() => {
   return 'text-success'
 })
 
-watch(
-  () => props.provider?.id,
-  () => {
-    testResult.value = 'idle'
-  },
-)
 
 watch(
   () => [open.value, props.focusTest] as const,
@@ -68,9 +61,6 @@ watch(
   },
 )
 
-function runTest() {
-  testResult.value = props.provider?.status === 'ready' ? 'pass' : 'fail'
-}
 </script>
 
 <template>
@@ -102,6 +92,7 @@ function runTest() {
         </CardHeader>
         <CardContent>
           <dl class="grid gap-3 text-sm sm:grid-cols-2">
+            <div><dt class="text-xs text-muted-foreground">{{ t('diagnostics.runtime') }}</dt><dd class="mt-1">{{ provider.runtime?.desired_state ?? providerStatusLabel(provider.status) }}</dd></div>
             <div>
               <dt class="text-xs tracking-wide text-muted-foreground uppercase">{{ t('providers.type') }}</dt>
               <dd class="mt-1">{{ providerTypeLabel(provider.type) }}</dd>
@@ -155,27 +146,7 @@ function runTest() {
           </CardHeader>
           <CardContent class="space-y-3">
             <p class="text-sm text-muted-foreground">{{ testHint }}</p>
-            <textarea v-model="testInput" class="admin-textarea min-h-24" />
-            <div class="flex flex-wrap items-center gap-3">
-              <Button size="sm"  @click="runTest">
-                <FlaskConical class="size-4" />
-                {{ t('providers.runTest') }}
-              </Button>
-              <span
-                v-if="testResult === 'pass'"
-                class="inline-flex items-center gap-1.5 text-sm text-success"
-              >
-                <CheckCircle2 class="size-4" />
-                {{ t('providers.testPass') }}
-              </span>
-              <span
-                v-if="testResult === 'fail'"
-                class="inline-flex items-center gap-1.5 text-sm text-danger"
-              >
-                <XCircle class="size-4" />
-                {{ t('providers.testFail') }}
-              </span>
-            </div>
+            <ProviderTestPanel v-if="open" :type="provider.type" :adapter="provider.adapter" :revision="provider.desiredRevision" :saved-key="provider.id" />
           </CardContent>
         </Card>
       </div>

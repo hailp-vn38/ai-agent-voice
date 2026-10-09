@@ -24,7 +24,7 @@ describe('SpeakerEnrollmentWizard', () => {
     })
     const wav = new Blob(['sample'], { type: 'audio/wav' })
     const recorder = {
-      recording: ref(false), elapsedMs: ref(0), level: ref(0), error: ref(''),
+      starting: ref(false), paused: ref(false), togglePause: vi.fn(), recording: ref(false), elapsedMs: ref(0), level: ref(0), error: ref(''),
       start: vi.fn(async () => { recorder.recording.value = true }),
       stop: vi.fn(async () => { recorder.recording.value = false; return wav }),
       dispose: vi.fn(),

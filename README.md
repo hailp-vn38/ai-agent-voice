@@ -60,6 +60,8 @@ trên host lần đầu.
 
 Đã bổ sung trang External MCP Catalog (`/mcp`) và Agent MCP Bindings/Tool Review vào Voice Agent Studio. Xem [hướng dẫn MCP Studio](apps/admin-web/docs/mcp-studio-implementation-guide.md).
 
+Admin Web hỗ trợ [Provider draft inference và MCP connection/tool discovery](docs/api/live-testing.md), gồm kiểm thử trước khi lưu và trang MCP detail `/mcp/:key`. Kết quả kiểm thử không thay đổi Agent bindings, tool approvals hoặc desired configuration.
+
 
 UI Voice Agent Studio đã có Overview, Devices và Agent Workbench; xem [hướng dẫn component và kết nối API](apps/admin-web/docs/voice-agent-studio-redesign.md) để phân biệt các phần đã triển khai với Playground/Reports còn ở giai đoạn thiết kế.
 

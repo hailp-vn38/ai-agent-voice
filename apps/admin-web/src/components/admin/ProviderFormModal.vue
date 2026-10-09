@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { TriangleAlert } from '@lucide/vue'
-import { computed, reactive, useId, watch } from 'vue'
+import { computed, reactive, ref, useId, watch } from 'vue'
 
+import { providerAdaptersApi } from '@/api/provider-adapters'
+import type { ProviderAdapter } from '@/api/types/providers'
+import ProviderConfigEditor from '@/components/providers/ProviderConfigEditor.vue'
+import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -27,11 +31,14 @@ const props = withDefaults(
 
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{
-  save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string; apiKey?: string }]
+  save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string; apiKey?: string; configJson?: Record<string, unknown> }]
 }>()
 
 const { t, providerTypeLabel } = useI18n()
 
+const descriptor = ref<ProviderAdapter>()
+const configError = ref('')
+let descriptorVersion = 0
 const adapterListId = useId()
 
 const form = reactive({
@@ -43,6 +50,7 @@ const form = reactive({
   status: 'ready' as ProviderStatus,
   endpoint: '',
   apiKey: '',
+  configJson: {} as Record<string, unknown>,
 })
 
 /**
@@ -62,7 +70,17 @@ const typeChanged = (next: ProviderType) => {
   if (!adapterHints.value.includes(form.adapter)) form.adapter = ''
 }
 
-watch(() => form.adapter, () => { form.apiKey = '' })
+watch(() => form.adapter, (adapter, previous) => {
+  form.apiKey = ''
+  if (previous && adapter !== props.provider?.adapter) form.configJson = {}
+})
+watch([open, () => form.adapter], async ([isOpen, adapter]) => {
+  const version = ++descriptorVersion
+  descriptor.value = undefined; configError.value = ''
+  if (!isOpen || !adapter) return
+  try { const result = await providerAdaptersApi.get(adapter); if (version === descriptorVersion) descriptor.value = result }
+  catch { if (version === descriptorVersion) configError.value = t('diagnostics.configUnavailable') }
+})
 
 watch(
   () => [open.value, props.provider] as const,
@@ -76,6 +94,7 @@ watch(
     form.description = props.provider?.description ?? ''
     form.status = props.provider?.status ?? 'ready'
     form.endpoint = props.provider?.endpoint ?? ''
+    form.configJson = { ...props.provider?.configJson }
   },
   { immediate: true },
 )
@@ -90,6 +109,7 @@ function submit() {
     description: form.description.trim(),
     status: form.status,
     endpoint: form.endpoint.trim() || undefined,
+    configJson: { ...form.configJson },
     ...(form.apiKey && ['openai', 'chillaudio_ws'].includes(form.adapter) ? { apiKey: form.apiKey } : {}),
   })
   form.apiKey = ''
@@ -144,11 +164,6 @@ function submit() {
         </datalist>
       </label>
 
-      <label v-if="form.type !== 'speaker'" class="block space-y-1.5">
-        <span class="text-sm font-medium">{{ t('providers.model') }}</span>
-        <input v-model="form.model" class="admin-input font-mono text-sm" />
-      </label>
-
       <label class="block space-y-1.5">
         <span class="text-sm font-medium">{{ t('providers.status') }}</span>
         <select v-model="form.status" class="admin-input">
@@ -158,14 +173,7 @@ function submit() {
         </select>
       </label>
 
-      <label v-if="form.type !== 'speaker'" class="block space-y-1.5">
-        <span class="text-sm font-medium">{{ t('providers.endpoint') }}</span>
-        <input
-          v-model="form.endpoint"
-          class="admin-input font-mono text-sm"
-          :placeholder="t('common.optional')"
-        />
-      </label>
+      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor v-model="form.configJson" :schema="descriptor?.config_schema" /></div>
 
       <label v-if="['openai', 'chillaudio_ws'].includes(form.adapter)" class="block space-y-1.5 sm:col-span-2">
         <span class="text-sm font-medium">API key / token mới (tùy chọn)</span>
@@ -174,10 +182,7 @@ function submit() {
         <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server.</small>
       </label>
 
-      <label v-if="form.type !== 'speaker'" class="block space-y-1.5 sm:col-span-2">
-        <span class="text-sm font-medium">{{ t('providers.descriptionField') }}</span>
-        <textarea v-model="form.description" class="admin-textarea min-h-24" />
-      </label>
+      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :capabilities="descriptor?.capabilities" :draft="{ type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
 
       <div class="flex justify-end gap-2 pt-2 sm:col-span-2">
         <Button type="button" variant="outline" @click="open = false">{{ t('common.cancel') }}</Button>

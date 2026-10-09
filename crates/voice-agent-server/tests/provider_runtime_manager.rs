@@ -1028,3 +1028,87 @@ async fn cold_preparation_keeps_envelope_after_waiter_timeout_until_late_complet
         "envelope released at terminal acknowledgement"
     );
 }
+
+#[tokio::test]
+async fn draft_versions_are_isolated_from_database_and_deployment_and_bounded() {
+    use voice_agent_server::database::secrets::{EnvSecretResolver, SecretResolver};
+    struct DraftBuilder;
+    impl RuntimeMaterializer for DraftBuilder {
+        fn estimated_peak_bytes(&self, _: &DesiredProvider) -> Result<u64, RuntimeError> {
+            Ok(10)
+        }
+        fn logical_capacity(&self, _: &DesiredProvider) -> Result<usize, RuntimeError> {
+            Ok(2)
+        }
+        fn build(
+            &self,
+            _: &DesiredProvider,
+            _: Option<PreparedRuntime>,
+            _: voice_agent_server::workers::ProviderRuntimeAdmission,
+        ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+            panic!("draft must not use saved/deployment build")
+        }
+        fn build_draft(
+            &self,
+            _: &DesiredProvider,
+            _: Option<PreparedRuntime>,
+            _: voice_agent_server::workers::ProviderRuntimeAdmission,
+            _: &dyn SecretResolver,
+        ) -> Result<Arc<dyn RuntimeResource>, RuntimeError> {
+            Ok(Arc::new(Resource))
+        }
+    }
+    let manager = ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 1,
+            max_waiters: 4,
+            max_resident_bytes: 20,
+            max_resources: 2,
+            max_version_entries: 2,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 1,
+            idle_ttl_ms: 1,
+        },
+        Arc::new(DraftBuilder),
+        AdmissionGate::open(),
+    )
+    .unwrap();
+    let mut draft = snapshot(1);
+    draft.id = 0;
+    let secrets = Arc::new(EnvSecretResolver);
+    let first = manager
+        .acquire_draft_until(draft.clone(), secrets.clone(), manager.admission_deadline())
+        .await
+        .unwrap();
+    let second = manager
+        .acquire_draft_until(draft.clone(), secrets.clone(), manager.admission_deadline())
+        .await
+        .unwrap();
+    assert_ne!(first.version(), second.version());
+    assert!(matches!(
+        first.version().identity,
+        voice_agent_server::services::provider_runtime::ProviderIdentity::Draft(_)
+    ));
+    assert_eq!(
+        manager.inspect(1, 1).desired_state,
+        voice_agent_server::services::provider_runtime::RuntimeState::Cold
+    );
+    assert!(matches!(
+        manager
+            .acquire_draft_until(draft.clone(), secrets.clone(), manager.admission_deadline())
+            .await,
+        Err(RuntimeError::Busy | RuntimeError::MemoryPressure)
+    ));
+    drop(first);
+    drop(second);
+    for _ in 0..20 {
+        let result = manager
+            .acquire_draft_until(draft.clone(), secrets.clone(), manager.admission_deadline())
+            .await;
+        // Metadata and memory pressure may reject a draft; they must never allow growth.
+        drop(result);
+        assert!(manager.accounting().version_entries <= 2);
+        assert!(manager.accounting().reserved_bytes <= 20);
+    }
+}

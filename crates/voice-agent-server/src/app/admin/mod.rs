@@ -28,6 +28,22 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route(
+            "/mcp-tests/connection",
+            axum::routing::post(mcp_tests::draft_connection),
+        )
+        .route(
+            "/mcp-tests/discover",
+            axum::routing::post(mcp_tests::draft_discover),
+        )
+        .route(
+            "/mcp-servers/{key}/test/connection",
+            axum::routing::post(mcp_tests::saved_connection),
+        )
+        .route(
+            "/mcp-servers/{key}/test/discover",
+            axum::routing::post(mcp_tests::saved_discover),
+        )
         .route("/system", get(get_system))
         .route("/agents", get(list_agents).post(create_agent))
         .route(
@@ -55,6 +71,20 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route(
             "/templates/{key}/providers/{provider_type}",
             put(bind_template_provider).delete(unlink_template_provider),
+        )
+        .route(
+            "/provider-tests/llm",
+            axum::routing::post(provider_test_drafts::llm),
+        )
+        .route(
+            "/provider-tests/tts",
+            axum::routing::post(provider_test_drafts::tts),
+        )
+        .route(
+            "/provider-tests/asr",
+            axum::routing::post(provider_test_drafts::asr).layer(
+                axum::extract::DefaultBodyLimit::max(MAX_ASR_TEST_BODY + 80 * 1024),
+            ),
         )
         .route("/providers", get(list_providers).post(create_provider))
         .route(
@@ -179,7 +209,9 @@ mod devices;
 mod enrollments;
 mod history;
 mod mcp_servers;
+mod mcp_tests;
 mod provider_adapters;
+mod provider_test_drafts;
 mod provider_tests;
 mod providers;
 mod speaker_policy;
@@ -230,8 +262,10 @@ async fn transport(request: Request, next: Next) -> Response {
         &http::Method::POST | &http::Method::PATCH | &http::Method::PUT
     );
     if is_mutation {
-        let max_body = if request.uri().path().ends_with("/test/asr") {
-            MAX_ASR_TEST_BODY
+        let max_body = if request.uri().path().ends_with("/test/asr")
+            || request.uri().path().ends_with("/provider-tests/asr")
+        {
+            MAX_ASR_TEST_BODY + 80 * 1024
         } else if request.uri().path().ends_with("/speakers/captures") {
             MAX_QUICK_CAPTURE_BODY
         } else if request.uri().path().contains("/enrollments/")

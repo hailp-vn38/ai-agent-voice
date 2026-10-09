@@ -3,13 +3,7 @@ use super::*;
 use crate::database::agents::get_agent_by;
 
 use crate::database::mcp_servers::{McpChanges, McpInput, McpServerRow, mcp_by};
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum McpAuth {
-    None {},
-    Bearer {},
-    Header { header_name: String },
-}
+use crate::tools::external_mcp::diagnostic::{McpAuth, auth_parts};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateMcpServer {
@@ -61,44 +55,6 @@ fn default_true() -> bool {
     true
 }
 
-fn valid_header_name(value: &str) -> bool {
-    !value.is_empty()
-        && value == value.to_ascii_lowercase()
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-}
-fn protected_header(value: &str) -> bool {
-    matches!(
-        value,
-        "host"
-            | "content-length"
-            | "transfer-encoding"
-            | "connection"
-            | "upgrade"
-            | "te"
-            | "trailer"
-            | "proxy-authorization"
-            | "proxy-authenticate"
-            | "www-authenticate"
-            | "keep-alive"
-            | "cookie"
-            | "set-cookie"
-            | "authorization"
-    )
-}
-fn auth_parts(auth: McpAuth) -> Option<(String, Option<String>)> {
-    match auth {
-        McpAuth::None {} => Some(("none".into(), None)),
-        McpAuth::Bearer {} => Some(("bearer".into(), None)),
-        McpAuth::Header { header_name }
-            if valid_header_name(&header_name) && !protected_header(&header_name) =>
-        {
-            Some(("header".into(), Some(header_name)))
-        }
-        _ => None,
-    }
-}
 fn valid_mcp_url(url: &str, state: &AppState) -> bool {
     external_mcp_policy::valid_desired_url(url, &state.config.mcp.external.network)
 }

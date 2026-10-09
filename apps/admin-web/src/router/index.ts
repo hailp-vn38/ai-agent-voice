@@ -55,6 +55,12 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.mcp' },
   },
   {
+    path: '/mcp/:key',
+    name: 'mcp-detail',
+    component: () => import('@/pages/mcp/McpServerDetailPage.vue'),
+    meta: { titleKey: 'nav.mcp' },
+  },
+  {
     path: '/providers',
     name: 'providers',
     component: () => import('@/views/ProvidersView.vue'),

@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::FutureExt;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
@@ -311,6 +312,37 @@ impl ProviderDiagnosticService {
             runtime_snapshot: Some(Arc::new(runtime_snapshot)),
             database: self.database.clone(),
             quarantined_capacity: Arc::clone(&self.quarantined_capacity),
+            manager: None,
+            managed_target: Some(snapshot),
+            managed_admission: Mutex::new(Some(admission)),
+            _managed_lease: Some(lease),
+        })
+    }
+
+    pub(crate) async fn draft_request(
+        &self,
+        snapshot: DesiredProvider,
+        secrets: Arc<dyn crate::database::secrets::SecretResolver>,
+    ) -> Result<Self, ProviderDiagnosticRequestError> {
+        let admission = self.limiter.try_acquire()?;
+        let manager = self
+            .manager
+            .as_ref()
+            .ok_or(ProviderDiagnosticError::Unavailable)?;
+        let test_deadline = tokio::time::Instant::now() + self.execution_timeout;
+        let deadline = manager.admission_deadline().min(test_deadline);
+        let lease = manager
+            .acquire_draft_until(snapshot.clone(), secrets, deadline)
+            .await?;
+        let registry = lease.runtimes().ok_or(RuntimeError::Unavailable)?;
+        Ok(Self {
+            limiter: self.limiter.clone(),
+            pilot: self.pilot.clone(),
+            execution_timeout: test_deadline.saturating_duration_since(tokio::time::Instant::now()),
+            registry: Arc::new(registry),
+            runtime_snapshot: None,
+            database: None,
+            quarantined_capacity: self.quarantined_capacity.clone(),
             manager: None,
             managed_target: Some(snapshot),
             managed_admission: Mutex::new(Some(admission)),
@@ -674,54 +706,70 @@ impl ProviderDiagnosticService {
         cleanup_grace: Duration,
     ) -> Result<(O::Output, ProviderDiagnosticRuntimeMetadata), ProviderDiagnosticError>
     where
-        O: ProviderDiagnosticOperation,
+        O: ProviderDiagnosticOperation + 'static,
+        O::Output: 'static,
     {
         let lease = self.begin(target)?;
         let cancellation = CancellationToken::new();
-        match tokio::time::timeout(
-            self.execution_timeout,
-            operation.execute(cancellation.clone()),
-        )
-        .await
-        {
-            Ok(Ok(output)) => {
-                let metadata = lease.metadata.clone();
+        let _cancel_on_drop = cancellation.clone().drop_guard();
+        let execution_timeout = self.execution_timeout;
+        // The bounded owner survives its HTTP waiter until terminal ACK or quarantine.
+        let attempt = tokio::spawn(async move {
+            if cancellation.is_cancelled() {
                 lease.acknowledge_terminal();
-                Ok((output, metadata))
+                return Err(ProviderDiagnosticError::Timeout);
             }
-            Ok(Err(error)) => {
-                // An operation-level error can be raised while its exact native worker is still
-                // producing output (for example after a diagnostic output cap). Treat it like a
-                // timeout: cancellation must be acknowledged before capacity is reusable.
-                operation.cancel_exact();
-                let acknowledged =
-                    tokio::time::timeout(cleanup_grace, operation.await_terminal_acknowledgement())
-                        .await
-                        .unwrap_or(false);
-                if acknowledged {
+            let outcome = tokio::select! {
+                _ = cancellation.cancelled() => None,
+                result = std::panic::AssertUnwindSafe(tokio::time::timeout(execution_timeout, operation.execute(cancellation.clone()))).catch_unwind() => Some(result.unwrap_or(Ok(Err(ProviderDiagnosticOperationError::Failed)))),
+            };
+            match outcome {
+                Some(Ok(Ok(output))) => {
+                    let metadata = lease.metadata.clone();
                     lease.acknowledge_terminal();
-                } else {
-                    operation.quarantine_exact();
-                    lease.quarantine();
+                    Ok((output, metadata))
                 }
-                Err(map_operation_error(error))
-            }
-            Err(_) => {
-                operation.cancel_exact();
-                cancellation.cancel();
-                let acknowledged =
-                    tokio::time::timeout(cleanup_grace, operation.await_terminal_acknowledgement())
-                        .await
-                        .unwrap_or(false);
-                if acknowledged {
-                    lease.acknowledge_terminal();
-                } else {
-                    operation.quarantine_exact();
-                    lease.quarantine();
+                Some(Ok(Err(error))) => {
+                    // An operation-level error can be raised while its exact native worker is still
+                    // producing output (for example after a diagnostic output cap). Treat it like a
+                    // timeout: cancellation must be acknowledged before capacity is reusable.
+                    operation.cancel_exact();
+                    let acknowledged = tokio::time::timeout(
+                        cleanup_grace,
+                        operation.await_terminal_acknowledgement(),
+                    )
+                    .await
+                    .unwrap_or(false);
+                    if acknowledged {
+                        lease.acknowledge_terminal();
+                    } else {
+                        operation.quarantine_exact();
+                        lease.quarantine();
+                    }
+                    Err(map_operation_error(error))
                 }
-                Err(ProviderDiagnosticError::Timeout)
+                None | Some(Err(_)) => {
+                    operation.cancel_exact();
+                    cancellation.cancel();
+                    let acknowledged = tokio::time::timeout(
+                        cleanup_grace,
+                        operation.await_terminal_acknowledgement(),
+                    )
+                    .await
+                    .unwrap_or(false);
+                    if acknowledged {
+                        lease.acknowledge_terminal();
+                    } else {
+                        operation.quarantine_exact();
+                        lease.quarantine();
+                    }
+                    Err(ProviderDiagnosticError::Timeout)
+                }
             }
-        }
+        });
+        attempt
+            .await
+            .unwrap_or(Err(ProviderDiagnosticError::Failed))
     }
 
     /// Starts only if the desired row says a runtime was loaded at process bootstrap. The caller
@@ -767,6 +815,20 @@ impl ProviderDiagnosticService {
         &self,
         target: &ProviderDiagnosticTarget,
     ) -> ProviderDiagnosticRuntimeMetadata {
+        if self._managed_lease.as_ref().is_some_and(|lease| {
+            matches!(
+                lease.version().identity,
+                crate::services::provider_runtime::ProviderIdentity::Draft(_)
+            )
+        }) {
+            return ProviderDiagnosticRuntimeMetadata {
+                tested_provider_id: None,
+                tested_revision: None,
+                tested_runtime: DatabaseRuntimeStatus::Loaded,
+                runtime_matches_desired: false,
+                requires_restart: false,
+            };
+        }
         let state = self
             .runtime_snapshot
             .as_ref()

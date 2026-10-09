@@ -23,13 +23,15 @@ export function withQuery(path: string, query: Record<string, QueryValue>): stri
   return serialized ? `${path}?${serialized}` : path
 }
 
-export function jsonRequest(method: string, body: unknown): RequestInit {
-  if (body && typeof body === 'object' && 'api_key' in body && body.api_key !== undefined) {
-    const endpoints = [new URL(location.href), new URL(apiBaseUrl || '/', location.href)]
-    if (endpoints.some((url) => url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
-      throw new Error('Cần HTTPS để gửi API key/token. HTTP chỉ dùng cho phát triển trên localhost.')
-    }
+export function assertCredentialTransport() {
+  const endpoints = [new URL(location.href), new URL(apiBaseUrl || '/', location.href)]
+  if (endpoints.some((url) => url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
+    throw new Error('Cần HTTPS để gửi API key/token. HTTP chỉ dùng cho phát triển trên localhost.')
   }
+}
+
+export function jsonRequest(method: string, body: unknown): RequestInit {
+  if (body && typeof body === 'object' && 'api_key' in body && body.api_key !== undefined) assertCredentialTransport()
   return {
     method,
     headers: { 'Content-Type': 'application/json' },
@@ -74,4 +76,10 @@ export async function requestText(path: string, init: RequestInit = {}, options:
 
 export async function requestBlob(path: string, init: RequestInit = {}, options: RequestOptions = {}) {
   return (await request(path, init, options)).blob()
+}
+
+export async function requestAudio(path: string, init: RequestInit, options: RequestOptions = {}) {
+  const response = await request(path, init, options)
+  if (response.headers.get('content-type')?.split(';')[0] !== 'audio/wav') throw new Error('invalid_audio_response')
+  return { audio: await response.blob(), elapsedMs: Number(response.headers.get('x-provider-test-elapsed-ms') ?? 0) }
 }
