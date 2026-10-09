@@ -47,13 +47,18 @@ describe('SpeakerEnrollmentWizard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('6–9 giây')
-    await wrapper.get('button').trigger('click')
+    expect(wrapper.get('[data-voice-recording-dock]').exists()).toBe(true)
+    expect(wrapper.findAll('.voice-dock-action')).toHaveLength(1)
+    await wrapper.get('.voice-dock-action').trigger('click')
     await flushPromises()
     expect(recorder.start).toHaveBeenCalledWith({ minClipMs: 6000, maxClipMs: 9000 }, expect.any(Function))
     expect(wrapper.get('button').attributes('disabled')).toBeDefined()
     recorder.elapsedMs.value = 6000
+    recorder.level.value = 0.7
     await flushPromises()
-    await wrapper.get('button').trigger('click')
+    expect(wrapper.get('[role="progressbar"]').attributes('aria-valuenow')).toBe('6000')
+    expect(wrapper.get('.voice-dock-action').attributes('disabled')).toBeUndefined()
+    await wrapper.get('.voice-dock-action').trigger('click')
     await flushPromises()
     expect(speakersApi.capture).toHaveBeenCalledWith(wav, expect.any(AbortSignal))
     await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
