@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, ArrowRight, CheckCircle2, CircleHelp, FlaskConical, Layers3, Pencil, Play, RefreshCw, RotateCcw, Settings2, Trash2 } from '@lucide/vue'
+import { Activity, ArrowRight, CircleHelp, FlaskConical, Layers3, Pencil, Play, RefreshCw, RotateCcw, Settings2, Trash2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -96,7 +96,7 @@ const configFields = computed(() => (adapterDescriptor.value?.config_schema?.fie
   .flatMap((field) => {
     const value = config.value[field.key]
     if (value === undefined || value === null || typeof value === 'object') return []
-    return [{ key: field.key, label: field.label || field.key, value: String(value) }]
+    return [{ key: field.key, label: field.label || field.key, value: typeof value === 'string' && /^https?:\\/\\//i.test(value) ? redactEndpoint(value) : String(value) }]
   }))
 
 async function load() {
@@ -368,7 +368,7 @@ onBeforeUnmount(() => {
           <section class="studio-panel space-y-4 p-4 sm:p-5" aria-labelledby="provider-config-heading">
             <div class="flex items-center gap-2">
               <Settings2 class="size-4 text-studio-violet" aria-hidden="true" />
-              <h2 id="provider-config-heading" class="font-semibold">{{ t('diagnostics.configuration') }}</h2>
+              <h2 id="provider-config-heading" class="font-semibold">{{ t('providerDetail.configurationTitle') }}</h2>
             </div>
             <p v-if="stringConfig('description')" class="text-sm text-muted-foreground">{{ stringConfig('description') }}</p>
             <dl class="space-y-3 text-sm">
