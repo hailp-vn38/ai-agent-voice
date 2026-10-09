@@ -870,5 +870,23 @@ ttl_ms = 1_000
             ))
             .is_err()
         );
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition.observe]
+min_clip_ms = 500
+"#
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition.observe]
+join_timeout_ms = 0
+"#
+            ))
+            .is_err()
+        );
     }
 }
