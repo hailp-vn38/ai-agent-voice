@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { CheckCircle, Mic, Square } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { CheckCircle } from '@lucide/vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { formatApiError } from '@/api/errors'
 import { speakersApi } from '@/api/speakers'
@@ -8,6 +8,7 @@ import type { Speaker, SpeakerCapture } from '@/api/types/speakers'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import { Button } from '@/components/ui/button'
 import { useMicrophoneRecorder } from '@/composables/useMicrophoneRecorder'
+import VoiceRecordingDock from '@/components/voice/VoiceRecordingDock.vue'
 
 const props = defineProps<{ open: boolean; speakerKey?: string }>()
 const emit = defineEmits<{ 'update:open': [boolean]; completed: [Speaker] }>()
@@ -25,8 +26,6 @@ const error = ref('')
 const name = ref('')
 const description = ref('')
 let controller: AbortController | undefined
-
-const canStop = computed(() => recorder.elapsedMs.value >= limits.value.minClipMs)
 
 async function load() {
   loading.value = true
@@ -53,7 +52,7 @@ async function load() {
 }
 
 async function startRecording() {
-  if (!available.value || loading.value || uploading.value) return
+  if (!available.value || loading.value || uploading.value || recorder.starting.value || recorder.recording.value) return
   error.value = ''
   await recorder.start(limits.value, () => void stopRecording())
   if (recorder.error.value) {
@@ -147,15 +146,19 @@ onBeforeUnmount(reset)
       <p v-if="error" role="alert" class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{{ error }}</p>
       <div v-if="loading" class="py-6 text-center text-sm text-muted-foreground">Đang tải cấu hình thu âm…</div>
       <template v-else-if="!completed && step === 'record'">
-        <div class="rounded-lg border p-6 text-center">
-          <Mic class="mx-auto size-8" />
-          <p class="mt-3 font-medium">
-            {{ recorder.recording.value ? `Đang ghi âm ${(recorder.elapsedMs.value / 1000).toFixed(1)}s` : 'Sẵn sàng ghi âm' }}
-          </p>
-          <p class="mt-1 text-sm text-muted-foreground">
-            Hãy nói tự nhiên {{ limits.minClipMs / 1000 }}–{{ limits.maxClipMs / 1000 }} giây ở nơi ít tiếng ồn.
-          </p>
-        </div>
+        <VoiceRecordingDock
+          :recording="recorder.recording.value"
+          :starting="recorder.starting.value"
+          :paused="recorder.paused.value"
+          :elapsed-ms="recorder.elapsedMs.value"
+          :level="recorder.level.value"
+          :min-clip-ms="limits.minClipMs"
+          :max-clip-ms="limits.maxClipMs"
+          :busy="uploading"
+          :disabled="!available"
+          @start="startRecording"
+          @stop="stopRecording"
+        />
       </template>
       <div v-else-if="!completed && step === 'result' && capture" class="py-5 text-center">
         <CheckCircle class="mx-auto size-10 text-emerald-600" />
@@ -185,17 +188,9 @@ onBeforeUnmount(reset)
         <p class="mt-3 font-medium">Đã lưu mẫu giọng nói thành công</p>
       </div>
     </div>
-    <template #footer>
+    <template v-if="completed || step !== 'record'" #footer>
       <div class="flex flex-wrap justify-end gap-2">
         <Button v-if="completed" variant="outline" @click="close">Đóng</Button>
-        <Button v-else-if="step === 'record' && recorder.recording.value"
-          :disabled="!canStop || uploading" @click="stopRecording">
-          <Square class="size-4" />Dừng ghi âm
-        </Button>
-        <Button v-else-if="step === 'record'"
-          :disabled="loading || uploading || !available" @click="startRecording">
-          <Mic class="size-4" />Bắt đầu ghi âm
-        </Button>
         <template v-else-if="step === 'result'">
           <Button variant="outline" @click="retry">Ghi âm lại</Button>
           <Button @click="step = 'details'">Tiếp tục</Button>
