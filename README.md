@@ -35,6 +35,12 @@ VOICE_AGENT_CONFIG=config.example.toml cargo run -p voice-agent-server --bin voi
 VOICE_AGENT_CONFIG=config.toml cargo run -p voice-agent-server --bin voice-agent-server
 ```
 
+Để lưu token Provider/MCP từ Admin Web, cấu hình khóa mã hóa trong
+`deployment.credential_keys_file` hoặc môi trường backend theo
+[hướng dẫn credential](docs/admin-managed-provider-mcp-credentials.md#server-key-provisioning).
+File khóa được nạp khi khởi động, kể cả khi chạy bằng `cargo run` hoặc nút Run của IDE;
+giữ nguyên file khóa qua các lần restart.
+
 Database và Device admission luôn bật. Provision Agent và Device `reference-client-01`
 qua Admin API trước khi chạy client, hoặc bật enrollment và claim mã từ thiết bị.
 Admin API vẫn cần `api.enabled=true` và admin token riêng. Không có Device thì OTA/WS

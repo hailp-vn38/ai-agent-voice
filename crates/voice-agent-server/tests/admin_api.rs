@@ -3319,6 +3319,51 @@ async fn provider_credentials_replace_only_when_supplied() {
 }
 
 #[tokio::test]
+async fn mcp_credentials_require_encryption_and_never_create_a_partial_resource() {
+    use voice_agent_server::database::secrets::{
+        SecretRef, SecretResolveError, SecretResolver, SecretValue,
+    };
+    struct UnavailableSecrets;
+    impl SecretResolver for UnavailableSecrets {
+        fn resolve(&self, _: &SecretRef) -> Result<SecretValue, SecretResolveError> {
+            Err(SecretResolveError::Unavailable)
+        }
+    }
+    let (base, task) =
+        server_with_resolver(true, &database_url(), Arc::new(UnavailableSecrets)).await;
+    let client = Client::new();
+    let servers = format!("{base}/api/admin/mcp-servers");
+    let response = client
+        .post(&servers)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({
+            "key":"gateway", "name":"Gateway", "url":"http://192.168.1.157:8080/mcp",
+            "auth":{"type":"bearer"}, "api_key":"mcp-test-never-plaintext-7A91"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("mcp-test-never-plaintext-7A91"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["error"]["code"],
+        "credential_storage_unavailable"
+    );
+    let page: serde_json::Value = client
+        .get(&servers)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(page["items"].as_array().unwrap().is_empty());
+    task.abort();
+}
+
+#[tokio::test]
 async fn mcp_credentials_are_write_only_replaceable_and_persist_after_restart() {
     let uri = database_url();
     let cipher = || {

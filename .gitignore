@@ -3,6 +3,7 @@ reference/
 /config.toml
 /docker/config.prod.toml
 /docker/secrets.env
+/docker/credential-keys.json
 models/
 /runtime/**
 .DS_Store

@@ -1,6 +1,7 @@
 use anyhow::Context;
+use std::sync::Arc;
 use voice_agent_server::{
-    app::{new_lifecycle, startup_with_lifecycle},
+    app::{new_lifecycle, startup_with_lifecycle, startup_with_lifecycle_and_secret_resolver},
     config::AppConfig,
     lifecycle::CONTROLLED_CLOSE_SETTLE,
     startup_handshake::StartupHandshake,
@@ -23,9 +24,21 @@ async fn main() -> anyhow::Result<()> {
     // all hold the same admission gate and drain registry. Building it afterwards would leave the
     // process briefly running with two lifecycles and no shared decision between them.
     let lifecycle = new_lifecycle(&config);
-    let app = startup_with_lifecycle(config.clone(), lifecycle.clone())
+    let app = if let Some(path) = &config.deployment.credential_keys_file {
+        let cipher = voice_agent_server::database::credentials::CredentialCipher::from_file(path)
+            .map_err(|_| {
+            anyhow::anyhow!("load credential encryption keys from {}", path.display())
+        })?;
+        startup_with_lifecycle_and_secret_resolver(
+            config.clone(),
+            lifecycle.clone(),
+            Arc::new(cipher),
+        )
         .await
-        .context("initialize database and local providers")?;
+    } else {
+        startup_with_lifecycle(config.clone(), lifecycle.clone()).await
+    }
+    .context("initialize database and local providers")?;
     let handshake = StartupHandshake::from_env()?;
     let bind_address = handshake
         .as_ref()

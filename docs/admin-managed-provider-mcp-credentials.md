@@ -20,12 +20,21 @@ PATCH uses the same optional field and the existing quoted `If-Match` revision. 
 
 ## Server key provisioning
 
+For local runs or deployments using a mounted secret file, set this path in the server TOML (relative to the process working directory, like model paths):
+
+```toml
+[deployment]
+credential_keys_file = "docker/credential-keys.json"
+```
+
+The JSON file contains `{"current_version":1,"keys":{"1":"<Base64-encoded random 32-byte key>"}}`. Protect it with file permissions `0600`, keep it outside SQLite/backups, and never commit it. The server reads it at startup without requiring shell environment setup. When configured, this file supplies all encryption key versions; the environment still supplies per-resource fallback credentials. An unreadable or invalid configured file stops startup. To rotate, add the new version to `keys`, select it with `current_version`, and retain older keys while records reference them.
+
 Inject a cryptographically random 32-byte server key through the deployment secret manager as `VOICE_CREDENTIAL_KEY_1`, Base64 encoded. Set `VOICE_CREDENTIAL_KEY_VERSION=1` (the default). The server key must be stored separately from SQLite and its backups. Encryption uses AES-256-GCM with a fresh random 12-byte nonce per write; AAD binds the Admin-owned resource identity and credential UUID.
 
 For a new version, provision `VOICE_CREDENTIAL_KEY_2` and select version `2`. Retain version `1` while stored records reference it; replacement writes use the current version. Missing keys, unknown versions, wrong keys and invalid authentication tags fail closed. There is no automatic bulk re-encryption or plaintext-read endpoint. Loss of a server key makes its old encrypted records unusable.
 
 Migration 0100 adds encrypted storage without rewriting migration 0099. Existing environment-derived Provider/MCP keys remain fallback sources until a key is submitted through Admin API; no environment secrets are copied automatically. Active Provider runtimes and MCP sessions retain their existing credential snapshots. Prepare a new runtime/restart or open a new MCP session to use replacements. MCP changes revoke existing tool approvals.
 
-Serve Admin Web through HTTPS before sending credentials. Admin Web blocks key submission from non-loopback HTTP pages or to non-loopback HTTP API destinations (including LAN IPs); loopback HTTP is allowed for local development. The backend may sit behind a trusted TLS terminator; configure HTTPS at the gateway. Protect SQLite/WAL/backups with the usual database permissions even though credentials are encrypted. Do not put credentials in URLs, logs, browser persistence or typed Provider configuration.
+Provider credential submission requires HTTPS for non-loopback Admin endpoints; MCP create/edit and draft diagnostics also permit LAN HTTP under the operator policy in ADR 0083. The backend may sit behind a trusted TLS terminator. Protect SQLite/WAL/backups with the usual database permissions even though credentials are encrypted. Do not put credentials in URLs, logs, browser persistence or typed Provider configuration.
 
 See [ADR 0083](adr/0083-admin-managed-resource-credentials.md) and [OWASP Secrets Management](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html).

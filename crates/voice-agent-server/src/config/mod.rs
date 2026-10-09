@@ -634,6 +634,8 @@ impl Default for AsrWorkerConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeploymentConfig {
+    #[serde(default)]
+    pub credential_keys_file: Option<PathBuf>,
     /// Explicit process-wide one-voice-pipeline pilot admission.
     #[serde(default)]
     pub speaker_pilot: bool,
@@ -646,6 +648,7 @@ impl Default for DeploymentConfig {
         Self {
             profile: "development-noncommercial".into(),
             speaker_pilot: false,
+            credential_keys_file: None,
         }
     }
 }

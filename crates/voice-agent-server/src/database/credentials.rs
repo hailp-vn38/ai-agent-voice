@@ -67,6 +67,46 @@ pub struct CredentialCipher {
 }
 
 impl CredentialCipher {
+    pub fn from_file(path: &std::path::Path) -> Result<Self, SecretResolveError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct KeyFile {
+            current_version: u32,
+            keys: BTreeMap<u32, SecretValue>,
+        }
+        let bytes =
+            Zeroizing::new(std::fs::read(path).map_err(|_| SecretResolveError::Unavailable)?);
+        if bytes.len() > 65_536 {
+            return Err(SecretResolveError::Invalid);
+        }
+        let file: KeyFile =
+            serde_json::from_slice(&bytes).map_err(|_| SecretResolveError::Invalid)?;
+        if file.current_version == 0 || file.keys.len() > 32 {
+            return Err(SecretResolveError::Invalid);
+        }
+        let mut keys = BTreeMap::new();
+        for (version, value) in file.keys {
+            if version == 0 {
+                return Err(SecretResolveError::Invalid);
+            }
+            let bytes = Zeroizing::new(
+                BASE64
+                    .decode(value.expose())
+                    .map_err(|_| SecretResolveError::Invalid)?,
+            );
+            let key = aead::UnboundKey::new(&aead::AES_256_GCM, &bytes)
+                .map_err(|_| SecretResolveError::Invalid)?;
+            keys.insert(version, aead::LessSafeKey::new(key));
+        }
+        if !keys.contains_key(&file.current_version) {
+            return Err(SecretResolveError::Unavailable);
+        }
+        Ok(Self {
+            current_version: file.current_version,
+            keys,
+        })
+    }
+
     pub fn new(version: u32, key: &[u8]) -> Result<Self, SecretResolveError> {
         if version == 0 {
             return Err(SecretResolveError::Invalid);
@@ -220,6 +260,10 @@ impl CredentialCipher {
         Ok(secret)
     }
 }
+
+#[cfg(test)]
+#[path = "credential_file_tests.rs"]
+mod file_tests;
 
 impl SecretResolver for CredentialCipher {
     fn resolve(&self, reference: &SecretRef) -> Result<SecretValue, SecretResolveError> {

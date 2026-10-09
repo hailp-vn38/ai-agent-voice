@@ -199,6 +199,8 @@ max_open_enrollments = 16
 max_audio_body_bytes = 524288
 
 [deployment]
+# Optional JSON key file, stored separately from SQLite; overrides encryption keys from environment.
+# credential_keys_file = "docker/credential-keys.json"
 # Explicit pilot: one active voice pipeline process-wide; idle sockets remain connected.
 speaker_pilot = false
 profile = "development-noncommercial"
