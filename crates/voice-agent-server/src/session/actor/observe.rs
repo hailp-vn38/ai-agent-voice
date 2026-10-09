@@ -2,8 +2,8 @@
 //! Observe is installed; the terminal boundary spawns one best-effort scoring task and drops any
 //! boundary that arrives while one is already running.
 //!
-//! Observe is deliberately outside the turn lifecycle: it never returns a value the core path
-//! checks, never holds a turn open, and never changes accept behaviour.
+//! Observe remains advisory: the ASR final may wait for its result up to a bounded timeout,
+//! but failure or a late result never denies the conversational turn.
 
 use std::sync::atomic::Ordering;
 

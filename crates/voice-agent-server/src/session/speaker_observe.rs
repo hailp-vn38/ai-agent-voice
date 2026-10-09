@@ -1,6 +1,6 @@
 //! Ticket 10: Agent **Observe** — best-effort speaker scoring for an accepted Voice Session.
 //!
-//! Observe never gates a turn, never grants authority by voice, and never puts speaker identity
+//! Observe never denies a turn, never grants authority by voice, and never puts speaker identity
 //! or a raw score on the wire. When the Agent policy is `off` none of this runs and no utterance
 //! PCM is retained.
 //!
