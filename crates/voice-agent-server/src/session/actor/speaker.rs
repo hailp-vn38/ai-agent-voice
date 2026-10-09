@@ -11,10 +11,12 @@ impl SessionActor {
             self.deliver_identified(text, Some(diagnostic));
         } else {
             self.identification_text = Some(text);
-            let timeout = self.speaker_observe.as_ref().map_or(
-                std::time::Duration::from_secs(10),
-                |observe| observe.join_timeout(),
-            );
+            let timeout = self
+                .speaker_observe
+                .as_ref()
+                .map_or(std::time::Duration::from_secs(10), |observe| {
+                    observe.join_timeout()
+                });
             self.identification_deadline = Some(std::time::Instant::now() + timeout);
         }
     }
