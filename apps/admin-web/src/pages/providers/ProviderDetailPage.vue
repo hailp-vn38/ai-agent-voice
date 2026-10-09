@@ -97,7 +97,7 @@ const configFields = computed(() => (adapterDescriptor.value?.config_schema?.fie
   .flatMap((field) => {
     const value = config.value[field.key]
     if (value === undefined || value === null || typeof value === 'object') return []
-    return [{ key: field.key, label: field.label || field.key, value: typeof value === 'string' && /^https?:\\/\\//i.test(value) ? redactEndpoint(value) : String(value) }]
+    return [{ key: field.key, label: field.label || field.key, value: typeof value === 'string' && (value.startsWith('https://') || value.startsWith('http://')) ? redactEndpoint(value) : String(value) }]
   }))
 
 async function load() {
