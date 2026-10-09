@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
         '/api': proxyTarget,
         '/health': proxyTarget,
         '/ready': proxyTarget,
-        '/mcp': proxyTarget,
+        '/mcp/vision/': proxyTarget,
         '/voice': {
           target: proxyTarget,
           ws: true,

@@ -28,7 +28,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173`.
 
-Development requests for `/health`, `/ready`, `/mcp`, `/voice` and `/api/admin/*` are proxied to
+Development requests for `/health`, `/ready`, `/mcp/vision/*`, `/voice` and `/api/admin/*` are proxied to
 `VITE_DEV_PROXY_TARGET`.
 
 ## Authentication
