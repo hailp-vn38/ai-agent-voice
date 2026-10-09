@@ -286,9 +286,13 @@ impl CallGate {
 
     /// The test side: wait until at least `count` calls are being held.
     async fn wait_until_held(&self, count: usize) {
-        while self.held_calls.load(Ordering::SeqCst) < count {
-            self.held.notified().await;
-        }
+        timeout(Duration::from_secs(5), async {
+            while self.held_calls.load(Ordering::SeqCst) < count {
+                self.held.notified().await;
+            }
+        })
+        .await
+        .expect("the reviewed external call reaches the gate");
     }
 
     fn open(&self) {
@@ -571,6 +575,8 @@ struct Voice {
 }
 
 async fn start(mut app_config: AppConfig, llm: ScriptedLlm) -> Voice {
+    app_config.api.enabled = true;
+    app_config.api.admin_token = "review-token".into();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     // The advertised URL is what a client reads out of `/voice/ota/`, so it has to name the port
@@ -635,6 +641,45 @@ async fn seed(url: &str, external_url: &str) {
     .execute(&pool)
     .await
     .unwrap();
+}
+
+async fn seed_reviewed(base: &str, url: &str, external_url: &str) {
+    seed(url, external_url).await;
+    approve_external_tool(base).await;
+}
+
+async fn approve_external_tool(base: &str) {
+    // Discovery records the contract; approval takes effect on the next WebSocket.
+    let observer = Peer::open(base).await;
+    drop(observer);
+    let client = reqwest::Client::new();
+    let path = format!("{base}/api/admin/agents/agent/tool-allowlist");
+    let observation = client
+        .get(&path)
+        .bearer_auth("review-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let contract = &observation["items"][0];
+    assert_eq!(contract["original_name"], "Forecast");
+    let reviewed = client
+        .put(&path)
+        .bearer_auth("review-token")
+        .header("If-Match", "\"1\"")
+        .json(&serde_json::json!({
+            "server_key": "weather", "original_name": "Forecast",
+            "observed_revision": contract["observed_revision"],
+            "fingerprint": contract["fingerprint"], "allowed": true, "sensitive": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reviewed.status(), reqwest::StatusCode::OK);
 }
 
 // ---------------------------------------------------------------------------
@@ -920,7 +965,7 @@ async fn a_mixed_round_runs_its_calls_in_model_order_and_pairs_every_result() {
     ]);
     let url = database_url();
     let voice = start(config(url.clone(), LlmToolsConfig::default()), llm).await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -992,7 +1037,7 @@ async fn a_session_local_action_runs_in_the_same_order_as_the_mcp_calls_around_i
     ])]);
     let url = database_url();
     let voice = start(config(url.clone(), LlmToolsConfig::default()), llm).await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -1054,7 +1099,7 @@ async fn a_round_over_the_call_cap_executes_no_call_at_all() {
         llm,
     )
     .await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -1107,7 +1152,7 @@ async fn a_turn_over_the_round_cap_stops_before_another_round_starts() {
         llm,
     )
     .await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -1156,7 +1201,7 @@ async fn a_device_call_that_outlives_the_execution_budget_ends_the_turn_too() {
         llm,
     )
     .await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.answer_device_calls = false;
@@ -1212,7 +1257,7 @@ async fn an_external_call_that_outlives_the_execution_budget_ends_the_turn() {
         llm,
     )
     .await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -1280,7 +1325,7 @@ async fn two_sessions_calling_one_server_never_exceed_the_shared_per_server_boun
         llm,
     )
     .await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
     let script = external.script();
 
     let mut first = Peer::open(&voice.base).await;
@@ -1343,7 +1388,7 @@ async fn an_interrupted_turn_drops_its_in_flight_call_and_never_continues() {
     ]);
     let url = database_url();
     let voice = start(config(url.clone(), LlmToolsConfig::default()), llm).await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -1405,7 +1450,7 @@ async fn a_refused_external_call_is_typed_and_does_not_stop_the_round() {
     ]);
     let url = database_url();
     let voice = start(config(url.clone(), LlmToolsConfig::default()), llm).await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -1453,7 +1498,7 @@ async fn the_peer_really_is_a_device_mcp_server_and_the_external_catalog_really_
     ]);
     let url = database_url();
     let voice = start(config(url.clone(), LlmToolsConfig::default()), llm).await;
-    seed(&url, &external.url).await;
+    seed_reviewed(&voice.base, &url, &external.url).await;
 
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
@@ -1523,31 +1568,14 @@ async fn reviewed_external_tool_is_advertised_and_dispatched_on_new_websocket() 
         Round::Text("forecast"),
     ]);
     let url = database_url();
-    let mut configuration = config(url.clone(), LlmToolsConfig::default());
-    configuration.api.enabled = true;
-    configuration.api.admin_token = "review-token".into();
-    let voice = start(configuration, llm).await;
+    let voice = start(config(url.clone(), LlmToolsConfig::default()), llm).await;
     seed(&url, &external.url).await;
     let pool = SqlitePoolOptions::new().connect(&url).await.unwrap();
     sqlx::query("INSERT INTO agent_speaker_policies(agent_id,mode) VALUES(1,'observe')")
         .execute(&pool)
         .await
         .unwrap();
-    let observer = Peer::open(&voice.base).await;
-    drop(observer);
-    let client = reqwest::Client::new();
-    let path = format!("{}/api/admin/agents/agent/tool-allowlist", voice.base);
-    let observation = client
-        .get(&path)
-        .bearer_auth("review-token")
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-    let contract = &observation["items"][0];
-    assert_eq!(client.put(&path).bearer_auth("review-token").header("If-Match","\"1\"").json(&serde_json::json!({"server_key":"weather","original_name":"Forecast","observed_revision":contract["observed_revision"],"fingerprint":contract["fingerprint"],"allowed":true,"sensitive":false})).send().await.unwrap().status(),reqwest::StatusCode::OK);
+    approve_external_tool(&voice.base).await;
     let mut peer = Peer::open(&voice.base).await;
     peer.run_turn().await;
     peer.wait_for_turn_end().await;

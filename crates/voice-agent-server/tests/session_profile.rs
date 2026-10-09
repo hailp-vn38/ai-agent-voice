@@ -1775,6 +1775,27 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         .await
         .unwrap();
     assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let row: serde_json::Value = client
+                .get(format!("{providers}/{unbound}"))
+                .bearer_auth(auth)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if row["runtime"]["desired_state"] == "ready" {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the prepared provider becomes ready");
     let ready = client
         .post(format!("{providers}/{unbound}/prepare"))
         .bearer_auth(auth)

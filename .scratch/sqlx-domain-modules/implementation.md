@@ -1,6 +1,6 @@
 # SQLx domain modules implementation
 
-Status: implemented and reviewed; verification complete with baseline limitations
+Status: implemented and reviewed; five baseline failures repaired; workspace passes
 
 Spec: `docs/sqlx-domain-modules-refactor-guide.md`.
 Baseline: `30b69e33f5be0c5393b60b15e065518e4961beff`.
@@ -37,7 +37,7 @@ Domain-modeling: existing CONTEXT vocabulary and ADRs 0070, 0073 and 0083 agree 
 implemented behavior. No new domain term was resolved; storage-module names are
 implementation details, so no glossary/ADR entry was needed.
 
-## Verification
+## Verification at refactor commit eab0728
 
 - Baseline cargo check: PASS.
 - Baseline admin_api: PASS (31 tests); device_admission: PASS (10).
@@ -64,7 +64,7 @@ implementation details, so no glossary/ADR entry was needed.
 - Final `cargo check -p voice-agent-server`: PASS (also repeated after removing a
   redundant checked Database lookup in provider capabilities).
 
-## Baseline failures and unavailable checks
+## Baseline failures and unavailable checks at refactor commit eab0728
 
 The workspace run reports four failures in tool_round_executor:
 
@@ -97,7 +97,7 @@ All-features Clippy is blocked by the unchanged integration-fixture enum pattern
 not covering QualificationVad. Default-feature Clippy passes. No UI or physical
 hardware qualification was performed for this storage organization refactor.
 
-## Final integration matrix
+## Integration matrix at refactor commit eab0728
 
 | Suite | Result | Counts |
 | --- | --- | --- |
@@ -226,3 +226,31 @@ Tests retain intentional direct SQLx access.
 - `docs/sqlx-domain-modules.md`
 - `scripts/check-sqlx-placement.py`
 - `scripts/tests/test_sqlx_placement.py`
+
+## Follow-up: repair the five baseline assertions
+
+The user requested fixing the five failures after the refactor commit eab0728.
+No production change is required: the stale fixtures missed required External MCP
+review and asynchronous Provider prepare readiness.
+
+Positive Tool-round Executor fixtures now discover the real external contract,
+approve its observed revision/fingerprint through the existing Admin API, then
+open the session under test. The unreviewed-tool negative case keeps raw seeding
+and remains denied. The already-reviewed test shares this approval helper.
+CallGate waits are bounded so absent dispatch fails rather than hanging, including
+three previously non-terminating tests with the same missing-review fixture.
+
+The Provider test polls its public GET until desired_state is ready before checking
+that repeated prepare returns 200 and the build count is unchanged. Existing
+ordering, auth-failure, cancellation and idempotency assertions remain intact.
+Standards review: 0 findings. Spec review: 0 findings.
+
+Validation:
+
+- `cargo test -p voice-agent-server --test tool_round_executor --test session_profile`: PASS
+  (12 + 26 tests, no skips; all five previously failing and three previously hung tests pass).
+- Default-feature Clippy, formatting and SQL placement: PASS.
+- `cargo test --workspace`: PASS (586 passed, 0 failed, 4 existing ignored native/model
+  qualification tests, 0 filtered out; all 51 binaries/doc-test groups completed).
+- No qualification assets/hardware or all-features Clippy were rerun; the previously
+  documented all-features fixture compile limitation remains outside this five-failure fix.
