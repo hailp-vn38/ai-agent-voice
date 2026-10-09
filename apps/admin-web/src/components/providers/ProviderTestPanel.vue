@@ -8,6 +8,7 @@ import type { ProviderType } from '@/domain/admin'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useMicrophoneRecorder } from '@/composables/useMicrophoneRecorder'
+import VoiceRecordingDock from '@/components/voice/VoiceRecordingDock.vue'
 
 const props = defineProps<{ type: ProviderType; savedKey?: string; revision?: number; adapter?: string; capabilities?: Record<string, unknown>; draft?: ProviderTestDraft }>()
 const { t } = useI18n()
@@ -122,10 +123,21 @@ async function run() {
         </label>
       </div>
       <div v-if="type === 'asr'" class="space-y-2">
-        <Button type="button" variant="outline" :disabled="busy || recorder.starting.value" @click="recorder.recording.value ? stopRecording() : startRecording()">{{ recorder.recording.value ? t('diagnostics.stop') : t('diagnostics.record') }}</Button>
-        <Button v-if="recorder.recording.value" type="button" variant="outline" @click="recorder.togglePause()">{{ t(recorder.paused.value ? 'diagnostics.resume' : 'diagnostics.pause') }}</Button>
-        <meter v-if="recorder.recording.value" :value="recorder.level.value" min="0" max="1" :aria-label="t('diagnostics.micLevel')" class="block w-full" />
-        <span v-if="recorder.recording.value" class="ml-3 text-xs">{{ Math.round(recorder.elapsedMs.value / 1000) }} / 30 s</span>
+        <VoiceRecordingDock
+          :recording="recorder.recording.value"
+          :paused="recorder.paused.value"
+          :starting="recorder.starting.value"
+          :elapsed-ms="recorder.elapsedMs.value"
+          :level="recorder.level.value"
+          :min-clip-ms="0"
+          :max-clip-ms="30_000"
+          :busy="busy"
+          :clip-ready="Boolean(audio)"
+          allow-pause
+          @start="startRecording"
+          @stop="stopRecording"
+          @toggle-pause="recorder.togglePause"
+        />
         <p v-if="audio" class="text-xs text-muted-foreground">{{ t('diagnostics.clipReady') }}</p>
         <p v-if="recorder.error.value" role="alert" class="text-sm text-danger">{{ recorder.error.value }}</p>
       </div>
