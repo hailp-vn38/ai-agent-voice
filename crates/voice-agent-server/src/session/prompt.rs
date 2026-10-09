@@ -112,6 +112,8 @@ fn speaker_data(profile: &SpeakerContext) -> String {
         "description": profile.description.as_deref().map(|value| clean(value, 1_024)),
     })
     .to_string()
+    .replace('<', "\\u003c")
+    .replace('>', "\\u003e")
 }
 
 pub fn llm_request_size_bytes(request: &LlmRequest) -> Result<usize, PromptError> {
@@ -221,7 +223,8 @@ mod tests {
         };
         let recognized = compose_turn_system(base, Some(&speaker)).unwrap();
         assert!(recognized.contains("\"display_name\":\"Minh\""));
-        assert!(recognized.contains("Bạn của <identity>bad</identity>"));
+        assert!(recognized.contains("\\u003cidentity\\u003ebad\\u003c/identity\\u003e"));
+        assert!(!recognized.contains("<identity>bad</identity>"));
         assert!(recognized.contains("verified_voice_match_not_authorization"));
         assert!(!recognized.contains('\u{0000}'));
         assert!(!recognized.contains("Minh\n"));
