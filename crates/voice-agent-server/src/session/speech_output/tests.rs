@@ -602,22 +602,22 @@ fn soft_punctuation_is_preferred_before_a_hard_length_split() {
 }
 
 #[test]
-fn sanitizes_markdown_and_emoji_for_tts() {
-    assert_eq!(sanitize_tts_text("**Xin chào!** 😊"), "Xin chào!");
+fn sanitizes_tts_input_to_unicode_words_with_decimal_separators() {
+    assert_eq!(sanitize_tts_text("**Xin chào!** 😊"), "Xin chào");
     assert_eq!(
         sanitize_tts_text("### Kết quả:\n- Bạn có thể **khởi động lại** server 🚀"),
-        "Kết quả: Bạn có thể khởi động lại server"
+        "Kết quả Bạn có thể khởi động lại server"
     );
     assert_eq!(
         sanitize_tts_text("Mình có thể giúp bạn #hôm_nay?"),
-        "Mình có thể giúp bạn hôm nay?"
+        "Mình có thể giúp bạn hôm nay"
     );
 }
 
 #[test]
-fn keeps_date_and_time_separators_for_zerotts_normalization() {
+fn retains_periods_and_commas_while_replacing_other_special_characters() {
     let text = sanitize_tts_text("Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC.");
-    assert_eq!(text, "Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC.");
+    assert_eq!(text, "Hôm nay là Tuesday, 23 09 2026 12 54 56 UTC.");
 }
 
 #[test]
@@ -683,7 +683,7 @@ fn segment_ready_keeps_display_text_while_tts_receives_sanitized_text() {
         output.poll().unwrap(),
         Some(SpeechOutputEvent::Started)
     ));
-    assert_eq!(*inputs.lock().unwrap(), ["Xin chào!"]);
+    assert_eq!(*inputs.lock().unwrap(), ["Xin chào"]);
 
     output.cancel();
     output.push_delta("{\"cmd\": \"date '+%A, %d/%m/").unwrap();
@@ -702,7 +702,7 @@ fn segment_ready_keeps_display_text_while_tts_receives_sanitized_text() {
     ));
     assert_eq!(
         *inputs.lock().unwrap(),
-        ["Xin chào!", "Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC."]
+        ["Xin chào", "Hôm nay là Tuesday, 23 09 2026 12 54 56 UTC."]
     );
 }
 

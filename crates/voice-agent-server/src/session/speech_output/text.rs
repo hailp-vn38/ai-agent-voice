@@ -162,29 +162,15 @@ pub(super) fn sanitize_tts_text(input: &str) -> String {
     let normalized = input.nfc().collect::<String>();
     let mut output = String::with_capacity(normalized.len());
     let mut pending_space = false;
-    for (index, ch) in normalized.char_indices() {
-        let between_digits = normalized[..index]
-            .chars()
-            .next_back()
-            .is_some_and(|previous| previous.is_ascii_digit())
-            && normalized[index + ch.len_utf8()..]
-                .chars()
-                .next()
-                .is_some_and(|next| next.is_ascii_digit());
-        if ch.is_alphanumeric() {
+    for ch in normalized.chars() {
+        if ch.is_alphanumeric() || matches!(ch, '.' | ',') {
             if pending_space && !output.is_empty() {
                 output.push(' ');
             }
             pending_space = false;
             output.push(ch);
-        } else if matches!(ch, '/' | '-') && between_digits {
-            pending_space = false;
-            output.push(ch);
-        } else if ch.is_whitespace() || matches!(ch, '_' | '-' | '–' | '—') {
+        } else {
             pending_space = true;
-        } else if matches!(ch, '.' | ',' | '!' | '?' | ';' | ':') {
-            pending_space = false;
-            output.push(ch);
         }
     }
     output.trim().to_owned()

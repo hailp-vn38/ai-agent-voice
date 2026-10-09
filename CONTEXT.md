@@ -213,6 +213,10 @@ _Avoid_: implicit tool request, unsupported tool fallback
 Đơn vị text speakable, được Sentence Segmenter tách từ Generated Assistant Response theo delivery policy và submit nguyên tử vào SpeechOutput.
 _Avoid_: token, full response, TTS chunk
 
+**TTS Plain Text**:
+Bản text riêng của Speech Segment được đưa vào TTS: chỉ gồm ký tự chữ hoặc số Unicode, dấu chấm và dấu phẩy; mỗi dãy ký tự khác được thay bằng tối đa một khoảng trắng ASCII. Bản hiển thị trong WS không bị thay đổi bởi quy tắc này.
+_Avoid_: display text, formatted text, provider-normalized text
+
 **LLM Operation**:
 Một streaming request theo đúng Voice Session và generation, giữ một global LLM permit từ lúc runtime accept tới terminal event; không phải persistent provider session.
 _Avoid_: LLM worker session, global chat, provider connection
