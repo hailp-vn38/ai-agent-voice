@@ -50,7 +50,8 @@ impl SessionActor {
             }
         };
         self.llm_messages = Vec::with_capacity(history.len() + 1);
-        self.llm_messages.push(ChatMessage::System { content: system });
+        self.llm_messages
+            .push(ChatMessage::System { content: system });
         self.llm_messages.extend(history);
         self.tool_rounds.begin_turn();
         self.start_llm_round(true);
