@@ -27,7 +27,7 @@ const props = withDefaults(
 
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{
-  save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string }]
+  save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string; apiKey?: string }]
 }>()
 
 const { t, providerTypeLabel } = useI18n()
@@ -42,6 +42,7 @@ const form = reactive({
   description: '',
   status: 'ready' as ProviderStatus,
   endpoint: '',
+  apiKey: '',
 })
 
 /**
@@ -61,9 +62,12 @@ const typeChanged = (next: ProviderType) => {
   if (!adapterHints.value.includes(form.adapter)) form.adapter = ''
 }
 
+watch(() => form.adapter, () => { form.apiKey = '' })
+
 watch(
   () => [open.value, props.provider] as const,
   () => {
+    form.apiKey = ''
     if (!open.value) return
     form.name = props.provider?.name ?? ''
     form.type = props.provider?.type ?? props.initialType
@@ -86,7 +90,9 @@ function submit() {
     description: form.description.trim(),
     status: form.status,
     endpoint: form.endpoint.trim() || undefined,
+    ...(form.apiKey && ['openai', 'chillaudio_ws'].includes(form.adapter) ? { apiKey: form.apiKey } : {}),
   })
+  form.apiKey = ''
   open.value = false
 }
 </script>
@@ -159,6 +165,13 @@ function submit() {
           class="admin-input font-mono text-sm"
           :placeholder="t('common.optional')"
         />
+      </label>
+
+      <label v-if="['openai', 'chillaudio_ws'].includes(form.adapter)" class="block space-y-1.5 sm:col-span-2">
+        <span class="text-sm font-medium">API key / token mới (tùy chọn)</span>
+        <p v-if="provider?.credential" class="text-xs text-muted-foreground">Key hiện tại: {{ provider.credential.masked_key }}</p>
+        <input v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
+        <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server.</small>
       </label>
 
       <label v-if="form.type !== 'speaker'" class="block space-y-1.5 sm:col-span-2">

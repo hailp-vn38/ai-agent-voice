@@ -66,7 +66,7 @@ export interface DeviceInput {
   templateId?: string
 }
 
-export type ProviderInput = Omit<ProviderInstance, 'id'>
+export type ProviderInput = Omit<ProviderInstance, 'id'> & { apiKey?: string }
 
 function isApiProviderType(value: string): value is TemplateProviderType {
   return (apiProviderTypes as string[]).includes(value)
@@ -122,6 +122,7 @@ function toProvider(provider: AdminProvider): ProviderInstance {
     type: provider.type as ProviderType,
     adapter: provider.adapter,
     credentialEnv: provider.credential_env ?? undefined,
+    credential: provider.credential,
     model: providerConfig(provider, 'model'),
     description: providerConfig(provider, 'description'),
     status: providerStatus(provider),
@@ -721,6 +722,7 @@ export const useAdminStore = defineStore('admin', () => {
         type: input.type as TemplateProviderType,
         adapter: input.adapter,
         config_json: toProviderConfig(input),
+        api_key: input.apiKey,
       })
       // The create endpoint always enables the provider, so a disabled draft needs a follow-up.
       const provider = input.status === 'disabled'
@@ -732,7 +734,7 @@ export const useAdminStore = defineStore('admin', () => {
     })
   }
 
-  async function updateProvider(providerId: string, patch: Partial<Omit<ProviderInstance, 'id' | 'type'>>) {
+  async function updateProvider(providerId: string, patch: Partial<Omit<ProviderInstance, 'id' | 'type'>> & { apiKey?: string }) {
     return run(async () => {
       const current = getProvider(providerId)
       const revision = providerRevisions.value[providerId]
@@ -743,6 +745,7 @@ export const useAdminStore = defineStore('admin', () => {
         providerId,
         {
           name: patch.name,
+          api_key: patch.apiKey,
           adapter: patch.adapter,
           config_json: touchesConfig
             ? toProviderConfig({

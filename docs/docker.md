@@ -76,7 +76,7 @@ chmod 600 docker/config.prod.toml docker/secrets.env
 
 Sửa token voice/admin, provider key/model và `server.public_ws_url` trong TOML.
 Không có interpolation environment tự động trong TOML. `secrets.env` cung cấp
-environment cho `EnvSecretResolver` khi Provider/MCP trong database dùng SecretRef.
+khóa mã hóa `VOICE_CREDENTIAL_KEY_<version>` cho credential Provider/MCP lưu trong database; các biến credential từng resource vẫn là nguồn dự phòng. Xem [hướng dẫn credential mã hóa](admin-managed-provider-mcp-credentials.md).
 Không đưa secret vào Docker build args hoặc `VITE_ADMIN_TOKEN`; dùng form kết nối
 sẵn có của web. Hai file thật được Git và Docker build context bỏ qua.
 

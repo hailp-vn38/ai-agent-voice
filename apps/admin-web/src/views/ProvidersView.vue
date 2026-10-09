@@ -195,6 +195,7 @@ function saveProvider(payload: {
   description: string
   status: ProviderStatus
   endpoint?: string
+  apiKey?: string
 }) {
   if (!editingProvider.value) return
   // The type of an existing instance is fixed: its bindings already rely on it.

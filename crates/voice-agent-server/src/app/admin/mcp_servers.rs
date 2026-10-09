@@ -16,6 +16,7 @@ struct McpServerRow {
     revision: i64,
     created_at: i64,
     updated_at: i64,
+    credential_json: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -27,6 +28,8 @@ enum McpAuth {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateMcpServer {
+    #[serde(default)]
+    api_key: Option<crate::database::secrets::SecretValue>,
     key: String,
     name: String,
     url: String,
@@ -39,6 +42,8 @@ struct CreateMcpServer {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PatchMcpServer {
+    #[serde(default)]
+    api_key: Patch<crate::database::secrets::SecretValue>,
     #[serde(default)]
     key: Patch<String>,
     #[serde(default)]
@@ -121,10 +126,10 @@ fn mcp_json(row: McpServerRow) -> Value {
         _ => serde_json::json!({"type":"none"}),
     };
     let credential_env = crate::database::secrets::mcp_secret_env(&row.key, &row.auth_type);
-    serde_json::json!({"key":row.key,"name":row.name,"transport":"streamable_http","url":row.url,"headers":{},"auth":auth,"credential_env":credential_env,"connect_timeout_ms":row.connect_timeout_ms,"request_timeout_ms":row.request_timeout_ms,"enabled":row.enabled != 0,"revision":row.revision,"created_at":row.created_at,"updated_at":row.updated_at})
+    serde_json::json!({"key":row.key,"name":row.name,"transport":"streamable_http","url":row.url,"headers":{},"auth":auth,"credential_env":credential_env,"credential":crate::database::credentials::metadata(row.credential_json.as_deref()),"connect_timeout_ms":row.connect_timeout_ms,"request_timeout_ms":row.request_timeout_ms,"enabled":row.enabled != 0,"revision":row.revision,"created_at":row.created_at,"updated_at":row.updated_at})
 }
 async fn mcp_by(pool: &SqlitePool, key: &str) -> Result<McpServerRow, sqlx::Error> {
-    sqlx::query_as("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at FROM mcp_servers WHERE key=?").bind(key).fetch_one(pool).await
+    sqlx::query_as("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at,credential_json FROM mcp_servers WHERE key=?").bind(key).fetch_one(pool).await
 }
 pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (_, CreateMcpServer) = match json(request).await {
@@ -142,6 +147,27 @@ pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Re
     {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     }
+    let credential = match body.api_key {
+        Some(value) => {
+            if auth_type == "none" || !crate::database::credentials::valid_input(&value) {
+                return error(&request, StatusCode::BAD_REQUEST, "credential_invalid");
+            }
+            match state
+                .secret_resolver
+                .seal(&value, &format!("mcp:{}", body.key))
+            {
+                Ok(record) => Some(record),
+                Err(_) => {
+                    return error(
+                        &request,
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "credential_storage_unavailable",
+                    );
+                }
+            }
+        }
+        None => None,
+    };
     let pool = match db(&state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -158,7 +184,7 @@ pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Re
             );
         }
     };
-    let result = sqlx::query("INSERT INTO mcp_servers(key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(&body.key).bind(&body.name).bind(&body.url).bind(auth_type).bind(auth_header_name).bind(body.connect_timeout_ms as i64).bind(body.request_timeout_ms as i64).bind(now()).bind(now()).execute(&mut *tx).await;
+    let result = sqlx::query("INSERT INTO mcp_servers(key,name,url,auth_type,auth_header_name,credential_json,connect_timeout_ms,request_timeout_ms,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(&body.key).bind(&body.name).bind(&body.url).bind(auth_type).bind(auth_header_name).bind(credential).bind(body.connect_timeout_ms as i64).bind(body.request_timeout_ms as i64).bind(now()).bind(now()).execute(&mut *tx).await;
     let resource_id = match result {
         Ok(v) => v.last_insert_rowid(),
         Err(e) => return mutation_sql_error(&request, &e),
@@ -217,7 +243,7 @@ pub(super) async fn list_mcp_servers(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match sqlx::query_as::<_,McpServerRow>("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at FROM mcp_servers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await {Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(mcp_json).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
+    match sqlx::query_as::<_,McpServerRow>("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at,credential_json FROM mcp_servers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await {Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(mcp_json).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
 }
 pub(super) async fn patch_mcp_server(
     State(state): State<AppState>,
@@ -283,6 +309,25 @@ pub(super) async fn patch_mcp_server(
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
         None => old.enabled,
     };
+    let credential = match body.api_key.value() {
+        Some(Some(value))
+            if auth_type != "none" && crate::database::credentials::valid_input(&value) =>
+        {
+            match state.secret_resolver.seal(&value, &format!("mcp:{key}")) {
+                Ok(record) => Some(record),
+                Err(_) => {
+                    return error(
+                        &request,
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "credential_storage_unavailable",
+                    );
+                }
+            }
+        }
+        Some(_) => return error(&request, StatusCode::BAD_REQUEST, "credential_invalid"),
+        None if auth_type == "none" => None,
+        None => old.credential_json.clone(),
+    };
     let security = &state.database.as_ref().unwrap().tool_security;
     let _publication = security.publication.write().await;
     let mut tx = match pool.begin().await {
@@ -298,8 +343,9 @@ pub(super) async fn patch_mcp_server(
     let source_changed = old.url != url
         || old.auth_type != auth_type
         || old.auth_header_name != auth_header_name
-        || old.enabled != enabled;
-    let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,auth_type=?,auth_header_name=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(auth_type).bind(auth_header_name).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
+        || old.enabled != enabled
+        || old.credential_json != credential;
+    let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,auth_type=?,auth_header_name=?,credential_json=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(auth_type).bind(auth_header_name).bind(credential).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
     if !updated {
         let _ = tx.rollback().await;
         audit_conflict(pool, id(&request).into(), "mcp_server", old.id, expected).await;

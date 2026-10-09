@@ -1,5 +1,7 @@
 # Deployment-owned credentials for Provider and External MCP
 
+> Superseded for Admin credential management by [ADR 0083](adr/0083-admin-managed-resource-credentials.md) and [encrypted credential operations](admin-managed-provider-mcp-credentials.md). The deployment variables below remain fallback sources for existing resources without a stored credential.
+
 ## Decision and security boundary
 
 Provider API keys and External MCP bearer/header token values **and their lookup references** are no longer accepted from Vue Admin or persisted to SQLite. Admin remains responsible for non-secret Provider configuration and MCP endpoint/auth mode only. Existing provider identities and Agent/Template/MCP bindings remain unchanged.

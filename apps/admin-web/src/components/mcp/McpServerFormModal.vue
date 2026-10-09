@@ -19,16 +19,17 @@ const form = reactive({
   url: '',
   auth: 'none' as AuthSelection,
   headerName: '',
+  apiKey: '',
   connectTimeoutMs: 5000,
   requestTimeoutMs: 30000,
 })
 
-const credentialHint = computed(() => {
-  const key = (form.key.trim() || props.server?.key || '').toUpperCase()
-  return `VOICE_MCP_${key || '<SERVER_KEY>'}_TOKEN`
-})
+const needsCredential = computed(() => ['bearer', 'header'].includes(form.auth) ||
+  (form.auth === 'unchanged' && props.server?.auth.type !== 'none'))
+watch(() => form.auth, () => { form.apiKey = '' })
 
 watch([open, () => props.server], () => {
+  form.apiKey = ''
   if (!open.value) return
   const existing = props.server
   form.key = existing?.key ?? ''
@@ -72,6 +73,7 @@ function submit() {
     url: form.url.trim(),
     connect_timeout_ms: form.connectTimeoutMs,
     request_timeout_ms: form.requestTimeoutMs,
+    ...(needsCredential.value && form.apiKey ? { api_key: form.apiKey } : {}),
   }
   if (props.server) {
     emit('save', { ...base, ...(auth ? { auth } : {}) })
@@ -116,23 +118,24 @@ function submit() {
           <select v-model="form.auth" class="admin-input">
             <option v-if="server" value="unchanged">{{ t('mcp.authKeep') }}</option>
             <option value="none">{{ t('mcp.authNone') }}</option>
-            <option value="bearer">Bearer (server environment)</option>
-            <option value="header">Header (server environment)</option>
+            <option value="bearer">Bearer</option>
+            <option value="header">Header</option>
           </select>
         </label>
         <p v-if="server" class="text-xs text-muted-foreground">
           {{ t('mcp.authCurrent') }}: {{ server.auth.type }}
-          {{ server.credential_env ? '— ' + server.credential_env : '' }}
+          {{ server.credential?.masked_key ?? server.credential_env ?? '' }}
         </p>
         <label v-if="form.auth === 'header'" class="block space-y-1.5">
           <span class="text-sm font-medium">{{ t('mcp.headerName') }}</span>
           <input v-model="form.headerName" class="admin-input font-mono" placeholder="x-api-key" />
         </label>
       </div>
-      <p v-if="form.auth === 'bearer' || form.auth === 'header'" class="rounded-lg border border-border/70 p-3 text-xs text-muted-foreground">
-        Token được cấp trên server qua <code>{{ credentialHint }}</code>.
-        Web và SQLite không lưu hoặc đọc giá trị token.
-      </p>
+      <label v-if="needsCredential" class="block space-y-1.5">
+        <span class="text-sm font-medium">API key / token (tùy chọn)</span>
+        <input v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
+        <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server; sau khi lưu chỉ hiển thị phần đã che.</small>
+      </label>
       <div class="flex justify-end gap-2">
         <Button type="button" variant="outline" :disabled="saving" @click="open = false">{{ t('common.cancel') }}</Button>
         <Button type="submit" :disabled="saving">{{ saving ? t('common.loading') : t('common.save') }}</Button>

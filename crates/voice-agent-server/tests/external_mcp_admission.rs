@@ -510,7 +510,7 @@ async fn start(secrets: ConstantSecrets) -> Voice {
     start_with_config(config(database_url()), secrets).await
 }
 
-async fn start_with_config(app_config: AppConfig, secrets: ConstantSecrets) -> Voice {
+async fn start_with_config(app_config: AppConfig, secrets: impl SecretResolver + 'static) -> Voice {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let url = app_config.database.url.clone();
@@ -1300,6 +1300,115 @@ async fn external_agent_reviews_exact_contract_and_drift_requires_new_review() {
             .unwrap()
             .status(),
         reqwest::StatusCode::CONFLICT
+    );
+    voice.task.abort();
+    server.task.abort();
+}
+
+#[tokio::test]
+async fn admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotation() {
+    let server = start_mcp(McpBehaviour::with_tools(vec![tool("Light")])).await;
+    let mut configuration = config(database_url());
+    configuration.api.enabled = true;
+    configuration.api.admin_token = "review-token".into();
+    let cipher =
+        || voice_agent_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap();
+    let voice = start_with_config(configuration.clone(), cipher()).await;
+    let pool = voice.database().await;
+    seed(&pool).await;
+    let client = reqwest::Client::new();
+    let response = client.post(format!("{}/api/admin/mcp-servers",voice.base)).bearer_auth("review-token").json(&serde_json::json!({"key":"home","name":"Home","url":server.url(),"auth":{"type":"bearer"},"api_key":"mcp-secret-before-1111"})).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        client
+            .put(format!(
+                "{}/api/admin/agents/agent/mcp-bindings/home",
+                voice.base
+            ))
+            .bearer_auth("review-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"enabled":true,"required":false}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    voice.task.abort();
+    let voice = start_with_config(configuration.clone(), cipher()).await;
+    voice.admit().await;
+    assert!(!server.seen().is_empty());
+    assert!(server.seen().iter().all(
+        |(authorization, _)| authorization.as_deref() == Some("Bearer mcp-secret-before-1111")
+    ));
+    let review_url = format!("{}/api/admin/agents/agent/tool-allowlist", voice.base);
+    let observations: serde_json::Value = client
+        .get(&review_url)
+        .bearer_auth("review-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let observation = &observations["items"][0];
+    assert!(observation["source"]["auth_reference"].is_null());
+    assert!(!observations.to_string().contains("mcp-secret-before-1111"));
+    assert_eq!(client.put(&review_url).bearer_auth("review-token").header("if-match",format!("\"{}\"",observation["revision"])).json(&serde_json::json!({"server_key":"home","original_name":"Light","observed_revision":observation["observed_revision"],"fingerprint":observation["fingerprint"],"allowed":true,"sensitive":false})).send().await.unwrap().status(),StatusCode::OK);
+    assert_eq!(
+        names(voice.admit().await.external_mcp()),
+        vec!["external.home.light"]
+    );
+    server.rewrite(|script| script.seen.lock().unwrap().clear());
+    assert_eq!(
+        client
+            .patch(format!("{}/api/admin/mcp-servers/home", voice.base))
+            .bearer_auth("review-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"api_key":"mcp-secret-after-2222"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert!(
+        names(voice.admit().await.external_mcp()).is_empty(),
+        "credential rotation requires tool review again"
+    );
+    assert!(!server.seen().is_empty());
+    assert!(
+        server
+            .seen()
+            .iter()
+            .all(|(authorization, _)| authorization.as_deref()
+                == Some("Bearer mcp-secret-after-2222"))
+    );
+    voice.task.abort();
+    for invalid_cipher in [
+        voice_agent_server::database::credentials::CredentialCipher::new(1, &[8; 32]).unwrap(),
+        voice_agent_server::database::credentials::CredentialCipher::new(2, &[7; 32]).unwrap(),
+    ] {
+        server.rewrite(|script| script.seen.lock().unwrap().clear());
+        let voice = start_with_config(configuration.clone(), invalid_cipher).await;
+        assert!(names(voice.admit().await.external_mcp()).is_empty());
+        assert!(
+            server.seen().is_empty(),
+            "wrong key/tag or unknown version must fail before network access"
+        );
+        voice.task.abort();
+    }
+    let voice = start_with_config(configuration.clone(), cipher()).await;
+    assert_eq!(client.post(format!("{}/api/admin/mcp-servers",voice.base)).bearer_auth("review-token").json(&serde_json::json!({"key":"donor","name":"Donor","url":server.url(),"auth":{"type":"bearer"},"api_key":"mcp-donor-secret-3333"})).send().await.unwrap().status(),StatusCode::CREATED);
+    // Fault injection: copying a valid encrypted record to another owner must fail its AAD check.
+    sqlx::query("UPDATE mcp_servers SET credential_json=(SELECT credential_json FROM mcp_servers WHERE key='donor') WHERE key='home'").execute(&pool).await.unwrap();
+    voice.task.abort();
+    server.rewrite(|script| script.seen.lock().unwrap().clear());
+    let voice = start_with_config(configuration, cipher()).await;
+    assert!(names(voice.admit().await.external_mcp()).is_empty());
+    assert!(
+        server.seen().is_empty(),
+        "encrypted records cannot be moved between resources"
     );
     voice.task.abort();
     server.task.abort();

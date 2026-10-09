@@ -129,4 +129,33 @@ describe('ProviderCreateDrawer', () => {
     expect((wrapper.get('input[placeholder="Giọng Mai Chi"]').element as HTMLInputElement).value).toBe('')
     expect(wrapper.find('input[placeholder="tts_maichi"]').exists()).toBe(false)
   })
+  it('submits an optional key separately and keeps it out of the JSON preview', async () => {
+    adaptersApi.list.mockResolvedValue([{ adapter: 'openai', type: 'llm' }])
+    adaptersApi.get.mockResolvedValue({ adapter: 'openai', type: 'llm', config_schema: { fields: [] } })
+    const create = vi.fn().mockResolvedValue({ key: 'llm_created' })
+    const wrapper = mount(ProviderCreateDrawer, {
+      props: { modelValue: false, initialType: 'llm', create },
+      global: { stubs: { BaseModal: BaseModalStub, Button: ButtonStub } },
+    })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    await wrapper.get('select').setValue('openai')
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text() === 'Tiếp tục')!.trigger('click')
+    await wrapper.get('input[placeholder="Giọng Mai Chi"]').setValue('LLM')
+    await wrapper.get('input[type="password"]').setValue('sk-test-only-7A91')
+    await wrapper.findAll('button').find((b) => b.text() === 'Tiếp tục')!.trigger('click')
+    expect(wrapper.text()).not.toContain('sk-test-only-7A91')
+    await wrapper.findAll('button').find((b) => b.text() === 'Tạo provider')!.trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith({ name: 'LLM', type: 'llm', adapter: 'openai', config_json: {}, api_key: 'sk-test-only-7A91' })
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    await wrapper.get('select').setValue('openai')
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text() === 'Tiếp tục')!.trigger('click')
+    expect(wrapper.get('input[type="password"]').element).toHaveProperty('value', '')
+  })
+
 })

@@ -57,4 +57,14 @@ describe('HTTP client', () => {
 
     await expect(request('/conflict')).rejects.toEqual(new ApiError('API request failed: revision_conflict', 409, 'revision_conflict', 'req-7'))
   })
+  it('blocks credential submission over LAN HTTP and allows HTTPS or loopback development', () => {
+    vi.stubGlobal('location', { href: 'http://192.168.1.157:5174/' })
+    expect(() => jsonRequest('POST', { api_key: 'test-secret' })).toThrow('HTTPS')
+    expect(() => jsonRequest('PATCH', { name: 'No key' })).not.toThrow()
+    vi.stubGlobal('location', { href: 'https://admin.example.test/' })
+    expect(jsonRequest('POST', { api_key: 'test-secret' }).body).toBe('{"api_key":"test-secret"}')
+    vi.stubGlobal('location', { href: 'http://localhost:5174/' })
+    expect(() => jsonRequest('POST', { api_key: 'test-secret' })).not.toThrow()
+  })
+
 })

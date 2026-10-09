@@ -1,4 +1,4 @@
-//! Deployment-owned secret boundary; SQLite never stores credential values or references.
+//! Redacted runtime secret interface; stored credentials are authenticated encrypted snapshots.
 use zeroize::Zeroizing;
 
 #[derive(PartialEq, Eq)]
@@ -6,7 +6,14 @@ pub struct SecretRef(String);
 impl SecretRef {
     pub fn parse(value: String) -> Result<Self, SecretRefError> {
         let bytes = value.as_bytes();
-        if bytes.is_empty() || bytes.len() > 256 {
+        if bytes.is_empty()
+            || bytes.len()
+                > if value.starts_with("sealed:") {
+                    12288
+                } else {
+                    256
+                }
+        {
             return Err(SecretRefError::Length);
         }
         if bytes.iter().any(|b| !(0x20..=0x7e).contains(b)) {
@@ -48,7 +55,7 @@ fn env_key(key: &str) -> Option<String> {
     Some(key.to_ascii_uppercase())
 }
 
-/// Remote provider adapters obtain credentials from server deployment configuration.
+/// Fallback environment credential for remote provider adapters.
 pub fn provider_secret_env(key: &str, adapter: &str) -> Option<String> {
     if !matches!(adapter, "openai" | "chillaudio_ws") {
         return None;
@@ -56,7 +63,7 @@ pub fn provider_secret_env(key: &str, adapter: &str) -> Option<String> {
     Some(format!("VOICE_PROVIDER_{}_API_KEY", env_key(key)?))
 }
 
-/// An MCP server's auth scheme is persisted, but its credential source is not.
+/// Fallback environment credential for authenticated MCP servers.
 pub fn mcp_secret_env(key: &str, auth_type: &str) -> Option<String> {
     if !matches!(auth_type, "bearer" | "header") {
         return None;
@@ -73,6 +80,11 @@ impl SecretValue {
         &self.0
     }
 }
+impl<'de> serde::Deserialize<'de> for SecretValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::new)
+    }
+}
 impl std::fmt::Debug for SecretValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("SecretValue([REDACTED])")
@@ -85,16 +97,25 @@ pub enum SecretResolveError {
 }
 pub trait SecretResolver: Send + Sync {
     fn resolve(&self, reference: &SecretRef) -> Result<SecretValue, SecretResolveError>;
+    fn seal(&self, _value: &SecretValue, _scope: &str) -> Result<String, SecretResolveError> {
+        Err(SecretResolveError::Unavailable)
+    }
 }
 
-/// V1 deployment resolver. Only this boundary interprets an in-memory reference as an
-/// environment-variable name; Admin and SQLite never accept one.
+/// Resolves encrypted snapshots or deployment environment references.
+/// Admin requests never accept caller-chosen references.
 #[derive(Default)]
 pub struct EnvSecretResolver;
 
 impl SecretResolver for EnvSecretResolver {
+    fn seal(&self, value: &SecretValue, scope: &str) -> Result<String, SecretResolveError> {
+        super::credentials::CredentialCipher::from_environment()?.seal(value, scope)
+    }
     fn resolve(&self, reference: &SecretRef) -> Result<SecretValue, SecretResolveError> {
         let name = reference.as_str();
+        if name.starts_with("sealed:") {
+            return super::credentials::CredentialCipher::from_environment()?.resolve(reference);
+        }
         if !name
             .bytes()
             .all(|byte| byte == b'_' || byte.is_ascii_uppercase() || byte.is_ascii_digit())

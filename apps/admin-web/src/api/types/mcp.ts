@@ -1,21 +1,24 @@
+import type { CredentialMetadata } from './providers'
+
 export type McpAuthInput =
   | { type: 'none' }
   | { type: 'bearer' }
   | { type: 'header'; header_name: string }
 
-/** Only auth metadata is persisted. Credential lookup is deployment-owned. */
+/** Read responses contain authentication metadata only. */
 export type McpAuthDisplay =
   | { type: 'none' }
   | { type: 'bearer' }
   | { type: 'header'; header_name: string }
 
 export interface AdminMcpServer {
+  credential?: CredentialMetadata | null
   key: string
   name: string
   transport: 'streamable_http'
   url: string
   headers: Record<string, string>
-  /** Read-only deployment environment variable for bearer/header authentication. */
+  /** Deployment fallback when no encrypted credential is stored. */
   credential_env: string | null
   auth: McpAuthDisplay
   connect_timeout_ms: number
@@ -43,6 +46,7 @@ export interface McpServerPage {
 }
 
 export interface CreateMcpServerInput {
+  api_key?: string
   key: string
   name: string
   url: string
@@ -52,6 +56,7 @@ export interface CreateMcpServerInput {
 }
 
 export interface UpdateMcpServerInput {
+  api_key?: string
   name?: string
   url?: string
   auth?: McpAuthInput

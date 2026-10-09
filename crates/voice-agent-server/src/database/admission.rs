@@ -249,8 +249,8 @@ impl Database {
         if rows.len() > 64 {
             return Err(DeviceAdmissionError::Unavailable);
         }
-        let bindings = sqlx::query_as::<_, (i64, String, i64, String, i64, String, String, String, i64)>(
-            "SELECT b.template_id, b.provider_type, p.id, p.key, p.enabled, p.type, p.adapter, p.config_json, p.revision \
+        let bindings = sqlx::query_as::<_, (i64, String, i64, String, i64, String, String, String, i64, Option<String>)>(
+            "SELECT b.template_id, b.provider_type, p.id, p.key, p.enabled, p.type, p.adapter, p.config_json, p.revision, p.credential_json \
              FROM template_provider_bindings b \
              JOIN providers p ON p.id = b.provider_id \
              WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments \
@@ -307,9 +307,14 @@ impl Database {
             adapter,
             config_json,
             revision,
+            credential,
         ) in bindings
         {
-            let secret_ref = super::secrets::provider_secret_env(&provider_key, &adapter);
+            let secret_ref = super::credentials::reference(
+                &format!("provider:{provider_key}"),
+                credential.as_deref(),
+                super::secrets::provider_secret_env(&provider_key, &adapter),
+            );
             let snapshot = match snapshots.entry(id) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
                 std::collections::hash_map::Entry::Vacant(entry) => {

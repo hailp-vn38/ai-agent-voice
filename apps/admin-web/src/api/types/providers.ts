@@ -10,7 +10,15 @@ export interface ProviderRuntime {
   failure_code: string | null
 }
 
+export interface CredentialMetadata {
+  id: string
+  masked_key: string
+  key_version: number
+  status: 'active'
+}
+
 export interface AdminProvider {
+  credential?: CredentialMetadata | null
   id: number
   key: string
   name: string
@@ -22,7 +30,7 @@ export interface AdminProvider {
   revision: number
   created_at: number
   updated_at: number
-  /** Deployment env var name, never a stored key or editable reference. */
+  /** Fallback deployment env var name; credential values are write-only. */
   credential_env: string | null
   runtime_status: 'not_loaded' | 'unavailable' | 'loaded'
   runtime_matches_desired: boolean
@@ -42,6 +50,7 @@ export interface ProviderPage extends Page<AdminProvider> {
 }
 
 export interface CreateProviderInput {
+  api_key?: string
   name: string
   type: TemplateProviderType
   adapter: string
@@ -49,6 +58,7 @@ export interface CreateProviderInput {
 }
 
 export interface UpdateProviderInput {
+  api_key?: string
   name?: string
   adapter?: string
   config_json?: Record<string, unknown>

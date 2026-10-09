@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0083](0083-admin-managed-resource-credentials.md)
 
 SQLite chỉ giữ `SecretRef` opaque, không biết secret backend và không lưu secret value. `SecretRef` là printable ASCII `1..=256` bytes (`0x20..=0x7E`), không empty/whitespace-only/leading-trailing space, không trim/normalize và redacts Debug; domain không áp resolver-specific syntax. Bootstrap inject `Arc<dyn SecretResolver>` vào AppState; Provider loader và External MCP client chỉ phụ thuộc abstraction này. V1 `EnvSecretResolver` diễn giải reference là environment-variable name và trả `secret_invalid` khi cú pháp không đúng, còn domain và Admin API không được làm vậy. `SecretValue` là wrapper zeroize-on-drop, redact `Debug`, không `Display`/`Clone` và chỉ expose value tại điểm dựng provider/request.
 

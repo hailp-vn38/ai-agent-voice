@@ -246,9 +246,9 @@ impl ProviderDiagnosticService {
             .database
             .as_ref()
             .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-        let (id, provider_key, provider_type, adapter, config, revision, enabled):
-            (i64, String, String, String, Option<String>, i64, i64) = sqlx::query_as(
-            "SELECT id,key,type,adapter,CASE WHEN length(CAST(config_json AS BLOB))<=65536 THEN config_json ELSE NULL END,revision,enabled FROM providers WHERE key=? AND length(CAST(key AS BLOB))<=128 AND length(CAST(type AS BLOB))<=16 AND length(CAST(adapter AS BLOB))<=64"
+        let (id, provider_key, provider_type, adapter, config, revision, enabled, credential):
+            (i64, String, String, String, Option<String>, i64, i64, Option<String>) = sqlx::query_as(
+            "SELECT id,key,type,adapter,CASE WHEN length(CAST(config_json AS BLOB))<=65536 THEN config_json ELSE NULL END,revision,enabled,credential_json FROM providers WHERE key=? AND length(CAST(key AS BLOB))<=128 AND length(CAST(type AS BLOB))<=16 AND length(CAST(adapter AS BLOB))<=64"
         ).bind(key).fetch_one(database.pool()).await.map_err(|error| match error {
             sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
             _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
@@ -259,7 +259,11 @@ impl ProviderDiagnosticService {
         if !kind.is_empty() && provider_type != kind {
             return Err(ProviderDiagnosticRequestError::TypeMismatch);
         }
-        let secret_ref = crate::database::secrets::provider_secret_env(&provider_key, &adapter);
+        let secret_ref = crate::database::credentials::reference(
+            &format!("provider:{provider_key}"),
+            credential.as_deref(),
+            crate::database::secrets::provider_secret_env(&provider_key, &adapter),
+        );
         Ok(DesiredProvider {
             id,
             key: provider_key,

@@ -373,13 +373,17 @@ _Avoid_: vendor hierarchy inference, hash collision suffix, truncated name
 Revision immutable mà Admin API client trình bày để conditional mutate một Database Desired Configuration.
 _Avoid_: last write wins, Session Profile Revision, database migration version
 
+**Resource Credential**:
+Secret dùng để xác thực với dịch vụ bên ngoài của một Provider Instance hoặc External MCP Server, được quản lý cùng resource đó.
+_Avoid_: provider configuration, arbitrary MCP header, shared Admin token
+
 **Secret Reference**:
-Identifier opaque printable ASCII `1..=256` bytes trỏ đến secret deployment-owned dùng bởi Provider hoặc External MCP, không phải secret value và không được đọc lại qua Admin API.
+Identifier opaque của nguồn credential hoặc snapshot credential mã hóa dùng bởi Provider hoặc External MCP; không phải Secret Value và không được đọc lại qua Admin API.
 _Avoid_: API key field, resolver-specific syntax, trim/normalization, secret value
 
 **Secret Resolver**:
-Abstraction deployment-owned được bootstrap inject để biến Secret Reference thành Secret Value tại runtime; V1 backend là environment variables.
-_Avoid_: repository reads environment directly, SQLite secret storage, Admin API resolution endpoint
+Interface biến Secret Reference thành Secret Value tại runtime; callers không sở hữu cách bảo vệ hoặc lưu credential.
+_Avoid_: repository reads environment directly, SQLite plaintext secret storage, Admin API resolution endpoint
 
 **Secret Value**:
 Wrapper runtime chỉ expose credential cho request/provider construction và redacts `Debug` output.
@@ -472,7 +476,7 @@ Policy kiểm soát URL HTTP/HTTPS và allowlist hostname tùy chọn của Exte
 _Avoid_: mandatory LAN/CIDR configuration, redirect destination trust
 
 **External MCP Authentication**:
-Auth configuration có kiểu `none`, `bearer` hoặc một header an toàn, kết hợp Secret Reference deployment-owned để inject credential lúc request.
+Cách xác thực `none`, `bearer` hoặc một header an toàn, kết hợp Resource Credential để xác thực request của External MCP.
 _Avoid_: query-string auth, template header value, Authorization header override
 
 **Admin Audit Event**:

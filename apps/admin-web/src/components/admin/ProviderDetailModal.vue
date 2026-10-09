@@ -116,10 +116,11 @@ function runTest() {
                 {{ provider.model || t('providers.modelMissing') }}
               </dd>
             </div>
-            <div v-if="provider.credentialEnv" class="sm:col-span-2">
+            <div v-if="provider.credential" class="sm:col-span-2"><dt class="text-xs text-muted-foreground">API key</dt><dd class="mt-1 font-mono text-xs">{{ provider.credential.masked_key }} · {{ provider.credential.status }}</dd></div>
+            <div v-else-if="provider.credentialEnv" class="sm:col-span-2">
               <dt class="text-xs tracking-wide text-muted-foreground uppercase">Credential trên server</dt>
               <dd class="mt-1 break-all font-mono text-xs">{{ provider.credentialEnv }}</dd>
-              <p class="mt-1 text-xs text-muted-foreground">Đặt biến môi trường này trước khi chuẩn bị lại runtime. Không nhập key trên web.</p>
+              <p class="mt-1 text-xs text-muted-foreground">Credential dự phòng từ môi trường server. Có thể nhập key mới trong form sửa Provider.</p>
             </div>
             <div v-if="endpoint" class="sm:col-span-2">
               <dt class="text-xs tracking-wide text-muted-foreground uppercase">

@@ -202,6 +202,7 @@ onBeforeUnmount(() => controller.abort())
         <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span class="rounded-md bg-surface px-2 py-1">Streamable HTTP</span>
           <span class="rounded-md bg-surface px-2 py-1">{{ t('mcp.auth') }}: {{ server.auth.type }}</span>
+          <span v-if="server.credential" class="rounded-md bg-surface px-2 py-1 font-mono">{{ server.credential.masked_key }} · {{ server.credential.status }}</span>
         </div>
         <p class="text-xs text-muted-foreground">{{ t('mcp.configNotice') }}</p>
         <div class="mt-auto flex flex-wrap items-center gap-2 border-t border-border/70 pt-4">

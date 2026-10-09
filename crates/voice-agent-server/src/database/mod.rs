@@ -8,6 +8,7 @@ use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
 pub mod admission;
+pub mod credentials;
 pub mod device_enrollments;
 pub mod external_mcp;
 pub mod external_mcp_policy;
@@ -158,23 +159,29 @@ impl Database {
     /// Reads desired state only.  Caller chooses whether an outcome is required, optional, or
     /// unbound; this database seam never constructs a provider or resolves a secret.
     pub async fn enabled_provider_rows(&self) -> Result<Vec<DesiredProvider>, DatabaseError> {
-        let rows = sqlx::query_as::<_, (i64, String, String, String, String, i64)>(
-            "SELECT id,key,type,adapter,config_json,revision FROM providers WHERE enabled=1 ORDER BY id",
+        let rows = sqlx::query_as::<_, (i64, String, String, String, String, i64, Option<String>)>(
+            "SELECT id,key,type,adapter,config_json,revision,credential_json FROM providers WHERE enabled=1 ORDER BY id",
         ).fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
         Ok(rows
             .into_iter()
-            .map(|(id, key, kind, adapter, config_json, revision)| {
-                let secret_ref = secrets::provider_secret_env(&key, &adapter);
-                DesiredProvider {
-                    id,
-                    key,
-                    kind,
-                    adapter,
-                    config_json,
-                    secret_ref,
-                    revision,
-                }
-            })
+            .map(
+                |(id, key, kind, adapter, config_json, revision, credential)| {
+                    let secret_ref = credentials::reference(
+                        &format!("provider:{key}"),
+                        credential.as_deref(),
+                        secrets::provider_secret_env(&key, &adapter),
+                    );
+                    DesiredProvider {
+                        id,
+                        key,
+                        kind,
+                        adapter,
+                        config_json,
+                        secret_ref,
+                        revision,
+                    }
+                },
+            )
             .collect())
     }
 }

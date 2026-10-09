@@ -24,6 +24,12 @@ export function withQuery(path: string, query: Record<string, QueryValue>): stri
 }
 
 export function jsonRequest(method: string, body: unknown): RequestInit {
+  if (body && typeof body === 'object' && 'api_key' in body && body.api_key !== undefined) {
+    const endpoints = [new URL(location.href), new URL(apiBaseUrl || '/', location.href)]
+    if (endpoints.some((url) => url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
+      throw new Error('Cần HTTPS để gửi API key/token. HTTP chỉ dùng cho phát triển trên localhost.')
+    }
+  }
   return {
     method,
     headers: { 'Content-Type': 'application/json' },

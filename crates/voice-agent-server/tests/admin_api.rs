@@ -6,7 +6,7 @@ use std::{
 
 use reqwest::{Client, StatusCode};
 use voice_agent_server::{
-    app::{AppState, bootstrap_with_providers, router_with_state},
+    app::{AppState, bootstrap_with_providers_and_secret_resolver, router_with_state},
     audio::PcmF32Mono,
     config::AppConfig,
     database::Database,
@@ -141,6 +141,19 @@ async fn server_with_database(
     api_enabled: bool,
     database_uri: &str,
 ) -> (String, tokio::task::JoinHandle<()>) {
+    server_with_resolver(
+        api_enabled,
+        database_uri,
+        Arc::new(voice_agent_server::database::secrets::EnvSecretResolver),
+    )
+    .await
+}
+
+async fn server_with_resolver(
+    api_enabled: bool,
+    database_uri: &str,
+    resolver: Arc<dyn voice_agent_server::database::secrets::SecretResolver>,
+) -> (String, tokio::task::JoinHandle<()>) {
     let config_path =
         std::env::temp_dir().join(format!("voice-agent-admin-{}.toml", uuid::Uuid::new_v4()));
     fs::write(
@@ -167,9 +180,13 @@ admin_token = "admin-test-token"
     .unwrap();
     let config = AppConfig::parse_and_resolve(&config_path).unwrap();
     fs::remove_file(config_path).unwrap();
-    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
-        .await
-        .unwrap();
+    let router = bootstrap_with_providers_and_secret_resolver(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        resolver,
+    )
+    .await
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -1854,7 +1871,7 @@ async fn external_mcp_configuration_is_redacted_validated_and_revisioned() {
     );
     assert!(server.get("secret_ref").is_none());
     assert_eq!(server["credential_env"], "VOICE_MCP_WEATHER_TOKEN");
-    // No secret or arbitrary header ingress survives in MCP Admin mutations.
+    // Legacy secret references and arbitrary headers remain rejected.
     for rejected in [
         serde_json::json!({"key":"legacy","name":"Legacy MCP","url":"https://mcp.example.test/mcp","auth":{"type":"bearer","secret_ref":"LEGACY_TOKEN"}}),
         serde_json::json!({"key":"legacy_none","name":"Legacy MCP","url":"https://mcp.example.test/mcp","auth":{"type":"none","secret_ref":"LEGACY_TOKEN"}}),
@@ -3111,5 +3128,272 @@ async fn retired_device_tool_routes_return_not_found() {
             StatusCode::NOT_FOUND,
         );
     }
+    task.abort();
+}
+
+#[tokio::test]
+async fn provider_credentials_require_encryption_and_never_create_a_partial_resource() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let response = client.post(format!("{base}/api/admin/providers"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"name":"Encrypted OpenAI","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test-model","max_tokens":8},"api_key":"sk-test-never-plaintext-7A91"}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("sk-test-never-plaintext-7A91"));
+    let page: serde_json::Value = client
+        .get(format!("{base}/api/admin/providers"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(page["items"].as_array().unwrap().is_empty());
+    task.abort();
+}
+
+#[tokio::test]
+async fn provider_credentials_are_write_only_masked_and_persist_after_restart() {
+    let uri = database_url();
+    let (base, task) = server_with_resolver(
+        true,
+        &uri,
+        Arc::new(
+            voice_agent_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap(),
+        ),
+    )
+    .await;
+    let client = Client::new();
+    let response = client.post(format!("{base}/api/admin/providers"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"name":"Encrypted OpenAI","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test-model","max_tokens":8},"api_key":"sk-test-never-plaintext-7A91"}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("sk-test-never-plaintext-7A91"));
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(created["credential"]["masked_key"], "sk-...7A91");
+    let key = created["key"].as_str().unwrap();
+    for (path, payload) in [
+        (
+            "agents",
+            serde_json::json!({"key":"cipher_agent","name":"Cipher Agent"}),
+        ),
+        (
+            "templates",
+            serde_json::json!({"key":"cipher_template","name":"Cipher Template","language":"vi-VN","prompt":"Short"}),
+        ),
+    ] {
+        assert_eq!(
+            client
+                .post(format!("{base}/api/admin/{path}"))
+                .bearer_auth("admin-test-token")
+                .json(&payload)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+    }
+    assert_eq!(
+        client
+            .put(format!(
+                "{base}/api/admin/templates/cipher_template/providers/llm"
+            ))
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"provider_key":key}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .put(format!(
+                "{base}/api/admin/agents/cipher_agent/default-template/cipher_template"
+            ))
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    task.abort();
+    let (base, task) = server_with_resolver(
+        true,
+        &uri,
+        Arc::new(
+            voice_agent_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap(),
+        ),
+    )
+    .await;
+    let body = client
+        .get(format!("{base}/api/admin/providers/{key}"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!body.contains("sk-test-never-plaintext-7A91"));
+    let fetched: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(fetched["credential"], created["credential"]);
+    assert!(fetched.get("api_key").is_none());
+    assert_eq!(fetched["runtime_status"], "loaded");
+    task.abort();
+}
+
+#[tokio::test]
+async fn provider_credentials_replace_only_when_supplied() {
+    let (base, task) = server_with_resolver(
+        true,
+        &database_url(),
+        Arc::new(
+            voice_agent_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap(),
+        ),
+    )
+    .await;
+    let client = Client::new();
+    let key = create_provider(&client, &format!("{base}/api/admin/providers"), serde_json::json!({"name":"LLM","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test","max_tokens":8},"api_key":"sk-first-secret-1111"})).await;
+    let url = format!("{base}/api/admin/providers/{key}");
+    for (revision, patch, hint) in [
+        (
+            1,
+            serde_json::json!({"api_key":"sk-second-secret-2222"}),
+            "sk-...2222",
+        ),
+        (2, serde_json::json!({"name":"Renamed"}), "sk-...2222"),
+    ] {
+        let response = client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", format!("\"{revision}\""))
+            .json(&patch)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(value["credential"]["masked_key"], hint);
+        assert!(value.get("api_key").is_none());
+    }
+    for value in [
+        serde_json::Value::Null,
+        serde_json::json!(""),
+        serde_json::json!("has whitespace"),
+    ] {
+        assert_eq!(
+            client
+                .patch(&url)
+                .bearer_auth("admin-test-token")
+                .header("if-match", "\"3\"")
+                .json(&serde_json::json!({"api_key":value}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let value: serde_json::Value = client
+        .get(&url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(value["revision"], 3);
+    assert_eq!(value["credential"]["masked_key"], "sk-...2222");
+    task.abort();
+}
+
+#[tokio::test]
+async fn mcp_credentials_are_write_only_replaceable_and_persist_after_restart() {
+    let uri = database_url();
+    let cipher = || {
+        Arc::new(
+            voice_agent_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap(),
+        ) as Arc<dyn voice_agent_server::database::secrets::SecretResolver>
+    };
+    let (base, task) = server_with_resolver(true, &uri, cipher()).await;
+    let client = Client::new();
+    let response = client.post(format!("{base}/api/admin/mcp-servers")).bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"key":"weather","name":"Weather","url":"https://mcp.example.test/mcp","auth":{"type":"bearer"},"api_key":"mcp-test-secret-7A91"})).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("mcp-test-secret-7A91"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["credential"]["masked_key"],
+        "…7A91"
+    );
+    task.abort();
+    let (base, task) = server_with_resolver(true, &uri, cipher()).await;
+    let url = format!("{base}/api/admin/mcp-servers/weather");
+    let value: serde_json::Value = client
+        .get(&url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(value["credential"]["masked_key"], "…7A91");
+    for (revision, patch, hint) in [
+        (
+            1,
+            serde_json::json!({"api_key":"mcp-replaced-secret-2222"}),
+            serde_json::json!("…2222"),
+        ),
+        (
+            2,
+            serde_json::json!({"name":"Renamed"}),
+            serde_json::json!("…2222"),
+        ),
+        (
+            3,
+            serde_json::json!({"auth":{"type":"none"}}),
+            serde_json::Value::Null,
+        ),
+    ] {
+        let response = client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", format!("\"{revision}\""))
+            .json(&patch)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.text().await.unwrap();
+        assert!(!body.contains("mcp-replaced-secret-2222"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["credential"]["masked_key"],
+            hint
+        );
+    }
+    assert_eq!(
+        client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"4\"")
+            .json(&serde_json::json!({"api_key":"mcp-rejected-secret-3333"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
     task.abort();
 }

@@ -11,6 +11,7 @@ export interface ProviderInstance {
   type: ProviderType
   adapter: string
   credentialEnv?: string
+  credential?: import('@/api/types/providers').CredentialMetadata | null
   model: string
   description: string
   status: ProviderStatus

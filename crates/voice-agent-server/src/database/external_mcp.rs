@@ -60,10 +60,11 @@ impl Database {
                 i64,
                 i64,
                 i64,
+                Option<String>,
             ),
         >(
             "SELECT m.id, m.key, m.url, m.headers_json, m.auth_type, m.auth_header_name, \
-                    m.connect_timeout_ms, m.request_timeout_ms, m.revision \
+                    m.connect_timeout_ms, m.request_timeout_ms, m.revision, m.credential_json \
              FROM agent_mcp_bindings b JOIN mcp_servers m ON m.id = b.mcp_server_id \
              WHERE b.agent_id = ? AND b.enabled = 1 AND m.enabled = 1 ORDER BY m.key",
         )
@@ -84,8 +85,13 @@ impl Database {
                     connect_timeout_ms,
                     request_timeout_ms,
                     revision,
+                    credential,
                 )| {
-                    let secret_ref = super::secrets::mcp_secret_env(&key, &auth_type);
+                    let secret_ref = super::credentials::reference(
+                        &format!("mcp:{key}"),
+                        credential.as_deref(),
+                        super::secrets::mcp_secret_env(&key, &auth_type),
+                    );
                     AdmittedMcpServer {
                         id,
                         key,
