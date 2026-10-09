@@ -85,7 +85,10 @@ pub fn compose_turn_system(
 ) -> Result<String, PromptError> {
     let speaker_data = speaker.map(speaker_data);
     let composed = if base.contains(SPEAKER_SLOT) {
-        base.replace(SPEAKER_SLOT, speaker_data.as_deref().unwrap_or(UNKNOWN_SPEAKER))
+        base.replace(
+            SPEAKER_SLOT,
+            speaker_data.as_deref().unwrap_or(UNKNOWN_SPEAKER),
+        )
     } else if let Some(data) = speaker_data {
         format!("{base}\n<speakers_info>\n{data}\n</speakers_info>")
     } else {
@@ -237,7 +240,10 @@ mod tests {
     fn old_stored_prompts_without_speaker_slot_are_compatible() {
         let base = "legacy system";
         assert_eq!(compose_turn_system(base, None).unwrap(), base);
-        let speaker = SpeakerContext { name: "Minh".into(), description: None };
+        let speaker = SpeakerContext {
+            name: "Minh".into(),
+            description: None,
+        };
         let recognized = compose_turn_system(base, Some(&speaker)).unwrap();
         assert!(recognized.starts_with("legacy system"));
         assert!(recognized.contains("<speakers_info>"));
