@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { AudioLines, CalendarClock, CheckCircle2, ChevronRight, Pencil, Trash2 } from '@lucide/vue'
+import { AudioLines, CalendarClock, CheckCircle2, Pencil, Trash2 } from '@lucide/vue'
 
 import type { SpeakerSummary } from '@/api/types/speakers'
-import { Button } from '@/components/ui/button'
+import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { useI18n } from '@/composables/useI18n'
 
 defineProps<{ speaker: SpeakerSummary }>()
@@ -32,7 +32,19 @@ const { t, formatDateTime } = useI18n()
           {{ speaker.description || t('speakers.noDescription') }}
         </p>
       </div>
-      <ChevronRight class="size-5 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-studio-violet" aria-hidden="true" />
+      <div class="pointer-events-auto relative z-20 shrink-0" data-speaker-menu>
+        <ActionMenu :label="t('speakers.actionsLabel', { name: speaker.name })">
+          <MenuItem data-speaker-edit @select="emit('edit', speaker.key)">
+            <Pencil class="size-4 shrink-0" aria-hidden="true" />
+            {{ t('common.edit') }}
+          </MenuItem>
+          <div class="my-1 h-px bg-border" role="separator" />
+          <MenuItem variant="danger" data-speaker-delete @select="emit('delete', speaker)">
+            <Trash2 class="size-4 shrink-0" aria-hidden="true" />
+            {{ t('common.delete') }}
+          </MenuItem>
+        </ActionMenu>
+      </div>
     </div>
 
     <div class="pointer-events-none flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-4 text-xs">
@@ -46,17 +58,6 @@ const { t, formatDateTime } = useI18n()
         <CalendarClock class="size-3.5 shrink-0" aria-hidden="true" />
         {{ formatDateTime(new Date(speaker.updated_at * 1000)) }}
       </span>
-    </div>
-
-    <div class="relative z-20 flex justify-end gap-2">
-      <Button type="button" variant="outline" size="sm" class="cursor-pointer" data-speaker-edit @click="emit('edit', speaker.key)">
-        <Pencil class="size-3.5" aria-hidden="true" />
-        {{ t('common.edit') }}
-      </Button>
-      <Button type="button" variant="ghost" size="sm" class="cursor-pointer text-danger-foreground hover:text-danger-foreground" data-speaker-delete @click="emit('delete', speaker)">
-        <Trash2 class="size-3.5" aria-hidden="true" />
-        {{ t('common.delete') }}
-      </Button>
     </div>
   </article>
 </template>

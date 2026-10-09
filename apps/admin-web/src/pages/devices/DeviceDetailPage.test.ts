@@ -67,6 +67,7 @@ describe('DeviceDetailPage', () => {
       global: {
         stubs: {
           RouterLink: true,
+          DetailHeader: { template: '<header><slot name="actions" /><slot /></header>' },
           ActionMenu: { template: '<div data-detail-actions><slot /></div>' },
           MenuItem: {
             emits: ['select'],

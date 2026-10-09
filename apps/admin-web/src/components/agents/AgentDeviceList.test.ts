@@ -34,7 +34,8 @@ describe('AgentDeviceList grid', () => {
     expect(wrapper.get('[data-device-grid]').classes()).toContain('sm:grid-cols-2')
     expect(wrapper.findAll('[data-device-card-stub]')).toHaveLength(2)
     expect(wrapper.text()).toContain('Default Voice')
-    expect(wrapper.text()).toContain('Enabled / Disabled')
+    expect(wrapper.text()).not.toContain('Add device')
+    expect(wrapper.text()).not.toContain('Enabled / Disabled')
   })
 
   it('keeps a visible empty state', () => {

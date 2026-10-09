@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, AudioLines, CheckCircle2, ChevronRight, Copy, Eraser, Mic, Pencil, RefreshCw, Trash2 } from '@lucide/vue'
+import { AudioLines, CheckCircle2, ChevronRight, Copy, Eraser, Mic, Pencil, RefreshCw, Trash2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -8,6 +8,7 @@ import { speakersApi } from '@/api/speakers'
 import type { Speaker, SpeakerVoiceprint } from '@/api/types/speakers'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
+import DetailHeader from '@/components/admin/DetailHeader.vue'
 import SpeakerEnrollmentWizard from '@/components/speakers/SpeakerEnrollmentWizard.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -162,11 +163,6 @@ onBeforeUnmount(() => activeRequest?.abort())
 
 <template>
   <section class="space-y-6">
-    <RouterLink :to="{ name: 'speakers' }" class="inline-flex items-center gap-2 text-sm text-muted-foreground transition hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-      <ArrowLeft class="size-4" aria-hidden="true" />
-      {{ t('nav.speakers') }}
-    </RouterLink>
-
     <div v-if="error" role="alert" class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
       <span>{{ error }}</span>
       <Button v-if="!speaker" variant="outline" size="sm" @click="load">{{ t('common.retry') }}</Button>
@@ -183,30 +179,29 @@ onBeforeUnmount(() => activeRequest?.abort())
     </div>
 
     <template v-else>
-      <header class="studio-panel flex flex-col gap-5 p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6">
-        <div class="flex min-w-0 items-start gap-4">
-          <span class="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-studio-violet/10 text-studio-violet">
-            <AudioLines class="size-7" aria-hidden="true" />
+      <DetailHeader :title="speaker.name" :back-label="t('nav.speakers')" @back="router.push({ name: 'speakers' })">
+        <template #icon>
+          <span class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet">
+            <AudioLines class="size-6" aria-hidden="true" />
           </span>
-          <div class="min-w-0">
-            <p class="text-xs font-medium uppercase tracking-wider text-studio-violet">{{ t('speakers.eyebrow') }}</p>
-            <h1 class="mt-1 break-words text-2xl font-semibold tracking-tight sm:text-3xl">{{ speaker.name }}</h1>
-            <p v-if="speaker.description" class="mt-2 max-w-2xl whitespace-pre-wrap break-words text-sm text-muted-foreground">{{ speaker.description }}</p>
-            <span
-              class="mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-              :class="speaker.enabled && voiceprintCount ? 'bg-success/10 text-success-foreground' : 'bg-muted text-muted-foreground'"
-            >
-              <CheckCircle2 v-if="speaker.enabled && voiceprintCount" class="size-3.5" aria-hidden="true" />
-              {{ t(speakerStatusKey) }}
-            </span>
-          </div>
-        </div>
-        <div class="flex shrink-0 flex-wrap gap-2">
+        </template>
+        <template #details>
+          <p class="font-medium uppercase tracking-wider text-studio-violet">{{ t('speakers.eyebrow') }}</p>
+          <p v-if="speaker.description" class="mt-1 max-w-2xl whitespace-pre-wrap break-words text-sm">{{ speaker.description }}</p>
+          <span
+            class="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+            :class="speaker.enabled && voiceprintCount ? 'bg-success/10 text-success-foreground' : 'bg-muted text-muted-foreground'"
+          >
+            <CheckCircle2 v-if="speaker.enabled && voiceprintCount" class="size-3.5" aria-hidden="true" />
+            {{ t(speakerStatusKey) }}
+          </span>
+        </template>
+        <template #actions>
           <Button variant="outline" :disabled="loading" @click="load"><RefreshCw class="size-4" />{{ t('common.refresh') }}</Button>
           <Button variant="outline" @click="openEdit"><Pencil class="size-4" />{{ t('common.edit') }}</Button>
           <Button @click="enrollOpen = true"><Mic class="size-4" />{{ t('speakers.confirmVoice') }}</Button>
-        </div>
-      </header>
+        </template>
+      </DetailHeader>
 
       <div class="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <section class="studio-panel min-w-0 p-5 sm:p-6">

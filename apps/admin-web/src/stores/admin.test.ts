@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 const agentsApi = vi.hoisted(() => ({ list: vi.fn(), templates: vi.fn(), setDefaultTemplate: vi.fn() }))
-const templatesApi = vi.hoisted(() => ({ list: vi.fn(), providers: vi.fn() }))
+const templatesApi = vi.hoisted(() => ({ list: vi.fn(), providers: vi.fn(), bindProvider: vi.fn(), unlinkProvider: vi.fn() }))
 const providersApi = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn() }))
 const devicesApi = vi.hoisted(() => ({ list: vi.fn() }))
 
@@ -76,5 +76,37 @@ describe('admin store', () => {
     expect(renderedDefaults).toEqual(['first', 'next'])
     expect(store.getAgent('agent')?.defaultTemplateId).toBe('next')
     expect(store.revisions.agents.agent).toBe(2)
+  })
+
+  it('updates template provider bindings reactively after linking a provider', async () => {
+    providersApi.list.mockResolvedValue({
+      items: [{ key: 'tts', name: 'TTS', type: 'tts', adapter: 'openai', config_json: '{}', enabled: true, revision: 1, runtime_status: 'not_loaded' }],
+    })
+    templatesApi.bindProvider.mockResolvedValue(undefined)
+    templatesApi.providers
+      .mockResolvedValueOnce({ template_key: 'first', revision: 1, bindings: {} })
+      .mockResolvedValueOnce({ template_key: 'next', revision: 1, bindings: {} })
+      .mockResolvedValueOnce({
+        template_key: 'first',
+        revision: 2,
+        bindings: { tts: { provider_key: 'tts', enabled: true } },
+      })
+      .mockResolvedValueOnce({ template_key: 'first', revision: 3, bindings: {} })
+    const store = useAdminStore()
+    await store.loadAll()
+    const renderedBindings: string[] = []
+    const stop = watch(
+      () => store.getTemplate('first')?.providerBindings.tts ?? '',
+      (providerId) => renderedBindings.push(providerId),
+      { immediate: true },
+    )
+
+    await store.linkProviderToTemplate('first', 'tts', 'tts')
+    await store.unlinkProviderFromTemplate('first', 'tts')
+    await nextTick()
+    stop()
+
+    expect(templatesApi.unlinkProvider).toHaveBeenCalledWith('first', 'tts', 2)
+    expect(renderedBindings).toEqual(['', 'tts', ''])
   })
 })

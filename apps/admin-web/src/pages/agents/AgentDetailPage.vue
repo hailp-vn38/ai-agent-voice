@@ -458,11 +458,10 @@ async function confirmDeleteDevice() {
     <div v-if="activeTab === 'speakers'" id="studio-panel-speakers" role="tabpanel" aria-labelledby="studio-tab-speakers" class="studio-panel p-5">
       <AgentSpeakerPolicy :agent-id="agentId" />
     </div>
-    <div v-if="activeTab === 'devices'" id="studio-panel-devices" role="tabpanel" aria-labelledby="studio-tab-devices" class="studio-panel p-5">
+    <div v-if="activeTab === 'devices'" id="studio-panel-devices" role="tabpanel" aria-labelledby="studio-tab-devices">
       <AgentDeviceList
         :devices="devices"
         :effective-template-by-id="store.getEffectiveDeviceTemplateById"
-        @add="openAddDevice"
         @edit="openEditDevice"
         @delete="deleteDeviceTarget = $event"
       />

@@ -1,4 +1,5 @@
 import { mount, RouterLinkStub } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { SpeakerSummary } from '@/api/types/speakers'
@@ -37,15 +38,20 @@ describe('SpeakerCard', () => {
     expect(wrapper.text()).not.toContain(speaker.key)
   })
 
-  it('keeps edit and delete as independent actions instead of nested links', async () => {
+  it('keeps edit and delete in an independent actions menu instead of nested links', async () => {
     const wrapper = renderCard()
 
     expect(wrapper.get('[data-speaker-open]').find('button').exists()).toBe(false)
-    await wrapper.get('[data-speaker-edit]').trigger('click')
+    expect(wrapper.find('[data-speaker-menu]').exists()).toBe(true)
+    await wrapper.get('[data-speaker-menu] button').trigger('click')
+    document.body.querySelector<HTMLButtonElement>('[data-speaker-edit]')!.click()
+    await nextTick()
     expect(wrapper.emitted('edit')).toEqual([[speaker.key]])
     expect(wrapper.emitted('delete')).toBeUndefined()
 
-    await wrapper.get('[data-speaker-delete]').trigger('click')
+    await wrapper.get('[data-speaker-menu] button').trigger('click')
+    document.body.querySelector<HTMLButtonElement>('[data-speaker-delete]')!.click()
+    await nextTick()
     expect(wrapper.emitted('delete')).toEqual([[speaker]])
   })
 

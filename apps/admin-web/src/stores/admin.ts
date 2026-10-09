@@ -309,7 +309,10 @@ export const useAdminStore = defineStore('admin', () => {
     }
     const index = templateList.value.findIndex((item) => item.id === templateKey)
     if (index === -1) return
-    templateList.value.splice(index, 1, { ...templateList.value[index], providerBindings: mapped })
+    revisions.value.templates[templateKey] = bindings.revision
+    templateList.value = templateList.value.map((template, templateIndex) =>
+      templateIndex === index ? { ...template, providerBindings: mapped } : template,
+    )
   }
 
   async function loadAll(signal?: AbortSignal) {

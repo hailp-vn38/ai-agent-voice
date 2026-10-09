@@ -23,7 +23,7 @@ function render() {
         ActionMenu: { template: '<div><slot /></div>' },
         MenuItem: {
           emits: ['select'],
-          template: '<button data-test-delete @click="$emit(\'select\')"><slot /></button>',
+          template: '<button v-bind="$attrs" @click="$emit(\'select\')"><slot /></button>',
         },
       },
     },
@@ -50,7 +50,7 @@ describe('shared DeviceCard', () => {
     const wrapper = render()
     expect(wrapper.get('[data-device-open]').find('button').exists()).toBe(false)
     await wrapper.get('[data-device-edit]').trigger('click')
-    await wrapper.get('[data-test-delete]').trigger('click')
+    await wrapper.get('[data-device-delete]').trigger('click')
     expect(wrapper.emitted('edit')).toEqual([[device]])
     expect(wrapper.emitted('delete')).toEqual([[device]])
   })

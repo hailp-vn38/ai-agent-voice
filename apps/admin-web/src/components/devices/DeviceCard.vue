@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { ArrowUpRight, Bot, CheckCircle2, Copy, Fingerprint, Layers3, Pencil, ShieldOff } from '@lucide/vue'
+import { Bot, CheckCircle2, Copy, Fingerprint, Layers3, Pencil, ShieldOff, Trash2 } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
 import VoiceDeviceIcon from '@/components/icons/VoiceDeviceIcon.vue'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
-import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { AgentTemplate, Device } from '@/domain/admin'
 
@@ -66,9 +65,15 @@ async function copyDeviceId() {
 
       <div class="pointer-events-auto relative z-20">
         <ActionMenu :label="t('common.actions')" panel-width="11rem">
-        <MenuItem variant="danger" @select="emit('delete', device)">
-          {{ t('agentDevices.delete') }}
-        </MenuItem>
+          <MenuItem data-device-edit @select="emit('edit', device)">
+            <Pencil class="size-4 shrink-0" aria-hidden="true" />
+            {{ t('agentDevices.edit') }}
+          </MenuItem>
+          <div class="my-1 h-px bg-border" role="separator" />
+          <MenuItem variant="danger" data-device-delete @select="emit('delete', device)">
+            <Trash2 class="size-4 shrink-0" aria-hidden="true" />
+            {{ t('agentDevices.delete') }}
+          </MenuItem>
         </ActionMenu>
       </div>
     </div>
@@ -129,15 +134,5 @@ async function copyDeviceId() {
     <p v-if="copyFailed" role="alert" class="mt-2 text-xs text-danger-foreground">
       {{ t('deviceCard.copyFailed') }}
     </p>
-
-    <div class="relative z-20 mt-auto flex items-center justify-between gap-2 pt-4">
-      <span v-if="detailLink" class="pointer-events-none inline-flex items-center gap-1 text-xs font-medium text-studio-cyan">
-        {{ t('deviceDetail.view') }} <ArrowUpRight class="size-3.5" aria-hidden="true" />
-      </span>
-      <Button variant="outline" size="sm" class="cursor-pointer" data-device-edit @click="emit('edit', device)">
-        <Pencil class="size-3.5" aria-hidden="true" />
-        {{ t('agentDevices.edit') }}
-      </Button>
-    </div>
   </li>
 </template>

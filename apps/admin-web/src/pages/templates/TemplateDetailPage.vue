@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ArrowLeft, Pencil } from '@lucide/vue'
+import { Layers3, Pencil } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
+import DetailHeader from '@/components/admin/DetailHeader.vue'
 import ProviderDetailModal from '@/components/admin/ProviderDetailModal.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
 import AiPipeline from '@/components/pipeline/AiPipeline.vue'
@@ -158,25 +159,17 @@ function isDefaultForAgent(agentId: string) {
 
 <template>
   <div v-if="template" class="space-y-4 sm:space-y-5">
-    <header class="rounded-xl border border-border/70 bg-card p-4 sm:p-5">
-      <Button variant="ghost" size="sm" class="-ml-2" @click="router.push('/templates')">
-        <ArrowLeft class="size-4" />
-        {{ t('nav.templates') }}
-      </Button>
-
-      <div class="mt-3 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div class="min-w-0">
-          <h1 class="text-3xl font-semibold tracking-tight">{{ template.name }}</h1>
-          <p class="mt-1.5 text-sm text-muted-foreground">
-            {{ template.language || t('templateCard.noLanguage') }} ·
-            {{ t('templates.usedBy', { count: agentCount }) }}
-          </p>
-          <p v-if="template.description" class="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            {{ template.description }}
-          </p>
-        </div>
-
-        <div class="flex shrink-0 items-center gap-2">
+    <DetailHeader :title="template.name" :back-label="t('nav.templates')" @back="router.push('/templates')">
+      <template #icon>
+        <span class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
+          <Layers3 class="size-6" aria-hidden="true" />
+        </span>
+      </template>
+      <template #details>
+        <p>{{ template.language || t('templateCard.noLanguage') }} · {{ t('templates.usedBy', { count: agentCount }) }}</p>
+        <p v-if="template.description" class="mt-1 max-w-2xl text-sm leading-relaxed">{{ template.description }}</p>
+      </template>
+      <template #actions>
           <Button size="sm" variant="outline" @click="editOpen = true">
             <Pencil class="size-4" />
             {{ t('templateConfig.editTemplate') }}
@@ -188,16 +181,12 @@ function isDefaultForAgent(agentId: string) {
             @copy="copyOpen = true"
             @delete="requestDeleteTemplate"
           />
-        </div>
-      </div>
+      </template>
+    </DetailHeader>
 
-      <p
-        v-if="agentCount > 1"
-        class="mt-4 rounded-lg bg-muted/60 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground"
-      >
-        {{ t('templates.sharedNotice', { name: template.name, count: agentCount }) }}
-      </p>
-    </header>
+    <p v-if="agentCount > 1" class="rounded-lg bg-muted/60 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+      {{ t('templates.sharedNotice', { name: template.name, count: agentCount }) }}
+    </p>
 
     <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
       <AiPipeline

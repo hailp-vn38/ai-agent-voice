@@ -6,8 +6,8 @@ import { RouterLink } from 'vue-router'
 import { mcpApi } from '@/api/mcp'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminMcpServer, CreateMcpServerInput, UpdateMcpServerInput } from '@/api/types/mcp'
-import PageHeader from '@/components/admin/PageHeader.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
+import DetailHeader from '@/components/admin/DetailHeader.vue'
 import McpServerFormModal from '@/components/mcp/McpServerFormModal.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -147,7 +147,16 @@ onBeforeUnmount(() => controller.abort())
 
 <template>
   <section class="space-y-6">
-    <PageHeader :eyebrow="t('mcp.eyebrow')" :title="t('mcp.title')" :description="t('mcp.description')">
+    <DetailHeader :title="t('mcp.title')">
+      <template #icon>
+        <span class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
+          <Server class="size-6" aria-hidden="true" />
+        </span>
+      </template>
+      <template #details>
+        <p class="font-medium uppercase tracking-wider text-studio-violet">{{ t('mcp.eyebrow') }}</p>
+        <p class="mt-1 max-w-3xl text-sm leading-relaxed">{{ t('mcp.description') }}</p>
+      </template>
       <template #actions>
         <Button variant="outline" :disabled="loading || saving" @click="load()">
           <RefreshCw class="size-4" aria-hidden="true" />{{ t('common.refresh') }}
@@ -156,7 +165,7 @@ onBeforeUnmount(() => controller.abort())
           <Plus class="size-4" aria-hidden="true" />{{ t('mcp.create') }}
         </Button>
       </template>
-    </PageHeader>
+    </DetailHeader>
 
     <div class="studio-panel grid gap-3 p-4 text-sm sm:grid-cols-3">
       <div class="flex items-start gap-3"><Server class="size-5 text-studio-violet" aria-hidden="true" /><div><p class="font-semibold">{{ t('mcp.step1') }}</p><p class="mt-1 text-xs text-muted-foreground">{{ t('mcp.step1Hint') }}</p></div></div>
@@ -194,11 +203,12 @@ onBeforeUnmount(() => controller.abort())
             {{ server.enabled ? t('mcp.enabled') : t('mcp.disabled') }}
           </span>
         </div>
-        <div class="min-w-0">
+        <RouterLink :to="`/mcp/${encodeURIComponent(server.key)}`" class="min-w-0 cursor-pointer rounded-lg outline-none hover:text-studio-violet focus-visible:ring-2 focus-visible:ring-ring" @keydown.space.prevent="$router.push(`/mcp/${encodeURIComponent(server.key)}`)">
           <h2 class="truncate text-lg font-semibold" :title="server.name">{{ server.name }}</h2>
           <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ server.key }}</p>
           <p class="mt-3 truncate text-xs text-muted-foreground" :title="safeEndpoint(server.url)">{{ safeEndpoint(server.url) }}</p>
-        </div>
+          <span class="mt-3 inline-flex items-center gap-1 text-xs text-studio-violet">{{ t('diagnostics.viewDetails') }} <ArrowRight class="size-3" aria-hidden="true" /></span>
+        </RouterLink>
         <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span class="rounded-md bg-surface px-2 py-1">Streamable HTTP</span>
           <span class="rounded-md bg-surface px-2 py-1">{{ t('mcp.auth') }}: {{ server.auth.type }}</span>

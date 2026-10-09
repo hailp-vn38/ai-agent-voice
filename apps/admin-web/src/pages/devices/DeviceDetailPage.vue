@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Bot, CheckCircle2, ChevronRight, Copy, Layers3, Pencil, RefreshCw, ShieldCheck, ShieldOff, Trash2 } from '@lucide/vue'
+import { Bot, CheckCircle2, ChevronRight, Copy, Layers3, Pencil, RefreshCw, ShieldCheck, ShieldOff, Trash2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -8,6 +8,7 @@ import { devicesApi } from '@/api/devices'
 import type { AdminDevice } from '@/api/types/devices'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
+import DetailHeader from '@/components/admin/DetailHeader.vue'
 import VoiceDeviceIcon from '@/components/icons/VoiceDeviceIcon.vue'
 import { displayDeviceDate } from '@/components/devices/presentation'
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
@@ -159,11 +160,6 @@ onBeforeUnmount(() => activeRequest?.abort())
 
 <template>
   <section class="space-y-5">
-    <RouterLink :to="{ name: 'devices' }" class="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-      <ArrowLeft class="size-4" aria-hidden="true" />
-      {{ t('nav.devices') }}
-    </RouterLink>
-
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger-foreground">
       {{ error }}
       <Button v-if="!device" variant="outline" size="sm" class="ml-2" @click="load">{{ t('common.retry') }}</Button>
@@ -178,24 +174,23 @@ onBeforeUnmount(() => activeRequest?.abort())
     </div>
 
     <template v-else>
-      <header class="studio-panel flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:justify-between">
-        <div class="flex min-w-0 items-start gap-3">
-          <span class="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-studio-cyan/20 bg-studio-cyan/10 text-studio-cyan">
-            <VoiceDeviceIcon class="size-9" />
+      <DetailHeader :title="device.name || device.device_id" :back-label="t('nav.devices')" @back="router.push({ name: 'devices' })">
+        <template #icon>
+          <span class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-studio-cyan/20 bg-studio-cyan/10 text-studio-cyan">
+            <VoiceDeviceIcon class="size-7" />
           </span>
-          <div class="min-w-0">
-            <p class="text-xs font-medium uppercase tracking-wide text-studio-cyan">{{ t('deviceCard.type') }}</p>
-            <h1 class="mt-1 break-words text-2xl font-semibold tracking-tight sm:text-3xl">{{ device.name || device.device_id }}</h1>
-            <p v-if="device.description" class="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{{ device.description }}</p>
-            <span class="mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-              :class="device.enabled !== 0 ? 'bg-success/10 text-success-foreground' : 'bg-muted text-muted-foreground'">
-              <CheckCircle2 v-if="device.enabled !== 0" class="size-3.5" aria-hidden="true" />
-              <ShieldOff v-else class="size-3.5" aria-hidden="true" />
-              {{ device.enabled !== 0 ? t('deviceCard.allowed') : t('deviceCard.blocked') }}
-            </span>
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-2">
+        </template>
+        <template #details>
+          <p class="font-medium uppercase tracking-wide text-studio-cyan">{{ t('deviceCard.type') }}</p>
+          <p v-if="device.description" class="mt-1 whitespace-pre-wrap break-words text-sm">{{ device.description }}</p>
+          <span class="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+            :class="device.enabled !== 0 ? 'bg-success/10 text-success-foreground' : 'bg-muted text-muted-foreground'">
+            <CheckCircle2 v-if="device.enabled !== 0" class="size-3.5" aria-hidden="true" />
+            <ShieldOff v-else class="size-3.5" aria-hidden="true" />
+            {{ device.enabled !== 0 ? t('deviceCard.allowed') : t('deviceCard.blocked') }}
+          </span>
+        </template>
+        <template #actions>
           <Button variant="outline" :disabled="loading || saving" @click="load">
             <RefreshCw class="size-4" aria-hidden="true" /> {{ t('common.refresh') }}
           </Button>
@@ -206,8 +201,8 @@ onBeforeUnmount(() => activeRequest?.abort())
               {{ t('agentDevices.delete') }}
             </MenuItem>
           </ActionMenu>
-        </div>
-      </header>
+        </template>
+      </DetailHeader>
 
       <div class="grid items-start gap-4 lg:grid-cols-2">
         <section class="studio-panel min-w-0 p-5">

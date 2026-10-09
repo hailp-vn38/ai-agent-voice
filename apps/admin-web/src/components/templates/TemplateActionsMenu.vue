@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { Copy, Eye, Link2, Trash2 } from '@lucide/vue'
+import { Copy, Eye, Link2, Pencil, Trash2 } from '@lucide/vue'
 
 import { ActionMenu, MenuItem } from '@/components/ui/action-menu'
 import { useI18n } from '@/composables/useI18n'
 import type { AgentTemplate } from '@/domain/admin'
 
-defineProps<{ template: AgentTemplate; showViewDetails?: boolean }>()
+defineProps<{ template: AgentTemplate; showEdit?: boolean; showViewDetails?: boolean }>()
 
 const { t } = useI18n()
 
 const emit = defineEmits<{
+  edit: []
   viewDetails: []
   linkToAgent: []
   copy: []
@@ -19,6 +20,10 @@ const emit = defineEmits<{
 
 <template>
   <ActionMenu :label="t('templatesActions.label', { name: template.name })" panel-width="14rem">
+    <MenuItem v-if="showEdit" @select="emit('edit')">
+      <Pencil class="size-4 shrink-0" aria-hidden="true" />
+      {{ t('templateCard.edit') }}
+    </MenuItem>
     <MenuItem v-if="showViewDetails !== false" @select="emit('viewDetails')">
       <Eye class="size-4 shrink-0" aria-hidden="true" />
       {{ t('templatesActions.viewDetails') }}

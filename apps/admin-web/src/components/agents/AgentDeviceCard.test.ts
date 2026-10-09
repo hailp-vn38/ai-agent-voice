@@ -28,7 +28,7 @@ function render(item: Device = device) {
         ActionMenu: { template: '<div><slot /></div>' },
         MenuItem: {
           emits: ['select'],
-          template: '<button data-device-menu-item @click="$emit(\'select\')"><slot /></button>',
+          template: '<button v-bind="$attrs" @click="$emit(\'select\')"><slot /></button>',
         },
       },
     },
@@ -57,7 +57,7 @@ describe('AgentDeviceCard', () => {
     const wrapper = render()
     await wrapper.get('[data-device-edit]').trigger('click')
     expect(wrapper.emitted('edit')).toEqual([[device]])
-    await wrapper.get('[data-device-menu-item]').trigger('click')
+    await wrapper.get('[data-device-delete]').trigger('click')
     expect(wrapper.emitted('delete')).toEqual([[device]])
   })
 

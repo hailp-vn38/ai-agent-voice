@@ -4,7 +4,6 @@ import { computed } from 'vue'
 import TemplateActionsMenu from '@/components/templates/TemplateActionsMenu.vue'
 import TemplatePipelineSummary from '@/components/templates/TemplatePipelineSummary.vue'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { AgentTemplate } from '@/domain/admin'
 
@@ -51,9 +50,10 @@ const used = computed(() => props.agentCount > 0)
       </div>
 
       <div class="flex shrink-0 items-center gap-2" @click.stop>
-        <Button size="sm" variant="outline" @click="emit('edit')">{{ t('templateCard.edit') }}</Button>
         <TemplateActionsMenu
           :template="template"
+          show-edit
+          @edit="emit('edit')"
           @view-details="emit('open')"
           @link-to-agent="emit('linkToAgent')"
           @copy="emit('copy')"

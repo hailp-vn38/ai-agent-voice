@@ -45,7 +45,7 @@ describe('AgentHeader option A', () => {
 
   it('preserves all existing Agent Detail actions', async () => {
     const wrapper = render()
-    await wrapper.get('[data-agent-back]').trigger('click')
+    await wrapper.get('[data-detail-back]').trigger('click')
     await wrapper.get('[data-agent-edit]').trigger('click')
     await wrapper.get('[data-agent-add-device]').trigger('click')
     await wrapper.get('[data-agent-delete]').trigger('click')
