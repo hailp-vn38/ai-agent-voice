@@ -28,6 +28,7 @@ const provider = ref<AdminProvider>()
 const adapterDescriptor = ref<ProviderAdapter>()
 const bindings = ref<ProviderTemplate[]>([])
 const bindingTotal = ref(0)
+const bindingsLoaded = ref(false)
 const nextBindingPage = ref(2)
 const loading = ref(false)
 const loadingBindings = ref(false)
@@ -110,6 +111,7 @@ async function load() {
   adapterDescriptor.value = undefined
   bindings.value = []
   bindingTotal.value = 0
+  bindingsLoaded.value = false
   nextBindingPage.value = 2
   try {
     const item = await providersApi.get(key.value, pending.signal)
@@ -122,6 +124,7 @@ async function load() {
     if (pending.signal.aborted) return
     bindings.value = page.items
     bindingTotal.value = page.total
+    bindingsLoaded.value = true
     await descriptor
   } catch (cause) {
     if (!pending.signal.aborted) error.value = formatApiError(cause)
@@ -197,7 +200,7 @@ function save(payload: {
   }, current.revision))
 }
 async function remove() {
-  if (!provider.value || bindingTotal.value > 0 || busy.value) return
+  if (!provider.value || !bindingsLoaded.value || bindingTotal.value > 0 || busy.value) return
   const current = provider.value
   busy.value = true
   error.value = ''
@@ -251,7 +254,7 @@ onBeforeUnmount(() => {
         <Button variant="outline" size="sm" :disabled="busy" @click="toggleEnabled">
           {{ enabled ? t('providerDetail.disable') : t('providerDetail.enable') }}
         </Button>
-        <Button variant="ghost" size="sm" class="text-danger" :disabled="busy || bindingTotal > 0" @click="deleteOpen = true">
+        <Button variant="ghost" size="sm" class="text-danger" :disabled="busy || !bindingsLoaded || bindingTotal > 0" @click="deleteOpen = true">
           <Trash2 class="size-4" aria-hidden="true" />{{ t('common.delete') }}
         </Button>
       </template>
