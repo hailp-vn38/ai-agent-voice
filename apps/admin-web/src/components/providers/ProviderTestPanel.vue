@@ -106,7 +106,7 @@ async function run() {
 
 <template>
   <section class="space-y-3" aria-live="polite">
-    <h3 class="text-sm font-semibold">{{ t('diagnostics.lastTest') }}</h3>
+    <h3 class="text-sm font-semibold">{{ t('diagnostics.currentTest') }}</h3>
     <p v-if="draft" class="text-xs text-muted-foreground">{{ t('diagnostics.draftHint') }}</p>
     <p v-if="!supported" class="text-sm text-muted-foreground">{{ t('diagnostics.unsupported') }}</p>
     <template v-else>
