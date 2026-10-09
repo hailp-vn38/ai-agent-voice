@@ -12,7 +12,7 @@ impl SessionActor {
         } else {
             self.identification_text = Some(text);
             self.identification_deadline =
-                Some(std::time::Instant::now() + std::time::Duration::from_millis(750));
+                Some(std::time::Instant::now() + self.speaker_observe.as_ref().map_or(std::time::Duration::from_secs(10), |observe| observe.join_timeout()));
         }
     }
 
@@ -49,7 +49,7 @@ impl SessionActor {
         self.identification_text = None;
         self.identification_diagnostic = None;
         self.identification_deadline = None;
-        self.speaker_name_for_turn = diagnostic.and_then(|diagnostic| {
+        self.speaker_context_for_turn = diagnostic.and_then(|diagnostic| {
             if diagnostic.outcome != crate::session::SpeakerStatus::Verified {
                 return None;
             }
@@ -59,7 +59,10 @@ impl SessionActor {
                 .candidates
                 .iter()
                 .find(|candidate| Some(candidate.speaker_id) == diagnostic.best_speaker_id)
-                .map(|candidate| candidate.key.clone())
+                .map(|candidate| crate::session::SpeakerContext {
+                    name: candidate.key.clone(),
+                    description: candidate.description.clone(),
+                })
         });
         match self.commit_user_text(text) {
             Some(text) => self.begin_speech_delivery(text),

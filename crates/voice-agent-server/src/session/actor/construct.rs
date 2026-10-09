@@ -262,7 +262,7 @@ impl SessionActor {
             identification_diagnostic: None,
             identification_deadline: None,
             identification_finished: false,
-            speaker_name_for_turn: None,
+            speaker_context_for_turn: None,
             gate_tx,
             gate_rx,
             // An actor built outside an application has nothing to ask, so it starts with a gate

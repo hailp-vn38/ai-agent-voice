@@ -179,8 +179,8 @@ pub struct SessionActor {
     identification_diagnostic: Option<ObserveDiagnostic>,
     identification_deadline: Option<std::time::Instant>,
     identification_finished: bool,
-    /// Ephemeral display name consumed exactly once while constructing the LLM prompt.
-    speaker_name_for_turn: Option<String>,
+    /// Verified Speaker profile consumed by one LLM turn only.
+    speaker_context_for_turn: Option<crate::session::SpeakerContext>,
     /// Where the detached speaker scoring task reports the diagnostic for the current turn.
     gate_tx: mpsc::UnboundedSender<ObserveDiagnostic>,
     gate_rx: mpsc::UnboundedReceiver<ObserveDiagnostic>,
