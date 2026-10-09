@@ -423,7 +423,10 @@ mod agent_template_tests {
 
     #[test]
     fn accepts_only_the_supported_literal_placeholders() {
-        assert!(validate_prompt_template("{{persona}} {{agent_name}} {{language}} {{speakers_info}}").is_ok());
+        assert!(
+            validate_prompt_template("{{persona}} {{agent_name}} {{language}} {{speakers_info}}")
+                .is_ok()
+        );
         for invalid in [
             "{{persona}} {{ persona }}",
             "{{persona}} {{foo}}",
