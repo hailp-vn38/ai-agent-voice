@@ -5,8 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ProviderDetailPage from './ProviderDetailPage.vue'
 
 const route = reactive({ params: { key: 'llm_primary' } })
-const push = vi.fn()
-const replace = vi.fn()
+const { push, replace } = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 vi.mock('vue-router', () => ({
   useRoute: () => route,
   useRouter: () => ({ push, replace }),
@@ -26,7 +25,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/providers', () => ({ providersApi: api }))
 const adapters = vi.hoisted(() => ({ get: vi.fn() }))
 vi.mock('@/api/provider-adapters', () => ({ providerAdaptersApi: adapters }))
-const refreshAll = vi.fn()
+const refreshAll = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/admin', () => ({
   useAdminStore: () => ({ providers: [], refreshAll }),
 }))
@@ -64,7 +63,7 @@ function render() {
   return mount(ProviderDetailPage, {
     global: {
       stubs: {
-        ProviderTestPanel: { template: '<div data-test-panel>Manual test, no persisted history</div>' },
+        ProviderTestPanel: { template: '<div data-test-panel>Manual test</div>' },
         ProviderFormModal: true,
         ConfirmDialog: true,
       },
