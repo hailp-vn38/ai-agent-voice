@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import ProviderTestPanel from './ProviderTestPanel.vue'
 import * as microphone from '@/composables/useMicrophoneRecorder'
 import { ref } from 'vue'
-const api = vi.hoisted(() => ({ testDraftLlm: vi.fn(), testLlm: vi.fn(), testTtsAudio: vi.fn(), testAsr: vi.fn() }))
+const api = vi.hoisted(() => ({ testDraftLlm: vi.fn(), testLlm: vi.fn(), testTtsAudio: vi.fn(), testAsr: vi.fn(), testDraftAsr: vi.fn() }))
 vi.mock('@/api/providers', () => ({ providersApi: api }))
 it('tests draft inference without saving and clears the result after an edit', async () => {
   api.testDraftLlm.mockResolvedValue({ result: { text: 'Actual response' }, metrics: { elapsed_ms: 12 } })
@@ -85,6 +85,42 @@ it('renders ASR language, audio duration and real-time factor from the response'
   expect(wrapper.text()).toContain('vi-VN')
   expect(wrapper.text()).toContain('1.25 s')
   expect(wrapper.text()).toContain('RTF: 0.200')
+  wrapper.unmount()
+  recorder.mockRestore()
+})
+
+it('uses the waveform dock for create-provider draft ASR without saving a provider', async () => {
+  const recording = ref(false)
+  const elapsedMs = ref(0)
+  const level = ref(0)
+  const audio = new Blob(['RIFF'], { type: 'audio/wav' })
+  const recorder = vi.spyOn(microphone, 'useMicrophoneRecorder').mockReturnValue({
+    recording, starting: ref(false), paused: ref(false), level, elapsedMs, error: ref(''),
+    start: vi.fn(async () => { recording.value = true }),
+    stop: vi.fn(async () => { recording.value = false; return audio }),
+    dispose: vi.fn(), togglePause: vi.fn(),
+  })
+  api.testDraftAsr.mockResolvedValue({ result: { text: 'Xin chào', language: 'vi-VN' }, metrics: { elapsed_ms: 30 } })
+  const draft = { type: 'asr' as const, adapter: 'whisper', config_json: { model: 'base' } }
+  const wrapper = mount(ProviderTestPanel, { props: { type: 'asr', draft } })
+
+  expect(wrapper.get('[data-voice-recording-dock]').exists()).toBe(true)
+  expect(wrapper.get('[data-run-test]').attributes('disabled')).toBeDefined()
+  await wrapper.get('.voice-dock-action').trigger('click')
+  await flushPromises()
+  expect(recorder.mock.results[0]?.type).toBe('return')
+  level.value = 0.75
+  elapsedMs.value = 1_200
+  await flushPromises()
+  expect(wrapper.text()).toContain('00:01')
+  expect(wrapper.get('.voice-dock-secondary').exists()).toBe(true)
+  await wrapper.get('.voice-dock-action').trigger('click')
+  await flushPromises()
+  await wrapper.get('[data-run-test]').trigger('click')
+  await flushPromises()
+
+  expect(api.testDraftAsr).toHaveBeenCalledWith(draft, audio, expect.any(AbortSignal))
+  expect(wrapper.text()).toContain('Xin chào')
   wrapper.unmount()
   recorder.mockRestore()
 })
