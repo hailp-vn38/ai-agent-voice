@@ -1,6 +1,6 @@
 //! Ticket 10: Agent **Observe** — best-effort speaker scoring for an accepted Voice Session.
 //!
-//! Observe never gates a turn, never grants authority by voice, and never puts speaker identity
+//! Observe never denies a turn, never grants authority by voice, and never puts speaker identity
 //! or a raw score on the wire. When the Agent policy is `off` none of this runs and no utterance
 //! PCM is retained.
 //!
@@ -54,7 +54,16 @@ impl SpeakerPolicyMode {
 pub struct ObserveCandidate {
     pub speaker_id: i64,
     pub key: String,
+    /// Optional human-entered profile; never an authorization credential.
+    pub description: Option<String>,
     pub vector: Vec<f32>,
+}
+
+/// Verified human-facing speaker profile, valid only for the current LLM turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpeakerContext {
+    pub name: String,
+    pub description: Option<String>,
 }
 
 /// Immutable admission-time Observe plan for the active Template.
@@ -163,6 +172,7 @@ pub struct SpeakerObserve {
     plan: ObservePlan,
     profile: QualityProfile,
     threshold: f32,
+    join_timeout: std::time::Duration,
     security: Arc<CancellationToken>,
 }
 
@@ -179,6 +189,7 @@ impl SpeakerObserve {
             plan,
             profile,
             threshold: OBSERVE_VERIFY_THRESHOLD,
+            join_timeout: std::time::Duration::from_secs(10),
             // A session admitted without the registry (tests, Observe-only harnesses) is never
             // revoked; real admission attaches the registry token via `with_security`.
             security: Arc::new(CancellationToken::new()),
@@ -191,6 +202,7 @@ impl SpeakerObserve {
         plan: ObservePlan,
         profile: QualityProfile,
         threshold: f32,
+        join_timeout_ms: u64,
     ) -> Self {
         Self {
             runtime,
@@ -198,6 +210,7 @@ impl SpeakerObserve {
             plan,
             profile,
             threshold,
+            join_timeout: std::time::Duration::from_millis(join_timeout_ms),
             security: Arc::new(CancellationToken::new()),
         }
     }
@@ -217,6 +230,10 @@ impl SpeakerObserve {
         self.security.is_cancelled()
     }
 
+    pub fn join_timeout(&self) -> std::time::Duration {
+        self.join_timeout
+    }
+
     pub fn plan(&self) -> &ObservePlan {
         &self.plan
     }
@@ -234,6 +251,7 @@ impl SpeakerObserve {
             plan,
             profile: self.profile,
             threshold: self.threshold,
+            join_timeout: self.join_timeout,
             security: Arc::clone(&self.security),
         }
     }
@@ -334,11 +352,13 @@ mod tests {
                 ObserveCandidate {
                     speaker_id: 1,
                     key: "alice".into(),
+                    description: Some("Alice profile".into()),
                     vector: vec![1.0, 0.0],
                 },
                 ObserveCandidate {
                     speaker_id: 2,
                     key: "bob".into(),
+                    description: None,
                     vector: vec![0.0, 1.0],
                 },
             ],

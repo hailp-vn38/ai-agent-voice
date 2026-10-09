@@ -2,8 +2,8 @@
 //! Observe is installed; the terminal boundary spawns one best-effort scoring task and drops any
 //! boundary that arrives while one is already running.
 //!
-//! Observe is deliberately outside the turn lifecycle: it never returns a value the core path
-//! checks, never holds a turn open, and never changes accept behaviour.
+//! Observe remains advisory: the ASR final may wait for its result up to a bounded timeout,
+//! but failure or a late result never denies the conversational turn.
 
 use std::sync::atomic::Ordering;
 
@@ -41,16 +41,36 @@ impl SessionActor {
         self.identification_diagnostic = None;
         self.identification_deadline = None;
         self.identification_finished = false;
-        self.speaker_name_for_turn = None;
+        self.speaker_context_for_turn = None;
         let Some(observe) = self.speaker_observe.as_ref().cloned() else {
             return;
         };
         let samples = std::mem::take(&mut self.observe_pcm);
-        if samples.is_empty() {
-            return;
-        }
-        if self.observe_in_flight.load(Ordering::Acquire) {
-            // Never queue: a second boundary while one extraction runs is discarded.
+        if samples.is_empty() || self.observe_in_flight.load(Ordering::Acquire) {
+            // Do not wait the full Speaker join timeout when no scoring job was launched.
+            let outcome = if samples.is_empty() {
+                crate::session::SpeakerStatus::InsufficientAudio
+            } else {
+                crate::session::SpeakerStatus::Unavailable
+            };
+            self.identification_diagnostic = Some(ObserveDiagnostic {
+                identity: crate::session::ObserveIdentity {
+                    operation_id: 0,
+                    turn_id: self.current_turn_id().map(TurnId::get).unwrap_or(0),
+                    generation: self.generation,
+                },
+                embedding_space: observe.embedding_space().to_owned(),
+                catalog_revision: observe.plan().catalog_revision,
+                samples: samples.len(),
+                speech_ms: 0,
+                queue_ms: 0,
+                inference_ms: 0,
+                gate_wait_ms: 0,
+                outcome,
+                best_speaker_id: None,
+                best_score: None,
+                runner_up_score: None,
+            });
             return;
         }
         self.observe_in_flight.store(true, Ordering::Release);

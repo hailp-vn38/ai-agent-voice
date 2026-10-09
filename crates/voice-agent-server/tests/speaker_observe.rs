@@ -144,6 +144,7 @@ async fn observe_with_policy(
         candidates: vec![ObserveCandidate {
             speaker_id: 1,
             key: "alice".into(),
+            description: Some("Test profile".into()),
             vector: vec![1.0, 0.0, 0.0],
         }],
     };

@@ -491,7 +491,11 @@ impl SessionActor {
         match self.asr_runtime.open(identity.clone()) {
             Ok(lease) => {
                 self.asr_stream = Some((lease, identity));
+                // Give Speaker the same VAD pre-roll that ASR receives. Otherwise the
+                // beginning of a short utterance is silently missing from its PCM.
+                self.observe_retain(retained.samples());
                 if self.push_asr(retained).is_err() {
+                    self.observe_reset();
                     self.cancel_asr();
                     self.auto_speech_active = false;
                 }

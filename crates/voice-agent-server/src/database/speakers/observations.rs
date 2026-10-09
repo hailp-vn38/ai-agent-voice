@@ -36,7 +36,7 @@ pub async fn resolve_observe_plan(
         return Ok(ObserveResolution::Off);
     }
     let rows = sqlx::query(
-        "SELECT s.id AS speaker_id,s.name AS key,v.vector AS vector,v.dims AS dims \
+        "SELECT s.id AS speaker_id,s.name AS key,s.description AS description,v.vector AS vector,v.dims AS dims \
          FROM agent_speaker_candidates c \
          JOIN speakers s ON s.id=c.speaker_id AND s.enabled=1 \
          JOIN speaker_voiceprints v ON v.speaker_id=s.id AND v.embedding_space=? \
@@ -63,6 +63,7 @@ pub async fn resolve_observe_plan(
                 // The identification-only label is the enrolled person's name.
                 // It is not a credential and must never be used for authorization.
                 key: row.get("key"),
+                description: row.get("description"),
                 vector,
             })
         })

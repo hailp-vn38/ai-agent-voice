@@ -24,8 +24,8 @@ pub use profile::{
 pub use runtime_profile::{ConfiguredTemplateProfile, PreparedTemplateProfile};
 pub use speaker_observe::{
     OBSERVE_VERIFY_THRESHOLD, ObserveCandidate, ObserveDiagnostic, ObserveIdentity, ObservePlan,
-    ObserveResolution, ObserveScore, SpeakerObserve, SpeakerPolicyMode, SpeakerStatus,
-    resolve_observe_plan, resolve_speaker_policy,
+    ObserveResolution, ObserveScore, SpeakerContext, SpeakerObserve, SpeakerPolicyMode,
+    SpeakerStatus, resolve_observe_plan, resolve_speaker_policy,
 };
 pub use state::SessionPhase;
 pub use turn::{ActiveTurnLimiter, TurnId};

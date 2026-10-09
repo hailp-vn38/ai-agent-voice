@@ -154,6 +154,19 @@ fn validate_speaker_recognition(config: &AppConfig) -> Result<(), ConfigError> {
             "speaker_recognition.enrollment bounds are invalid".into(),
         ));
     }
+    let observe = &speaker.observe;
+    // WS keeps at most 6 seconds of PCM; the extractor needs >=1 second.
+    if !(1_000..=6_000).contains(&observe.min_clip_ms)
+        || !(250..=6_000).contains(&observe.min_speech_ms)
+        || !(1_000..=6_000).contains(&observe.max_window_ms)
+        || observe.min_clip_ms > observe.max_window_ms
+        || observe.min_speech_ms > observe.max_window_ms
+        || !(100..=30_000).contains(&observe.join_timeout_ms)
+    {
+        return Err(ConfigError::Validation(
+            "speaker_recognition.observe bounds are invalid".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -853,6 +866,24 @@ max_clip_ms = 5_000
                 r#"
 [speaker_recognition.enrollment]
 ttl_ms = 1_000
+"#
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition.observe]
+min_clip_ms = 500
+"#
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_speaker_recognition(&config(
+                r#"
+[speaker_recognition.observe]
+join_timeout_ms = 0
 "#
             ))
             .is_err()
