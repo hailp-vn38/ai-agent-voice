@@ -612,6 +612,10 @@ fn sanitizes_tts_input_to_unicode_words_with_decimal_separators() {
         sanitize_tts_text("Mình có thể giúp bạn #hôm_nay?"),
         "Mình có thể giúp bạn hôm nay"
     );
+    assert_eq!(
+        sanitize_tts_text("Ví dụ: - Bạn muốn xem **tình trạng thiết bị** (pin, kết nối, nhiệt độ."),
+        "Ví dụ Bạn muốn xem tình trạng thiết bị pin, kết nối, nhiệt độ."
+    );
 }
 
 #[test]
@@ -715,6 +719,18 @@ fn unspeakable_response_fails_instead_of_waiting_forever() {
     let mut output =
         SpeechOutput::with_config(Arc::new(UnavailableTts), SpeechOutputConfig::default()).unwrap();
     output.push_delta("😊🚀").unwrap();
+    assert_eq!(output.finish_input(), Err(SpeechOutputError::Synthesis));
+}
+
+#[test]
+fn punctuation_only_response_fails_before_tts_submission() {
+    use super::{SpeechOutput, SpeechOutputError};
+    use crate::providers::tts::UnavailableTts;
+    use std::sync::Arc;
+
+    let mut output =
+        SpeechOutput::with_config(Arc::new(UnavailableTts), SpeechOutputConfig::default()).unwrap();
+    output.push_delta(".,").unwrap();
     assert_eq!(output.finish_input(), Err(SpeechOutputError::Synthesis));
 }
 

@@ -1,75 +1,96 @@
-# Flow 01 — WebSocket
+# Flow 01 — Luồng bên trong WebSocket
 
-## 1. Mục tiêu
+## 1. Phạm vi
 
-Duy trì protocol conformance bằng OTA discovery + WebSocket protocol v1.
+Tài liệu này bắt đầu **sau khi HTTP đã chấp nhận WebSocket upgrade** cho một
+Voice Session. Nó mô tả handshake ứng dụng, routing frame, lifecycle của
+`SessionActor`, writer và đóng kết nối. OTA discovery, bearer authentication,
+Device/Agent admission và enrollment không nằm trong flow này; xem
+[ADR 0073](../adr/0073-required-database-and-device-admission.md) và
+[ADR 0074](../adr/0074-websocket-enrollment-session.md).
 
-## 2. OTA discovery
+Một Voice Session thuộc đúng một WebSocket connection và một `Device ID`.
+`session_id` được cấp trước upgrade, dùng cho cả Voice Session và persistent
+transcript (nếu profile bật), nhưng không phải credential.
+
+## 2. Tổng quan
+
+```mermaid
+flowchart LR
+    C[Voice Protocol Client] -->|text / binary frame| R[WS reader]
+    R -->|SessionEvent| A[SessionActor]
+    A -->|ASR / LLM / TTS work| P[Voice pipeline]
+    P -->|events| A
+    A --> U[urgent queue]
+    A --> N[control queue]
+    A --> Q[audio queue]
+    U --> W[WS writer]
+    N --> W
+    Q --> W
+    W -->|text / binary frame| C
+```
+
+- Reader chỉ kiểm giới hạn transport, parse text và chuyển thành
+  `SessionEvent`; không chạy ASR, LLM hay TTS.
+- `SessionActor` là owner duy nhất của state Voice Session và là producer của
+  các outbound queue.
+- Writer là task duy nhất gọi `WebSocket::send`. Ba queue bounded có thứ tự ưu
+  tiên `urgent > control > audio`.
+
+## 3. Handshake trong socket
+
+Ngay sau upgrade, server chờ đúng một text `hello` trong
+`server.hello_timeout_ms`. Trước `ServerHello`, socket chưa có Voice Session
+sẵn sàng nhận command hoặc audio.
 
 ```mermaid
 sequenceDiagram
-    participant CLIENT as Voice Protocol Client
-    participant HTTP as Rust HTTP
-    CLIENT->>HTTP: POST /voice/ota/\nDevice-Id, Client-Id
-    HTTP->>HTTP: read Device/Agent registration
-    alt Registered and enabled
-        HTTP-->>CLIENT: websocket.url + token + server_time
-    else Unknown and websocket enrollment enabled
-        HTTP-->>CLIENT: websocket.url + transport token, no activation
-    else Unknown and OTA enrollment enabled
-        HTTP-->>CLIENT: activation.code + challenge, no WS token
-    else Unknown or blocked
-        HTTP-->>CLIENT: 403
-    end
-```
-
-Database-backed admission luôn có; flow claim/poll xem [Flow 08](08-database-device-enrollment.md). DB lỗi trả 503, không trả cấu hình fallback.
-
-V1 không cần firmware hosting. `firmware.url` có thể rỗng.
-
-## 3. WebSocket handshake
-
-Firmware gửi headers:
-
-```text
-Authorization: Bearer <token>   # required only when auth.token is non-empty
-Protocol-Version: 1
-Device-Id: <mac>
-Client-Id: <uuid>
-```
-
-Khi `auth.token` không rỗng, `Authorization` bắt buộc; thiếu hoặc sai token bị từ chối WebSocket upgrade với HTTP 401. Khi token rỗng, server không yêu cầu header. Mode websocket enrollment trả static transport token cho Unknown để đi vào phiên chờ mã; quyền hội thoại vẫn do DB admission. Device-Id tự khai chưa phải credential phần cứng, nên deployment vẫn theo trusted LAN policy. Registered WS resolve Device/Agent/Template/Providers trước upgrade; Unknown chỉ vào Enrollment Session khi enabled + mode websocket, còn lại 403. Disabled 403, DB/profile/runtime unavailable 503, không đổi lỗi runtime thành enrollment.
-
-Enrollment Session handshake v1 rồi gửi stt hiển thị mã + tts/Opus đọc sáu digit.
-Nó không tạo SessionActor, acquire provider hoặc transcript. Sau claim worker thấy
-Registered, gửi thông báo và close 1000; WS mới chạy voice admission. Xem
-[flow chi tiết](../device-enrollment-websocket.md). Các phần SessionActor bên dưới
-áp dụng cho Voice Session đã admit, không áp dụng cho Enrollment Session.
-
-`session_id` được sinh ra *trước* upgrade, ngay cùng lúc Effective Session Profile được resolve, vì cùng một identity đó vừa là `session_id` của Voice Session vừa là session key của optional Persistent Transcript. Một connection có đúng một session identity, và nó thuộc về connection chứ không thuộc về database: `SessionActor` không giữ identity thứ hai.
-
-Sau upgrade:
-
-```mermaid
-sequenceDiagram
-    participant CLIENT as Voice Protocol Client
-    participant WS as WS Transport
+    participant C as Voice Protocol Client
+    participant W as WS handler
     participant A as SessionActor
-    CLIENT->>WS: text {type:"hello", ...}
-    WS->>A: ClientMessage::Hello
-    A->>A: validate profile + initialize audio runtime
-    A->>WS: ServerHello(session_id, audio_params)
-    WS-->>CLIENT: text hello
-    A->>A: phase = Ready
+    participant R as Runtime/profile snapshot
+
+    C->>W: text hello
+    W->>W: validate v1 + canonical uplink profile
+    W->>A: create audio runtime and actor
+    A->>R: pin admitted profile, runtimes and optional capabilities
+    A-->>W: enqueue ServerHello
+    W-->>C: text hello(session_id, downlink audio_params)
+    W->>A: start MCP discovery (when enabled)
+    Note over A: phase = Ready
 ```
 
-Server hello tối thiểu:
+Client hello V1 hợp lệ:
+
+```json
+{
+  "type": "hello",
+  "version": 1,
+  "transport": "websocket",
+  "audio_params": {
+    "format": "opus",
+    "sample_rate": 16000,
+    "channels": 1,
+    "frame_duration": 60
+  },
+  "features": {
+    "pipeline_status": false,
+    "speaker_status": false,
+    "aec": false,
+    "mcp": false
+  }
+}
+```
+
+`features` là các capability assertion tùy chọn; field feature chưa biết vẫn
+tương thích. Server không negotiate audio profile. Nó luôn trả downlink Opus
+24 kHz, mono, frame 60 ms:
 
 ```json
 {
   "type": "hello",
   "transport": "websocket",
-  "session_id": "...",
+  "session_id": "…",
   "audio_params": {
     "format": "opus",
     "sample_rate": 24000,
@@ -79,105 +100,173 @@ Server hello tối thiểu:
 }
 ```
 
-Sau ClientHello hợp lệ, server khởi tạo `UplinkOpusDecoder` và `ManualCapture` trước khi tạo/register Voice Session và gửi ServerHello. Nếu init/allocation fallible lỗi, connection mới đóng 1011, không ServerHello hay payload custom và không ảnh hưởng Voice Session đang khỏe của cùng Device ID. Chỉ sau init thành công server mới atomically replace session cũ (nếu có).
+Binary frame đầu tiên, JSON lỗi, message không phải `hello`, hoặc hello sai
+version/transport/profile đều đóng socket với code `1002` trước khi actor được
+tạo. Frame vượt `websocket.max_frame_bytes` đóng `1009`. Nếu audio runtime,
+speech output hoặc effective profile không khởi tạo được sau hello hợp lệ,
+server đóng connection mới bằng `1011`, không gửi custom error. Một reconnect
+lỗi vì thế không thay thế một Voice Session đang khỏe của cùng Device ID.
 
-V1 validate, không negotiate, Canonical Audio Profile trước khi tạo Voice Session/đi vào Ready:
-
-```text
-Protocol-Version header = 1
-hello.version = 1
-hello.transport = websocket
-hello.audio_params = opus / 16000 Hz / mono / 60 ms
-```
-
-Trong `AwaitHello`, binary frame, malformed JSON, `type != "hello"`, missing hello field hay bất kỳ mismatch nào ghi telemetry và đóng WS bằng 1002 Protocol Error. Không tạo Voice Session, không gửi custom JSON error, không đoán hoặc resample uplink. Server hello luôn quảng bá Opus / 24000 Hz / mono / 60 ms; PCM từ TTS provider có thể được normalize nội bộ trước encode.
-
-## 4. Message routing
-
-WS reader chỉ làm 3 việc:
-
-1. Text frame -> parse `ClientMessage` -> `SessionEvent::ClientMessage`.
-2. Binary frame -> `SessionEvent::ClientAudio`.
-3. Disconnect/error -> `SessionEvent::Disconnected`.
-
-Không chạy ASR/LLM/TTS trực tiếp trong reader.
-
-Listen được parse thành `ListenStart { mode }`, `ListenStop` và `ListenDetect { text }`; chỉ Start yêu cầu `mode`. `listen:start` mang `mode` parsed thành enum `Manual`, `Auto` hoặc `Realtime`; missing/invalid mode là application message invalid và không default sang Manual. Phase 5 arm/reset capture/VAD Cycle cho mode hợp lệ nhưng không cancel turn. `abort` là interruption explicit. `features.aec` trong ClientHello optional/default false; chỉ predicate Phase 5 đã trust mới route audio `Speaking` của Auto/Realtime vào VAD Barge-in Watch. `listen:stop` chỉ finalize Manual Capture active; ở phase khác chỉ trace/ignore.
-
-## 5. Protocol v1 binary
-
-V1 binary frame là raw Opus packet, không header riêng.
-
-```text
-WS binary payload == opus packet
-```
-
-Không parse v2/v3 trong MVP. Nếu `Protocol-Version != 1`, server log và reject rõ ràng. V1 không negotiate protocol chưa có parser; policy cấu hình chỉ xác nhận hành vi `reject`.
-
-## 6. Single writer
+## 4. Ingress sau handshake
 
 ```mermaid
-flowchart LR
-  ACTOR[SessionActor] --> U[bounded urgent queue]
-  ACTOR --> C[bounded normal control queue]
-  ACTOR --> A[bounded audio queue]
-  U --> WRITER[WS Writer]
-  C --> WRITER
-  A --> WRITER
-  WRITER --> CLIENT[Voice Protocol Client]
+flowchart TD
+    F[Frame từ client] --> K{Frame type}
+    K -->|Text within cap| J[parse ClientMessage]
+    K -->|Binary within cap| B[SessionEvent::ClientAudio]
+    K -->|Ping / Pong| P[transport xử lý]
+    K -->|Close / transport error| X[stop ingress]
+    J -->|valid command| M[SessionEvent::ClientMessage]
+    J -->|malformed / unknown / invalid app message| I[log/metric rồi ignore]
+    M --> A[SessionActor]
+    B --> A
 ```
 
-Actor là producer duy nhất của ba queue; writer là task duy nhất gọi WebSocket send. Writer ưu tiên `urgent > normal control > audio`; mọi turn JSON/audio mang generation và bị shared gate kiểm tra ngay trước admission/send. `SpeechOutput` và MCP trả event về actor, không gửi thẳng vào queue.
+Sau handshake, malformed JSON, message không biết, command sai schema hoặc
+sai phase không làm chết Voice Session: reader/actor ghi telemetry và ignore.
+Riêng text hoặc binary vượt frame cap vẫn đóng `1009` trước parse/decode. Khi
+mailbox control đầy, reader đóng `1013`; audio mailbox đầy chỉ drop frame để
+giữ bounded memory.
 
-## 7. Ordering quan trọng
+Text command V1 có thể mang `session_id`. Field này vắng mặt hoặc chuỗi rỗng
+được chấp nhận vì tương thích; chuỗi không rỗng phải khớp session hiện tại.
 
-Một TTS turn điển hình:
+| Client message | Ý nghĩa trong WS |
+| --- | --- |
+| `hello` | Chỉ hợp lệ là frame đầu tiên; hoàn tất application handshake. |
+| `listen` với `state: start` và `mode: manual\|auto\|realtime` | Arm hoặc reset capture cycle. |
+| `listen` với `state: stop` | Chỉ finalize Manual capture đang active. |
+| `listen` với `state: detect` | Đưa text đã detect vào actor theo contract protocol. |
+| `abort` | Interruption idempotent của capture/turn đang có. |
+| `mcp` | Route response/request Device MCP khi MCP đã được bật. |
+| binary | Một raw uplink Opus packet V1, không có header ứng dụng. |
+
+Chi tiết capture/VAD, ASR, interrupt và MCP lần lượt ở [Flow 02](02-vad.md),
+[Flow 03](03-asr.md), [Flow 06](06-interrupt-cancellation.md) và
+[Flow 07](07-device-mcp.md).
+
+## 5. State của Voice Session
+
+```mermaid
+stateDiagram-v2
+    [*] --> AwaitHello
+    AwaitHello --> Ready: valid ClientHello + actor initialized
+    AwaitHello --> [*]: timeout or protocol fault (1002)
+    Ready --> Listening: listen:start
+    Listening --> Processing: Manual stop / VAD endpoint
+    Processing --> Speaking: response has playable audio
+    Processing --> Ready: manual terminal / silent or failed turn
+    Processing --> Listening: auto/realtime terminal / silent or failed turn
+    Speaking --> Ready: manual turn finishes
+    Speaking --> Listening: auto/realtime turn finishes
+    Listening --> Ready: manual abort
+    Listening --> Listening: auto/realtime abort re-arms cycle
+    Speaking --> Processing: eligible acoustic barge-in
+    Ready --> [*]: disconnect, shutdown or security invalidation
+    Listening --> [*]: disconnect, shutdown or security invalidation
+    Processing --> [*]: disconnect, shutdown or security invalidation
+    Speaking --> [*]: disconnect, shutdown or security invalidation
+```
+
+`Ready` nghĩa là socket còn sống nhưng không thu microphone; không dùng tên
+`Idle` để tránh lẫn với timeout transport. Chỉ `Listening` nhận audio cho
+capture bình thường. Khi `Speaking`, audio chỉ được đưa vào Barge-in Watch nếu
+mode Auto/Realtime đã arm, client đã assert `features.aec=true`, và cả hai cờ
+server cho phép tin assertion này. Manual không có acoustic barge-in.
+
+## 6. Một conversational turn trên cùng socket
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as SessionActor
+    participant ASR as ASR worker
+    participant L as LLM worker
+    participant T as SpeechOutput/TTS
+    participant W as WS writer
+
+    C->>A: listen:start + binary Opus frames
+    C->>A: listen:stop (manual) / VAD endpoint (auto)
+    A->>ASR: finish utterance
+    ASR-->>A: final text
+    A->>W: stt text
+    A->>L: begin turn
+    L-->>A: response deltas
+    A->>T: speakable segments
+    T-->>A: start, sentence, Opus packets, drained
+    A->>W: BeginTurn / text / Binary / FinishTurn
+    W-->>C: tts:start, sentence, raw Opus, tts:stop
+```
+
+`SessionActor` giữ dialogue, generation và turn state trong RAM của connection.
+Provider worker không sở hữu WebSocket hay session state; mọi event quay lại
+actor trước khi được gửi. Một final ASR non-empty phát đúng một `stt` trước khi
+LLM turn bắt đầu. Sau terminal outcome, Manual về `Ready`; Auto/Realtime re-arm
+về `Listening` theo policy.
+
+## 7. Outbound ordering và cancellation
+
+Writer serialize mọi outbound traffic. Một playback bình thường có thứ tự:
 
 ```text
-JSON tts:start
-JSON tts:sentence_start
-binary opus
-binary opus
-...
-JSON tts:stop
+tts:start → tts:sentence_start (zero or more) → raw Opus packets → tts:stop
 ```
 
-Luồng hoàn tất bình thường chỉ gửi `tts:stop` sau event `SpeechOutputEvent::Drained`. Khi interrupt, actor snapshot PCM nếu là Barge-in, cập nhật `GenerationGate`, rồi gửi `tts:stop` qua urgent lane; writer drop JSON/audio stale còn nằm trong queue trước stop. Urgent admission fail sau `tts:start` là session-integrity failure và đóng session qua escape path.
+`tts:start` chỉ được gửi khi đã có audio phát được. `tts:stop` bình thường chỉ
+được gửi sau packet cuối đã drain. `BeginTurn`, `FinishTurn` và `AbortTurn` là
+semantic command giữa actor và writer; chỉ writer tạo các wire control tương
+ứng và báo terminal outcome về actor.
 
-## 8. Timeout
+Khi `abort` hoặc acoustic barge-in thắng race:
 
-- Client hello timeout: nhỏ hơn firmware timeout 10 giây; khuyến nghị server 5 giây.
-- Transport idle timeout đo activity WebSocket RX/TX hợp lệ hai chiều; V1 mặc định 300 giây. Conversation idle tắt.
-- Firmware baseline có thể tự coi channel timeout sau hơn 120 giây không nhận dữ liệu từ server; V1 không thêm heartbeat để né hành vi này.
+1. Actor invalidate `GenerationGate` rồi cancel producer của turn cũ.
+2. Actor gửi `AbortTurn` qua urgent lane.
+3. Writer drop JSON/audio stale tại điểm gửi, phát tối đa một `tts:stop` nếu
+   `tts:start` đã được gửi, rồi báo `TurnClosed(Aborted)`.
 
-## 9. State/message matrix
+Packet đã được writer gửi trước điểm invalidation không thể thu hồi; sau đó
+không payload scoped-to-turn cũ nào được admit. Nếu urgent stop không thể được
+admit sau một `tts:start`, đó là session-integrity failure và session fail
+closed, không retry vô hạn.
 
-| Incoming | Ready | Listening | Processing | Speaking |
-| --- | --- | --- | --- | --- |
-| binary audio | drop + counter | accept | drop + counter | Barge-in Watch chỉ khi predicate AEC trusted, còn lại drop + counter |
-| `listen:start` | → Listening/arm | reset cycle, remain Listening | arm/reset cycle, giữ turn | arm/reset cycle, giữ turn |
-| `listen:stop` | ignore | finalize/stop | ignore | ignore |
-| `abort` | no-op | cancel capture | cancel turn | cancel turn |
-| MCP response | route nếu pending | route nếu pending | route nếu pending | route nếu pending |
-| unknown valid JSON | log/ignore | log/ignore | log/ignore | log/ignore |
+## 8. Đóng socket và failure boundary
 
-Không warning từng binary frame bị drop để tránh log spam. `abort` phải idempotent. Sau handshake, malformed JSON, unknown/invalid application message và valid wrong-state message chỉ metric + ignore, không thay đổi state hay đóng session. WebSocket framing/UTF-8 fault do transport library xử lý.
+```mermaid
+flowchart TD
+    E[Disconnect / close frame / receive error] --> S[Ngừng ingress]
+    G[Graceful server shutdown] --> H[SessionEvent::Shutdown]
+    I[Security snapshot bị revoke] --> C[urgent close 1008]
+    C --> V[SessionEvent::SecurityInvalidated]
+    S --> A[Actor kết thúc và giải phóng turn/resource]
+    H --> A
+    V --> A
+    A --> D[Đóng ba outbound sender]
+    D --> W[Writer drain rồi dừng]
+    W --> R[Release drain registration]
+```
 
-Ở Listening, `listen:start` lặp lại discard capture đang có và restart cycle mới, không finalize utterance hay phát wire response. Với Manual, `abort` discard capture rồi về Ready, cũng không tạo Capture Outcome cho downstream, không ASR và không wire response mới. Với Auto/Realtime, `abort` hủy turn/capture rồi reset worker lease đang pin; sau `ResetDone` actor re-arm theo policy cycle. Acoustic `SpeechStart` khi Speaking chỉ hợp lệ cho Auto đã arm hoặc Realtime, có client AEC assertion đã trust, và phải snapshot retention trước reset/invalidation.
-- WS ping có thể để transport/library xử lý; không trộn với conversation state.
+Server shutdown có controlled-close path để actor và writer hoàn tất outbound
+đã xếp trước khi connection kết thúc. Security invalidation (ví dụ profile,
+speaker grant/policy hoặc external-tool guard bị revoke) đóng với `1008` và
+không cho dispatch mới. Peer close, receive error, hoặc writer failure cũng
+kết thúc actor; không có retry socket hay resume session trong V1.
 
-## 10. Test contract
+## 9. Invariants và test contract
 
-- valid hello -> valid server hello.
-- audio/profile mismatch -> close 1002 trước Ready.
-- missing type -> ignore/log, no panic.
-- binary, malformed/non-hello JSON hoặc hello mismatch trước hello -> close 1002 và không tạo Voice Session.
-- oversized text/binary frame -> close 1009 trước application parsing/decode.
-- unknown JSON fields -> accepted.
-- unknown type -> ignore/log.
-- disconnect -> cancel session.
-- `tts:start(gen N)` đến trước Opus đầu tiên của generation N.
-- sau `tts:stop(gen N)`, không Opus generation N nào tới WebSocket.
-- state/message matrix, gồm `listen:start` ở Listening reset collector và `abort` lặp lại, được test theo từng phase.
-- một invalid application message sau handshake không terminate Voice Session khỏe.
-- abort khi audio cũ đã nằm trong outbound queue -> writer drop cả JSON/audio stale trước `tts:stop`.
+- Một connection có một immutable runtime/profile snapshot và một `session_id`.
+- Chỉ một writer gọi `WebSocket::send`; tất cả queue đều bounded.
+- `tts:start` luôn trước Opus đầu tiên của turn; không Opus stale sau
+  `tts:stop`.
+- Chỉ hello hợp lệ đi qua `AwaitHello`; lỗi protocol ở giai đoạn đó đóng `1002`.
+- Lỗi application sau handshake không phá Voice Session khỏe; frame quá lớn
+  luôn đóng `1009`.
+- Audio V1 ingress/egress là raw Opus; canonical uplink là 16 kHz mono 60 ms,
+  downlink là 24 kHz mono 60 ms.
+- Disconnect/shutdown/cancellation phải giải phóng actor, worker lease và
+  connection drain registration.
+
+Chạy regression của module bằng:
+
+```bash
+./scripts/test-module.sh ws
+```

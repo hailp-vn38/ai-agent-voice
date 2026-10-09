@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded, 2026-10-08 by [MCP Tool Authorization Refactor](../mcp-tool-authorization-refactor-implementation-guide.md). The new policy retains Agent-scoped, live-guarded approval for External MCP in every Speaker Policy, but removes Device tool approval/recovery entirely.
+Superseded, 2026-10-08 by the MCP Tool Authorization refactor. The new policy retains Agent-scoped, live-guarded approval for External MCP in every Speaker Policy, but removes Device tool approval/recovery entirely.
 
 Agent Tool Allowlist do server/admin quản lý là giới hạn thao tác của Agent độc lập với Speaker Match. Entry thuộc Agent, định danh công khai bằng `device_id` / Protocol Device Identity + tên tool gốc, hoặc External MCP `server_key` + tên tool gốc; DB dùng FK tới resource nội bộ. Không thêm Device key riêng, không dùng tên hiển thị/Client ID hoặc wildcard Device; Device mới hoặc resource delete/recreate không kế thừa quyền cũ. Chỉ tool đã được admin đánh giá và cho phép mới được quảng bá cho LLM. Kiểm lại quyền trước dispatch cho cả hai nguồn, kể cả tên tool được gọi trực tiếp. Tool chưa được đánh giá/cho phép mặc định bị từ chối; tool nhạy cảm bị chặn khi chưa có Independent Confirmation. Không suy độ an toàn từ prompt, tên hoặc nhãn read-only, vì đọc dữ liệu riêng cũng nhạy cảm.
 

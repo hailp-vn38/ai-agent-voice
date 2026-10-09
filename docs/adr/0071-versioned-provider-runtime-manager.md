@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted design; implementation tracked in `.scratch/provider-runtime-manager/`.
+Accepted and implemented. Completion evidence and the resolved delivery tracker live in `.scratch/provider-runtime-manager/`.
 
 ## Context
 
@@ -10,7 +10,7 @@ Startup-only Runtime Catalog không cấp được Provider Instance vừa tạo
 
 ## Decision
 
-Áp dụng [three-phase guide](../provider-runtime-manager-three-phase-guide.md). Application-owned Provider Runtime Manager cấp runtime theo ProviderVersion từ một bounded, transaction-consistent Database Desired Configuration snapshot. SessionActor không query DB, resolve secret hoặc build model. Voice Session giữ immutable Effective Session Profile và Resource Leases; mutation chỉ ảnh hưởng admission mới. Switch explicit prepare ngoài actor rồi commit tại writer/cleanup/history boundary.
+Application-owned Provider Runtime Manager cấp runtime theo ProviderVersion từ một bounded, transaction-consistent Database Desired Configuration snapshot. SessionActor không query DB, resolve secret hoặc build model. Voice Session giữ immutable Effective Session Profile và Resource Leases; mutation chỉ ảnh hưởng admission mới. Switch explicit prepare ngoài actor rồi commit tại writer/cleanup/history boundary.
 
 ProviderVersion gồm database source namespace, Provider Instance identity và desired revision. Schema hiện tại dùng `providers.id INTEGER PRIMARY KEY AUTOINCREMENT`; Admin CRUD không nhận hay sửa id, nên delete/recreate qua supported API không tái sử dụng identity. Deployment defaults dùng source namespace khác. Restore/import hoặc explicit SQL tái sử dụng id không được thực hiện khi process owner còn chạy; nếu bổ sung supported import phải tạo instance identity mới.
 

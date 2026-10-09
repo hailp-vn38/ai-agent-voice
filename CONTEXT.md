@@ -1,614 +1,642 @@
 # voice-agent-server
 
-Voice-agent server cá nhân. Context này điều phối một Voice Session giữa một Voice Protocol Client và các provider AI.
+A personal voice-agent server. This context coordinates a Voice Session between a Voice Protocol Client and AI providers.
 
 ## Language
 
-## Quy ước cấu trúc mã nguồn
+## Source code structure conventions
 
-- Khi một file mã nguồn trở nên dài hoặc ôm nhiều trách nhiệm, phải tách thành các module theo trách nhiệm rõ ràng; giữ đường dẫn public ổn định bằng module cha và re-export khi cần.
-- Test của một module phải nằm trong file test riêng thuộc module đó, thay vì tiếp tục làm phình file implementation. Test tích hợp/public-boundary vẫn đặt ở khu vực integration test phù hợp.
+- When a source file becomes long or takes on multiple responsibilities, split it into modules with clear responsibilities; keep public paths stable through the parent module and re-exports where needed.
+- A module's tests must live in a separate test file within that module, rather than further expanding the implementation file. Integration/public-boundary tests remain in the appropriate integration test area.
 
 **Compatibility Profile**:
-Tổ hợp voice wire protocol, audio/MCP contract và provenance external reference mà server cam kết tương thích.
-_Avoid_: protocol version (khi chỉ nói đến phiên bản wire protocol), vendor-specific compatibility
+The combination of voice wire protocol, audio/MCP contracts, and external reference provenance with which the server commits to being compatible.
+_Avoid_: protocol version (when referring only to the wire protocol version), vendor-specific compatibility
 
 **Voice Protocol Client**:
-Một client phần mềm hoặc phần cứng tuân thủ voice wire protocol và Compatibility Profile. Có thể là firmware, ứng dụng Linux hoặc Rust/Python Reference Client.
+A software or hardware client that conforms to the voice wire protocol and Compatibility Profile. It may be firmware, a Linux application, or a Rust/Python Reference Client.
 _Avoid_: vendor simulator, vendor client
 
 **Reference Client**:
-Một Voice Protocol Client độc lập dùng để kiểm thử protocol conformance mà không cần phần cứng reference.
+An independent Voice Protocol Client used to test protocol conformance without reference hardware.
 _Avoid_: firmware simulator, fake hardware
 
 **Reference Integration Client**:
-Một client qualification độc lập kiểm tra public control-plane và Voice Protocol contracts theo scenario deterministic; không phải Admin CLI vận hành tổng quát.
+An independent qualification client that checks public control-plane and Voice Protocol contracts through deterministic scenarios; it is not a general-purpose operational Admin CLI.
 _Avoid_: operations console, production management CLI, server-side test harness
 
 **Qualification Provider**:
-Provider Adapter deterministic chỉ được compile vào qualification build, nhưng đi qua cùng desired-configuration, startup load plan, Runtime Catalog, diagnostic và Voice Session boundaries như production provider.
+A deterministic Provider Adapter compiled only into a qualification build, but passing through the same desired-configuration, startup load plan, Runtime Catalog, diagnostic, and Voice Session boundaries as a production provider.
 _Avoid_: injected ProviderSet, runtime fake switch, external smoke provider
 
 **Qualification Build**:
-Build của production `voice-agent-server` entrypoint với compile-time Qualification Providers; không phải default/release artifact và không thể được bật bằng runtime configuration.
+A build of the production `voice-agent-server` entrypoint with compile-time Qualification Providers; it is not the default/release artifact and cannot be enabled through runtime configuration.
 _Avoid_: deployed release binary, test-only server binary, runtime qualification mode
 
 **Integration Harness**:
-Owner của Mandatory Qualification automated: tạo môi trường tạm, spawn production binary, điều phối controlled restart và deterministic doubles, rồi chạy Reference Integration Client qua public boundary. Không rebuild `AppState` trong process để giả lập restart.
+The owner of automated Mandatory Qualification: it creates a temporary environment, spawns the production binary, coordinates controlled restarts and deterministic doubles, then runs the Reference Integration Client through the public boundary. It does not rebuild `AppState` in-process to simulate a restart.
 _Avoid_: in-process restart helper, server-side test seam, operations CLI
 
 **Process Startup Handshake**:
-Machine-readable nonce-bound artifact mà production process exclusive-create và publish atomically sau listener bind để Integration Harness khám phá đúng child/address trước khi probe Readiness.
+A machine-readable, nonce-bound artifact that the production process creates exclusively and publishes atomically after binding the listener, allowing the Integration Harness to discover the correct child/address before probing Readiness.
 _Avoid_: human-log parsing, reserved-port handoff, PID-only identity, file existence as readiness
 
 **Scenario State**:
-Artifact handoff immutable, create-new và được validate trước side effect giữa lifetime hai process của Integration Harness. Chỉ giữ public resource identity, revision, run/spec identity và runtime observation cần thiết; không giữ credential, secret reference, authorization header, prompt, result hay audio.
+An immutable handoff artifact between two process lifetimes of the Integration Harness, created with create-new semantics and validated before side effects. It retains only public resource identities, revisions, run/spec identities, and necessary runtime observations; it does not retain credentials, secret references, authorization headers, prompts, results, or audio.
 _Avoid_: resume journal, mutable provisioning cache, secret store
 
 **Scenario Plan**:
-Kế hoạch immutable được materialize và validate từ ScenarioSpec trước bất kỳ provisioning side effect nào, chứa identity run và resource graph dự kiến nhưng chưa khẳng định resource đã tồn tại.
+An immutable plan materialized and validated from ScenarioSpec before any provisioning side effect, containing the run identity and expected resource graph without yet asserting that the resources exist.
 _Avoid_: Scenario State, partial provisioning record, retry journal
 
 **Reference Client Wire Type**:
-Biểu diễn request/response public contract do Reference Integration Client sở hữu độc lập với server implementation types, để API drift trở thành failure quan sát được.
+A representation of the public request/response contract owned by the Reference Integration Client independently of server implementation types, making API drift an observable failure.
 _Avoid_: shared repository row, imported server handler DTO, server domain type
 
 **Mandatory Qualification**:
-Gate compatibility deterministic bắt buộc, chạy qua public boundary bằng provider doubles hoặc local fixtures và không phụ thuộc credential, remote service, model thật hay hardware.
+A mandatory deterministic compatibility gate that runs through the public boundary using provider doubles or local fixtures, without depending on credentials, remote services, real models, or hardware.
 _Avoid_: real-environment smoke test, optional runtime evidence
 
 **Qualification Deadline**:
-Hard upper bound của toàn Mandatory Qualification; remaining time của nó giới hạn mọi stage deadline và khi hết luôn tạo failure trước teardown.
+A hard upper bound for all of Mandatory Qualification; its remaining time limits every stage deadline, and expiry always produces a failure before teardown.
 _Avoid_: sum of stage timeouts, advisory timeout, per-request timeout
 
 **Qualification Report**:
-Artifact JSON versioned, privacy-safe và machine-readable ghi mandatory result, stage outcomes, optional evidence và cleanup mà không chứa nội dung request/response nhạy cảm.
+A versioned, privacy-safe, machine-readable JSON artifact recording the mandatory result, stage outcomes, optional evidence, and cleanup without sensitive request/response content.
 _Avoid_: raw log archive, transcript report, debug dump
 
 **Optional Runtime Evidence**:
-Bằng chứng report riêng từ provider, remote service hoặc hardware thật; trạng thái `PASS`, `FAIL` hay `NOT_RUN` không thay đổi Mandatory Qualification.
+Separately reported evidence from a real provider, remote service, or hardware; its `PASS`, `FAIL`, or `NOT_RUN` status does not change Mandatory Qualification.
 _Avoid_: completion gate, required CI evidence
 
 **Firmware Baseline**:
-Phiên bản firmware và commit đã pin dùng làm nguồn chân lý tương thích.
-_Avoid_: upstream main, firmware mới nhất
+The pinned firmware version and commit used as the compatibility source of truth.
+_Avoid_: upstream main, latest firmware
 
 **HIL Reference Profile**:
-Thiết bị và cấu hình mạng vật lý chuẩn dùng để xác nhận tương thích firmware.
+The standard physical device and network configuration used to confirm firmware compatibility.
 _Avoid_: Reference Client, simulated client
 
 **Voice Session**:
-Một kết nối WebSocket đang hoạt động, thuộc duy nhất một Device ID và mang dialogue chỉ trong RAM.
+An active WebSocket connection belonging to exactly one Device ID and holding dialogue only in RAM.
 _Avoid_: device session, persistent session
 
+**SessionActor**:
+The sole owner of mutable Voice Session state. The reader, provider workers, and writer communicate with it only through events or commands over bounded channels; they hold no mutable references to the session.
+_Avoid_: shared session state, provider-owned session, WebSocket handler state
+
+**WebSocket Writer**:
+The only task that calls WebSocket send for a Voice Session. It owns bounded outbound lanes with priority `urgent > control > audio` and arbitrates the terminal playback outcome before SessionActor commits delivery.
+_Avoid_: provider direct send, concurrent socket writer, actor-owned wire ordering
+
+**Protocol Fault Boundary**:
+The wire fault boundary distinguishes the handshake from application messages: an invalid ClientHello closes the connection before a Voice Session begins; after the handshake, malformed, unknown, or out-of-phase application messages are recorded and ignored, while a frame exceeding the transport cap always causes closure before parsing.
+_Avoid_: fail-closed every application error, custom wire-error protocol, codec buffer limit
+
 **Ready**:
-Trạng thái Voice Session còn kết nối nhưng không nhận microphone audio.
+The state in which a Voice Session remains connected but does not accept microphone audio.
 _Avoid_: Idle, Listening
 
 **Processing**:
-Trạng thái Voice Session đã endpoint một utterance và đang hoàn tất Conversational Turn; microphone audio bị drop cho tới terminal outcome.
+The state in which a Voice Session has determined an utterance endpoint and is completing the Conversational Turn; microphone audio is dropped until the terminal outcome.
 _Avoid_: Listening, queued turn
 
 **Listening Mode**:
-Ý nghĩa capture do Voice Protocol Client khai báo trong `listen:start`; V1 có Manual, Auto và Realtime là các giá trị wire riêng, không được server suy đoán hoặc đổi thay thế.
+The capture semantics declared by a Voice Protocol Client in `listen:start`; in V1, Manual, Auto, and Realtime are distinct wire values that the server must not infer or substitute.
 _Avoid_: capture option, implicit manual mode
 
 **Conversational Turn**:
-Một lượt xử lý giọng nói có thể hủy độc lập trong một Voice Session.
+An independently cancellable unit of voice processing within a Voice Session.
 _Avoid_: request, job
 
 **Turn ID**:
-Identity tăng đơn điệu, không tái sử dụng trong một Voice Session, được cấp khi utterance qua terminal boundary và được Active Turn admission chấp nhận; identity này theo lượt qua ASR finalization, LLM và speech delivery.
+A monotonically increasing identity that is never reused within a Voice Session, assigned when an utterance crosses the terminal boundary and is accepted by Active Turn admission; this identity follows the turn through ASR finalization, LLM processing, and speech delivery.
 _Avoid_: Generation ID, ASR stream identity, VAD Capture Cycle ID
 
 **Active Turn**:
-Conversational Turn đã qua utterance terminal boundary và đang giữ global capacity từ ASR finalization đến terminal state.
+A Conversational Turn that has crossed the utterance terminal boundary and holds global capacity from ASR finalization to its terminal state.
 _Avoid_: listening turn, queued turn
 
 **History-Barrier Turn**:
-Active Turn đã qua utterance terminal boundary và giữ capacity, nhưng accepted user text chưa được commit hoặc đưa vào LLM vì Conversational Turn trước chưa có terminal writer outcome.
+An Active Turn that has crossed the utterance terminal boundary and holds capacity, but whose accepted user text has not yet been committed or sent to the LLM because the preceding Conversational Turn has no terminal writer outcome yet.
 _Avoid_: queued turn, capacity-free pending turn
 
 **Active Turn Limiter**:
-Capacity domain toàn application giới hạn số Active Turn đồng thời, độc lập với capacity provider worker.
+An application-wide capacity domain limiting concurrent Active Turns independently of provider worker capacity.
 _Avoid_: ASR semaphore, provider limit
 
 **ASR Stream Lease**:
-Quyền capacity dành riêng cho một recognition stream đang mở, từ lúc bắt đầu thu cho tới khi ASR final, cancel hoặc lỗi.
+Capacity reserved for an open recognition stream, from the start of capture until ASR finalization, cancellation, or error.
 _Avoid_: Active Turn, ASR queue slot
 
 **ASR Stream Identity**:
-Identity của một recognition stream, có thể tồn tại trước Turn ID; ASR final sau utterance terminal boundary được liên kết với Turn ID của lượt đã nhận stream đó.
+The identity of a recognition stream, which may exist before a Turn ID; ASR finalization after the utterance terminal boundary is associated with the Turn ID of the turn that accepted that stream.
 _Avoid_: Turn ID, ASR Stream Lease
 
 **Semantic ASR Ownership**:
-Quyền duy nhất để ASR event tạo accepted user text; quyền này bị revoke ngay khi Detect được accept, độc lập với physical worker cleanup.
+The exclusive right for ASR events to produce accepted user text; this right is revoked as soon as Detect is accepted, independently of physical worker cleanup.
 _Avoid_: ASR Stream Lease, cleanup acknowledgement
 
 **ASR Cleanup Obligation**:
-Identity cleanup-only của ASR stream đã detach semantic ownership nhưng worker chưa xác nhận terminal. Mọi cleanup timeout của obligation vẫn fail closed Voice Session, kể cả qua generation mới.
+The cleanup-only identity of an ASR stream whose semantic ownership has been detached but whose worker has not yet acknowledged termination. Any cleanup timeout for this obligation still fails the Voice Session closed, even across a new generation.
 _Avoid_: active ASR stream, stale event ignored
 
 **Inbound Session-Scoped Command**:
-Listen hoặc Abort mang `session_id` optional trong V1. Field missing/rỗng được compatibility accept; string non-empty phải khớp Voice Session, còn field present sai JSON type là Unknown.
+Listen or Abort carrying an optional `session_id` in V1. A missing/empty field is accepted for compatibility; a non-empty string must match the Voice Session, while a present field with the wrong JSON type is Unknown.
 _Avoid_: authentication credential, mandatory V1 session ID
 
 **Inference Worker Runtime**:
-Nhóm worker bounded thuộc application, mỗi worker sở hữu mutable provider stream/session và chỉ trao đổi command/event mang identity; không sở hữu Voice Session state hay WebSocket.
+An application-owned bounded group of workers, each owning a mutable provider stream/session and exchanging only commands/events carrying identities; it owns neither Voice Session state nor the WebSocket.
 _Avoid_: provider pool, background task, SessionActor worker
 
 **VAD Probability**:
-Kết quả inference Silero cho đúng một khoảng PCM liên tục của Auto cycle, gồm xác suất speech và sample cursor `[start_sample, end_sample)`; đây chưa phải ranh giới utterance.
+A Silero inference result for exactly one continuous PCM interval of an Auto cycle, containing speech probability and the sample cursor `[start_sample, end_sample)`; it is not yet an utterance boundary.
 _Avoid_: SpeechStart, SpeechEnd, speech decision
 
 **VAD Stream Integrity Failure**:
-Lỗi khi một Auto cycle nhận VAD Probability có gap, duplicate, thứ tự sai hoặc sample range không hợp lệ; Voice Session bị ảnh hưởng fail closed vì endpoint không còn đáng tin.
+A failure when an Auto cycle receives a VAD Probability with a gap, duplicate, incorrect order, or invalid sample range; the affected Voice Session fails closed because endpointing is no longer reliable.
 _Avoid_: dropped VAD frame, recoverable VAD delay
 
 **Worker Cleanup Acknowledgement**:
-Event xác nhận worker đã kết thúc hoặc reset mutable runtime của một lease, là điều kiện duy nhất để slot trở lại reusable; vẫn được xử lý khi generation logic đã stale.
+An event confirming that a worker has terminated or reset a lease's mutable runtime, the sole condition for its slot to become reusable; it is still processed when the generation logic is stale.
 _Avoid_: cancel requested, Drop, logical cancellation
 
 **Acoustic Barge-in**:
-Interruption của một assistant turn đang `Speaking`, chỉ do `SpeechStart` từ VAD của microphone uplink đã được client AEC/echo-suppressed khai báo và server tin cậy cho phép. Nó snapshot PCM giữ lại trước, rồi invalidate turn cũ, gửi đúng một urgent `tts:stop` nếu playback đã bắt đầu, và mở ASR cho turn mới.
+Interruption of an assistant turn in `Speaking`, triggered only by `SpeechStart` from VAD on microphone uplink declared by the client to be AEC/echo-suppressed and permitted by server trust policy. It first snapshots retained PCM, then invalidates the old turn, sends exactly one urgent `tts:stop` if playback has started, and opens ASR for the new turn.
 _Avoid_: server-side AEC, any microphone packet, explicit abort
 
 **VAD Capture Cycle**:
-Chu kỳ semantic có identity riêng của VAD gồm timeline PCM, segmenter và retention; khác lifetime của VAD worker lease và khác Conversational Turn. Event semantic chỉ hợp lệ cho cycle hiện hành; cleanup acknowledgement vẫn xử lý khi cycle đã stale.
+A VAD semantic cycle with its own identity, comprising the PCM timeline, segmenter, and retention; it differs from both the VAD worker lease lifetime and a Conversational Turn. Semantic events are valid only for the current cycle; cleanup acknowledgements are still processed when the cycle is stale.
 _Avoid_: VAD worker identity, turn generation, reset requested
 
 **Generation ID**:
-Epoch dùng để vô hiệu hóa output khi một lượt bị hủy hoặc ngắt; nhiều Conversational Turn hoàn tất bình thường có thể cùng Generation ID.
+An epoch used to invalidate output when a turn is cancelled or interrupted; multiple normally completed Conversational Turns may share a Generation ID.
 _Avoid_: Turn ID, operation identity
 
 **Echo-safe Client Assertion**:
-`features.aec=true` trong ClientHello là assertion client uplink đã echo-suppressed, không phải bằng chứng server-side AEC. Nó chỉ cho Acoustic Barge-in khi cả `barge_in.enabled` lẫn `barge_in.trust_client_aec_feature` được bật.
+`features.aec=true` in ClientHello asserts that the client uplink is echo-suppressed; it is not evidence of server-side AEC. It permits Acoustic Barge-in only when both `barge_in.enabled` and `barge_in.trust_client_aec_feature` are enabled.
 _Avoid_: verified server AEC, capability unconditionally trusted
 
 **Dialogue History**:
-Lịch sử Exchange Atom trong RAM thuộc một Voice Session; user message được commit sau ASR final non-empty. Số message là eviction target, còn request có hard byte bound riêng.
+The in-RAM history of Exchange Atoms belonging to a Voice Session; user messages are committed after a non-empty ASR final result. Message count is an eviction target, while requests have a separate hard byte bound.
 _Avoid_: persistent memory, transcript log
 
 **Agent Persona**:
-Cấu hình deployment định hình tên, vai trò và phong cách của trợ lý trong Voice Session; không chứa credential hay trạng thái provider.
+Deployment configuration shaping the assistant's name, role, and style within a Voice Session; it contains neither credentials nor provider state.
 _Avoid_: OpenAI prompt, provider prompt, model personality
 
 **Prompt Template**:
-Khuôn mẫu do deployment quản lý để kết hợp Agent Persona với quy tắc hội thoại giọng nói thành system message cho mỗi LLM Operation.
-_Avoid_: provider request template, Dialogue History
+A strict, single-pass deployment template that combines Agent Persona with voice conversation rules into an immutable base System Prompt at admission; it accepts only `agent_name`, `persona`, `language`, and the optional `speakers_info` slot.
+_Avoid_: provider request template, general-purpose template engine, Dialogue History
+
+**Turn System Prompt**:
+A single System message composed from the base System Prompt snapshot and the verified Speaker Context of the specific Conversational Turn, after the ASR/Speaker join and before the first LLM round. Tool continuation reuses this exact snapshot; speaker metadata enters neither Dialogue History nor the base profile.
+_Avoid_: per-round prompt rebuild, mutable session prompt, persisted speaker profile
 
 **Prompt/LLM Base Snapshot**:
-Tập message bất biến của một Conversational Turn gồm system snapshot, các Exchange Atom đã commit trước turn và current User đã commit; tool continuation chỉ nối completed tool prefix vào tập này.
-_Avoid_: per-round history rebuild, mutable provider prompt
+The immutable message set of a Conversational Turn, comprising the Turn System Prompt, Exchange Atoms committed before the turn, and the committed current User; tool continuation only appends the completed tool prefix to this set.
+_Avoid_: per-round prompt rebuild, mutable provider prompt
 
 **Provider Asset Declaration**:
-Module `assets.rs` cạnh một local provider khai báo authoritative URL upstream đã pin, revision, relative install path của từng file model, danh sách voice, và phép chuyển đổi riêng của provider nếu upstream format cần nó. Không có tài liệu manifest trung tâm; provider tự là nguồn.
+The `assets.rs` module beside a local provider declares the authoritative pinned upstream URL, revision, relative install path of each model file, voice list, and provider-specific conversion if the upstream format requires it. There is no central manifest document; the provider itself is the source.
 _Avoid_: model manifest, artifact registry, database asset row
 
 **Provider Asset Manager**:
-Phần của Provider Adapter Registration chịu trách nhiệm làm cho file model của provider tồn tại. Provider Runtime Manager gọi `ensure_assets()` khi materialize provider; Provider Factory sau đó resolve path và build, không tải thêm.
+The part of Provider Adapter Registration responsible for ensuring that the provider's model files exist. Provider Runtime Manager calls `ensure_assets()` when materializing a provider; Provider Factory then resolves paths and builds without further downloads.
 _Avoid_: provider download, startup model scan, asset framework
 
 **Provider Asset**:
-Một file model mà provider cần, khai báo trong Provider Asset Declaration. Sẵn sàng khi nó là regular file và có kích thước lớn hơn 0 — không checksum, không fingerprint, không parse ONNX. Model có nạp được hay không do runtime initialization xác nhận.
+A model file required by a provider and declared in its Provider Asset Declaration. It is ready when it is a regular file with a size greater than 0 — no checksum, fingerprint, or ONNX parsing. Runtime initialization confirms whether the model can be loaded.
 _Avoid_: verified artifact, immutable install, content-addressed copy
 
 **Provider Asset Download**:
-Một lần tải asset ghi vào `<target>.part`, kiểm kích thước khác 0, rồi atomic rename vào final path; mỗi asset giữ một striped lock nên hai request materializing cùng provider không tải trùng file. File final không bao giờ tồn tại ở trạng thái dở dang, và một lần thất bại để lại gì để retry sạch.
+An asset download writes to `<target>.part`, checks for non-zero size, then atomically renames to the final path; each asset holds a striped lock so two requests materializing the same provider do not download the same file twice. The final file never exists in a partial state, and a failed attempt leaves nothing behind, allowing a clean retry.
 _Avoid_: partial final file, unlocked concurrent download
 
 **Typed Provider Configuration**:
-Cấu hình selection adapter bằng `[providers.<kind>].adapter` và cấu hình concrete dưới bảng cùng tên adapter; startup chỉ chấp nhận bảng khớp adapter được compile vào binary.
+Configuration selecting an adapter through `[providers.<kind>].adapter` and placing concrete configuration under a table with the adapter's name; startup accepts only a table matching an adapter compiled into the binary.
 _Avoid_: adapter_config table, compatibility parser, runtime provider discovery
 
 **Worker Runtime Configuration**:
-Cấu hình `[workers.vad]`, `[workers.asr]` hoặc `[workers.tts]` điều khiển capacity, mailbox, timeout, cleanup và quarantine của Inference Worker Runtime; không chứa model hoặc inference option.
+Configuration under `[workers.vad]`, `[workers.asr]`, or `[workers.tts]` controlling capacity, mailboxes, timeouts, cleanup, and quarantine of the Inference Worker Runtime; it contains no model or inference options.
 _Avoid_: provider config, model option, adapter setting
 
 **Unexpected Tool Call**:
-Tool call mà LLM phát trong một round không được cấp tool definitions; đây là terminal failure của generation, không phải Device MCP request.
+A tool call emitted by the LLM in a round that was not supplied with tool definitions; it is a terminal generation failure, not a Device MCP request.
 _Avoid_: implicit tool request, unsupported tool fallback
 
 **Speech Segment**:
-Đơn vị text speakable, được Sentence Segmenter tách từ Generated Assistant Response theo delivery policy và submit nguyên tử vào SpeechOutput.
+A unit of speakable text extracted by Sentence Segmenter from the Generated Assistant Response according to delivery policy and submitted atomically to SpeechOutput.
 _Avoid_: token, full response, TTS chunk
 
 **TTS Plain Text**:
-Bản text riêng của Speech Segment được đưa vào TTS: chỉ gồm ký tự chữ hoặc số Unicode, dấu chấm và dấu phẩy; mỗi dãy ký tự khác được thay bằng tối đa một khoảng trắng ASCII. Bản hiển thị trong WS không bị thay đổi bởi quy tắc này.
+The separate text representation of a Speech Segment sent to TTS: it contains only Unicode letters or numbers, periods, and commas; each run of other characters is replaced with at most one ASCII space. A segment with no remaining letters/numbers is not sent to TTS. This rule does not change the text displayed over WS.
 _Avoid_: display text, formatted text, provider-normalized text
 
 **LLM Operation**:
-Một streaming request theo đúng Voice Session và generation, giữ một global LLM permit từ lúc runtime accept tới terminal event; không phải persistent provider session.
+A streaming request scoped to a specific Voice Session and generation, holding a global LLM permit from runtime acceptance until the terminal event; it is not a persistent provider session.
 _Avoid_: LLM worker session, global chat, provider connection
 
 **Speech Output Backpressure**:
-Trạng thái tạm dừng đọc LLM delta khi hard-bounded pending Speech Segment queue hết capacity; actor giữ tối đa một delta đang xử lý dở và tiếp tục sau khi TTS lấy bớt segment. Buffer câu chưa kết thúc vượt ngưỡng khẩn cấp vẫn là terminal failure; không được bỏ hoặc overwrite segment.
+The state in which reading LLM deltas pauses when the pending Speech Segment queue reaches its hard capacity bound; the actor retains at most one partially processed delta and resumes after TTS consumes segments. An unfinished sentence buffer exceeding the emergency threshold remains a terminal failure; segments must not be dropped or overwritten.
 _Avoid_: skipped sentence, best-effort speech queue
 
 **Provider Adapter**:
-Implementation compile-time của một provider trait, được chọn bằng typed provider configuration khi materialize runtime. Legacy deployment mode chọn adapter tại startup; managed runtime mode có thể materialize adapter tại acquisition. Adapter không biết Voice Session, WebSocket hoặc worker runtime.
+A compile-time implementation of a provider trait, selected by typed provider configuration when materializing a runtime. Legacy deployment mode selects the adapter at startup; managed runtime mode may materialize the adapter at acquisition. The adapter has no knowledge of Voice Sessions, WebSockets, or worker runtimes.
 _Avoid_: dynamic plugin, provider platform, service locator
 
 **Provider Instance**:
-Một cấu hình có ID ổn định của đúng một Provider Adapter; ID là giá trị agent bind, còn adapter chỉ định implementation.
+A configuration with a stable ID for exactly one Provider Adapter; the ID is the value bound by an agent, while the adapter specifies the implementation.
 _Avoid_: adapter name, active provider
 
 **Provider Catalog**:
-Tập read-only các Provider Instance đã materialize, được index theo Provider Instance ID và không thuộc Voice Session. Legacy deployment mode build catalog tại startup; managed runtime mode giữ catalog deployment rỗng và resolve exact Provider Version qua Provider Runtime Manager.
+The read-only set of materialized Provider Instances, indexed by Provider Instance ID and independent of Voice Sessions. Legacy deployment mode builds the catalog at startup; managed runtime mode keeps the deployment catalog empty and resolves the exact Provider Version through Provider Runtime Manager.
 _Avoid_: adapter registry, session provider map
 
 **Effective Provider Bindings**:
-Tập Provider Instance ID hoàn chỉnh sau khi materialize provider defaults và agent override tại Config boundary.
+The complete set of Provider Instance IDs after materializing provider defaults and agent overrides at the Config boundary.
 _Avoid_: runtime fallback, adapter binding
 
 **Runtime Catalog**:
-Tập read-only Inference Worker Runtime theo Provider Instance ID; nó resolve Effective Provider Bindings thành runtime snapshot trước khi tạo Voice Session.
+The read-only set of Inference Worker Runtimes indexed by Provider Instance ID; it resolves Effective Provider Bindings into a runtime snapshot before creating a Voice Session.
 _Avoid_: SessionActor provider lookup, runtime plugin registry
 
 **Runtime Snapshot**:
-Các runtime concrete được resolve một lần cho Voice Session, giữ ổn định trong connection đó.
+The concrete runtimes resolved once for a Voice Session and kept stable throughout that connection.
 _Avoid_: hot-switched segment runtime, catalog-aware SessionActor
 
 **Provider Benchmark**:
-Developer CLI chạy cùng fixed, versioned TTS workload, selected Typed Provider Configuration và run policy ở hai mode để đo initialization và steady-state processing trên hardware hiện tại. Nó tách Provider Asset Download và provider build/startup readiness (cold) khỏi workload warmup và measured run (steady); warmup không thuộc samples. Không sở hữu Voice Session, WebSocket hoặc pacing. Mode `provider` kết thúc ở PCM provider-facing; mode `delivery` dùng cùng PCM stream và cùng deterministic canonical downlink conversion với production, gồm fade, resample, framing, Opus encode và tail finalization, kết thúc ở canonical Opus packet cuối cùng sẵn sàng gửi. Mặc định chỉ in stdout; artifact JSON là opt-in, không chứa benchmark text, audio, filesystem path, secret hoặc deployment endpoint. Không còn phân biệt model đã verify với model đã tải, vì đó giờ là một khái niệm.
+A developer CLI that runs the same fixed, versioned TTS workload, selected Typed Provider Configuration, and run policy in two modes to measure initialization and steady-state processing on the current hardware. It separates Provider Asset Download and provider build/startup readiness (cold) from workload warmup and measured runs (steady); warmup is excluded from samples. It owns neither Voice Sessions, WebSockets, nor pacing. Mode `provider` ends at provider-facing PCM; mode `delivery` uses the same PCM stream and the same deterministic canonical downlink conversion as production, including fade, resampling, framing, Opus encoding, and tail finalization, ending at the last canonical Opus packet ready to send. By default it prints only to stdout; the JSON artifact is opt-in and contains no benchmark text, audio, filesystem paths, secrets, or deployment endpoints. It no longer distinguishes verified models from downloaded models, as these are now one concept.
 _Avoid_: correctness test, end-to-end latency benchmark, playback benchmark
 
 **Provider Factory**:
-Factory compile-time build một Provider Adapter từ typed provider configuration và, khi cần, Resolved Model; không tự acquire model hoặc biết Voice Session.
+A compile-time factory that builds a Provider Adapter from typed provider configuration and, when needed, a Resolved Model; it neither acquires models itself nor knows about Voice Sessions.
 _Avoid_: provider downloader, runtime plugin factory
 
 **Provider Registry**:
-Tập Provider Factory được compile vào binary, lookup khi startup theo typed adapter selection và chỉ thay đổi khi build/restart; không discovery hay load code lúc runtime.
+The set of Provider Factories compiled into the binary, looked up at startup through typed adapter selection and changed only by a build/restart; it neither discovers nor loads code at runtime.
 _Avoid_: dynamic plugin registry, service locator
 
 **Logical Model Identity**:
-Khoá model do typed provider configuration chọn, dùng để chọn đúng Provider Asset Declaration của adapter; nó không phải filesystem path hay tên thư mục, và không định nghĩa nội dung file.
+The model key selected by typed provider configuration, used to select the adapter's correct Provider Asset Declaration; it is neither a filesystem path nor a directory name, and does not define file contents.
 _Avoid_: model directory, latest model, adapter name
 
 **Model License**:
-License của một model, khai báo cùng Provider Asset Declaration. ZeroTTS bundle codec Apache-2.0 nên dùng composite `MIT; bundled-codec=Apache-2.0`. License không phải config: một deployment không acknowledge hay override nó.
+A model's license, declared alongside its Provider Asset Declaration. ZeroTTS bundles an Apache-2.0 codec, so it uses the composite `MIT; bundled-codec=Apache-2.0`. The license is not configuration: a deployment neither acknowledges nor overrides it.
 _Avoid_: license acknowledgement config, per-deployment license gate
 
 **Phase Completion Gate**:
-Gate bắt buộc để một phase được đánh dấu hoàn tất. Gate phải dùng boundary thực của phase; với Phase 3 là real-model Voice Protocol E2E Manual và Auto qua canonical Opus tới exactly one STT, còn Phase 6 là Reference Client MCP E2E qua WebSocket và SessionActor. Cả hai tách biệt implementation gate dùng fake provider.
-_Avoid_: ignored smoke test, compile success, hardware dependency không thuộc Compatibility Profile
+A mandatory gate for marking a phase complete. The gate must use the phase's real boundary; for Phase 3 this is real-model Voice Protocol E2E in Manual and Auto through canonical Opus to exactly one STT, while for Phase 6 it is Reference Client MCP E2E through WebSocket and SessionActor. Both are separate from the implementation gate using fake providers.
+_Avoid_: ignored smoke test, compile success, hardware dependency outside the Compatibility Profile
 
 **Canonical Audio Profile**:
-Wire-audio profile cố định của Compatibility Profile: uplink Opus 16 kHz mono 60 ms và downlink Opus 24 kHz mono 60 ms.
+The Compatibility Profile's fixed wire-audio profile: uplink Opus 16 kHz mono 60 ms and downlink Opus 24 kHz mono 60 ms.
 _Avoid_: negotiated audio params, supported audio formats
 
 **Uplink PCM Frame**:
-Một khung PCM16 mono 16 kHz, đúng 960 samples, đã được giải mã từ đúng một Opus uplink packet trước khi được đưa vào một bộ thu audio.
+A PCM16 mono 16 kHz frame of exactly 960 samples, decoded from exactly one Opus uplink packet before being passed to an audio capture component.
 _Avoid_: PCM Frame, audio bytes, sample chunk
 
 **Downlink PCM Frame**:
-Một khung PCM16 mono 24 kHz, đúng 1.440 samples, sẵn sàng để encode thành đúng một Opus downlink packet.
+A PCM16 mono 24 kHz frame of exactly 1,440 samples, ready to be encoded into exactly one Opus downlink packet.
 _Avoid_: PCM Frame, output chunk
 
 **Uplink Audio Utterance**:
-PCM16 mono 16 kHz canonical hoàn chỉnh của một lượt thu âm, chỉ được tạo khi một bộ thu kết thúc thành công.
+The complete canonical PCM16 mono 16 kHz audio of a capture, created only when an audio capture component completes successfully.
 _Avoid_: Audio Utterance, PCM buffer, partial capture
 
 **Manual Capture**:
-Bộ thu audio theo listen mode manual, sở hữu PCM và capacity của một lượt thu, rồi trả Uplink Audio Utterance hoặc outcome không có audio.
+An audio capture component for manual listen mode that owns a capture's PCM and capacity, then returns an Uplink Audio Utterance or an outcome without audio.
 _Avoid_: actor buffer, manual listen buffer
 
 **Uplink Audio Stream**:
-Chuỗi Opus microphone liên tục trong suốt một Voice Session; ranh giới Conversational Turn hoặc Manual Capture không tạo stream mới.
+The continuous stream of microphone Opus throughout a Voice Session; Conversational Turn or Manual Capture boundaries do not create a new stream.
 _Avoid_: capture stream, turn stream
 
 **Capture Outcome**:
-Kết quả có kiểu của việc dừng một Manual Capture: Uplink Audio Utterance, empty hoặc overflowed.
+The typed result of stopping a Manual Capture: Uplink Audio Utterance, empty, or overflowed.
 _Avoid_: optional audio, capture status flag
 
 **Trace Session ID**:
-UUID ngẫu nhiên chỉ dùng để tương quan telemetry của một Voice Session mà không ghi Device ID hay Client ID.
+A random UUID used only to correlate telemetry for a Voice Session without recording Device ID or Client ID.
 _Avoid_: device identifier, client identifier
 
 **Discovered Tool**:
-Tool mà thiết bị công bố qua MCP, chưa mặc nhiên được phép cho mô hình ngôn ngữ dùng.
+A tool advertised by a device through MCP, without implicit permission for a language model to use it.
 _Avoid_: permitted tool
 
 **LLM-visible Tool**:
-Discovered Tool đã qua policy server và được phép đưa vào schema của mô hình ngôn ngữ.
+A Discovered Tool that has passed server policy and is permitted in the language model's schema.
 _Avoid_: discovered tool, authorized tool
 
 **Device MCP Server**:
-Capability MCP do một Voice Protocol Client sở hữu, công bố tool qua `initialize` và `tools/list`, rồi thực thi `tools/call` trong phạm vi state của chính client.
+An MCP capability owned by a Voice Protocol Client, advertising tools through `initialize` and `tools/list`, then executing `tools/call` within the client's own state.
 _Avoid_: server-side MCP plugin, ESP32-only capability, global tool registry
 
 **Reference Client MCP Gate**:
-Phase Completion Gate của Device MCP: Reference Client vừa dùng WebSocket voice protocol thật vừa làm Device MCP Server deterministic, thực thi tối thiểu một tool stateful và chứng minh tool result đi qua LLM continuation tới final TTS lifecycle.
+The Phase Completion Gate for Device MCP: the Reference Client both uses the real WebSocket voice protocol and acts as a deterministic Device MCP Server, executing at least one stateful tool and proving that its tool result passes through LLM continuation to the final TTS lifecycle.
 _Avoid_: mocked actor response, ESP32 HIL requirement, fixed firmware tool catalog
 
 **Generated Assistant Response**:
-Nội dung assistant đã được LLM tạo cho Conversational Turn nhưng chưa chắc đã được người dùng nghe hết.
+Assistant content generated by the LLM for a Conversational Turn, which the user may not have heard in full.
 _Avoid_: delivered response, dialogue assistant message
 
 **Delivered Assistant Response**:
-Generated Assistant Response chỉ trở thành một phần dialogue khi WebSocket writer đã gửi thành công toàn bộ audio của lượt và normal `tts:stop` theo đúng thứ tự; không hàm ý client đã phát xong.
+A Generated Assistant Response becomes part of the dialogue only when the WebSocket writer has successfully sent all audio for the turn and the normal `tts:stop` in the correct order; this does not imply that client playback has completed.
 _Avoid_: partial response, cancelled response, client playback complete
 
 **Persistent Transcript**:
-Bản ghi tùy chọn, có retention, của final user text và Delivered Assistant Response theo một Voice Session; không phải Dialogue History trong RAM và mặc định tắt.
+An optional record, subject to retention, of final user text and Delivered Assistant Responses for a Voice Session; it is not the in-RAM Dialogue History and is disabled by default.
 _Avoid_: dialogue history, full conversation log, audio archive
 
 **Database-backed Device Admission**:
-Chính sách bắt buộc tại WebSocket boundary: mọi Voice Protocol Client phải resolve Device đã provision trong SQLite. Database là startup dependency luôn có; không có cờ tắt Device admission hoặc đường WS bỏ qua database.
+Mandatory policy at the WebSocket boundary: every Voice Protocol Client must resolve to a Device provisioned in SQLite. The database is an unconditional startup dependency; there is no flag to disable Device admission or WS path bypassing the database.
 _Avoid_: implicit device registration, migration-based admission
 
 **Database Desired Configuration**:
-Cấu hình persistent mà admin đã yêu cầu cho provider/template, có thể chưa có hiệu lực trong process đang chạy.
+Persistent configuration requested by an admin for providers/templates, which may not yet be effective in the running process.
 _Avoid_: loaded runtime, active runtime configuration
 
 **Loaded Runtime**:
-Backing resource đã hoàn tất validation, native readiness và warmup. Provider Runtime Manager giữ resource theo generation và RAM budget; lease giữ resource usable cho admitted snapshot. Legacy deployment mode vẫn dùng process-lifetime Runtime Catalog.
+A backing resource that has completed validation, native readiness, and warmup. Provider Runtime Manager retains the resource according to generation and RAM budgets; leases keep it usable for admitted snapshots. Legacy deployment mode still uses a process-lifetime Runtime Catalog.
 _Avoid_: database desired configuration, hot-reloaded provider
 
 **Effective Session Profile**:
-Snapshot immutable của Device, Agent, Template tùy chọn, Provider bindings, prompt/language và MCP bindings được resolve trước khi Voice Session bắt đầu.
+An immutable snapshot of Device, Agent, optional Template, Provider bindings, prompt/language, and MCP bindings resolved before a Voice Session begins.
 _Avoid_: per-frame database lookup, mutable agent configuration
 
 **Template Switch Catalog**:
-Tập immutable các configured Template Profile enabled, hợp lệ và exact desired provider snapshots khi admit. Chỉ selected profile được acquire trước upgrade; switch prepare acquire cold candidate ngoài actor rồi commit sau writer/history/native cleanup barrier. Legacy injected catalog có thể chứa resolved profiles.
+The immutable set of configured Template Profiles that are enabled and valid, together with exact desired provider snapshots at admission. Only the selected profile is acquired before upgrade; switch preparation acquires a cold candidate outside the actor, then commits after the writer/history/native cleanup barrier. A legacy injected catalog may contain resolved profiles.
 _Avoid_: live template query, pending restart candidate, mutable assignment list
 
 **Session Profile Revision**:
-Counter lifecycle chỉ trong một Voice Session, tăng khi một Template Switch thành công được apply tại normal turn boundary.
+A lifecycle counter local to a Voice Session, incremented when a successful Template Switch is applied at a normal turn boundary.
 _Avoid_: template revision, provider revision, database row version
 
 **External MCP Binding**:
-Liên kết của Agent với một MCP Streamable HTTP server, cung cấp snapshot tool LLM-visible tách khỏi Device MCP Server.
+An Agent's binding to an MCP Streamable HTTP server, providing a snapshot of LLM-visible tools separate from the Device MCP Server.
 _Avoid_: Device MCP Server, global tool registry, verified stale tool cache
 
 **External MCP Protocol Engine**:
-Thành phần thực thi protocol lifecycle và message transport cho một External MCP client, tách khỏi Database Desired Configuration, outbound security policy và Voice Session lifecycle.
+The component implementing protocol lifecycle and message transport for an External MCP client, separate from Database Desired Configuration, outbound security policy, and Voice Session lifecycle.
 _Avoid_: database repository, arbitrary HTTP client, SessionActor configuration source
 
 **Tool Origin**:
-Định danh có kiểu của capability tool trước khi route execution, phân biệt Device MCP original name với External MCP server key và original name.
+The typed identity of a tool capability before routing execution, distinguishing a Device MCP original name from an External MCP server key and original name.
 _Avoid_: LLM-visible name as authority, bind-order routing
 
 **External Tool Segment**:
-Một server key hoặc original MCP tool name được normalize độc lập, bounded và deterministic để tạo LLM-visible External MCP tool name.
+A server key or original MCP tool name normalized independently, with bounded and deterministic rules, to construct an LLM-visible External MCP tool name.
 _Avoid_: vendor hierarchy inference, hash collision suffix, truncated name
 
 **Expected Revision**:
-Revision immutable mà Admin API client trình bày để conditional mutate một Database Desired Configuration.
+The immutable revision presented by an Admin API client to conditionally mutate a Database Desired Configuration.
 _Avoid_: last write wins, Session Profile Revision, database migration version
 
 **Resource Credential**:
-Secret dùng để xác thực với dịch vụ bên ngoài của một Provider Instance hoặc External MCP Server, được quản lý cùng resource đó.
-_Avoid_: provider configuration, arbitrary MCP header, shared Admin token
+A secret used by a Provider Instance or External MCP Server to authenticate with an external service. Admin API accepts only a write-only value; managed snapshots are encrypted and persisted with the resource, while the deployment environment is a fallback when the resource has no managed snapshot.
+_Avoid_: provider configuration, arbitrary MCP header, shared Admin token, readable Admin field
 
 **Secret Reference**:
-Identifier opaque của nguồn credential hoặc snapshot credential mã hóa dùng bởi Provider hoặc External MCP; không phải Secret Value và không được đọc lại qua Admin API.
+An opaque identifier for a credential source or encrypted credential snapshot used by a Provider or External MCP; it is not a Secret Value and cannot be read back through Admin API.
 _Avoid_: API key field, resolver-specific syntax, trim/normalization, secret value
 
 **Secret Resolver**:
-Interface biến Secret Reference thành Secret Value tại runtime; callers không sở hữu cách bảo vệ hoặc lưu credential.
+An interface resolving a Secret Reference into a Secret Value at runtime; callers do not own how credentials are protected or stored.
 _Avoid_: repository reads environment directly, SQLite plaintext secret storage, Admin API resolution endpoint
 
 **Secret Value**:
-Wrapper runtime chỉ expose credential cho request/provider construction và redacts `Debug` output.
+A runtime wrapper that exposes credentials only for request/provider construction and redacts `Debug` output.
 _Avoid_: ordinary debug string, clone/display implementation, telemetry label, persisted configuration
 
 **Secret Rotation Snapshot**:
-Credential lifecycle snapshot: backing Provider Runtime giữ resolved secret trong resource lifetime; admitted session giữ resource lease, External MCP Client giữ secret đến disconnect. Resolver hiện chưa cung cấp credential generation nên remote/authenticated resources không share giữa desired versions; không silently rotate secret của resource đang dùng.
+A credential lifecycle snapshot: the backing Provider Runtime retains the resolved secret for the resource lifetime; an admitted session holds a resource lease, and an External MCP Client retains the secret until disconnect. The resolver currently provides no credential generation, so remote/authenticated resources are not shared across desired versions; the secret of a resource in use is not silently rotated.
 _Avoid_: per-request secret resolution, silent credential replacement, runtime failure refresh
 
 **Credential-free Provider Config**:
-Canonical serialization của typed adapter configuration không chứa credential; credential Provider chỉ qua Secret Reference và Secret Resolver.
+Canonical serialization of typed adapter configuration without credentials; Provider credentials flow only through Secret Reference and Secret Resolver.
 _Avoid_: arbitrary JSON bag, adapter-owned api key field, plaintext header/options escape hatch
 
 **Provider Config Shape**:
-Resource-abuse boundary chung của Provider config: raw UTF-8 bytes, JSON depth và aggregate object-key/array-item nodes trước typed validation.
+The shared resource-abuse boundary for Provider config: raw UTF-8 bytes, JSON depth, and aggregate object-key/array-item nodes before typed validation.
 _Avoid_: deep JSON allocation, separate Admin/startup validity rules, semantic adapter limits
 
 **Forward-only Schema Migration**:
-SQLx migration history monotonic mà binary chỉ được migrate tiến; binary cũ gặp schema mới hơn phải fail trước listener.
+Monotonic SQLx migration history in which a binary may migrate only forward; an older binary encountering a newer schema must fail before the listener starts.
 _Avoid_: automatic downgrade, unknown-schema best effort, application-owned backup restore
 
 **SQLite Lock Contention**:
-Lock SQLite còn tồn tại sau busy timeout, tách khỏi SQLx pool exhaustion và storage unavailable; không được retry ở application layer.
+A SQLite lock persisting beyond the busy timeout, distinct from SQLx pool exhaustion and unavailable storage; it must not be retried at the application layer.
 _Avoid_: pool timeout named busy, transaction retry, SessionActor database wait
 
 **Admin JSON Transport Boundary**:
-Shared pre-deserialization protection của Admin mutation body: content encoding/type và raw size limit, trước domain validation.
+Shared pre-deserialization protection for Admin mutation bodies: content encoding/type and raw size limits, before domain validation.
 _Avoid_: handler-local body checks, decompression bypass, parser error/body logging
 
 **Single-owner SQLite Deployment**:
-Một Voice Agent process duy nhất sở hữu local SQLite database path trong V1.
+Exactly one Voice Agent process owns the local SQLite database path in V1.
 _Avoid_: active-active writer, NFS/SMB database, implicit migration leader election
 
 **Patch Field Intent**:
-Ý định update typed phân biệt field vắng mặt, set value và clear explicit, trước domain validation.
+Typed update intent distinguishing an absent field, setting a value, and explicit clearing before domain validation.
 _Avoid_: JSON Merge Patch, nested Option ambiguity, null clears immutable field
 
 **Readiness**:
-Khả năng process nhận connection mới bằng các dependency application-owned, tách process liveness và không probe External MCP optional.
+The process's ability to accept new connections using application-owned dependencies, separate from process liveness and without probing optional External MCP.
 _Avoid_: full admission probe, per-device resolution, optional MCP availability gate
 
 **Admission Gate**:
-Một gate application-owned duy nhất quyết định công việc mới có được bắt đầu hay không: listener mới, DB admission mới và Tool-round work mới. Shutdown đóng nó một lần trước khi drain, và không SessionActor nào phải quan sát shutdown trước khi nó đóng.
-_Avoid_: per-session shutdown flag, cancel token thay gate, admission check lặp lại ở từng component
+The single application-owned gate deciding whether new work may begin: new listeners, new DB admissions, and new Tool-round work. Shutdown closes it once before draining, and no SessionActor needs to observe shutdown before it closes.
+_Avoid_: per-session shutdown flag, cancel token replacing the gate, repeated admission checks in each component
 
 **Session Drain Registry**:
-Registry application-owned của các Voice Session đã nhận và chưa xong, mỗi entry giữ một completion handle đăng ký trước khi connection bắt đầu làm việc, để shutdown quan sát drain completion và phát controlled close cho đúng những session còn mở tại deadline.
-_Avoid_: task abort, broadcast không đếm, đếm session theo ước lượng
+An application-owned registry of accepted, unfinished Voice Sessions, each entry holding a completion handle registered before the connection starts work, allowing shutdown to observe drain completion and issue Controlled Close to exactly those sessions still open at the deadline.
+_Avoid_: task abort, uncounted broadcast, estimated session count
 
 **Controlled Close**:
-Close protocol do chính Voice Session thực hiện khi drain deadline tới hoặc process dừng, khác với abort cưỡng bức task; client vẫn nhận close code bình thường.
-_Avoid_: task abort, drop socket im lặng, ungraceful server shutdown
+A protocol close performed by the Voice Session itself when the drain deadline arrives or the process stops, distinct from forcibly aborting a task; the client still receives a normal close code.
+_Avoid_: task abort, silent socket drop, ungraceful server shutdown
 
 **Liveness**:
-Câu hỏi duy nhất process còn chạy hay không, không phụ thuộc database, External MCP hay shutdown; `/health` chỉ trả lời điều này.
-_Avoid_: readiness synonym, dependency-aware health check, restart khi database hỏng
+The sole question of whether the process is still running, independent of the database, External MCP, or shutdown; `/health` answers only this question.
+_Avoid_: readiness synonym, dependency-aware health check, restart when the database fails
 
 **History Purge**:
-Thao tác destructive tường minh xóa Persistent Transcript trong scope Device, Voice Session hoặc toàn bộ archive, độc lập Dialogue History của session đang mở.
+An explicit destructive operation deleting Persistent Transcript within the scope of a Device, Voice Session, or the entire archive, independently of the Dialogue History of open sessions.
 _Avoid_: side effect of disabling Device, implicit transcript delete, session memory reset
 
 **Resource Key**:
-Public resource identity ổn định, lowercase ASCII và immutable của Agent, Template, Provider hoặc MCP Server; database primary key chỉ là implementation detail. Agent, Template và MCP Server do client chọn khi tạo; Provider Key do server sinh ở thời điểm tạo theo format `{provider_type}_{uuid32}` vì Provider name có thể trùng và đổi.
+The stable, lowercase ASCII, immutable public resource identity of an Agent, Template, Provider, or MCP Server; the database primary key is only an implementation detail. Agent, Template, and MCP Server keys are chosen by the client at creation; Provider Key is generated by the server at creation in the format `{provider_type}_{uuid32}` because Provider names may be duplicated and changed.
 _Avoid_: mutable display name, client-supplied Provider key, identity derived from display name, case-insensitive alias, database primary key
 
 **Protocol Device Identity**:
-Identity opaque và immutable do Voice Protocol Client cung cấp để provision Device, được so sánh byte-preserving tại database boundary.
+The opaque, immutable identity supplied by a Voice Protocol Client to provision a Device, compared without altering its bytes at the database boundary.
 _Avoid_: normalized MAC address, display name, Client ID
 
 **Device Enrollment**:
-Bản ghi control-plane SQLite ngắn hạn liên kết một Protocol Device Identity chưa đăng ký với một Activation Code và metadata đã scrub; không phải credential, Voice Session hoặc audio state.
+A short-lived SQLite control-plane record linking an unregistered Protocol Device Identity to an Activation Code and scrubbed metadata; it is not a credential, Voice Session, or audio state.
 _Avoid_: device authentication, session record, audio-pipeline cache
 
 **Activation Code**:
-Chuỗi 6 chữ số ASCII sinh CSPRNG, TTL-bound và chỉ được dùng tối đa một lần để Admin claim Device.
+A CSPRNG-generated string of 6 ASCII digits, bound by a TTL and usable at most once for an Admin to claim a Device.
 _Avoid_: device token, password, Device ID
 
 **Enrollment Session**:
-Kết nối WebSocket control-plane của Device chưa đăng ký, chỉ hiển thị/phát Activation
-Code và quan sát Enrollment Claim; không có Effective Session Profile, provider,
-transcript hoặc quyền hội thoại. Kết nối Voice Session mới thực hiện admission sau claim.
+An unregistered Device's control-plane WebSocket connection that only displays/plays an Activation
+Code and observes Enrollment Claim; it has no Effective Session Profile, provider,
+transcript, or conversational permissions. A new Voice Session connection performs admission after the claim.
 _Avoid_: anonymous Voice Session, temporary Agent, provider fallback
 
 **Enrollment Claim**:
-Transaction Admin tạo Device enabled, consume đúng một Device Enrollment và ghi audit tối thiểu; không tải provider/runtime hoặc xác nhận thiết bị đang online.
+An Admin transaction that creates an enabled Device, consumes exactly one Device Enrollment, and records minimal audit data; it neither loads providers/runtimes nor confirms that the device is online.
 _Avoid_: WebSocket admission, runtime warmup, online presence
 
 **External MCP Network Policy**:
-Policy kiểm soát URL HTTP/HTTPS và allowlist hostname tùy chọn của External MCP; mặc định chấp nhận mọi host.
+Policy governing External MCP HTTP/HTTPS URLs and an optional hostname allowlist; all hosts are accepted by default.
 _Avoid_: mandatory LAN/CIDR configuration, redirect destination trust
 
 **External MCP Authentication**:
-Cách xác thực `none`, `bearer` hoặc một header an toàn, kết hợp Resource Credential để xác thực request của External MCP.
+Authentication using `none`, `bearer`, or a safe header, combined with Resource Credential to authenticate External MCP requests.
 _Avoid_: query-string auth, template header value, Authorization header override
 
 **Admin Audit Event**:
-Metadata bounded ghi nhận mutation hoặc authenticated optimistic-concurrency conflict của Admin API, không sao chép nội dung resource hay secret.
+Bounded metadata recording an Admin API mutation or authenticated optimistic-concurrency conflict, without copying resource contents or secrets.
 _Avoid_: request archive, configuration diff, authentication failure record
 
 **Provider Load Plan**:
-Phân hoạch startup provider thành required phải materialize trước listener và optional được thử load để làm switch candidate khả dụng mà không chặn boot.
+The partition of startup providers into required providers that must materialize before the listener and optional providers whose loading is attempted to make switch candidates available without blocking boot.
 _Avoid_: all-enabled provider preload, non-default provider skip forever, duplicate load
 
 **Runtime Status**:
-Trạng thái usable của Loaded Runtime trong process, tách khỏi việc runtime đó có khớp Database Desired Configuration revision hiện tại không.
+The usability state of a Loaded Runtime in the process, separate from whether that runtime matches the current Database Desired Configuration revision.
 _Avoid_: desired-state freshness, provider enabled flag, restart completion
 
 **Admin Request ID**:
-UUID do server tạo cho một request Admin API để correlation response, telemetry và audit, không do client điều khiển.
+A server-generated UUID for an Admin API request to correlate the response, telemetry, and audit; it is not controlled by the client.
 _Avoid_: client correlation identifier, database primary key, authentication credential
 
 **External Tool Call**:
-Một logical LLM ToolCall routed tới External MCP, có tối đa một outbound attempt và luôn kết thúc bằng normal hoặc typed synthetic ToolResult.
+A logical LLM ToolCall routed to External MCP, with at most one outbound attempt and always ending in a normal or typed synthetic ToolResult.
 _Avoid_: retried HTTP request, dangling tool call, remote error passthrough
 
 **Tool-round Executor**:
-Owner chung thực thi ToolCall trong đúng model order và ghép từng terminal ToolResult cùng index trước LLM continuation.
+The shared owner executing ToolCalls in the exact model order and pairing each terminal ToolResult at the same index before LLM continuation.
 _Avoid_: origin-specific scheduler, parallel tool batch, reordered tool result
 
 **Tool Execution Budget**:
-Budget thời gian session-local của một Conversational Turn cho Tool-round Executor, bắt đầu ở ToolCall đầu tiên và giới hạn việc bắt đầu call tiếp theo.
+A Conversational Turn's session-local time budget for Tool-round Executor, starting at the first ToolCall and limiting the start of subsequent calls.
 _Avoid_: per-call timeout only, unbounded tool loop, audio pipeline budget
 
 **Session Tool Catalog**:
-Snapshot immutable của toàn bộ LLM-visible tools đã được resolve và validate khi admission, giữ nguyên đến khi Voice Session disconnect.
-_Avoid_: remove capability sau một runtime failure, DB availability mutation từ tools/call telemetry, implicit circuit breaker
+An immutable snapshot of all LLM-visible tools resolved and validated at admission, retained unchanged until the Voice Session disconnects.
+_Avoid_: removing capability after a runtime failure, DB availability mutation from tools/call telemetry, implicit circuit breaker
 
 **External MCP Call Limiter**:
-Semaphore process-global theo MCP server identity giới hạn outbound External Tool Call đồng thời giữa mọi Voice Session.
+A process-global semaphore per MCP server identity limiting concurrent outbound External Tool Calls across all Voice Sessions.
 _Avoid_: per-session-only cap, unbounded cross-session fan-out, permit held during LLM continuation
 
 **Admin API**:
-Surface quản trị tùy chọn cho Database Desired Configuration và Persistent Transcript, chỉ mount khi được enable và luôn dùng credential riêng với Voice/OTA.
+An optional administration surface for Database Desired Configuration, Resource Credential, and Persistent Transcript, mounted only when enabled and always using credentials separate from Voice/OTA.
 _Avoid_: Voice API, trusted-LAN anonymous endpoint, shared OTA token
 
 **Admin Web**:
-Ứng dụng Vue tùy chọn tại `apps/admin-web/` quản lý server qua Admin API công khai. Nó sở hữu trình bày và browser-side read model, nhưng không import Rust internal module, không đọc hoặc sửa `config.toml` trực tiếp, và không sở hữu Voice Session state. Khi Admin API không được enable hoặc bearer token không hợp lệ, UI không có quyền thay thế bằng một control path khác.
+An optional Vue application at `apps/admin-web/` that manages the server through the public Admin API. It owns presentation and the browser-side read model, but does not import internal Rust modules, read or modify `config.toml` directly, or own Voice Session state. When Admin API is disabled or the bearer token is invalid, the UI has no authority to substitute another control path.
 _Avoid_: server module, Admin API handler, direct SQLite/config editor, Voice Session owner
 
 **Exchange Atom**:
-Đơn vị Dialogue History không thể tách khi dựng prompt hoặc eviction: một user turn với các Completed Tool Round theo thứ tự, mỗi round gồm các cặp assistant tool call/tool result đã terminal, và Delivered Assistant Response nếu writer đóng turn Normal. Tool call chưa có terminal result không thuộc atom; turn lỗi trước tool đầu tiên là user-only atom.
+An indivisible Dialogue History unit for prompt construction or eviction: a user turn with ordered Completed Tool Rounds, each containing terminal assistant tool call/tool result pairs, and a Delivered Assistant Response if the writer closes the turn as Normal. Tool calls without terminal results are not part of the atom; a turn that fails before the first tool is a user-only atom.
 _Avoid_: message, partial exchange
 
 **ProviderVersion**:
-Identity của đúng nguồn và phiên bản cấu hình Provider dùng khi cấp runtime. Với Provider Instance đã lưu, phiên bản ứng với desired revision và không tái sử dụng sau delete/recreate; với Provider Test Draft, identity chỉ thuộc lần kiểm thử. Voice Session giữ version đã snapshot tại admission.
+The identity of the exact Provider source and configuration version used when granting a runtime. For a saved Provider Instance, the version corresponds to the desired revision and is not reused after deletion/recreation; for a Provider Test Draft, the identity belongs only to that test run. A Voice Session retains the version snapshotted at admission.
 _Avoid_: provider key alone, latest mutable provider, Session Profile Revision
 
 **Runtime Resource Key**:
-Opaque identity của backing runtime resource có resource specification tương đương theo hợp đồng Provider Adapter, bao gồm immutable artifact identity, execution settings, physical replica count và credential scope khi cần. Khác Resource Key public của Admin resource. Không chứa voice, language, Template hay Agent, vì các đó là logical selection.
+The opaque identity of a backing runtime resource whose resource specification is equivalent under the Provider Adapter contract, including immutable artifact identity, execution settings, physical replica count, and credential scope where needed. It differs from an Admin resource's public Resource Key. It contains no voice, language, Template, or Agent, since those are logical selections.
 _Avoid_: public provider key, raw JSON digest, path as model identity
 
 **Physical Replica**:
-Một bản sao resident của native engine mà một Runtime Resource sở hữu, khai báo bởi Provider Adapter chứ không phải operator. ZeroTTS giữ đúng một Physical Replica vì mỗi replica commit bốn ONNX session; generic worker concurrency không nhân bản nó. Số này là phần của Runtime Resource Key, nên đổi topology vẫn cô lập resource.
+A resident copy of a native engine owned by a Runtime Resource, declared by the Provider Adapter rather than the operator. ZeroTTS retains exactly one Physical Replica because each replica commits four ONNX sessions; generic worker concurrency does not replicate it. This count is part of the Runtime Resource Key, so topology changes still isolate resources.
 _Avoid_: engine instance per voice, worker count as replica count, template runtime
 
 **Prepared Runtime**:
-Kết quả mà preparation đã xác lập trước khi `build` chạy: các file model của provider đã tồn tại, kèm thời gian đã dùng. `build` chỉ resolve path và dựng runtime, nên một materialization không bao giờ tải lại cùng một model.
+The result established by preparation before `build` runs: the provider's model files already exist, together with the time spent. `build` only resolves paths and constructs the runtime, so a materialization never downloads the same model again.
 _Avoid_: prepared model cache, immutable model tree
 
 **Physical Resource Key — model identity**:
-Phần identity của một physical runtime đến từ adapter, MODEL_REVISION đã pin của provider, ONNX execution identity và thread count — không từ việc đọc model file. Bump revision tạo key khác mà không phải hash gì.
+The identity portion of a physical runtime comes from the adapter, the provider's pinned MODEL_REVISION, ONNX execution identity, and thread count — not from reading model files. Bumping the revision produces a different key without hashing anything.
 _Avoid_: model content hash, manifest fingerprint
 
 **Resource Lease**:
-Quyền sử dụng backing runtime resource được Provider Runtime Manager cấp cho Voice Session hoặc operation. Resource không thể unload khi quyền này hay cleanup obligation tương ứng còn tồn tại.
+The right to use a backing runtime resource granted by Provider Runtime Manager to a Voice Session or operation. The resource cannot be unloaded while this right or its corresponding cleanup obligation exists.
 _Avoid_: inference permit, best-effort Arc count, runtime lookup without ownership
 
 **Bounded Startup Warmup**:
-Readiness pass chạy trên từng retained native worker, chỉ chạm mỗi graph trên hot path đúng một lần và xác minh PCM terminal finite non-empty, rồi reset trước traffic. Không synthesize utterance đầy đủ; gate deterministic full-utterance thuộc Optional Runtime Evidence, không thuộc startup path.
+A readiness pass on each retained native worker that touches each graph on the hot path exactly once, verifies finite, non-empty terminal PCM, then resets before traffic. It does not synthesize a full utterance; the deterministic full-utterance gate belongs to Optional Runtime Evidence, not the startup path.
 _Avoid_: full-sentence warmup, warmup as qualification, unbounded readiness loop
 
 **Provider Runtime Manager**:
-Application owner cấp runtime đúng ProviderVersion và giữ lifecycle/backing resources dùng chung trong các budget rõ ràng. Không sở hữu session history, stream state hay mutate Database Desired Configuration.
+The application owner that grants runtimes for the exact ProviderVersion and maintains shared lifecycle/backing resources within explicit budgets. It neither owns session history or stream state nor mutates Database Desired Configuration.
 _Avoid_: runtime plugin registry, per-frame provider factory, automatic provider retry
 
 ## Speaker recognition
 
+**Speaker Voiceprint**:
+A versioned embedding of a Speaker in the correct embedding space, carrying enrollment provenance and validation status. It is input to Speaker Match, not a credential, authentication, or self-sufficient evidence for Required policy.
+_Avoid_: Speaker profile, authentication token, authorization grant
+
+**Quick Speaker Enrollment**:
+A two-step Admin flow: captured audio is quality-checked and converted into a staged embedding with a 10-minute TTL, then an explicit commit creates a Speaker or replaces a Speaker Voiceprint. The staged waveform is not persisted; the current implementation writes the voiceprint with status `passed` after commit.
+_Avoid_: persisted WAV, implicit Speaker creation, authorization grant
+
+**Speaker Context**:
+A human-facing profile containing the name and optional description of a `Verified` Speaker Match, valid only for the Turn System Prompt of the current Conversational Turn. This is untrusted, bounded data, not a credential or authorization.
+_Avoid_: persistent speaker profile, speaker grant, identity inherited from a prior turn
+
 **Speaker Match**:
-Kết quả đối chiếu giọng của đoạn audio được kiểm tra với Voiceprint theo calibration tương ứng; chưa phải quyền thực hiện yêu cầu và không chứng minh toàn bộ utterance do cùng một người nói.
+The result of comparing the voice in the evaluated audio segment against Voiceprints using the corresponding calibration; it is not permission to execute a request and does not prove that the entire utterance came from the same speaker.
 _Avoid_: speaker authorization, authenticated request, liveness proof
 
 **Speaker Authorization**:
-Quyết định cho phép một Speaker sử dụng Agent và Template cho một voice turn, dựa trên Speaker Match mới cùng policy, grants và hiệu lực quyền. Quyền này chưa đủ để thực hiện thao tác nhạy cảm.
+The decision permitting a Speaker to use an Agent and Template for a voice turn, based on a fresh Speaker Match together with policy, grants, and their validity. This permission is not sufficient to perform sensitive operations.
 _Avoid_: speaker match, independent confirmation, blanket tool permission
 
 **Independent Confirmation**:
-Xác nhận riêng cho một thao tác nhạy cảm bằng căn cứ độc lập với Speaker Match của yêu cầu đó.
+Separate confirmation of a sensitive operation based on evidence independent of the Speaker Match for that request.
 _Avoid_: repeated speaker match, spoken yes, Device authentication alone
 
 **Preliminary Calibration**:
-Calibration sơ bộ dùng thử nghiệm chất lượng audio, tính nhất quán của mẫu, holdout enrollment và Observe; chưa đủ điều kiện cho Speaker Authorization trong Required.
+Preliminary calibration used to test audio quality, sample consistency, holdout enrollment, and Observe; it is not yet qualified for Speaker Authorization in Required.
 _Avoid_: Required-qualified calibration, production authorization threshold
 
 **Required-qualified Calibration**:
-Calibration được người vận hành xác nhận dựa trên báo cáo đánh giá độc lập cho đúng candidate set của Agent/Template, voiceprint revisions, embedding space, preprocessing, scoring parameters và điều kiện audio/tải. Chỉ đủ điều kiện Required khi qualification còn hiệu lực; subset của candidate set không tự được bao phủ.
+Calibration confirmed by the operator based on an independent evaluation report for the exact Agent/Template candidate set, voiceprint revisions, embedding space, preprocessing, scoring parameters, and audio/load conditions. It qualifies for Required only while the qualification remains valid; a subset of the candidate set is not automatically covered.
 _Avoid_: preliminary calibration, browser holdout alone, demo threshold
 
 **Agent Tool Allowlist**:
-Tập tool được admin đánh giá và cho phép cho một Agent, định danh theo Protocol Device Identity (`device_id`) hoặc External MCP server key cùng tên tool gốc; tool ngoài tập bị từ chối. Resource được tạo lại không kế thừa quyền của resource đã xóa. Đây là giới hạn thao tác của Agent, độc lập với Speaker Match và Speaker Authorization.
+The set of tools reviewed and permitted by an admin for an Agent, identified by Protocol Device Identity (`device_id`) or External MCP server key together with the original tool name; tools outside the set are denied. A recreated resource does not inherit permissions from the deleted resource. This is the Agent's operational limit, independent of Speaker Match and Speaker Authorization.
 _Avoid_: speaker grants, LLM tool name allowlist, read-only safety inference
 
 **Misidentification**:
-Kết quả nhận diện 1:N chấp nhận một identity khác với người thực sự nói trong trial genuine; thuộc genuine failure dù hệ thống có trả match.
+A 1:N identification result accepting an identity different from the actual speaker in a genuine trial; it counts as a genuine failure even if the system returns a match.
 _Avoid_: genuine success, pure rejection, successful match
 
 **Voice Pipeline Processing Permit**:
-Quyền độc quyền xử lý pipeline của một Voice Session trong envelope pilot, gồm cả capture đang armed và công việc hội thoại chưa terminal. Khác Resource Lease giữ model và permit riêng của từng inference operation.
+The exclusive right to process a Voice Session's pipeline within the pilot envelope, including armed capture and conversational work that has not reached a terminal state. It differs from the Resource Lease retaining the model and the separate permit for each inference operation.
 _Avoid_: Resource Lease, Active Turn Permit, speaker inference permit
 
 **Reviewed Tool Contract**:
-Contract quan sát được của một tool mà admin đã đánh giá, gồm identity nguồn, tên gốc, input schema, description có ảnh hưởng cách sử dụng và cấu hình nguồn liên quan. Review mất hiệu lực khi server quan sát contract thay đổi; không chứng minh hành vi implementation bên ngoài giữ nguyên.
+An observable tool contract reviewed by an admin, including source identity, original name, input schema, description affecting usage, and relevant source configuration. The review becomes invalid when the server observes a contract change; it does not prove that the external implementation's behavior remains unchanged.
 _Avoid_: tool name alone, remote implementation attestation, secret value fingerprint
 
 **Provider Test Draft**:
-Cấu hình Provider chưa được lưu, được sử dụng cho một lần kiểm tra inference thủ công. Kết quả không xác lập readiness của Provider Instance đang được Agent sử dụng.
+Unsaved Provider configuration used for a single manual inference test. The result does not establish readiness of the Provider Instance used by an Agent.
 _Avoid_: temporary Provider Instance, production readiness test
 
 **MCP Connection Probe**:
-Quan sát thủ công khả năng bắt tay với một External MCP server tại thời điểm kiểm tra; không khẳng định server có tool hay đang sẵn sàng cho Agent.
+A manual observation of the ability to handshake with an External MCP server at the time of testing; it does not assert that the server has tools or is ready for an Agent.
 _Avoid_: connected flag, Agent availability
 
 **MCP Tool Discovery**:
-Quan sát đầy đủ danh mục tool do một External MCP server công bố tại thời điểm kiểm tra. Danh mục này không phải Reviewed Tool Contract hoặc Agent Tool Allowlist.
+A complete observation of the tool catalog advertised by an External MCP server at the time of testing. This catalog is neither a Reviewed Tool Contract nor an Agent Tool Allowlist.
 _Avoid_: tool approval, approved catalog

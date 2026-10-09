@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted design, 2026-10-07; chưa triển khai. Busy wire contract đã chốt về capability/legacy semantics; wire DTO và qualification client cần bổ sung trước bàn giao.
+Accepted and implemented, 2026-10-07. The deployment opt-in is `[deployment].speaker_pilot = true`; the wire contract uses `features.pipeline_status` for bounded busy status and closes legacy clients with 1013.
 
 Pilot qualification giới hạn process ở một Voice Session xử lý pipeline đồng thời và một luồng enrollment cạnh tranh tài nguyên; nhiều WS idle vẫn được giữ. Phải admission trước native work tương ứng, không chỉ giới hạn một speaker operation tại utterance end: VAD/ASR/LLM/TTS từ WS khác cũng làm tải vượt envelope đã đánh giá. Speaker operation có cap process một; enrollment dùng bounded scheduler, không yêu cầu hai inference song song trên extractor. Permit native chỉ trở lại reusable sau cleanup acknowledgement.
 

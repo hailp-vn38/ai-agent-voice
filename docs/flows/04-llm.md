@@ -45,17 +45,26 @@ sequenceDiagram
 
 Không gửi từng token vào TTS.
 
-Segmenter phát một Speech Segment ngay khi thấy dấu kết câu `. ! ? 。！？` mà không chờ độ dài tối thiểu. Dấu phẩy, chấm phẩy và hai chấm chỉ nằm trong câu; EOF phát phần text cuối còn lại. Dấu chấm có thể thuộc số thập phân hoặc phiên bản nên không tách các trường hợp đó. `max_chars` chỉ giới hạn khẩn cấp cho buffer chưa có dấu kết câu (hiện fail backpressure khi vượt `2 * max_chars`), không tự cắt một câu để đọc. Hai trường cấu hình `min_chars` và `soft_break_min_chars` được giữ để đọc cấu hình cũ nhưng không còn chi phối segmentation.
+Segmenter phát một Speech Segment ngay khi thấy dấu kết câu `. ! ? 。！？` mà không chờ độ dài tối thiểu. Dấu chấm chỉ là boundary khi theo sau bởi whitespace/quote/closing delimiter, hoặc ở EOF và không đứng sau chữ số. EOF phát phần text cuối còn lại. Khi buffer đạt `max_chars` mà chưa có sentence boundary, nó cắt ở newline, rồi `, ; :`, rồi whitespace sau `soft_break_min_chars`; nếu không có, cắt đúng `max_chars` để giữ bound. `min_chars` không chi phối segmentation.
 
-SpeechOutput giữ nguyên text hiển thị cho sự kiện WebSocket `llm` theo từng câu; text đưa vào TTS được NFC và loại markdown, emoji, control/symbol không đọc được, trong khi giữ dấu câu hữu ích. Actor phát `llm` trước khi bắt đầu tổng hợp audio của câu tương ứng.
+SpeechOutput giữ nguyên text hiển thị cho sự kiện WebSocket `llm` theo từng segment; text đưa vào TTS được NFC, chỉ giữ chữ/số cùng `.` và `,`, rồi coalesce phần còn lại thành space. Actor phát `llm` trước khi bắt đầu tổng hợp audio của segment tương ứng.
 
-## 4. Tool call
+## 4. System prompt theo turn
 
-Phase 4 gọi `chat_stream_with_tools(messages, None)` để dùng một typed streaming seam. Nếu stream vẫn phát tool call, actor fail generation là `llm_unexpected_tool_call`, cancel LLM và SpeechOutput, không submit segment mới, không gọi MCP và không retry. Audio đã deliver trước event không thể thu hồi; GenerationGate drop mọi audio stale/còn queue.
+Sau ASR/Speaker join, actor tạo đúng một System message từ snapshot prompt của
+session và Speaker Context đã xác minh (nếu có). `{{speakers_info}}` được thay
+thế bằng JSON đã escape trong block dữ liệu; prompt cũ không có slot chỉ được
+append block khi có verified match. Context này không phải authorization, không
+vào dialogue history/transcript và không sang turn sau. Tool continuation dùng
+lại chính System message của turn; request vượt hard limit 96 KiB bị terminalize
+trước khi gọi LLM.
 
-Phase 6 mới truyền `Some(&tools)` và áp dụng tool-result loop sau:
+## 5. Tool call
 
-Nếu Device MCP ready, tool definitions được đưa vào request LLM.
+Mỗi round LLM nhận immutable catalog của session: builtin action, Device MCP đã
+discover và External MCP đã admit. Nếu catalog có tool có thể thay đổi câu trả
+lời, prose của round được buffer đến khi tool round kết thúc; round không có
+tool vẫn stream token → segmenter → TTS.
 
 ```mermaid
 sequenceDiagram
@@ -72,9 +81,9 @@ sequenceDiagram
 
 Tool-level failure khi session khỏe được normalize thành tool result `ok:false` không chứa error body/secret rồi quay lại LLM. Khi vượt `max_rounds_per_turn`, turn terminalize bằng `tool_round_limit_exceeded` trước khi gửi request của round kế tiếp, nên không có call nào mới bắt đầu; terminal session/cancellation failure không tiếp tục LLM.
 
-Nhiều tool call của một round chạy tuần tự theo thứ tự LLM trả về, mỗi call có timeout riêng. Tool-level error không ngăn sibling call còn allowlisted khi session/generation vẫn khỏe; result giữ đúng tool_call_id và thứ tự để gửi vào round kế tiếp. `llm.tools.max_rounds_per_turn` đếm tool round, không đếm individual call; `llm.tools.max_calls_per_round` giới hạn số call của một round và được kiểm tra cho cả round trước call đầu tiên. Một Tool-round Executor chung chạy Device MCP, External MCP và session-local action tuần tự; xem `docs/adr/0060-sequential-shared-tool-round-executor.md`. Final no-tool round với text rỗng sau trim là `Failed(llm_empty_final_response)`, không gọi TTS.
+Nhiều tool call của một round chạy tuần tự theo thứ tự LLM trả về, mỗi call có timeout riêng. Tool-level error không ngăn sibling call còn trong immutable catalog khi session/generation vẫn khỏe; result giữ đúng tool_call_id và thứ tự để gửi vào round kế tiếp. `llm.tools.max_rounds_per_turn` đếm tool round, không đếm individual call; `llm.tools.max_calls_per_round` giới hạn số call của một round và được kiểm tra cho cả round trước call đầu tiên. Một Tool-round Executor chung chạy Device MCP, External MCP và session-local action tuần tự; xem `docs/adr/0060-sequential-shared-tool-round-executor.md`. Final no-tool round với text rỗng sau trim là `Failed(llm_empty_final_response)`, không gọi TTS.
 
-## 5. History commit
+## 6. History commit
 
 Chỉ commit assistant response hoàn chỉnh vào dialogue khi turn kết thúc hợp lệ.
 
@@ -91,7 +100,7 @@ MCP `direct_tts` hoặc session-local built-in action vẫn commit dialogue hist
 có record assistant nào, vì đó không phải Generated Assistant Response của model. Xem
 `docs/03-module-contracts.md` §6.2.
 
-## 6. Provider abstraction
+## 7. Provider abstraction
 
 V1 dùng OpenAI qua typed API của crate `llm` 1.3.8, pin exact với default features tắt và chỉ `openai`/`rustls-tls`. Adapter phải bridge stream thành event chuẩn:
 
@@ -106,7 +115,7 @@ pub enum LlmEvent {
 
 V1 không automatic retry logical LLM operation sau timeout/lỗi.
 
-## 7. Test contract
+## 8. Test contract
 
 - multiple text deltas -> đúng concatenation.
 - segmenter phát segment trước stream done.
@@ -116,3 +125,4 @@ V1 không automatic retry logical LLM operation sau timeout/lỗi.
 - cancellation dừng downstream TTS request.
 - stale generation delta bị drop.
 - provider stream error -> actor kết thúc turn sạch sẽ.
+- Speaker Context chỉ xuất hiện trong System message của current turn; tool continuation giữ nguyên message đó.

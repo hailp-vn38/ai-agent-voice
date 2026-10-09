@@ -77,9 +77,34 @@
               "name": "OTA - POST",
               "request": {
                 "method": "POST",
-                "header": [],
+                "header": [
+                  {
+                    "key": "Device-Id",
+                    "value": "{{device_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Client-Id",
+                    "value": "{{client_id}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
                 "url": "{{base_url}}/voice/ota/",
-                "description": "Same handler/response as GET; kept for Xiaozhi compatibility."
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Same handler/response as GET; POST requires Device-Id, Client-Id and an application/json body (an empty object is valid). Kept for Xiaozhi compatibility."
               },
               "response": []
             },

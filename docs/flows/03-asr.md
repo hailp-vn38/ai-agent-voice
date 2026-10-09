@@ -19,6 +19,9 @@ sequenceDiagram
     ASR-->>A: AsrPartial(text, generation) internal only
     A->>ASR: finish() after Active Turn permit
     ASR-->>A: AsrFinal(text, generation)
+    opt Speaker Observe enabled
+      A->>A: bounded join with Observe diagnostic
+    end
     alt generation still current and text.trim() non-empty
       A->>A: commit user utterance
       A->>WS: exactly one existing stt{session_id, text}
@@ -39,6 +42,13 @@ sequenceDiagram
 ```
 
 V1 không thêm `stt_partial`, `asr_partial`, `asr_final`, `vad_start`, `vad_stop` hoặc field partial/final mới. Final rỗng, ASR failure/cancel hoặc event stale không gửi `stt`.
+
+Khi Speaker Observe được bật, ASR final và diagnostic của cùng
+`generation`/`turn_id` được join tối đa `speaker_recognition.observe.join_timeout_ms`. Match
+`verified` chỉ là context advisory cho LLM turn hiện tại; timeout, lỗi hoặc match
+khác `verified` vẫn commit cùng ASR final và tiếp tục conversational turn. Context
+không được gửi trong `stt`, không được ghi vào dialogue/transcript và không được
+tái dùng ở turn sau.
 
 Provider adapter chuẩn hóa model result về:
 

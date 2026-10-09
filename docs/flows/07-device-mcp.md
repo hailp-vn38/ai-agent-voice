@@ -42,13 +42,17 @@ sequenceDiagram
 
 ## 3. Discovery, policy và tool registry
 
-Discovery không phải permission. Server phải lọc tool trước khi đưa schema cho LLM:
+Discovery không phải authorization. Server chỉ nhận catalog khi toàn bộ trang
+`tools/list` hợp lệ và original name lẫn sanitized LLM name đều unique:
 
 ```text
-device tools/list -> discovered tools -> server policy filter -> LLM-visible tools
+device tools/list -> complete validated catalog -> LLM-visible tools
 ```
 
-V1 default deny: chỉ read hoặc low-risk write có trong server-side allowlist mới được expose. Sensitive write bị deny mặc định; dangerous tool (reboot, firmware upgrade, reset, command execution tương đương) luôn deny trong V1.
+Device MCP V1 không có allowlist/review recovery path trong server. Catalog được
+pin tại admission; discovery thất bại, timeout hoặc ambiguous name làm toàn bộ
+Device MCP unavailable cho session đó. Builtin name không được Device MCP shadow,
+và tool call luôn resolve từ catalog immutable này.
 
 Lưu:
 
@@ -61,7 +65,7 @@ Tool schema được convert sang format LLM provider.
 ## 4. Tool call correlation
 
 ```rust
-HashMap<McpRequestId, oneshot::Sender<McpResponse>>
+HashMap<McpRequestId, PendingMcpRequest>
 ```
 
 Flow:
@@ -97,4 +101,4 @@ Actor là owner duy nhất của tool registry, request ID và `HashMap` pending
 - timeout cleanup pending map.
 - timeout/failure không gửi lần `tools/call` thứ hai tự động.
 - MCP disabled -> không gửi initialize.
-- discovered tool không có trong allowlist -> LLM không nhận schema và không thể gọi.
+- discovery có duplicate original/sanitized name -> cả catalog bị từ chối, không `tools/call`.

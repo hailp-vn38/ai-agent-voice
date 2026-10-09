@@ -2,24 +2,25 @@
 
 ## 1. Input
 
-`SpeechOutput` nhận **speakable text segment**, không nhận toàn bộ response bắt buộc. TTS provider là implementation bên trong Module này.
+`SpeechOutput` nhận **speakable text segment**, không nhận toàn bộ response bắt buộc. Provider chỉ chịu trách nhiệm tạo PCM; session layer sở hữu canonicalization, Opus và WebSocket delivery.
 
 ```rust
-pub struct TtsRequest {
-    pub generation: u64,
+pub struct TtsSynthesisRequest {
     pub text: String,
+    pub selection: TtsBinding,
+}
+
+pub struct TtsBinding {
     pub voice: String,
-    pub output_sample_rate: u32,
+    pub language: String,
 }
 ```
 
-Adapter concrete V1 là `zerotts_onnx`, native Rust + ONNX. Provider chỉ infer và trả typed PCM cùng sample rate thực tế; `SpeechOutput` normalize/resample PCM về 24 kHz mono rồi Opus encode. Actor không thấy implementation hoặc wire format của provider.
+Các adapter hiện có gồm `zerotts_onnx`, `kokoro_vi_onnx` và `chillaudio_ws`; chúng có thể stream PCM hoặc trả một utterance hoàn chỉnh. `SpeechOutput` nhận `PcmF32Mono` ở sample rate thực tế của adapter, normalize/resample về 24 kHz mono rồi Opus encode. Actor không thấy implementation, transport hoặc wire format của provider.
 
-`TtsWorkerRuntime` application-owned chạy ZeroTTS/ORT trên worker bounded, không trên Tokio executor. Nó sở hữu native mutable inference, command queue, timeout, cancel/cleanup acknowledgement và quarantine. `SpeechOutput` giữ semantic lifecycle; khi inference không preempt được, cancel có hiệu lực tại safe point kế tiếp nhưng output stale vẫn bị GenerationGate drop và slot chỉ reusable sau cleanup acknowledgement.
+`TtsWorkerRuntime` application-owned chạy worker bounded, không infer trên Tokio executor. Nó sở hữu state mutable của adapter, command queue, timeout, cancel/cleanup acknowledgement và quarantine. `SpeechOutput` giữ semantic lifecycle; khi inference không preempt được, cancel có hiệu lực tại safe point kế tiếp nhưng output stale vẫn bị GenerationGate drop và slot chỉ reusable sau cleanup acknowledgement.
 
-ZeroTTS V1 trả `PcmF32Mono` 48 kHz mono: codec stereo được adapter average/normalize trước boundary. `SpeechOutput` resample 48 kHz -> 24 kHz, convert f32 -> i16, rồi tạo đúng 1.440-sample `DownlinkPcmFrame`. Factory/warmup xác minh config và codec metadata đều 48 kHz, channel profile và voice dimensions khớp graph; thay đổi profile ở revision khác fail startup.
-
-ZeroTTS chuẩn hoá văn bản tiếng Việt trước tokenizer. `providers.tts.zerotts_onnx.delivery_mode = "stream"` là mặc định: worker dùng `decode_step` và codec cache qua các segment trong một lượt thoại; cold start giải mã theo nhóm 4, 8, 16 frames. Chế độ `"file"` vẫn có thể chọn: worker sinh đủ codec frames của từng Speech Segment, giải mã bằng `decode_full`, ghi WAV float mono 48 kHz vào file tạm, rồi đọc file theo khối. Chỉ sau khi WAV hoàn chỉnh mới đưa PCM vào `SpeechOutput` để đổi mẫu, Opus encode và pace qua WebSocket. File tạm được xoá khi hoàn tất, lỗi hoặc huỷ.
+`TtsBinding` được pin vào logical runtime và đi cùng mọi work request. Worker giữ stream state private cho một `SpeechOutput` delivery; adapter stateless dùng compatibility stream. Warmup/reset là trách nhiệm adapter/runtime, không đưa PCM warmup vào output của user.
 
 ## 2. Flow
 
@@ -82,11 +83,11 @@ Mỗi segment có `ordinal` liên tục tăng dần. Mỗi generation có tối 
 
 TTS producer bị chặn khi bounded queue đầy. Không tạo unbounded audio queue.
 
-Không lấy được worker slot hoặc command queue đầy làm fail-fast current generation; không chờ vô hạn, drop hay skip segment. `tts.timeout_ms` bắt đầu khi worker accept segment và chỉ kết thúc khi `SegmentFinished`, `Failed` hoặc cancelled acknowledgement, không reset theo PCM chunk. Timeout fail generation, request cleanup; hết cleanup grace thì quarantine worker. Không retry logical TTS operation.
+Không lấy được worker slot hoặc command queue đầy làm fail-fast current generation; không chờ vô hạn, drop hay skip segment. Voice synthesis có final timeout được refresh bởi PCM non-empty đang tiến triển; empty PCM không gia hạn. Diagnostic giữ deadline tuyệt đối. Timeout fail generation, request cleanup; hết cleanup grace thì quarantine worker. Không retry logical TTS operation.
 
-`speech_output.pending_segments` (default 8) là hard bound riêng cho text segment chờ synthesis. Khi queue đầy, actor tạm dừng nhận thêm LLM delta cho tới khi TTS lấy bớt segment; nó giữ tối đa một delta đang xử lý dở và không drop hoặc overwrite text. Buffer câu chưa kết thúc vượt ngưỡng khẩn cấp vẫn fail `speech_output_backpressure`. `limits.tts_concurrency` là global admission budget, còn `workers.tts.max_workers` là logical width; ZeroTTS có đúng một physical replica nên chỉ một native synthesis chạy tại một thời điểm trên engine đó và request thứ hai đi qua bounded admission/backpressure hiện có.
+`speech_output.pending_segments` (default 8) là hard bound riêng cho text segment chờ synthesis. Khi queue đầy, actor tạm dừng nhận thêm LLM delta cho tới khi TTS lấy bớt segment; nó giữ tối đa một delta đang xử lý dở và không drop hoặc overwrite text. `limits.tts_concurrency` là global admission budget, còn `workers.tts.max_workers` là logical width; giới hạn thực tế của mỗi adapter vẫn được runtime admission và worker pool enforce.
 
-Trước bind, retained ZeroTTS worker chạy **bounded one-step warmup**: text encoder, cold prefix step, đúng một local frame decode, đúng một prefix frame step, rồi một codec decode nhỏ; PCM 48 kHz mono phải finite và non-empty. Warmup không chạy loop tới EOA nên không synthesize utterance đầy đủ: mục đích chỉ là chứng minh session load được, ORT allocator nóng, và mọi graph trên hot path chạy được. Voice readiness lấy từ shared voice registry, không phụ thuộc binding của bất kỳ provider nào, nên một physical runtime phục vụ mọi voice đều warm được. Sau đó mọi mutable turn state và codec cache bị reset trước traffic; request đầu tiên phải cho audio giống hệt một replica chưa từng warm. Gate deterministic full-utterance thuộc về qualification (`provider-bench`, installed-model gate, `zerotts-core-check`), không phải startup path. Warmup không đi qua SessionActor, SpeechOutput, Opus hay WebSocket.
+Worker warmup là bounded adapter-level validation; native worker phải reset state trước traffic. Warmup không đi qua `SessionActor`, `SpeechOutput`, Opus hay WebSocket, và PCM từ warmup không thể tới user delivery. Qualification full-utterance là gate riêng, không phải startup path.
 
 ## 7. Cancellation
 

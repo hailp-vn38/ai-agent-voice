@@ -2,11 +2,13 @@
 
 ## Status
 
-Accepted design, 2026-10-07; cập nhật 2026-10-08. Xem [implementation guide](../speaker-identification-ws-logging-implementation-guide.md).
+Accepted for `off` and advisory `observe`, 2026-10-07; cập nhật 2026-10-09. `required`, calibration catalog và exact-candidate-set qualification vẫn là thiết kế chưa triển khai (ADR-0079 đến ADR-0081).
 
-V1 dùng Speaker Authorization cho trò chuyện, tra cứu thông thường và điều khiển ít hậu quả như đèn hoặc âm lượng. Speaker Match có rủi ro replay/giọng tổng hợp, nên thao tác nhạy cảm như mở khóa hoặc truy cập dữ liệu riêng cần Independent Confirmation; chưa có cơ chế đó thì từ chối. Giữ Device và Admin authentication hiện có. V1 chặn tool nhạy cảm khi chưa có Independent Confirmation theo [ADR 0078](0078-agent-tool-allowlist.md); giọng match không cấp quyền bao quát cho tools.
+Implementation hiện tại chỉ có `off` và `observe`. Observe là nhận dạng advisory theo từng Conversational Turn: match chỉ có thể điều chỉnh cách xưng hô trong prompt tạm thời của turn đó, không xác thực Device, không cấp tool/private-data permission và không được lưu hay tái dùng sang turn khác. Không có voice-based admission hay Speaker Authorization trong code hiện tại.
 
-Required xác minh mới ở từng voice turn, kể cả sau khi khóa Speaker trong Voice Session; chấp nhận từ chối lượt thiếu 2 giây tiếng nói thay vì kế thừa pass để hỗ trợ câu ngắn. Device control `abort` tiếp tục hoạt động theo protocol; câu “dừng” qua ASR vẫn chịu Speaker Gate. Observe là nhận dạng advisory theo từng Conversational Turn: match chỉ có thể điều chỉnh cách xưng hô trong prompt tạm thời của turn đó, không xác thực Device, không cấp tool/private-data permission và không được lưu hay tái dùng sang turn khác.
+Thiết kế `required` còn lại dùng Speaker Authorization cho trò chuyện, tra cứu thông thường và điều khiển ít hậu quả như đèn hoặc âm lượng. Speaker Match có rủi ro replay/giọng tổng hợp, nên thao tác nhạy cảm như mở khóa hoặc truy cập dữ liệu riêng cần Independent Confirmation; chưa có cơ chế đó thì từ chối. Giữ Device và Admin authentication hiện có. Giọng match không cấp quyền bao quát cho tools.
+
+Khi triển khai, Required sẽ xác minh mới ở từng voice turn, kể cả sau khi khóa Speaker trong Voice Session; chấp nhận từ chối lượt thiếu 2 giây tiếng nói thay vì kế thừa pass để hỗ trợ câu ngắn. Device control `abort` tiếp tục hoạt động theo protocol; câu “dừng” qua ASR vẫn chịu Speaker Gate.
 
 Mốc đầu gồm web enrollment và Observe từ ESP32 qua WS: provider/draft/thu mẫu → profile `pending` → Observe trên thiết bị. Quality-accepted quick enrollment chỉ tạo profile provisional; Observe không cần `calibration.json` hay qualification. Chỉ cho phép Required sau hiệu chỉnh bằng dữ liệu thực tế và đánh giá độc lập; browser holdout đạt không thay thế điều kiện này.
 

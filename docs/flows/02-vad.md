@@ -85,14 +85,28 @@ Phase 5 không thêm server-side AEC vào raw WebSocket V1. Thay vào đó, clie
 
 Khi `Speaking`, actor decode frame, push vào retention và VAD Barge-in Watch, nhưng không feed ASR turn cũ. `SpeechStarted { start_sample }` hợp lệ thực hiện đúng thứ tự: snapshot `retention.range(start_sample - pre_roll_samples)`; invalidate GenerationGate turn N; cancel producers; gửi urgent đúng một `tts:stop` nếu N đã `Started`; tạo generation/ASR N+1 và feed snapshot, rồi tiếp tục frame sau vào ASR N+1. Snapshot phải trước reset retention/VAD; gate invalidation là interruption linearization point. Packet writer đã admit trước point này không thể thu hồi, mọi turn payload N sau point phải bị drop.
 
-## 7. Resource limits
+## 7. Speaker Observe
+
+Khi Agent bật `observe`, actor giữ tối đa sáu giây canonical uplink PCM của
+mỗi utterance. Ở utterance boundary, PCM này được chấm điểm bất đồng bộ với
+ASR; không có PCM, audio quá ngắn, runtime bận hoặc lỗi chỉ tạo một kết quả
+advisory (`insufficient_audio`, `unavailable` hoặc `unknown`), không chặn
+utterance. Client chỉ nhận frame `speaker` khi đã opt-in `features.speaker_status`;
+frame không bao giờ chứa tên Speaker, score hay embedding.
+
+Observe không xác thực Device, không cấp quyền tool và không giữ identity sang
+turn sau. Flow join với ASR và việc dùng match cho prompt được mô tả ở Flow 03
+và Flow 04.
+
+## 8. Resource limits
 
 - `max_utterance_ms`: tránh buffer vô hạn; V1 default 30 giây, validate trong khoảng 1.000–120.000 ms và chia hết cho 60 ms. Capacity được tính bằng integer frame count: 30 giây là 500 frame/480.000 samples; frame thứ 500 hợp lệ và frame thứ 501 mới overflow. `ManualCapture` pre-reserve capacity fallible ở runtime init trước ServerHello và không realloc khi thu.
 - Auto/VAD vượt giới hạn: force-endpoint, try-acquire `Active Turn` permit rồi `finish()` ASR stream; không thu turn mới song song. Nếu permit không có, cancel stream và release `AsrStreamLease`, không xếp chờ.
 - Manual vượt giới hạn: discard buffer, đánh dấu capture overflow, ignore audio đến `listen:stop` và cần `listen:start` mới để thu lại. `listen:stop` trả `Overflowed`, không gọi ASR/STT/LLM/TTS và chuyển manual mode về Ready.
 - `AsrStreamLease` chỉ giới hạn recognition stream và release sau final/cancel/lỗi; `Active Turn` permit bắt đầu ở endpoint và release ở terminal turn.
+- Khi deployment pilot bật, Voice Pipeline permit phải được lấy trước `listen:start` hoặc `listen:detect` và giữ qua capture, turn, playback và cleanup. Nếu hết capacity, client có `features.pipeline_status` nhận `pipeline: busy`; client cũ bị đóng `1013`.
 
-## 8. Test contract
+## 9. Test contract
 
 Fixtures nên có PCM hoặc synthetic samples:
 
@@ -104,3 +118,4 @@ Fixtures nên có PCM hoặc synthetic samples:
 - Speaking + one noisy frame -> không interrupt; Manual/no-AEC -> không Acoustic Barge-in. Auto/Realtime AEC-safe `SpeechStart` -> snapshot retention, interrupt đúng một lần, ASR turn mới nhận prefix và frame tiếp theo.
 - auto max utterance -> đúng một force endpoint và collector dừng.
 - manual max utterance -> không gọi ASR, audio tiếp theo bị ignore đến chu kỳ listen mới.
+- Observe không làm một utterance bị từ chối; trạng thái Speaker trên wire không lộ identity hoặc score.
