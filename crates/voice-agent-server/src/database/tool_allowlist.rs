@@ -107,3 +107,121 @@ impl Database {
         })
     }
 }
+
+use super::{
+    audit::{AuditOutcome, audit},
+    writes::WriteError,
+};
+use serde::Deserialize;
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ToolReview {
+    pub(crate) server_key: String,
+    pub(crate) original_name: String,
+    pub(crate) observed_revision: i64,
+    pub(crate) fingerprint: String,
+    #[serde(default)]
+    pub(crate) allowed: bool,
+    #[serde(default)]
+    pub(crate) sensitive: bool,
+}
+impl Database {
+    pub(crate) async fn external_tool_reviews(
+        &self,
+        agent_id: i64,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            String,
+        )>,
+        sqlx::Error,
+    > {
+        sqlx::query_as::<_, (String,String,String,String,String,i64,i64,i64,i64,i64,String)>("SELECT m.key,o.original_name,o.description,o.input_schema,o.fingerprint,o.revision,o.observed_at,CASE WHEN a.fingerprint=o.fingerprint THEN COALESCE(a.allowed,0) ELSE 0 END,COALESCE(a.sensitive,0),COALESCE(a.revision,1),json_object('endpoint',m.url,'transport','streamable_http','auth_type',m.auth_type,'auth_header',m.auth_header_name,'auth_reference',CASE WHEN m.auth_type IN ('bearer','header') AND m.credential_json IS NULL THEN 'VOICE_MCP_'||upper(m.key)||'_TOKEN' ELSE NULL END) FROM agent_mcp_bindings b JOIN mcp_servers m ON m.id=b.mcp_server_id JOIN external_tool_observations o ON o.server_id=m.id AND o.server_revision=m.revision AND o.blocked=0 LEFT JOIN agent_external_tool_allowlist a ON a.agent_id=b.agent_id AND a.server_id=m.id AND a.original_name=o.original_name WHERE b.agent_id=? ORDER BY m.key,o.original_name").bind(agent_id).fetch_all(&self.pool).await
+    }
+    pub(crate) async fn review_external_tool(
+        &self,
+        key: &str,
+        body: ToolReview,
+        expected: i64,
+        request_id: &str,
+    ) -> Result<i64, WriteError> {
+        let pool = &self.pool;
+        let agent = match super::agents::get_agent_by(self, key).await {
+            Ok(v) => v,
+            Err(e) => return Err(WriteError::Sql(e)),
+        };
+        let security = &self.tool_security;
+        let _publication = security.publication.write().await;
+        let mut tx = match pool.begin().await {
+            Ok(v) => v,
+            Err(e) => return Err(WriteError::Sql(e)),
+        };
+        let observed=sqlx::query_scalar::<_,i64>("SELECT o.server_id FROM external_tool_observations o JOIN mcp_servers m ON m.id=o.server_id JOIN agent_mcp_bindings b ON b.mcp_server_id=m.id WHERE b.agent_id=? AND m.key=? AND o.original_name=? AND o.revision=? AND o.fingerprint=? AND o.server_revision=m.revision AND o.blocked=0").bind(agent.id).bind(&body.server_key).bind(&body.original_name).bind(body.observed_revision).bind(&body.fingerprint).fetch_optional(&mut *tx).await;
+        let server = match observed {
+            Ok(Some(v)) => v,
+            Ok(None) => return Err(WriteError::Conflict("contract_conflict")),
+            Err(e) => return Err(WriteError::Sql(e)),
+        };
+        let old=sqlx::query_as::<_,(i64,i64,i64,String)>("SELECT revision,allowed,sensitive,fingerprint FROM agent_external_tool_allowlist WHERE agent_id=? AND server_id=? AND original_name=?").bind(agent.id).bind(server).bind(&body.original_name).fetch_optional(&mut *tx).await;
+        let old = match old {
+            Ok(v) => v,
+            Err(e) => return Err(WriteError::Sql(e)),
+        };
+        if old.as_ref().map(|v| v.0).unwrap_or(1) != expected {
+            return Err(WriteError::Conflict("revision_conflict"));
+        }
+        let result=sqlx::query("INSERT INTO agent_external_tool_allowlist(agent_id,server_id,original_name,fingerprint,allowed,sensitive,revision) VALUES(?,?,?,?,?,?,2) ON CONFLICT(agent_id,server_id,original_name) DO UPDATE SET fingerprint=excluded.fingerprint,allowed=excluded.allowed,sensitive=excluded.sensitive,revision=revision+1")
+        .bind(agent.id).bind(server).bind(&body.original_name).bind(&body.fingerprint).bind(i64::from(body.allowed)).bind(i64::from(body.sensitive)).execute(&mut *tx).await;
+        if let Err(e) = result {
+            return Err(WriteError::Sql(e));
+        }
+        if let Err(e) = audit(
+            &mut *tx,
+            request_id,
+            "agent",
+            Some(agent.id),
+            "review_external_tool",
+            Some(expected),
+            Some(expected + 1),
+            AuditOutcome::Success,
+            1,
+        )
+        .await
+        {
+            return Err(WriteError::Sql(e));
+        }
+        if let Err(e) = tx.commit().await {
+            return Err(WriteError::Sql(e));
+        }
+        if old.is_some_and(|(_, allowed, sensitive, fingerprint)| {
+            allowed != 0
+                && sensitive == 0
+                && (!body.allowed || body.sensitive || fingerprint != body.fingerprint)
+        }) {
+            self.tool_security.invalidate_agent(agent.id);
+        }
+        Ok(expected + 1)
+    }
+}
+
+impl Database {
+    pub(super) async fn external_tool_allowed(
+        &self,
+        agent_id: i64,
+        id: i64,
+        name: &str,
+        fingerprint: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_external_tool_allowlist a JOIN external_tool_observations o ON o.server_id=a.server_id AND o.original_name=a.original_name JOIN mcp_servers m ON m.id=a.server_id JOIN agent_mcp_bindings b ON b.agent_id=a.agent_id AND b.mcp_server_id=a.server_id WHERE a.agent_id=? AND a.server_id=? AND a.original_name=? AND a.fingerprint=? AND o.fingerprint=a.fingerprint AND o.server_revision=m.revision AND o.blocked=0 AND a.allowed=1 AND a.sensitive=0 AND m.enabled=1 AND b.enabled=1")
+            .bind(agent_id).bind(id).bind(name).bind(fingerprint).fetch_one(&self.pool).await.map(|count| count == 1)
+    }
+}

@@ -22,6 +22,8 @@
 //! Read and purge are deliberately absent here: those are the Admin API's surfaces and live in
 //! `app::admin::history`, which owns its own typed query and its audit transaction.
 
+pub(crate) mod queries;
+
 use crate::config::DatabaseHistoryConfig;
 use std::{
     sync::{

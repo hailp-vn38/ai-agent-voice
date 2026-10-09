@@ -387,7 +387,10 @@ async fn managed_startup(
         drop(lease);
     }
     if let (Some(database), Some(prewarm)) = (&state.database, &state.provider_prewarm) {
-        let defaults: Vec<(i64,)> = sqlx::query_as("SELECT DISTINCT t.id FROM agent_templates t JOIN agent_template_assignments a ON a.template_id=t.id JOIN agents g ON g.id=a.agent_id WHERE a.enabled=1 AND a.is_default=1 AND t.enabled=1 AND g.enabled=1 LIMIT 256").fetch_all(database.pool()).await.map_err(|_| BootstrapError::Provider)?;
+        let defaults: Vec<(i64,)> = database
+            .default_prewarm_templates()
+            .await
+            .map_err(|_| BootstrapError::Provider)?;
         for (id,) in defaults {
             prewarm.template(id).await;
         }

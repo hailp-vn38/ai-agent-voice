@@ -11,9 +11,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, put},
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
-use sqlx::{Executor, FromRow, Sqlite, SqlitePool};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -313,17 +312,6 @@ fn error(request: &Request, status: StatusCode, code: &'static str) -> Response 
     )
         .into_response()
 }
-#[allow(clippy::result_large_err)] // Axum handlers return the response directly on this boundary.
-fn db(state: &AppState) -> Result<&SqlitePool, Response> {
-    state.database.as_ref().map(|db| db.pool()).ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error":{"code":"database_unavailable"}})),
-        )
-            .into_response()
-    })
-}
-
 /// The shared security registry, used by every mutating handler to revoke the live Voice Sessions
 /// that pinned the changed dependency.
 fn security(
@@ -508,98 +496,32 @@ fn expected(headers: &HeaderMap) -> Result<i64, &'static str> {
         .filter(|v: &i64| *v > 0)
         .ok_or("invalid_if_match")
 }
-/// What an administration did, and therefore what its audit row records.
-///
-/// The outcome and the reason a row failed travel as one value because they are never independent:
-/// a mismatched pair would be representable as two free strings and meaningless in practice.
-#[derive(Clone, Copy)]
-pub(super) enum AuditOutcome {
-    Success,
-    RevisionConflict,
-}
 
-impl AuditOutcome {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Success => "success",
-            Self::RevisionConflict => "conflict",
-        }
+#[allow(clippy::result_large_err)]
+fn database(state: &AppState) -> Result<&crate::database::Database, Response> {
+    state.database.as_deref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":{"code":"database_unavailable"}})),
+        )
+            .into_response()
+    })
+}
+fn write_error(request: &Request, cause: crate::database::writes::WriteError) -> Response {
+    use crate::database::writes::WriteError;
+    match cause {
+        WriteError::Sql(cause) => sql_error(request, &cause),
+        WriteError::Mutation(cause) => mutation_sql_error(request, &cause),
+        WriteError::Unavailable => error(
+            request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        ),
+        WriteError::NotFound => error(request, StatusCode::NOT_FOUND, "not_found"),
+        WriteError::Invalid(code) => error(request, StatusCode::BAD_REQUEST, code),
+        WriteError::Gone(code) => error(request, StatusCode::GONE, code),
+        WriteError::Missing(code) => error(request, StatusCode::NOT_FOUND, code),
+        WriteError::UnavailableCode(code) => error(request, StatusCode::SERVICE_UNAVAILABLE, code),
+        WriteError::Conflict(code) => error(request, StatusCode::CONFLICT, code),
     }
-
-    /// The only reason kind V1 records, and it belongs to exactly one outcome.
-    fn error_kind(self) -> Option<&'static str> {
-        match self {
-            Self::Success => None,
-            Self::RevisionConflict => Some("revision_conflict"),
-        }
-    }
-}
-
-/// One audit row: enough to account for an administration without recording any of it.
-///
-/// `resource_id` is `None` for an operation that stands behind no single resource row — a scoped
-/// History Purge names a scope rather than a resource and has no revision pair, so its `action` and
-/// `affected_rows` are the only thing that identifies it.  Nothing about the text a purge deleted
-/// does: a purge must leave a countable trace, not a second copy of what it removed.
-#[allow(clippy::too_many_arguments)] // Each argument maps one-to-one to the immutable audit schema.
-async fn audit<'e, E>(
-    executor: E,
-    request_id: &str,
-    resource: &str,
-    resource_id: Option<i64>,
-    action: &str,
-    prior: Option<i64>,
-    new: Option<i64>,
-    outcome: AuditOutcome,
-    affected_rows: u64,
-) -> Result<(), sqlx::Error>
-where
-    E: Executor<'e, Database = Sqlite>,
-{
-    sqlx::query("INSERT INTO admin_audit_events (created_at,request_id,resource_type,resource_id,action,prior_revision,new_revision,outcome,error_kind,affected_rows) VALUES (?,?,?,?,?,?,?,?,?,?)")
-        .bind(now())
-        .bind(request_id)
-        .bind(resource)
-        .bind(resource_id)
-        .bind(action)
-        .bind(prior)
-        .bind(new)
-        .bind(outcome.as_str())
-        .bind(outcome.error_kind())
-        .bind(affected_rows as i64)
-        .execute(executor)
-        .await
-        .map(|_| ())
-}
-
-async fn audit_conflict(
-    pool: &SqlitePool,
-    request_id: String,
-    resource: &str,
-    resource_id: i64,
-    expected: i64,
-) {
-    audit_conflict_action(pool, request_id, resource, resource_id, expected, "update").await;
-}
-
-async fn audit_conflict_action(
-    pool: &SqlitePool,
-    request_id: String,
-    resource: &str,
-    resource_id: i64,
-    expected: i64,
-    action: &str,
-) {
-    let _ = audit(
-        pool,
-        &request_id,
-        resource,
-        Some(resource_id),
-        action,
-        Some(expected),
-        None,
-        AuditOutcome::RevisionConflict,
-        1,
-    )
-    .await;
 }

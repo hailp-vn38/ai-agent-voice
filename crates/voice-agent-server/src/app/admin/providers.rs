@@ -1,23 +1,7 @@
 //! Admin providers resources.
 use super::*;
-use sqlx::QueryBuilder;
 
-#[derive(Serialize, FromRow)]
-struct Provider {
-    id: i64,
-    key: String,
-    name: String,
-    #[serde(rename = "type")]
-    kind: String,
-    adapter: String,
-    config_json: String,
-    enabled: i64,
-    revision: i64,
-    created_at: i64,
-    updated_at: i64,
-    #[serde(skip)]
-    credential_json: Option<String>,
-}
+use crate::database::providers::{Provider, ProviderFilters};
 fn provider_response(
     provider: Provider,
     runtime_snapshot: Option<&crate::providers::DatabaseRuntimeSnapshot>,
@@ -121,9 +105,6 @@ struct PatchProvider {
 fn adapter_matches_kind(kind: &str, adapter: &str) -> bool {
     crate::providers::admin_provider_adapter_matches_kind(kind, adapter)
 }
-async fn provider_by(pool: &SqlitePool, key: &str) -> Result<Provider, sqlx::Error> {
-    sqlx::query_as("SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,credential_json FROM providers WHERE key=?").bind(key).fetch_one(pool).await
-}
 /// Mints the immutable identity for a new provider as `{provider_type}_{uuid32}`.
 ///
 /// The key never derives from the display name: names repeat, get renamed and carry no slug
@@ -173,47 +154,27 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
         }
         None => None,
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let r=sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,credential_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").bind(&provider_key).bind(&body.name).bind(&body.kind).bind(&body.adapter).bind(config).bind(credential).bind(now()).bind(now()).execute(&mut *tx).await;
-    let provider_id = match r {
-        Ok(v) => v.last_insert_rowid(),
-        Err(e) => return mutation_sql_error(&request, &e),
-    };
-    if audit(
-        &mut *tx,
-        id(&request),
-        "provider",
-        Some(provider_id),
-        "create",
-        None,
-        Some(1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
+    if let Err(cause) = database
+        .create_provider(
+            crate::database::providers::NewProvider {
+                key: &provider_key,
+                name: &body.name,
+                kind: &body.kind,
+                adapter: &body.adapter,
+                config: &config,
+                credential: credential.as_deref(),
+            },
+            id(&request),
+        )
+        .await
     {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
-    };
-    match provider_by(pool, &provider_key).await {
+        return write_error(&request, cause);
+    }
+    match crate::database::providers::provider_by(database, &provider_key).await {
         Ok(v) => (
             StatusCode::CREATED,
             Json(managed_provider_response(v, &state)),
@@ -227,11 +188,11 @@ pub(super) async fn get_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    match provider_by(pool, &key).await {
+    match crate::database::providers::provider_by(database, &key).await {
         Ok(v) => Json(managed_provider_response(v, &state)).into_response(),
         Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
         Err(e) => sql_error(&request, &e),
@@ -246,41 +207,25 @@ pub(super) async fn list_providers(
         Ok(v) => v,
         Err(c) => return error(&request, StatusCode::BAD_REQUEST, c),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let order = match query.sort.as_deref().unwrap_or("key") {
-        "key" => "key ASC",
-        "-key" => "key DESC",
-        "name" => "name ASC, key ASC",
-        "-name" => "name DESC, key ASC",
-        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
-    };
-    let filters = match ProviderFilters::from_query(&query) {
+    if query
+        .sort
+        .as_deref()
+        .is_some_and(|sort| !matches!(sort, "key" | "-key" | "name" | "-name"))
+    {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_query");
+    }
+    let filters = match ProviderFilters::new(query.enabled, query.q.clone(), query.kind.clone()) {
         Ok(value) => value,
         Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
     };
-    let total = match provider_count(pool, &filters, true).await {
-        Ok(value) => value,
-        Err(value) => return sql_error(&request, &value),
-    };
-    let facets = match provider_facets(pool, &filters).await {
-        Ok(value) => value,
-        Err(value) => return sql_error(&request, &value),
-    };
-    let mut builder = QueryBuilder::<Sqlite>::new(
-        "SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,credential_json FROM providers",
-    );
-    append_provider_filters(&mut builder, &filters, true);
-    builder
-        .push(" ORDER BY ")
-        .push(order)
-        .push(" LIMIT ")
-        .push_bind(i64::from(size))
-        .push(" OFFSET ")
-        .push_bind(i64::from((page - 1) * size));
-    match builder.build_query_as::<Provider>().fetch_all(pool).await { Ok(items) => Json(serde_json::json!({"items":items.into_iter().map(|item| managed_provider_response(item, &state)).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX,"total":total,"total_pages":provider_total_pages(total, size),"facets":facets})).into_response(), Err(value) => sql_error(&request, &value) }
+    match database.list_providers(&filters, query.sort.as_deref(), page, size).await {
+        Ok(result) => Json(serde_json::json!({"items":result.items.into_iter().map(|item| managed_provider_response(item, &state)).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX,"total":result.total,"total_pages":provider_total_pages(result.total, size),"facets":result.facets})).into_response(),
+        Err(value) => sql_error(&request, &value),
+    }
 }
 
 #[derive(Deserialize)]
@@ -298,97 +243,6 @@ pub(super) struct ProviderListQuery {
     #[serde(default)]
     sort: Option<String>,
 }
-struct ProviderFilters {
-    enabled: Option<bool>,
-    q: Option<String>,
-    kind: Option<String>,
-}
-impl ProviderFilters {
-    fn from_query(query: &ProviderListQuery) -> Result<Self, ()> {
-        let kind = query.kind.clone();
-        if kind
-            .as_deref()
-            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts"))
-        {
-            return Err(());
-        }
-        let q = query.q.clone().filter(|value| !value.is_empty());
-        if q.as_ref().is_some_and(|value| value.len() > 128) {
-            return Err(());
-        }
-        Ok(Self {
-            enabled: query.enabled,
-            q,
-            kind,
-        })
-    }
-}
-fn append_provider_filters(
-    builder: &mut QueryBuilder<Sqlite>,
-    filters: &ProviderFilters,
-    include_kind: bool,
-) {
-    let mut first = true;
-    let mut clause = |builder: &mut QueryBuilder<Sqlite>| {
-        builder.push(if first { " WHERE " } else { " AND " });
-        first = false;
-    };
-    if let Some(enabled) = filters.enabled {
-        clause(builder);
-        builder.push("enabled=").push_bind(i64::from(enabled));
-    }
-    if include_kind && let Some(kind) = &filters.kind {
-        clause(builder);
-        builder.push("type=").push_bind(kind.clone());
-    }
-    if let Some(q) = &filters.q {
-        clause(builder);
-        let q = format!(
-            "%{}%",
-            q.replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_")
-        );
-        builder
-            .push("(key LIKE ")
-            .push_bind(q.clone())
-            .push(" ESCAPE '\\' OR name LIKE ")
-            .push_bind(q)
-            .push(" ESCAPE '\\')");
-    }
-}
-async fn provider_count(
-    pool: &SqlitePool,
-    filters: &ProviderFilters,
-    include_kind: bool,
-) -> Result<i64, sqlx::Error> {
-    let mut builder = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM providers");
-    append_provider_filters(&mut builder, filters, include_kind);
-    builder.build_query_scalar().fetch_one(pool).await
-}
-async fn provider_facets(
-    pool: &SqlitePool,
-    filters: &ProviderFilters,
-) -> Result<Value, sqlx::Error> {
-    let mut builder = QueryBuilder::<Sqlite>::new("SELECT type, COUNT(*) FROM providers");
-    append_provider_filters(&mut builder, filters, false);
-    builder.push(" GROUP BY type");
-    let counts: Vec<(String, i64)> = builder.build_query_as().fetch_all(pool).await?;
-    let mut facets = serde_json::Map::new();
-    for kind in ["vad", "asr", "llm", "tts"] {
-        facets.insert(
-            kind.into(),
-            Value::from(
-                counts
-                    .iter()
-                    .find(|(value, _)| value == kind)
-                    .map(|(_, count)| *count)
-                    .unwrap_or(0),
-            ),
-        );
-    }
-    Ok(Value::Object(facets))
-}
 fn provider_total_pages(total: i64, page_size: u32) -> i64 {
     (total + i64::from(page_size) - 1) / i64::from(page_size)
 }
@@ -403,36 +257,25 @@ pub(super) async fn list_provider_templates(
         Ok(value) if query.enabled.is_none() && query.sort.is_none() => value,
         _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let provider = match provider_by(pool, &provider_key).await {
+    let provider = match crate::database::providers::provider_by(database, &provider_key).await {
         Ok(v) => v,
         Err(sqlx::Error::RowNotFound) => {
             return error(&request, StatusCode::NOT_FOUND, "not_found");
         }
         Err(e) => return sql_error(&request, &e),
     };
-    let total: i64 = match sqlx::query_scalar(
-        "SELECT COUNT(*) FROM template_provider_bindings WHERE provider_id=?",
-    )
-    .bind(provider.id)
-    .fetch_one(pool)
-    .await
+    let (total, rows) = match database
+        .provider_templates(provider.id, page, page_size)
+        .await
     {
         Ok(value) => value,
-        Err(e) => return sql_error(&request, &e),
+        Err(cause) => return sql_error(&request, &cause),
     };
-    let rows: Result<Vec<(String, String, String, i64)>, _> = sqlx::query_as(
-        "SELECT t.key,t.name,b.provider_type,t.enabled FROM template_provider_bindings b \
-         JOIN agent_templates t ON t.id=b.template_id WHERE b.provider_id=? ORDER BY t.key LIMIT ? OFFSET ?",
-    )
-    .bind(provider.id)
-    .bind(i64::from(page_size))
-    .bind(i64::from((page - 1) * page_size))
-    .fetch_all(pool)
-    .await;
+    let rows: Result<_, sqlx::Error> = Ok(rows);
     match rows {
         Ok(rows) => Json(serde_json::json!({
             "provider_key": provider_key,
@@ -468,26 +311,11 @@ pub(super) async fn patch_provider(
         Ok(v) => v,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    type ProviderRow = (
-        i64,
-        String,
-        String,
-        String,
-        String,
-        i64,
-        i64,
-        Option<String>,
-    );
-    let old: Result<ProviderRow, _> = sqlx::query_as(
-        "SELECT id,name,type,adapter,config_json,enabled,revision,credential_json FROM providers WHERE key=?",
-    )
-    .bind(&key)
-    .fetch_one(pool)
-    .await;
+    let old = crate::database::providers::provider_by(database, &key).await;
     let (
         provider_id,
         old_name,
@@ -498,14 +326,25 @@ pub(super) async fn patch_provider(
         revision,
         old_credential,
     ) = match old {
-        Ok(v) => v,
+        Ok(v) => (
+            v.id,
+            v.name,
+            v.kind,
+            v.adapter,
+            v.config_json,
+            v.enabled,
+            v.revision,
+            v.credential_json,
+        ),
         Err(sqlx::Error::RowNotFound) => {
             return error(&request, StatusCode::NOT_FOUND, "not_found");
         }
         Err(e) => return sql_error(&request, &e),
     };
     if revision != expected {
-        audit_conflict(pool, id(&request).into(), "provider", provider_id, expected).await;
+        database
+            .provider_conflict(id(&request), provider_id, expected)
+            .await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
     let name = match body.name.value() {
@@ -561,49 +400,28 @@ pub(super) async fn patch_provider(
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
         None => old_enabled,
     };
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let changed = sqlx::query("UPDATE providers SET name=?,adapter=?,config_json=?,credential_json=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?")
-        .bind(name).bind(adapter).bind(config).bind(credential).bind(enabled).bind(now()).bind(provider_id).bind(expected)
-        .execute(&mut *tx).await.map(|v| v.rows_affected() == 1).unwrap_or(false);
-    if !changed {
-        let _ = tx.rollback().await;
-        return error(&request, StatusCode::CONFLICT, "revision_conflict");
-    }
-    if audit(
-        &mut *tx,
-        id(&request),
-        "provider",
-        Some(provider_id),
-        "update",
-        Some(expected),
-        Some(expected + 1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
+    if let Err(cause) = database
+        .update_provider(
+            provider_id,
+            expected,
+            crate::database::providers::ProviderChanges {
+                name: &name,
+                adapter: &adapter,
+                config: &config,
+                credential: credential.as_deref(),
+                enabled,
+            },
+            id(&request),
+        )
+        .await
     {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
+        return write_error(&request, cause);
     }
     if let Some(prewarm) = &state.provider_prewarm {
         prewarm.provider(provider_id, expected + 1).await;
     }
     let _ = kind; // type is immutable and retained for the provider instance.
-    match provider_by(pool, &key).await {
+    match crate::database::providers::provider_by(database, &key).await {
         Ok(v) => Json(managed_provider_response(v, &state)).into_response(),
         Err(e) => sql_error(&request, &e),
     }

@@ -57,15 +57,11 @@ pub(super) async fn get_provider_capabilities(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    let pool = match db(&state) {
-        Ok(pool) => pool,
+    let database = match database(&state) {
+        Ok(database) => database,
         Err(response) => return response,
     };
-    let provider: Result<(i64, String, String, i64), _> =
-        sqlx::query_as("SELECT id,adapter,type,revision FROM providers WHERE key=?")
-            .bind(&key)
-            .fetch_one(pool)
-            .await;
+    let provider = database.provider_capability_identity(&key).await;
     let (provider_id, adapter, kind, revision) = match provider {
         Ok(provider) => provider,
         Err(sqlx::Error::RowNotFound) => {

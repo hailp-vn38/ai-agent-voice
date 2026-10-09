@@ -116,8 +116,11 @@ impl ExternalToolGuard {
         let Some((id, fingerprint)) = self.contracts.get(&(server.into(), name.into())) else {
             return false;
         };
-        let allowed = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_external_tool_allowlist a JOIN external_tool_observations o ON o.server_id=a.server_id AND o.original_name=a.original_name JOIN mcp_servers m ON m.id=a.server_id JOIN agent_mcp_bindings b ON b.agent_id=a.agent_id AND b.mcp_server_id=a.server_id WHERE a.agent_id=? AND a.server_id=? AND a.original_name=? AND a.fingerprint=? AND o.fingerprint=a.fingerprint AND o.server_revision=m.revision AND o.blocked=0 AND a.allowed=1 AND a.sensitive=0 AND m.enabled=1 AND b.enabled=1")
-            .bind(self.agent_id).bind(id).bind(name).bind(fingerprint).fetch_one(self.database.pool()).await.unwrap_or(0) == 1;
+        let allowed = self
+            .database
+            .external_tool_allowed(self.agent_id, *id, name, fingerprint)
+            .await
+            .unwrap_or(false);
         allowed && !self.close.is_cancelled()
     }
 }

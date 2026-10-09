@@ -7,7 +7,10 @@
 //! stays in RAM whatever an administrator does here.
 use super::*;
 
-use crate::database::history::HistoryRole;
+use crate::database::history::{
+    HistoryRole,
+    queries::{HistoryFilters, PurgeScope},
+};
 
 /// The literal an all-history purge must carry.  Archive deletion is irreversible, so the widest
 /// scope is the one an operator spells out rather than the one a request reaches by omission.
@@ -47,34 +50,11 @@ pub(super) struct HistoryQuery {
     role: Option<String>,
 }
 
-#[derive(Serialize, FromRow)]
-struct HistoryMessage {
-    id: i64,
-    session_id: String,
-    device_id: i64,
-    agent_id: i64,
-    template_id: Option<i64>,
-    sequence: i64,
-    turn_id: Option<String>,
-    role: String,
-    text: String,
-    /// Unix milliseconds UTC, matching the retention cutoff this archive is pruned by.
-    created_at: i64,
-}
-
 /// The filter set, or why the request named something this archive cannot answer.
 ///
 /// A rejected filter never degrades into an absent one: `device_id=0` matched by nothing would be
 /// answered with the *whole archive*, which is the one answer an administrator must never be handed
 /// in place of the one they asked for.
-struct HistoryFilters {
-    session_id: Option<String>,
-    device_id: Option<i64>,
-    agent_id: Option<i64>,
-    template_id: Option<i64>,
-    role: Option<&'static str>,
-}
-
 impl HistoryFilters {
     fn of(query: &HistoryQuery) -> Result<Self, &'static str> {
         if let Some(session_id) = query.session_id.as_deref()
@@ -94,28 +74,6 @@ impl HistoryFilters {
             template_id: query.template_id,
             role: role_filter(query.role.as_deref())?,
         })
-    }
-
-    /// Adds each present filter as one clause.  Absent filters contribute nothing, so the query is
-    /// the whole archive only when the request asked for the whole archive.
-    ///
-    /// The set is consumed because every value it holds is bound into the query it builds.
-    fn push(self, query: &mut sqlx::QueryBuilder<'_, Sqlite>) {
-        if let Some(session_id) = self.session_id {
-            query.push(" AND session_id = ").push_bind(session_id);
-        }
-        for (column, id) in [
-            ("device_id", self.device_id),
-            ("agent_id", self.agent_id),
-            ("template_id", self.template_id),
-        ] {
-            if let Some(id) = id {
-                query.push(" AND ").push(column).push(" = ").push_bind(id);
-            }
-        }
-        if let Some(role) = self.role {
-            query.push(" AND role = ").push_bind(role);
-        }
     }
 }
 
@@ -139,18 +97,19 @@ pub(super) async fn list_history(
         Ok(value) => value,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
-    let order = match query.page.sort.as_deref().unwrap_or("-created_at") {
-        "created_at" => "created_at ASC",
-        "sequence" => "sequence ASC",
-        "-sequence" => "sequence DESC",
-        "-created_at" => "created_at DESC",
-        _ => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
-    };
+    if query.page.sort.as_deref().is_some_and(|sort| {
+        !matches!(
+            sort,
+            "created_at" | "-created_at" | "sequence" | "-sequence"
+        )
+    }) {
+        return error(&request, StatusCode::BAD_REQUEST, "invalid_query");
+    }
     let filters = match HistoryFilters::of(&query) {
         Ok(filters) => filters,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(value) => value,
         Err(_) => {
             return error(
@@ -160,21 +119,8 @@ pub(super) async fn list_history(
             );
         }
     };
-    let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
-        "SELECT id, session_id, device_id, agent_id, template_id, sequence, turn_id, role, text, \
-         created_at FROM history_messages WHERE 1 = 1",
-    );
-    filters.push(&mut builder);
-    builder
-        .push(" ORDER BY ")
-        .push(order)
-        .push(" LIMIT ")
-        .push_bind(i64::from(page_size))
-        .push(" OFFSET ")
-        .push_bind(i64::from((page - 1) * page_size));
-    match builder
-        .build_query_as::<HistoryMessage>()
-        .fetch_all(pool)
+    match database
+        .list_history(filters, query.page.sort.as_deref(), page, page_size)
         .await
     {
         Ok(items) => Json(serde_json::json!({
@@ -204,12 +150,6 @@ pub(super) struct PurgeHistory {
 }
 
 /// The single deletion a purge request is allowed to become.
-enum PurgeScope {
-    Device(i64),
-    Session(String),
-    All,
-}
-
 impl PurgeHistory {
     fn scope(&self) -> Result<PurgeScope, &'static str> {
         let named = usize::from(self.device_id.is_some())
@@ -249,21 +189,6 @@ impl PurgeHistory {
     }
 }
 
-impl PurgeScope {
-    /// Adds this scope's predicate, or nothing at all for the confirmed all-history delete.
-    fn push(self, query: &mut sqlx::QueryBuilder<'_, Sqlite>) {
-        match self {
-            Self::All => {}
-            Self::Device(id) => {
-                query.push(" AND device_id = ").push_bind(id);
-            }
-            Self::Session(id) => {
-                query.push(" AND session_id = ").push_bind(id);
-            }
-        }
-    }
-}
-
 pub(super) async fn purge_history(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (_, PurgeHistory) = match json(request).await {
         Ok(value) => value,
@@ -273,7 +198,7 @@ pub(super) async fn purge_history(State(state): State<AppState>, request: Reques
         Ok(scope) => scope,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(value) => value,
         Err(_) => {
             return error(
@@ -283,41 +208,8 @@ pub(super) async fn purge_history(State(state): State<AppState>, request: Reques
             );
         }
     };
-    let mut transaction = match pool.begin().await {
-        Ok(value) => value,
-        Err(error_value) => return sql_error(&request, &error_value),
-    };
-    let mut builder = sqlx::QueryBuilder::<Sqlite>::new("DELETE FROM history_messages WHERE 1 = 1");
-    scope.push(&mut builder);
-    let deleted = match builder.build().execute(&mut *transaction).await {
-        Ok(result) => result.rows_affected(),
-        Err(error_value) => {
-            let _ = transaction.rollback().await;
-            return sql_error(&request, &error_value);
-        }
-    };
-    // The deletion and the record of it are one transaction: an archive an operator cannot account
-    // for is the one outcome worse than a failed purge.
-    if audit(
-        &mut *transaction,
-        id(&request),
-        "history",
-        None,
-        "purge",
-        None,
-        None,
-        AuditOutcome::Success,
-        deleted,
-    )
-    .await
-    .is_err()
-        || transaction.commit().await.is_err()
-    {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
+    match database.purge_history(scope, id(&request)).await {
+        Ok(deleted) => Json(serde_json::json!({"deleted":deleted})).into_response(),
+        Err(cause) => write_error(&request, cause),
     }
-    Json(serde_json::json!({"deleted": deleted})).into_response()
 }

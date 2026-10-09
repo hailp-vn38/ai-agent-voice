@@ -102,7 +102,7 @@ impl EnrollmentCleaner {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
                     _ = schedule.tick() => {
-                        if let Some(now) = super::unix_seconds()
+                        if let Some(now) = crate::database::unix_seconds()
                             && let Err(error) = database.purge_enrollments(now, retention_seconds, 256).await {
                             tracing::warn!(event = "enrollment_cleanup_skipped", reason = %error, "Enrollment cleanup pass was skipped");
                         }
@@ -344,4 +344,142 @@ async fn registration_in_tx(
         }
         Some(_) => DeviceRegistration::Blocked,
     })
+}
+
+use super::{
+    audit::{AuditOutcome, audit},
+    writes::WriteError,
+};
+pub(crate) struct AdminEnrollmentClaim<'a> {
+    pub code: &'a str,
+    pub agent_key: &'a str,
+    pub name: Option<&'a str>,
+    pub template_key: Option<&'a str>,
+}
+impl Database {
+    pub(crate) async fn claim_device_enrollment(
+        &self,
+        input: AdminEnrollmentClaim<'_>,
+        request_id: &str,
+    ) -> Result<super::devices::Device, WriteError> {
+        let pool = &self.pool;
+        let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
+            Ok(tx) => tx,
+            Err(error_value) => return Err(WriteError::Sql(error_value)),
+        };
+        let row: Option<(String, String, i64, String)> = match sqlx::query_as(
+            "SELECT status,device_id,expires_at,metadata_json FROM device_enrollments WHERE code=?",
+        )
+        .bind(input.code)
+        .fetch_optional(&mut *tx)
+        .await
+        {
+            Ok(row) => row,
+            Err(error_value) => return Err(WriteError::Sql(error_value)),
+        };
+        let Some((status, device_identity, expires_at, metadata_json)) = row else {
+            return Err(WriteError::Missing("enrollment_code_invalid"));
+        };
+        match status.as_str() {
+            "claimed" => return Err(WriteError::Conflict("enrollment_already_claimed")),
+            "cancelled" => return Err(WriteError::Conflict("enrollment_cancelled")),
+            "expired" => return Err(WriteError::Gone("enrollment_code_expired")),
+            "pending" if crate::database::unix_seconds().unwrap_or_default() >= expires_at => {
+                return Err(WriteError::Gone("enrollment_code_expired"));
+            }
+            "pending" => {}
+            _ => {
+                return Err(WriteError::Unavailable);
+            }
+        }
+        let agent: Result<(i64, i64), _> =
+            sqlx::query_as("SELECT id,enabled FROM agents WHERE key=?")
+                .bind(input.agent_key)
+                .fetch_one(&mut *tx)
+                .await;
+        let (agent_id, enabled) = match agent {
+            Ok(value) => value,
+            Err(sqlx::Error::RowNotFound) => {
+                return Err(WriteError::Invalid("invalid_agent"));
+            }
+            Err(error_value) => return Err(WriteError::Sql(error_value)),
+        };
+        if enabled != 1 {
+            return Err(WriteError::Invalid("invalid_agent"));
+        }
+        let template_id =
+            match super::devices::template_override_id(&mut tx, agent_id, input.template_key).await
+            {
+                Ok(value) => value,
+                Err(sqlx::Error::RowNotFound) => {
+                    return Err(WriteError::Invalid("invalid_template_override"));
+                }
+                Err(error_value) => return Err(WriteError::Sql(error_value)),
+            };
+        let existing: Result<Option<(i64,)>, _> =
+            sqlx::query_as("SELECT id FROM devices WHERE device_id=?")
+                .bind(&device_identity)
+                .fetch_optional(&mut *tx)
+                .await;
+        match existing {
+            Ok(None) => {}
+            Ok(Some(_)) => return Err(WriteError::Conflict("device_already_registered")),
+            Err(error_value) => return Err(WriteError::Sql(error_value)),
+        }
+        let timestamp = crate::database::unix_seconds().unwrap_or_default();
+        let device_row = match sqlx::query("INSERT INTO devices (device_id,agent_id,template_id,name,metadata_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+        .bind(&device_identity).bind(agent_id).bind(template_id).bind(input.name).bind(metadata_json).bind(timestamp).bind(timestamp).execute(&mut *tx).await {
+        Ok(result) => result.last_insert_rowid(),
+        Err(error_value) if super::is_busy(&error_value) => return Err(WriteError::Sql(error_value)),
+        Err(error_value) if is_unique_constraint(&error_value) => {
+            return Err(WriteError::Conflict("device_already_registered"));
+        }
+        Err(error_value) => return Err(WriteError::Sql(error_value)),
+    };
+        let claimed = match sqlx::query("UPDATE device_enrollments SET status='claimed',claimed_device_id=?,terminal_at=? WHERE code=? AND status='pending' AND expires_at>?")
+        .bind(device_row).bind(timestamp).bind(input.code).bind(timestamp).execute(&mut *tx).await {
+        Ok(result) => result.rows_affected(), Err(error_value) => return Err(WriteError::Sql(error_value)),
+    };
+        if claimed != 1 {
+            return Err(WriteError::Conflict("enrollment_already_claimed"));
+        }
+        if audit(
+            &mut *tx,
+            request_id,
+            "device",
+            Some(device_row),
+            "create",
+            None,
+            Some(1),
+            AuditOutcome::Success,
+            1,
+        )
+        .await
+        .is_err()
+            || audit(
+                &mut *tx,
+                request_id,
+                "device_enrollment",
+                None,
+                "claim",
+                None,
+                None,
+                AuditOutcome::Success,
+                1,
+            )
+            .await
+            .is_err()
+        {
+            return Err(WriteError::Unavailable);
+        }
+        let device: super::devices::Device = match sqlx::query_as("SELECT d.id,d.device_id,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.id=?")
+        .bind(device_row).fetch_one(&mut *tx).await { Ok(device) => device, Err(error_value) => return Err(WriteError::Sql(error_value)) };
+        if tx.commit().await.is_err() {
+            return Err(WriteError::Unavailable);
+        }
+        Ok(device)
+    }
+}
+fn is_unique_constraint(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(database_error) if matches!(database_error.code().as_deref(), Some("1555" | "2067" | "SQLITE_CONSTRAINT_UNIQUE")))
 }

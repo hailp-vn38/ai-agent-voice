@@ -1,17 +1,7 @@
 //! Admin agents resources.
 use super::*;
 
-#[derive(Serialize, FromRow)]
-pub(super) struct Agent {
-    pub(super) id: i64,
-    pub(super) key: String,
-    name: String,
-    description: Option<String>,
-    pub(super) enabled: i64,
-    pub(super) revision: i64,
-    created_at: i64,
-    updated_at: i64,
-}
+use crate::database::agents::{AgentChanges, NewAgent};
 #[derive(Deserialize)]
 struct CreateAgent {
     key: String,
@@ -44,7 +34,7 @@ pub(super) async fn create_agent(State(state): State<AppState>, request: Request
     {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(_) => {
             return error(
@@ -54,53 +44,20 @@ pub(super) async fn create_agent(State(state): State<AppState>, request: Request
             );
         }
     };
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let time = now();
-    let result = sqlx::query(
-        "INSERT INTO agents (key,name,description,created_at,updated_at) VALUES (?,?,?,?,?)",
-    )
-    .bind(&body.key)
-    .bind(&body.name)
-    .bind(&body.description)
-    .bind(time)
-    .bind(time)
-    .execute(&mut *tx)
-    .await;
-    let resource_id = match result {
-        Ok(v) => v.last_insert_rowid(),
-        Err(error_value) => return mutation_sql_error(&request, &error_value),
-    };
-    if audit(
-        &mut *tx,
-        id(&request),
-        "agent",
-        Some(resource_id),
-        "create",
-        None,
-        Some(1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
+    if let Err(cause) = database
+        .create_agent(
+            NewAgent {
+                key: &body.key,
+                name: &body.name,
+                description: body.description.as_deref(),
+            },
+            id(&request),
+        )
+        .await
     {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
-    };
-    get_agent_by(pool, &body.key)
+        return write_error(&request, cause);
+    }
+    get_agent_by(database, &body.key)
         .await
         .map(|agent| (StatusCode::CREATED, Json(agent)).into_response())
         .unwrap_or_else(|_| {
@@ -116,7 +73,7 @@ pub(super) async fn get_agent(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(_) => {
             return error(
@@ -126,15 +83,13 @@ pub(super) async fn get_agent(
             );
         }
     };
-    match get_agent_by(pool, &key).await {
+    match get_agent_by(database, &key).await {
         Ok(v) => Json(v).into_response(),
         Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
         Err(error_value) => sql_error(&request, &error_value),
     }
 }
-pub(super) async fn get_agent_by(pool: &SqlitePool, key: &str) -> Result<Agent, sqlx::Error> {
-    sqlx::query_as("SELECT id,key,name,description,enabled,revision,created_at,updated_at FROM agents WHERE key=?").bind(key).fetch_one(pool).await
-}
+use crate::database::agents::get_agent_by;
 pub(super) async fn list_agents(
     State(state): State<AppState>,
     Query(query): Query<PageQuery>,
@@ -151,7 +106,7 @@ pub(super) async fn list_agents(
     {
         return error(&request, StatusCode::BAD_REQUEST, "invalid_query");
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(_) => {
             return error(
@@ -161,22 +116,8 @@ pub(super) async fn list_agents(
             );
         }
     };
-    let enabled = query.enabled.map(i64::from);
-    let order = match query.sort.as_deref().unwrap_or("key") {
-        "name" => "name ASC",
-        "-name" => "name DESC",
-        "-key" => "key DESC",
-        _ => "key ASC",
-    };
-    let sql = format!(
-        "SELECT id,key,name,description,enabled,revision,created_at,updated_at FROM agents WHERE (? IS NULL OR enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
-    );
-    let rows = sqlx::query_as::<_, Agent>(&sql)
-        .bind(enabled)
-        .bind(enabled)
-        .bind(i64::from(page_size))
-        .bind(i64::from((page - 1) * page_size))
-        .fetch_all(pool)
+    let rows = database
+        .list_agents(query.enabled, query.sort.as_deref(), page, page_size)
         .await;
     match rows {Ok(items)=>Json(serde_json::json!({"items":items,"page":page,"page_size":page_size,"max_page_size":PAGE_MAX})).into_response(),Err(error_value)=>sql_error(&request, &error_value)}
 }
@@ -197,7 +138,7 @@ pub(super) async fn patch_agent(
         Ok(v) => v,
         Err(c) => return error(&request, StatusCode::BAD_REQUEST, c),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(_) => {
             return error(
@@ -207,7 +148,7 @@ pub(super) async fn patch_agent(
             );
         }
     };
-    let old = match get_agent_by(pool, &key).await {
+    let old = match get_agent_by(database, &key).await {
         Ok(v) => v,
         Err(sqlx::Error::RowNotFound) => {
             return error(&request, StatusCode::NOT_FOUND, "not_found");
@@ -216,7 +157,9 @@ pub(super) async fn patch_agent(
     };
     if old.revision != expected {
         {
-            audit_conflict(pool, id(&request).to_owned(), "agent", old.id, expected).await;
+            database
+                .agent_conflict(id(&request), old.id, expected)
+                .await;
             return error(&request, StatusCode::CONFLICT, "revision_conflict");
         }
     };
@@ -237,150 +180,31 @@ pub(super) async fn patch_agent(
         Some(None) => return error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
         None => old.enabled,
     };
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let update = sqlx::query("UPDATE agents SET name=?,description=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(description).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await;
-    let update = match update {
-        Ok(result) if result.rows_affected() == 1 => Ok(()),
-        Ok(_) => Err(()),
-        Err(_) => Err(()),
-    };
-    if update.is_err() {
-        let _ = tx.rollback().await;
-        audit_conflict(pool, id(&request).to_owned(), "agent", old.id, expected).await;
-        return error(&request, StatusCode::CONFLICT, "revision_conflict");
-    }
-    if audit(
-        &mut *tx,
-        id(&request),
-        "agent",
-        Some(old.id),
-        "update",
-        Some(expected),
-        Some(expected + 1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
+    if let Err(cause) = database
+        .update_agent(
+            old.id,
+            expected,
+            AgentChanges {
+                name: &name,
+                description: description.as_deref(),
+                enabled,
+            },
+            id(&request),
+        )
+        .await
     {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
-    };
+        return write_error(&request, cause);
+    }
     // An Agent update re-scopes its sessions' profile snapshot; close them rather than hot-reload.
     if let Some(security) = security(&state) {
         security.invalidate_agent_speakers(old.id);
     }
-    get_agent_by(pool, &key)
+    get_agent_by(database, &key)
         .await
         .map(|v| Json(v).into_response())
         .unwrap_or_else(|_| {
             error(
                 &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            )
-        })
-}
-#[allow(dead_code)]
-async fn patch_agent_enabled(
-    state: &AppState,
-    key: &str,
-    request: &Request,
-    expected: i64,
-    enabled: Option<Option<bool>>,
-) -> Response {
-    let Some(enabled) = enabled.flatten() else {
-        return get_agent(
-            State(state.clone()),
-            Path(key.to_owned()),
-            Request::new(Body::empty()),
-        )
-        .await;
-    };
-    let pool = match db(state) {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let old = match get_agent_by(pool, key).await {
-        Ok(v) => v,
-        Err(_) => return error(request, StatusCode::NOT_FOUND, "not_found"),
-    };
-    if old.revision != expected {
-        {
-            audit_conflict(pool, id(request).to_owned(), "agent", old.id, expected).await;
-            return error(request, StatusCode::CONFLICT, "revision_conflict");
-        }
-    };
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    if sqlx::query(
-        "UPDATE agents SET enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?",
-    )
-    .bind(i64::from(enabled))
-    .bind(now())
-    .bind(old.id)
-    .bind(expected)
-    .execute(&mut *tx)
-    .await
-    .is_err()
-        || audit(
-            &mut *tx,
-            id(request),
-            "agent",
-            Some(old.id),
-            "update",
-            Some(expected),
-            Some(expected + 1),
-            AuditOutcome::Success,
-            1,
-        )
-        .await
-        .is_err()
-        || tx.commit().await.is_err()
-    {
-        return error(
-            request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
-    };
-    // Disabling (or re-enabling) an Agent re-scopes its sessions; close them rather than hot-reload.
-    if let Some(security) = security(state) {
-        security.invalidate_agent_speakers(old.id);
-    }
-    get_agent_by(pool, key)
-        .await
-        .map(|v| Json(v).into_response())
-        .unwrap_or_else(|_| {
-            error(
-                request,
                 StatusCode::SERVICE_UNAVAILABLE,
                 "database_unavailable",
             )

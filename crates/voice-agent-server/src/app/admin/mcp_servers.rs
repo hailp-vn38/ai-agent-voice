@@ -1,23 +1,8 @@
 //! Admin mcp servers resources.
-use super::agents::get_agent_by;
 use super::*;
+use crate::database::agents::get_agent_by;
 
-#[derive(FromRow)]
-struct McpServerRow {
-    id: i64,
-    key: String,
-    name: String,
-    url: String,
-    auth_type: String,
-    auth_header_name: Option<String>,
-    connect_timeout_ms: i64,
-    request_timeout_ms: i64,
-    enabled: i64,
-    revision: i64,
-    created_at: i64,
-    updated_at: i64,
-    credential_json: Option<String>,
-}
+use crate::database::mcp_servers::{McpChanges, McpInput, McpServerRow, mcp_by};
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum McpAuth {
@@ -128,9 +113,6 @@ fn mcp_json(row: McpServerRow) -> Value {
     let credential_env = crate::database::secrets::mcp_secret_env(&row.key, &row.auth_type);
     serde_json::json!({"key":row.key,"name":row.name,"transport":"streamable_http","url":row.url,"headers":{},"auth":auth,"credential_env":credential_env,"credential":crate::database::credentials::metadata(row.credential_json.as_deref()),"connect_timeout_ms":row.connect_timeout_ms,"request_timeout_ms":row.request_timeout_ms,"enabled":row.enabled != 0,"revision":row.revision,"created_at":row.created_at,"updated_at":row.updated_at})
 }
-async fn mcp_by(pool: &SqlitePool, key: &str) -> Result<McpServerRow, sqlx::Error> {
-    sqlx::query_as("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at,credential_json FROM mcp_servers WHERE key=?").bind(key).fetch_one(pool).await
-}
 pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Request) -> Response {
     let (request, body): (_, CreateMcpServer) = match json(request).await {
         Ok(v) => v,
@@ -168,49 +150,29 @@ pub(super) async fn create_mcp_server(State(state): State<AppState>, request: Re
         }
         None => None,
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let security = &state.database.as_ref().unwrap().tool_security;
-    let _publication = security.publication.write().await;
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let result = sqlx::query("INSERT INTO mcp_servers(key,name,url,auth_type,auth_header_name,credential_json,connect_timeout_ms,request_timeout_ms,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(&body.key).bind(&body.name).bind(&body.url).bind(auth_type).bind(auth_header_name).bind(credential).bind(body.connect_timeout_ms as i64).bind(body.request_timeout_ms as i64).bind(now()).bind(now()).execute(&mut *tx).await;
-    let resource_id = match result {
-        Ok(v) => v.last_insert_rowid(),
-        Err(e) => return mutation_sql_error(&request, &e),
-    };
-    if audit(
-        &mut *tx,
-        id(&request),
-        "mcp_server",
-        Some(resource_id),
-        "create",
-        None,
-        Some(1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
+    if let Err(cause) = database
+        .create_mcp_server(
+            McpInput {
+                key: &body.key,
+                name: &body.name,
+                url: &body.url,
+                auth_type: &auth_type,
+                auth_header_name: auth_header_name.as_deref(),
+                credential: credential.as_deref(),
+                connect_timeout_ms: body.connect_timeout_ms as i64,
+                request_timeout_ms: body.request_timeout_ms as i64,
+            },
+            id(&request),
+        )
+        .await
     {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
+        return write_error(&request, cause);
     }
-    match mcp_by(pool, &body.key).await {
+    match mcp_by(database, &body.key).await {
         Ok(row) => (StatusCode::CREATED, Json(mcp_json(row))).into_response(),
         Err(e) => sql_error(&request, &e),
     }
@@ -220,11 +182,11 @@ pub(super) async fn get_mcp_server(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    match mcp_by(pool, &key).await {
+    match mcp_by(database, &key).await {
         Ok(row) => Json(mcp_json(row)).into_response(),
         Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
         Err(e) => sql_error(&request, &e),
@@ -239,11 +201,11 @@ pub(super) async fn list_mcp_servers(
         Ok(v) => v,
         Err(c) => return error(&request, StatusCode::BAD_REQUEST, c),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    match sqlx::query_as::<_,McpServerRow>("SELECT id,key,name,url,auth_type,auth_header_name,connect_timeout_ms,request_timeout_ms,enabled,revision,created_at,updated_at,credential_json FROM mcp_servers ORDER BY key LIMIT ? OFFSET ?").bind(i64::from(size)).bind(i64::from((page-1)*size)).fetch_all(pool).await {Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(mcp_json).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
+    match database.list_mcp_servers(page, size).await {Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(mcp_json).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX})).into_response(),Err(e)=>sql_error(&request,&e)}
 }
 pub(super) async fn patch_mcp_server(
     State(state): State<AppState>,
@@ -261,11 +223,11 @@ pub(super) async fn patch_mcp_server(
         Ok(v) => v,
         Err(c) => return error(&request, StatusCode::BAD_REQUEST, c),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let old = match mcp_by(pool, &key).await {
+    let old = match mcp_by(database, &key).await {
         Ok(v) => v,
         Err(sqlx::Error::RowNotFound) => {
             return error(&request, StatusCode::NOT_FOUND, "not_found");
@@ -273,7 +235,7 @@ pub(super) async fn patch_mcp_server(
         Err(e) => return sql_error(&request, &e),
     };
     if old.revision != expected {
-        audit_conflict(pool, id(&request).into(), "mcp_server", old.id, expected).await;
+        database.mcp_conflict(id(&request), old.id, expected).await;
         return error(&request, StatusCode::CONFLICT, "revision_conflict");
     }
     let name = match body.name.value() {
@@ -328,66 +290,26 @@ pub(super) async fn patch_mcp_server(
         None if auth_type == "none" => None,
         None => old.credential_json.clone(),
     };
-    let security = &state.database.as_ref().unwrap().tool_security;
-    let _publication = security.publication.write().await;
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let source_changed = old.url != url
-        || old.auth_type != auth_type
-        || old.auth_header_name != auth_header_name
-        || old.enabled != enabled
-        || old.credential_json != credential;
-    let updated=sqlx::query("UPDATE mcp_servers SET name=?,url=?,auth_type=?,auth_header_name=?,credential_json=?,connect_timeout_ms=?,request_timeout_ms=?,enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(name).bind(url).bind(auth_type).bind(auth_header_name).bind(credential).bind(connect_timeout).bind(request_timeout).bind(enabled).bind(now()).bind(old.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
-    if !updated {
-        let _ = tx.rollback().await;
-        audit_conflict(pool, id(&request).into(), "mcp_server", old.id, expected).await;
-        return error(&request, StatusCode::CONFLICT, "revision_conflict");
-    };
-    let approvals = if source_changed {
-        sqlx::query("UPDATE agent_external_tool_allowlist SET allowed=0,revision=revision+1 WHERE server_id=?").bind(old.id).execute(&mut *tx).await
-    } else {
-        sqlx::query("UPDATE external_tool_observations SET server_revision=? WHERE server_id=?")
-            .bind(expected + 1)
-            .bind(old.id)
-            .execute(&mut *tx)
-            .await
-    };
-    if let Err(e) = approvals {
-        return sql_error(&request, &e);
-    }
-    if audit(
-        &mut *tx,
-        id(&request),
-        "mcp_server",
-        Some(old.id),
-        "update",
-        Some(expected),
-        Some(expected + 1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
+    if let Err(cause) = database
+        .update_mcp_server(
+            &old,
+            expected,
+            McpChanges {
+                name: &name,
+                url: &url,
+                auth_type: &auth_type,
+                auth_header_name: auth_header_name.as_deref(),
+                credential: credential.as_deref(),
+                connect_timeout,
+                request_timeout,
+                enabled,
+            },
+            id(&request),
+        )
+        .await
     {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
-    };
-    if source_changed {
-        security.invalidate_server(old.id);
+        return write_error(&request, cause);
     }
-    drop(_publication);
     get_mcp_server(State(state), Path(key), request).await
 }
 pub(super) async fn list_agent_mcp_bindings(
@@ -395,18 +317,18 @@ pub(super) async fn list_agent_mcp_bindings(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let agent = match get_agent_by(pool, &key).await {
+    let agent = match get_agent_by(database, &key).await {
         Ok(v) => v,
         Err(sqlx::Error::RowNotFound) => {
             return error(&request, StatusCode::NOT_FOUND, "not_found");
         }
         Err(e) => return sql_error(&request, &e),
     };
-    match sqlx::query_as::<_,(String,i64,i64)>("SELECT m.key,b.enabled,b.required FROM agent_mcp_bindings b JOIN mcp_servers m ON m.id=b.mcp_server_id WHERE b.agent_id=? ORDER BY m.key").bind(agent.id).fetch_all(pool).await { Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(|(server_key,enabled,required)|serde_json::json!({"server_key":server_key,"enabled":enabled!=0,"required":required!=0})).collect::<Vec<_>>() })).into_response(),Err(e)=>sql_error(&request,&e) }
+    match database.agent_mcp_bindings(agent.id).await { Ok(rows)=>Json(serde_json::json!({"items":rows.into_iter().map(|(server_key,enabled,required)|serde_json::json!({"server_key":server_key,"enabled":enabled!=0,"required":required!=0})).collect::<Vec<_>>() })).into_response(),Err(e)=>sql_error(&request,&e) }
 }
 pub(super) async fn put_agent_mcp_binding(
     State(state): State<AppState>,
@@ -424,70 +346,17 @@ pub(super) async fn put_agent_mcp_binding(
         Ok(v) => v,
         Err(c) => return error(&request, StatusCode::BAD_REQUEST, c),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let agent = match get_agent_by(pool, &key).await {
-        Ok(v) => v,
-        Err(sqlx::Error::RowNotFound) => {
-            return error(&request, StatusCode::NOT_FOUND, "not_found");
-        }
-        Err(e) => return sql_error(&request, &e),
-    };
-    if agent.revision != expected {
-        audit_conflict(pool, id(&request).into(), "agent", agent.id, expected).await;
-        return error(&request, StatusCode::CONFLICT, "revision_conflict");
-    };
-    let server = match mcp_by(pool, &server_key).await {
-        Ok(v) => v,
-        Err(sqlx::Error::RowNotFound) => {
-            return error(&request, StatusCode::BAD_REQUEST, "invalid_mcp_server");
-        }
-        Err(e) => return sql_error(&request, &e),
-    };
-    let security = &state.database.as_ref().unwrap().tool_security;
-    let _publication = security.publication.write().await;
-    let mut tx = match pool.begin().await {
-        Ok(v) => v,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let ok=sqlx::query("INSERT INTO agent_mcp_bindings(agent_id,mcp_server_id,enabled,required,created_at) VALUES(?,?,?,?,?) ON CONFLICT(agent_id,mcp_server_id) DO UPDATE SET enabled=excluded.enabled,required=excluded.required").bind(agent.id).bind(server.id).bind(i64::from(body.enabled)).bind(0i64).bind(now()).execute(&mut *tx).await.is_ok()&&sqlx::query("UPDATE agents SET revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(now()).bind(agent.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()==1).unwrap_or(false);
-    if !ok {
-        let _ = tx.rollback().await;
-        return error(&request, StatusCode::CONFLICT, "revision_conflict");
-    };
-    if audit(
-        &mut *tx,
-        id(&request),
-        "agent",
-        Some(agent.id),
-        "upsert_mcp_binding",
-        Some(expected),
-        Some(expected + 1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
+    if let Err(cause) = database
+        .put_agent_mcp_binding(&key, &server_key, body.enabled, expected, id(&request))
+        .await
     {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
-    };
-    if !body.enabled {
-        security.invalidate_agent(agent.id);
+        return write_error(&request, cause);
     }
-    match get_agent_by(pool, &key).await {
+    match get_agent_by(database, &key).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => sql_error(&request, &e),
     }
@@ -502,97 +371,15 @@ pub(super) async fn unlink_agent_mcp_binding(
         Ok(value) => value,
         Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
     };
-    let pool = match db(&state) {
+    let database = match database(&state) {
         Ok(value) => value,
         Err(response) => return response,
     };
-    let agent = match get_agent_by(pool, &key).await {
-        Ok(value) => value,
-        Err(sqlx::Error::RowNotFound) => {
-            return error(&request, StatusCode::NOT_FOUND, "not_found");
-        }
-        Err(error_value) => return sql_error(&request, &error_value),
-    };
-    if agent.revision != expected {
-        audit_conflict(pool, id(&request).into(), "agent", agent.id, expected).await;
-        return error(&request, StatusCode::CONFLICT, "revision_conflict");
-    }
-    let security = &state.database.as_ref().unwrap().tool_security;
-    let _publication = security.publication.write().await;
-    let mut tx = match pool.begin().await {
-        Ok(value) => value,
-        Err(_) => {
-            return error(
-                &request,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "database_unavailable",
-            );
-        }
-    };
-    let deleted = match sqlx::query(
-        "DELETE FROM agent_mcp_bindings WHERE agent_id=? AND mcp_server_id=(SELECT id FROM mcp_servers WHERE key=?)",
-    )
-    .bind(agent.id)
-    .bind(&server_key)
-    .execute(&mut *tx)
-    .await
+    if let Err(cause) = database
+        .unlink_agent_mcp_binding(&key, &server_key, expected, id(&request))
+        .await
     {
-        Ok(result) => result.rows_affected() == 1,
-        Err(error_value) => {
-            let _ = tx.rollback().await;
-            return sql_error(&request, &error_value);
-        }
-    };
-    if !deleted {
-        let _ = tx.rollback().await;
-        return error(&request, StatusCode::NOT_FOUND, "not_found");
+        return write_error(&request, cause);
     }
-    let updated = match sqlx::query(
-        "UPDATE agents SET revision=revision+1,updated_at=? WHERE id=? AND revision=?",
-    )
-    .bind(now())
-    .bind(agent.id)
-    .bind(expected)
-    .execute(&mut *tx)
-    .await
-    {
-        Ok(result) => result.rows_affected() == 1,
-        Err(error_value) => {
-            let _ = tx.rollback().await;
-            return sql_error(&request, &error_value);
-        }
-    };
-    if !updated {
-        let _ = tx.rollback().await;
-        audit_conflict(pool, id(&request).into(), "agent", agent.id, expected).await;
-        return error(&request, StatusCode::CONFLICT, "revision_conflict");
-    }
-    if audit(
-        &mut *tx,
-        id(&request),
-        "agent",
-        Some(agent.id),
-        "unlink_mcp_binding",
-        Some(expected),
-        Some(expected + 1),
-        AuditOutcome::Success,
-        1,
-    )
-    .await
-    .is_err()
-        || tx.commit().await.is_err()
-    {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-        );
-    }
-    state
-        .database
-        .as_ref()
-        .unwrap()
-        .tool_security
-        .invalidate_agent(agent.id);
     StatusCode::NO_CONTENT.into_response()
 }

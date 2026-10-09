@@ -246,13 +246,22 @@ impl ProviderDiagnosticService {
             .database
             .as_ref()
             .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-        let (id, provider_key, provider_type, adapter, config, revision, enabled, credential):
-            (i64, String, String, String, Option<String>, i64, i64, Option<String>) = sqlx::query_as(
-            "SELECT id,key,type,adapter,CASE WHEN length(CAST(config_json AS BLOB))<=65536 THEN config_json ELSE NULL END,revision,enabled,credential_json FROM providers WHERE key=? AND length(CAST(key AS BLOB))<=128 AND length(CAST(type AS BLOB))<=16 AND length(CAST(adapter AS BLOB))<=64"
-        ).bind(key).fetch_one(database.pool()).await.map_err(|error| match error {
-            sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
-            _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
-        })?;
+        let (id, provider_key, provider_type, adapter, config, revision, enabled, credential): (
+            i64,
+            String,
+            String,
+            String,
+            Option<String>,
+            i64,
+            i64,
+            Option<String>,
+        ) = database
+            .diagnostic_provider_row(key)
+            .await
+            .map_err(|error| match error {
+                sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
+                _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
+            })?;
         if enabled == 0 {
             return Err(ProviderDiagnosticRequestError::Disabled);
         }

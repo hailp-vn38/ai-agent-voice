@@ -928,6 +928,7 @@ async fn close_direct(sender: &mut futures_util::stream::SplitSink<WebSocket, Me
 
 /// Install optional, Agent-scoped speaker identification. No voice-based admission
 /// or tool gate exists: inference failures do not interrupt the ordinary pipeline.
+#[allow(clippy::result_large_err)] // The admission boundary returns its HTTP rejection directly.
 async fn resolve_speaker_observe(
     state: &AppState,
     profile: &crate::session::EffectiveSessionProfile,
@@ -937,15 +938,14 @@ async fn resolve_speaker_observe(
     let Some(database) = state.database.as_ref() else {
         return Ok(None);
     };
-    let policy =
-        match crate::session::resolve_speaker_policy(database.pool(), profile.agent_id).await {
-            Ok(Some(mode)) => mode,
-            Ok(None) => crate::session::SpeakerPolicyMode::Off,
-            Err(cause) => {
-                warn!(%cause, "speaker identification preference unavailable");
-                return Ok(None);
-            }
-        };
+    let policy = match crate::session::resolve_speaker_policy(database, profile.agent_id).await {
+        Ok(Some(mode)) => mode,
+        Ok(None) => crate::session::SpeakerPolicyMode::Off,
+        Err(cause) => {
+            warn!(%cause, "speaker identification preference unavailable");
+            return Ok(None);
+        }
+    };
     let enabled = policy == crate::session::SpeakerPolicyMode::Observe;
     let runtime = state.speaker_runtime.as_ref();
     if !enabled || runtime.is_none() {
@@ -960,7 +960,7 @@ async fn resolve_speaker_observe(
     }
     let runtime = runtime.expect("checked built-in speaker runtime availability");
     let plan = match crate::session::resolve_observe_plan(
-        database.pool(),
+        database,
         profile.agent_id,
         0,
         runtime.embedding_space_id(),

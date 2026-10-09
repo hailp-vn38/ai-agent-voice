@@ -8,16 +8,25 @@ use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
 pub mod admission;
+pub(crate) mod agents;
+mod audit;
 pub mod credentials;
+pub(crate) mod deletion;
 pub mod device_enrollments;
+pub(crate) mod devices;
 pub mod external_mcp;
 pub mod external_mcp_policy;
 pub mod history;
 pub mod load_plan;
+pub(crate) mod mcp_servers;
 pub mod provider_config;
+pub(crate) mod providers;
 pub mod secrets;
+pub(crate) mod speakers;
+pub(crate) mod templates;
 pub mod tool_allowlist;
 pub mod tool_security;
+pub(crate) mod writes;
 
 pub use history::{
     HistoryArchive, HistoryDrop, HistoryRole, HistoryWrite, HistoryWriter, HistoryWriterCounters,
@@ -43,29 +52,7 @@ pub struct Database {
     pub tool_security: std::sync::Arc<tool_security::ToolSecurity>,
 }
 
-/// Desired provider copied out of SQLite before runtime construction.  It contains no resolved
-/// credential and is deliberately independent from the read-only runtime catalog.
-#[derive(Clone, PartialEq, Eq)]
-pub struct DesiredProvider {
-    pub id: i64,
-    pub key: String,
-    pub kind: String,
-    pub adapter: String,
-    pub config_json: String,
-    pub secret_ref: Option<String>,
-    pub revision: i64,
-}
-
-impl std::fmt::Debug for DesiredProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DesiredProvider")
-            .field("id", &self.id)
-            .field("revision", &self.revision)
-            .field("kind", &self.kind)
-            .field("adapter", &self.adapter)
-            .finish_non_exhaustive()
-    }
-}
+pub use providers::DesiredProvider;
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
@@ -155,35 +142,6 @@ impl Database {
             .map(|_| ())
             .map_err(map_sqlx_error)
     }
-
-    /// Reads desired state only.  Caller chooses whether an outcome is required, optional, or
-    /// unbound; this database seam never constructs a provider or resolves a secret.
-    pub async fn enabled_provider_rows(&self) -> Result<Vec<DesiredProvider>, DatabaseError> {
-        let rows = sqlx::query_as::<_, (i64, String, String, String, String, i64, Option<String>)>(
-            "SELECT id,key,type,adapter,config_json,revision,credential_json FROM providers WHERE enabled=1 ORDER BY id",
-        ).fetch_all(&self.pool).await.map_err(map_sqlx_error)?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(id, key, kind, adapter, config_json, revision, credential)| {
-                    let secret_ref = credentials::reference(
-                        &format!("provider:{key}"),
-                        credential.as_deref(),
-                        secrets::provider_secret_env(&key, &adapter),
-                    );
-                    DesiredProvider {
-                        id,
-                        key,
-                        kind,
-                        adapter,
-                        config_json,
-                        secret_ref,
-                        revision,
-                    }
-                },
-            )
-            .collect())
-    }
 }
 
 async fn applied_versions(pool: &SqlitePool) -> Result<Vec<i64>, DatabaseError> {
@@ -259,4 +217,8 @@ async fn ensure_schema_is_current(pool: &SqlitePool) -> Result<(), DatabaseError
         return Err(DatabaseError::SchemaPending);
     }
     Ok(())
+}
+
+pub(crate) fn is_busy(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(error) if matches!(error.code().as_deref(), Some("5" | "6" | "SQLITE_BUSY" | "SQLITE_LOCKED")))
 }

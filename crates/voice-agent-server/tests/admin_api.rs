@@ -3397,3 +3397,61 @@ async fn mcp_credentials_are_write_only_replaceable_and_persist_after_restart() 
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn failed_success_audit_rolls_back_each_new_desired_resource() {
+    let database_uri = database_url();
+    let (base, task) = server_with_database(true, &database_uri).await;
+    let pool = sqlx::SqlitePool::connect(&database_uri).await.unwrap();
+    sqlx::query("CREATE TRIGGER reject_success_audit BEFORE INSERT ON admin_audit_events WHEN NEW.outcome='success' BEGIN SELECT RAISE(ABORT,'test audit unavailable'); END")
+        .execute(&pool).await.unwrap();
+    let client = Client::new();
+    for (route, table, body) in [
+        (
+            "agents",
+            "agents",
+            serde_json::json!({"key":"audit_agent","name":"Agent"}),
+        ),
+        (
+            "templates",
+            "agent_templates",
+            serde_json::json!({"key":"audit_template","name":"Template","language":"en","prompt":"Hello"}),
+        ),
+        (
+            "providers",
+            "providers",
+            serde_json::json!({"name":"Provider","type":"llm","adapter":"openai","config_json":{"base_url":"https://api.example.com/v1","model":"test"}}),
+        ),
+        (
+            "mcp-servers",
+            "mcp_servers",
+            serde_json::json!({"key":"audit_mcp","name":"MCP","url":"https://example.com/mcp","auth":{"type":"none"}}),
+        ),
+        (
+            "speakers",
+            "speakers",
+            serde_json::json!({"key":"audit_speaker","name":"Speaker"}),
+        ),
+    ] {
+        let response = client
+            .post(format!("{base}/api/admin/{route}"))
+            .bearer_auth("admin-test-token")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{route}"
+        );
+        let error: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(error["error"]["code"], "database_unavailable", "{route}");
+        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{route} survived an audit failure");
+    }
+    task.abort();
+}
