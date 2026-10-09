@@ -78,6 +78,8 @@ impl ProviderRuntimeAdmission {
             let used = state.voice + state.diagnostic;
             match workload {
                 ProviderWorkloadClass::Voice => used >= state.total,
+                // A single worker must remain testable while idle; both workloads share its slot.
+                ProviderWorkloadClass::Diagnostic if state.total == 1 => used >= state.total,
                 ProviderWorkloadClass::Diagnostic => used >= state.total - state.reserved_voice,
             }
         }) {

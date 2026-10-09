@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn single_worker_allows_one_diagnostic_when_idle() {
+    let gate = ProviderRuntimeAdmission::new(1, 1);
+    let diagnostic = gate.try_admit(ProviderWorkloadClass::Diagnostic).unwrap();
+    assert!(gate.try_admit(ProviderWorkloadClass::Diagnostic).is_err());
+    assert!(gate.try_admit(ProviderWorkloadClass::Voice).is_err());
+    drop(diagnostic);
+    let voice = gate.try_admit(ProviderWorkloadClass::Voice).unwrap();
+    assert!(gate.try_admit(ProviderWorkloadClass::Diagnostic).is_err());
+    drop(voice);
+    assert!(gate.try_admit(ProviderWorkloadClass::Diagnostic).is_ok());
+}
+
+#[test]
 fn diagnostic_never_consumes_the_voice_reservation() {
     let gate = ProviderRuntimeAdmission::new(2, 1);
     let _diagnostic = gate.try_admit(ProviderWorkloadClass::Diagnostic).unwrap();

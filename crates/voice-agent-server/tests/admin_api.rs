@@ -383,7 +383,7 @@ allowed_hosts = ["mcp.example.test"]
             requests: Arc::clone(&requests),
         }),
         WorkerRuntimeConfig {
-            max_workers: 2,
+            max_workers: 1,
             voice_reserved_capacity: 1,
             command_capacity: 4,
             final_timeout: Duration::from_secs(1),
