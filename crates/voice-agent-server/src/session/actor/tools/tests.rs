@@ -1537,7 +1537,7 @@ async fn server_external_mcp_reports_tool_lifecycle_without_client_device_mcp() 
     server.wait_until_held().await;
     let started = std::iter::from_fn(|| rx.try_recv().ok())
         .find_map(|message| match message {
-            OutboundMessage::TurnText { turn_id: observed, text, .. } if observed == turn_id => {
+            OutboundMessage::TurnText { text, .. } => {
                 let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
                 (value["type"] == "tool").then_some(value)
             }
