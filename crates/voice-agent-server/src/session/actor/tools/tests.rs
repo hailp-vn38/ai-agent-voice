@@ -1514,9 +1514,8 @@ async fn server_external_mcp_reports_tool_lifecycle_without_client_device_mcp() 
     let server = GatedServer::start().await;
     let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
     let (tx, mut rx) = mpsc::channel(8);
-    let mut actor =
-        session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await)
-            .with_tool_status(true);
+    let mut actor = session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await)
+        .with_tool_status(true);
     actor.control_tx = tx;
     assert!(actor.mcp.visible.is_empty(), "web assistants do not advertise Device MCP");
 
@@ -1550,14 +1549,16 @@ async fn server_external_mcp_reports_tool_lifecycle_without_client_device_mcp() 
     })
     .await
     .expect("external MCP result completes the tool round");
-    let terminal = std::iter::from_fn(|| rx.try_recv().ok()).find_map(|message| {
-        if let OutboundMessage::TurnText { text, .. } = message {
-            let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
-            (value["type"] == "tool").then_some(value)
-        } else {
-            None
-        }
-    }).expect("external tool terminal status was sent");
+    let terminal = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|message| {
+            if let OutboundMessage::TurnText { text, .. } = message {
+                let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+                (value["type"] == "tool").then_some(value)
+            } else {
+                None
+            }
+        })
+        .expect("external tool terminal status was sent");
     assert_eq!(terminal["state"], "completed");
     assert_eq!(terminal["name"], "external.weather.forecast");
 }
