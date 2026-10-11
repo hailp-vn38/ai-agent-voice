@@ -3,6 +3,7 @@ import { Plus, Search } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import CopyTemplateDialog from '@/components/templates/CopyTemplateDialog.vue'
@@ -197,7 +198,8 @@ function agentNamesFor(templateId: string) {
       </select>
     </div>
 
-    <div v-if="visibleTemplates.length" class="grid gap-3 lg:grid-cols-2">
+    <CardListSkeleton v-if="store.loading" class="lg:grid-cols-2" />
+    <div v-else-if="visibleTemplates.length" class="grid gap-3 lg:grid-cols-2">
       <TemplateCard
         v-for="template in visibleTemplates"
         :key="template.id"

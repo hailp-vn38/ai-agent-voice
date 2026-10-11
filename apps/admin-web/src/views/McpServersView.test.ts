@@ -21,3 +21,40 @@ it('links the card to details while edit controls remain outside its link', asyn
   expect(router.currentRoute.value.path).toBe('/mcp/weather')
   wrapper.unmount()
 })
+
+it('replaces only the item list with shimmer while keeping the header and filters mounted', async () => {
+  let finish!: (value: { items: unknown[]; page_size: number }) => void
+  api.list.mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/mcp', component: McpServersView }, { path: '/:pathMatch(.*)*', component: { template: '<p />' } }] })
+  await router.push('/mcp')
+  const wrapper = mount(McpServersView, { global: { plugins: [router], stubs: { McpServerFormModal: true, ConfirmDialog: true } } })
+  try {
+    await flushPromises()
+    const header = wrapper.get('[data-detail-header]').element
+    const search = wrapper.get('input[type="search"]').element
+    const filter = wrapper.get('select').element
+    const checkLoading = () => {
+      expect(wrapper.findAll('.card-shimmer')).toHaveLength(6)
+      expect(wrapper.get('[data-detail-header]').element).toBe(header)
+      expect(wrapper.get('input[type="search"]').element).toBe(search)
+      expect(wrapper.get('select').element).toBe(filter)
+      expect(wrapper.find('[data-detail-header] .card-shimmer').exists()).toBe(false)
+      expect(wrapper.find('article').exists()).toBe(false)
+    }
+    checkLoading()
+    const server = { key: 'weather', name: 'Weather', url: 'https://example.test/mcp', auth: { type: 'none' }, enabled: true, revision: 1 }
+    finish({ items: [server], page_size: 50 })
+    await flushPromises()
+    expect(wrapper.findAll('.card-shimmer')).toHaveLength(0)
+    expect(wrapper.get('article').text()).toContain('Weather')
+
+    await wrapper.get('[data-detail-header] button').trigger('click')
+    checkLoading()
+    finish({ items: [server], page_size: 50 })
+    await flushPromises()
+    expect(wrapper.findAll('.card-shimmer')).toHaveLength(0)
+    expect(wrapper.get('article').text()).toContain('Weather')
+  } finally {
+    wrapper.unmount()
+  }
+})

@@ -3,6 +3,7 @@ import { MonitorSmartphone, Plus, RefreshCw, Search, ShieldCheck } from '@lucide
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
 import { formatApiError } from '@/api/errors'
 import { devicesApi } from '@/api/devices'
 import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
@@ -195,9 +196,7 @@ onBeforeUnmount(() => activeRequest?.abort())
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger-foreground">
       {{ error }}
     </div>
-    <div v-if="loading" class="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3" aria-busy="true">
-      <div v-for="n in 6" :key="n" class="studio-panel h-64 animate-pulse bg-muted/20" />
-    </div>
+    <CardListSkeleton v-if="loading" class="gap-3 sm:grid-cols-2 2xl:grid-cols-3" />
     <div v-else-if="!filtered.length" class="studio-panel px-5 py-12 text-center">
       <p class="text-sm text-muted-foreground">{{ search || agentFilter || admissionFilter !== 'all' ? t('deviceDetail.emptyFilter') : t('devices.empty') }}</p>
     </div>

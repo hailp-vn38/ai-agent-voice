@@ -190,12 +190,21 @@ Repository có Compose production và qualification/test; nginx phục vụ Stud
 bash scripts/compose.sh --help
 bash scripts/compose.sh prod config
 bash scripts/compose.sh prod build
+./scripts/compose.sh build server web  # Build selected services (defaults to prod)
+./scripts/compose.sh build all         # Build all images; also: ./scripts/compose.sh build
 bash scripts/compose.sh prod up
+./scripts/compose.sh prod down web         # Stop and remove web only; keep data
+./scripts/compose.sh prod down server web  # Stop and remove selected services
+./scripts/compose.sh prod down all         # Remove the whole stack; keep data
 ```
 
 Trước khi chạy production, tạo `docker/config.prod.toml` và `docker/secrets.env` từ [config mẫu](docker/config.prod.example.toml) và [env mẫu](docker/secrets.env.example), chỉnh provider credentials, bind và runtime library. Chuẩn bị thư mục data/models và quyền ghi theo [`compose.prod.yaml`](compose.prod.yaml); web mặc định ở `http://127.0.0.1:8080`.
 
-Compose và storage checker hiện gắn với host có storage tại `/mnt/storage/ai-agent-voice`; cần đối chiếu [storage checker](scripts/check-docker-storage.py) và volume paths khi dùng máy khác. Backend production không publish cổng trực tiếp ra host.
+Compose production mount chỉ đọc `docker/credential-keys.json` và `runtime/kokoro-vi`; cần chuẩn bị các đường dẫn này trước khi chạy. Kokoro cần Python env tương thích Linux trong container. Nếu cổng 8080 đã được dùng, chạy `WEB_PORT=8082 bash scripts/compose.sh prod up` và dùng cùng `WEB_PORT` cho các lần `up` tiếp theo.
+
+Để lưu cổng cho các lần chạy sau, đặt `WEB_PORT=8082` trong file `.env` ở thư mục gốc (không commit), rồi chạy `bash scripts/compose.sh prod up`. Studio sẽ ở `http://127.0.0.1:8082`. Khi đổi địa chỉ cho thiết bị truy cập, cập nhật `server.public_ws_url` trong `docker/config.prod.toml` cho khớp địa chỉ web được publish.
+
+Data/models production và Cargo build trên host nằm tại `/mnt/storage/ai-agent-voice`; [storage checker](scripts/check-docker-storage.py) kiểm tra thư mục storage và đường dẫn Cargo build. Docker/containerd dùng storage mặc định; image, volume và cache của Docker build nằm trong storage của Docker, kể cả cache mount có đường dẫn `/mnt/storage` bên trong container. Khi dùng máy khác, cần chỉnh Cargo target và volume paths tương ứng. Backend production không publish cổng trực tiếp ra host.
 
 TTS tiếng Việt qua VieNeu: [service Docker Compose và provider HTTP streaming](docs/vieneu.md).
 

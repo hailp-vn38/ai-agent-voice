@@ -11,6 +11,18 @@ services:
         bind:
           create_host_path: false
       - type: bind
+        source: ./docker/credential-keys.json
+        target: /app/docker/credential-keys.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./runtime/kokoro-vi
+        target: /app/runtime/kokoro-vi
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
         source: /mnt/storage/ai-agent-voice/docker/prod/data
         target: /app/data
         bind:

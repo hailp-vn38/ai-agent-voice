@@ -3,6 +3,7 @@ import { Plus } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
 import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
 import type { ClaimDeviceEnrollmentInput } from '@/api/types/devices'
 import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmentModal.vue'
@@ -91,7 +92,8 @@ function createAgent(payload: { agent: { name: string; description: string }; te
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 lg:grid-cols-2">
+    <CardListSkeleton v-if="store.loading" class="lg:grid-cols-2" />
+    <div v-else class="grid gap-4 lg:grid-cols-2">
       <AgentCard
         v-for="agent in agents"
         :key="agent.id"
@@ -106,7 +108,7 @@ function createAgent(payload: { agent: { name: string; description: string }; te
     </div>
 
     <div
-      v-if="agents.length === 0"
+      v-if="!store.loading && agents.length === 0"
       class="rounded-xl border border-dashed py-16 text-center text-sm text-muted-foreground"
     >
       {{ t('agents.empty') }}

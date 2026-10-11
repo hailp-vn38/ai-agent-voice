@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { Plus, Search } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import type { TemplateProviderType } from '@/api/types/templates'
+import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
@@ -26,6 +27,7 @@ import { useAdminStore } from '@/stores/admin'
 
 const store = useAdminStore()
 const router = useRouter()
+const route = useRoute()
 const { t, providerTypeLabel } = useI18n()
 
 const ALL = 'all'
@@ -37,7 +39,12 @@ function isSetupType(type?: ProviderType): type is TemplateProviderType {
 }
 
 const searchQuery = ref('')
-const activeType = ref<string>(ALL)
+const activeType = computed<string>({
+  get: () => providerTypes.find((type) => type === route.query.type) ?? ALL,
+  set: (type) => {
+    void router.replace({ query: { ...route.query, type: type === ALL ? undefined : type } })
+  },
+})
 const statusFilter = ref<string>(ALL)
 
 const createOpen = ref(false)
@@ -154,11 +161,11 @@ function openCreate(type?: ProviderType) {
 /** A saved provider is not ready to use yet, so it lands on detail, not the catalog. */
 function openCreatedProvider(key: string) {
   createType.value = undefined
-  void router.push({ name: 'provider-detail', params: { key } })
+  void router.push({ name: 'provider-detail', params: { key }, query: route.query })
 }
 
 function openDetail(provider: ProviderInstance) {
-  void router.push({ name: 'provider-detail', params: { key: provider.id } })
+  void router.push({ name: 'provider-detail', params: { key: provider.id }, query: route.query })
 }
 
 function openEdit(provider: ProviderInstance) {
@@ -242,7 +249,8 @@ function providerNameById(id?: string) {
 
     <ProviderTypeTabs v-model="activeType" :counts="typeCounts" />
 
-    <div v-if="displayGroups.length" class="space-y-8">
+    <CardListSkeleton v-if="store.loading" class="gap-3 sm:grid-cols-2 xl:grid-cols-3" />
+    <div v-else-if="displayGroups.length" class="space-y-8">
       <section v-for="group in displayGroups" :key="group.key" class="space-y-3">
         <h2
           v-if="group.label"

@@ -3,6 +3,7 @@ import { ArrowRight, Link2, Pencil, Plus, Power, RefreshCw, Search, Server, Shie
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
 import { mcpApi } from '@/api/mcp'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminMcpServer, CreateMcpServerInput, UpdateMcpServerInput } from '@/api/types/mcp'
@@ -194,7 +195,8 @@ onBeforeUnmount(() => controller.abort())
       <span class="text-xs text-muted-foreground">{{ t('mcp.loadedCount', { count: servers.length }) }}</span>
     </div>
 
-    <div v-if="visible.length" class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+    <CardListSkeleton v-if="loading" class="lg:grid-cols-2 xl:grid-cols-3" />
+    <div v-else-if="visible.length" class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
       <article v-for="server in visible" :key="server.key" class="studio-panel relative flex flex-col gap-4 p-5">
         <RouterLink :to="`/mcp/${encodeURIComponent(server.key)}`" class="flex flex-1 cursor-pointer flex-col gap-5 rounded-lg outline-none hover:text-studio-violet focus-visible:ring-2 focus-visible:ring-ring" @keydown.space.prevent="$router.push(`/mcp/${encodeURIComponent(server.key)}`)">
         <div class="flex items-start justify-between gap-3">
@@ -232,7 +234,6 @@ onBeforeUnmount(() => controller.abort())
         </ActionMenu>
       </article>
     </div>
-    <div v-else-if="loading" class="studio-panel p-10 text-center text-sm text-muted-foreground">{{ t('common.loading') }}</div>
     <div v-else class="studio-panel p-10 text-center text-sm text-muted-foreground">{{ t('mcp.empty') }}</div>
 
     <div v-if="hasMore" class="flex justify-center">

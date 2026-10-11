@@ -4,7 +4,9 @@ cd "$(dirname "$0")/.."
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/compose.sh <prod|test> <command> [server|web]
+Usage: ./scripts/compose.sh <prod|test> <command> [server|web]
+       ./scripts/compose.sh [prod|test] build [server web|all]
+       ./scripts/compose.sh <prod|test> down [server web|all]
 
   build     Build images (checks /mnt/storage first)
   up        Start the stack and wait for readiness (checks storage first)
@@ -13,10 +15,12 @@ Usage: bash scripts/compose.sh <prod|test> <command> [server|web]
   logs      Follow the last 100 log lines
   status    Show containers, including stopped ones
   config    Validate Compose without printing secrets
-  check     Check Docker storage
+  check     Check application storage
   run       Run all tests and smoke checks (test only; removes test data)
 
-Optional server/web selection: build, up, restart, logs, status.
+Build defaults to prod; omit services or use all to build all images.
+Build and down accept multiple services; down without services or with all removes the whole stack.
+Optional server/web selection: up, restart, logs, status.
 Production setup: docs/docker.md
 EOF
 }
@@ -25,13 +29,20 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
   usage
   exit 0
 fi
-if (( $# < 2 || $# > 3 )); then
+if [[ ${1:-} == build ]]; then
+  set -- prod "$@"
+fi
+if (( $# < 2 )); then
   usage >&2
   exit 2
 fi
 
 environment=$1
 action=$2
+if [[ $action != build && $action != down ]] && (( $# > 3 )); then
+  usage >&2
+  exit 2
+fi
 selection=()
 case "$environment" in
   prod)
@@ -46,7 +57,19 @@ case "$environment" in
 esac
 
 case "$action" in
-  build|up|restart|logs|status)
+  build|down)
+    if [[ $# == 3 && $3 == all ]]; then
+      selection=()
+    else
+      for service in "${@:3}"; do
+        case "$service" in
+          server|web) selection+=("$service") ;;
+          *) usage >&2; exit 2 ;;
+        esac
+      done
+    fi
+    ;;
+  up|restart|logs|status)
     if (( $# == 3 )); then
       case "$3" in
         server|web) selection=("$3") ;;
@@ -54,7 +77,7 @@ case "$action" in
       esac
     fi
     ;;
-  down|config|check)
+  config|check)
     if (( $# == 3 )); then usage >&2; exit 2; fi
     ;;
   run)
@@ -71,7 +94,7 @@ esac
 case "$action" in
   build) exec "${compose[@]}" build "${selection[@]}" ;;
   up) exec "${compose[@]}" up --detach --wait --wait-timeout "$wait_seconds" "${selection[@]}" ;;
-  down) exec "${compose[@]}" down ;;
+  down) exec "${compose[@]}" down "${selection[@]}" ;;
   restart) exec "${compose[@]}" restart "${selection[@]}" ;;
   logs) exec "${compose[@]}" logs --follow --tail 100 "${selection[@]}" ;;
   status) exec "${compose[@]}" ps --all "${selection[@]}" ;;

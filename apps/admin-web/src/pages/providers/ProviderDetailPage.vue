@@ -20,6 +20,7 @@ import { useAdminStore } from '@/stores/admin'
 
 const route = useRoute()
 const router = useRouter()
+const catalogRoute = computed(() => ({ path: '/providers', query: route.query }))
 const store = useAdminStore()
 const { t, providerTypeLabel } = useI18n()
 const key = computed(() => typeof route.params.key === 'string' ? route.params.key : '')
@@ -207,7 +208,7 @@ async function remove() {
   try {
     await providersApi.remove(current.key, current.revision)
     await store.refreshAll()
-    await router.replace('/providers')
+    await router.replace(catalogRoute.value)
   } catch (cause) {
     if (isApiError(cause) && cause.status === 409) await load()
     error.value = formatApiError(cause)
@@ -229,7 +230,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="mx-auto max-w-7xl space-y-5">
-    <DetailHeader v-if="provider" :title="provider.name" :back-label="t('providers.title')" @back="router.push('/providers')">
+    <DetailHeader v-if="provider" :title="provider.name" :back-label="t('providers.title')" @back="router.push(catalogRoute)">
       <template #icon>
         <span class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-studio-violet/20 bg-studio-violet/10 text-studio-violet">
           <component :is="typeIcon" class="size-5" aria-hidden="true" />
@@ -265,7 +266,7 @@ onBeforeUnmount(() => {
       {{ t('common.loading') }}
     </div>
     <div v-if="!loading && !provider" class="space-y-3">
-      <RouterLink to="/providers" class="text-sm text-studio-violet hover:underline">← {{ t('providers.title') }}</RouterLink>
+      <RouterLink :to="catalogRoute" class="text-sm text-studio-violet hover:underline">← {{ t('providers.title') }}</RouterLink>
       <p class="text-sm text-muted-foreground">{{ t('providerDetail.unavailable') }}</p>
       <Button variant="outline" @click="load">{{ t('common.retry') }}</Button>
     </div>

@@ -3,6 +3,7 @@ import { Plus, RefreshCw, Search } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import CardListSkeleton from '@/components/admin/CardListSkeleton.vue'
 import { formatApiError } from '@/api/errors'
 import { speakersApi } from '@/api/speakers'
 import type { SpeakerSummary } from '@/api/types/speakers'
@@ -155,9 +156,7 @@ onBeforeUnmount(() => activeRequest?.abort())
       <Button size="sm" variant="outline" @click="load">{{ t('common.retry') }}</Button>
     </div>
 
-    <div v-if="loading" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true">
-      <div v-for="slot in 6" :key="slot" class="studio-panel h-52 animate-pulse bg-muted/20" />
-    </div>
+    <CardListSkeleton v-if="loading" class="sm:grid-cols-2 xl:grid-cols-3" />
 
     <div v-else-if="!filtered.length" class="studio-panel px-6 py-12 text-center">
       <p class="text-sm text-muted-foreground">{{ search.trim() ? t('speakers.emptySearch') : t('speakers.empty') }}</p>

@@ -1,6 +1,7 @@
 reference/
 /target/
 /config.toml
+/.env
 /docker/config.prod.toml
 /docker/secrets.env
 /docker/credential-keys.json
@@ -16,3 +17,6 @@ models/
 /apps/admin-web/.env
 /apps/admin-web/.vite/
 /apps/admin-web/*.tsbuildinfo
+
+# Python bytecode cache.
+__pycache__/
