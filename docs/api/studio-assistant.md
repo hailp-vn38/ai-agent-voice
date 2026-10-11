@@ -80,3 +80,25 @@ is included once one exists. Normal completion follows the writer's terminal
 outcome after `tts:stop`; early LLM/TTS/recognition failures also release the UI.
 Empty capture and admission denial use `rejected`. Capture-only abort may have no
 Turn ID. A protocol/transport timeout reports an unknown outcome, never success.
+
+## Compact Voice + Live Conversation web client
+
+The AdminShell mounts Studio Assistant once across the web app. The floating panel is
+voice-first (375 px wide, up to 490 px high): compact status dot, microphone and
+waveform, plus a Live Conversation area that shows the last user/ASR message paired
+with the streaming LLM response. The History toggle reveals earlier messages;
+the keyboard button opens an optional text composer. ASR is displayed when the
+server emits an accepted `stt` event; no speculative partial transcription is
+fabricated. `llm` segments are appended to the active response until terminal
+`turn_status`. Playback status is shown only when the speaker is enabled.
+
+Clicking anywhere outside the panel (or pressing Escape) collapses the UI into a
+persistent bubble without closing the WebSocket, cancelling a turn or stopping TTS.
+Clicking the bubble reopens the same client and in-memory conversation. The header
+X deliberately ends the session (confirming first if a turn is active); logout
+and layout teardown also disconnect. A backgrounded browser tab still interrupts
+active microphone capture, while TTS downlink remains unaffected by panel collapse.
+Manual microphone capture is interrupted on panel collapse to avoid hidden recording.
+The default microphone action unlocks TTS playback within the user gesture, unless
+the user explicitly muted the speaker. Statuses remain separate: a completed
+WebSocket handshake does not guarantee success of the current Agent turn.
