@@ -197,3 +197,22 @@ fn parse_session_id(value: &Value) -> Option<Option<String>> {
         Some(_) => None,
     }
 }
+
+#[cfg(test)]
+mod tool_status_feature_tests {
+    use super::*;
+
+    #[test]
+    fn tool_status_is_explicitly_opted_into_by_voice_clients() {
+        let base = serde_json::json!({"type":"hello","version":1,"transport":"websocket"});
+        let without = parse_client_message(&base.to_string()).expect("default hello parses");
+        let ClientMessage::Hello(without) = without else { panic!("hello") };
+        assert!(!without.features.tool_status);
+
+        let mut enabled = base;
+        enabled["features"] = serde_json::json!({"tool_status":true,"future_feature":true});
+        let parsed = parse_client_message(&enabled.to_string()).expect("feature hello parses");
+        let ClientMessage::Hello(parsed) = parsed else { panic!("hello") };
+        assert!(parsed.features.tool_status);
+    }
+}
