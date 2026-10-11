@@ -51,6 +51,8 @@ impl TtsProvider for VieneuHttpProvider {
         // A redirect must not move text or credentials to a different service.
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            // The worker runtime pauses between requests and cannot observe idle socket closes.
+            .pool_max_idle_per_host(0)
             .build()
             .map_err(|_| TtsError::RemoteConnection)?;
         Ok(Box::new(VieneuHttpWorker {

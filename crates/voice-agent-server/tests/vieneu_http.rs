@@ -54,6 +54,63 @@ fn request() -> TtsSynthesisRequest {
     }
 }
 
+#[test]
+fn a_retained_worker_reconnects_after_the_service_closes_an_idle_connection() {
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let started = std::time::Instant::now();
+            let socket = loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(started.elapsed() < Duration::from_secs(3));
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept failed: {error}"),
+                }
+            };
+            socket
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut socket = BufReader::new(socket);
+            let mut length = None;
+            loop {
+                let mut line = String::new();
+                assert!(socket.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = Some(value.trim().parse::<usize>().unwrap());
+                }
+            }
+            socket.read_exact(&mut vec![0; length.unwrap()]).unwrap();
+            socket.get_mut().write_all(b"HTTP/1.1 200 OK\r\nContent-Type: audio/pcm\r\nX-Sample-Rate: 24000\r\nContent-Length: 2\r\n\r\n\x01\x00").unwrap();
+            // The client runtime stops polling between syntheses, like Uvicorn's idle timeout.
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    let mut worker = worker(&url, 2000);
+    for _ in 0..2 {
+        let mut samples = 0;
+        worker
+            .synthesize(&request(), &AtomicBool::new(false), &mut |pcm| {
+                samples += pcm.samples().len();
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(samples, 1);
+        worker.reset().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    server.join().unwrap();
+}
+
 fn pcm_response(body: Body) -> Response<Body> {
     Response::builder()
         .header("content-type", "audio/pcm")
