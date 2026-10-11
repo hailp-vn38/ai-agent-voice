@@ -163,6 +163,11 @@ pub(super) fn sanitize_tts_text(input: &str) -> String {
     let mut output = String::with_capacity(normalized.len());
     let mut pending_space = false;
     for ch in normalized.chars() {
+        let ch = match ch {
+            ':' | ';' => ',',
+            '!' | '?' => '.',
+            _ => ch,
+        };
         if ch.is_alphanumeric() || matches!(ch, '.' | ',') {
             if pending_space && !output.is_empty() {
                 output.push(' ');

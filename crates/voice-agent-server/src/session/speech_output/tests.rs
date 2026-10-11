@@ -603,25 +603,33 @@ fn soft_punctuation_is_preferred_before_a_hard_length_split() {
 
 #[test]
 fn sanitizes_tts_input_to_unicode_words_with_decimal_separators() {
-    assert_eq!(sanitize_tts_text("**Xin chào!** 😊"), "Xin chào");
+    assert_eq!(sanitize_tts_text("**Xin chào!** 😊"), "Xin chào.");
     assert_eq!(
         sanitize_tts_text("### Kết quả:\n- Bạn có thể **khởi động lại** server 🚀"),
-        "Kết quả Bạn có thể khởi động lại server"
+        "Kết quả, Bạn có thể khởi động lại server"
     );
     assert_eq!(
         sanitize_tts_text("Mình có thể giúp bạn #hôm_nay?"),
-        "Mình có thể giúp bạn hôm nay"
+        "Mình có thể giúp bạn hôm nay."
     );
     assert_eq!(
         sanitize_tts_text("Ví dụ: - Bạn muốn xem **tình trạng thiết bị** (pin, kết nối, nhiệt độ."),
-        "Ví dụ Bạn muốn xem tình trạng thiết bị pin, kết nối, nhiệt độ."
+        "Ví dụ, Bạn muốn xem tình trạng thiết bị pin, kết nối, nhiệt độ."
+    );
+}
+
+#[test]
+fn converts_tts_punctuation_to_pause_markers() {
+    assert_eq!(
+        sanitize_tts_text("Lưu ý: nói chậm; ngắt rõ! Được không?"),
+        "Lưu ý, nói chậm, ngắt rõ. Được không."
     );
 }
 
 #[test]
 fn retains_periods_and_commas_while_replacing_other_special_characters() {
     let text = sanitize_tts_text("Hôm nay là Tuesday, 23/09/2026 12:54:56 UTC.");
-    assert_eq!(text, "Hôm nay là Tuesday, 23 09 2026 12 54 56 UTC.");
+    assert_eq!(text, "Hôm nay là Tuesday, 23 09 2026 12,54,56 UTC.");
 }
 
 #[test]
@@ -678,16 +686,16 @@ fn segment_ready_keeps_display_text_while_tts_receives_sanitized_text() {
         SpeechOutputConfig::default(),
     )
     .unwrap();
-    output.push_delta("**Xin chào!** 😊").unwrap();
+    output.push_delta("**Lưu ý:** hãy nói chậm! 😊").unwrap();
     output.finish_input().unwrap();
     assert!(
-        matches!(output.poll().unwrap(), Some(SpeechOutputEvent::SegmentReady { text }) if text == "**Xin chào!")
+        matches!(output.poll().unwrap(), Some(SpeechOutputEvent::SegmentReady { text }) if text == "**Lưu ý:** hãy nói chậm!")
     );
     assert!(matches!(
         output.poll().unwrap(),
         Some(SpeechOutputEvent::Started)
     ));
-    assert_eq!(*inputs.lock().unwrap(), ["Xin chào"]);
+    assert_eq!(*inputs.lock().unwrap(), ["Lưu ý, hãy nói chậm."]);
 
     output.cancel();
     output.push_delta("{\"cmd\": \"date '+%A, %d/%m/").unwrap();
@@ -706,7 +714,10 @@ fn segment_ready_keeps_display_text_while_tts_receives_sanitized_text() {
     ));
     assert_eq!(
         *inputs.lock().unwrap(),
-        ["Xin chào", "Hôm nay là Tuesday, 23 09 2026 12 54 56 UTC."]
+        [
+            "Lưu ý, hãy nói chậm.",
+            "Hôm nay là Tuesday, 23 09 2026 12,54,56 UTC."
+        ]
     );
 }
 
