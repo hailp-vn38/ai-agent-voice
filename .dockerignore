@@ -19,4 +19,5 @@ benchmarks
 config.toml
 docker/config.prod.toml
 docker/secrets.env
+docker/credential-keys.json
 *.log
