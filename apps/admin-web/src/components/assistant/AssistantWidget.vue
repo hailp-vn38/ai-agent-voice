@@ -48,8 +48,9 @@ function barHeight(index: number) {
   return Math.round(3 + shape * 4) + 'px'
 }
 function collapse(focusLauncher = true) {
-  // Never leave an active microphone capturing while the UI is hidden.
-  if (assistant.state === 'listening') assistant.interrupt()
+  // Hide the panel without ending the WebSocket or interrupting TTS.
+  // Microphone capture is stopped for privacy whenever the panel is hidden.
+  if (assistant.micEnabled) void assistant.stopMicrophone()
   assistant.visible = false
   historyOpen.value = false
   if (focusLauncher) launcher.value?.focus()
@@ -68,7 +69,7 @@ async function send() {
   await assistant.sendText(value)
 }
 async function microphone() {
-  if (assistant.state === 'listening') await assistant.stopMicrophone()
+  if (assistant.micEnabled) await assistant.stopMicrophone()
   else if (assistant.state === 'ready' && micSupported) await assistant.startMicrophone()
 }
 async function toggleTextMode() {
@@ -87,7 +88,7 @@ function keydown(event: KeyboardEvent) {
 }
 function visibility() {
   // Background microphone capture is not permitted; an ongoing TTS downlink is preserved.
-  if (document.hidden && assistant.state === 'listening') assistant.interrupt()
+  if (document.hidden && assistant.micEnabled) void assistant.stopMicrophone()
 }
 watch(() => auth.adminToken, () => { assistant.disconnect(); assistant.visible = false })
 watch(() => assistant.visible, async open => {
@@ -120,7 +121,7 @@ onBeforeUnmount(() => {
       <button
         ref="launcher" type="button"
         class="assistant-launcher fixed z-30 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-2 focus-visible:outline-offset-4"
-        :class="{ 'assistant-launcher-active': active, 'assistant-launcher-listening': assistant.state === 'listening' }"
+        :class="{ 'assistant-launcher-active': active, 'assistant-launcher-listening': assistant.micEnabled }"
         :aria-label="assistant.visible ? t('assistant.collapse') : t('assistant.open')"
         :aria-expanded="assistant.visible" aria-controls="studio-assistant"
         @click="assistant.visible ? collapse() : assistant.open()"
@@ -210,14 +211,14 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 class="assistant-microphone absolute left-1/2 grid size-[60px] -translate-x-1/2 place-items-center rounded-full bg-primary text-primary-foreground shadow-md focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-not-allowed disabled:opacity-40"
-                :class="{ 'is-listening': assistant.state === 'listening' }"
-                :disabled="!micSupported || !['ready', 'listening'].includes(assistant.state)"
-                :aria-label="assistant.state === 'listening' ? t('assistant.stopMic') : t('assistant.mic')"
-                :aria-pressed="assistant.state === 'listening'"
+                :class="{ 'is-listening': assistant.micEnabled }"
+                :disabled="!micSupported || (!assistant.micEnabled && assistant.state !== 'ready')"
+                :aria-label="assistant.micEnabled ? t('assistant.stopMic') : t('assistant.mic')"
+                :aria-pressed="assistant.micEnabled"
                 :title="!micSupported ? t('assistant.micUnsupported') : undefined"
                 @click="microphone"
               >
-                <Square v-if="assistant.state === 'listening'" class="size-5" fill="currentColor" aria-hidden="true" />
+                <Square v-if="assistant.micEnabled" class="size-5" fill="currentColor" aria-hidden="true" />
                 <Mic v-else class="size-6" aria-hidden="true" />
               </button>
               <Button size="icon" variant="outline" class="ml-auto size-10 rounded-full" :aria-label="assistant.muted ? t('assistant.unmute') : t('assistant.mute')" :aria-pressed="!assistant.muted" @click="assistant.toggleSpeaker()">
