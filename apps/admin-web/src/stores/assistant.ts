@@ -29,7 +29,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     microphone: enabled => { micEnabled.value = enabled },
     state: value => {
       state.value = value
-      if (!['listening', 'processing', 'speaking'].includes(value)) activeTool.value = null
+      if (value !== 'processing') activeTool.value = null
       if (value === 'uncertain') {
         if (pendingUser) pendingUser.status = 'uncertain'
         if (response) response.status = 'uncertain'
