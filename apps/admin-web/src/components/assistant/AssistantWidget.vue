@@ -56,7 +56,6 @@ function collapse(focusLauncher = true) {
   if (focusLauncher) launcher.value?.focus()
 }
 function closeSession() {
-  if (active.value && !window.confirm(t('assistant.endConfirm'))) return
   assistant.disconnect()
   draft.value = ''
   textMode.value = false

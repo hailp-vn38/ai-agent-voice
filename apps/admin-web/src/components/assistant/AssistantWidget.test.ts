@@ -32,6 +32,19 @@ afterEach(() => {
 })
 
 describe('compact Studio Assistant', () => {
+  it.each(['listening', 'processing', 'speaking', 'aborting'] as const)('closes a %s session without confirmation', async state => {
+    assistant.state = state
+    assistant.messages.push({ id: 1, role: 'assistant', text: 'current response', status: 'pending' })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const disconnect = vi.spyOn(assistant, 'disconnect')
+    await nextTick()
+    await widget.get('header button').trigger('click')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(assistant.visible).toBe(false)
+    expect(assistant.messages).toHaveLength(0)
+  })
+
   it('shows only the latest user/LLM turn and offers history on demand', async () => {
     const store = useAssistantStore()
     store.messages.push(
