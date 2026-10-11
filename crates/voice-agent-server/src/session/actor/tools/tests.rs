@@ -1440,7 +1440,8 @@ fn builtin_tool_status_is_visible_only_to_opted_in_clients() {
 
     for enabled in [false, true] {
         let (tx, mut rx) = mpsc::channel(8);
-        let mut actor = session_with_external_mcp(admitted_external_mcp()).with_tool_status(enabled);
+        let mut actor =
+            session_with_external_mcp(admitted_external_mcp()).with_tool_status(enabled);
         actor.control_tx = tx;
         let turn_id = actor.begin_active_turn().expect("admitted turn");
         actor.start_tool_batch(vec![ToolCall {
@@ -1494,7 +1495,9 @@ fn tool_status_backpressure_does_not_prevent_tool_result_recording() {
         name: EXIT_TOOL_NAME.into(),
         arguments: serde_json::json!({}),
     }]);
-    let first = rx.try_recv().expect("started entered the bounded control queue");
+    let first = rx
+        .try_recv()
+        .expect("started entered the bounded control queue");
     let OutboundMessage::TurnText { text, .. } = first else {
         panic!("tool status must be turn-scoped")
     };
