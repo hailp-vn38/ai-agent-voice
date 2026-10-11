@@ -904,7 +904,7 @@ async fn complete_vietnamese_sentences_announce_once_before_their_audio() {
     assert_eq!(first_controls[1]["type"], "llm");
     assert_eq!(first_controls[1]["text"], "Xin chào!");
     assert_eq!(first_controls[2]["state"], "start");
-    assert_eq!(*tts_inputs.lock().unwrap(), ["Xin chào"]);
+    assert_eq!(*tts_inputs.lock().unwrap(), ["Xin chào."]);
     assert!(matches!(
         audio_rx.try_recv(),
         Ok(OutboundMessage::Binary { .. })
@@ -933,7 +933,7 @@ async fn complete_vietnamese_sentences_announce_once_before_their_audio() {
     assert_eq!(later_controls[1]["state"], "stop");
     assert_eq!(
         *tts_inputs.lock().unwrap(),
-        ["Xin chào", "Mình có thể giúp gì cho bạn hôm nay"]
+        ["Xin chào.", "Mình có thể giúp gì cho bạn hôm nay."]
     );
     assert!(matches!(
         audio_rx.try_recv(),
