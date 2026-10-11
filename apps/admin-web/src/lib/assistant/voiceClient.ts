@@ -150,6 +150,11 @@ export class WebAssistantClient {
         clearTimeout(this.turnTimeout)
         if (!this.continuousMicrophone) this.audio.cancelMicrophone()
         if (event.state !== 'completed') this.audio.cancelPlayback()
+        // A rejected Auto listen:start has no VAD worker; do not leave the
+        // microphone streaming into a session that cannot accept audio.
+        if (event.state === 'rejected' && this.continuousMicrophone) {
+          void this.stopMicrophone().catch(() => this.fail('capture_stop_failed'))
+        }
         this.setState(this.continuousMicrophone ? 'listening' : 'ready')
       }
     } else if (event.type === 'stt' || event.type === 'llm') {
