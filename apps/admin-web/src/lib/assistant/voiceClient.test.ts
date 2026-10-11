@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebAssistantClient } from './voiceClient'
-import { parseServerEvent } from './protocol'
+import { clientHello, parseServerEvent } from './protocol'
 
 vi.mock('@/api/assistant', () => ({ assistantApi: {
   settings: vi.fn(async () => ({ configured: true, enabled: true, device_id: 'managed', agent_key: 'studio', template_key: null, revision: 1, active_connections: 0 })),
@@ -66,6 +66,20 @@ describe('shared Voice WebSocket client', () => {
     socket.event({ type: 'turn_status', state: 'completed', turn_id: 1 })
     expect(states.at(-1)).toBe('ready')
     expect(events).toHaveLength(6)
+  })
+  it('opts into tool status and forwards it without affecting the voice turn lifecycle', async () => {
+    const socket = await open()
+    expect(JSON.parse(socket.sent[0]!)).toMatchObject({ features: { tool_status: true, turn_status: true, mcp: false } })
+    expect(clientHello.features.tool_status).toBe(true)
+    const sending = client.sendText('status')
+    socket.event({ type: 'turn_status', state: 'listening_ready' })
+    await sending
+    socket.event({ type: 'tool', turn_id: 1, name: 'server_switch_template', state: 'started' })
+    socket.event({ type: 'tool', turn_id: 1, name: 'server_switch_template', state: 'completed' })
+    expect(events.at(-1)).toMatchObject({ type: 'tool', state: 'completed' })
+    expect(states.at(-1)).toBe('processing')
+    socket.event({ type: 'turn_status', turn_id: 1, state: 'completed' })
+    expect(states.at(-1)).toBe('ready')
   })
   it('never sends detect when manual listening is rejected', async () => {
     const socket = await open()
@@ -225,4 +239,14 @@ it('validates session and typed events without exposing raw frames', () => {
   expect(() => parseServerEvent('{"type":"llm","text":4,"session_id":"session-1"}')).toThrow('invalid_frame')
   expect(() => parseServerEvent('[]')).toThrow('invalid_frame')
   expect(() => parseServerEvent('x'.repeat(65537))).toThrow('invalid_frame')
+  expect(parseServerEvent(JSON.stringify({ type: 'tool', session_id: 'session-1', turn_id: 12, name: 'external.home_assistant.light_turn_on', state: 'started' }), 'session-1')).toMatchObject({ type: 'tool', state: 'started' })
+  for (const invalid of [
+    { turn_id: 0 },
+    { turn_id: '1' },
+    { state: 'cancelled' },
+    { name: '<script>' },
+    { name: 'x'.repeat(129) },
+  ]) {
+    expect(() => parseServerEvent(JSON.stringify({ type: 'tool', session_id: 'session-1', turn_id: 1, name: 'handle_exit_intent', state: 'started', ...invalid }))).toThrow('invalid_frame')
+  }
 })

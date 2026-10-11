@@ -64,6 +64,7 @@ pub struct SessionActor {
     pipeline_permit: Option<crate::session::pilot::PilotPermit>,
     pipeline_status: bool,
     turn_status: bool,
+    tool_status: bool,
     turn_status_active: bool,
     turn_status_outcome: &'static str,
     pipeline_request: std::sync::Arc<std::sync::atomic::AtomicU64>,

@@ -1,14 +1,22 @@
 export const clientHello = {
   type: 'hello', version: 1, transport: 'websocket',
   audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 },
-  features: { pipeline_status: false, speaker_status: false, aec: false, mcp: false, turn_status: true },
+  features: { pipeline_status: false, speaker_status: false, aec: false, mcp: false, turn_status: true, tool_status: true },
 }
 export type TurnState = 'listening_ready' | 'rejected' | 'completed' | 'failed' | 'cancelled'
+export type ToolStatusEvent = {
+  type: 'tool'
+  session_id: string
+  turn_id: number
+  name: string
+  state: 'started' | 'completed' | 'failed'
+}
 export type ServerEvent =
   | { type: 'hello'; session_id: string }
   | { type: 'stt' | 'llm'; session_id: string; text: string }
   | { type: 'tts'; session_id: string; state: 'start' | 'stop' | 'sentence_start'; text?: string }
   | { type: 'turn_status'; session_id: string; state: TurnState; turn_id?: number; reason?: string }
+  | ToolStatusEvent
 
 export function parseServerEvent(raw: string, session?: string): ServerEvent | null {
   if (new TextEncoder().encode(raw).length > 65536) throw new Error('invalid_frame')
@@ -30,6 +38,12 @@ export function parseServerEvent(raw: string, session?: string): ServerEvent | n
       if (!['start', 'stop', 'sentence_start'].includes(String(v.state))) throw new Error('invalid_frame')
       if (v.text !== undefined && typeof v.text !== 'string') throw new Error('invalid_frame')
       return v as ServerEvent
+    case 'tool':
+      if (!Number.isSafeInteger(v.turn_id) || Number(v.turn_id) < 1
+        || typeof v.name !== 'string' || !v.name || v.name.length > 128
+        || !/^[A-Za-z0-9_.:-]+$/.test(v.name)
+        || !['started', 'completed', 'failed'].includes(String(v.state))) throw new Error('invalid_frame')
+      return v as ToolStatusEvent
     case 'turn_status':
       if (!['listening_ready', 'rejected', 'completed', 'failed', 'cancelled'].includes(String(v.state))) throw new Error('invalid_frame')
       if (v.turn_id !== undefined && (!Number.isSafeInteger(v.turn_id) || Number(v.turn_id) < 1)) throw new Error('invalid_frame')

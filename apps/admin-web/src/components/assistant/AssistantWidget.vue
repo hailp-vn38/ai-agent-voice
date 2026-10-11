@@ -160,7 +160,7 @@ onBeforeUnmount(() => {
             </div>
             <p class="mt-1 text-xs font-semibold" role="status">{{ assistant.state === 'ready' ? t('assistant.readyVoice') : t(`assistant.state.${assistant.state}`) }}</p>
             <p class="mt-1 text-[11px] text-muted-foreground">
-              {{ assistant.state === 'ready' ? t('assistant.voiceHint') : assistant.state === 'listening' ? t('assistant.listeningHint') : assistant.state === 'speaking' ? t('assistant.speakingHint') : assistant.state === 'processing' ? t('assistant.processingHint') : '' }}
+              {{ assistant.state === 'ready' ? t('assistant.voiceHint') : assistant.state === 'listening' ? t('assistant.listeningHint') : assistant.state === 'speaking' ? t('assistant.speakingHint') : assistant.state === 'processing' ? (assistant.activeTool ? t('assistant.usingTool', { name: assistant.activeTool.name }) : t('assistant.processingHint')) : '' }}
             </p>
           </div>
 

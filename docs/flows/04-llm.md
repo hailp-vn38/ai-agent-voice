@@ -61,6 +61,18 @@ trước khi gọi LLM.
 
 ## 5. Tool call
 
+Tool Call là yêu cầu do model chọn; Tool Result là kết quả dùng cho LLM
+continuation; **Tool Execution Status** là tín hiệu quan sát tùy chọn cho Voice
+Client. Ba khái niệm có lifecycle riêng (xem [GLOSSARY.md](../../GLOSSARY.md)).
+Server chỉ phát `tool:started` trong shared sequential Tool-round Executor sau
+khi round kết thúc, admission/budget pass và tool resolve được; không phát
+ngay khi nhận streaming `LlmRuntimeEvent::ToolCall`. Terminal `completed` /
+`failed` được phân loại từ typed outcome ở completion path, không parse một
+ToolResult JSON format chung. Tool-level failure không đồng nghĩa turn failure.
+Event best-effort, generation-gated, opt-in `features.tool_status`; không làm
+thay đổi ToolResult, TTS hay LLM continuation.
+
+
 Mỗi round LLM nhận immutable catalog của session: builtin action, Device MCP đã
 discover và External MCP đã admit. Nếu catalog có tool có thể thay đổi câu trả
 lời, prose của round được buffer đến khi tool round kết thúc; round không có

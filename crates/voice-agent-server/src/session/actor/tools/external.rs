@@ -88,6 +88,7 @@ impl SessionActor {
         if let Some(batch) = self.tool_batch.as_mut() {
             batch.in_flight = None;
         }
+        let succeeded = outcome.as_ref().is_ok_and(|result| !result.is_error);
         let content = external_tool_result(outcome.map_err(|error| *error));
         tracing::info!(
             event = "external_tool_result_received",
@@ -96,7 +97,7 @@ impl SessionActor {
             ok = outcome.is_ok(),
             "External MCP tool result received"
         );
-        self.record_tool_call(call, content);
+        self.record_tool_call(call, content, succeeded);
         self.dispatch_next_tool();
     }
 

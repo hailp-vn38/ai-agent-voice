@@ -646,8 +646,9 @@ async fn handle_socket(
         }
     };
     let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
-    let actor =
-        actor.with_turn_status(assistant_connection.is_some() && hello.features.turn_status);
+    let actor = actor
+        .with_turn_status(assistant_connection.is_some() && hello.features.turn_status)
+        .with_tool_status(hello.features.tool_status);
     let actor = actor.with_pipeline_writer_terminal(pipeline_writer_terminal);
     let actor =
         actor.with_pilot_admission(runtimes.pilot_admission, hello.features.pipeline_status);

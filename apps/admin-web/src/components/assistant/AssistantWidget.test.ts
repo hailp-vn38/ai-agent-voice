@@ -91,6 +91,17 @@ describe('compact Studio Assistant', () => {
     expect(stop).toHaveBeenCalledOnce()
   })
 
+  it('shows active tool below waveform without adding conversation bubbles', async () => {
+    assistant.state = 'processing'
+    assistant.activeTool = { turn_id: 3, name: 'external.home_assistant.light_turn_on' }
+    await nextTick()
+    expect(widget.text()).toContain('Using external.home_assistant.light_turn_on')
+    expect(widget.findAll('article')).toHaveLength(0)
+    assistant.activeTool = null
+    await nextTick()
+    expect(widget.text()).toContain('Assistant is preparing a response')
+  })
+
   it('uses a connection dot, prioritizes microphone, and reveals text input only on demand', async () => {
     expect(widget.find('.assistant-connection-dot.is-online').exists()).toBe(true)
     expect(widget.get('header .sr-only').text()).toBe('Connected')
