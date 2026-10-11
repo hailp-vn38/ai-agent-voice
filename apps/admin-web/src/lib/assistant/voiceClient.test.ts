@@ -112,22 +112,21 @@ describe('shared Voice WebSocket client', () => {
     expect(states.at(-1)).toBe('ready')
     expect(errors).toHaveLength(0)
   })
-  it('a cancelled microphone permission request cannot abort the next turn', async () => {
+  it('a cancelled Auto microphone permission request cannot abort the next text turn', async () => {
     const socket = await open()
     let rejectCapture!: (error: Error) => void
     vi.spyOn(client.audio, 'startMicrophone').mockImplementation(() => new Promise((_resolve, reject) => { rejectCapture = reject }))
+    vi.spyOn(client.audio, 'stopMicrophone').mockResolvedValue(undefined)
     const capture = client.startMicrophone()
-    socket.event({ type: 'turn_status', state: 'listening_ready' })
     await vi.waitFor(() => expect(rejectCapture).toBeDefined())
-    client.interrupt()
-    socket.event({ type: 'turn_status', state: 'cancelled' })
+    await client.stopMicrophone()
     const sending = client.sendText('next')
     socket.event({ type: 'turn_status', state: 'listening_ready' })
     await sending
     rejectCapture(new Error('capture_cancelled'))
-    await expect(capture).rejects.toThrow('capture_cancelled')
+    await expect(capture).resolves.toBeUndefined()
     expect(states.at(-1)).toBe('processing')
-    expect(socket.sent.filter(s => JSON.parse(s).type === 'abort')).toHaveLength(1)
+    expect(socket.sent.filter(s => typeof s === 'string' && s.includes('"type":"abort"'))).toHaveLength(0)
   })
   it('ignores late listening ACK while aborting and accepts terminal cancellation', async () => {
     const socket = await open()
