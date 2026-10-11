@@ -159,6 +159,7 @@ function toDevice(device: AdminDevice): Device {
     agentId: device.agent_key,
     name: device.name ?? device.device_id,
     deviceId: device.device_id,
+    kind: device.kind,
     description: device.description ?? '',
     status: device.enabled ? 'online' : 'offline',
     templateId: device.template_key ?? undefined,

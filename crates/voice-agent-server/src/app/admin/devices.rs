@@ -4,6 +4,8 @@ use super::*;
 use crate::database::devices::{DeviceChanges, DeviceInput, get_device_by};
 #[derive(Deserialize)]
 struct CreateDevice {
+    #[serde(default)]
+    kind: Patch<Value>,
     device_id: String,
     agent_key: String,
     #[serde(default)]
@@ -17,6 +19,8 @@ struct CreateDevice {
 }
 #[derive(Deserialize)]
 struct PatchDevice {
+    #[serde(default)]
+    kind: Patch<Value>,
     #[serde(default)]
     device_id: Patch<String>,
     #[serde(default)]
@@ -37,6 +41,9 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
         Ok(v) => v,
         Err(e) => return e,
     };
+    if !matches!(body.kind, Patch::Absent) {
+        return error(&request, StatusCode::BAD_REQUEST, "immutable_field");
+    }
     if !valid_identity(&body.device_id)
         || body
             .name
@@ -155,6 +162,9 @@ pub(super) async fn patch_device(
         Ok(v) => v,
         Err(e) => return e,
     };
+    if !matches!(body.kind, Patch::Absent) {
+        return error(&request, StatusCode::BAD_REQUEST, "immutable_field");
+    }
     if !matches!(body.device_id, Patch::Absent) {
         return error(&request, StatusCode::BAD_REQUEST, "immutable_field");
     };
@@ -179,6 +189,13 @@ pub(super) async fn patch_device(
         }
         Err(error_value) => return sql_error(&request, &error_value),
     };
+    if old.kind != "physical" {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "managed_device_use_system_settings",
+        );
+    }
     if old.revision != expected {
         {
             database

@@ -117,6 +117,16 @@ impl Database {
             }
             Err(error_value) => return Err(WriteError::Sql(error_value)),
         };
+        if matches!(resource, DeleteResource::Device) {
+            let kind: String = sqlx::query_scalar("SELECT kind FROM devices WHERE id=?")
+                .bind(resource_id)
+                .fetch_one(pool)
+                .await
+                .map_err(WriteError::Sql)?;
+            if kind != "physical" {
+                return Err(WriteError::Conflict("managed_device_use_system_settings"));
+            }
+        }
         if revision != expected {
             audit_conflict_action(
                 pool,

@@ -15,6 +15,15 @@ Commit only after both commands exit successfully. Resolve any failures and reru
 
 ## Language
 
+**Virtual Device**:
+The single System-managed Device representing Studio Assistant for a deployment, with its own Agent and optional Template assignment.
+_Avoid_: browser identity, per-tab Device, Assistant Profile
+
+**Studio Assistant**:
+The administrator's floating Voice Protocol Client, whose conversations belong to independent Voice Sessions on the Virtual Device.
+_Avoid_: Admin tool authority, separate assistant runtime
+
+
 ## Source code structure conventions
 
 - When a source file becomes long or takes on multiple responsibilities, split it into modules with clear responsibilities; keep public paths stable through the parent module and re-exports where needed.

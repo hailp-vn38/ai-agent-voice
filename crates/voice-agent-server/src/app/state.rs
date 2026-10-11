@@ -33,6 +33,7 @@ use std::{
 pub struct AppState {
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
+    pub(crate) web_assistant: Arc<super::web_assistant_auth::WebAssistantAuth>,
     /// Identity of this process incarnation, pinned into enrollment drafts as provenance so a
     /// restart can detect a stale runtime and repin a still-compatible draft.
     pub runtime_id: String,
@@ -687,6 +688,7 @@ impl AppState {
         );
         let state = Self {
             started_at: Instant::now(),
+            web_assistant: Arc::new(Default::default()),
             runtime_id: format!("voice-agent-server-{}", uuid::Uuid::new_v4()),
             deployment_snapshots: Vec::new(),
             provider_prewarm: None,

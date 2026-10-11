@@ -10,6 +10,7 @@ use sqlx::{FromRow, Sqlite};
 pub(crate) struct Device {
     pub(crate) id: i64,
     pub(crate) device_id: String,
+    pub(crate) kind: String,
     pub(crate) agent_key: String,
     pub(crate) template_key: Option<String>,
     pub(crate) name: Option<String>,
@@ -24,7 +25,7 @@ pub(crate) async fn get_device_by(
     database: &Database,
     device_id: &str,
 ) -> Result<Device, sqlx::Error> {
-    sqlx::query_as("SELECT d.id,d.device_id,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.device_id=?").bind(device_id).fetch_one(&database.pool).await
+    sqlx::query_as("SELECT d.id,d.device_id,d.kind,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.device_id=?").bind(device_id).fetch_one(&database.pool).await
 }
 /// Returns the selected Template only when it is enabled and has an enabled assignment to the
 /// resulting Device Agent.  This is duplicated at admission as a fail-closed integrity check.
@@ -131,6 +132,14 @@ impl Database {
                 return Err(WriteError::Unavailable);
             }
         };
+        let kind: String = sqlx::query_scalar("SELECT kind FROM devices WHERE id=?")
+            .bind(resource_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(WriteError::Sql)?;
+        if kind != "physical" {
+            return Err(WriteError::Conflict("managed_device_use_system_settings"));
+        }
         let agent: Result<(i64, i64), _> =
             sqlx::query_as("SELECT id, enabled FROM agents WHERE key=?")
                 .bind(input.agent_key)
@@ -192,7 +201,7 @@ impl Database {
             _ => "d.device_id ASC",
         };
         let sql = format!(
-            "SELECT d.id,d.device_id,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE (? IS NULL OR d.enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
+            "SELECT d.id,d.device_id,d.kind,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE (? IS NULL OR d.enabled=?) ORDER BY {order} LIMIT ? OFFSET ?"
         );
         sqlx::query_as::<_, Device>(&sql)
             .bind(enabled)

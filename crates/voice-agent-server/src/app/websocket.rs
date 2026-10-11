@@ -49,6 +49,16 @@ pub(super) async fn handler(
             return (StatusCode::BAD_REQUEST, "duplicate protocol header").into_response();
         }
     }
+    for (name, value) in [
+        ("protocol-version", &query.protocol_version),
+        ("device-id", &query.device_id),
+        ("client-id", &query.client_id),
+        ("authorization", &query.authorization),
+    ] {
+        if headers.contains_key(name) && value.is_some() {
+            return (StatusCode::BAD_REQUEST, "ambiguous protocol identity").into_response();
+        }
+    }
     if !header_or_query_is_or_absent(
         &headers,
         "protocol-version",
@@ -69,23 +79,6 @@ pub(super) async fn handler(
             "Protocol-Version, Device-Id and Client-Id are required",
         )
             .into_response();
-    }
-    if bearer_auth_enabled
-        && !header_or_query_is(
-            &headers,
-            header::AUTHORIZATION.as_str(),
-            query.authorization.as_deref(),
-            &format!("Bearer {}", config.auth.token),
-        )
-    {
-        log_ws_auth(
-            true,
-            "denied",
-            "not_checked",
-            "denied",
-            "invalid_bearer_token",
-        );
-        return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
     }
     let device_id = header_or_query_value(&headers, "device-id", query.device_id.as_deref())
         .expect("validated above");
@@ -111,6 +104,71 @@ pub(super) async fn handler(
         );
         return (StatusCode::BAD_REQUEST, "invalid Client-Id").into_response();
     }
+    let assistant_auth = state.web_assistant.clone();
+    // Hold publication through graph resolution and connection registration; System saves cannot
+    // rebind between credential validation and the immutable profile snapshot.
+    let publication = assistant_auth.publication.read().await;
+    let device = match &state.database {
+        Some(db) => match crate::database::devices::get_device_by(db, device_id).await {
+            Ok(d) => Some(d),
+            Err(sqlx::Error::RowNotFound) => None,
+            Err(_) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "device admission unavailable",
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+    let assistant_connection = if device.as_ref().is_some_and(|d| d.kind == "web_assistant") {
+        if headers.contains_key(header::AUTHORIZATION) || query.authorization.is_some() {
+            return (StatusCode::BAD_REQUEST, "ambiguous authentication").into_response();
+        }
+        let Some(ticket) = query.ticket.as_deref() else {
+            return (StatusCode::UNAUTHORIZED, "ticket required").into_response();
+        };
+        let Some(origin) = super::web_assistant_auth::trusted_origin(&state, &headers) else {
+            return (StatusCode::FORBIDDEN, "untrusted origin").into_response();
+        };
+        match assistant_auth.consume(
+            ticket,
+            device.as_ref().expect("managed Device"),
+            client_id,
+            &origin,
+        ) {
+            Ok(connection) => Some(connection),
+            Err("assistant_capacity_exceeded") => {
+                return (StatusCode::TOO_MANY_REQUESTS, "assistant capacity exceeded")
+                    .into_response();
+            }
+            Err(_) => return (StatusCode::UNAUTHORIZED, "invalid ticket").into_response(),
+        }
+    } else {
+        drop(publication);
+        if query.ticket.is_some() {
+            return (StatusCode::UNAUTHORIZED, "ticket requires managed Device").into_response();
+        }
+        if bearer_auth_enabled
+            && !header_or_query_is(
+                &headers,
+                header::AUTHORIZATION.as_str(),
+                query.authorization.as_deref(),
+                &format!("Bearer {}", config.auth.token),
+            )
+        {
+            log_ws_auth(
+                true,
+                "denied",
+                "not_checked",
+                "denied",
+                "invalid_bearer_token",
+            );
+            return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
+        }
+        None
+    };
     let routing_timer = metrics
         .as_ref()
         .map(|metrics| metrics.timer(RuntimePhase::WsRouting));
@@ -205,6 +263,11 @@ pub(super) async fn handler(
             return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
         }
     };
+    if assistant_connection.is_some()
+        && let Some(guard) = &profile.external_mcp().guard
+    {
+        assistant_auth.register_close(&guard.close);
+    }
     let resolved_runtimes = match profile
         .selected_runtimes
         .clone()
@@ -277,6 +340,7 @@ pub(super) async fn handler(
                     admission_gate,
                     connect_started,
                     metrics,
+                    assistant_connection,
                 },
                 SessionControl {
                     stopping,
@@ -323,7 +387,7 @@ fn log_ws_auth(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(super) struct WebsocketQuery {
     #[serde(rename = "protocol-version")]
     protocol_version: Option<String>,
@@ -332,6 +396,7 @@ pub(super) struct WebsocketQuery {
     #[serde(rename = "client-id")]
     client_id: Option<String>,
     authorization: Option<String>,
+    ticket: Option<String>,
 }
 
 struct PlaybackTurn {
@@ -428,6 +493,7 @@ fn valid_device_identity(value: &str) -> bool {
 }
 
 struct SocketRuntimes {
+    assistant_connection: Option<super::web_assistant_auth::Connection>,
     connect_started: Instant,
     metrics: Option<Arc<RuntimeMetrics>>,
     asr: Arc<AsrWorkerRuntime>,
@@ -474,6 +540,11 @@ async fn handle_socket(
     runtimes: SocketRuntimes,
     control: SessionControl,
 ) {
+    let assistant_connection = runtimes.assistant_connection;
+    let assistant_close = assistant_connection
+        .as_ref()
+        .map(|c| c.close.clone())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
     let socket_started = Instant::now();
     let connect_started = runtimes.connect_started;
     let metrics = runtimes.metrics;
@@ -506,6 +577,7 @@ async fn handle_socket(
         .map(|metrics| metrics.timer(RuntimePhase::WsHelloWait));
     let first = tokio::select! {
         _ = stopping.cancelled() => return,
+        _ = assistant_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         _ = tool_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         _ = speaker_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
@@ -574,6 +646,8 @@ async fn handle_socket(
         }
     };
     let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
+    let actor =
+        actor.with_turn_status(assistant_connection.is_some() && hello.features.turn_status);
     let actor = actor.with_pipeline_writer_terminal(pipeline_writer_terminal);
     let actor =
         actor.with_pilot_admission(runtimes.pilot_admission, hello.features.pipeline_status);
@@ -620,7 +694,11 @@ async fn handle_socket(
                 trust_client_aec_feature: config.barge_in.trust_client_aec_feature,
             },
         )
-        .with_device_mcp(hello.features.mcp, &config.mcp, vision_capability(&config))
+        .with_device_mcp(
+            hello.features.mcp && assistant_connection.is_none(),
+            &config.mcp,
+            vision_capability(&config),
+        )
         .with_tool_round_limits(crate::tools::round::ToolRoundLimits::from_config(
             &config.llm.tools,
         ))
@@ -774,6 +852,10 @@ async fn handle_socket(
             // The deadline reached this session. It closes cleanly: the actor is told to stop,
             // sends its terminal close frame and lets the writer drain, and this loop only exits
             // once the connection itself is done. No task is aborted.
+            _ = assistant_close.cancelled() => {
+                let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
+                break;
+            }
             _ = tool_security_close.cancelled() => {
                 let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
                 let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);

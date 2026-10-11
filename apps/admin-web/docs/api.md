@@ -53,6 +53,7 @@ Các path dưới đây là path mà frontend gọi, không phải bản sao to�
 | `external-tools.ts` | `/api/admin/agents/{agentKey}/tool-allowlist` GET/PUT |
 | `speakers.ts` | `/api/admin/speakers`; CRUD; `/captures`, `/from-capture`; `/{key}/voiceprint` PUT; `/voiceprint/purge` POST; `/bindings`; summary `/api/admin/speaker-recognition` |
 | `history.ts` | `/api/admin/history` GET và `/purge` POST; chưa có route/page History |
+| `assistant.ts` | GET/PUT `/api/admin/system/assistant-device`; POST `/api/admin/assistant/ws-ticket`; [contract](../../../docs/api/studio-assistant.md) |
 | `system.ts` | `/health`, `/ready`, `/api/admin/system` |
 
 Đối chiếu DTO cụ thể trong `src/api/types/`. Raw response có thể dùng boolean hoặc số `0/1` tùy resource; không suy từ `enabled` của resource khác.

@@ -119,6 +119,15 @@ impl SessionActor {
                 }
                 let actions = self.pending_actions.take_for_turn(turn_id);
                 self.tts_started = false;
+                if self.turn_status_outcome != "failed"
+                    || matches!(outcome, WriterTurnOutcome::Normal)
+                {
+                    self.turn_status_outcome = if matches!(outcome, WriterTurnOutcome::Normal) {
+                        "completed"
+                    } else {
+                        "cancelled"
+                    };
+                }
                 self.release_active_turn();
                 if matches!(outcome, WriterTurnOutcome::Normal) {
                     if let Some(switch) = actions.switch_template_after_turn {

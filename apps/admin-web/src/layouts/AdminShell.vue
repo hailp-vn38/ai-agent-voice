@@ -2,6 +2,7 @@
 import { AudioWaveform, Menu } from '@lucide/vue'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import AssistantWidget from '@/components/assistant/AssistantWidget.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import SidebarContent from '@/components/SidebarContent.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
@@ -39,6 +40,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="min-h-screen bg-background text-foreground">
     <AppSidebar />
+    <AssistantWidget />
 
     <div class="lg:pl-64">
       <header class="sticky top-0 z-20 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:hidden">

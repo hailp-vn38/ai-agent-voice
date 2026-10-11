@@ -3,6 +3,7 @@ import type { Page, PageQuery } from './common'
 export interface AdminDevice {
   id: number
   device_id: string
+  kind?: 'physical' | 'web_assistant'
   agent_key: string
   template_key: string | null
   name: string | null

@@ -418,6 +418,7 @@ impl SessionActor {
     }
 
     pub(super) fn fail_speech_delivery(&mut self) {
+        self.turn_status_outcome = "failed";
         let writer_owns_terminal_outcome = self.tts_started;
         let failed_generation = self.generation;
         if !writer_owns_terminal_outcome {
@@ -536,6 +537,10 @@ impl SessionActor {
     }
 
     pub(super) fn release_active_turn(&mut self) {
+        if self.turn.is_some() && self.turn_status_active {
+            self.turn_status_active = false;
+            self.emit_turn_status(self.turn_status_outcome, None);
+        }
         if let Some(turn) = self.turn.take() {
             drop(turn.permit);
         }

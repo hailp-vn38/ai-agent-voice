@@ -42,6 +42,7 @@ mod enrollment;
 mod ota;
 mod state;
 mod vision;
+mod web_assistant_auth;
 mod websocket;
 
 pub use state::{AppState, SessionProfileAdmissionError};

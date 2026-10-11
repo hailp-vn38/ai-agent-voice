@@ -45,6 +45,14 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             axum::routing::post(mcp_tests::saved_discover),
         )
         .route("/system", get(get_system))
+        .route(
+            "/system/assistant-device",
+            get(assistant_device::get).put(assistant_device::put),
+        )
+        .route(
+            "/assistant/ws-ticket",
+            axum::routing::post(assistant_device::ticket),
+        )
         .route("/agents", get(list_agents).post(create_agent))
         .route(
             "/agents/{key}",
@@ -204,6 +212,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
 }
 
 mod agents;
+mod assistant_device;
 mod deletion;
 mod devices;
 mod enrollments;

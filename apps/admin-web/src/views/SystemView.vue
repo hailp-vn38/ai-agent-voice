@@ -3,6 +3,7 @@ import { Activity, Database, RefreshCcw, Server, Wifi } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 
+import AssistantDeviceSettings from '@/components/system/AssistantDeviceSettings.vue'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -139,6 +140,8 @@ onBeforeUnmount(() => {
         </CardContent>
       </Card>
     </div>
+
+    <AssistantDeviceSettings />
 
     <Card>
       <CardHeader>

@@ -8,6 +8,7 @@ impl SessionActor {
             ListenCommand::Start { .. } | ListenCommand::Detect { .. }
         ) && !self.admit_pipeline()
         {
+            self.emit_turn_status("rejected", Some("pipeline_capacity"));
             return;
         }
         match command {
@@ -24,6 +25,8 @@ impl SessionActor {
                     } else {
                         self.cancel_asr();
                         self.phase = SessionPhase::Ready;
+                        self.emit_turn_status("rejected", Some("empty_capture"));
+                        self.turn_status_active = false;
                     }
                 }
             }
@@ -87,8 +90,11 @@ impl SessionActor {
                     self.manual_capture.restart();
                     self.asr_stream = Some((lease, identity));
                     self.phase = SessionPhase::Listening;
+                    self.turn_status_active = true;
+                    self.turn_status_outcome = "failed";
                 }
                 Err(error) => {
+                    self.emit_turn_status("rejected", Some("asr_capacity"));
                     warn!(?error, "manual ASR start rejected");
                     self.phase = SessionPhase::Ready;
                 }
@@ -171,7 +177,13 @@ impl SessionActor {
         if self.phase == SessionPhase::Closed {
             return;
         }
+        self.turn_status_outcome = "cancelled";
+        let capture_only = self.turn.is_none() && self.turn_status_active;
         self.interrupt_active_turn();
+        if capture_only {
+            self.emit_turn_status("cancelled", None);
+            self.turn_status_active = false;
+        }
         if !self.advance_generation() {
             return;
         }
@@ -223,6 +235,12 @@ impl SessionActor {
             return;
         }
         let Some(text) = normalize_detect_text(input) else {
+            if self.turn_status {
+                self.emit_turn_status("rejected", Some("invalid_text"));
+                self.turn_status_active = false;
+                self.cancel_asr();
+                self.phase = SessionPhase::Ready;
+            }
             return;
         };
         info!(mode = ?self.listening_mode, "typed detect accepted");
@@ -319,6 +337,22 @@ impl SessionActor {
             .is_some_and(|(_, current)| current == identity)
             && identity.generation() == self.generation;
         match event {
+            AsrWorkerEvent::Opened { .. }
+                if current && self.listening_mode == Some(ListenMode::Manual) =>
+            {
+                self.emit_turn_status("listening_ready", None)
+            }
+            AsrWorkerEvent::Failed { .. }
+                if current
+                    && self.turn_status
+                    && self.listening_mode == Some(ListenMode::Manual)
+                    && self.phase == SessionPhase::Listening =>
+            {
+                self.asr_stream = None;
+                self.emit_turn_status("rejected", Some("asr_unavailable"));
+                self.turn_status_active = false;
+                self.phase = SessionPhase::Ready;
+            }
             AsrWorkerEvent::Final { text, .. } if current => {
                 self.asr_stream = None;
                 let text = normalize_asr_final_text(text);

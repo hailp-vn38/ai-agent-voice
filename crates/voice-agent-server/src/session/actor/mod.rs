@@ -63,6 +63,9 @@ pub struct SessionActor {
     pilot_admission: crate::session::pilot::PilotAdmission,
     pipeline_permit: Option<crate::session::pilot::PilotPermit>,
     pipeline_status: bool,
+    turn_status: bool,
+    turn_status_active: bool,
+    turn_status_outcome: &'static str,
     pipeline_request: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pipeline_writer_pending: HashSet<TurnId>,
     pipeline_writer_terminal: Option<watch::Receiver<bool>>,
@@ -557,6 +560,7 @@ mod observe;
 mod pilot;
 mod speaker;
 mod tools;
+mod turn_status;
 fn normalize_detect_text(input: String) -> Option<String> {
     let text = input.trim();
     if text.is_empty()
@@ -570,7 +574,11 @@ fn normalize_detect_text(input: String) -> Option<String> {
 impl SessionActor {
     /// Allocates a semantic identity only after Active Turn admission succeeds.
     pub(super) fn begin_active_turn(&mut self) -> Option<TurnId> {
-        let permit = ActiveTurnLimiter::try_acquire_permit(&self.active_turn_limiter)?;
+        let Some(permit) = ActiveTurnLimiter::try_acquire_permit(&self.active_turn_limiter) else {
+            self.emit_turn_status("rejected", Some("active_turn_capacity"));
+            self.turn_status_active = false;
+            return None;
+        };
         let raw = self.next_turn_id;
         let Some(next) = raw.checked_add(1) else {
             drop(permit);

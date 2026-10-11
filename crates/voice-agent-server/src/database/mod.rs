@@ -9,6 +9,7 @@ use thiserror::Error;
 
 pub mod admission;
 pub(crate) mod agents;
+pub(crate) mod assistant_device;
 mod audit;
 pub mod credentials;
 pub(crate) mod deletion;

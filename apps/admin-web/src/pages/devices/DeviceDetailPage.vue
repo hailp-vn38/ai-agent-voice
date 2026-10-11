@@ -78,7 +78,7 @@ async function load() {
 }
 
 function openEdit() {
-  if (!device.value) return
+  if (!device.value || device.value.kind === 'web_assistant') return
   form.value = {
     name: device.value.name || device.value.device_id,
     description: device.value.description ?? '',
@@ -194,8 +194,9 @@ onBeforeUnmount(() => activeRequest?.abort())
           <Button variant="outline" :disabled="loading || saving" @click="load">
             <RefreshCw class="size-4" aria-hidden="true" /> {{ t('common.refresh') }}
           </Button>
-          <Button :disabled="saving" @click="openEdit"><Pencil class="size-4" aria-hidden="true" />{{ t('agentDevices.edit') }}</Button>
-          <ActionMenu :label="t('common.actions')" panel-width="12rem" :disabled="saving">
+          <RouterLink v-if="device.kind === 'web_assistant'" to="/system" class="text-sm underline">{{ t('assistant.managedDevice') }}</RouterLink>
+          <Button v-else :disabled="saving" @click="openEdit"><Pencil class="size-4" aria-hidden="true" />{{ t('agentDevices.edit') }}</Button>
+          <ActionMenu v-if="device.kind !== 'web_assistant'" :label="t('common.actions')" panel-width="12rem" :disabled="saving">
             <MenuItem variant="danger" @select="deleteOpen = true">
               <Trash2 class="size-4 shrink-0" aria-hidden="true" />
               {{ t('agentDevices.delete') }}
@@ -277,7 +278,7 @@ onBeforeUnmount(() => activeRequest?.abort())
           </div>
         </div>
         <button type="button" role="switch" data-device-admission-switch :aria-checked="device.enabled !== 0"
-          :aria-label="t('deviceDetail.access')" :disabled="saving"
+          :aria-label="t('deviceDetail.access')" :disabled="saving || device.kind === 'web_assistant'"
           class="relative h-7 w-12 shrink-0 cursor-pointer rounded-full transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-ring"
           :class="device.enabled !== 0 ? 'bg-success' : 'bg-muted-foreground/40'" @click="setAdmission">
           <span class="absolute top-1 size-5 rounded-full bg-white shadow transition-all" :class="device.enabled !== 0 ? 'left-6' : 'left-1'" />

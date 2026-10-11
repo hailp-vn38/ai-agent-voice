@@ -60,11 +60,12 @@ async function copyDeviceId() {
         <p v-if="device.description" class="mt-1 line-clamp-2 break-words text-xs leading-5 text-muted-foreground">
           {{ device.description }}
         </p>
-        <p v-else class="mt-1 text-xs text-muted-foreground">{{ t('deviceCard.type') }}</p>
+        <p v-else class="mt-1 text-xs text-muted-foreground">{{ device.kind === 'web_assistant' ? t('assistant.managedDevice') : t('deviceCard.type') }}</p>
       </div>
 
       <div class="pointer-events-auto relative z-20">
-        <ActionMenu :label="t('common.actions')" panel-width="11rem">
+        <RouterLink v-if="device.kind === 'web_assistant'" to="/system" class="text-xs underline">{{ t('assistant.managedDevice') }}</RouterLink>
+        <ActionMenu v-else :label="t('common.actions')" panel-width="11rem">
           <MenuItem data-device-edit @select="emit('edit', device)">
             <Pencil class="size-4 shrink-0" aria-hidden="true" />
             {{ t('agentDevices.edit') }}

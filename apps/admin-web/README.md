@@ -95,3 +95,19 @@ docs/           Tài liệu ứng dụng
 ```
 
 Kiểm chứng ngày 2026-10-09: **38 test files / 126 tests pass**, typecheck và production build pass. Chưa kiểm live backend, browser E2E hoặc microphone/hardware thật. Các lỗi được review vẫn cần sửa, đặc biệt binding persistence và Device revision/identity.
+
+## Studio Assistant
+
+System → Studio Assistant chọn Agent, optional linked Template và Enabled, rồi
+Save. Open Floating Chat mở widget dùng một Virtual Device server-managed và
+shared `/voice/v1/`; không nhập mã enrollment hoặc Voice token. Widget giữ hội
+thoại xuyên route và thu gọn; Disconnect xóa hội thoại RAM và dừng mic/audio/WS.
+Text vẫn đi qua pipeline TTS; loa mặc định tắt nhưng frame Opus luôn được tiêu thụ.
+Mic và loa dùng WebCodecs Opus, mic cần HTTPS/localhost và AudioWorklet. Browser
+không hỗ trợ codec sẽ báo lỗi; không gửi WebM/Ogg hoặc PCM thay cho raw Opus.
+
+Khi System Save thay cấu hình, phiên web hiện tại bị đóng; operator Retry để nhận
+profile mới. Mạng gián đoạn xin ticket mới với backoff tối đa ba lần, không gửi
+lại tin nhắn hoặc tool call. Nếu kết quả lượt trước bị mất, UI báo unknown outcome.
+Server có thể lưu transcript theo profile; UI không cam kết chỉ lưu phía browser.
+Xem [API và bảo mật](../../docs/api/studio-assistant.md).

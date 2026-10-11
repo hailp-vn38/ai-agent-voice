@@ -83,6 +83,7 @@ export interface Device {
   agentId: string
   name: string
   deviceId: string
+  kind?: 'physical' | 'web_assistant'
   description: string
   status: DeviceStatus
   /** `undefined` means the device follows the agent default template. */

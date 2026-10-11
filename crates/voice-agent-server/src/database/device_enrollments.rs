@@ -472,7 +472,7 @@ impl Database {
         {
             return Err(WriteError::Unavailable);
         }
-        let device: super::devices::Device = match sqlx::query_as("SELECT d.id,d.device_id,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.id=?")
+        let device: super::devices::Device = match sqlx::query_as("SELECT d.id,d.device_id,d.kind,a.key AS agent_key,t.key AS template_key,d.name,d.description,d.enabled,d.metadata_json,d.revision,d.created_at,d.updated_at FROM devices d JOIN agents a ON a.id=d.agent_id LEFT JOIN agent_templates t ON t.id=d.template_id WHERE d.id=?")
         .bind(device_row).fetch_one(&mut *tx).await { Ok(device) => device, Err(error_value) => return Err(WriteError::Sql(error_value)) };
         if tx.commit().await.is_err() {
             return Err(WriteError::Unavailable);

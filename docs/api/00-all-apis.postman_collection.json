@@ -2669,6 +2669,118 @@
           ]
         }
       ]
+    },
+    {
+      "name": "Studio Assistant",
+      "item": [
+        {
+          "name": "Get Assistant Device",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/system/assistant-device",
+            "description": "Studio Assistant uses the System-managed singleton and shared /voice/v1/. Ticket is one-use, expires in 30 seconds and must never be persisted/logged. See docs/api/studio-assistant.md."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Assistant Device",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/system/assistant-device",
+            "description": "Studio Assistant uses the System-managed singleton and shared /voice/v1/. Ticket is one-use, expires in 30 seconds and must never be persisted/logged. See docs/api/studio-assistant.md.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"agent_key\": \"{{agent_key}}\",\n  \"template_key\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Assistant Device",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "If-Match",
+                "value": "\"{{assistant_revision}}\""
+              }
+            ],
+            "url": "{{base_url}}/api/admin/system/assistant-device",
+            "description": "Studio Assistant uses the System-managed singleton and shared /voice/v1/. Ticket is one-use, expires in 30 seconds and must never be persisted/logged. See docs/api/studio-assistant.md.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false,\n  \"agent_key\": \"{{agent_key}}\",\n  \"template_key\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Issue Assistant WS Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Origin",
+                "value": "{{assistant_origin}}"
+              }
+            ],
+            "url": "{{base_url}}/api/admin/assistant/ws-ticket",
+            "description": "Studio Assistant uses the System-managed singleton and shared /voice/v1/. Ticket is one-use, expires in 30 seconds and must never be persisted/logged. See docs/api/studio-assistant.md.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
@@ -2821,6 +2933,14 @@
       "key": "speaker_policy_revision",
       "value": "1",
       "type": "string"
+    },
+    {
+      "key": "assistant_revision",
+      "value": "1"
+    },
+    {
+      "key": "assistant_origin",
+      "value": "http://localhost"
     }
   ]
 }

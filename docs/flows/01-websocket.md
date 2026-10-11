@@ -14,7 +14,11 @@ transcript (nếu profile bật), nhưng không phải credential.
 
 ### Admission trước HTTP upgrade
 
-Handler kiểm tra Admission Gate, bearer và identity trước khi route Device.
+Handler kiểm tra Admission Gate và identity, rồi chọn nhánh xác thực theo
+`devices.kind` do server quản lý. Physical/Unknown giữ Voice bearer và enrollment;
+Virtual Device bắt buộc ticket một lần, trusted Origin và revision hiện tại,
+không fallback sang Voice bearer. Nhánh web đi qua cùng admission/profile/runtime.
+Chi tiết ticket, thu hồi phiên và ACK opt-in: [Studio Assistant API](../api/studio-assistant.md).
 Device chưa đăng ký có thể đi vào Enrollment Session; Device đã đăng ký được
 admit bằng một configuration snapshot bounded từ SQLite. Sau đó resolver chạy
 chuẩn bị selected runtime và discovery External MCP song song:
@@ -336,3 +340,15 @@ Chạy regression của module bằng:
 ```bash
 ./scripts/test-module.sh ws
 ```
+
+## Studio Assistant: manual ACK và terminal status
+
+`features.turn_status=true` chỉ có hiệu lực trên Virtual Device đã xác thực bằng
+ticket. `listening_ready` được gửi sau ASR worker Opened; browser mới được gửi
+`detect` hoặc Opus 16 kHz mono 60 ms. Admission/capture bị từ chối trả `rejected`
+có reason code an toàn. Accepted text tiếp tục dùng đúng một `stt` echo.
+`completed` bám writer TurnClosed Normal sau packet cuối và `tts:stop`;
+`failed/cancelled` bám terminal/release của actor, kể cả lỗi trước `tts:start`.
+ESP32 không nhận extension này dù quảng cáo flag trên Physical Device.
+System Save invalidate ticket và đóng cả web socket đang đợi ClientHello;
+publication giữ profile snapshot không bị xen một settings write trước upgrade.

@@ -15,7 +15,16 @@ flowchart LR
   Backend --> Runtime[Provider Runtime Manager]
 ```
 
-Microphone ở browser chỉ dùng cho Speaker enrollment và ASR diagnostics. Admin Web không điều khiển vòng đời một Voice Session; việc Vite proxy `/voice` không có nghĩa UI là Voice Protocol Client.
+Studio Assistant là Voice Protocol Client trong browser, mount một lần tại
+AdminShell. System cấu hình một Virtual Device; Admin HTTP cấp ticket, rồi
+`lib/assistant/voiceClient.ts` điều khiển một WS dùng chung `/voice/v1/`.
+`stores/assistant.ts` giữ hội thoại chỉ trong RAM xuyên route; SessionActor phía
+server vẫn sở hữu trạng thái Voice Session. Text dùng manual Start → ACK → Detect;
+microphone dùng AudioWorklet/WebCodecs raw Opus. Parser, sequencing, reconnect và
+audio lifecycle nằm trong `lib/assistant/`, không nằm rải trong UI. Loa mặc định
+tắt và vẫn tiêu thụ frame binary. Queue capture/decode/playback đều có giới hạn.
+Không render HTML từ LLM; message được Vue escape. Không có Browser Device MCP,
+Admin write tools hay runtime riêng. Transcript server vẫn theo profile hiện có.
 
 ## Entry points và cấu trúc
 
@@ -24,13 +33,15 @@ Microphone ở browser chỉ dùng cho Speaker enrollment và ASR diagnostics. A
 | `src/main.ts` | Mount Vue, Pinia, Router, CSS |
 | `src/App.vue` | Connect token, load cache ban đầu, error banner, RouterView gate |
 | `src/router/index.ts` | History router, lazy import trang, redirects, document title |
-| `src/layouts/AdminShell.vue` | Shell/sidebar responsive |
+| `src/layouts/AdminShell.vue` | Shell/sidebar responsive và AssistantWidget toàn cục |
 | `src/config/navigation.ts` | Nhóm Workspace, Voice, Infrastructure |
 | `src/views/` | Overview, Agents, Providers, Devices, Speakers, MCP catalog, System |
 | `src/pages/` | Detail pages và Templates catalog |
 | `src/components/` | Form, cards, pipeline, enrollment, diagnostics, UI primitives |
 | `src/api/` và `src/api/types/` | Transport/resource clients và wire types |
 | `src/stores/admin.ts` | Cache/read model Agents, Templates, Providers, Devices |
+| `src/stores/assistant.ts` | Hội thoại RAM và client dùng một WS xuyên route |
+| `src/lib/assistant/` | Shared Voice protocol, ACK/terminal sequencing và Opus audio |
 | `src/stores/auth.ts` | Session token và fallback env |
 | `src/stores/server.ts` | Health, readiness, system runtime aggregates |
 | `src/domain/admin.ts` | View models và provider types |

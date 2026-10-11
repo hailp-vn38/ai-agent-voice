@@ -37,3 +37,12 @@ khi bật websocket enrollment; script tạo asset local bằng espeak-ng/ffmpeg
 operator cung cấp recording riêng. Missing/invalid clip fail trước listener;
 không synthesize bằng Agent TTS trong onboarding. Không thêm Redis/migration SQL,
 không query DB trong Voice SessionActor và không nới Device/Agent voice admission.
+
+## Managed browser Device extension
+
+Studio Assistant bổ sung một Device `kind=web_assistant` được provision từ System.
+Nhánh này bắt buộc Admin-issued one-time ticket và trusted Origin trước upgrade;
+không dùng shared Voice bearer hoặc pending enrollment. Device Physical/Unknown
+giữ nguyên decision enrollment ở trên. Sau web authorization, resolver/runtime
+và Voice SessionActor vẫn dùng chung. Contract và opt-in `turn_status` được ghi
+trong [Studio Assistant API](../api/studio-assistant.md).
