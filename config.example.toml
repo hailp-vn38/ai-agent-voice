@@ -130,6 +130,7 @@ model = "model-name"
 adapter = "zerotts_onnx"
 voice = "maichi"
 delivery_mode = "stream"
+# Set preload = true to retain ZeroTTS before bind even with a different TTS default.
 
 # Remote ChillAudio is a separate configured instance. Agent binding selects it
 # without changing another provider block; it does not use Model Preparation.

@@ -43,6 +43,8 @@ model = "REPLACE_WITH_MODEL_NAME"
 adapter = "zerotts_onnx"
 voice = "maichi"
 delivery_mode = "stream"
+# Keep ZeroTTS resident even when another provider is the TTS default.
+preload = true
 
 # Optional remote VieNeu; start compose.vieneu.yaml before selecting it.
 # [providers.tts.instances.vieneu_default]

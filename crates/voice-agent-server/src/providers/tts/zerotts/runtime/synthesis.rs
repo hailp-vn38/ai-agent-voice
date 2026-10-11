@@ -1,6 +1,9 @@
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(test)]
+mod tests;
+
 const FIRST_CHUNK_FRAMES: usize = 4;
 const MAX_CHUNK_FRAMES: usize = 16;
 const MIN_FRAMES: usize = 4;
@@ -282,26 +285,36 @@ impl ZeroTtsReplica {
             .graphs
             .as_ref()
             .ok_or_else(|| TtsError::IncompatibleContract("ZeroTTS engine is not loaded".into()))?;
+        let (text_encoder, prefix_step, local_frame_decode) = loading::load_ar_graphs(
+            || {
+                let text = load_graph(
+                    &graphs.text_encoder,
+                    graphs.threads,
+                    TEXT_ENCODER_INPUTS,
+                    TEXT_ENCODER_OUTPUTS,
+                )?;
+                let prefix = load_graph(
+                    &graphs.prefix_step,
+                    graphs.threads,
+                    PREFIX_STEP_INPUTS,
+                    PREFIX_STEP_OUTPUTS,
+                )?;
+                Ok((text, prefix))
+            },
+            || {
+                load_graph(
+                    &graphs.local_frame_decode,
+                    graphs.threads,
+                    LOCAL_FRAME_INPUTS,
+                    LOCAL_FRAME_OUTPUTS,
+                )
+            },
+        )?;
         Ok(Self {
             contract: contract.clone(),
-            text_encoder: load_graph(
-                &graphs.text_encoder,
-                graphs.threads,
-                TEXT_ENCODER_INPUTS,
-                TEXT_ENCODER_OUTPUTS,
-            )?,
-            prefix_step: load_graph(
-                &graphs.prefix_step,
-                graphs.threads,
-                PREFIX_STEP_INPUTS,
-                PREFIX_STEP_OUTPUTS,
-            )?,
-            local_frame_decode: load_graph(
-                &graphs.local_frame_decode,
-                graphs.threads,
-                LOCAL_FRAME_INPUTS,
-                LOCAL_FRAME_OUTPUTS,
-            )?,
+            text_encoder,
+            prefix_step,
+            local_frame_decode,
         })
     }
 

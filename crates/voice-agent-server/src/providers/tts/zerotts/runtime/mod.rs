@@ -2,6 +2,7 @@
 
 mod codec;
 mod contract;
+mod loading;
 mod synthesis;
 pub mod text;
 

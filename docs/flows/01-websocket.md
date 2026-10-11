@@ -42,6 +42,16 @@ Templates và overrides của enabled Devices có assignment hợp lệ. Admin c
 DB commit. Đây là hint bounded, best-effort, không phải bảo đảm mọi Template
 đã Ready khi `/ready` trả 200.
 
+TTS instance có `preload=true` được nạp và retain trước bind, kể cả khi không
+phải deployment default. Production config bật lựa chọn này cho ZeroTTS để
+tránh idle eviction và chuyển cold load sang startup. Một ZeroTTS Physical
+Replica vẫn giữ bốn ONNX sessions: text encoder và prefix step được tạo trên
+một luồng, đồng thời local frame decode được tạo trên luồng khởi tạo; codec
+được tạo sau đó. Tối đa hai graph loads chạy đồng thời trong một attempt;
+mọi luồng được join trước khi báo completion/error, rồi retained worker mới
+warmup và publish Ready. Preload tăng thời gian boot và RAM/reservations thường
+trú; không chứng nhận remote inference đã warm.
+
 Production config dành tối đa 500 ms cho tổng External MCP discovery, 400 ms
 cho mỗi server. Server vượt budget không đóng Voice Session nhưng có thể làm
 session thiếu tools. Budget discovery không thay đổi timeout thực thi tool.
