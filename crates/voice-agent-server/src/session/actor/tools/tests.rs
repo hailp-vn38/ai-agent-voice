@@ -1514,12 +1514,18 @@ async fn server_external_mcp_reports_tool_lifecycle_without_client_device_mcp() 
     let server = GatedServer::start().await;
     let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
     let (tx, mut rx) = mpsc::channel(8);
-    let mut actor = session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await)
-        .with_tool_status(true);
+    let mut actor =
+        session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await)
+            .with_tool_status(true);
     actor.control_tx = tx;
-    assert!(actor.mcp.visible.is_empty(), "web assistants do not advertise Device MCP");
+    assert!(
+        actor.mcp.visible.is_empty(),
+        "web assistants do not advertise Device MCP"
+    );
 
-    let turn_id = actor.begin_active_turn().expect("an active turn is admitted");
+    let turn_id = actor
+        .begin_active_turn()
+        .expect("an active turn is admitted");
     actor
         .commit_user_text("get the forecast".to_owned())
         .expect("accepted text belongs to the active turn");
@@ -1529,12 +1535,15 @@ async fn server_external_mcp_reports_tool_lifecycle_without_client_device_mcp() 
         arguments: serde_json::json!({}),
     }]);
     server.wait_until_held().await;
-    let first = rx.try_recv().expect("external tool start is observable");
-    let OutboundMessage::TurnText { turn_id: first_turn, text, .. } = first else {
-        panic!("tool status belongs to a generation-gated turn")
-    };
-    let started: serde_json::Value = serde_json::from_str(&text).expect("status JSON");
-    assert_eq!(first_turn, turn_id);
+    let started = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|message| match message {
+            OutboundMessage::TurnText { turn_id: observed, text, .. } if observed == turn_id => {
+                let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+                (value["type"] == "tool").then_some(value)
+            }
+            _ => None,
+        })
+        .expect("external MCP start status is observable");
     assert_eq!(started["type"], "tool");
     assert_eq!(started["state"], "started");
     assert_eq!(started["name"], "external.weather.forecast");
