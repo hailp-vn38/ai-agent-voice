@@ -152,7 +152,7 @@ function clearFilters() {
 }
 
 /** The API models four provider types, so `vision` never preselects anything. */
-function openCreate(type?: ProviderType) {
+function openCreate(type: ProviderType = activeProviderType.value) {
   createType.value = isSetupType(type) ? type : undefined
   editingProvider.value = undefined
   createOpen.value = true

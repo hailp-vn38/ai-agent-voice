@@ -11,6 +11,7 @@ import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import ProviderFormModal from '@/components/admin/ProviderFormModal.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { ProviderInstance, ProviderStatus, ProviderType } from '@/domain/admin'
@@ -239,6 +240,7 @@ onBeforeUnmount(() => {
       <template #details>
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span class="font-medium">{{ providerTypeLabel(provider.type) }}</span>
+          <Badge v-if="provider.source === 'config'" variant="outline">Config</Badge>
           <span aria-hidden="true">·</span>
           <span class="font-mono">{{ provider.adapter }}</span>
           <span aria-hidden="true">·</span>

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { providersApi } from './providers'
 import { mcpApi } from './mcp'
+import { providerAdaptersApi } from './provider-adapters'
 
 afterEach(() => vi.unstubAllGlobals())
 it('posts an unsaved LLM configuration with cancellation and no CRUD', async () => {
@@ -24,12 +25,29 @@ it('uses separate connection and discovery routes for saved and draft MCP', asyn
   await mcpApi.discoverSavedTools('weather')
   expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/admin/mcp-tests/connection', '/api/admin/mcp-tests/discover', '/api/admin/mcp-servers/weather/test/connection', '/api/admin/mcp-servers/weather/test/discover'])
 })
-it('blocks Provider draft credentials over LAN HTTP before fetch', () => {
+it('allows Provider credentials over LAN HTTP for create, edit, draft tests and discovery', async () => {
   vi.stubGlobal('location', { href: 'http://192.168.1.2/' })
-  const fetch = vi.fn()
+  const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}', { headers: { 'Content-Type': 'audio/wav' } })))
   vi.stubGlobal('fetch', fetch)
-  expect(() => providersApi.testDraftLlm({ type: 'llm', adapter: 'openai', config_json: {}, api_key: 'secret' }, { text: 'hi' })).toThrow('HTTPS')
-  expect(fetch).not.toHaveBeenCalled()
+  const provider = { type: 'llm' as const, adapter: 'openai', config_json: { base_url: 'http://llm:8000/v1', model: 'demo' }, api_key: 'secret' }
+  await providersApi.create({ ...provider, name: 'Demo' })
+  await providersApi.update('demo', { api_key: provider.api_key }, 3)
+  await providersApi.testDraftLlm(provider, { text: 'hi' })
+  await providersApi.testDraftTts({ ...provider, type: 'tts' }, { text: 'hi' })
+  await providersApi.testDraftAsr({ ...provider, type: 'asr' }, new Blob(['RIFF']))
+  await providerAdaptersApi.discoverCapabilities('vieneu_http', { selection: {}, api_key: provider.api_key })
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/api/admin/providers', '/api/admin/providers/demo',
+    '/api/admin/provider-tests/llm', '/api/admin/provider-tests/tts',
+    '/api/admin/provider-tests/asr', '/api/admin/provider-adapters/vieneu_http/capabilities/discover',
+  ])
+  const requests = fetch.mock.calls.map(([, init]) => init)
+  expect(JSON.parse(requests[0].body).api_key).toBe(provider.api_key)
+  expect(JSON.parse(requests[1].body).api_key).toBe(provider.api_key)
+  expect(requests[1].headers.get('If-Match')).toBe('"3"')
+  for (const request of requests.slice(2, 4)) expect(JSON.parse(request.body).provider.api_key).toBe(provider.api_key)
+  expect(JSON.parse(requests[4].body.get('provider')).api_key).toBe(provider.api_key)
+  expect(JSON.parse(requests[5].body).api_key).toBe(provider.api_key)
 })
 
 it.each([401, 400, 409, 413, 429, 502, 503, 504])('keeps bounded diagnostic HTTP %i errors', async (status) => {

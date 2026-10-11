@@ -38,10 +38,10 @@ export const mcpApi = {
     return requestJson<AdminMcpServer>(mcpServerPath(key), {}, { signal })
   },
   create(input: CreateMcpServerInput) {
-    return requestJson<AdminMcpServer>(mcpServersPath, jsonRequest('POST', input, { allowHttpCredentials: true }))
+    return requestJson<AdminMcpServer>(mcpServersPath, jsonRequest('POST', input))
   },
   update(key: string, input: UpdateMcpServerInput, revision: number) {
-    return requestJson<AdminMcpServer>(mcpServerPath(key), jsonRequest('PATCH', input, { allowHttpCredentials: true }), { revision })
+    return requestJson<AdminMcpServer>(mcpServerPath(key), jsonRequest('PATCH', input), { revision })
   },
   async remove(key: string, revision: number) {
     await request(mcpServerPath(key), { method: 'DELETE' }, { revision })

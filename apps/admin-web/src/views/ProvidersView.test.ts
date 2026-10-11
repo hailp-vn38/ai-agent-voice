@@ -4,7 +4,10 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { expect, it, vi } from 'vitest'
 
 import DetailHeader from '@/components/admin/DetailHeader.vue'
+import PageHeader from '@/components/admin/PageHeader.vue'
 import ProviderCatalogCard from '@/components/providers/ProviderCatalogCard.vue'
+import ProviderCreateDrawer from '@/components/providers/ProviderCreateDrawer.vue'
+import { providerAdaptersApi } from '@/api/provider-adapters'
 import ProviderDetailPage from '@/pages/providers/ProviderDetailPage.vue'
 import ProvidersView from './ProvidersView.vue'
 
@@ -17,7 +20,7 @@ vi.mock('@/stores/admin', () => ({
     providers, templates: [],
     searchProviders: () => providers,
     templatesUsingProvider: () => [],
-    refreshAll: vi.fn(), createProvider: vi.fn(),
+    refreshAll: vi.fn(), createProvider: vi.fn(), createProviderFromSetup: vi.fn(),
   }),
 }))
 vi.mock('@/api/providers', () => ({
@@ -29,8 +32,31 @@ vi.mock('@/api/providers', () => ({
   },
 }))
 vi.mock('@/api/provider-adapters', () => ({
-  providerAdaptersApi: { get: vi.fn(async () => ({ config_schema: { fields: [] } })) },
+  providerAdaptersApi: { list: vi.fn(async () => []), get: vi.fn(async () => ({ config_schema: { fields: [] } })) },
 }))
+
+it.each(['vad', 'asr', 'llm', 'tts'])('opens Create with the currently viewed %s type', async (type) => {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/providers', component: ProvidersView }],
+  })
+  await router.push(`/providers?type=${type}`)
+  await router.isReady()
+  const wrapper = mount(ProvidersView, {
+    global: {
+      plugins: [router],
+      stubs: { BaseModal: { template: '<div><slot /></div>' }, ProviderFormModal: true, LinkProviderTemplateDialog: true, ConfirmDialog: true, ProviderTestPanel: true },
+    },
+  })
+  try {
+    await wrapper.getComponent(PageHeader).get('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.getComponent(ProviderCreateDrawer).props('initialType')).toBe(type)
+    expect(providerAdaptersApi.list).toHaveBeenLastCalledWith(type)
+  } finally {
+    wrapper.unmount()
+  }
+})
 
 it.each(['header', 'browser'])('keeps the TTS tab after opening details and going back via %s', async (back) => {
   const router = createRouter({

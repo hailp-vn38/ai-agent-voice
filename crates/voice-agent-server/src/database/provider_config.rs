@@ -129,7 +129,7 @@ struct OpenAi {
 }
 impl OpenAi {
     fn valid(&self) -> bool {
-        self.base_url.scheme() == "https"
+        matches!(self.base_url.scheme(), "http" | "https")
             && string(&self.model, 256)
             && (1..=120_000).contains(&self.timeout_ms)
             && self.max_tokens.is_none_or(|v| v > 0 && v <= 65_536)

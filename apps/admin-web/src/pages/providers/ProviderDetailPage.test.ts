@@ -3,6 +3,7 @@ import { reactive } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import ProviderDetailPage from './ProviderDetailPage.vue'
+import { Badge } from '@/components/ui/badge'
 
 const route = reactive({ params: { key: 'llm_primary' } })
 const { push, replace } = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
@@ -89,6 +90,15 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.clearAllMocks()
+})
+
+it.each(['config', 'database', undefined])('shows the Config tag on detail only for config providers (source=%s)', async (source) => {
+  api.get.mockResolvedValue({ ...fixture, source })
+  const wrapper = render()
+  await flushPromises()
+  expect(wrapper.findComponent(Badge).exists()).toBe(source === 'config')
+  if (source === 'config') expect(wrapper.getComponent(Badge).text()).toBe('Config')
+  wrapper.unmount()
 })
 
 it('loads a direct link without running tests or preparing runtime, and redacts secrets', async () => {

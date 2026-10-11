@@ -114,6 +114,7 @@ function providerConfig(provider: AdminProvider, field: string): string {
 
 function toProvider(provider: AdminProvider): ProviderInstance {
   return {
+    source: provider.source,
     id: provider.key,
     name: provider.name,
     type: provider.type as ProviderType,

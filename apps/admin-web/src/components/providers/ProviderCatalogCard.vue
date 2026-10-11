@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 
 import ProviderActionsMenu from '@/components/providers/ProviderActionsMenu.vue'
 import ProviderUsageList from '@/components/providers/ProviderUsageList.vue'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useI18n } from '@/composables/useI18n'
 import type { ProviderInstance, ProviderUsageEntry } from '@/domain/admin'
@@ -51,10 +52,11 @@ const statusTone = computed(() => {
     @click="emit('open')"
   >
     <CardHeader class="gap-2.5 pb-3">
-      <div class="flex items-start justify-between gap-3">
+      <div class="flex items-center justify-between gap-3">
         <div class="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           <component :is="typeIcon" class="size-3.5 shrink-0" aria-hidden="true" />
           <span class="font-medium tracking-wide uppercase">{{ providerTypeLabel(provider.type) }}</span>
+          <Badge v-if="provider.source === 'config'" variant="outline">Config</Badge>
         </div>
         <div class="flex shrink-0 items-center gap-1">
           <span

@@ -1,4 +1,7 @@
 import { nextTick, watch } from 'vue'
+import { mount } from '@vue/test-utils'
+import ProviderCatalogCard from '@/components/providers/ProviderCatalogCard.vue'
+import { Badge } from '@/components/ui/badge'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -56,6 +59,22 @@ describe('admin store', () => {
     expect(providersApi.update).toHaveBeenCalledWith('speaker_test', {
       name: 'Renamed', adapter: undefined, config_json: undefined, enabled: true,
     }, 1)
+  })
+
+  it.each(['config', 'database', undefined])('shows the Config tag only for config providers (source=%s)', async (source) => {
+    providersApi.listAll.mockResolvedValue({ items: [{
+      key: 'llm_primary', name: 'LLM', type: 'llm', adapter: 'openai', source,
+      config_json: '{}', enabled: 1, revision: 1, runtime_status: 'not_loaded',
+    }] })
+    const store = useAdminStore()
+    await store.loadAll()
+    const wrapper = mount(ProviderCatalogCard, {
+      props: { provider: store.getProvider('llm_primary')!, usage: [] },
+      global: { stubs: { ProviderActionsMenu: true } },
+    })
+    expect(wrapper.findComponent(Badge).exists()).toBe(source === 'config')
+    if (source === 'config') expect(wrapper.getComponent(Badge).text()).toBe('Config')
+    wrapper.unmount()
   })
 
   it('updates Agent Detail reactively after the server accepts a new default template', async () => {

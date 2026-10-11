@@ -6,6 +6,7 @@ export type DeviceStatus = 'online' | 'offline'
 
 /** A provider instance in the global catalog. Templates bind to these by id. */
 export interface ProviderInstance {
+  source?: import('@/api/types/providers').AdminProvider['source']
   configJson?: Record<string, unknown>
   id: string
   name: string

@@ -1,4 +1,4 @@
-import { assertCredentialTransport, requestAudio, jsonRequest, request, requestBlob, requestJson, withQuery } from './client'
+import { requestAudio, jsonRequest, request, requestBlob, requestJson, withQuery } from './client'
 import type {
   AdminProvider,
   ProviderTestDraft,
@@ -31,15 +31,12 @@ export const providersApi = {
     return { ...first, items }
   },
   testDraftLlm(provider: ProviderTestDraft, input: { text: string }, signal?: AbortSignal) {
-    if (provider.api_key) assertCredentialTransport()
     return requestJson<ProviderTextTestResult>('/api/admin/provider-tests/llm', jsonRequest('POST', { provider, input }), { signal })
   },
   testDraftTts(provider: ProviderTestDraft, input: TtsDiagnosticInput, signal?: AbortSignal) {
-    if (provider.api_key) assertCredentialTransport()
     return requestAudio('/api/admin/provider-tests/tts', jsonRequest('POST', { provider, input }), { signal })
   },
   testDraftAsr(provider: ProviderTestDraft, audio: Blob, signal?: AbortSignal) {
-    if (provider.api_key) assertCredentialTransport()
     const body = new FormData()
     body.append('provider', JSON.stringify(provider))
     body.append('audio', audio, 'clip.wav')

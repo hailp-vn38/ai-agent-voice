@@ -2321,6 +2321,72 @@ async fn kokoro_desired_configuration_accepts_catalog_selection_and_rejects_fact
 }
 
 #[tokio::test]
+async fn openai_provider_mutations_accept_http_and_https_base_urls() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let providers = format!("{base}/api/admin/providers");
+    for endpoint in [
+        "http://localhost:8000/v1",
+        "http://192.168.1.158:20128/v1",
+        "http://llm:8000/v1",
+        "http://example.test/v1",
+        "https://example.test/v1",
+        "ftp://example.test/v1",
+        "file:///tmp/model",
+        "not-a-url",
+    ] {
+        let config = serde_json::json!({"base_url":endpoint,"model":"test"});
+        let accepted = endpoint.starts_with("http://") || endpoint.starts_with("https://");
+        let response = client
+            .post(&providers)
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"name":"OpenAI","type":"llm","adapter":"openai","config_json":config}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if accepted {
+                StatusCode::CREATED
+            } else {
+                StatusCode::BAD_REQUEST
+            },
+            "create: {endpoint}"
+        );
+        let key = create_provider(
+            &client,
+            &providers,
+            serde_json::json!({"name":"OpenAI","type":"llm","adapter":"openai","config_json":{"base_url":"https://example.test/v1","model":"test"}}),
+        )
+        .await;
+        let response = client
+            .patch(format!("{providers}/{key}"))
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"config_json":config}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if accepted {
+                StatusCode::OK
+            } else {
+                StatusCode::BAD_REQUEST
+            },
+            "update: {endpoint}"
+        );
+        if accepted {
+            let row = response.json::<serde_json::Value>().await.unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_str(row["config_json"].as_str().unwrap()).unwrap();
+            assert_eq!(saved["base_url"], endpoint);
+        }
+    }
+    task.abort();
+}
+
+#[tokio::test]
 async fn provider_mutations_reject_server_owned_configuration() {
     let (base, task) = server(true).await;
     let client = Client::new();
