@@ -59,6 +59,26 @@ URI paths. The supplied Nginx config logs paths only and suppresses WS-location
 error logs because Nginx error messages include the full request URL. Apply the
 same policy at any outer proxy/CDN/error reporter.
 
+## Opt-in tool execution status
+
+Compact Voice gửi `features.tool_status=true` trong ClientHello và vẫn giữ
+`features.mcp=false`, `features.turn_status=true`. Tool status không phải
+Device MCP request và không tạo thêm quyền tool; Agent-scoped External MCP vẫn
+chạy phía server như trước.
+
+```json
+{"type":"tool","session_id":"...","turn_id":1,"name":"external.home_assistant.light_turn_on","state":"started"}
+```
+
+`state` là `started` / `completed` / `failed`. Message không chứa
+`call_id`, `source`, `reason`, arguments hoặc results. Floating Chat chỉ
+hiển thị tên tool đang chạy dưới waveform khi đang processing, dùng state
+`activeTool` tạm thời và xóa khi tool terminal, abort, turn terminal hoặc
+mất kết nối. Không thêm status vào lịch sử ASR/LLM. Do control queue bounded,
+events là best-effort; terminal turn status vẫn quyết định lúc mở lượt mới.
+
+Xem [implementation guide](../tool-execution-status-websocket-implementation-guide.md).
+
 ## Opt-in turn status
 
 Only authenticated Virtual Device sessions with `features.turn_status=true`
