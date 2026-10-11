@@ -129,7 +129,7 @@ onBeforeUnmount(() => {
         <Bot v-else class="size-6" aria-hidden="true" />
         <span class="assistant-launcher-dot" :class="'is-' + connectionTone" aria-hidden="true" />
       </button>
-      <Transition enter-active-class="transition duration-150 motion-reduce:transition-none" enter-from-class="opacity-0 translate-y-2 scale-95" leave-active-class="transition duration-150 motion-reduce:transition-none" leave-to-class="opacity-0 translate-y-2 scale-95">
+      <Transition name="assistant-panel">
         <section
           v-if="assistant.visible" id="studio-assistant" ref="panel" tabindex="-1"
           class="assistant-panel fixed z-40 flex flex-col overflow-hidden border bg-card shadow-2xl"
@@ -237,6 +237,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .assistant-launcher { right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); }
+.assistant-panel-enter-active { transition: opacity 280ms ease-out, transform 280ms cubic-bezier(.22, 1, .36, 1); }
+.assistant-panel-leave-active { transition: opacity 220ms ease-in, transform 220ms ease-in; pointer-events: none; }
+.assistant-panel-enter-from, .assistant-panel-leave-to { opacity: 0; transform: scale(0); }
 .assistant-launcher-active { box-shadow: 0 0 0 5px color-mix(in oklch, var(--primary) 18%, transparent), 0 10px 30px rgb(0 0 0 / 16%); }
 .assistant-launcher-listening { box-shadow: 0 0 0 6px color-mix(in oklch, var(--primary) 25%, transparent), 0 10px 30px rgb(0 0 0 / 18%); }
 .assistant-launcher-dot { position: absolute; bottom: 1px; right: 1px; width: 12px; height: 12px; border: 2px solid var(--card); border-radius: 50%; }
@@ -244,7 +247,7 @@ onBeforeUnmount(() => {
 .is-online { background: #34c99b; }
 .is-connecting { background: #e5b35e; }
 .is-offline { background: #ec6f78; }
-.assistant-panel { right: 20px; bottom: calc(88px + env(safe-area-inset-bottom)); width: min(375px, calc(100vw - 24px)); height: min(490px, calc(100dvh - 108px)); border-radius: 20px; }
+.assistant-panel { right: 20px; bottom: calc(88px + env(safe-area-inset-bottom)); width: min(375px, calc(100vw - 24px)); height: min(490px, calc(100dvh - 108px)); border-radius: 20px; transform-origin: calc(100% - 28px) calc(100% + 40px); }
 .assistant-voice { background: radial-gradient(ellipse at 50% 35%, color-mix(in oklch, var(--primary) 12%, transparent), transparent 74%); }
 .assistant-wave-bar { background: linear-gradient(180deg, var(--studio-violet, var(--primary)), var(--studio-cyan, var(--primary))); transition: height 100ms linear; }
 .assistant-voice.is-speaking .assistant-wave-bar { animation: assistant-speaking 1s ease-in-out infinite alternate; transform-origin: center; }
@@ -255,9 +258,10 @@ onBeforeUnmount(() => {
 @keyframes assistant-thinking { from { transform: scaleY(.65); } to { transform: scaleY(1.2); } }
 @media (max-width: 639px) {
   .assistant-launcher { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
-  .assistant-panel { right: 12px; bottom: calc(78px + env(safe-area-inset-bottom)); height: min(490px, calc(100dvh - 98px)); }
+  .assistant-panel { right: 12px; bottom: calc(78px + env(safe-area-inset-bottom)); height: min(490px, calc(100dvh - 98px)); transform-origin: calc(100% - 28px) calc(100% + 38px); }
 }
 @media (prefers-reduced-motion: reduce) {
+  .assistant-panel-enter-active, .assistant-panel-leave-active { transition: none; }
   .assistant-wave-bar { animation: none !important; transition: none !important; }
 }
 </style>
