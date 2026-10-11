@@ -36,7 +36,10 @@ impl SessionActor {
             "state": state,
         });
         if self.send_turn_control(payload.to_string()).is_err() {
-            tracing::debug!(event = "tool_status_dropped", "Tool status could not enter control queue");
+            tracing::debug!(
+                event = "tool_status_dropped",
+                "Tool status could not enter control queue"
+            );
         }
     }
 
