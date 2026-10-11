@@ -139,7 +139,7 @@ onBeforeUnmount(() => {
               <strong class="block truncate text-sm">{{ t('assistant.title') }}</strong>
               <span class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span class="assistant-connection-dot" :class="'is-' + connectionTone" aria-hidden="true" />
-                <span>{{ t('assistant.state.' + assistant.state) }}</span>
+                <span class="sr-only">{{ t(`assistant.state.${assistant.state}`) }}</span>
               </span>
             </div>
             <Button size="icon" variant="ghost" class="size-8 shrink-0 rounded-full" :aria-label="t('assistant.disconnect')" :title="t('assistant.disconnect')" @click="closeSession">
@@ -155,7 +155,7 @@ onBeforeUnmount(() => {
                 :style="{ height: barHeight(index), animationDelay: '-' + index * 87 + 'ms', animationDuration: 950 + (index % 5) * 140 + 'ms' }"
               />
             </div>
-            <p class="mt-1 text-xs font-semibold" role="status">{{ t('assistant.state.' + assistant.state) }}</p>
+            <p class="mt-1 text-xs font-semibold" role="status">{{ assistant.state === 'ready' ? t('assistant.readyVoice') : t(`assistant.state.${assistant.state}`) }}</p>
             <p class="mt-1 text-[11px] text-muted-foreground">
               {{ assistant.state === 'ready' ? t('assistant.voiceHint') : assistant.state === 'listening' ? t('assistant.listeningHint') : assistant.state === 'speaking' ? t('assistant.speakingHint') : assistant.state === 'processing' ? t('assistant.processingHint') : '' }}
             </p>
