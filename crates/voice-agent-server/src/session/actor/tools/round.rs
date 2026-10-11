@@ -9,6 +9,37 @@ use crate::{
 };
 
 impl SessionActor {
+    pub(crate) fn with_tool_status(mut self, enabled: bool) -> Self {
+        self.tool_status = enabled;
+        self
+    }
+
+    /// Best-effort status for the current admitted turn. Never hold up a tool call for UI.
+    fn emit_tool_status(&self, name: &str, state: &'static str) {
+        if !self.tool_status
+            || name.is_empty()
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_.:-".contains(&byte))
+        {
+            return;
+        }
+        let Some(turn_id) = self.current_turn_id() else {
+            return;
+        };
+        let payload = serde_json::json!({
+            "type": "tool",
+            "session_id": self.session_id,
+            "turn_id": turn_id.get(),
+            "name": name,
+            "state": state,
+        });
+        if self.send_turn_control(payload.to_string()).is_err() {
+            tracing::debug!(event = "tool_status_dropped", "Tool status could not enter control queue");
+        }
+    }
+
     /// The one place a tool round begins.
     pub(in super::super) fn start_tool_batch(&mut self, calls: Vec<ToolCall>) {
         if calls.is_empty() {
@@ -95,10 +126,17 @@ impl SessionActor {
             return;
         };
         match self.resolve_tool(&call.name) {
-            Some(ToolTarget::Builtin(tool)) => self.execute_builtin_tool(call, tool),
-            Some(ToolTarget::DeviceMcp(tool)) => self.dispatch_device_mcp_tool(call, tool, budget),
+            Some(ToolTarget::Builtin(tool)) => {
+                self.emit_tool_status(&call.name, "started");
+                self.execute_builtin_tool(call, tool);
+            }
+            Some(ToolTarget::DeviceMcp(tool)) => {
+                self.emit_tool_status(&call.name, "started");
+                self.dispatch_device_mcp_tool(call, tool, budget);
+            }
             Some(ToolTarget::ExternalMcp(server, tool)) => {
-                self.dispatch_external_tool(call, &server, &tool, budget)
+                self.emit_tool_status(&call.name, "started");
+                self.dispatch_external_tool(call, &server, &tool, budget);
             }
             None => self.complete_tool_call(call, Err("unknown_tool")),
         }
@@ -118,6 +156,9 @@ impl SessionActor {
         call: ToolCall,
         result: Result<serde_json::Value, &str>,
     ) {
+        let succeeded = result.as_ref().is_ok_and(|value| {
+            value.get("isError").and_then(serde_json::Value::as_bool) != Some(true)
+        });
         let content = match result {
             Ok(value) => {
                 crate::session::actor::mcp::log_action_envelope_shape(&value, &call.name);
@@ -138,7 +179,7 @@ impl SessionActor {
                         response_chars = response.chars().count(),
                         "MCP action response detected"
                     );
-                    self.record_tool_call(call, content);
+                    self.record_tool_call(call, content, succeeded);
                     if let (Some(batch), Some(response)) =
                         (self.tool_batch.as_mut(), direct_response)
                     {
@@ -159,7 +200,7 @@ impl SessionActor {
             }
             Err(code) => tool_error_content(code),
         };
-        self.record_tool_call(call, content);
+        self.record_tool_call(call, content, succeeded);
         self.dispatch_next_tool();
     }
 
@@ -169,20 +210,35 @@ impl SessionActor {
         content: String,
         response: String,
     ) {
-        self.record_tool_call(call, content);
+        self.record_tool_call(call, content, true);
         if let Some(batch) = self.tool_batch.as_mut() {
             batch.direct_response.get_or_insert(response);
         }
         self.dispatch_next_tool();
     }
 
-    pub(in super::super) fn record_tool_call(&mut self, call: ToolCall, content: String) {
-        if let Some(batch) = self.tool_batch.as_mut() {
+    pub(in super::super) fn record_tool_call(
+        &mut self,
+        call: ToolCall,
+        content: String,
+        succeeded: bool,
+    ) {
+        let name = call.name.clone();
+        let recorded = if let Some(batch) = self.tool_batch.as_mut() {
+            if batch.generation != self.generation {
+                return;
+            }
             batch.completed_calls.push(call.clone());
             batch.results.push(ChatMessage::ToolResult {
                 tool_call_id: call.id,
                 content,
             });
+            true
+        } else {
+            false
+        };
+        if recorded && self.resolve_tool(&name).is_some() {
+            self.emit_tool_status(&name, if succeeded { "completed" } else { "failed" });
         }
     }
 
