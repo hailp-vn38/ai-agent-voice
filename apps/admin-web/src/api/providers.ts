@@ -22,6 +22,14 @@ function providerPath(key: string) {
 }
 
 export const providersApi = {
+  async listAll(signal?: AbortSignal): Promise<ProviderPage> {
+    const first = await providersApi.list({ pageSize: 100, sort: 'name' }, signal)
+    const items = [...first.items]
+    for (let page = 2; page <= (first.total_pages ?? 1); page++) {
+      items.push(...(await providersApi.list({ page, pageSize: 100, sort: 'name' }, signal)).items)
+    }
+    return { ...first, items }
+  },
   testDraftLlm(provider: ProviderTestDraft, input: { text: string }, signal?: AbortSignal) {
     if (provider.api_key) assertCredentialTransport()
     return requestJson<ProviderTextTestResult>('/api/admin/provider-tests/llm', jsonRequest('POST', { provider, input }), { signal })

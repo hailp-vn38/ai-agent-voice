@@ -383,7 +383,6 @@ async fn managed_startup(
         manager
             .retain_deployment(lease.version())
             .map_err(|_| BootstrapError::Provider)?;
-        state.deployment_snapshots.push(snapshot);
         drop(lease);
     }
     if let (Some(database), Some(prewarm)) = (&state.database, &state.provider_prewarm) {

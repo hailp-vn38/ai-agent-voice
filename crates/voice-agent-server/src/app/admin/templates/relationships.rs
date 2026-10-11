@@ -120,8 +120,9 @@ pub(in crate::app::admin) async fn list_template_providers(
             "template_key": template_key,
             "revision": template.revision,
             "bindings": rows.into_iter().map(|(provider_type, provider_key, enabled)| (
-                provider_type,
-                serde_json::json!({"provider_key": provider_key, "enabled": enabled != 0}),
+                provider_type.clone(),
+                serde_json::json!({"provider_key": provider_key, "enabled": enabled != 0 &&
+                    (!provider_key.starts_with("config:") || crate::providers::config_catalog::ProviderRef::parse(&provider_key, Some(&provider_type)).and_then(|r| r.snapshot(&state.config)).is_ok())}),
             )).collect::<serde_json::Map<String, Value>>(),
         }))
         .into_response(),

@@ -35,7 +35,7 @@ import {
 const PAGE_SIZE = 100
 
 /** The API models a Template slot as one of four types; `vision` never reaches it. */
-const apiProviderTypes: TemplateProviderType[] = ['vad', 'asr', 'llm', 'tts']
+const apiProviderTypes: TemplateProviderType[] = ['vad', 'asr', 'llm', 'tts', 'speaker']
 
 export interface AgentTemplateInput {
   name: string
@@ -322,7 +322,7 @@ export const useAdminStore = defineStore('admin', () => {
       const [agentPage, templatePage, providerPage, devicePage] = await Promise.all([
         agentsApi.list(signal),
         templatesApi.list({ pageSize: PAGE_SIZE, sort: 'name' }, signal),
-        providersApi.list({ pageSize: PAGE_SIZE, sort: 'name' }, signal),
+        providersApi.listAll(signal),
         devicesApi.list({ pageSize: PAGE_SIZE }, signal),
       ])
 

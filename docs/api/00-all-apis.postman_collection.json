@@ -855,7 +855,7 @@
                 }
               }
             },
-            "description": "provider_type must be one of vad|asr|llm|tts. Increments template revision.",
+            "description": "provider_type must be vad|asr|llm|tts|speaker. Body provider_key accepts database keys or config:<kind>:<raw_key> of the same kind. Config binding requires managed runtime (otherwise 409 config_provider_requires_managed_runtime). Quoted If-Match is required; success increments Template revision atomically with audit.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -895,7 +895,7 @@
             "method": "GET",
             "header": [],
             "url": "{{base_url}}/api/admin/templates/{{template_key}}/providers",
-            "description": "Returns the persisted Provider binding map for the Template. This is desired configuration and does not refresh runtime.",
+            "description": "Persisted binding map for both database and config origins. Config keys remain qualified; removed config instances remain visible with enabled=false. This read never prepares runtime.",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -1001,7 +1001,7 @@
                 "method": "GET",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers?page=1&page_size=50",
-                "description": "Query: page 1..10000, page_size 1..200, optional enabled, q, type=vad|asr|llm|tts and sort in key|-key|name|-name. Response includes total, total_pages and facets by provider type.",
+                "description": "Merged database + config catalog; each item has source. Query: page 1..10000, page_size 1..200, optional enabled, q, type=vad|asr|llm|tts|speaker and sort=key|-key|name|-name. Filters, counts and pagination apply to the union; facets ignore the type filter. Config keys are config:<kind>:<raw_key>, id=0 and config_json=\"{}\". Listing never prepares runtime.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1080,7 +1080,7 @@
                     }
                   ]
                 },
-                "description": " Runtime metadata reads do not build models or refresh cache TTL."
+                "description": " Runtime metadata reads do not build models or refresh cache TTL. Qualified config:<kind>:<raw_key> references are supported; credentials and private deployment configuration are not returned."
               },
               "response": []
             },
@@ -1110,7 +1110,7 @@
                     }
                   }
                 },
-                "description": "Optional top-level api_key is encrypted in SQLite and write-only; responses expose credential masked metadata. Omit api_key on PATCH to keep it. Submit secrets over HTTPS. key is server-generated and immutable; sending it returns 400 immutable_field. type is not patchable. Managed runtimes acquire the exact desired revision for new sessions and diagnostics. Existing admitted sessions retain their snapshot and lease. Inspect runtime.desired_state, ready_revisions and can_prepare; requires_restart is explicit only for unsupported changes.",
+                "description": "Optional top-level api_key is encrypted in SQLite and write-only; responses expose credential masked metadata. Omit api_key on PATCH to keep it. Submit secrets over HTTPS. key is server-generated and immutable; sending it returns 400 immutable_field. type is not patchable. Managed runtimes acquire the exact desired revision for new sessions and diagnostics. Existing admitted sessions retain their snapshot and lease. Inspect runtime.desired_state, ready_revisions and can_prepare; requires_restart is explicit only for unsupported changes. Config references return 409 config_provider_readonly without any write.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1150,7 +1150,7 @@
                     }
                   }
                 },
-                "description": "Idempotently acquire the current desired revision without user inference. Strict empty JSON body. 200 ready; 202 queued/loading; 409 disabled/conflict; 429 bounded capacity; 503 infrastructure failure; 504 acquisition deadline. Response identifies provider key, desired revision and safe runtime state. Poll GET metadata; a desired revision change starts a new view.",
+                "description": "Idempotently acquire the current desired revision without user inference. Strict empty JSON body. 200 ready; 202 queued/loading; 409 disabled/conflict; 429 bounded capacity; 503 infrastructure failure; 504 acquisition deadline. Response identifies provider key, desired revision and safe runtime state. Poll GET metadata; a desired revision change starts a new view. Config references acquire deployment runtime in managed mode and return the existing preparation shape with provider_key, desired_revision and runtime; legacy returns 409 config_provider_requires_managed_runtime.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1175,7 +1175,7 @@
                   }
                 ],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}",
-                "description": "Conditional hard-delete. Returns 204 only when no Template Provider Binding remains; otherwise 409 provider_in_use. Existing sessions retain their exact runtime lease until cleanup; deleting desired state does not invalidate admitted sessions.",
+                "description": "Conditional hard-delete. Returns 204 only when no Template Provider Binding remains; otherwise 409 provider_in_use. Existing sessions retain their exact runtime lease until cleanup; deleting desired state does not invalidate admitted sessions. Config references return 409 config_provider_readonly without any write.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1195,7 +1195,7 @@
                 "method": "GET",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}/templates?page=1&page_size=50",
-                "description": "Lists persisted Template usage for this Provider, including binding type and Template enabled state. Pagination: page 1..10000, page_size 1..200. Runtime metadata reads do not build models or refresh cache TTL.",
+                "description": "Lists persisted Template usage for this Provider, including binding type and Template enabled state. Pagination: page 1..10000, page_size 1..200. Runtime metadata reads do not build models or refresh cache TTL. Qualified config:<kind>:<raw_key> references are supported; credentials and private deployment configuration are not returned.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1215,7 +1215,7 @@
                 "method": "GET",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}/capabilities",
-                "description": "Requires the DB provider runtime to be loaded and its compiled adapter descriptor to expose capabilities.",
+                "description": "Requires the DB provider runtime to be loaded and its compiled adapter descriptor to expose capabilities. Config references return 409 config_provider_operation_unsupported.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1255,7 +1255,7 @@
                     }
                   }
                 },
-                "description": "Tests the loaded LLM runtime only. JSON body rejects unknown fields. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "description": "Tests the loaded LLM runtime only. JSON body rejects unknown fields. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1290,7 +1290,7 @@
                     }
                   }
                 },
-                "description": "Returns audio/wav on success. voice and language are optional typed overrides. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "description": "Returns audio/wav on success. voice and language are optional typed overrides. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1322,7 +1322,7 @@
                     "src": []
                   }
                 },
-                "description": "Upload PCM WAV. Expected: mono 16 kHz PCM, duration <= 30 s, request body <= 5 MiB. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "description": "Upload PCM WAV. Expected: mono 16 kHz PCM, duration <= 30 s, request body <= 5 MiB. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1342,7 +1342,7 @@
                 "method": "POST",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/vad",
-                "description": "No request body. Tests exactly one canonical silent VAD inference frame on the already-loaded runtime. Returns probability, sample range, elapsed time and runtime provenance; provider_key must identify a VAD Provider Instance. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision.",
+                "description": "No request body. Tests exactly one canonical silent VAD inference frame on the already-loaded runtime. Returns probability, sample range, elapsed time and runtime provenance; provider_key must identify a VAD Provider Instance. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [

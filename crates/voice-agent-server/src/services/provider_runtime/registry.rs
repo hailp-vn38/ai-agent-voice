@@ -824,8 +824,18 @@ impl ProviderRuntimeManager {
             .clone()
             .try_acquire_owned()
             .map_err(|_| RuntimeError::Busy)?;
-        let version = ProviderVersion::database(snapshot.id, snapshot.revision);
-        if !bounded_snapshot(&snapshot) || snapshot.id <= 0 || snapshot.revision <= 0 {
+        let version = if snapshot.id == 0 {
+            ProviderVersion {
+                identity: super::ProviderIdentity::Deployment {
+                    kind: snapshot.kind.clone(),
+                    key: snapshot.key.clone(),
+                },
+                revision: snapshot.revision,
+            }
+        } else {
+            ProviderVersion::database(snapshot.id, snapshot.revision)
+        };
+        if !bounded_snapshot(&snapshot) || snapshot.id < 0 || snapshot.revision <= 0 {
             return Err(RuntimeError::Configuration);
         }
         self.acquire_version_until(
@@ -875,15 +885,17 @@ impl ProviderRuntimeManager {
 
     /// Metadata-only inspection. It neither resolves credentials nor refreshes cache usage.
     pub fn inspect(&self, provider_id: i64, desired_revision: i64) -> super::RuntimeInspection {
+        self.inspect_version(&ProviderVersion::database(provider_id, desired_revision))
+    }
+    pub(crate) fn inspect_version(&self, version: &ProviderVersion) -> super::RuntimeInspection {
+        let desired_revision = version.revision;
         let registry = self.registry.lock().expect("runtime registry poisoned");
-        let desired = registry
-            .entries
-            .get(&ProviderVersion::database(provider_id, desired_revision));
+        let desired = registry.entries.get(version);
         let mut ready_revisions: Vec<_> = registry
             .entries
             .iter()
-            .filter(|(version, entry)| {
-                version.identity == super::ProviderIdentity::Database(provider_id)
+            .filter(|(candidate, entry)| {
+                candidate.identity == version.identity
                     && entry.state == RuntimeState::Ready
                     && entry.healthy()
             })

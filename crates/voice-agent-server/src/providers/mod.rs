@@ -3,6 +3,7 @@
 pub mod assets;
 pub mod capabilities;
 mod catalog;
+pub(crate) mod config_catalog;
 mod database_loader;
 mod descriptor;
 mod error;

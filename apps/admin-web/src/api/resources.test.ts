@@ -181,3 +181,19 @@ describe('Admin resource APIs', () => {
     expectJsonMutation(call(fetch, 9)[1], 'POST', { all: 'all', confirm: 'PURGE_ALL_HISTORY' })
   })
 })
+
+
+describe('complete provider catalog', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('fetches every page and preserves source-qualified keys', async () => {
+    const items = Array.from({ length: 100 }, (_, i) => ({ key: `db_${i}` }))
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items, total: 101, total_pages: 2 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ key: 'config:speaker:voice' }], total: 101, total_pages: 2 })))
+    vi.stubGlobal('fetch', fetch)
+    const result = await providersApi.listAll()
+    expect(result.items).toHaveLength(101)
+    expect(result.items[100]?.key).toBe('config:speaker:voice')
+    expect(fetch.mock.calls[1]?.[0]).toBe('/api/admin/providers?page=2&page_size=100&sort=name')
+  })
+})

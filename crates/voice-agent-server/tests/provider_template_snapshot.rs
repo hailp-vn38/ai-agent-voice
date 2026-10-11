@@ -114,3 +114,81 @@ fn missing_slots_use_deployment_snapshots_without_replacing_explicit_bindings() 
         .is_err()
     );
 }
+
+#[test]
+fn explicit_config_bindings_keep_deployment_identity_and_never_fall_back() {
+    let mut graph = assignment();
+    // Same raw key as the DB binding, but its origin selects deployment revision 1.
+    graph.bindings[2].provider_key = "config:llm:llm".into();
+    graph.bindings[2].snapshot = None;
+    graph.bindings.push(AdmittedProviderBinding {
+        provider_type: "speaker".into(),
+        provider_key: "config:speaker:voice".into(),
+        provider_enabled: true,
+        snapshot: None,
+    });
+    let defaults = EffectiveProviderBindings {
+        vad: "vad".into(),
+        asr: "asr".into(),
+        llm: "default".into(),
+        tts: "tts".into(),
+        speaker: None,
+        vision: None,
+    };
+    let deployment =
+        [("llm", "llm"), ("llm", "default"), ("speaker", "voice")].map(|(kind, key)| {
+            DesiredProvider {
+                id: 0,
+                key: key.into(),
+                kind: kind.into(),
+                adapter: "fixture".into(),
+                revision: 1,
+                config_json: "{}".into(),
+                secret_ref: None,
+            }
+        });
+    let candidate =
+        ConfiguredTemplateProfile::from_assignment_with_defaults(&graph, &defaults, &deployment)
+            .unwrap();
+    let versions = candidate.provider_versions();
+    assert_eq!(versions.len(), 5);
+    assert!(versions.iter().any(|v| v.identity
+        == ProviderIdentity::Deployment {
+            kind: "llm".into(),
+            key: "llm".into()
+        }
+        && v.revision == 1));
+    assert!(versions.iter().any(|v| v.identity
+        == ProviderIdentity::Deployment {
+            kind: "speaker".into(),
+            key: "voice".into()
+        }));
+    assert!(
+        versions
+            .iter()
+            .all(|v| v.identity != ProviderIdentity::Database(3))
+    );
+    assert!(
+        ConfiguredTemplateProfile::from_assignment_with_defaults(
+            &graph,
+            &defaults,
+            &deployment[1..]
+        )
+        .is_err()
+    );
+    let mut ambiguous = graph.clone();
+    ambiguous.bindings.push(assignment().bindings[2].clone());
+    assert!(
+        ConfiguredTemplateProfile::from_assignment_with_defaults(
+            &ambiguous,
+            &defaults,
+            &deployment
+        )
+        .is_err()
+    );
+    graph.bindings[2].provider_enabled = false;
+    assert!(
+        ConfiguredTemplateProfile::from_assignment_with_defaults(&graph, &defaults, &deployment)
+            .is_err()
+    );
+}

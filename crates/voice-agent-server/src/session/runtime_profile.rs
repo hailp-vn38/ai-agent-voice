@@ -50,9 +50,41 @@ impl ConfiguredTemplateProfile {
             return Err(ProfileUnavailable);
         }
         let mut snapshots = BTreeMap::new();
+        let mut deployment_snapshots = Vec::new();
+        let mut explicit_deployment = BTreeMap::new();
         for binding in &assignment.bindings {
+            if snapshots.contains_key(binding.provider_type.as_str())
+                || explicit_deployment.contains_key(binding.provider_type.as_str())
+            {
+                return Err(ProfileUnavailable);
+            }
             if !binding.provider_enabled {
                 return Err(ProfileUnavailable);
+            }
+            let reference = crate::providers::config_catalog::ProviderRef::parse(
+                &binding.provider_key,
+                Some(&binding.provider_type),
+            )
+            .map_err(|_| ProfileUnavailable)?;
+            if reference.origin == crate::providers::config_catalog::ProviderOrigin::Config {
+                let (_, deployment) = fallback.ok_or(ProfileUnavailable)?;
+                let snapshot = deployment
+                    .iter()
+                    .find(|row| {
+                        row.kind == reference.kind
+                            && row.key == reference.key
+                            && row.id == 0
+                            && row.revision > 0
+                    })
+                    .ok_or(ProfileUnavailable)?;
+                if explicit_deployment
+                    .insert(snapshot.kind.as_str(), snapshot.key.clone())
+                    .is_some()
+                {
+                    return Err(ProfileUnavailable);
+                }
+                deployment_snapshots.push(snapshot.clone());
+                continue;
             }
             let snapshot = binding.snapshot.as_ref().ok_or(ProfileUnavailable)?;
             if snapshot.id <= 0
@@ -67,8 +99,10 @@ impl ConfiguredTemplateProfile {
                 return Err(ProfileUnavailable);
             }
         }
-        let mut deployment_snapshots = Vec::new();
         let mut key = |kind: &str, default: Option<&str>| {
+            if let Some(key) = explicit_deployment.get(kind) {
+                return Ok(key.clone());
+            }
             if let Some(row) = snapshots.get(kind) {
                 return Ok(row.key.clone());
             }
@@ -90,7 +124,10 @@ impl ConfiguredTemplateProfile {
             llm: key("llm", defaults.map(|value| value.llm.as_str()))?,
             tts: key("tts", defaults.map(|value| value.tts.as_str()))?,
             vision: None,
-            speaker: snapshots.get("speaker").map(|row| row.key.clone()),
+            speaker: snapshots
+                .get("speaker")
+                .map(|row| row.key.clone())
+                .or_else(|| explicit_deployment.get("speaker").cloned()),
         };
         Ok(Self {
             source: ProfileSource::Template {
@@ -161,6 +198,7 @@ impl ConfiguredTemplateProfile {
             catalog.asr.extend(resident.asr);
             catalog.llm.extend(resident.llm);
             catalog.tts.extend(resident.tts);
+            catalog.speaker.extend(resident.speaker);
             leases.push(lease);
         }
         let runtimes = catalog

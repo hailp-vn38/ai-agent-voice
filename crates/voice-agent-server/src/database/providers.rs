@@ -7,7 +7,7 @@ use super::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use sqlx::{FromRow, QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{FromRow, QueryBuilder, Sqlite};
 #[derive(Serialize, FromRow)]
 pub(crate) struct Provider {
     pub(crate) id: i64,
@@ -66,38 +66,6 @@ fn append_provider_filters(
             .push(" ESCAPE '\\')");
     }
 }
-async fn provider_count(
-    pool: &SqlitePool,
-    filters: &ProviderFilters,
-    include_kind: bool,
-) -> Result<i64, sqlx::Error> {
-    let mut builder = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM providers");
-    append_provider_filters(&mut builder, filters, include_kind);
-    builder.build_query_scalar().fetch_one(pool).await
-}
-async fn provider_facets(
-    pool: &SqlitePool,
-    filters: &ProviderFilters,
-) -> Result<Value, sqlx::Error> {
-    let mut builder = QueryBuilder::<Sqlite>::new("SELECT type, COUNT(*) FROM providers");
-    append_provider_filters(&mut builder, filters, false);
-    builder.push(" GROUP BY type");
-    let counts: Vec<(String, i64)> = builder.build_query_as().fetch_all(pool).await?;
-    let mut facets = serde_json::Map::new();
-    for kind in ["vad", "asr", "llm", "tts"] {
-        facets.insert(
-            kind.into(),
-            Value::from(
-                counts
-                    .iter()
-                    .find(|(value, _)| value == kind)
-                    .map(|(_, count)| *count)
-                    .unwrap_or(0),
-            ),
-        );
-    }
-    Ok(Value::Object(facets))
-}
 impl ProviderFilters {
     pub(crate) fn new(
         enabled: Option<bool>,
@@ -106,7 +74,7 @@ impl ProviderFilters {
     ) -> Result<Self, ()> {
         if kind
             .as_deref()
-            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts"))
+            .is_some_and(|value| !matches!(value, "vad" | "asr" | "llm" | "tts" | "speaker"))
         {
             return Err(());
         }
@@ -224,17 +192,40 @@ impl Database {
         sort: Option<&str>,
         page: u32,
         size: u32,
+        config_providers: &str,
     ) -> Result<ProviderPage, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
         let order = match sort.unwrap_or("key") {
             "-key" => "key DESC",
             "name" => "name ASC, key ASC",
             "-name" => "name DESC, key ASC",
             _ => "key ASC",
         };
-        let total = provider_count(&self.pool, filters, true).await?;
-        let facets = provider_facets(&self.pool, filters).await?;
-        let mut builder = QueryBuilder::<Sqlite>::new(
-            "SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,credential_json FROM providers",
+        let mut count = catalog_query(config_providers, "SELECT COUNT(*) FROM catalog");
+        append_provider_filters(&mut count, filters, true);
+        let total = count.build_query_scalar().fetch_one(&mut *tx).await?;
+        let mut counts = catalog_query(config_providers, "SELECT type,COUNT(*) FROM catalog");
+        append_provider_filters(&mut counts, filters, false);
+        counts.push(" GROUP BY type");
+        let counts: Vec<(String, i64)> = counts.build_query_as().fetch_all(&mut *tx).await?;
+        let facets: serde_json::Map<String, Value> = ["vad", "asr", "llm", "tts", "speaker"]
+            .into_iter()
+            .map(|kind| {
+                (
+                    kind.into(),
+                    Value::from(
+                        counts
+                            .iter()
+                            .find(|(k, _)| k == kind)
+                            .map_or(0, |(_, n)| *n),
+                    ),
+                )
+            })
+            .collect();
+        let facets = Value::Object(facets);
+        let mut builder = catalog_query(
+            config_providers,
+            "SELECT id,key,name,type AS kind,adapter,config_json,enabled,revision,created_at,updated_at,credential_json FROM catalog",
         );
         append_provider_filters(&mut builder, filters, true);
         builder
@@ -243,9 +234,9 @@ impl Database {
             .push(" LIMIT ")
             .push_bind(i64::from(size))
             .push(" OFFSET ")
-            .push_bind(i64::from((page - 1) * size));
+            .push_bind((i64::from(page) - 1) * i64::from(size));
         Ok(ProviderPage {
-            items: builder.build_query_as().fetch_all(&self.pool).await?,
+            items: builder.build_query_as().fetch_all(&mut *tx).await?,
             total,
             facets,
         })
@@ -329,7 +320,7 @@ impl Database {
         // Bounds are checked in SQL before copying persisted text. The one SELECT ends before build.
         type PrewarmRow = (i64, String, String, String, String, i64, Option<String>);
         let rows: Vec<PrewarmRow> = sqlx::query_as(
-        "SELECT DISTINCT p.id,p.key,p.type,p.adapter,p.config_json,p.revision,p.credential_json FROM providers p JOIN template_provider_bindings b ON b.provider_id=p.id JOIN agent_templates t ON t.id=b.template_id WHERE p.enabled=1 AND t.enabled=1 AND (? IS NULL OR (p.id=? AND p.revision=?)) AND (? IS NULL OR t.id=?) AND length(CAST(p.config_json AS BLOB))<=65536 AND length(CAST(p.key AS BLOB))<=128 AND length(CAST(p.type AS BLOB))<=16 AND length(CAST(p.adapter AS BLOB))<=64 LIMIT 4"
+        "SELECT DISTINCT p.id,p.key,p.type,p.adapter,p.config_json,p.revision,p.credential_json FROM providers p JOIN template_provider_bindings b ON b.provider_source='database' AND b.provider_id=p.id JOIN agent_templates t ON t.id=b.template_id WHERE p.enabled=1 AND t.enabled=1 AND (? IS NULL OR (p.id=? AND p.revision=?)) AND (? IS NULL OR t.id=?) AND length(CAST(p.config_json AS BLOB))<=65536 AND length(CAST(p.key AS BLOB))<=128 AND length(CAST(p.type AS BLOB))<=16 AND length(CAST(p.adapter AS BLOB))<=64 LIMIT 5"
     ).bind(provider.map(|v|v.0)).bind(provider.map(|v|v.0)).bind(provider.map(|v|v.1)).bind(template).bind(template).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -411,5 +402,39 @@ impl Database {
                 .await?
         };
         Ok((count, rows))
+    }
+}
+
+fn catalog_query(config: &str, query: &str) -> QueryBuilder<'static, Sqlite> {
+    let mut builder = QueryBuilder::new(
+        "WITH catalog AS (SELECT id,key,name,type,adapter,config_json,enabled,revision,created_at,updated_at,credential_json FROM providers UNION ALL SELECT 0,json_extract(value,'$.key'),json_extract(value,'$.name'),json_extract(value,'$.type'),json_extract(value,'$.adapter'),'{}',1,1,0,0,NULL FROM json_each(",
+    );
+    builder.push_bind(config.to_owned()).push(")) ").push(query);
+    builder
+}
+
+impl Database {
+    pub(crate) async fn config_provider_templates(
+        &self,
+        kind: &str,
+        key: &str,
+        page: u32,
+        size: u32,
+    ) -> Result<(i64, Vec<(String, String, String, i64)>), sqlx::Error> {
+        let total = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings WHERE provider_source='config' AND provider_type=? AND config_provider_key=?")
+            .bind(kind).bind(key).fetch_one(&self.pool).await?;
+        let rows = sqlx::query_as("SELECT t.key,t.name,b.provider_type,t.enabled FROM template_provider_bindings b JOIN agent_templates t ON t.id=b.template_id WHERE b.provider_source='config' AND b.provider_type=? AND b.config_provider_key=? ORDER BY t.key LIMIT ? OFFSET ?")
+            .bind(kind).bind(key).bind(i64::from(size)).bind((i64::from(page)-1)*i64::from(size)).fetch_all(&self.pool).await?;
+        Ok((total, rows))
+    }
+}
+
+impl Database {
+    pub(crate) async fn config_prewarm_bindings(
+        &self,
+        template_id: i64,
+    ) -> Result<Vec<(String, String, i64)>, sqlx::Error> {
+        sqlx::query_as("SELECT b.provider_type,'config:'||b.provider_type||':'||b.config_provider_key,1 FROM template_provider_bindings b JOIN agent_templates t ON t.id=b.template_id WHERE b.provider_source='config' AND t.enabled=1 AND b.template_id=? ORDER BY b.provider_type LIMIT 5")
+            .bind(template_id).fetch_all(&self.pool).await
     }
 }

@@ -556,8 +556,14 @@ impl AppState {
             .with_runtime_manager(Arc::clone(&manager)),
         );
         self.provider_prewarm = self.database.as_ref().and_then(|database| {
-            crate::services::provider_prewarm::ProviderPrewarm::start(database.clone(), &manager)
+            crate::services::provider_prewarm::ProviderPrewarm::start(
+                database.clone(),
+                &manager,
+                self.config.clone(),
+            )
         });
+        self.deployment_snapshots =
+            crate::providers::config_catalog::deployment_snapshots(&self.config);
         self.provider_runtime_manager = Some(manager);
         self
     }

@@ -995,38 +995,44 @@ impl crate::services::provider_runtime::RuntimeMaterializer for SwitchBuilder {
     }
     fn build(
         &self,
-        _: &crate::database::DesiredProvider,
+        snapshot: &crate::database::DesiredProvider,
         _: Option<crate::services::provider_runtime::PreparedRuntime>,
         _: crate::workers::ProviderRuntimeAdmission,
     ) -> Result<
         Arc<dyn crate::services::provider_runtime::RuntimeResource>,
         crate::services::provider_runtime::RuntimeError,
     > {
-        Ok(Arc::new(SwitchResource(self.0.clone())))
+        let mut catalog = RuntimeCatalog::default();
+        let key = snapshot.key.clone();
+        match snapshot.kind.as_str() {
+            "vad" => {
+                catalog.vad.insert(key, self.0.vad[&snapshot.key].clone());
+            }
+            "asr" => {
+                catalog.asr.insert(key, self.0.asr[&snapshot.key].clone());
+            }
+            "llm" => {
+                catalog.llm.insert(key, self.0.llm[&snapshot.key].clone());
+            }
+            "tts" => {
+                catalog.tts.insert(key, self.0.tts[&snapshot.key].clone());
+            }
+            "speaker" => {
+                catalog
+                    .speaker
+                    .insert(key, self.0.speaker[&snapshot.key].clone());
+            }
+            _ => return Err(crate::services::provider_runtime::RuntimeError::Configuration),
+        }
+        Ok(Arc::new(SwitchResource(catalog)))
     }
 }
 fn managed_switch_actor() -> (
     SessionActor,
     Arc<crate::services::provider_runtime::ProviderRuntimeManager>,
 ) {
-    use crate::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits};
     let catalog = catalog();
-    let manager = ProviderRuntimeManager::new(
-        RuntimeLimits {
-            max_parallel_loads: 1,
-            max_pending_loads: 4,
-            max_waiters: 8,
-            max_resident_bytes: 8,
-            max_resources: 8,
-            max_version_entries: 16,
-            admission_timeout_ms: 1000,
-            failure_cooldown_ms: 10,
-            idle_ttl_ms: 100,
-        },
-        Arc::new(SwitchBuilder(catalog.clone())),
-        AdmissionGate::open(),
-    )
-    .unwrap();
+    let manager = switch_manager(catalog.clone());
     let mut actor = admitted_actor(&catalog);
     let mut assignment = candidate(7, "cold", "cold prompt", "alternate", "alternate-vad");
     for (index, binding) in assignment.bindings.iter_mut().enumerate() {
@@ -1270,4 +1276,160 @@ async fn abort_while_native_switch_build_is_blocked_cannot_commit_late_completio
     assert!(actor.pending_actions.switch_template_after_turn.is_none());
     assert_eq!(manager.accounting().active_leases, 0);
     assert_eq!(manager.accounting().build_attempts, 1);
+}
+
+#[tokio::test]
+async fn mixed_source_candidate_acquires_exact_versions_and_releases_every_lease() {
+    use crate::services::provider_runtime::{ProviderIdentity, ProviderVersion};
+    let mut catalog = catalog();
+    let speaker = Arc::new(
+        crate::providers::speaker::SpeakerRuntime::new(
+            Box::new(SwitchSpeaker),
+            crate::workers::ProviderRuntimeAdmission::new(1, 1),
+        )
+        .unwrap(),
+    );
+    catalog.speaker.insert("voice".into(), speaker.clone());
+    let manager = switch_manager(catalog.clone());
+    let mut actor = admitted_actor(&catalog);
+    actor.switch_catalog.manager = Some(manager.clone());
+    let mut assignment = candidate(8, "mixed", "mixed prompt", "alternate", "alternate-vad");
+    for (index, binding) in assignment.bindings.iter_mut().enumerate() {
+        binding.snapshot = Some(Arc::new(crate::database::DesiredProvider {
+            id: index as i64 + 1,
+            key: binding.provider_key.clone(),
+            kind: binding.provider_type.clone(),
+            adapter: "fixture".into(),
+            revision: 2,
+            config_json: "{}".into(),
+            secret_ref: None,
+        }));
+    }
+    let db = crate::session::ConfiguredTemplateProfile::from_assignment(&assignment).unwrap();
+    let llm = assignment
+        .bindings
+        .iter_mut()
+        .find(|b| b.provider_type == "llm")
+        .unwrap();
+    let snapshot = crate::database::DesiredProvider {
+        id: 0,
+        key: llm.provider_key.clone(),
+        kind: "llm".into(),
+        adapter: "fixture".into(),
+        revision: 1,
+        config_json: "{}".into(),
+        secret_ref: None,
+    };
+    llm.provider_key = format!("config:llm:{}", snapshot.key);
+    llm.snapshot = None;
+    assignment.bindings.push(AdmittedProviderBinding {
+        provider_type: "speaker".into(),
+        provider_key: "config:speaker:voice".into(),
+        provider_enabled: true,
+        snapshot: None,
+    });
+    let deployment_speaker = crate::database::DesiredProvider {
+        id: 0,
+        key: "voice".into(),
+        kind: "speaker".into(),
+        adapter: "fixture".into(),
+        revision: 1,
+        config_json: "{}".into(),
+        secret_ref: None,
+    };
+    let mixed = crate::session::ConfiguredTemplateProfile::from_assignment_with_defaults(
+        &assignment,
+        &deployment().provider_defaults.effective_bindings(),
+        &[snapshot, deployment_speaker],
+    );
+    let mixed = mixed.unwrap();
+    let old = db
+        .prepare(&manager, manager.admission_deadline())
+        .await
+        .unwrap();
+    let prepared = mixed
+        .prepare(&manager, manager.admission_deadline())
+        .await
+        .unwrap();
+    assert_eq!(prepared.leases.len(), 5);
+    assert!(Arc::ptr_eq(
+        prepared.runtimes.speaker.as_ref().unwrap(),
+        &speaker
+    ));
+    assert!(prepared.leases.iter().any(|l| l.version()
+        == &ProviderVersion {
+            identity: ProviderIdentity::Deployment {
+                kind: "llm".into(),
+                key: "alternate".into()
+            },
+            revision: 1
+        }));
+    assert!(
+        prepared
+            .leases
+            .iter()
+            .filter(|l| matches!(l.version().identity, ProviderIdentity::Database(_)))
+            .all(|l| l.version().revision == 2)
+    );
+    assert_eq!(manager.accounting().active_leases, 9);
+    drop(old);
+    drop(prepared);
+    actor.switch_catalog.cold.push(mixed);
+    let turn_id = actor.begin_active_turn().unwrap();
+    actor.execute_template_switch(ToolCall {
+        id: "mixed-switch".into(),
+        name: SWITCH_TEMPLATE_TOOL_NAME.into(),
+        arguments: serde_json::json!({"template":"mixed"}),
+    });
+    let deadline = manager.admission_deadline();
+    while actor.pending_actions.switch_template_after_turn.is_none() {
+        actor.drain_template_preparation();
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(actor.profile_revision(), 1);
+    actor.on_writer_event(WriterEvent::TurnClosed {
+        turn_id,
+        outcome: WriterTurnOutcome::Normal,
+    });
+    actor.drain_managed_switch_boundary();
+    assert_eq!(actor.profile_revision(), 2);
+    assert_eq!(actor.profile.system_prompt, "mixed prompt");
+    assert_eq!(manager.accounting().active_leases, 5);
+    drop(actor);
+    assert_eq!(manager.accounting().active_leases, 0);
+}
+fn switch_manager(
+    catalog: RuntimeCatalog,
+) -> Arc<crate::services::provider_runtime::ProviderRuntimeManager> {
+    use crate::services::provider_runtime::{ProviderRuntimeManager, RuntimeLimits};
+    ProviderRuntimeManager::new(
+        RuntimeLimits {
+            max_parallel_loads: 1,
+            max_pending_loads: 4,
+            max_waiters: 8,
+            max_resident_bytes: 8,
+            max_resources: 8,
+            max_version_entries: 16,
+            admission_timeout_ms: 1000,
+            failure_cooldown_ms: 10,
+            idle_ttl_ms: 100,
+        },
+        Arc::new(SwitchBuilder(catalog)),
+        AdmissionGate::open(),
+    )
+    .unwrap()
+}
+
+struct SwitchSpeaker;
+impl crate::providers::speaker::SpeakerProvider for SwitchSpeaker {
+    fn dimension(&self) -> usize {
+        2
+    }
+    fn extract(
+        &mut self,
+        _: &crate::audio::PcmF32Mono,
+    ) -> Result<Vec<f32>, crate::providers::speaker::SpeakerError> {
+        Ok(vec![1.0, 0.0])
+    }
 }

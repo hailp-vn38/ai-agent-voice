@@ -181,7 +181,7 @@ impl Database {
         &self,
         key: &str,
         provider_type: &str,
-        provider_key: &str,
+        reference: &crate::providers::config_catalog::ProviderRef,
         expected: i64,
         request_id: &str,
     ) -> Result<i64, WriteError> {
@@ -196,25 +196,58 @@ impl Database {
         if template.revision != expected {
             return Err(WriteError::Conflict("revision_conflict"));
         };
-        let provider: Result<(i64, String, i64), _> =
-            sqlx::query_as("SELECT id,type,enabled FROM providers WHERE key=?")
-                .bind(provider_key)
-                .fetch_one(pool)
-                .await;
-        let (provider_id, provider_kind, enabled) = match provider {
-            Ok(v) => v,
-            Err(_) => return Err(WriteError::Invalid("invalid_provider")),
-        };
-        if provider_kind != provider_type || enabled != 1 {
-            return Err(WriteError::Invalid("invalid_provider"));
-        };
-        let mut tx = match pool.begin().await {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(WriteError::Unavailable);
+        let mut tx = pool.begin().await.map_err(|_| WriteError::Unavailable)?;
+        let (provider_source, provider_id, config_key) = match reference.origin {
+            crate::providers::config_catalog::ProviderOrigin::Database => {
+                let (id, kind, enabled): (i64, String, i64) =
+                    sqlx::query_as("SELECT id,type,enabled FROM providers WHERE key=?")
+                        .bind(&reference.key)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(WriteError::Sql)?
+                        .ok_or(WriteError::Invalid("invalid_provider"))?;
+                if kind != provider_type || enabled != 1 {
+                    return Err(WriteError::Invalid("invalid_provider"));
+                }
+                ("database", Some(id), None)
+            }
+            crate::providers::config_catalog::ProviderOrigin::Config => {
+                if reference.kind != provider_type {
+                    return Err(WriteError::Invalid("invalid_provider"));
+                }
+                ("config", None, Some(reference.key.as_str()))
             }
         };
-        if sqlx::query("INSERT INTO template_provider_bindings (template_id,provider_type,provider_id,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(template_id,provider_type) DO UPDATE SET provider_id=excluded.provider_id,updated_at=excluded.updated_at").bind(template.id).bind(provider_type).bind(provider_id).bind(crate::database::unix_seconds().unwrap_or_default()).bind(crate::database::unix_seconds().unwrap_or_default()).execute(&mut *tx).await.is_err() || sqlx::query("UPDATE agent_templates SET revision=revision+1,updated_at=? WHERE id=? AND revision=?").bind(crate::database::unix_seconds().unwrap_or_default()).bind(template.id).bind(expected).execute(&mut *tx).await.map(|v|v.rows_affected()!=1).unwrap_or(true) || audit(&mut *tx,request_id,"template",Some(template.id),"bind_provider",Some(expected),Some(expected+1),AuditOutcome::Success, 1).await.is_err() || tx.commit().await.is_err(){return Err(WriteError::Unavailable)};
+        let time = crate::database::unix_seconds().unwrap_or_default();
+        let changed = sqlx::query(
+            "UPDATE agent_templates SET revision=revision+1,updated_at=? WHERE id=? AND revision=?",
+        )
+        .bind(time)
+        .bind(template.id)
+        .bind(expected)
+        .execute(&mut *tx)
+        .await
+        .map_err(WriteError::Sql)?;
+        if changed.rows_affected() != 1 {
+            return Err(WriteError::Conflict("revision_conflict"));
+        }
+        sqlx::query("INSERT INTO template_provider_bindings (template_id,provider_type,provider_source,provider_id,config_provider_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(template_id,provider_type) DO UPDATE SET provider_source=excluded.provider_source,provider_id=excluded.provider_id,config_provider_key=excluded.config_provider_key,updated_at=excluded.updated_at")
+            .bind(template.id).bind(provider_type).bind(provider_source).bind(provider_id).bind(config_key).bind(time).bind(time)
+            .execute(&mut *tx).await.map_err(WriteError::Sql)?;
+        audit(
+            &mut *tx,
+            request_id,
+            "template",
+            Some(template.id),
+            "bind_provider",
+            Some(expected),
+            Some(expected + 1),
+            AuditOutcome::Success,
+            1,
+        )
+        .await
+        .map_err(|_| WriteError::Unavailable)?;
+        tx.commit().await.map_err(|_| WriteError::Unavailable)?;
         Ok(template.id)
     }
     pub(crate) async fn set_default_template(
@@ -286,7 +319,7 @@ impl Database {
         // structurally incomplete. The optional Speaker slot is never counted here, so binding a
         // Speaker provider cannot mask a missing core slot. A failed probe promotes anyway, because
         // the invariant matters more than the optimistic read.
-        let broken_core: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? AND b.provider_type IN ('vad','asr','llm','tts') AND (p.enabled!=1 OR b.provider_type!=p.type)")
+        let broken_core: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM template_provider_bindings b JOIN providers p ON b.provider_source='database' AND p.id=b.provider_id WHERE b.template_id=? AND b.provider_type IN ('vad','asr','llm','tts') AND (p.enabled!=1 OR b.provider_type!=p.type)")
         .bind(template.id).fetch_one(&mut *tx).await.unwrap_or(0);
         let promote: i64 = if broken_core == 0 {
             sqlx::query_scalar::<_, i64>("SELECT NOT EXISTS(SELECT 1 FROM agent_template_assignments WHERE agent_id=? AND enabled=1 AND is_default=1)")

@@ -3206,7 +3206,13 @@ async fn provider_credentials_require_encryption_and_never_create_a_partial_reso
         .json()
         .await
         .unwrap();
-    assert!(page["items"].as_array().unwrap().is_empty());
+    assert!(
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["source"] == "config")
+    );
     task.abort();
 }
 
@@ -3590,7 +3596,17 @@ async fn draft_tests_reject_invalid_sources_without_creating_resources() {
             .json()
             .await
             .unwrap();
-        assert!(response["items"].as_array().unwrap().is_empty());
+        if resource == "providers" {
+            assert!(
+                response["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|item| item["source"] == "config")
+            );
+        } else {
+            assert!(response["items"].as_array().unwrap().is_empty());
+        }
     }
     task.abort();
 }

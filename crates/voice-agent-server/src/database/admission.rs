@@ -221,10 +221,10 @@ impl Database {
             "SELECT COALESCE((SELECT SUM(length(CAST(t.key AS BLOB)) + length(CAST(t.name AS BLOB)) + \
                     length(CAST(t.language AS BLOB)) + length(CAST(t.prompt AS BLOB))) \
                 FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id \
-                WHERE ata.agent_id=? AND ata.enabled=1),0) + COALESCE((SELECT SUM(length(CAST(p.key AS BLOB)) + \
-                    length(CAST(p.type AS BLOB)) + length(CAST(p.adapter AS BLOB)) + \
-                    length(CAST(p.config_json AS BLOB))) \
-                FROM template_provider_bindings b JOIN providers p ON p.id=b.provider_id \
+                WHERE ata.agent_id=? AND ata.enabled=1),0) + COALESCE((SELECT SUM(length(CAST(coalesce(b.config_provider_key,p.key) AS BLOB)) + \
+                    length(CAST(b.provider_type AS BLOB)) + coalesce(length(CAST(p.adapter AS BLOB)),0) + \
+                    coalesce(length(CAST(p.config_json AS BLOB)),0)) \
+                FROM template_provider_bindings b LEFT JOIN providers p ON b.provider_source='database' AND p.id=b.provider_id \
                 WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1)),0)",
         )
         .bind(agent_id)
@@ -250,9 +250,9 @@ impl Database {
             return Err(DeviceAdmissionError::Unavailable);
         }
         let bindings = sqlx::query_as::<_, (i64, String, i64, String, i64, String, String, String, i64, Option<String>)>(
-            "SELECT b.template_id, b.provider_type, p.id, p.key, p.enabled, p.type, p.adapter, p.config_json, p.revision, p.credential_json \
+            "SELECT b.template_id, b.provider_type, coalesce(p.id,0), CASE WHEN b.provider_source='config' THEN 'config:'||b.provider_type||':'||b.config_provider_key ELSE p.key END, CASE WHEN b.provider_source='config' THEN 1 ELSE p.enabled END, coalesce(p.type,b.provider_type), coalesce(p.adapter,''), coalesce(p.config_json,''), coalesce(p.revision,1), p.credential_json \
              FROM template_provider_bindings b \
-             JOIN providers p ON p.id = b.provider_id \
+             LEFT JOIN providers p ON b.provider_source='database' AND p.id = b.provider_id \
              WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments \
                                      WHERE agent_id = ? AND enabled=1) \
              ORDER BY b.template_id, b.provider_type LIMIT 257",
@@ -310,6 +310,25 @@ impl Database {
             credential,
         ) in bindings
         {
+            if provider_key.starts_with("config:") {
+                snapshot_bytes =
+                    snapshot_bytes.saturating_add(provider_key.len() + provider_type.len());
+                if snapshot_bytes > 2 * 1024 * 1024 {
+                    return Err(DeviceAdmissionError::Unavailable);
+                }
+                if let Some(assignment) = assignments
+                    .iter_mut()
+                    .find(|a| a.template_id == template_id)
+                {
+                    assignment.bindings.push(AdmittedProviderBinding {
+                        provider_type,
+                        provider_key,
+                        provider_enabled: true,
+                        snapshot: None,
+                    });
+                }
+                continue;
+            }
             let secret_ref = super::credentials::reference(
                 &format!("provider:{provider_key}"),
                 credential.as_deref(),

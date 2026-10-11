@@ -18,6 +18,7 @@ export interface CredentialMetadata {
 }
 
 export interface AdminProvider {
+  source?: 'database' | 'config'
   credential?: CredentialMetadata | null
   id: number
   key: string

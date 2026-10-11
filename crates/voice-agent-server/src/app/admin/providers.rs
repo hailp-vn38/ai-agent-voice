@@ -28,6 +28,7 @@ fn provider_response(
     let credential = crate::database::credentials::metadata(provider.credential_json.as_deref());
     let mut response = serde_json::to_value(provider).expect("Provider is serializable");
     response["credential"] = credential;
+    response["source"] = Value::String("database".into());
     let object = response
         .as_object_mut()
         .expect("Provider serializes to object");
@@ -47,6 +48,39 @@ fn provider_response(
     response
 }
 fn managed_provider_response(provider: Provider, state: &AppState) -> Value {
+    if provider.id == 0 {
+        let reference = crate::providers::config_catalog::ProviderRef::parse(&provider.key, None)
+            .expect("catalog reference");
+        let runtime = state.provider_runtime_manager.as_ref().map(|manager| {
+            manager.inspect_version(&crate::services::provider_runtime::ProviderVersion {
+                identity: crate::services::provider_runtime::ProviderIdentity::Deployment {
+                    kind: reference.kind,
+                    key: reference.key,
+                },
+                revision: provider.revision,
+            })
+        });
+        use crate::services::provider_runtime::RuntimeState;
+        let ready = runtime
+            .as_ref()
+            .is_some_and(|r| r.desired_state == RuntimeState::Ready);
+        let status = match runtime.as_ref().map(|r| r.desired_state) {
+            Some(RuntimeState::Ready) => "loaded",
+            Some(RuntimeState::Failed | RuntimeState::Quarantined) => "unavailable",
+            _ => "not_loaded",
+        };
+        let mut response = serde_json::to_value(provider).expect("Provider is serializable");
+        response["source"] = Value::String("config".into());
+        response["credential_env"] = Value::Null;
+        response["credential"] = crate::database::credentials::metadata(None);
+        response["runtime_status"] = Value::String(status.into());
+        response["runtime_matches_desired"] = Value::Bool(ready);
+        response["requires_restart"] = Value::Bool(false);
+        if let Some(runtime) = runtime {
+            response["runtime"] = serde_json::to_value(runtime).expect("runtime is serializable");
+        }
+        return response;
+    }
     let Some(manager) = &state.provider_runtime_manager else {
         return provider_response(provider, state.database_runtime_snapshot.as_deref());
     };
@@ -64,6 +98,7 @@ fn managed_provider_response(provider: Provider, state: &AppState) -> Value {
     let credential = crate::database::credentials::metadata(provider.credential_json.as_deref());
     let mut response = serde_json::to_value(provider).expect("Provider is serializable");
     response["credential"] = credential;
+    response["source"] = Value::String("database".into());
     response["credential_env"] = serde_json::to_value(credential_env).unwrap();
     response["runtime_status"] = Value::String(status.into());
     response["runtime_matches_desired"] = Value::Bool(ready);
@@ -194,6 +229,18 @@ pub(super) async fn get_provider(
         Ok(v) => v,
         Err(e) => return e,
     };
+    if key.starts_with("config:") {
+        return match crate::providers::config_catalog::ProviderRef::parse(&key, None)
+            .and_then(|r| r.snapshot(&state.config))
+        {
+            Ok(snapshot) => Json(managed_provider_response(
+                crate::providers::config_catalog::public_provider(&snapshot),
+                &state,
+            ))
+            .into_response(),
+            Err(()) => error(&request, StatusCode::NOT_FOUND, "invalid_provider"),
+        };
+    }
     match crate::database::providers::provider_by(database, &key).await {
         Ok(v) => Json(managed_provider_response(v, &state)).into_response(),
         Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
@@ -224,7 +271,13 @@ pub(super) async fn list_providers(
         Ok(value) => value,
         Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_query"),
     };
-    match database.list_providers(&filters, query.sort.as_deref(), page, size).await {
+    let config_items: Vec<_> =
+        crate::providers::config_catalog::deployment_snapshots(&state.config)
+            .iter()
+            .map(crate::providers::config_catalog::public_provider)
+            .collect();
+    let config_json = serde_json::to_string(&config_items).expect("public catalog is serializable");
+    match database.list_providers(&filters, query.sort.as_deref(), page, size, &config_json).await {
         Ok(result) => Json(serde_json::json!({"items":result.items.into_iter().map(|item| managed_provider_response(item, &state)).collect::<Vec<_>>(),"page":page,"page_size":size,"max_page_size":PAGE_MAX,"total":result.total,"total_pages":provider_total_pages(result.total, size),"facets":result.facets})).into_response(),
         Err(value) => sql_error(&request, &value),
     }
@@ -263,17 +316,35 @@ pub(super) async fn list_provider_templates(
         Ok(v) => v,
         Err(e) => return e,
     };
-    let provider = match crate::database::providers::provider_by(database, &provider_key).await {
-        Ok(v) => v,
-        Err(sqlx::Error::RowNotFound) => {
-            return error(&request, StatusCode::NOT_FOUND, "not_found");
-        }
-        Err(e) => return sql_error(&request, &e),
+    let (revision, result) = if provider_key.starts_with("config:") {
+        let reference =
+            match crate::providers::config_catalog::ProviderRef::parse(&provider_key, None) {
+                Ok(reference) if reference.snapshot(&state.config).is_ok() => reference,
+                _ => return error(&request, StatusCode::NOT_FOUND, "invalid_provider"),
+            };
+        (
+            1,
+            database
+                .config_provider_templates(&reference.kind, &reference.key, page, page_size)
+                .await,
+        )
+    } else {
+        let provider = match crate::database::providers::provider_by(database, &provider_key).await
+        {
+            Ok(provider) => provider,
+            Err(sqlx::Error::RowNotFound) => {
+                return error(&request, StatusCode::NOT_FOUND, "not_found");
+            }
+            Err(cause) => return sql_error(&request, &cause),
+        };
+        (
+            provider.revision,
+            database
+                .provider_templates(provider.id, page, page_size)
+                .await,
+        )
     };
-    let (total, rows) = match database
-        .provider_templates(provider.id, page, page_size)
-        .await
-    {
+    let (total, rows) = match result {
         Ok(value) => value,
         Err(cause) => return sql_error(&request, &cause),
     };
@@ -281,7 +352,7 @@ pub(super) async fn list_provider_templates(
     match rows {
         Ok(rows) => Json(serde_json::json!({
             "provider_key": provider_key,
-            "revision": provider.revision,
+            "revision": revision,
             "page": page,
             "page_size": page_size,
             "max_page_size": PAGE_MAX,
@@ -302,6 +373,9 @@ pub(super) async fn patch_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
+    if key.starts_with("config:") {
+        return error(&request, StatusCode::CONFLICT, "config_provider_readonly");
+    }
     let (request, body): (_, PatchProvider) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,

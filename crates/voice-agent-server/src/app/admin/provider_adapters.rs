@@ -59,6 +59,13 @@ pub(super) async fn get_provider_capabilities(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
+    if key.starts_with("config:") {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "config_provider_operation_unsupported",
+        );
+    }
     let database = match database(&state) {
         Ok(database) => database,
         Err(response) => return response,

@@ -253,6 +253,18 @@ _Avoid_: server worker, native TTS runtime
 A configuration with a stable ID for exactly one Provider Adapter; the ID is the value bound by an agent, while the adapter specifies the implementation.
 _Avoid_: adapter name, active provider
 
+**Provider Origin**:
+The authority declaring a Provider Instance: either Admin-managed database configuration or read-only deployment configuration. Equal names from different origins identify different instances.
+_Avoid_: runtime state, adapter source
+
+**Provider Reference**:
+An unambiguous reference to a Provider Instance that retains its origin and provider kind. A Template binding names one instance independently of whether its runtime is resident.
+_Avoid_: display name, loaded provider
+
+**Provider Configuration Catalog**:
+The combined set of declared Provider Instances available to Admin, including both origins; membership does not establish runtime readiness.
+_Avoid_: Provider Catalog, Runtime Catalog
+
 **Provider Catalog**:
 The read-only set of materialized Provider Instances, indexed by Provider Instance ID and independent of Voice Sessions. Legacy deployment mode builds the catalog at startup; managed runtime mode keeps the deployment catalog empty and resolves the exact Provider Version through Provider Runtime Manager.
 _Avoid_: adapter registry, session provider map

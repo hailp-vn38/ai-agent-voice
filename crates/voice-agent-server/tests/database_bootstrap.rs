@@ -367,4 +367,32 @@ UPDATE sqlite_sequence SET seq=88 WHERE name='template_provider_bindings';").exe
         0
     );
     assert!(sqlx::query("INSERT INTO template_provider_bindings(template_id,provider_type,provider_id,created_at,updated_at) VALUES(7,'speaker',999,1,1)").execute(database.pool()).await.is_err());
+    assert!(
+        sqlx::query("DELETE FROM providers WHERE id=19")
+            .execute(database.pool())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT provider_source FROM template_provider_bindings WHERE id=27"
+        )
+        .fetch_one(database.pool())
+        .await
+        .unwrap(),
+        "database"
+    );
+    sqlx::query("INSERT INTO template_provider_bindings(template_id,provider_type,provider_source,config_provider_key,created_at,updated_at) VALUES(7,'llm','config','cold',1,1)").execute(database.pool()).await.unwrap();
+    for sql in [
+        "INSERT INTO template_provider_bindings(template_id,provider_type,provider_source,config_provider_key,created_at,updated_at) VALUES(7,'llm','config','duplicate',1,1)",
+        "UPDATE template_provider_bindings SET provider_id=19 WHERE provider_source='config'",
+        "UPDATE template_provider_bindings SET config_provider_key='' WHERE provider_source='config'",
+        "UPDATE template_provider_bindings SET config_provider_key='mixed' WHERE provider_source='database'",
+        "UPDATE template_provider_bindings SET provider_source='unknown'",
+    ] {
+        assert!(
+            sqlx::query(sql).execute(database.pool()).await.is_err(),
+            "{sql}"
+        );
+    }
 }

@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 const agentsApi = vi.hoisted(() => ({ list: vi.fn(), templates: vi.fn(), setDefaultTemplate: vi.fn() }))
 const templatesApi = vi.hoisted(() => ({ list: vi.fn(), providers: vi.fn(), bindProvider: vi.fn(), unlinkProvider: vi.fn() }))
-const providersApi = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn() }))
+const providersApi = vi.hoisted(() => ({ listAll: vi.fn(), update: vi.fn() }))
 const devicesApi = vi.hoisted(() => ({ list: vi.fn() }))
 
 vi.mock('@/api/agents', () => ({ agentsApi }))
@@ -41,14 +41,14 @@ describe('admin store', () => {
       ],
     })
     templatesApi.providers.mockResolvedValue({ bindings: {} })
-    providersApi.list.mockResolvedValue({ items: [] })
+    providersApi.listAll.mockResolvedValue({ items: [] })
     devicesApi.list.mockResolvedValue({ items: [] })
     agentsApi.setDefaultTemplate.mockResolvedValue(undefined)
   })
 
   it('preserves speaker config when the metadata form sends generic provider fields', async () => {
     const provider = { id: 3, key: 'speaker_test', name: 'Voice', type: 'speaker', adapter: 'campplus_sherpa', config_json: '{"min_speech_ms":3000,"target_speech_ms":4000,"max_window_ms":6000}', enabled: 1, revision: 1, runtime_status: 'not_loaded' }
-    providersApi.list.mockResolvedValue({ items: [provider] })
+    providersApi.listAll.mockResolvedValue({ items: [provider] })
     providersApi.update.mockResolvedValue({ ...provider, name: 'Renamed', revision: 2 })
     const store = useAdminStore()
     await store.loadAll()
@@ -79,7 +79,7 @@ describe('admin store', () => {
   })
 
   it('updates template provider bindings reactively after linking a provider', async () => {
-    providersApi.list.mockResolvedValue({
+    providersApi.listAll.mockResolvedValue({
       items: [{ key: 'tts', name: 'TTS', type: 'tts', adapter: 'openai', config_json: '{}', enabled: true, revision: 1, runtime_status: 'not_loaded' }],
     })
     templatesApi.bindProvider.mockResolvedValue(undefined)
@@ -114,7 +114,7 @@ describe('admin store', () => {
 it('preserves adapter-specific config when editing a provider model', async () => {
   setActivePinia(createPinia())
   const provider = { id: 2, key: 'llm_config', name: 'LLM', type: 'llm', adapter: 'openai', config_json: '{"model":"old","base_url":"https://example.test/v1","timeout_ms":17000}', enabled: 1, revision: 4, runtime_status: 'not_loaded' }
-  providersApi.list.mockResolvedValue({ items: [provider] })
+  providersApi.listAll.mockResolvedValue({ items: [provider] })
   providersApi.update.mockResolvedValue({ ...provider, revision: 5 })
   const store = useAdminStore()
   await store.loadAll()

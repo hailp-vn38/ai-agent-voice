@@ -238,7 +238,10 @@ pub(super) async fn bind_template_provider(
         Ok(v) => v,
         Err(e) => return e,
     };
-    if !matches!(provider_type.as_str(), "vad" | "asr" | "llm" | "tts") {
+    if !matches!(
+        provider_type.as_str(),
+        "vad" | "asr" | "llm" | "tts" | "speaker"
+    ) {
         return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     }
     let expected = match expected(request.headers()) {
@@ -249,14 +252,27 @@ pub(super) async fn bind_template_provider(
         Ok(v) => v,
         Err(e) => return e,
     };
+    let reference = match crate::providers::config_catalog::ProviderRef::parse(
+        &body.provider_key,
+        Some(&provider_type),
+    ) {
+        Ok(value) => value,
+        Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_provider"),
+    };
+    if reference.origin == crate::providers::config_catalog::ProviderOrigin::Config {
+        if reference.snapshot(&state.config).is_err() {
+            return error(&request, StatusCode::BAD_REQUEST, "invalid_provider");
+        }
+        if state.provider_runtime_manager.is_none() {
+            return error(
+                &request,
+                StatusCode::CONFLICT,
+                "config_provider_requires_managed_runtime",
+            );
+        }
+    }
     let template_id = match database
-        .bind_template_provider(
-            &key,
-            &provider_type,
-            &body.provider_key,
-            expected,
-            id(&request),
-        )
+        .bind_template_provider(&key, &provider_type, &reference, expected, id(&request))
         .await
     {
         Ok(value) => value,

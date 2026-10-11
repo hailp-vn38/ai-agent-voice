@@ -51,8 +51,8 @@ impl Database {
         template_id: i64,
     ) -> Result<Vec<(String, String, i64)>, sqlx::Error> {
         sqlx::query_as(
-            "SELECT b.provider_type,p.key,p.enabled FROM template_provider_bindings b \
-         JOIN providers p ON p.id=b.provider_id WHERE b.template_id=? ORDER BY b.provider_type",
+            "SELECT b.provider_type,CASE WHEN b.provider_source='config' THEN 'config:'||b.provider_type||':'||b.config_provider_key ELSE p.key END,CASE WHEN b.provider_source='config' THEN 1 ELSE p.enabled END FROM template_provider_bindings b \
+         LEFT JOIN providers p ON b.provider_source='database' AND p.id=b.provider_id WHERE b.template_id=? ORDER BY b.provider_type",
         )
         .bind(template_id)
         .fetch_all(&self.pool)

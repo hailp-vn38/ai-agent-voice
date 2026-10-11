@@ -31,6 +31,9 @@ pub(super) async fn delete_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
+    if key.starts_with("config:") {
+        return error(&request, StatusCode::CONFLICT, "config_provider_readonly");
+    }
     delete_by_key(&state, &key, request, DeleteResource::Provider).await
 }
 

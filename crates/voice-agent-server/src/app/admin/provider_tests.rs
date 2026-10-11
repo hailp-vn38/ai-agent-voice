@@ -16,6 +16,13 @@ pub(super) async fn test_vad_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
+    if key.starts_with("config:") {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "config_provider_operation_unsupported",
+        );
+    }
     let (parts, body) = request.into_parts();
     let request = Request::from_parts(parts, Body::empty());
     match to_bytes(body, 1).await {
@@ -56,6 +63,13 @@ pub(super) async fn test_llm_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
+    if key.starts_with("config:") {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "config_provider_operation_unsupported",
+        );
+    }
     let (request, body): (_, LlmTestRequest) = match json(request).await {
         Ok(value) => value,
         Err(response) => return response,
@@ -93,6 +107,13 @@ pub(super) async fn test_tts_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
+    if key.starts_with("config:") {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "config_provider_operation_unsupported",
+        );
+    }
     let (request, body): (_, TtsTestRequest) = match json(request).await {
         Ok(value) => value,
         Err(response) => return response,
@@ -173,6 +194,13 @@ pub(super) async fn test_asr_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
+    if key.starts_with("config:") {
+        return error(
+            &request,
+            StatusCode::CONFLICT,
+            "config_provider_operation_unsupported",
+        );
+    }
     if request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -338,6 +366,34 @@ pub(super) async fn prepare_provider(
         Ok(value) => value,
         Err(response) => return response,
     };
+    if key.starts_with("config:") {
+        let snapshot = match crate::providers::config_catalog::ProviderRef::parse(&key, None)
+            .and_then(|r| r.snapshot(&state.config))
+        {
+            Ok(snapshot) => snapshot,
+            Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_provider"),
+        };
+        let Some(manager) = &state.provider_runtime_manager else {
+            return error(
+                &request,
+                StatusCode::CONFLICT,
+                "config_provider_requires_managed_runtime",
+            );
+        };
+        return match manager
+            .acquire_deployment_until(snapshot.clone(), manager.admission_deadline())
+            .await
+        {
+            Ok(lease) => Json(serde_json::json!({
+                "provider_key": key, "desired_revision": snapshot.revision,
+                "runtime": manager.inspect_version(lease.version()),
+            }))
+            .into_response(),
+            Err(cause) => {
+                request_error_response(&request, ProviderDiagnosticRequestError::Runtime(cause))
+            }
+        };
+    }
     match state.provider_diagnostics.prepare(&key).await {
         Ok(prepared) => {
             let status = if prepared.runtime.desired_state

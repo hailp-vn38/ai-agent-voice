@@ -20,16 +20,19 @@ pub struct ProviderPrewarm {
     pending: Arc<Mutex<HashMap<PrewarmKey, DesiredProvider>>>,
     notify: Arc<Notify>,
     capacity: usize,
+    config: Arc<crate::config::AppConfig>,
     metrics: Arc<crate::services::provider_runtime::RuntimeMetrics>,
 }
 impl ProviderPrewarm {
     pub fn start(
         database: Arc<Database>,
         manager: &Arc<ProviderRuntimeManager>,
+        config: Arc<crate::config::AppConfig>,
     ) -> Option<Arc<Self>> {
         let runtime = tokio::runtime::Handle::try_current().ok()?;
         let service = Arc::new(Self {
             database,
+            config,
             manager: Arc::downgrade(manager),
             pending: Arc::new(Mutex::new(HashMap::new())),
             notify: Arc::new(Notify::new()),
@@ -82,9 +85,17 @@ impl ProviderPrewarm {
         for snapshot in rows {
             let key = match manager.prewarm_resource_key(&snapshot) {
                 Ok(Some(resource)) => PrewarmKey::Resource(resource),
-                Ok(None) => {
-                    PrewarmKey::Version(ProviderVersion::database(snapshot.id, snapshot.revision))
-                }
+                Ok(None) => PrewarmKey::Version(if snapshot.id == 0 {
+                    ProviderVersion {
+                        identity: crate::services::provider_runtime::ProviderIdentity::Deployment {
+                            kind: snapshot.kind.clone(),
+                            key: snapshot.key.clone(),
+                        },
+                        revision: snapshot.revision,
+                    }
+                } else {
+                    ProviderVersion::database(snapshot.id, snapshot.revision)
+                }),
                 Err(_) => {
                     self.metrics.increment(
                         crate::services::provider_runtime::RuntimeCounter::ObsoleteIntent,
@@ -102,8 +113,19 @@ impl ProviderPrewarm {
             .await
     }
     pub async fn template(&self, id: i64) -> bool {
-        self.enqueue_rows(snapshots(&self.database, None, Some(id)).await)
-            .await
+        let mut rows = snapshots(&self.database, None, Some(id)).await;
+        if let Ok(bindings) = self.database.config_prewarm_bindings(id).await {
+            rows.extend(bindings.into_iter().filter_map(|(kind, key, enabled)| {
+                if enabled == 0 {
+                    return None;
+                }
+                crate::providers::config_catalog::ProviderRef::parse(&key, Some(&kind))
+                    .ok()?
+                    .snapshot(&self.config)
+                    .ok()
+            }));
+        }
+        self.enqueue_rows(rows).await
     }
 }
 async fn snapshots(

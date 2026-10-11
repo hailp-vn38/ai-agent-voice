@@ -96,7 +96,7 @@ impl Database {
         let referenced = sqlx::query_as::<_, (String, i64)>(
             "SELECT DISTINCT p.key, ata.is_default \
              FROM template_provider_bindings b \
-             JOIN providers p ON p.id = b.provider_id \
+             JOIN providers p ON b.provider_source='database' AND p.id = b.provider_id \
              JOIN agent_templates t ON t.id = b.template_id \
              JOIN agent_template_assignments ata ON ata.template_id = t.id \
              JOIN agents a ON a.id = ata.agent_id \
