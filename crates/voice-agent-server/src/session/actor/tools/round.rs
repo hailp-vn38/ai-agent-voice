@@ -125,20 +125,17 @@ impl SessionActor {
             self.terminalize_tool_round(ToolRoundFailure::ExecutionBudgetExceeded);
             return;
         };
-        match self.resolve_tool(&call.name) {
-            Some(ToolTarget::Builtin(tool)) => {
-                self.emit_tool_status(&call.name, "started");
-                self.execute_builtin_tool(call, tool);
+        let Some(target) = self.resolve_tool(&call.name) else {
+            self.complete_tool_call(call, Err("unknown_tool"));
+            return;
+        };
+        self.emit_tool_status(&call.name, "started");
+        match target {
+            ToolTarget::Builtin(tool) => self.execute_builtin_tool(call, tool),
+            ToolTarget::DeviceMcp(tool) => self.dispatch_device_mcp_tool(call, tool, budget),
+            ToolTarget::ExternalMcp(server, tool) => {
+                self.dispatch_external_tool(call, &server, &tool, budget)
             }
-            Some(ToolTarget::DeviceMcp(tool)) => {
-                self.emit_tool_status(&call.name, "started");
-                self.dispatch_device_mcp_tool(call, tool, budget);
-            }
-            Some(ToolTarget::ExternalMcp(server, tool)) => {
-                self.emit_tool_status(&call.name, "started");
-                self.dispatch_external_tool(call, &server, &tool, budget);
-            }
-            None => self.complete_tool_call(call, Err("unknown_tool")),
         }
     }
 
@@ -224,20 +221,15 @@ impl SessionActor {
         succeeded: bool,
     ) {
         let name = call.name.clone();
-        let recorded = if let Some(batch) = self.tool_batch.as_mut() {
-            if batch.generation != self.generation {
-                return;
-            }
-            batch.completed_calls.push(call.clone());
-            batch.results.push(ChatMessage::ToolResult {
-                tool_call_id: call.id,
-                content,
-            });
-            true
-        } else {
-            false
+        let Some(batch) = self.tool_batch.as_mut() else {
+            return;
         };
-        if recorded && self.resolve_tool(&name).is_some() {
+        batch.completed_calls.push(call.clone());
+        batch.results.push(ChatMessage::ToolResult {
+            tool_call_id: call.id,
+            content,
+        });
+        if self.resolve_tool(&name).is_some() {
             self.emit_tool_status(&name, if succeeded { "completed" } else { "failed" });
         }
     }
