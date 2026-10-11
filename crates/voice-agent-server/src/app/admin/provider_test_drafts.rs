@@ -27,7 +27,7 @@ fn runner(state: &AppState) -> ProviderTestRunner<'_> {
         secrets: state.secret_resolver.clone(),
     }
 }
-fn failure(request: &Request, cause: ProviderTestError) -> Response {
+pub(super) fn failure(request: &Request, cause: ProviderTestError) -> Response {
     match cause {
         ProviderTestError::Config => {
             error(request, StatusCode::BAD_REQUEST, "provider_config_invalid")

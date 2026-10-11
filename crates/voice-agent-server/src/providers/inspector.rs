@@ -16,6 +16,8 @@ pub enum ProviderInspectError {
     InvalidSelection,
     #[error("bootstrap discovery is not supported")]
     Unsupported,
+    #[error("remote capability discovery unavailable")]
+    RemoteUnavailable,
 }
 
 pub trait BootstrapCapabilityInspector: Send + Sync {

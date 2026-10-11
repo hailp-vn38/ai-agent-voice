@@ -1,0 +1,11 @@
+   Compiling voice-agent-server v0.1.0 (/home/hailp/ai-agent-voice/crates/voice-agent-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 56s
+     Running unittests src/lib.rs (/mnt/storage/ai-agent-voice/target/debug/deps/voice_agent_server-f8113cd615c8aed6)
+
+running 3 tests
+test providers::tts::vieneu::voices::tests::rejects_invalid_urls_and_credentials_in_selection ... ok
+test providers::tts::vieneu::voices::tests::discovers_unicode_and_custom_voices_without_a_selected_voice ... ok
+test providers::tts::vieneu::voices::tests::rejects_untrusted_lists_and_non_success_responses ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 216 filtered out; finished in 0.28s
+

@@ -4,6 +4,7 @@ import { computed, reactive, ref, useId, watch } from 'vue'
 
 import { providerAdaptersApi } from '@/api/provider-adapters'
 import type { ProviderAdapter } from '@/api/types/providers'
+import ProviderVoiceDiscovery from '@/components/providers/ProviderVoiceDiscovery.vue'
 import ProviderConfigEditor from '@/components/providers/ProviderConfigEditor.vue'
 import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
@@ -173,7 +174,8 @@ function submit() {
         </select>
       </label>
 
-      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor v-model="form.configJson" :schema="descriptor?.config_schema" /></div>
+      <ProviderVoiceDiscovery v-if="descriptor?.discovery?.voices === 'remote'" class="sm:col-span-2" :draft="{ type: 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && (provider.credential || provider.credentialEnv) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" @discovered="descriptor = { ...descriptor!, capabilities: { ...descriptor?.capabilities, ...$event } }" />
+      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor v-model="form.configJson" :schema="descriptor?.config_schema" :capabilities="descriptor?.capabilities" /></div>
 
       <label v-if="['openai', 'chillaudio_ws', 'vieneu_http'].includes(form.adapter)" class="block space-y-1.5 sm:col-span-2">
         <span class="text-sm font-medium">API key / token mới (tùy chọn)</span>

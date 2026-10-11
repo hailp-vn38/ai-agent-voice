@@ -1,4 +1,4 @@
-import { jsonRequest, requestJson, withQuery } from './client'
+import { assertCredentialTransport, jsonRequest, requestJson, withQuery } from './client'
 import type { ProviderAdapter, ProviderAdapterDiscoverInput, ProviderAdapterListResponse } from './types/providers'
 import type { TemplateProviderType } from './types/templates'
 
@@ -18,6 +18,7 @@ export const providerAdaptersApi = {
     return requestJson<ProviderAdapter>(adapterPath(adapter), {}, { signal })
   },
   discoverCapabilities(adapter: string, input: ProviderAdapterDiscoverInput, signal?: AbortSignal) {
-    return requestJson<unknown>(`${adapterPath(adapter)}/capabilities/discover`, jsonRequest('POST', input), { signal })
+    if (input.api_key) assertCredentialTransport()
+    return requestJson<Record<string, unknown>>(`${adapterPath(adapter)}/capabilities/discover`, jsonRequest('POST', input), { signal })
   },
 }

@@ -1,0 +1,17 @@
+
+> voice-agent-admin-web@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.3 /home/hailp/ai-agent-voice/apps/admin-web
+
+
+ Test Files  39 passed (39)
+      Tests  132 passed (132)
+   Start at  11:17:59
+   Duration  39.85s (environment 62%, import 23%, tests 8%, transform 6%, worker 1%)
+
+Environment  jsdom was created 39 times · 62.82s total, 62% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+

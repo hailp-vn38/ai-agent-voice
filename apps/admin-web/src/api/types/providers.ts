@@ -86,6 +86,7 @@ export interface ProviderAdapter {
   capabilities?: Record<string, unknown>
   config_schema?: ProviderConfigSchema
   secret_ref?: boolean
+  discovery?: { models?: string; voices?: string; languages?: string }
   supports_discovery?: boolean
 }
 
@@ -112,6 +113,8 @@ export interface ProviderConfigSchema {
 }
 
 export interface ProviderAdapterDiscoverInput {
+  api_key?: string
+  saved_credential?: { key: string; expected_revision: number }
   selection: Record<string, unknown>
 }
 

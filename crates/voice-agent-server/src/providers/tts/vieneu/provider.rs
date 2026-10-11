@@ -27,14 +27,12 @@ impl TtsProvider for VieneuHttpProvider {
     }
 
     fn validate_diagnostic(&self, request: &TtsDiagnosticRequest) -> Result<(), TtsError> {
-        if request
-            .voice
+        if request.voice.as_ref().is_some_and(|voice| {
+            voice.trim().is_empty() || voice.len() > 128 || voice.chars().any(char::is_control)
+        }) || request
+            .language
             .as_ref()
-            .is_some_and(|voice| voice != &self.config.voice)
-            || request
-                .language
-                .as_ref()
-                .is_some_and(|language| language != &self.config.language)
+            .is_some_and(|language| language != &self.config.language)
         {
             Err(TtsError::DiagnosticOverrideUnsupported)
         } else {
@@ -93,6 +91,22 @@ impl TtsWorker for VieneuHttpWorker {
                     result.map_err(|_| TtsError::RemoteTimeout)?,
             }
         })
+    }
+
+    fn synthesize_diagnostic(
+        &mut self,
+        request: &TtsSynthesisRequest,
+        diagnostic: &TtsDiagnosticRequest,
+        cancelled: &AtomicBool,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        let original = self.config.voice.clone();
+        if let Some(voice) = &diagnostic.voice {
+            self.config.voice.clone_from(voice);
+        }
+        let result = self.synthesize(request, cancelled, on_pcm);
+        self.config.voice = original;
+        result
     }
 
     fn reset(&mut self) -> Result<(), TtsError> {

@@ -1338,6 +1338,45 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
 }
 
 #[tokio::test]
+async fn vieneu_remote_discovery_uses_write_only_credentials_without_materializing_a_runtime() {
+    let upstream = axum::Router::new().route("/v1/voices", axum::routing::get(|headers: axum::http::HeaderMap| async move {
+        assert_eq!(headers["authorization"], "Bearer voice-fixture-secret");
+        axum::Json(serde_json::json!({"data":[{"id":"Trúc Ly","name":"Trúc Ly"},{"id":"Custom","name":"Custom"}]}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let upstream_task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    let url = format!("{base}/api/admin/provider-adapters/vieneu_http/capabilities/discover");
+    let descriptor: serde_json::Value = client
+        .get(format!("{base}/api/admin/provider-adapters/vieneu_http"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(descriptor["discovery"]["voices"], "remote");
+    let response = client.post(&url).bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"selection":{"base_url":upstream_url},"api_key":"voice-fixture-secret"}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("voice-fixture-secret"));
+    let voices: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(voices["voices"][0]["id"], "Trúc Ly");
+    assert_eq!(voices["voices"][1]["id"], "Custom");
+    let response = client.post(&url).bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"selection":{"base_url":upstream_url},"saved_credential":{"key":"missing","expected_revision":1}}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    task.abort();
+    upstream_task.abort();
+}
+
+#[tokio::test]
 async fn templates_and_provider_desired_configuration_are_bounded_and_restart_honest() {
     let (base, task) = server(true).await;
     let client = Client::new();

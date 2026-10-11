@@ -1,4 +1,4 @@
-//! Read-only adapter descriptor and metadata-only bootstrap discovery endpoints.
+//! Adapter metadata with local bootstrap and explicit remote voice discovery.
 
 use super::*;
 use crate::providers::{
@@ -10,6 +10,8 @@ use axum::extract::RawQuery;
 #[serde(deny_unknown_fields)]
 struct BootstrapRequest {
     selection: Value,
+    api_key: Option<crate::database::secrets::SecretValue>,
+    saved_credential: Option<crate::services::test_credentials::SavedCredential>,
 }
 
 pub(super) async fn list_provider_adapters(
@@ -128,6 +130,7 @@ pub(super) async fn get_provider_capabilities(
 }
 
 pub(super) async fn discover_provider_capabilities(
+    State(state): State<AppState>,
     Path(adapter): Path<String>,
     request: Request,
 ) -> Response {
@@ -139,12 +142,56 @@ pub(super) async fn discover_provider_capabilities(
     if registry.get(&adapter).is_none() {
         return error(&request, StatusCode::NOT_FOUND, "not_found");
     }
+    if adapter == "vieneu_http" {
+        let mut draft = crate::services::provider_test::ProviderTestDraft {
+            kind: "tts".into(),
+            adapter,
+            config_json: body.selection,
+            api_key: body.api_key,
+            saved_credential: body.saved_credential,
+        };
+        let runner = crate::services::provider_test::ProviderTestRunner {
+            diagnostics: &state.provider_diagnostics,
+            database: state.database.as_deref(),
+            secrets: state.secret_resolver.clone(),
+        };
+        let credential = match runner.credential(&mut draft).await {
+            Ok(value) => value,
+            Err(cause) => return provider_test_drafts::failure(&request, cause),
+        };
+        return match crate::providers::tts::vieneu::voices::discover(
+            &draft.config_json,
+            credential.as_ref(),
+        )
+        .await
+        {
+            Ok(capabilities) => Json(capabilities).into_response(),
+            Err(ProviderInspectError::InvalidSelection) => error(
+                &request,
+                StatusCode::BAD_REQUEST,
+                "capability_discovery_invalid",
+            ),
+            Err(_) => error(
+                &request,
+                StatusCode::BAD_GATEWAY,
+                "capability_discovery_unavailable",
+            ),
+        };
+    }
+    if body.api_key.is_some() || body.saved_credential.is_some() {
+        return error(&request, StatusCode::BAD_REQUEST, "credential_invalid");
+    }
     match registry.discover(&adapter, &body.selection) {
         Ok(capabilities) => Json(capabilities).into_response(),
         Err(ProviderInspectError::InvalidSelection) => error(
             &request,
             StatusCode::BAD_REQUEST,
             "capability_discovery_invalid",
+        ),
+        Err(ProviderInspectError::RemoteUnavailable) => error(
+            &request,
+            StatusCode::BAD_GATEWAY,
+            "capability_discovery_unavailable",
         ),
         Err(ProviderInspectError::Unsupported) => error(
             &request,

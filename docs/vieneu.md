@@ -28,7 +28,7 @@ In Studio, create a TTS provider with adapter **VieNeu HTTP Streaming** and this
 }
 ```
 
-The base URL includes `/v1`. Voice is the exact preset or registered voice name; the upstream `GET /v1/voices` endpoint lists valid names. Language defaults to `vi-VN`. Credentials belong in the separate API key field, never `config_json`. Bind the new Provider Instance to the Agent or its Template and use the TTS test panel to verify audio. A provider can be created and its Rust runtime materialized before VieNeu is online; availability is checked on synthesis.
+The base URL includes `/v1`. Use **Tải danh sách giọng** in the create/edit form or TTS test panel to load presets and registered voices from the service's `GET /v1/voices` endpoint, then choose a voice. Editing can reuse the saved credential without exposing it; a replacement key is used only for the current request until saved. Discovery does not load inference, persist configuration or change the runtime. It has a ten-second maximum timeout and bounded response size. If discovery is unavailable, the configuration still accepts an exact voice name manually. A test-panel voice override applies to that test only. Language defaults to `vi-VN`. Credentials belong in the separate API key field, never `config_json`. Bind the new Provider Instance to the Agent or its Template and use the TTS test panel to verify audio. A provider can be created and its Rust runtime materialized before VieNeu is online; availability is checked on synthesis.
 
 Studio draft tests require `[provider_runtime]` to be enabled. In legacy startup mode, save and bind the provider, then restart before testing the loaded instance.
 

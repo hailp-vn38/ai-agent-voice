@@ -120,6 +120,42 @@ fn pcm_response(body: Body) -> Response<Body> {
 }
 
 #[tokio::test]
+async fn diagnostic_voice_override_does_not_change_the_retained_default() {
+    let (sent, mut received) = tokio::sync::mpsc::channel(2);
+    let app = Router::new().route(
+        "/v1/audio/speech",
+        post(move |axum::Json(body): axum::Json<Value>| {
+            let sent = sent.clone();
+            async move {
+                sent.send(body["voice"].clone()).await.unwrap();
+                pcm_response(Body::from(vec![0, 1]))
+            }
+        }),
+    );
+    let (url, server) = serve(app).await;
+    tokio::task::spawn_blocking(move || {
+        let mut worker = worker(&url, 2000);
+        let cancelled = AtomicBool::new(false);
+        let diagnostic = voice_agent_server::providers::tts::TtsDiagnosticRequest {
+            text: "Xin chào".into(),
+            voice: Some("Trúc Ly".into()),
+            language: None,
+        };
+        worker
+            .synthesize_diagnostic(&request(), &diagnostic, &cancelled, &mut |_| Ok(()))
+            .unwrap();
+        worker
+            .synthesize(&request(), &cancelled, &mut |_| Ok(()))
+            .unwrap();
+    })
+    .await
+    .unwrap();
+    assert_eq!(received.recv().await.unwrap(), "Trúc Ly");
+    assert_eq!(received.recv().await.unwrap(), "Mai Anh");
+    server.abort();
+}
+
+#[tokio::test]
 async fn streams_before_completion_preserves_split_samples_and_sends_the_vieneu_contract() {
     let (release, tail) = tokio::sync::oneshot::channel();
     let tail = Arc::new(tokio::sync::Mutex::new(Some(tail)));

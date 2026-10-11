@@ -1,6 +1,7 @@
 use crate::providers::{
     capabilities::{
-        CapabilityDiscoveryMode, DiscoverySource, LanguageOption, ProviderCapabilities,
+        CapabilityDiscoveryMode, CapabilitySource, DiscoverySource, LanguageOption,
+        ProviderCapabilities,
     },
     descriptor::{
         ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
@@ -25,7 +26,7 @@ const FIELDS: &[ProviderConfigField] = &[
         "VieNeu voice name",
         ConfigFieldType::String,
         true,
-        None,
+        Some(CapabilitySource::Voices),
         None,
         None,
         Some(128),
@@ -76,7 +77,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     },
     discovery: CapabilityDiscoveryMode {
         models: DiscoverySource::Unsupported,
-        voices: DiscoverySource::Unsupported,
+        voices: DiscoverySource::Remote,
         languages: DiscoverySource::Static,
     },
 };

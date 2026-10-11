@@ -8,6 +8,7 @@ import type { ProviderType } from '@/domain/admin'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { useMicrophoneRecorder } from '@/composables/useMicrophoneRecorder'
+import ProviderVoiceDiscovery from './ProviderVoiceDiscovery.vue'
 import VoiceRecordingDock from '@/components/voice/VoiceRecordingDock.vue'
 
 const props = defineProps<{ type: ProviderType; savedKey?: string; revision?: number; adapter?: string; capabilities?: Record<string, unknown>; draft?: ProviderTestDraft }>()
@@ -20,7 +21,7 @@ const languageResult = ref('')
 const durationMs = ref<number>()
 const rtf = ref<number>()
 const discoveredCapabilities = ref<Record<string, unknown>>()
-const capabilities = computed(() => props.capabilities ?? discoveredCapabilities.value)
+const capabilities = computed(() => ({ ...props.capabilities, ...discoveredCapabilities.value }))
 function options(key: 'voices' | 'languages') {
   const values = capabilities.value?.[key]
   return Array.isArray(values) ? values.flatMap((item) => {
@@ -106,6 +107,8 @@ async function run() {
 
 <template>
   <section class="space-y-3" aria-live="polite">
+    <ProviderVoiceDiscovery v-if="adapter === 'vieneu_http'" :draft="draft" :saved-key="savedKey" @discovered="discoveredCapabilities = $event" />
+
     <h3 class="text-sm font-semibold">{{ t('diagnostics.currentTest') }}</h3>
     <p v-if="draft" class="text-xs text-muted-foreground">{{ t('diagnostics.draftHint') }}</p>
     <p v-if="!supported" class="text-sm text-muted-foreground">{{ t('diagnostics.unsupported') }}</p>

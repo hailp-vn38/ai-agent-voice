@@ -50,9 +50,63 @@ pub struct ProviderTestRunner<'a> {
     pub secrets: Arc<dyn SecretResolver>,
 }
 impl ProviderTestRunner<'_> {
+    pub(crate) async fn credential(
+        &self,
+        draft: &mut ProviderTestDraft,
+    ) -> Result<Option<SecretValue>, ProviderTestError> {
+        if draft.api_key.is_some() && draft.saved_credential.is_some() {
+            return Err(ProviderTestError::Credential);
+        }
+        let credential = if let Some(saved) = draft.saved_credential.take() {
+            let database = self
+                .database
+                .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
+            let (_, _, kind, adapter, _, revision, _, record) = database
+                .diagnostic_provider_row(&saved.key)
+                .await
+                .map_err(|e| match e {
+                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
+                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
+                })?;
+            if revision != saved.expected_revision {
+                return Err(ProviderDiagnosticRequestError::RevisionConflict.into());
+            }
+            if kind != draft.kind || adapter != draft.adapter {
+                return Err(ProviderTestError::Credential);
+            }
+            let reference = crate::database::credentials::reference(
+                &format!("provider:{}", saved.key),
+                record.as_deref(),
+                crate::database::secrets::provider_secret_env(&saved.key, &adapter),
+            )
+            .ok_or(ProviderTestError::Credential)?;
+            Some(
+                self.secrets
+                    .resolve(
+                        &crate::database::secrets::SecretRef::parse(reference)
+                            .map_err(|_| ProviderTestError::Credential)?,
+                    )
+                    .map_err(|_| ProviderTestError::Credential)?,
+            )
+        } else {
+            draft.api_key.take()
+        };
+        if credential
+            .as_ref()
+            .is_some_and(|value| !crate::database::credentials::valid_input(value))
+            || (credential.is_some()
+                && !matches!(
+                    draft.adapter.as_str(),
+                    "openai" | "chillaudio_ws" | "vieneu_http"
+                ))
+        {
+            return Err(ProviderTestError::Credential);
+        }
+        Ok(credential)
+    }
     pub async fn run(
         &self,
-        draft: ProviderTestDraft,
+        mut draft: ProviderTestDraft,
         input: ProviderTestInput,
     ) -> Result<ProviderTestOutput, ProviderTestError> {
         let expected = match &input {
@@ -95,54 +149,7 @@ impl ProviderTestRunner<'_> {
             }
             _ => {}
         }
-        if draft.api_key.is_some() && draft.saved_credential.is_some() {
-            return Err(ProviderTestError::Credential);
-        }
-        let credential = if let Some(saved) = draft.saved_credential {
-            let database = self
-                .database
-                .ok_or(ProviderDiagnosticRequestError::DatabaseUnavailable)?;
-            let (_, _, kind, adapter, _, revision, _, record) = database
-                .diagnostic_provider_row(&saved.key)
-                .await
-                .map_err(|e| match e {
-                    sqlx::Error::RowNotFound => ProviderDiagnosticRequestError::NotFound,
-                    _ => ProviderDiagnosticRequestError::DatabaseUnavailable,
-                })?;
-            if revision != saved.expected_revision {
-                return Err(ProviderDiagnosticRequestError::RevisionConflict.into());
-            }
-            if kind != draft.kind || adapter != draft.adapter {
-                return Err(ProviderTestError::Credential);
-            }
-            let reference = crate::database::credentials::reference(
-                &format!("provider:{}", saved.key),
-                record.as_deref(),
-                crate::database::secrets::provider_secret_env(&saved.key, &adapter),
-            )
-            .ok_or(ProviderTestError::Credential)?;
-            Some(
-                self.secrets
-                    .resolve(
-                        &crate::database::secrets::SecretRef::parse(reference)
-                            .map_err(|_| ProviderTestError::Credential)?,
-                    )
-                    .map_err(|_| ProviderTestError::Credential)?,
-            )
-        } else {
-            draft.api_key
-        };
-        if credential
-            .as_ref()
-            .is_some_and(|value| !crate::database::credentials::valid_input(value))
-            || (credential.is_some()
-                && !matches!(
-                    draft.adapter.as_str(),
-                    "openai" | "chillaudio_ws" | "vieneu_http"
-                ))
-        {
-            return Err(ProviderTestError::Credential);
-        }
+        let credential = self.credential(&mut draft).await?;
         let has_credential = credential.is_some();
         let secrets: Arc<dyn SecretResolver> = match credential {
             Some(value) => Arc::new(InlineCredential(value)),
