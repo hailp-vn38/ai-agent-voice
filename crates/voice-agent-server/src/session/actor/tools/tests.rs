@@ -1508,3 +1508,66 @@ fn tool_status_backpressure_does_not_prevent_tool_result_recording() {
         "the call finishes even if its terminal status was dropped"
     );
 }
+
+#[tokio::test]
+async fn server_external_mcp_reports_tool_lifecycle_without_client_device_mcp() {
+    let server = GatedServer::start().await;
+    let telemetry = Arc::new(crate::telemetry::RecordingTelemetry::default());
+    let (tx, mut rx) = mpsc::channel(8);
+    let mut actor =
+        session_with_external_mcp(gated_snapshot(&server, Arc::clone(&telemetry)).await)
+            .with_tool_status(true);
+    actor.control_tx = tx;
+    assert!(
+        actor.mcp.visible.is_empty(),
+        "web assistants do not advertise Device MCP"
+    );
+
+    let turn_id = actor
+        .begin_active_turn()
+        .expect("an active turn is admitted");
+    actor
+        .commit_user_text("get the forecast".to_owned())
+        .expect("accepted text belongs to the active turn");
+    actor.start_tool_batch(vec![ToolCall {
+        id: "server-mcp-call".to_owned(),
+        name: "external.weather.forecast".to_owned(),
+        arguments: serde_json::json!({}),
+    }]);
+    server.wait_until_held().await;
+    let started = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|message| match message {
+            OutboundMessage::TurnText { text, .. } => {
+                let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+                (value["type"] == "tool").then_some(value)
+            }
+            _ => None,
+        })
+        .expect("external MCP start status is observable");
+    assert_eq!(started["type"], "tool");
+    assert_eq!(started["state"], "started");
+    assert_eq!(started["name"], "external.weather.forecast");
+    assert_eq!(started["turn_id"], turn_id.get());
+
+    server.release();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while actor.tool_batch.is_some() {
+            actor.drain_external_call_completions();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("external MCP result completes the tool round");
+    let terminal = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|message| {
+            if let OutboundMessage::TurnText { text, .. } = message {
+                let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+                (value["type"] == "tool").then_some(value)
+            } else {
+                None
+            }
+        })
+        .expect("external tool terminal status was sent");
+    assert_eq!(terminal["state"], "completed");
+    assert_eq!(terminal["name"], "external.weather.forecast");
+}
