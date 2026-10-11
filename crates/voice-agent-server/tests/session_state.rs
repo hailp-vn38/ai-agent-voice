@@ -81,3 +81,30 @@ async fn auto_replaces_manual_capture_and_never_falls_back_when_vad_is_unavailab
     ));
     assert!(!actor.on_binary(packet.as_bytes().to_vec()));
 }
+
+#[tokio::test]
+async fn stop_auto_capture_releases_vad_without_closing_the_voice_session() {
+    let (control, _) = mpsc::channel(4);
+    let (audio, _) = mpsc::channel(4);
+    let mut actor = SessionActor::new(
+        "session".into(),
+        control,
+        audio,
+        4,
+        Arc::new(ProviderSet::unavailable()),
+    )
+    .unwrap();
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Start {
+        mode: ListenMode::Auto,
+    }));
+    assert_eq!(actor.phase(), SessionPhase::Listening);
+
+    actor.on_client_message(ClientMessage::listen(ListenCommand::Stop));
+    assert_eq!(actor.phase(), SessionPhase::Ready);
+    let packet = DownlinkOpusEncoder::new(65_536)
+        .unwrap()
+        .encode(DownlinkPcmFrame::try_new(Pcm16Mono::new(vec![0; 1_440])).unwrap())
+        .unwrap();
+    assert!(!actor.on_binary(packet.as_bytes().to_vec()));
+}
