@@ -38,7 +38,8 @@ fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
         server: ServerConfig {
             bind: address,
             public_ws_url: Url::parse(&format!("ws://{address}/voice/v1/")).unwrap(),
-            hello_timeout_ms: 500,
+            // SQLite work after upgrade must not race the protocol hello deadline.
+            hello_timeout_ms: 5_000,
         },
         auth: AuthConfig::default(),
         audio: AudioConfig::default(),

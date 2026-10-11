@@ -1,0 +1,12 @@
+Docker storage is under /mnt/storage
+ Container voice-agent-prod-web-1 Running 
+ Container voice-agent-prod-server-1 Recreate 
+ Container voice-agent-prod-server-1 Recreated 
+ Container voice-agent-prod-server-1 Starting 
+ Container voice-agent-prod-server-1 Started 
+ Container voice-agent-prod-server-1 Waiting 
+ Container voice-agent-prod-server-1 Healthy 
+ Container voice-agent-prod-server-1 Waiting 
+ Container voice-agent-prod-web-1 Waiting 
+ Container voice-agent-prod-server-1 Healthy 
+ Container voice-agent-prod-web-1 Healthy 

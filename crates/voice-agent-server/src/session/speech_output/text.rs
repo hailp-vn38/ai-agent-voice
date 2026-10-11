@@ -173,9 +173,9 @@ pub(super) fn sanitize_tts_text(input: &str) -> String {
             pending_space = true;
         }
     }
-    output
-        .chars()
-        .any(char::is_alphanumeric)
-        .then(|| output.trim().to_owned())
-        .unwrap_or_default()
+    if output.chars().any(char::is_alphanumeric) {
+        output.trim().to_owned()
+    } else {
+        String::new()
+    }
 }

@@ -184,14 +184,14 @@ async fn start_pilot(outcome: AsrOutcome, pilot: bool) -> (String, JoinHandle<()
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut providers_config = ProvidersConfig::default();
-    let vad = providers_config
-        .vad
-        .instances
-        .entry("test".into())
-        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
-    let VadInstanceConfig::SileroOnnx(vad) = vad;
-    vad.min_speech_ms = 32;
-    vad.end_silence_ms = 32;
+    providers_config.vad.instances.insert(
+        "test".into(),
+        VadInstanceConfig::SileroOnnx(SileroOnnxConfig {
+            min_speech_ms: 32,
+            end_silence_ms: 32,
+            ..Default::default()
+        }),
+    );
     let config = AppConfig {
         speaker_recognition: Default::default(),
         server: ServerConfig {
@@ -243,14 +243,14 @@ async fn start_barge_in() -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let mut providers_config = ProvidersConfig::default();
-    let vad = providers_config
-        .vad
-        .instances
-        .entry("test".into())
-        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
-    let VadInstanceConfig::SileroOnnx(vad) = vad;
-    vad.min_speech_ms = 32;
-    vad.end_silence_ms = 32;
+    providers_config.vad.instances.insert(
+        "test".into(),
+        VadInstanceConfig::SileroOnnx(SileroOnnxConfig {
+            min_speech_ms: 32,
+            end_silence_ms: 32,
+            ..Default::default()
+        }),
+    );
     let config = AppConfig {
         speaker_recognition: Default::default(),
         server: ServerConfig {

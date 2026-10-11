@@ -1,0 +1,16 @@
+Docker smoke passed: readiness, SPA, admin auth, WebSocket proxy/auth, SQLite
+Production adapter catalog passed: qualification adapters absent
+Production published localhost port readiness passed
+ Container voice-agent-prod-server-1 Restarting 
+ Container voice-agent-prod-server-1 Started 
+Docker storage is under /mnt/storage
+ Container voice-agent-prod-server-1 Running 
+ Container voice-agent-prod-web-1 Running 
+ Container voice-agent-prod-server-1 Waiting 
+ Container voice-agent-prod-server-1 Healthy 
+ Container voice-agent-prod-server-1 Waiting 
+ Container voice-agent-prod-web-1 Waiting 
+ Container voice-agent-prod-server-1 Healthy 
+ Container voice-agent-prod-web-1 Healthy 
+Docker smoke passed: readiness, SPA, admin auth, WebSocket proxy/auth, SQLite
+Production adapter catalog passed: qualification adapters absent

@@ -1,0 +1,3009 @@
+Docker storage is under /mnt/storage
+ Image voice-agent-server:qualification Building 
+ Image voice-agent-web:test Building 
+ Image voice-agent-test-server-check Building 
+ Image voice-agent-web:checks Building 
+ Image voice-agent-web:checks Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 2.48kB done
+#1 DONE 0.0s
+
+#2 [smoke internal] load build definition from web.Dockerfile
+#2 transferring dockerfile: 625B done
+#2 DONE 0.5s
+
+#3 [web] resolve image config for docker-image://docker.io/docker/dockerfile:1
+#3 ...
+
+#4 [server internal] load build definition from server.Dockerfile
+#4 transferring dockerfile: 2.63kB 0.0s done
+#4 DONE 0.8s
+
+#3 [server-check] resolve image config for docker-image://docker.io/docker/dockerfile:1
+#3 ...
+
+#5 [server] docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#5 CACHED
+
+#3 [server] resolve image config for docker-image://docker.io/docker/dockerfile:1
+#3 DONE 1.4s
+
+#5 [web] docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#5 CACHED
+
+#6 [server-check internal] load metadata for docker.io/library/rust:1.98.1-bookworm
+#6 DONE 2.0s
+
+#7 [server-check internal] load .dockerignore
+#7 transferring context:
+#7 transferring context: 267B 0.0s done
+#7 DONE 0.5s
+
+#8 [web-check internal] load metadata for docker.io/library/node:22-bookworm-slim
+#8 DONE 2.9s
+
+#7 [web-check internal] load .dockerignore
+#7 transferring context: 267B 0.0s done
+#7 DONE 0.5s
+
+#9 [server internal] load metadata for docker.io/library/debian:bookworm-slim
+#9 ...
+
+#10 [web internal] load metadata for docker.io/library/nginx:1.28-bookworm
+#10 DONE 3.3s
+
+#7 [web internal] load .dockerignore
+#7 transferring context: 267B 0.0s done
+#7 DONE 0.5s
+
+#9 [server internal] load metadata for docker.io/library/debian:bookworm-slim
+#9 ...
+
+#11 [server-check source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#11 DONE 0.0s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#9 [server internal] load metadata for docker.io/library/debian:bookworm-slim
+#9 DONE 3.4s
+
+#7 [server internal] load .dockerignore
+#7 transferring context: 267B 0.0s done
+#7 DONE 0.5s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#13 [smoke source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#13 DONE 0.0s
+
+#14 [smoke internal] load build context
+#14 DONE 0.0s
+
+#13 [web-check source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#13 DONE 0.0s
+
+#14 [web-check internal] load build context
+#14 DONE 0.0s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#13 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#13 DONE 0.0s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#11 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#11 DONE 0.0s
+
+#15 [server runtime 1/4] FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+#15 DONE 0.0s
+
+#16 [web production 1/3] FROM docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+#16 DONE 0.0s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#17 [web internal] load build context
+#17 transferring context: 15.21kB 0.4s done
+#17 DONE 0.7s
+
+#18 [web source 2/5] WORKDIR /app
+#18 CACHED
+
+#19 [web source 4/5] RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+#19 CACHED
+
+#20 [web build 1/1] RUN npm run build
+#20 CACHED
+
+#21 [web source 3/5] COPY apps/admin-web/package.json apps/admin-web/package-lock.json ./
+#21 CACHED
+
+#22 [web source 5/5] COPY apps/admin-web/ ./
+#22 CACHED
+
+#23 [web production 2/3] COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+#23 CACHED
+
+#24 [web production 3/3] COPY --from=build /app/dist /usr/share/nginx/html
+#24 CACHED
+
+#12 [server-check internal] load build context
+#12 ...
+
+#25 [web] exporting to image
+#25 exporting layers done
+#25 writing image sha256:2f271ef631c40c61436a78b46afa356975121f79cca28dd0cec149f1ca7ea9d9 0.1s done
+#25 naming to docker.io/library/voice-agent-web:test 0.2s done
+#25 DONE 0.5s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#14 [web-check internal] load build context
+#14 transferring context: 911.72kB 1.1s done
+#14 DONE 1.6s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#26 [smoke source 4/5] RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+#26 CACHED
+
+#18 [smoke source 2/5] WORKDIR /app
+#18 CACHED
+
+#27 [smoke source 3/5] COPY apps/admin-web/package.json apps/admin-web/package-lock.json ./
+#27 CACHED
+
+#28 [smoke source 5/5] COPY apps/admin-web/ ./
+#28 CACHED
+
+#29 [smoke test 1/1] COPY docker/smoke.mjs /smoke.mjs
+#29 CACHED
+
+#12 [server-check internal] load build context
+#12 ...
+
+#30 [web-check] exporting to image
+#30 exporting layers done
+#30 writing image sha256:c8aede3a148e18ded6e0c093e683f8b8750331209f04056569db288ce281920c 0.2s done
+#30 naming to docker.io/library/voice-agent-web:checks 0.2s done
+#30 DONE 0.7s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#31 [smoke] exporting to image
+#31 exporting layers done
+#31 writing image sha256:19a6701a6290848f25e5d8faca3da2bf55c95dafd51867a5e45196c5a140b7f0 0.2s done
+#31 naming to docker.io/library/voice-agent-web:checks 0.2s done
+#31 DONE 1.1s
+
+#12 [server-check internal] load build context
+#12 transferring context: 394.19MB 6.6s
+#12 ...
+
+#32 [web] resolving provenance for metadata file
+#32 DONE 0.0s
+
+#33 [web-check] resolving provenance for metadata file
+#33 DONE 0.0s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#34 [smoke] resolving provenance for metadata file
+#34 DONE 0.0s
+
+#12 [server-check internal] load build context
+#12 ...
+
+#35 [server internal] load build context
+#35 ...
+
+#12 [server-check internal] load build context
+#12 transferring context: 713.26MB 11.8s
+#12 transferring context: 960.87MB 15.5s done
+#12 DONE 17.2s
+
+#35 [server internal] load build context
+#35 transferring context: 960.84MB 15.5s done
+#35 DONE 16.8s
+
+#36 [server-check source  5/10] COPY .cargo .cargo
+#36 CACHED
+
+#37 [server-check source  6/10] COPY crates crates
+#37 DONE 16.1s
+
+#38 [server-check source  7/10] COPY prompts prompts
+#38 DONE 1.5s
+
+#39 [server-check source  8/10] COPY assets assets
+#39 DONE 1.3s
+
+#40 [server-check source  9/10] COPY config.example.toml ./
+#40 DONE 1.1s
+
+#41 [server-check source 10/10] COPY docker docker
+#41 DONE 1.3s
+
+#42 [server-check source 10/10] COPY docker docker
+#42 CACHED
+
+#43 [server-check source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#43 CACHED
+
+#44 [server-check source  3/10] WORKDIR /app
+#44 CACHED
+
+#45 [server-check source  7/10] COPY prompts prompts
+#45 CACHED
+
+#46 [server-check source  6/10] COPY crates crates
+#46 CACHED
+
+#47 [server-check source  9/10] COPY config.example.toml ./
+#47 CACHED
+
+#48 [server-check source  4/10] COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+#48 CACHED
+
+#49 [server-check source  5/10] COPY .cargo .cargo
+#49 CACHED
+
+#50 [server-check source  8/10] COPY assets assets
+#50 CACHED
+
+#51 [server-check test 1/2] RUN rustup component add rustfmt clippy
+#51 ...
+
+#36 [server source  5/10] COPY .cargo .cargo
+#36 CACHED
+
+#51 [server-check test 1/2] RUN rustup component add rustfmt clippy
+#51 ...
+
+#37 [server source  6/10] COPY crates crates
+#37 DONE 16.1s
+
+#38 [server source  7/10] COPY prompts prompts
+#38 DONE 1.5s
+
+#39 [server source  8/10] COPY assets assets
+#39 DONE 1.3s
+
+#40 [server source  9/10] COPY config.example.toml ./
+#40 DONE 1.1s
+
+#41 [server source 10/10] COPY docker docker
+#41 DONE 1.3s
+
+#52 [server source  5/10] COPY .cargo .cargo
+#52 CACHED
+
+#53 [server source  4/10] COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+#53 CACHED
+
+#54 [server source  8/10] COPY assets assets
+#54 CACHED
+
+#55 [server source  9/10] COPY config.example.toml ./
+#55 CACHED
+
+#44 [server source  3/10] WORKDIR /app
+#44 CACHED
+
+#43 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#43 CACHED
+
+#56 [server source  6/10] COPY crates crates
+#56 CACHED
+
+#57 [server source  7/10] COPY prompts prompts
+#57 CACHED
+
+#58 [server source 10/10] COPY docker docker
+#58 CACHED
+
+#59 [server qualification-build 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked -p voice-agent-server --bin voice-agent-server --features qualification-providers     && cp /mnt/storage/ai-agent-voice/target/debug/voice-agent-server /voice-agent-server
+#59 ...
+
+#51 [server-check test 1/2] RUN rustup component add rustfmt clippy
+#51 5.968 info: syncing channel updates for 1.98.1-x86_64-unknown-linux-gnu
+#51 6.754 info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+#51 6.775 info: downloading 2 components
+#51 8.544 info: component rustfmt is up to date
+#51 8.544 info: component clippy is up to date
+#51 DONE 19.2s
+
+#59 [server qualification-build 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked -p voice-agent-server --bin voice-agent-server --features qualification-providers     && cp /mnt/storage/ai-agent-voice/target/debug/voice-agent-server /voice-agent-server
+#59 ...
+
+#60 [server-check test 2/2] COPY scripts scripts
+#60 DONE 1.0s
+
+#59 [server qualification-build 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked -p voice-agent-server --bin voice-agent-server --features qualification-providers     && cp /mnt/storage/ai-agent-voice/target/debug/voice-agent-server /voice-agent-server
+#59 ...
+
+#61 [server-check] exporting to image
+#61 exporting layers
+#61 exporting layers 9.4s done
+#61 writing image sha256:9d6f3310a4159aab91d7d94f87fa2b41d3eb3f8bd51c87ed0afa030d17ebc5c1 0.1s done
+#61 naming to docker.io/library/voice-agent-test-server-check 0.1s done
+#61 DONE 10.0s
+
+#59 [server qualification-build 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked -p voice-agent-server --bin voice-agent-server --features qualification-providers     && cp /mnt/storage/ai-agent-voice/target/debug/voice-agent-server /voice-agent-server
+#59 ...
+
+#62 [server-check] resolving provenance for metadata file
+#62 DONE 0.4s
+
+#59 [server qualification-build 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked -p voice-agent-server --bin voice-agent-server --features qualification-providers     && cp /mnt/storage/ai-agent-voice/target/debug/voice-agent-server /voice-agent-server
+#59 266.4 info: syncing channel updates for 1.98.1-x86_64-unknown-linux-gnu
+#59 267.1 info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+#59 267.1 info: downloading 2 components
+#59 289.3    Compiling voice-agent-server v0.1.0 (/app/crates/voice-agent-server)
+#59 395.1     Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 06s
+#59 DONE 401.6s
+
+#63 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#63 CACHED
+
+#64 [server runtime 3/4] WORKDIR /app
+#64 CACHED
+
+#65 [server runtime 4/4] COPY assets/enrollment assets/enrollment
+#65 CACHED
+
+#66 [server runtime 4/4] COPY assets/enrollment assets/enrollment
+#66 CACHED
+
+#67 [server qualification 1/1] COPY --from=qualification-build /voice-agent-server /usr/local/bin/voice-agent-server
+#67 DONE 3.8s
+
+#68 [server] exporting to image
+#68 exporting layers
+#68 exporting layers 3.4s done
+#68 writing image sha256:82628569cba26ce9421d8ebd264fd2b3e0be765b4a37892ab29d0fe93987b893 0.0s done
+#68 naming to docker.io/library/voice-agent-server:qualification 0.1s done
+#68 DONE 3.7s
+
+#69 [server] resolving provenance for metadata file
+#69 DONE 0.0s
+ Image voice-agent-server:qualification Built 
+ Image voice-agent-test-server-check Built 
+ Image voice-agent-web:checks Built 
+ Image voice-agent-web:test Built 
+ Image voice-agent-web:checks Built 
+ Container voice-agent-test-server-check-run-1d95e9764f74 Creating 
+ Container voice-agent-test-server-check-run-1d95e9764f74 Created 
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded adler2 v2.0.1
+  Downloaded hex v0.4.3
+  Downloaded ident_case v1.0.1
+  Downloaded heck v0.5.0
+  Downloaded itoa v1.0.18
+  Downloaded http-body v1.1.0
+  Downloaded pkcs1 v0.7.5
+  Downloaded httpdate v1.0.3
+  Downloaded home v0.5.12
+  Downloaded inout v0.1.4
+  Downloaded mime v0.3.17
+  Downloaded percent-encoding v2.3.2
+  Downloaded lru-slab v0.1.3
+  Downloaded num-conv v0.2.2
+  Downloaded option-ext v0.2.0
+  Downloaded tokio-tungstenite v0.29.0
+  Downloaded md-5 v0.10.6
+  Downloaded hashlink v0.10.0
+  Downloaded monostate-impl v0.1.18
+  Downloaded macro_rules_attribute v0.2.3
+  Downloaded macro_rules_attribute-proc_macro v0.2.3
+  Downloaded tokio-tungstenite v0.30.0
+  Downloaded lazy_static v1.5.0
+  Downloaded matchers v0.2.0
+  Downloaded num-iter v0.1.46
+  Downloaded parking v2.2.1
+  Downloaded tokio-rustls v0.26.5
+  Downloaded idna_adapter v1.2.2
+  Downloaded multiversion_no_op v1.0.0
+  Downloaded pbkdf2 v0.12.2
+  Downloaded monostate v0.1.18
+  Downloaded mime_guess v2.0.5
+  Downloaded multer v3.1.0
+  Downloaded http-body-util v0.1.5
+  Downloaded onig v6.5.3
+  Downloaded openssl-probe v0.2.1
+  Downloaded ipnet v2.12.2
+  Downloaded jobserver v0.1.35
+  Downloaded toml_datetime v0.6.11
+  Downloaded pest_derive v2.9.2
+  Downloaded toml_write v0.1.2
+  Downloaded hyper-rustls v0.27.10
+  Downloaded lzma-rs v0.3.0
+  Downloaded nu-ansi-term v0.50.3
+  Downloaded num-complex v0.4.6
+  Downloaded opus2 v0.4.0
+  Downloaded paste v1.0.15
+  Downloaded pastey v0.2.3
+  Downloaded pem-rfc7468 v0.7.0
+  Downloaded pest_generator v2.9.2
+  Downloaded serde_urlencoded v0.7.1
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded utf8_iter v1.0.4
+  Downloaded hmac v0.12.1
+  Downloaded hound v3.5.1
+  Downloaded hybrid-array v0.4.15
+  Downloaded libloading v0.9.0
+  Downloaded lock_api v0.4.14
+  Downloaded ndarray-npy v0.10.0
+  Downloaded num-integer v0.1.47
+  Downloaded pest_meta v2.9.2
+  Downloaded strsim v0.11.1
+  Downloaded unit-prefix v0.5.2
+  Downloaded want v0.3.1
+  Downloaded rustversion v1.0.23
+  Downloaded httparse v1.10.1
+  Downloaded iana-time-zone v0.1.65
+  Downloaded tower-service v0.3.3
+  Downloaded version_check v0.9.5
+  Downloaded webpki-roots v0.26.11
+  Downloaded matchit v0.8.4
+  Downloaded once_cell v1.21.4
+  Downloaded parking_lot v0.12.5
+  Downloaded parking_lot_core v0.9.12
+  Downloaded pin-project-lite v0.2.17
+  Downloaded litemap v0.8.3
+  Downloaded sha2 v0.10.9
+  Downloaded simd-adler32 v0.3.10
+  Downloaded simdutf8 v0.1.5
+  Downloaded getrandom v0.4.3
+  Downloaded untrusted v0.9.0
+  Downloaded icu_provider v2.3.1
+  Downloaded log v0.4.34
+  Downloaded ort-sys v2.0.0-rc.13
+  Downloaded matrixmultiply v0.3.11
+  Downloaded num-traits v0.2.19
+  Downloaded tinyvec v1.13.3
+  Downloaded icu_normalizer_data v2.3.0
+  Downloaded synstructure v0.14.0
+  Downloaded xattr v1.6.1
+  Downloaded hashbrown v0.15.5
+  Downloaded icu_collections v2.3.0
+  Downloaded miniz_oxide v0.9.1
+  Downloaded try-lock v0.2.5
+  Downloaded icu_locale_core v2.3.0
+  Downloaded sherpa-onnx v1.13.8
+  Downloaded cfg-if v1.0.5
+  Downloaded cfg_aliases v0.2.2
+  Downloaded tower-layer v0.3.3
+  Downloaded indicatif v0.18.6
+  Downloaded icu_properties v2.3.0
+  Downloaded minimal-lexical v0.2.1
+  Downloaded thiserror-impl v1.0.69
+  Downloaded rsa v0.9.10
+  Downloaded serde v1.0.229
+  Downloaded atoi v2.0.0
+  Downloaded zerofrom-derive v0.1.8
+  Downloaded block-buffer v0.10.4
+  Downloaded yoke-derive v0.8.3
+  Downloaded http v1.5.0
+  Downloaded memchr v2.8.3
+  Downloaded num-bigint v0.4.8
+  Downloaded chacha20 v0.10.2
+  Downloaded crossbeam-deque v0.8.8
+  Downloaded indexmap v2.14.2
+  Downloaded mio v1.2.3
+  Downloaded nom v7.1.3
+  Downloaded derive_builder_macro v0.20.2
+  Downloaded hyper-util v0.1.20
+  Downloaded crc32fast v1.5.2
+  Downloaded sqlx-core v0.8.6
+  Downloaded dirs-sys v0.5.0
+  Downloaded num-bigint-dig v0.8.6
+  Downloaded hashbrown v0.17.1
+  Downloaded ort v2.0.0-rc.13
+  Downloaded pest v2.9.2
+  Downloaded itertools v0.14.0
+  Downloaded reqwest v0.12.28
+  Downloaded equivalent v1.0.2
+  Downloaded zerofrom v0.1.8
+  Downloaded block-buffer v0.12.1
+  Downloaded der v0.7.10
+  Downloaded displaydoc v0.2.7
+  Downloaded errno v0.3.14
+  Downloaded hkdf v0.12.4
+  Downloaded hyper v1.11.1
+  Downloaded icu_properties_data v2.3.0
+  Downloaded idna v1.1.0
+  Downloaded libm v0.2.16
+  Downloaded zeroize_derive v1.5.0
+  Downloaded subtle v2.6.1
+  Downloaded tokio-stream v0.1.19
+  Downloaded toml_datetime v1.1.1+spec-1.1.0
+  Downloaded toml_parser v1.1.3+spec-1.1.0
+  Downloaded zeroize v1.9.0
+  Downloaded async-trait v0.1.92
+  Downloaded tracing-log v0.2.0
+  Downloaded whoami v1.6.1
+  Downloaded atomic-waker v1.1.2
+  Downloaded axum-core v0.5.6
+  Downloaded byteorder v1.5.0
+  Downloaded zstd v0.13.3
+  Downloaded sqlx v0.8.6
+  Downloaded fs_extra v1.3.0
+  Downloaded futures v0.3.34
+  Downloaded ndarray v0.17.2
+  Downloaded pkcs8 v0.10.2
+  Downloaded powerfmt v0.2.0
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded proc-macro2 v1.0.107
+  Downloaded time v0.3.55
+  Downloaded chrono v0.4.45
+  Downloaded py_literal v0.4.0
+  Downloaded unicase v2.9.0
+  Downloaded xz2 v0.1.7
+  Downloaded zerovec-derive v0.11.6
+  Downloaded zmij v1.0.23
+  Downloaded zstd-safe v7.3.0
+  Downloaded anyhow v1.0.104
+  Downloaded autocfg v1.5.1
+  Downloaded base64ct v1.8.3
+  Downloaded darling_macro v0.20.11
+  Downloaded esaxx-rs v0.1.10
+  Downloaded llm v1.3.8
+  Downloaded quinn-udp v0.5.15
+  Downloaded quote v1.0.47
+  Downloaded rand v0.8.8
+  Downloaded rustls v0.23.45
+  Downloaded secrecy v0.8.0
+  Downloaded serde_bytes v0.11.19
+  Downloaded serde_derive v1.0.229
+  Downloaded serde_path_to_error v0.1.20
+  Downloaded serde_spanned v1.1.1
+  Downloaded sha1 v0.11.0
+  Downloaded toml v0.8.23
+  Downloaded toml_writer v1.1.2+spec-1.1.0
+  Downloaded cipher v0.4.4
+  Downloaded writeable v0.6.4
+  Downloaded arrayvec v0.7.8
+  Downloaded ucd-trie v0.1.7
+  Downloaded axum-macros v0.5.1
+  Downloaded bitflags v1.3.2
+  Downloaded tokio-macros v2.7.2
+  Downloaded serde_core v1.0.229
+  Downloaded serde_spanned v0.6.9
+  Downloaded symphonia v0.5.5
+  Downloaded ahash v0.8.12
+  Downloaded unicode-properties v0.1.4
+  Downloaded constant_time_eq v0.3.1
+  Downloaded futures-channel v0.3.34
+  Downloaded tracing-attributes v0.1.31
+  Downloaded toml v1.1.6+spec-1.1.0
+  Downloaded tracing-core v0.1.36
+  Downloaded unicode-bidi v0.3.18
+  Downloaded yoke v0.8.3
+  Downloaded zopfli v0.8.3
+  Downloaded allocator-api2 v0.2.21
+  Downloaded base64 v0.13.1
+  Downloaded bitflags v2.13.2
+  Downloaded bytemuck v1.25.2
+  Downloaded quinn v0.11.12
+  Downloaded ryu v1.0.23
+  Downloaded tinystr v0.8.4
+  Downloaded toml_edit v0.22.27
+  Downloaded find-msvc-tools v0.1.13
+  Downloaded icu_normalizer v2.3.0
+  Downloaded crypto-common v0.2.2
+  Downloaded either v1.18.0
+  Downloaded filetime v0.2.29
+  Downloaded lzma-sys v0.1.20
+  Downloaded onig_sys v69.9.3
+  Downloaded quinn-proto v0.11.18
+  Downloaded rand_core v0.9.5
+  Downloaded scopeguard v1.2.0
+  Downloaded crypto-common v0.1.7
+  Downloaded libc v0.2.189
+  Downloaded pkg-config v0.3.34
+  Downloaded rustls-webpki v0.103.15
+  Downloaded signature v2.2.0
+  Downloaded bzip2 v0.4.4
+  Downloaded darling v0.20.11
+  Downloaded foldhash v0.1.5
+  Downloaded slab v0.4.12
+  Downloaded tungstenite v0.30.0
+  Downloaded unicode-ident v1.0.26
+  Downloaded unsafe-libyaml v0.2.11
+  Downloaded base64 v0.22.1
+  Downloaded rand_pcg v0.10.2
+  Downloaded sha1 v0.10.7
+  Downloaded event-listener v5.4.2
+  Downloaded rand_core v0.10.1
+  Downloaded rawpointer v0.2.1
+  Downloaded rustls-pki-types v1.15.1
+  Downloaded rustls-platform-verifier v0.7.0
+  Downloaded spki v0.7.3
+  Downloaded stringprep v0.1.5
+  Downloaded symphonia-bundle-mp3 v0.5.5
+  Downloaded tar v0.4.46
+  Downloaded tokio v1.53.1
+  Downloaded potential_utf v0.1.6
+  Downloaded time-core v0.1.9
+  Downloaded const-oid v0.9.6
+  Downloaded crossbeam-utils v0.8.23
+  Downloaded dary_heap v0.3.9
+  Downloaded data-encoding v2.11.1
+  Downloaded deflate64 v0.1.12
+  Downloaded futures-sink v0.3.34
+  Downloaded const-oid v0.10.2
+  Downloaded rand_core v0.6.4
+  Downloaded getrandom v0.2.17
+  Downloaded sse-stream v0.2.4
+  Downloaded castaway v0.2.4
+  Downloaded crc-catalog v2.5.0
+  Downloaded crossbeam-epoch v0.9.21
+  Downloaded crossbeam-queue v0.3.14
+  Downloaded fnv v1.0.7
+  Downloaded generic-array v0.14.7
+  Downloaded portable-atomic v1.15.0
+  Downloaded serde_yaml v0.9.34+deprecated
+  Downloaded static_assertions v1.1.0
+  Downloaded cpufeatures v0.2.17
+  Downloaded cpufeatures v0.3.1
+  Downloaded rustc-hash v2.1.3
+  Downloaded sync_wrapper v1.0.2
+  Downloaded uuid v1.26.1
+  Downloaded sqlx-macros v0.8.6
+  Downloaded thiserror v2.0.20
+  Downloaded bzip2 v0.5.2
+  Downloaded digest v0.10.7
+  Downloaded rustls-native-certs v0.8.4
+  Downloaded sqlx-macros-core v0.8.6
+  Downloaded encoding_rs v0.8.42
+  Downloaded form_urlencoded v1.2.2
+  Downloaded futures-core v0.3.34
+  Downloaded sha2 v0.11.0
+  Downloaded dirs v6.0.0
+  Downloaded dunce v1.0.5
+  Downloaded tungstenite v0.29.0
+  Downloaded sqlx-sqlite v0.8.6
+  Downloaded deranged v0.5.8
+  Downloaded digest v0.11.3
+  Downloaded dotenvy v0.15.7
+  Downloaded flume v0.11.1
+  Downloaded getrandom v0.3.4
+  Downloaded reqwest v0.13.5
+  Downloaded sqlx-postgres v0.8.6
+  Downloaded flate2 v1.1.10
+  Downloaded tokenizers v0.22.2
+  Downloaded spm_precompiled v0.1.4
+  Downloaded regex-syntax v0.8.11
+  Downloaded rustix v1.1.5
+  Downloaded unicode_categories v0.1.1
+  Downloaded futures-macro v0.3.34
+  Downloaded futures-task v0.3.34
+  Downloaded rand_chacha v0.3.1
+  Downloaded rayon-cond v0.4.0
+  Downloaded zerotrie v0.2.5
+  Downloaded base64 v0.23.1
+  Downloaded crc v3.4.0
+  Downloaded futures-io v0.3.34
+  Downloaded rand_chacha v0.9.0
+  Downloaded shlex v2.0.1
+  Downloaded bytes v1.12.1
+  Downloaded core_detect v1.0.0
+  Downloaded futures-executor v0.3.34
+  Downloaded signal-hook-registry v1.4.8
+  Downloaded derive_builder v0.20.2
+  Downloaded sherpa-onnx-sys v1.13.8
+  Downloaded smallvec v1.16.1
+  Downloaded spin v0.9.9
+  Downloaded symphonia-metadata v0.5.5
+  Downloaded socket2 v0.6.5
+  Downloaded rand v0.10.3
+  Downloaded rand v0.9.5
+  Downloaded futures-intrusive v0.5.0
+  Downloaded regex-automata v0.4.18
+  Downloaded sqlx-mysql v0.8.6
+  Downloaded symphonia-core v0.5.5
+  Downloaded rayon v1.12.0
+  Downloaded console v0.16.6
+  Downloaded bumpalo v3.20.3
+  Downloaded darling_core v0.20.11
+  Downloaded unicode-normalization-alignments v0.1.12
+  Downloaded url v2.5.8
+  Downloaded zip v2.4.2
+  Downloaded syn v2.0.119
+  Downloaded ureq v2.12.1
+  Downloaded tower v0.5.3
+  Downloaded cmake v0.1.58
+  Downloaded thread_local v1.1.10
+  Downloaded derive_builder_core v0.20.2
+  Downloaded thiserror v1.0.69
+  Downloaded thiserror-impl v2.0.20
+  Downloaded unicode-segmentation v1.13.3
+  Downloaded typenum v1.20.1
+  Downloaded zerovec v0.11.8
+  Downloaded sharded-slab v0.1.7
+  Downloaded linux-raw-sys v0.12.1
+  Downloaded unicode-normalization v0.1.25
+  Downloaded aes v0.8.4
+  Downloaded rayon-core v1.13.0
+  Downloaded zip v6.0.0
+  Downloaded tower-http v0.6.11
+  Downloaded tokio-util v0.7.19
+  Downloaded compact_str v0.9.1
+  Downloaded serde_json v1.0.151
+  Downloaded libopus_sys v0.3.3
+  Downloaded cc v1.4.7
+  Downloaded aho-corasick v1.1.5
+  Downloaded libsqlite3-sys v0.30.1
+  Downloaded tower-http v0.7.1
+  Downloaded winnow v0.7.15
+  Downloaded axum v0.8.9
+  Downloaded winnow v1.0.4
+  Downloaded webpki-roots v1.0.9
+  Downloaded regex v1.13.1
+  Downloaded zlib-rs v0.6.8
+  Downloaded tracing-subscriber v0.3.23
+  Downloaded vcpkg v0.2.15
+  Downloaded futures-util v0.3.34
+  Downloaded aws-lc-rs v1.18.1
+  Downloaded unicode-width v0.2.2
+  Downloaded zerocopy v0.8.57
+  Downloaded syn v3.0.6
+  Downloaded tracing v0.1.44
+  Downloaded rmcp v3.5.0
+  Downloaded bzip2-sys v0.1.13+1.0.8
+  Downloaded zstd-sys v2.1.0+zstd.1.5.7
+  Downloaded ring v0.17.14
+  Downloaded aws-lc-sys v0.45.0
+    Checking voice-agent-server v0.1.0 (/app/crates/voice-agent-server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 57.87s
+   Compiling voice-agent-server v0.1.0 (/app/crates/voice-agent-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6m 01s
+     Running unittests src/lib.rs (/mnt/storage/ai-agent-voice/target/debug/deps/voice_agent_server-f8113cd615c8aed6)
+
+running 216 tests
+test app::admin::providers::provider_runtime_tests::a_generated_key_is_prefixed_by_type_and_never_repeats ... ok
+test app::admin::providers::provider_runtime_tests::loaded_runtime_becomes_stale_after_desired_revision_changes ... ok
+test app::admin::speaker_quick::tests::reservation_keeps_the_capture_accepted_until_a_speaker_is_linked ... ok
+test audio::enrollment::tests::centroid_is_the_renormalized_equal_weight_mean ... ok
+test audio::enrollment::tests::cosine_matches_hand_computed_fixtures ... ok
+test audio::enrollment::tests::embedding_validation_and_encoding ... ok
+test audio::enrollment::tests::pairwise_min_cosine_uses_the_worst_pair ... ok
+test app::admin::speaker_quick::tests::quick_voiceprint_insert_matches_its_columns ... ok
+test audio::canonical_downlink::tests::accepts_canonical_24khz_provider_pcm_without_resampling ... ok
+test audio::canonical_downlink::tests::finalizes_a_partial_provider_tail_as_one_canonical_packet ... ok
+test audio::enrollment::tests::parses_pcm16_mono_16k ... ok
+test audio::enrollment::tests::quality_gate_accepts_a_speech_like_clip ... ok
+test audio::enrollment::tests::rejects_stereo_and_other_rates_without_relabelling ... ok
+test audio::enrollment::tests::window_selection_prefers_the_speechiest_span ... ok
+test audio::resampler::tests::keeps_phase_across_arbitrary_chunks ... ok
+test benchmark::tests::asr_runner_uses_canonical_frames_and_rejects_a_partial_frame ... ok
+test audio::resampler::tests::attenuates_content_above_the_24khz_nyquist_band ... ok
+test benchmark::tests::invalid_pcm_is_rejected ... ok
+test benchmark::tests::kokoro_24khz_delivery_measures_real_duration_and_canonical_packets ... ok
+test benchmark::tests::llm_runner_uses_first_non_empty_text_delta_for_ttft ... ok
+test benchmark::tests::vad_runner_rejects_a_provider_that_mutates_the_input_timeline ... ok
+test benchmark::tests::vad_runner_reports_every_canonical_frame_and_rejects_a_partial_frame ... ok
+test config::agent_template_tests::accepts_only_the_supported_literal_placeholders ... ok
+test config::database_history_config_tests::the_default_history_configuration_is_the_documented_one ... ok
+test benchmark::tests::delivery_excludes_warmup_and_reports_canonical_packets ... ok
+test config::external_mcp_config_tests::an_omitted_section_deserializes_to_the_documented_defaults ... ok
+test config::external_mcp_config_tests::the_default_external_mcp_configuration_is_the_documented_one ... ok
+test config::providers::zerotts_delivery_tests::stream_delivery_is_default_and_file_remains_selectable ... ok
+test config::tool_round_config_tests::every_tool_round_cap_refuses_zero_and_its_hard_ceiling ... ok
+test config::tool_round_config_tests::the_default_tool_round_configuration_is_the_documented_one ... ok
+test config::validation::tests::capture_and_retention_bounds_are_checked_before_a_listener_binds ... ok
+test config::validation::tests::retention_is_bounded_whether_or_not_capture_is_on ... ok
+test config::validation::tests::speaker_recognition_bounds_are_enforced ... ok
+test database::admission::tests::admission_summary_reports_decision_facts_without_sensitive_values ... ok
+test database::admission::tests::admission_summary_truncates_beyond_the_bounded_prefix ... ok
+test database::credentials::file_tests::key_file_credentials_survive_reload_and_rotation ... ok
+test database::admission::tests::admission_summary_marks_an_unresolved_binding ... ok
+test database::external_mcp_policy::tests::http_and_https_work_without_network_configuration ... ok
+test database::external_mcp_policy::tests::malformed_urls_and_embedded_credentials_are_rejected ... ok
+test database::external_mcp_policy::tests::network_configuration_only_has_an_optional_host_allowlist ... ok
+test database::external_mcp_policy::tests::optional_host_allowlist_restricts_http_and_https ... ok
+test audio::enrollment::tests::rejects_clips_longer_than_the_cap ... ok
+test database::history::tests::a_full_queue_drops_one_record_and_never_waits ... ok
+test database::history::tests::a_session_without_a_database_identity_is_never_bound_to_the_archive ... ok
+test database::history::tests::a_role_has_exactly_the_two_words_the_archive_stores ... ok
+test database::history::tests::a_stopped_writer_drops_every_later_record ... ok
+test database::history::tests::one_session_archives_under_a_sequence_that_only_moves_forward ... ok
+test database::history::tests::retention_deletes_only_what_is_older_than_its_utc_cutoff ... ok
+test database::history::tests::text_outside_the_archive_bound_is_refused_rather_than_truncated ... ok
+test database::history::tests::the_writer_is_settled_only_once_it_holds_no_records ... ok
+test database::load_plan::tests::server_defaults_are_required_and_never_optional ... ok
+test database::secrets::deployment_name_tests::mcp_credentials_are_derived_only_for_authenticated_servers ... ok
+test database::secrets::deployment_name_tests::provider_credentials_are_derived_only_for_remote_adapters ... ok
+test lifecycle::tests::a_closed_gate_refuses_new_work_forever ... ok
+test database::tool_security::tests::speaker_invalidation_matches_every_pinned_dependency ... ok
+test lifecycle::tests::a_registry_counts_a_session_until_its_handle_drops ... ok
+test lifecycle::tests::a_drain_that_finishes_early_never_reaches_the_deadline ... ok
+test lifecycle::tests::an_archived_writer_is_flushed_without_waiting_for_the_deadline ... ok
+test lifecycle::tests::an_empty_process_drains_without_reaching_the_deadline ... ok
+test lifecycle::tests::the_admission_gate_is_not_a_session_generation_gate ... ok
+test lifecycle::tests::the_deadline_reports_the_sessions_still_open ... ok
+test lifecycle::tests::the_deadline_signals_only_the_sessions_still_open ... ok
+test providers::database_loader::tests::a_required_failure_reports_the_coarse_reason_and_blocks_startup ... ok
+test providers::database_loader::tests::an_unbound_provider_never_resolves_a_secret_or_builds_a_runtime ... ok
+test providers::database_loader::tests::an_unbound_provider_with_invalid_config_is_unavailable_without_blocking_boot ... ok
+test providers::database_loader::tests::chillaudio_tts_materialization_maps_the_secret_reference_to_its_runtime_token ... ok
+test providers::database_loader::tests::optional_and_unbound_failures_stay_unavailable_without_loading_a_runtime ... ok
+test providers::llm::tests::tool_stream_intermediate_chunks_do_not_fail_the_round ... ok
+test providers::runtime_catalog::tests::a_binding_whose_vad_runtime_is_absent_cannot_admit_a_session ... ok
+test providers::runtime_catalog::tests::resolve_returns_the_runtime_snapshot_named_by_effective_bindings ... ok
+test providers::speaker::descriptor::tests::exposes_only_optional_window_controls_with_server_defaults ... ok
+test audio::enrollment::tests::quality_gate_rejects_short_silent_and_clipped ... ok
+test providers::tts::file_delivery::tests::removes_file_when_delivery_is_cancelled ... ok
+test providers::tts::kokoro_vi::real_model_tests::loads_local_contextbox_model_and_synthesizes_24khz_pcm ... ignored, requires models/tts/kokoro-vi and runtime/kokoro-vi local assets
+test providers::tts::kokoro_vi::runtime::tests::cancellation_stops_emission_between_pcm_chunks ... ok
+test providers::tts::kokoro_vi::runtime::tests::complete_waveform_is_emitted_as_bounded_24khz_chunks ... ok
+test providers::tts::kokoro_vi::runtime::tests::invalid_waveform_is_rejected_before_delivery ... ok
+test providers::tts::kokoro_vi::tokenizer::tests::unknown_phonemes_are_dropped_but_known_unicode_is_preserved ... ok
+test providers::tts::file_delivery::tests::replays_only_a_finalized_file_and_removes_it ... ok
+test lifecycle::tests::a_stuck_writer_costs_records_at_the_deadline_and_nothing_more ... ok
+test providers::vad::silero::provider::tests::inference_input_prepends_the_previous_64_samples ... ok
+test services::device_enrollment::audio::tests::leading_zero_is_a_digit_and_pcm_order_is_exact_before_lossy_encoding ... ok
+test services::device_enrollment::tests::canonical_packets_decode_and_invalid_code_or_assets_fail_closed ... ok
+test services::device_enrollment::tests::static_runtime_has_independent_bounded_connection_capacity ... ok
+test services::provider_diagnostic::tests::cancelled_waiter_keeps_diagnostic_admission_until_terminal_acknowledgement ... ok
+test services::provider_diagnostic::tests::quarantine_releases_limiter_but_keeps_exact_runtime_capacity_consumed ... ok
+test services::provider_diagnostic::tests::stale_runtime_is_explicit_but_remains_testable ... ok
+test services::provider_diagnostic::tests::terminal_acknowledgement_releases_runtime_and_diagnostic_capacity ... ok
+test services::provider_diagnostic::tests::timeout_cancels_then_acknowledges_before_releasing_capacity ... ok
+test providers::tts::zerotts::runtime::text::tests::matches_python_spoken_form_fixtures ... ok
+test providers::tts::zerotts::runtime::text::additional_python_cases::matches_python_numeric_and_context_cases ... ok
+test services::provider_prewarm::tests::pending_snapshots_coalesce_by_resource_and_reject_a_new_resource_at_capacity ... ok
+test services::provider_runtime::factory::tests::a_shared_zerotts_runtime_rebinds_voice_without_changing_physical_state ... ok
+test services::provider_runtime::factory::tests::shared_silero_resource_materializes_snapshot_endpoint_policy ... ok
+test session::actor::mcp::tests::double_encoded_xiaozhi_response_is_classified ... ok
+test session::actor::mcp::tests::generic_camera_wrapper_redacts_photo_data_before_normalization ... ok
+test session::actor::mcp::tests::generic_or_unsuccessful_action_is_not_a_direct_response ... ok
+test session::actor::mcp::tests::nested_vision_response_ignores_large_photo_data_before_generic_cap ... ok
+test session::actor::mcp::tests::normalizer_does_not_mark_exact_cap_as_truncated ... ok
+test session::actor::mcp::tests::normalizer_joins_nfc_sanitizes_and_caps_after_sanitization ... ok
+test session::actor::mcp::tests::unsuccessful_outer_wrapper_does_not_speak_nested_vision_response ... ok
+test session::actor::mcp::tests::xiaozhi_response_action_is_classified_before_generic_normalization ... ok
+test session::actor::retention::tests::capacity_covers_pre_roll_confirmation_command_lag_frame_and_rechunk_slack ... ok
+test services::provider_prewarm::tests::obsolete_unbound_and_disabled_intents_never_produce_build_snapshots ... ok
+test database::mcp_servers::tests::publication_covers_commit_and_invalidation_but_not_a_rolled_back_revocation ... ok
+test session::actor::tools::tests::a_cold_switch_prepares_outside_actor_and_commits_only_at_normal_writer_boundary ... ok
+test session::actor::tools::tests::a_closed_gate_starts_no_tool_round_at_all ... ok
+test session::actor::tools::tests::a_session_installs_the_admitted_external_mcp_catalog ... ok
+test session::actor::tools::tests::a_session_without_a_catalog_is_never_offered_the_switch_tool ... ok
+test session::actor::tools::tests::a_closed_gate_stops_a_round_that_was_already_running ... ok
+test session::actor::tools::tests::a_response_that_lands_after_its_round_is_discarded_and_acts_on_nothing ... ok
+test session::actor::tools::tests::a_switch_that_keeps_the_capture_runtimes_leaves_their_leases_open ... ok
+test session::actor::tools::tests::a_successful_switch_installs_the_candidate_runetimes_and_advances_the_revision ... ok
+test session::actor::tools::tests::a_switch_to_a_candidate_this_session_never_admitted_changes_nothing ... ok
+test session::actor::tools::tests::a_switch_that_rebases_the_vad_runtime_rearms_capture_instead_of_failing_closed ... ok
+test session::actor::tools::tests::abort_while_native_switch_build_is_blocked_cannot_commit_late_completion ... ok
+test session::actor::tools::tests::abort_discards_cold_switch_preparation_and_every_late_lease ... ok
+test session::actor::tools::tests::external_tool_names_are_namespaced_and_keep_their_wire_name ... ok
+test session::actor::tools::tests::managed_switch_keeps_old_profile_until_exact_vad_cleanup_acknowledgement ... ok
+test session::generation_gate::tests::invalidation_rejects_the_old_turn_but_not_a_newer_turn ... ok
+test session::profile::tests::a_bound_speaker_slot_resolves_without_a_deployment_default ... ok
+test session::profile::tests::a_bound_speaker_slot_without_a_loaded_runtime_fails_closed ... ok
+test session::profile::tests::a_default_template_resolves_its_own_prompt_language_and_bindings ... ok
+test session::profile::tests::a_default_template_without_loaded_runtimes_fails_closed ... ok
+test session::profile::tests::a_missing_binding_uses_the_matching_server_default ... ok
+test session::profile::tests::a_successful_switch_replaces_the_active_snapshot_and_advances_the_revision ... ok
+test session::profile::tests::a_switch_targets_only_a_candidate_this_session_admitted ... ok
+test session::profile::tests::an_absent_speaker_slot_has_no_implicit_fallback ... ok
+test session::profile::tests::an_oversized_stored_prompt_is_never_accepted ... ok
+test session::profile::tests::only_disabled_assignments_use_server_defaults_without_an_override ... ok
+test session::profile::tests::the_switch_catalog_keeps_candidates_with_missing_bindings_on_server_defaults ... ok
+test session::prompt::tests::composition_respects_system_prompt_byte_budget ... ok
+test session::prompt::tests::default_prompt_contains_structured_blocks_and_keeps_speaker_slot_until_turn ... ok
+test session::prompt::tests::old_stored_prompts_without_speaker_slot_are_compatible ... ok
+test session::prompt::tests::recognized_speaker_is_scoped_to_one_turn_and_json_escaped ... ok
+test session::prompt::tests::request_bound_uses_utf8_content_and_fixed_overhead ... ok
+test session::prompt::tests::template_is_strict_and_single_pass ... ok
+test session::runtime_profile::tests::a_speaker_binding_is_admitted_as_an_optional_slot ... ok
+test session::runtime_profile::tests::a_speaker_binding_must_match_the_provider_kind ... ok
+test session::runtime_profile::tests::an_absent_speaker_slot_is_not_filled_from_a_deployment_default ... ok
+test session::speaker_observe::tests::policy_parses_and_gates_off ... ok
+test session::speaker_observe::tests::score_is_ranked_and_bounded_by_candidates ... ok
+test session::speaker_observe::tests::wire_text_never_leaks_identity_or_score ... ok
+test session::speech_output::tests::bounded_split_prevents_an_unfinished_sentence_from_growing_unbounded ... ok
+test session::speech_output::tests::does_not_send_a_partial_version_to_tts_when_decimal_dots_span_deltas ... ok
+test session::speech_output::tests::emits_a_complete_sentence_before_the_llm_finishes ... ok
+test session::actor::tools::tests::a_sessions_external_mcp_snapshot_renders_without_a_credential ... ok
+test session::speech_output::tests::hard_splits_a_long_token_at_unicode_char_boundaries ... ok
+test session::speech_output::tests::holds_fragmented_vietnamese_deltas_until_the_complete_sentence_boundary ... ok
+test session::speech_output::tests::json_filter_handles_escaped_braces_and_keeps_non_json_braces ... ok
+test session::speech_output::tests::first_five_packets_are_sent_before_realtime_pacing ... ok
+test session::speech_output::tests::long_unpunctuated_delta_does_not_become_backpressure ... ok
+test services::provider_diagnostic::tests::timeout_quarantines_the_exact_operation_when_acknowledgement_is_missing ... ok
+test session::speech_output::tests::paced_deadlines_are_anchored_to_first_packet_even_if_prebuffer_is_delayed ... ok
+test session::speech_output::tests::pacing_reanchors_after_audio_starvation_instead_of_catching_up ... ok
+test session::speech_output::tests::prebuffered_audio_does_not_drain_before_nominal_playback_ends ... ok
+test session::actor::tools::tests::an_interrupted_turn_drops_its_in_flight_call_without_producing_a_result ... ok
+test session::speech_output::tests::punctuation_only_response_fails_before_tts_submission ... ok
+test session::speech_output::tests::removes_json_command_across_deltas_before_sentence_delivery ... ok
+test session::speech_output::tests::retains_periods_and_commas_while_replacing_other_special_characters ... ok
+test session::speech_output::tests::sanitizes_tts_input_to_unicode_words_with_decimal_separators ... ok
+test session::speech_output::tests::segment_ready_keeps_display_text_while_tts_receives_sanitized_text ... ok
+test session::speech_output::tests::short_hard_sentence_is_flushed_immediately ... ok
+test session::speech_output::tests::long_streaming_segment_starts_at_bounded_initial_buffer ... ok
+test session::speech_output::tests::soft_punctuation_is_preferred_before_a_hard_length_split ... ok
+test session::speech_output::tests::splits_unicode_only_at_complete_sentence_boundary ... ok
+test session::speech_output::tests::starvation_before_prebuffer_does_not_underflow_pacing_index ... ok
+test session::speech_output::tests::terminal_partial_frame_fades_to_zero_before_padding ... ok
+test session::speech_output::tests::unspeakable_response_fails_instead_of_waiting_forever ... ok
+test session::turn::tests::keeps_current_atom_when_it_exceeds_eviction_target ... ok
+test session::turn::tests::materializes_tool_rounds_without_dangling_calls ... ok
+test startup_handshake::tests::binding_is_literal_loopback_only_when_handshake_is_enabled ... ok
+test session::speech_output::tests::short_streaming_segment_waits_for_completion_before_starting_playback ... ok
+test telemetry::tests::a_call_outcome_has_exactly_the_bounded_vocabulary ... ok
+test telemetry::tests::a_recorder_reports_the_metric_name_its_labels_and_its_value ... ok
+test tools::external_mcp::client::tests::a_page_must_describe_every_tool_it_claims ... ok
+test tools::external_mcp::client::tests::a_typed_auth_shape_is_resolved_once_and_never_prints_its_value ... ok
+test tools::external_mcp::client::tests::an_oversized_result_is_refused_rather_than_truncated ... ok
+test tools::external_mcp::client::tests::only_text_or_structured_json_survives_the_result_allowlist ... ok
+test tools::external_mcp::manager::tests::every_wire_failure_maps_to_a_bounded_reason ... ok
+test tools::external_mcp::registry::tests::a_supported_subset_is_accepted_including_a_closed_object ... ok
+test tools::external_mcp::registry::tests::an_unrepresentable_name_is_dropped_while_a_collision_loses_the_server ... ok
+test tools::external_mcp::registry::tests::every_shape_outside_the_supported_subset_is_refused ... ok
+test tools::external_mcp::registry::tests::normalization_is_pure_and_bounded_with_fixed_vectors ... ok
+test tools::external_mcp::registry::tests::structural_caps_bound_a_document_instead_of_each_level_separately ... ok
+test session::speech_output::tests::next_segment_starts_while_previous_audio_is_queued ... ok
+test tools::external_mcp::transport::tests::a_configured_page_that_cannot_be_buffered_is_refused_at_configuration_time ... ok
+test tools::external_mcp::transport::tests::a_permit_is_released_when_its_caller_drops_it ... ok
+test tools::external_mcp::transport::tests::one_servers_saturation_never_reaches_another_server ... ok
+test tools::external_mcp::transport::tests::static_headers_are_canonicalized_and_protected_names_are_refused ... ok
+test tools::external_mcp::transport::tests::a_caller_with_no_budget_left_sends_nothing_rather_than_waiting ... ok
+test tools::external_mcp::transport::tests::typed_auth_is_redacted_until_the_rmcp_adapter_materializes_it ... ok
+test tools::round::tests::a_cap_or_budget_is_reported_as_a_turn_failure_and_never_as_content ... ok
+test tools::round::tests::a_remote_is_error_stays_a_paired_result ... ok
+test tools::round::tests::a_remote_refusal_carries_its_class_and_nothing_else ... ok
+test tools::round::tests::a_success_shares_the_device_result_envelope ... ok
+test tools::round::tests::every_tool_call_failure_has_exactly_one_bounded_class ... ok
+test tools::round::tests::limits_come_from_the_validated_configuration_unchanged ... ok
+test workers::admission::tests::diagnostic_cannot_take_the_last_slot_after_voice_started ... ok
+test workers::admission::tests::diagnostic_never_consumes_the_voice_reservation ... ok
+test workers::admission::tests::logical_views_have_independent_quotas_and_one_physical_limit ... ok
+test workers::admission::tests::single_worker_allows_one_diagnostic_when_idle ... ok
+test workers::asr::pool::tests::reset_failure_marks_retained_pool_unhealthy_without_replacement ... ok
+test workers::llm::tests::diagnostic_collects_text_from_a_tool_free_independent_request ... ok
+test workers::llm::tests::diagnostic_rejects_tool_calls_and_oversized_text ... ok
+test workers::llm::tests::session_reports_an_open_stream_failure_without_exposing_provider_details ... ok
+test workers::tts::tests::diagnostic_pcm_does_not_extend_absolute_timeout ... ok
+test workers::tts::tests::empty_pcm_does_not_extend_voice_timeout ... ok
+test workers::tts::tests::queued_voice_pcm_does_not_charge_backpressure_as_a_stall ... ok
+test workers::tts::tests::voice_stall_times_out_after_last_pcm_progress ... ok
+test workers::tts::tests::voice_without_first_pcm_still_times_out_from_acceptance ... ok
+test workers::vad::tests::a_diagnostic_worker_lease_leaves_the_voice_reservation_available ... ok
+test workers::vad::tests::reset_discards_rechunk_slack_and_restarts_the_sample_timeline ... ok
+test startup_handshake::tests::publishing_is_create_new_and_includes_the_nonce_and_bound_address ... ok
+test tools::external_mcp::transport::tests::the_limiter_bound_is_the_one_configuration_validates ... ok
+test session::speech_output::tests::progressing_tts_does_not_cut_playback_at_total_timeout ... ok
+
+test result: ok. 215 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.41s
+
+     Running unittests src/bin/provider-bench.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_bench-d2c41705a555caea)
+
+running 4 tests
+test tests::output_without_overwrite_never_replaces_an_existing_file ... ok
+test tests::failure_output_contains_only_the_stable_category ... ok
+test tests::output_creates_a_missing_parent_directory ... ok
+test tests::output_publish_and_overwrite_are_explicit ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src/bin/provider-bench-av.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_bench_av-b616ffc3136c3689)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/provider-runtime-bench.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_runtime_bench-0e36045d86d750d1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/mnt/storage/ai-agent-voice/target/debug/deps/voice_agent_server-e4e81df42ea149b6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/zerotts-core-check.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_core_check-383fbd4692658837)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/admin_api.rs (/mnt/storage/ai-agent-voice/target/debug/deps/admin_api-6b256133721e6839)
+
+running 35 tests
+test admin_router_auth_crud_revision_and_transport_contract ... ok
+test a_generated_provider_key_binds_a_template_without_being_retyped ... ok
+test admin_p1_read_models_and_device_template_override_are_public_contracts ... ok
+test admin_relationship_reads_and_unlinks_are_revisioned_public_contracts ... ok
+test conditional_delete_requires_a_current_revision_and_preserves_linked_templates ... ok
+test descriptor_language_fields_match_provider_config_migration_and_validation ... ok
+test admin_system_reports_database_unavailable_without_leaking_runtime_details ... ok
+test asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media ... ok
+test disabled_admin_route_is_not_mounted ... ok
+test draft_tests_reject_invalid_sources_without_creating_resources ... ok
+test draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime ... ok
+test external_mcp_configuration_is_redacted_validated_and_revisioned ... ok
+test external_tool_reviews_are_admin_authenticated_and_default_empty ... ok
+test external_mcp_http_can_be_created_and_updated_without_network_configuration ... ok
+test failed_success_audit_rolls_back_each_new_desired_resource ... ok
+test first_assignment_with_a_partial_core_becomes_the_default ... ok
+test kokoro_desired_configuration_accepts_catalog_selection_and_rejects_factory_incompatible_voice ... ok
+test first_assignment_to_an_agent_becomes_its_enabled_default ... ok
+test legacy_provider_runtime_fields_are_removed_by_migration_before_admin_reads ... ok
+test provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_only_contracts ... ok
+test mcp_credentials_are_write_only_replaceable_and_persist_after_restart ... ok
+test mcp_credentials_require_encryption_and_never_create_a_partial_resource ... ok
+test provider_credentials_require_encryption_and_never_create_a_partial_resource ... ok
+test provider_credentials_replace_only_when_supplied ... ok
+test llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request ... ok
+test provider_credentials_are_write_only_masked_and_persist_after_restart ... ok
+test provider_key_is_generated_by_the_server_and_never_accepted_from_a_client ... ok
+test provider_mutations_reject_server_owned_configuration ... ok
+test speaker_provider_creation_is_rejected ... ok
+test retired_device_tool_routes_return_not_found ... ok
+test speaker_waiter_timeout_retains_exact_lease_and_capacity_until_native_completion ... ok
+test speaker_provider_diagnostic_route_is_not_exposed ... ok
+test templates_and_provider_desired_configuration_are_bounded_and_restart_honest ... ok
+test tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_provider_wav ... ok
+test vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runtime ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.77s
+
+     Running tests/audio.rs (/mnt/storage/ai-agent-voice/target/debug/deps/audio-ff04dc64f395ad9c)
+
+running 7 tests
+test direction_specific_pcm_frames_reject_the_wrong_shape ... ok
+test decoder_drops_empty_and_oversized_packets_without_panicking ... ok
+test manual_capture_preserves_frames_in_order ... ok
+test manual_capture_overflow_discards_the_whole_utterance ... ok
+test manual_capture_restart_and_abort_discard_collected_pcm ... ok
+test downlink_encoder_rejects_packets_larger_than_the_transport_cap ... ok
+test opus_round_trip_returns_a_canonical_uplink_frame ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/builtin_tools.rs (/mnt/storage/ai-agent-voice/target/debug/deps/builtin_tools-baa907018c4a05ff)
+
+running 4 tests
+test exit_definition_requires_a_single_goodbye_without_extra_properties ... ok
+test exit_arguments_trim_valid_goodbye_and_reject_blank_or_oversized_values ... ok
+test switch_arguments_trim_a_template_key_and_reject_anything_else ... ok
+test switch_definition_names_exactly_the_templates_this_session_admitted ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/config_audio.rs (/mnt/storage/ai-agent-voice/target/debug/deps/config_audio-a065daf7e4d18b40)
+
+running 17 tests
+test audio_limit_is_converted_to_an_exact_frame_capacity ... ok
+test catalog_instances_keep_typed_adapter_options ... ok
+test config_accepts_multiple_asr_instances_with_different_adapters ... ok
+test config_rejects_invalid_database_and_shutdown_bounds ... ok
+test config_rejects_invalid_gipformer_runtime_options ... ok
+test config_rejects_legacy_agent_provider_bindings ... ok
+test config_rejects_shutdown_grace_outside_the_bounded_drain_window ... ok
+test gipformer_config_defaults_are_qualification_defaults ... ok
+test invalid_audio_and_transport_limits_fail_fast ... ok
+test phase_four_delivery_capacity_and_speech_bounds_fail_fast ... ok
+test private_network_http_llm_endpoint_is_allowed_but_public_http_is_rejected ... ok
+test removed_database_and_admission_switches_are_rejected ... ok
+test validation_rejects_a_missing_default ... ok
+test worker_runtime_limits_and_timeouts_are_configured_and_validated ... ok
+test application_state_preserves_injected_llm_and_tts_test_providers ... ok
+test application_builds_each_worker_runtime_from_its_own_config ... ok
+test application_rejects_missing_local_model_artifacts_before_binding ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+
+     Running tests/cors.rs (/mnt/storage/ai-agent-voice/target/debug/deps/cors-84195906fa145002)
+
+running 3 tests
+test local_ipv4_and_ipv6_origins_are_allowed ... ok
+test lan_browser_preflight_and_authenticated_requests ... ok
+test public_and_opaque_origins_are_not_allowed_for_admin ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/database_bootstrap.rs (/mnt/storage/ai-agent-voice/target/debug/deps/database_bootstrap-f62b1a675412586b)
+
+running 9 tests
+test database_parent_that_is_a_file_fails_before_boot ... ok
+test current_database_is_idempotent_when_migrations_run_again ... ok
+test missing_database_parent_is_created_and_existing_rows_survive_restart ... ok
+test failed_migration_history_fails_before_boot ... ok
+test pending_schema_with_migration_on_start_disabled_fails_before_boot ... ok
+test schema_newer_than_binary_is_rejected_before_listener_bind ... ok
+test fresh_database_migrates_then_boots_health_and_ready_routes ... ok
+test supported_old_schema_is_forward_migrated_to_the_current_indexes ... ok
+test speaker_provider_migration_preserves_bindings_and_deleted_high_water_marks ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.53s
+
+     Running tests/device_admission.rs (/mnt/storage/ai-agent-voice/target/debug/deps/device_admission-cdee138048c26bda)
+
+running 10 tests
+test admission_rejects_an_oversized_device_identity_before_database_lookup ... ok
+test default_admission_rejects_unknown_devices_before_upgrade ... ok
+test enabled_admission_returns_coarse_503_when_its_database_is_unavailable ... ok
+test auto_registration_is_atomic_for_racing_connections_and_stores_only_safe_metadata ... ok
+test admitted_connection_keeps_its_baseline_while_reconnect_re_resolves_policy ... ok
+test enabled_admission_rejects_unknown_and_disabled_devices_before_upgrade ... ok
+test enabled_admission_uses_server_defaults_when_agent_has_no_template_assignments ... ok
+test enabled_admission_returns_coarse_503_when_its_database_pool_is_closed ... ok
+test ota_enrollment_claim_and_activate_create_exactly_one_admitted_device ... ok
+test ota_without_enrollment_only_discloses_configuration_for_registered_devices ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.57s
+
+     Running tests/device_enrollment_ws.rs (/mnt/storage/ai-agent-voice/target/debug/deps/device_enrollment_ws-728e0fa8d6ed4db8)
+
+running 4 tests
+test missing_assets_fail_bootstrap_before_router_publication ... ok
+test abort_cancels_audio_without_consuming_enrollment_and_replay_has_cooldown ... ok
+test auth_capacity_disabled_and_expiry_fail_closed ... ok
+test ota_ws_prompt_claim_and_reconnect_preserve_database_admission ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.78s
+
+     Running tests/device_mcp.rs (/mnt/storage/ai-agent-voice/target/debug/deps/device_mcp-3a252256387efbf5)
+
+running 5 tests
+test json_rpc_parser_rejects_invalid_ids_and_preserves_numeric_correlation ... ok
+test duplicate_original_name_rejects_the_whole_catalog ... ok
+test discovered_tools_include_formerly_denied_names ... ok
+test sanitizer_is_stable_and_collision_rejects_the_whole_catalog ... ok
+test tools_call_uses_original_device_name_and_object_arguments ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/docker_config.rs (/mnt/storage/ai-agent-voice/target/debug/deps/docker_config-f2647f91f5b2616b)
+
+running 2 tests
+test docker_qualification_config_is_compile_time_only ... ok
+test production_docker_config_uses_container_paths_and_listener ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/exit_intent_integration.rs (/mnt/storage/ai-agent-voice/target/debug/deps/exit_intent_integration-37e522c04f8dfe74)
+
+running 2 tests
+test aborting_the_goodbye_cancels_the_pending_normal_close ... ok
+test exit_builtin_without_mcp_sends_final_audio_then_stop_then_normal_close ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.78s
+
+     Running tests/external_mcp_admission.rs (/mnt/storage/ai-agent-voice/target/debug/deps/external_mcp_admission-8dccc4d31048b63f)
+
+running 17 tests
+test an_agent_without_mcp_bindings_admits_without_external_tools ... ok
+test external_agent_reviews_exact_contract_and_drift_requires_new_review ... ok
+test admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_complete ... ok
+test admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotation ... ok
+test external_mcp_diagnostics_stay_bounded_classes ... ok
+test external_mcp_admission_snapshot_is_fresh_bounded_and_immutable ... ok
+test external_mcp_aggregate_tool_cap_drops_the_whole_snapshot ... ok
+test external_mcp_aggregate_tool_cap_is_counted_once_and_not_as_a_server_failure ... ok
+test external_mcp_https_never_falls_back_to_an_unvalidated_connection ... ok
+test external_mcp_publishes_only_enabled_bindings_of_enabled_servers ... ok
+test external_mcp_outbound_policy_refuses_unlisted_destinations_and_redirects ... ok
+test external_mcp_refuses_server_keys_that_normalize_alike ... ok
+test manual_discovery_rejects_an_invalid_later_page_without_partial_catalog ... ok
+test external_mcp_secret_failure_excludes_its_server_and_redacts_its_reason ... ok
+test manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shutdown ... ok
+test manual_saved_probes_keep_disabled_config_and_credentials_and_reject_stale_reuse ... ok
+test external_mcp_discovery_refuses_caps_namespaces_and_collisions ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.29s
+
+     Running tests/lifecycle.rs (/mnt/storage/ai-agent-voice/target/debug/deps/lifecycle-64f6d8e0d14f325e)
+
+running 19 tests
+test a_closed_gate_refuses_database_admission_regardless_of_the_caller ... ok
+test a_closed_gate_refuses_a_new_voice_connection ... ok
+test a_degraded_database_degrades_readiness_without_taking_the_process_down ... ok
+test a_capture_off_process_reports_nothing_left_to_flush ... ok
+test a_healthy_process_is_both_live_and_ready ... ok
+test a_session_that_finishes_on_its_own_drains_before_the_deadline ... ok
+test a_session_open_at_the_deadline_is_controlled_closed_not_aborted ... ok
+test a_session_admitted_before_a_database_outage_keeps_its_profile ... ok
+test application_shutdown_uses_its_existing_deadline_for_managed_resources ... ok
+test missing_database_reports_startup_incomplete ... ok
+test a_shutting_down_process_is_live_but_no_longer_ready ... ok
+test readiness_never_resolves_a_device ... ok
+test shutdown_is_bounded_even_when_a_session_never_answers ... ok
+test an_unreachable_external_mcp_server_does_not_make_the_process_unready ... ok
+test the_grace_deadline_comes_from_the_deployment_configuration ... ok
+test readiness_never_discovers_external_mcp ... ok
+test the_drain_counts_and_closes_exactly_the_sessions_still_open ... ok
+test readiness_never_runs_full_admission ... ok
+test the_history_flush_never_decides_how_long_shutdown_takes ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.73s
+
+     Running tests/llm_runtime.rs (/mnt/storage/ai-agent-voice/target/debug/deps/llm_runtime-afa1d7fd8f14a42b)
+
+running 3 tests
+test runtime_routes_typed_tool_call_without_a_retry ... ok
+test turn_owned_cancellation_token_terminates_the_matching_operation ... ok
+test runtime_routes_domain_events_and_releases_permit_after_terminal ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/manual_stt.rs (/mnt/storage/ai-agent-voice/target/debug/deps/manual_stt-e77d65b7b8705b79)
+
+running 15 tests
+test abort_in_auto_rearms_the_pinned_vad_lease_instead_of_closing_it ... ok
+test auto_retains_pre_roll_and_all_pcm_arrived_while_vad_events_lag ... ok
+test active_turn_capacity_denial_finishes_without_stt_or_history ... ok
+test dialogue_history_evicts_the_oldest_manual_final_at_its_configured_limit ... ok
+test manual_capture_overflow_stops_feeding_the_asr_stream ... ok
+test manual_empty_final_does_not_commit_or_enqueue_stt ... ok
+test manual_failed_final_does_not_commit_or_enqueue_stt ... ok
+test manual_final_commits_history_then_enqueues_one_stt_without_partial ... ok
+test repeated_auto_start_during_asr_finalization_preserves_final_text ... ok
+test repeated_auto_start_rearms_the_pinned_vad_lease_with_one_worker_slot ... ok
+test repeated_realtime_start_rearms_the_pinned_vad_lease_with_one_worker_slot ... ok
+test repeated_auto_start_during_speech_preserves_asr_pcm ... ok
+test stale_vad_probability_before_reset_does_not_open_asr_for_the_new_cycle ... ok
+test auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done ... ok
+test replacement_invalidates_a_late_final_without_emitting_stale_stt ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/model_download.rs (/mnt/storage/ai-agent-voice/target/debug/deps/model_download-a5762adbfb2ba5b4)
+
+running 3 tests
+test not_found_is_not_retried_and_leaves_no_partial_file ... ok
+test transient_server_error_is_retried ... ok
+test interrupted_stream_retries_from_zero_without_appending_partial_bytes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.26s
+
+     Running tests/protocol_e2e.rs (/mnt/storage/ai-agent-voice/target/debug/deps/protocol_e2e-559f5fadb1a07a91)
+
+running 6 tests
+test pilot_busy_keeps_opt_in_controls_and_closes_legacy_before_capture ... ok
+test pilot_auto_abort_retains_armed_slot_until_disconnect_cleanup ... ok
+test failed_and_cancelled_recognition_emit_no_stt ... ok
+test trusted_aec_auto_barge_in_stops_a_once_and_delivers_b_on_the_same_socket ... ok
+test trusted_aec_realtime_barge_in_keeps_the_voice_session_connected ... ok
+test manual_and_auto_canonical_opus_emit_one_existing_stt_without_internal_events ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.39s
+
+     Running tests/protocol_listen.rs (/mnt/storage/ai-agent-voice/target/debug/deps/protocol_listen-8397a8ce4fba0d84)
+
+running 6 tests
+test barge_in_policy_requires_opt_in_and_a_non_manual_mode ... ok
+test hello_accepts_optional_aec_assertion_and_ignores_unknown_features ... ok
+test listen_detect_is_parsed_without_being_inferred_as_start ... ok
+test listen_start_requires_a_typed_mode ... ok
+test session_id_is_optional_but_present_non_string_is_unknown ... ok
+test listen_stop_does_not_require_a_mode ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_admission_snapshot.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_admission_snapshot-29bc6ab769db7fe4)
+
+running 4 tests
+test admission_marks_invalid_persisted_provider_config_unusable_without_copying_it_to_a_runtime_snapshot ... ok
+test admission_owns_exact_provider_version_after_patch_and_key_recreation ... ok
+test admission_bounds_total_snapshot_bytes_before_returning_configuration ... ok
+test admission_refuses_an_unbounded_assignment_graph ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+     Running tests/provider_assets.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_assets-eae7b0422662a327)
+
+running 7 tests
+test a_download_that_writes_nothing_is_rejected_and_leaves_no_final_asset ... ok
+test a_missing_asset_is_downloaded_and_atomically_installed ... ok
+test an_existing_asset_is_reused_without_downloading ... ok
+test readiness_depends_only_on_a_non_empty_regular_file ... ok
+test an_interrupted_download_leaves_no_final_asset_and_no_temporary_file ... ok
+test a_zero_byte_asset_is_downloaded_again ... ok
+test concurrent_ensures_download_a_missing_asset_only_once ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_draft_tests.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_draft_tests-cc0cd491308bd705)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_load_plan.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_load_plan-c7ad389e2d6d6aab)
+
+running 8 tests
+test a_required_provider_that_collides_with_a_deployment_instance_refuses_to_start ... ok
+test a_required_default_template_provider_failure_refuses_to_start ... ok
+test a_provider_bound_only_by_a_disabled_agent_stays_out_of_the_load_plan ... ok
+test a_loaded_database_provider_reports_desired_versus_loaded_revision ... ok
+test an_unbound_provider_is_validated_without_resolving_its_secret_or_loading ... ok
+test an_optional_non_default_provider_that_loads_becomes_a_usable_candidate ... ok
+test an_optional_non_default_provider_failure_starts_and_reports_unavailable ... ok
+test an_unbound_provider_with_invalid_config_does_not_block_boot ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s
+
+     Running tests/provider_materializer.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_materializer-fa798421f36929fd)
+
+running 19 tests
+test deployment_startup_and_the_manager_agree_on_the_zerotts_replica_count ... ok
+test kokoro_runtime_plan_excludes_preload_but_keeps_native_selection_and_g2p_identity ... ok
+test checkout_example_configuration_parses_without_resolving_or_printing_credentials ... ok
+test native_gipformer_single_frame_finishes_without_foreign_exception ... ignored, requires acknowledged installed Gipformer and native ONNX runtime; set PROVIDER_QUALIFICATION_CONFIG
+test local_runtime_identity_uses_adapter_owned_physical_specs ... ok
+test a_shared_zerotts_physical_runtime_admits_one_native_synthesis_at_a_time ... ok
+test native_resource_identity_normalizes_defaults_and_isolates_execution_and_credentials ... ok
+test preparing_a_remote_provider_does_not_enter_the_asset_layer ... ok
+test one_materialization_ensures_its_provider_assets ... ok
+test a_different_zerotts_delivery_mode_builds_a_second_physical_runtime ... ok
+test native_resource_identity_uses_execution_content_not_only_its_path ... ok
+test runtime_configuration_requires_complete_explicit_budget_and_rejects_unknown_fields ... ok
+test single_provider_materialization_rejects_invalid_config_before_secret_resolution ... ok
+test single_remote_provider_materialization_creates_an_exact_usable_catalog_without_network_io ... ok
+test startup_materializes_every_deployment_default ... ok
+test zerotts_physical_replica_count_is_independent_of_generic_tts_concurrency ... ok
+test production_manager_materializer_owns_remote_runtime_and_acknowledged_unload ... ok
+test zerotts_resource_identity_shares_voices_but_isolates_delivery_mode ... ok
+test switching_the_logical_voice_never_rematerializes_the_zerotts_runtime ... ok
+
+test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/provider_registry.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_registry-5d80580d48250cc5)
+
+running 8 tests
+test asset_ownership_follows_whether_a_provider_loads_local_files ... ok
+test admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapters ... ok
+test every_advertised_local_voice_is_an_installed_voice_asset ... ok
+test every_local_adapter_pins_an_immutable_upstream_revision ... ok
+test native_transducers_accept_every_advertised_decoding_method ... ignored, requires acknowledged installed ASR models; set PROVIDER_QUALIFICATION_CONFIG
+test registry_exposes_only_adapters_compiled_into_the_binary ... ok
+test catalog_config_keeps_secrets_redacted_and_options_scoped_to_each_instance ... ok
+test descriptors_expose_only_user_configuration_and_typed_decoding_choices ... ok
+
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/provider_runtime_manager.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_runtime_manager-f756d8d68177d0bd)
+
+running 24 tests
+test active_enrollment_refuses_cold_start_as_busy_not_permanent_failure ... ok
+test active_lease_prevents_eviction_and_last_clone_release_starts_idle_lifetime ... ok
+test cold_start_holds_the_envelope_until_terminal_so_voice_sees_busy ... ok
+test concurrent_exact_version_acquisition_coalesces_and_retains_provenance ... ok
+test cold_preparation_keeps_envelope_after_waiter_timeout_until_late_completion ... ok
+test deployment_defaults_have_a_separate_identity_and_are_retained_until_shutdown ... ok
+test draft_versions_are_isolated_from_database_and_deployment_and_bounded ... ok
+test failed_attempt_is_coalesced_during_cooldown_and_does_not_publish_ready ... ok
+test equivalent_versions_and_instances_share_one_backing_resource_with_exact_provenance ... ok
+test load_queue_is_bounded_without_allocating_an_extra_native_resource ... ok
+test draining_resource_keeps_memory_until_actual_unload_acknowledgement ... ok
+test metadata_pressure_never_prunes_a_retained_deployment_alias ... ok
+test native_completion_remains_owned_when_the_original_async_executor_is_gone ... ok
+test ready_backing_runtime_hot_acquire_keeps_capacity_while_voice_holds_envelope ... ok
+test revisions_share_logical_provider_capacity ... ok
+test pressure_evicts_only_lru_idle_resource_and_preserves_active_lease ... ok
+test equivalent_revision_churn_keeps_alias_metadata_bounded ... ok
+test shutdown_uses_supplied_deadline_and_keeps_active_resource_accounted ... ok
+test status_polling_does_not_extend_idle_ttl ... ok
+test unhealthy_retained_worker_is_quarantined_without_releasing_memory_or_rebuilding ... ok
+test waiter_timeout_retains_native_attempt_memory_and_load_capacity ... ok
+test installed_identity_drift_and_metadata_panics_quarantine_until_unload_ack ... ok
+test sequential_cold_acquisitions_release_the_only_load_slot_before_ready ... ok
+test uncertain_cleanup_retains_memory_and_loader_and_refuses_replacement ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
+     Running tests/provider_template_snapshot.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_template_snapshot-48051768f41b06b2)
+
+running 3 tests
+test invalid_or_ambiguous_binding_snapshot_never_becomes_a_cold_candidate ... ok
+test a_cold_switch_candidate_is_authorized_from_snapshot_without_a_loaded_catalog ... ok
+test missing_slots_use_deployment_snapshots_without_replacing_explicit_bindings ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_worker_unload.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_worker_unload-cb103cd2970a7994)
+
+running 4 tests
+test asr_final_event_does_not_acknowledge_native_exit_or_release_capacity ... ok
+test ready_vad_retains_warmed_workers_and_resets_between_session_owners ... ok
+test ready_asr_retains_warmed_workers_without_carrying_audio_between_sessions ... ok
+test asr_diagnostics_reuse_retained_sessions_and_acknowledge_reset_before_next_request ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/session_profile.rs (/mnt/storage/ai-agent-voice/target/debug/deps/session_profile-728e5c661c0f28f4)
+
+running 26 tests
+test a_closed_database_pool_degrades_admission_to_coarse_503 ... ok
+test a_default_template_bound_to_a_disabled_provider_fails_closed ... ok
+test a_default_template_binding_selects_a_loaded_runtime_other_than_the_server_default ... ok
+test a_default_template_bound_to_an_unloaded_provider_fails_closed ... ok
+test a_default_template_missing_a_binding_uses_the_server_default_for_that_slot ... ok
+test a_disabled_default_template_fails_closed ... ok
+test a_candidate_excluded_at_admission_can_never_be_switched_to ... ok
+test a_disabled_device_is_still_denied_before_profile_resolution ... ok
+test a_session_without_a_template_assignment_is_never_offered_the_switch_tool ... ok
+test a_switch_applies_at_the_next_turn_boundary_on_the_candidates_loaded_runtime ... ok
+test a_switch_uses_the_admission_snapshot_even_after_the_database_changes ... ok
+test a_turn_arriving_after_a_reported_boundary_keeps_its_frames_and_uses_the_switched_profile ... ok
+test an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_switch ... ok
+test an_agent_without_an_enabled_default_assignment_returns_coarse_503 ... ok
+test an_agent_with_only_a_disabled_assignment_uses_server_defaults ... ok
+test an_admitted_profile_stays_immutable_while_a_new_session_sees_the_mutation ... ok
+test an_agent_without_any_assignment_row_uses_server_defaults ... ok
+test an_interrupted_turn_drops_the_switch_it_armed ... ok
+test concurrent_sessions_each_resolve_their_own_immutable_profile ... ok
+test database_backed_admission_uses_the_default_template_prompt_and_language ... ok
+test an_invalid_non_default_candidate_is_excluded_while_a_valid_default_still_starts ... ok
+test managed_template_acquires_deployment_runtimes_for_missing_slots ... ok
+test prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood ... ok
+test public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_session_version ... ok
+test the_switch_tool_offers_exactly_the_candidates_admission_validated ... ok
+test the_turn_after_a_switch_keeps_every_audio_frame_and_runs_the_new_profile ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.17s
+
+     Running tests/session_state.rs (/mnt/storage/ai-agent-voice/target/debug/deps/session_state-a098e37f6953f0b6)
+
+running 2 tests
+test raw_binary_is_only_accepted_while_listening ... ok
+test auto_replaces_manual_capture_and_never_falls_back_when_vad_is_unavailable ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/speaker_identification_builtin.rs (/mnt/storage/ai-agent-voice/target/debug/deps/speaker_identification_builtin-b6af3dd3067ed37b)
+
+running 3 tests
+test required_authentication_and_template_provider_api_are_not_available ... ok
+test capture_accepts_wav_above_json_limit_but_enforces_audio_limit ... ok
+test single_capture_registers_and_reenrolls_without_a_provider ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+
+     Running tests/speaker_observe.rs (/mnt/storage/ai-agent-voice/target/debug/deps/speaker_observe-cb1f98742f5fc7dc)
+
+running 7 tests
+test observe_accepts_detect_without_audio ... ok
+test observe_off_emits_no_speaker_frame_and_retains_nothing ... ok
+test off_session_still_accepts_detect ... ok
+test observe_emits_bounded_state_without_identity_or_score ... ok
+test revoked_snapshot_closes_the_ingress_loop_before_accepting ... ok
+test observe_unavailable_runtime_does_not_block_core_path ... ok
+test observe_turn_verifies_and_commits ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/speechoutput_tracer.rs (/mnt/storage/ai-agent-voice/target/debug/deps/speechoutput_tracer-dcd1ad63350fcfb1)
+
+running 14 tests
+test explicit_abort_admits_urgent_stop_and_invalidates_queued_turn_payload_under_pressure ... ok
+test complete_vietnamese_sentences_announce_once_before_their_audio ... ok
+test full_outbound_audio_queue_retries_every_packet_without_a_gap ... ok
+test auto_listening_accepts_digital_human_detect_as_a_text_turn ... ok
+test llm_failure_before_audio_emits_no_playback_controls_or_assistant_history ... ok
+test listen_arm_during_delivery_does_not_interrupt_the_active_turn ... ok
+test non_empty_asr_final_delivers_started_canonical_opus_then_one_stop ... ok
+test full_segment_capacity_pauses_llm_until_all_segments_are_spoken ... ok
+test auto_greeting_then_rust_response_drains_on_the_same_session ... ok
+test streaming_llm_delivers_first_audio_before_eof_and_commits_only_after_drained ... ok
+test public_websocket_sends_each_complete_llm_sentence_once ... ok
+test router_writes_tts_start_then_canonical_audio_then_one_stop ... ok
+test public_abort_with_bounded_lanes_sends_one_stop_then_writer_stays_quiet ... ok
+test wrapped_long_llm_text_waits_for_speech_segment_capacity ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+
+     Running tests/tool_round_executor.rs (/mnt/storage/ai-agent-voice/target/debug/deps/tool_round_executor-e36dc8a9618fe052)
+
+running 12 tests
+test a_refused_external_call_is_typed_and_does_not_stop_the_round ... ok
+test a_mixed_round_runs_its_calls_in_model_order_and_pairs_every_result ... ok
+test a_round_over_the_call_cap_executes_no_call_at_all ... ok
+test a_session_local_action_runs_in_the_same_order_as_the_mcp_calls_around_it ... ok
+test a_device_call_that_outlives_the_execution_budget_ends_the_turn_too ... ok
+test a_turn_over_the_round_cap_stops_before_another_round_starts ... ok
+test an_external_call_that_outlives_the_execution_budget_ends_the_turn ... ok
+test participating_agent_never_advertises_or_dispatches_unreviewed_external_tool ... ok
+test an_interrupted_turn_drops_its_in_flight_call_and_never_continues ... ok
+test reviewed_external_tool_is_advertised_and_dispatched_on_new_websocket ... ok
+test the_peer_really_is_a_device_mcp_server_and_the_external_catalog_really_resolves ... ok
+test two_sessions_calling_one_server_never_exceed_the_shared_per_server_bound ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.75s
+
+     Running tests/transcript_archive.rs (/mnt/storage/ai-agent-voice/target/debug/deps/transcript_archive-de4e70e973e79fc5)
+
+running 15 tests
+test a_contended_retention_run_is_abandoned_and_the_next_one_still_happens ... ok
+test a_full_archive_queue_drops_one_record_and_never_the_turn ... ok
+test a_purge_never_reaches_an_open_sessions_dialogue_history ... ok
+test a_database_that_refuses_a_record_drops_it_and_never_the_turn ... ok
+test a_server_default_session_archives_without_a_template ... ok
+test a_turn_that_speaks_a_tool_argument_never_archives_it ... ok
+test an_enabled_archive_stores_only_the_final_user_text_and_the_delivered_answer ... ok
+test an_interrupted_turn_archives_its_user_text_and_no_answer ... ok
+test an_unknown_device_cannot_start_a_session_or_archive_anything ... ok
+test a_switched_template_is_attributed_to_the_turn_that_ran_under_it ... ok
+test capture_off_still_prunes_what_an_earlier_deployment_archived ... ok
+test capture_is_off_by_default_so_a_turn_archives_nothing ... ok
+test retention_runs_at_startup_and_again_on_its_schedule ... ok
+test the_archive_stays_readable_and_prunable_while_capture_is_off ... ok
+test the_archive_is_readable_and_prunable_through_the_authenticated_admin_api ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.28s
+
+     Running tests/tts_worker_runtime.rs (/mnt/storage/ai-agent-voice/target/debug/deps/tts_worker_runtime-4f2cf497f73aa109)
+
+running 15 tests
+test a_stream_rejects_a_segment_from_a_different_logical_binding ... ok
+test detached_cancel_drains_queued_pcm_and_releases_full_event_channel ... ok
+test initialization_cleanup_panic_is_quarantined_instead_of_a_retryable_load_failure ... ok
+test native_slot_stays_occupied_until_runtime_consumes_terminal_acknowledgement ... ok
+test native_worker_init_failure_is_reported_before_runtime_is_published ... ok
+test logical_views_inject_their_own_binding_into_shared_workers ... ok
+test one_tts_stream_preserves_provider_state_across_speech_segments ... ok
+test retained_worker_warmup_failure_prevents_ready_publication ... ok
+test streaming_provider_delivers_each_pcm_chunk_before_terminal_acknowledgement ... ok
+test completed_synthesis_is_not_timed_out_while_pcm_waits_for_pacing ... ok
+test unload_refuses_an_open_stream_until_the_owner_closes_it ... ok
+test unload_waits_for_retained_native_worker_exit_and_closes_admission ... ok
+test detached_cancel_quarantines_a_worker_that_misses_cleanup_grace ... ok
+test native_workers_are_created_once_per_pool_slot_not_per_synthesis ... ok
+test timeout_starts_cleanup_from_worker_acceptance_and_quarantines_without_later_polling ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/vad_segmentation_correctness.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vad_segmentation_correctness-b73343a4f02bab4e)
+
+running 4 tests
+test segmenter_emits_confirmed_candidate_onset_and_trailing_silence_boundaries ... ok
+test reset_allows_a_fresh_auto_utterance_timeline ... ok
+test segmenter_rejects_a_gap_before_endpointing ... ok
+test worker_fails_when_provider_mutates_the_canonical_sample_range ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vision_api.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vision_api-08439ad1c67719ec)
+
+running 5 tests
+test vision_api_options_preflight_works_over_tcp ... ok
+test vision_api_accepts_firmware_file_field_in_any_order ... ok
+test vision_api_get_probe_and_multipart_post_work_over_tcp ... ok
+test vision_api_rejects_invalid_public_contract_inputs ... ok
+test pilot_serializes_vision_requests_even_with_provider_capacity_two ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+     Running tests/vision_config.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vision_config-90133acaafbeabb7)
+
+running 1 test
+test vision_config_accepts_multiple_instances_and_redacts_secret ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vision_provider.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vision_provider-50faf2023b5ef4dd)
+
+running 1 test
+test openai_vision_sends_multimodal_payload_over_http ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/worker_runtime.rs (/mnt/storage/ai-agent-voice/target/debug/deps/worker_runtime-299a7097e4ed4ffa)
+
+running 4 tests
+test stale_cancel_acknowledgement_releases_its_pinned_stream_without_exposing_a_logical_event ... ok
+test vad_reset_and_close_are_acknowledgement_barriers_before_a_slot_is_reused ... ok
+test vad_probability_and_reset_acknowledgement_keep_the_capture_cycle_identity ... ok
+test cleanup_timeout_quarantines_the_exact_worker_instead_of_reusing_it ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/worker_runtime_review.rs (/mnt/storage/ai-agent-voice/target/debug/deps/worker_runtime_review-fc537aec987568c6)
+
+running 7 tests
+test supervisor_observation_does_not_pin_an_idle_runtime ... ok
+test disconnected_vad_session_releases_capacity_after_close_acknowledgement ... ok
+test vad_events_are_routed_to_the_registered_session_mailbox ... ok
+test vad_reset_timeout_quarantines_the_worker_and_routes_the_fatal_event ... ok
+test disconnected_session_releases_capacity_after_cancel_acknowledgement ... ok
+test final_timeout_fail_closes_the_affected_voice_session ... ok
+test worker_event_is_routed_only_to_its_own_voice_session ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/ws_protocol.rs (/mnt/storage/ai-agent-voice/target/debug/deps/ws_protocol-6c8b17705c29be42)
+
+running 9 tests
+test binary_before_hello_closes_with_protocol_error ... ok
+test mcp_initialize_follows_server_hello_when_client_advertises_capability ... ok
+test application_shutdown_controlled_closes_an_upgraded_voice_session ... ok
+test ota_accepts_post_and_advertises_preflight_methods ... ok
+test websocket_accepts_browser_authorization_query ... ok
+test oversized_post_handshake_frame_closes_with_1009 ... ok
+test ota_advertises_ws_url_and_health_is_available ... ok
+test valid_hello_receives_canonical_server_hello ... ok
+test websocket_accepts_browser_identity_query_when_headers_are_absent ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.38s
+
+     Running tests/zerotts_assets.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_assets-0ee2b44a47fed419)
+
+running 11 tests
+test assets_live_under_the_shared_models_directory ... ok
+test codec_external_data_stays_a_sibling_of_its_graphs ... ok
+test a_second_ensure_downloads_nothing_further ... ok
+test a_zero_byte_voice_is_reinstalled ... ok
+test every_url_is_pinned_to_the_declared_upstream_revision ... ok
+test concurrent_ensures_install_every_asset_exactly_once ... ok
+test resolving_reports_a_missing_asset_instead_of_downloading_it ... ok
+test every_core_asset_is_ensured ... ok
+test resolving_assets_never_downloads ... ok
+test every_supported_voice_is_ensured_not_only_the_selected_one ... ok
+test the_advertised_voice_catalog_is_the_downloaded_voice_catalog ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/zerotts_synthesis_core.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_synthesis_core-f1ada26fff7239cb)
+
+running 5 tests
+test checked_in_parity_fixture_requires_a_bounded_eoa_checkpoint ... ok
+test startup_warmup_is_bounded_and_leaves_no_state_in_the_retained_runtime ... ignored, requires an installed ZeroTTS pack and ONNX runtime; set ZEROTTS_QUALIFICATION_PACK and VOICE_ONNX_RUNTIME_LIB
+test tokenizer_contract_rejects_wrong_voice_or_graph_dimensions_before_inference ... ok
+test tokenizer_contract_rejects_special_token_drift_before_inference ... ok
+test tokenizer_contract_normalizes_then_wraps_pinned_special_tokens ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/zerotts_warmup_contract.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_warmup_contract-072c256dc3e3ab73)
+
+running 1 test
+test warmup_pcm_requires_terminal_finite_non_empty_48khz_mono_audio ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests voice_agent_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling voice-agent-server v0.1.0 (/app/crates/voice-agent-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 05s
+     Running unittests src/lib.rs (/mnt/storage/ai-agent-voice/target/debug/deps/voice_agent_server-46393d3b31bbda9f)
+
+running 218 tests
+test app::admin::providers::provider_runtime_tests::a_generated_key_is_prefixed_by_type_and_never_repeats ... ok
+test app::admin::providers::provider_runtime_tests::loaded_runtime_becomes_stale_after_desired_revision_changes ... ok
+test audio::canonical_downlink::tests::accepts_canonical_24khz_provider_pcm_without_resampling ... ok
+test audio::canonical_downlink::tests::finalizes_a_partial_provider_tail_as_one_canonical_packet ... ok
+test audio::enrollment::tests::cosine_matches_hand_computed_fixtures ... ok
+test audio::enrollment::tests::embedding_validation_and_encoding ... ok
+test audio::enrollment::tests::pairwise_min_cosine_uses_the_worst_pair ... ok
+test audio::enrollment::tests::centroid_is_the_renormalized_equal_weight_mean ... ok
+test audio::enrollment::tests::parses_pcm16_mono_16k ... ok
+test audio::enrollment::tests::quality_gate_accepts_a_speech_like_clip ... ok
+test app::admin::speaker_quick::tests::reservation_keeps_the_capture_accepted_until_a_speaker_is_linked ... ok
+test app::admin::speaker_quick::tests::quick_voiceprint_insert_matches_its_columns ... ok
+test audio::enrollment::tests::window_selection_prefers_the_speechiest_span ... ok
+test audio::resampler::tests::attenuates_content_above_the_24khz_nyquist_band ... ok
+test audio::enrollment::tests::rejects_stereo_and_other_rates_without_relabelling ... ok
+test audio::resampler::tests::keeps_phase_across_arbitrary_chunks ... ok
+test benchmark::tests::asr_runner_uses_canonical_frames_and_rejects_a_partial_frame ... ok
+test benchmark::tests::invalid_pcm_is_rejected ... ok
+test audio::enrollment::tests::quality_gate_rejects_short_silent_and_clipped ... ok
+test audio::enrollment::tests::rejects_clips_longer_than_the_cap ... ok
+test benchmark::tests::vad_runner_rejects_a_provider_that_mutates_the_input_timeline ... ok
+test benchmark::tests::kokoro_24khz_delivery_measures_real_duration_and_canonical_packets ... ok
+test benchmark::tests::delivery_excludes_warmup_and_reports_canonical_packets ... ok
+test benchmark::tests::vad_runner_reports_every_canonical_frame_and_rejects_a_partial_frame ... ok
+test config::agent_template_tests::accepts_only_the_supported_literal_placeholders ... ok
+test config::external_mcp_config_tests::the_default_external_mcp_configuration_is_the_documented_one ... ok
+test benchmark::tests::llm_runner_uses_first_non_empty_text_delta_for_ttft ... ok
+test config::tool_round_config_tests::every_tool_round_cap_refuses_zero_and_its_hard_ceiling ... ok
+test config::providers::zerotts_delivery_tests::stream_delivery_is_default_and_file_remains_selectable ... ok
+test config::database_history_config_tests::the_default_history_configuration_is_the_documented_one ... ok
+test config::tool_round_config_tests::the_default_tool_round_configuration_is_the_documented_one ... ok
+test config::external_mcp_config_tests::an_omitted_section_deserializes_to_the_documented_defaults ... ok
+test database::admission::tests::admission_summary_marks_an_unresolved_binding ... ok
+test config::validation::tests::retention_is_bounded_whether_or_not_capture_is_on ... ok
+test database::admission::tests::admission_summary_reports_decision_facts_without_sensitive_values ... ok
+test database::admission::tests::admission_summary_truncates_beyond_the_bounded_prefix ... ok
+test config::validation::tests::capture_and_retention_bounds_are_checked_before_a_listener_binds ... ok
+test database::external_mcp_policy::tests::http_and_https_work_without_network_configuration ... ok
+test database::external_mcp_policy::tests::malformed_urls_and_embedded_credentials_are_rejected ... ok
+test database::external_mcp_policy::tests::network_configuration_only_has_an_optional_host_allowlist ... ok
+test database::external_mcp_policy::tests::optional_host_allowlist_restricts_http_and_https ... ok
+test database::history::tests::a_role_has_exactly_the_two_words_the_archive_stores ... ok
+test config::validation::tests::speaker_recognition_bounds_are_enforced ... ok
+test database::history::tests::a_session_without_a_database_identity_is_never_bound_to_the_archive ... ok
+test database::history::tests::a_full_queue_drops_one_record_and_never_waits ... ok
+test database::history::tests::a_stopped_writer_drops_every_later_record ... ok
+test database::history::tests::one_session_archives_under_a_sequence_that_only_moves_forward ... ok
+test database::history::tests::retention_deletes_only_what_is_older_than_its_utc_cutoff ... ok
+test database::history::tests::text_outside_the_archive_bound_is_refused_rather_than_truncated ... ok
+test database::history::tests::the_writer_is_settled_only_once_it_holds_no_records ... ok
+test database::secrets::deployment_name_tests::mcp_credentials_are_derived_only_for_authenticated_servers ... ok
+test database::secrets::deployment_name_tests::provider_credentials_are_derived_only_for_remote_adapters ... ok
+test database::load_plan::tests::server_defaults_are_required_and_never_optional ... ok
+test lifecycle::tests::a_closed_gate_refuses_new_work_forever ... ok
+test lifecycle::tests::a_drain_that_finishes_early_never_reaches_the_deadline ... ok
+test lifecycle::tests::a_registry_counts_a_session_until_its_handle_drops ... ok
+test database::tool_security::tests::speaker_invalidation_matches_every_pinned_dependency ... ok
+test lifecycle::tests::an_archived_writer_is_flushed_without_waiting_for_the_deadline ... ok
+test lifecycle::tests::an_empty_process_drains_without_reaching_the_deadline ... ok
+test lifecycle::tests::the_admission_gate_is_not_a_session_generation_gate ... ok
+test lifecycle::tests::the_deadline_reports_the_sessions_still_open ... ok
+test lifecycle::tests::the_deadline_signals_only_the_sessions_still_open ... ok
+test lifecycle::tests::a_stuck_writer_costs_records_at_the_deadline_and_nothing_more ... ok
+test providers::database_loader::tests::a_required_failure_reports_the_coarse_reason_and_blocks_startup ... ok
+test providers::database_loader::tests::an_unbound_provider_never_resolves_a_secret_or_builds_a_runtime ... ok
+test providers::database_loader::tests::an_unbound_provider_with_invalid_config_is_unavailable_without_blocking_boot ... ok
+test providers::database_loader::tests::optional_and_unbound_failures_stay_unavailable_without_loading_a_runtime ... ok
+test providers::llm::tests::tool_stream_intermediate_chunks_do_not_fail_the_round ... ok
+test providers::database_loader::tests::chillaudio_tts_materialization_maps_the_secret_reference_to_its_runtime_token ... ok
+test providers::runtime_catalog::tests::a_binding_whose_vad_runtime_is_absent_cannot_admit_a_session ... ok
+test providers::runtime_catalog::tests::resolve_returns_the_runtime_snapshot_named_by_effective_bindings ... ok
+test providers::speaker::descriptor::tests::exposes_only_optional_window_controls_with_server_defaults ... ok
+test providers::loader::tests::qualification_defaults_load_without_openai_configuration ... ok
+test providers::speaker::qualification::tests::same_loudness_maps_to_the_same_point_and_other_loudness_does_not ... ok
+test providers::tts::file_delivery::tests::removes_file_when_delivery_is_cancelled ... ok
+test providers::tts::kokoro_vi::real_model_tests::loads_local_contextbox_model_and_synthesizes_24khz_pcm ... ignored, requires models/tts/kokoro-vi and runtime/kokoro-vi local assets
+test providers::tts::kokoro_vi::runtime::tests::cancellation_stops_emission_between_pcm_chunks ... ok
+test providers::tts::kokoro_vi::runtime::tests::complete_waveform_is_emitted_as_bounded_24khz_chunks ... ok
+test providers::tts::kokoro_vi::runtime::tests::invalid_waveform_is_rejected_before_delivery ... ok
+test providers::tts::kokoro_vi::tokenizer::tests::unknown_phonemes_are_dropped_but_known_unicode_is_preserved ... ok
+test providers::tts::file_delivery::tests::replays_only_a_finalized_file_and_removes_it ... ok
+test database::credentials::file_tests::key_file_credentials_survive_reload_and_rotation ... ok
+test providers::vad::silero::provider::tests::inference_input_prepends_the_previous_64_samples ... ok
+test services::device_enrollment::audio::tests::leading_zero_is_a_digit_and_pcm_order_is_exact_before_lossy_encoding ... ok
+test services::device_enrollment::tests::canonical_packets_decode_and_invalid_code_or_assets_fail_closed ... ok
+test services::device_enrollment::tests::static_runtime_has_independent_bounded_connection_capacity ... ok
+test services::provider_diagnostic::tests::cancelled_waiter_keeps_diagnostic_admission_until_terminal_acknowledgement ... ok
+test services::provider_diagnostic::tests::quarantine_releases_limiter_but_keeps_exact_runtime_capacity_consumed ... ok
+test services::provider_diagnostic::tests::stale_runtime_is_explicit_but_remains_testable ... ok
+test services::provider_diagnostic::tests::terminal_acknowledgement_releases_runtime_and_diagnostic_capacity ... ok
+test services::provider_diagnostic::tests::timeout_cancels_then_acknowledges_before_releasing_capacity ... ok
+test providers::tts::zerotts::runtime::text::tests::matches_python_spoken_form_fixtures ... ok
+test providers::tts::zerotts::runtime::text::additional_python_cases::matches_python_numeric_and_context_cases ... ok
+test services::provider_prewarm::tests::pending_snapshots_coalesce_by_resource_and_reject_a_new_resource_at_capacity ... ok
+test services::provider_runtime::factory::tests::a_shared_zerotts_runtime_rebinds_voice_without_changing_physical_state ... ok
+test services::provider_runtime::factory::tests::shared_silero_resource_materializes_snapshot_endpoint_policy ... ok
+test session::actor::mcp::tests::double_encoded_xiaozhi_response_is_classified ... ok
+test session::actor::mcp::tests::generic_camera_wrapper_redacts_photo_data_before_normalization ... ok
+test session::actor::mcp::tests::generic_or_unsuccessful_action_is_not_a_direct_response ... ok
+test session::actor::mcp::tests::nested_vision_response_ignores_large_photo_data_before_generic_cap ... ok
+test session::actor::mcp::tests::normalizer_does_not_mark_exact_cap_as_truncated ... ok
+test session::actor::mcp::tests::normalizer_joins_nfc_sanitizes_and_caps_after_sanitization ... ok
+test session::actor::mcp::tests::unsuccessful_outer_wrapper_does_not_speak_nested_vision_response ... ok
+test session::actor::mcp::tests::xiaozhi_response_action_is_classified_before_generic_normalization ... ok
+test session::actor::retention::tests::capacity_covers_pre_roll_confirmation_command_lag_frame_and_rechunk_slack ... ok
+test services::provider_prewarm::tests::obsolete_unbound_and_disabled_intents_never_produce_build_snapshots ... ok
+test database::mcp_servers::tests::publication_covers_commit_and_invalidation_but_not_a_rolled_back_revocation ... ok
+test session::actor::tools::tests::a_cold_switch_prepares_outside_actor_and_commits_only_at_normal_writer_boundary ... ok
+test session::actor::tools::tests::a_closed_gate_starts_no_tool_round_at_all ... ok
+test services::provider_diagnostic::tests::timeout_quarantines_the_exact_operation_when_acknowledgement_is_missing ... ok
+test session::actor::tools::tests::a_session_without_a_catalog_is_never_offered_the_switch_tool ... ok
+test session::actor::tools::tests::a_session_installs_the_admitted_external_mcp_catalog ... ok
+test session::actor::tools::tests::a_successful_switch_installs_the_candidate_runetimes_and_advances_the_revision ... ok
+test session::actor::tools::tests::a_switch_that_keeps_the_capture_runtimes_leaves_their_leases_open ... ok
+test session::actor::tools::tests::a_switch_that_rebases_the_vad_runtime_rearms_capture_instead_of_failing_closed ... ok
+test session::actor::tools::tests::a_switch_to_a_candidate_this_session_never_admitted_changes_nothing ... ok
+test session::actor::tools::tests::a_sessions_external_mcp_snapshot_renders_without_a_credential ... ok
+test session::actor::tools::tests::abort_while_native_switch_build_is_blocked_cannot_commit_late_completion ... ok
+test session::actor::tools::tests::abort_discards_cold_switch_preparation_and_every_late_lease ... ok
+test session::actor::tools::tests::external_tool_names_are_namespaced_and_keep_their_wire_name ... ok
+test session::actor::tools::tests::managed_switch_keeps_old_profile_until_exact_vad_cleanup_acknowledgement ... ok
+test session::generation_gate::tests::invalidation_rejects_the_old_turn_but_not_a_newer_turn ... ok
+test session::profile::tests::a_bound_speaker_slot_resolves_without_a_deployment_default ... ok
+test session::profile::tests::a_bound_speaker_slot_without_a_loaded_runtime_fails_closed ... ok
+test session::profile::tests::a_default_template_resolves_its_own_prompt_language_and_bindings ... ok
+test session::profile::tests::a_default_template_without_loaded_runtimes_fails_closed ... ok
+test session::profile::tests::a_missing_binding_uses_the_matching_server_default ... ok
+test session::profile::tests::a_successful_switch_replaces_the_active_snapshot_and_advances_the_revision ... ok
+test session::profile::tests::a_switch_targets_only_a_candidate_this_session_admitted ... ok
+test session::profile::tests::an_absent_speaker_slot_has_no_implicit_fallback ... ok
+test session::profile::tests::an_oversized_stored_prompt_is_never_accepted ... ok
+test session::profile::tests::only_disabled_assignments_use_server_defaults_without_an_override ... ok
+test session::profile::tests::the_switch_catalog_keeps_candidates_with_missing_bindings_on_server_defaults ... ok
+test session::prompt::tests::composition_respects_system_prompt_byte_budget ... ok
+test session::prompt::tests::default_prompt_contains_structured_blocks_and_keeps_speaker_slot_until_turn ... ok
+test session::prompt::tests::old_stored_prompts_without_speaker_slot_are_compatible ... ok
+test session::prompt::tests::recognized_speaker_is_scoped_to_one_turn_and_json_escaped ... ok
+test session::prompt::tests::request_bound_uses_utf8_content_and_fixed_overhead ... ok
+test session::prompt::tests::template_is_strict_and_single_pass ... ok
+test session::runtime_profile::tests::a_speaker_binding_is_admitted_as_an_optional_slot ... ok
+test session::runtime_profile::tests::a_speaker_binding_must_match_the_provider_kind ... ok
+test session::runtime_profile::tests::an_absent_speaker_slot_is_not_filled_from_a_deployment_default ... ok
+test session::speaker_observe::tests::policy_parses_and_gates_off ... ok
+test session::speaker_observe::tests::score_is_ranked_and_bounded_by_candidates ... ok
+test session::speaker_observe::tests::wire_text_never_leaks_identity_or_score ... ok
+test session::speech_output::tests::bounded_split_prevents_an_unfinished_sentence_from_growing_unbounded ... ok
+test session::speech_output::tests::does_not_send_a_partial_version_to_tts_when_decimal_dots_span_deltas ... ok
+test session::speech_output::tests::emits_a_complete_sentence_before_the_llm_finishes ... ok
+test session::actor::tools::tests::a_response_that_lands_after_its_round_is_discarded_and_acts_on_nothing ... ok
+test session::speech_output::tests::hard_splits_a_long_token_at_unicode_char_boundaries ... ok
+test session::speech_output::tests::holds_fragmented_vietnamese_deltas_until_the_complete_sentence_boundary ... ok
+test session::speech_output::tests::json_filter_handles_escaped_braces_and_keeps_non_json_braces ... ok
+test session::actor::tools::tests::a_closed_gate_stops_a_round_that_was_already_running ... ok
+test session::speech_output::tests::long_unpunctuated_delta_does_not_become_backpressure ... ok
+test session::speech_output::tests::first_five_packets_are_sent_before_realtime_pacing ... ok
+test session::speech_output::tests::paced_deadlines_are_anchored_to_first_packet_even_if_prebuffer_is_delayed ... ok
+test session::speech_output::tests::pacing_reanchors_after_audio_starvation_instead_of_catching_up ... ok
+test session::speech_output::tests::prebuffered_audio_does_not_drain_before_nominal_playback_ends ... ok
+test session::actor::tools::tests::an_interrupted_turn_drops_its_in_flight_call_without_producing_a_result ... ok
+test session::speech_output::tests::punctuation_only_response_fails_before_tts_submission ... ok
+test session::speech_output::tests::removes_json_command_across_deltas_before_sentence_delivery ... ok
+test session::speech_output::tests::retains_periods_and_commas_while_replacing_other_special_characters ... ok
+test session::speech_output::tests::sanitizes_tts_input_to_unicode_words_with_decimal_separators ... ok
+test session::speech_output::tests::segment_ready_keeps_display_text_while_tts_receives_sanitized_text ... ok
+test session::speech_output::tests::short_hard_sentence_is_flushed_immediately ... ok
+test session::speech_output::tests::next_segment_starts_while_previous_audio_is_queued ... ok
+test session::speech_output::tests::soft_punctuation_is_preferred_before_a_hard_length_split ... ok
+test session::speech_output::tests::splits_unicode_only_at_complete_sentence_boundary ... ok
+test session::speech_output::tests::starvation_before_prebuffer_does_not_underflow_pacing_index ... ok
+test session::speech_output::tests::terminal_partial_frame_fades_to_zero_before_padding ... ok
+test session::speech_output::tests::unspeakable_response_fails_instead_of_waiting_forever ... ok
+test session::turn::tests::keeps_current_atom_when_it_exceeds_eviction_target ... ok
+test session::turn::tests::materializes_tool_rounds_without_dangling_calls ... ok
+test startup_handshake::tests::binding_is_literal_loopback_only_when_handshake_is_enabled ... ok
+test session::speech_output::tests::short_streaming_segment_waits_for_completion_before_starting_playback ... ok
+test telemetry::tests::a_call_outcome_has_exactly_the_bounded_vocabulary ... ok
+test telemetry::tests::a_recorder_reports_the_metric_name_its_labels_and_its_value ... ok
+test tools::external_mcp::client::tests::a_page_must_describe_every_tool_it_claims ... ok
+test tools::external_mcp::client::tests::a_typed_auth_shape_is_resolved_once_and_never_prints_its_value ... ok
+test tools::external_mcp::client::tests::an_oversized_result_is_refused_rather_than_truncated ... ok
+test tools::external_mcp::client::tests::only_text_or_structured_json_survives_the_result_allowlist ... ok
+test tools::external_mcp::manager::tests::every_wire_failure_maps_to_a_bounded_reason ... ok
+test tools::external_mcp::registry::tests::a_supported_subset_is_accepted_including_a_closed_object ... ok
+test tools::external_mcp::registry::tests::an_unrepresentable_name_is_dropped_while_a_collision_loses_the_server ... ok
+test tools::external_mcp::registry::tests::every_shape_outside_the_supported_subset_is_refused ... ok
+test tools::external_mcp::registry::tests::normalization_is_pure_and_bounded_with_fixed_vectors ... ok
+test tools::external_mcp::registry::tests::structural_caps_bound_a_document_instead_of_each_level_separately ... ok
+test session::speech_output::tests::long_streaming_segment_starts_at_bounded_initial_buffer ... ok
+test tools::external_mcp::transport::tests::a_configured_page_that_cannot_be_buffered_is_refused_at_configuration_time ... ok
+test tools::external_mcp::transport::tests::a_permit_is_released_when_its_caller_drops_it ... ok
+test tools::external_mcp::transport::tests::one_servers_saturation_never_reaches_another_server ... ok
+test tools::external_mcp::transport::tests::static_headers_are_canonicalized_and_protected_names_are_refused ... ok
+test tools::external_mcp::transport::tests::a_caller_with_no_budget_left_sends_nothing_rather_than_waiting ... ok
+test tools::external_mcp::transport::tests::typed_auth_is_redacted_until_the_rmcp_adapter_materializes_it ... ok
+test tools::round::tests::a_cap_or_budget_is_reported_as_a_turn_failure_and_never_as_content ... ok
+test tools::round::tests::a_remote_is_error_stays_a_paired_result ... ok
+test tools::round::tests::a_remote_refusal_carries_its_class_and_nothing_else ... ok
+test tools::round::tests::a_success_shares_the_device_result_envelope ... ok
+test tools::round::tests::every_tool_call_failure_has_exactly_one_bounded_class ... ok
+test tools::round::tests::limits_come_from_the_validated_configuration_unchanged ... ok
+test workers::admission::tests::diagnostic_cannot_take_the_last_slot_after_voice_started ... ok
+test workers::admission::tests::diagnostic_never_consumes_the_voice_reservation ... ok
+test workers::admission::tests::logical_views_have_independent_quotas_and_one_physical_limit ... ok
+test workers::admission::tests::single_worker_allows_one_diagnostic_when_idle ... ok
+test workers::asr::pool::tests::reset_failure_marks_retained_pool_unhealthy_without_replacement ... ok
+test workers::llm::tests::diagnostic_collects_text_from_a_tool_free_independent_request ... ok
+test workers::llm::tests::diagnostic_rejects_tool_calls_and_oversized_text ... ok
+test workers::llm::tests::session_reports_an_open_stream_failure_without_exposing_provider_details ... ok
+test workers::tts::tests::diagnostic_pcm_does_not_extend_absolute_timeout ... ok
+test workers::tts::tests::empty_pcm_does_not_extend_voice_timeout ... ok
+test workers::tts::tests::queued_voice_pcm_does_not_charge_backpressure_as_a_stall ... ok
+test workers::tts::tests::voice_stall_times_out_after_last_pcm_progress ... ok
+test workers::tts::tests::voice_without_first_pcm_still_times_out_from_acceptance ... ok
+test workers::vad::tests::a_diagnostic_worker_lease_leaves_the_voice_reservation_available ... ok
+test workers::vad::tests::reset_discards_rechunk_slack_and_restarts_the_sample_timeline ... ok
+test session::speech_output::tests::progressing_tts_does_not_cut_playback_at_total_timeout ... ok
+test startup_handshake::tests::publishing_is_create_new_and_includes_the_nonce_and_bound_address ... ok
+test tools::external_mcp::transport::tests::the_limiter_bound_is_the_one_configuration_validates ... ok
+
+test result: ok. 217 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.68s
+
+     Running unittests src/bin/provider-bench.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_bench-ce2a131194830fe4)
+
+running 4 tests
+test tests::output_without_overwrite_never_replaces_an_existing_file ... ok
+test tests::failure_output_contains_only_the_stable_category ... ok
+test tests::output_creates_a_missing_parent_directory ... ok
+test tests::output_publish_and_overwrite_are_explicit ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src/bin/provider-bench-av.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_bench_av-ed593c941e3014ea)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/provider-runtime-bench.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_runtime_bench-ce3d1403c95b3e57)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/mnt/storage/ai-agent-voice/target/debug/deps/voice_agent_server-1112c531269e0835)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/zerotts-core-check.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_core_check-e8a75532ebe5c20b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/admin_api.rs (/mnt/storage/ai-agent-voice/target/debug/deps/admin_api-88b9faa759760f0f)
+
+running 35 tests
+test admin_router_auth_crud_revision_and_transport_contract ... ok
+test a_generated_provider_key_binds_a_template_without_being_retyped ... ok
+test admin_p1_read_models_and_device_template_override_are_public_contracts ... ok
+test admin_relationship_reads_and_unlinks_are_revisioned_public_contracts ... ok
+test conditional_delete_requires_a_current_revision_and_preserves_linked_templates ... ok
+test descriptor_language_fields_match_provider_config_migration_and_validation ... ok
+test admin_system_reports_database_unavailable_without_leaking_runtime_details ... ok
+test draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime ... ok
+test asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media ... ok
+test disabled_admin_route_is_not_mounted ... ok
+test draft_tests_reject_invalid_sources_without_creating_resources ... ok
+test external_tool_reviews_are_admin_authenticated_and_default_empty ... ok
+test external_mcp_http_can_be_created_and_updated_without_network_configuration ... ok
+test external_mcp_configuration_is_redacted_validated_and_revisioned ... ok
+test failed_success_audit_rolls_back_each_new_desired_resource ... ok
+test first_assignment_to_an_agent_becomes_its_enabled_default ... ok
+test kokoro_desired_configuration_accepts_catalog_selection_and_rejects_factory_incompatible_voice ... ok
+test first_assignment_with_a_partial_core_becomes_the_default ... ok
+test legacy_provider_runtime_fields_are_removed_by_migration_before_admin_reads ... ok
+test provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_only_contracts ... ok
+test mcp_credentials_are_write_only_replaceable_and_persist_after_restart ... ok
+test mcp_credentials_require_encryption_and_never_create_a_partial_resource ... ok
+test llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request ... ok
+test provider_credentials_replace_only_when_supplied ... ok
+test provider_credentials_are_write_only_masked_and_persist_after_restart ... ok
+test provider_credentials_require_encryption_and_never_create_a_partial_resource ... ok
+test provider_key_is_generated_by_the_server_and_never_accepted_from_a_client ... ok
+test provider_mutations_reject_server_owned_configuration ... ok
+test speaker_provider_creation_is_rejected ... ok
+test speaker_waiter_timeout_retains_exact_lease_and_capacity_until_native_completion ... ok
+test retired_device_tool_routes_return_not_found ... ok
+test speaker_provider_diagnostic_route_is_not_exposed ... ok
+test templates_and_provider_desired_configuration_are_bounded_and_restart_honest ... ok
+test vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runtime ... ok
+test tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_provider_wav ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.15s
+
+     Running tests/audio.rs (/mnt/storage/ai-agent-voice/target/debug/deps/audio-d85fb73674669a19)
+
+running 7 tests
+test decoder_drops_empty_and_oversized_packets_without_panicking ... ok
+test direction_specific_pcm_frames_reject_the_wrong_shape ... ok
+test manual_capture_overflow_discards_the_whole_utterance ... ok
+test manual_capture_preserves_frames_in_order ... ok
+test manual_capture_restart_and_abort_discard_collected_pcm ... ok
+test downlink_encoder_rejects_packets_larger_than_the_transport_cap ... ok
+test opus_round_trip_returns_a_canonical_uplink_frame ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/builtin_tools.rs (/mnt/storage/ai-agent-voice/target/debug/deps/builtin_tools-033aeaf7fda9f09e)
+
+running 4 tests
+test exit_definition_requires_a_single_goodbye_without_extra_properties ... ok
+test switch_definition_names_exactly_the_templates_this_session_admitted ... ok
+test exit_arguments_trim_valid_goodbye_and_reject_blank_or_oversized_values ... ok
+test switch_arguments_trim_a_template_key_and_reject_anything_else ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/config_audio.rs (/mnt/storage/ai-agent-voice/target/debug/deps/config_audio-74aa8cb13873b555)
+
+running 17 tests
+test audio_limit_is_converted_to_an_exact_frame_capacity ... ok
+test catalog_instances_keep_typed_adapter_options ... ok
+test config_accepts_multiple_asr_instances_with_different_adapters ... ok
+test config_rejects_invalid_database_and_shutdown_bounds ... ok
+test config_rejects_invalid_gipformer_runtime_options ... ok
+test config_rejects_legacy_agent_provider_bindings ... ok
+test config_rejects_shutdown_grace_outside_the_bounded_drain_window ... ok
+test gipformer_config_defaults_are_qualification_defaults ... ok
+test invalid_audio_and_transport_limits_fail_fast ... ok
+test phase_four_delivery_capacity_and_speech_bounds_fail_fast ... ok
+test private_network_http_llm_endpoint_is_allowed_but_public_http_is_rejected ... ok
+test removed_database_and_admission_switches_are_rejected ... ok
+test validation_rejects_a_missing_default ... ok
+test worker_runtime_limits_and_timeouts_are_configured_and_validated ... ok
+test application_state_preserves_injected_llm_and_tts_test_providers ... ok
+test application_builds_each_worker_runtime_from_its_own_config ... ok
+test application_rejects_missing_local_model_artifacts_before_binding ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/cors.rs (/mnt/storage/ai-agent-voice/target/debug/deps/cors-2493bea63993eb91)
+
+running 3 tests
+test lan_browser_preflight_and_authenticated_requests ... ok
+test local_ipv4_and_ipv6_origins_are_allowed ... ok
+test public_and_opaque_origins_are_not_allowed_for_admin ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+     Running tests/database_bootstrap.rs (/mnt/storage/ai-agent-voice/target/debug/deps/database_bootstrap-4e467e164e36692b)
+
+running 9 tests
+test database_parent_that_is_a_file_fails_before_boot ... ok
+test fresh_database_migrates_then_boots_health_and_ready_routes ... ok
+test missing_database_parent_is_created_and_existing_rows_survive_restart ... ok
+test current_database_is_idempotent_when_migrations_run_again ... ok
+test failed_migration_history_fails_before_boot ... ok
+test pending_schema_with_migration_on_start_disabled_fails_before_boot ... ok
+test schema_newer_than_binary_is_rejected_before_listener_bind ... ok
+test supported_old_schema_is_forward_migrated_to_the_current_indexes ... ok
+test speaker_provider_migration_preserves_bindings_and_deleted_high_water_marks ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.37s
+
+     Running tests/device_admission.rs (/mnt/storage/ai-agent-voice/target/debug/deps/device_admission-2b1351c5dec8ff46)
+
+running 10 tests
+test auto_registration_is_atomic_for_racing_connections_and_stores_only_safe_metadata ... ok
+test default_admission_rejects_unknown_devices_before_upgrade ... ok
+test admission_rejects_an_oversized_device_identity_before_database_lookup ... ok
+test enabled_admission_returns_coarse_503_when_its_database_is_unavailable ... ok
+test admitted_connection_keeps_its_baseline_while_reconnect_re_resolves_policy ... ok
+test enabled_admission_rejects_unknown_and_disabled_devices_before_upgrade ... ok
+test enabled_admission_returns_coarse_503_when_its_database_pool_is_closed ... ok
+test enabled_admission_uses_server_defaults_when_agent_has_no_template_assignments ... ok
+test ota_enrollment_claim_and_activate_create_exactly_one_admitted_device ... ok
+test ota_without_enrollment_only_discloses_configuration_for_registered_devices ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.37s
+
+     Running tests/device_enrollment_ws.rs (/mnt/storage/ai-agent-voice/target/debug/deps/device_enrollment_ws-acf14816abd28ecd)
+
+running 4 tests
+test missing_assets_fail_bootstrap_before_router_publication ... ok
+test abort_cancels_audio_without_consuming_enrollment_and_replay_has_cooldown ... ok
+test auth_capacity_disabled_and_expiry_fail_closed ... ok
+test ota_ws_prompt_claim_and_reconnect_preserve_database_admission ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.64s
+
+     Running tests/device_mcp.rs (/mnt/storage/ai-agent-voice/target/debug/deps/device_mcp-cd7d0ef5530bda2b)
+
+running 5 tests
+test sanitizer_is_stable_and_collision_rejects_the_whole_catalog ... ok
+test duplicate_original_name_rejects_the_whole_catalog ... ok
+test discovered_tools_include_formerly_denied_names ... ok
+test json_rpc_parser_rejects_invalid_ids_and_preserves_numeric_correlation ... ok
+test tools_call_uses_original_device_name_and_object_arguments ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/docker_config.rs (/mnt/storage/ai-agent-voice/target/debug/deps/docker_config-bdeb97fd57ca7b0a)
+
+running 2 tests
+test production_docker_config_uses_container_paths_and_listener ... ok
+test docker_qualification_config_is_compile_time_only ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/exit_intent_integration.rs (/mnt/storage/ai-agent-voice/target/debug/deps/exit_intent_integration-6ef4907102b4fe34)
+
+running 2 tests
+test aborting_the_goodbye_cancels_the_pending_normal_close ... ok
+test exit_builtin_without_mcp_sends_final_audio_then_stop_then_normal_close ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.98s
+
+     Running tests/external_mcp_admission.rs (/mnt/storage/ai-agent-voice/target/debug/deps/external_mcp_admission-6e45d2de665bfe9e)
+
+running 17 tests
+test an_agent_without_mcp_bindings_admits_without_external_tools ... ok
+test external_agent_reviews_exact_contract_and_drift_requires_new_review ... ok
+test admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_complete ... ok
+test admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotation ... ok
+test external_mcp_diagnostics_stay_bounded_classes ... ok
+test external_mcp_admission_snapshot_is_fresh_bounded_and_immutable ... ok
+test external_mcp_aggregate_tool_cap_drops_the_whole_snapshot ... ok
+test external_mcp_aggregate_tool_cap_is_counted_once_and_not_as_a_server_failure ... ok
+test external_mcp_https_never_falls_back_to_an_unvalidated_connection ... ok
+test external_mcp_publishes_only_enabled_bindings_of_enabled_servers ... ok
+test external_mcp_refuses_server_keys_that_normalize_alike ... ok
+test external_mcp_outbound_policy_refuses_unlisted_destinations_and_redirects ... ok
+test manual_discovery_rejects_an_invalid_later_page_without_partial_catalog ... ok
+test external_mcp_secret_failure_excludes_its_server_and_redacts_its_reason ... ok
+test manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shutdown ... ok
+test manual_saved_probes_keep_disabled_config_and_credentials_and_reject_stale_reuse ... ok
+test external_mcp_discovery_refuses_caps_namespaces_and_collisions ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.90s
+
+     Running tests/lifecycle.rs (/mnt/storage/ai-agent-voice/target/debug/deps/lifecycle-8d023a0f0d9c4b42)
+
+running 19 tests
+test a_closed_gate_refuses_database_admission_regardless_of_the_caller ... ok
+test a_closed_gate_refuses_a_new_voice_connection ... ok
+test a_degraded_database_degrades_readiness_without_taking_the_process_down ... ok
+test a_capture_off_process_reports_nothing_left_to_flush ... ok
+test a_healthy_process_is_both_live_and_ready ... ok
+test a_session_admitted_before_a_database_outage_keeps_its_profile ... ok
+test a_session_open_at_the_deadline_is_controlled_closed_not_aborted ... ok
+test a_session_that_finishes_on_its_own_drains_before_the_deadline ... ok
+test missing_database_reports_startup_incomplete ... ok
+test application_shutdown_uses_its_existing_deadline_for_managed_resources ... ok
+test a_shutting_down_process_is_live_but_no_longer_ready ... ok
+test readiness_never_resolves_a_device ... ok
+test shutdown_is_bounded_even_when_a_session_never_answers ... ok
+test an_unreachable_external_mcp_server_does_not_make_the_process_unready ... ok
+test the_grace_deadline_comes_from_the_deployment_configuration ... ok
+test readiness_never_discovers_external_mcp ... ok
+test readiness_never_runs_full_admission ... ok
+test the_drain_counts_and_closes_exactly_the_sessions_still_open ... ok
+test the_history_flush_never_decides_how_long_shutdown_takes ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.03s
+
+     Running tests/llm_runtime.rs (/mnt/storage/ai-agent-voice/target/debug/deps/llm_runtime-26f9b074a4de14a0)
+
+running 3 tests
+test runtime_routes_typed_tool_call_without_a_retry ... ok
+test turn_owned_cancellation_token_terminates_the_matching_operation ... ok
+test runtime_routes_domain_events_and_releases_permit_after_terminal ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/manual_stt.rs (/mnt/storage/ai-agent-voice/target/debug/deps/manual_stt-7a40ffcffa999fbc)
+
+running 15 tests
+test abort_in_auto_rearms_the_pinned_vad_lease_instead_of_closing_it ... ok
+test active_turn_capacity_denial_finishes_without_stt_or_history ... ok
+test auto_retains_pre_roll_and_all_pcm_arrived_while_vad_events_lag ... ok
+test dialogue_history_evicts_the_oldest_manual_final_at_its_configured_limit ... ok
+test manual_empty_final_does_not_commit_or_enqueue_stt ... ok
+test manual_capture_overflow_stops_feeding_the_asr_stream ... ok
+test manual_failed_final_does_not_commit_or_enqueue_stt ... ok
+test manual_final_commits_history_then_enqueues_one_stt_without_partial ... ok
+test repeated_auto_start_during_asr_finalization_preserves_final_text ... ok
+test repeated_auto_start_rearms_the_pinned_vad_lease_with_one_worker_slot ... ok
+test repeated_realtime_start_rearms_the_pinned_vad_lease_with_one_worker_slot ... ok
+test repeated_auto_start_during_speech_preserves_asr_pcm ... ok
+test stale_vad_probability_before_reset_does_not_open_asr_for_the_new_cycle ... ok
+test auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done ... ok
+test replacement_invalidates_a_late_final_without_emitting_stale_stt ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/model_download.rs (/mnt/storage/ai-agent-voice/target/debug/deps/model_download-32f4d3c7cb4a3fbc)
+
+running 3 tests
+test not_found_is_not_retried_and_leaves_no_partial_file ... ok
+test transient_server_error_is_retried ... ok
+test interrupted_stream_retries_from_zero_without_appending_partial_bytes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+     Running tests/protocol_e2e.rs (/mnt/storage/ai-agent-voice/target/debug/deps/protocol_e2e-640c39d058b3641f)
+
+running 6 tests
+test pilot_busy_keeps_opt_in_controls_and_closes_legacy_before_capture ... ok
+test pilot_auto_abort_retains_armed_slot_until_disconnect_cleanup ... ok
+test trusted_aec_auto_barge_in_stops_a_once_and_delivers_b_on_the_same_socket ... ok
+test failed_and_cancelled_recognition_emit_no_stt ... ok
+test trusted_aec_realtime_barge_in_keeps_the_voice_session_connected ... ok
+test manual_and_auto_canonical_opus_emit_one_existing_stt_without_internal_events ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.30s
+
+     Running tests/protocol_listen.rs (/mnt/storage/ai-agent-voice/target/debug/deps/protocol_listen-349d676d8b4f6348)
+
+running 6 tests
+test barge_in_policy_requires_opt_in_and_a_non_manual_mode ... ok
+test listen_stop_does_not_require_a_mode ... ok
+test listen_detect_is_parsed_without_being_inferred_as_start ... ok
+test hello_accepts_optional_aec_assertion_and_ignores_unknown_features ... ok
+test listen_start_requires_a_typed_mode ... ok
+test session_id_is_optional_but_present_non_string_is_unknown ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_admission_snapshot.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_admission_snapshot-17744dc7e25b7f34)
+
+running 4 tests
+test admission_owns_exact_provider_version_after_patch_and_key_recreation ... ok
+test admission_bounds_total_snapshot_bytes_before_returning_configuration ... ok
+test admission_marks_invalid_persisted_provider_config_unusable_without_copying_it_to_a_runtime_snapshot ... ok
+test admission_refuses_an_unbounded_assignment_graph ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/provider_assets.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_assets-3bfa81ab8fcad16a)
+
+running 7 tests
+test a_download_that_writes_nothing_is_rejected_and_leaves_no_final_asset ... ok
+test an_existing_asset_is_reused_without_downloading ... ok
+test a_missing_asset_is_downloaded_and_atomically_installed ... ok
+test an_interrupted_download_leaves_no_final_asset_and_no_temporary_file ... ok
+test a_zero_byte_asset_is_downloaded_again ... ok
+test concurrent_ensures_download_a_missing_asset_only_once ... ok
+test readiness_depends_only_on_a_non_empty_regular_file ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_draft_tests.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_draft_tests-59395b86ac071ac0)
+
+running 1 test
+test draft_inference_uses_real_factories_without_saved_rows_or_readiness_changes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+     Running tests/provider_load_plan.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_load_plan-d938dcf7761780c2)
+
+running 8 tests
+test a_required_provider_that_collides_with_a_deployment_instance_refuses_to_start ... ok
+test a_required_default_template_provider_failure_refuses_to_start ... ok
+test an_optional_non_default_provider_failure_starts_and_reports_unavailable ... ok
+test a_provider_bound_only_by_a_disabled_agent_stays_out_of_the_load_plan ... ok
+test an_optional_non_default_provider_that_loads_becomes_a_usable_candidate ... ok
+test a_loaded_database_provider_reports_desired_versus_loaded_revision ... ok
+test an_unbound_provider_is_validated_without_resolving_its_secret_or_loading ... ok
+test an_unbound_provider_with_invalid_config_does_not_block_boot ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.14s
+
+     Running tests/provider_materializer.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_materializer-e34e9b5ddf2bf5e4)
+
+running 19 tests
+test deployment_startup_and_the_manager_agree_on_the_zerotts_replica_count ... ok
+test kokoro_runtime_plan_excludes_preload_but_keeps_native_selection_and_g2p_identity ... ok
+test checkout_example_configuration_parses_without_resolving_or_printing_credentials ... ok
+test native_gipformer_single_frame_finishes_without_foreign_exception ... ignored, requires acknowledged installed Gipformer and native ONNX runtime; set PROVIDER_QUALIFICATION_CONFIG
+test local_runtime_identity_uses_adapter_owned_physical_specs ... ok
+test a_shared_zerotts_physical_runtime_admits_one_native_synthesis_at_a_time ... ok
+test a_different_zerotts_delivery_mode_builds_a_second_physical_runtime ... ok
+test native_resource_identity_normalizes_defaults_and_isolates_execution_and_credentials ... ok
+test preparing_a_remote_provider_does_not_enter_the_asset_layer ... ok
+test one_materialization_ensures_its_provider_assets ... ok
+test single_provider_materialization_rejects_invalid_config_before_secret_resolution ... ok
+test runtime_configuration_requires_complete_explicit_budget_and_rejects_unknown_fields ... ok
+test native_resource_identity_uses_execution_content_not_only_its_path ... ok
+test production_manager_materializer_owns_remote_runtime_and_acknowledged_unload ... ok
+test single_remote_provider_materialization_creates_an_exact_usable_catalog_without_network_io ... ok
+test startup_materializes_every_deployment_default ... ok
+test zerotts_physical_replica_count_is_independent_of_generic_tts_concurrency ... ok
+test zerotts_resource_identity_shares_voices_but_isolates_delivery_mode ... ok
+test switching_the_logical_voice_never_rematerializes_the_zerotts_runtime ... ok
+
+test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/provider_registry.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_registry-57166f653a41af17)
+
+running 8 tests
+test asset_ownership_follows_whether_a_provider_loads_local_files ... ok
+test admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapters ... ok
+test every_local_adapter_pins_an_immutable_upstream_revision ... ok
+test native_transducers_accept_every_advertised_decoding_method ... ignored, requires acknowledged installed ASR models; set PROVIDER_QUALIFICATION_CONFIG
+test every_advertised_local_voice_is_an_installed_voice_asset ... ok
+test descriptors_expose_only_user_configuration_and_typed_decoding_choices ... ok
+test registry_exposes_only_adapters_compiled_into_the_binary ... ok
+test catalog_config_keeps_secrets_redacted_and_options_scoped_to_each_instance ... ok
+
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/provider_runtime_manager.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_runtime_manager-4cfac757eca8d7ed)
+
+running 24 tests
+test active_enrollment_refuses_cold_start_as_busy_not_permanent_failure ... ok
+test active_lease_prevents_eviction_and_last_clone_release_starts_idle_lifetime ... ok
+test cold_preparation_keeps_envelope_after_waiter_timeout_until_late_completion ... ok
+test cold_start_holds_the_envelope_until_terminal_so_voice_sees_busy ... ok
+test concurrent_exact_version_acquisition_coalesces_and_retains_provenance ... ok
+test deployment_defaults_have_a_separate_identity_and_are_retained_until_shutdown ... ok
+test draft_versions_are_isolated_from_database_and_deployment_and_bounded ... ok
+test draining_resource_keeps_memory_until_actual_unload_acknowledgement ... ok
+test equivalent_versions_and_instances_share_one_backing_resource_with_exact_provenance ... ok
+test failed_attempt_is_coalesced_during_cooldown_and_does_not_publish_ready ... ok
+test load_queue_is_bounded_without_allocating_an_extra_native_resource ... ok
+test installed_identity_drift_and_metadata_panics_quarantine_until_unload_ack ... ok
+test native_completion_remains_owned_when_the_original_async_executor_is_gone ... ok
+test metadata_pressure_never_prunes_a_retained_deployment_alias ... ok
+test ready_backing_runtime_hot_acquire_keeps_capacity_while_voice_holds_envelope ... ok
+test revisions_share_logical_provider_capacity ... ok
+test pressure_evicts_only_lru_idle_resource_and_preserves_active_lease ... ok
+test equivalent_revision_churn_keeps_alias_metadata_bounded ... ok
+test shutdown_uses_supplied_deadline_and_keeps_active_resource_accounted ... ok
+test unhealthy_retained_worker_is_quarantined_without_releasing_memory_or_rebuilding ... ok
+test status_polling_does_not_extend_idle_ttl ... ok
+test waiter_timeout_retains_native_attempt_memory_and_load_capacity ... ok
+test sequential_cold_acquisitions_release_the_only_load_slot_before_ready ... ok
+test uncertain_cleanup_retains_memory_and_loader_and_refuses_replacement ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+
+     Running tests/provider_template_snapshot.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_template_snapshot-05dd800bb773425e)
+
+running 3 tests
+test invalid_or_ambiguous_binding_snapshot_never_becomes_a_cold_candidate ... ok
+test a_cold_switch_candidate_is_authorized_from_snapshot_without_a_loaded_catalog ... ok
+test missing_slots_use_deployment_snapshots_without_replacing_explicit_bindings ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provider_worker_unload.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_worker_unload-c9f1591d8e6876bd)
+
+running 4 tests
+test asr_final_event_does_not_acknowledge_native_exit_or_release_capacity ... ok
+test ready_asr_retains_warmed_workers_without_carrying_audio_between_sessions ... ok
+test ready_vad_retains_warmed_workers_and_resets_between_session_owners ... ok
+test asr_diagnostics_reuse_retained_sessions_and_acknowledge_reset_before_next_request ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/session_profile.rs (/mnt/storage/ai-agent-voice/target/debug/deps/session_profile-53b4284e32769455)
+
+running 26 tests
+test a_closed_database_pool_degrades_admission_to_coarse_503 ... ok
+test a_default_template_binding_selects_a_loaded_runtime_other_than_the_server_default ... ok
+test a_default_template_bound_to_a_disabled_provider_fails_closed ... ok
+test a_default_template_bound_to_an_unloaded_provider_fails_closed ... ok
+test a_candidate_excluded_at_admission_can_never_be_switched_to ... ok
+test a_disabled_default_template_fails_closed ... ok
+test a_disabled_device_is_still_denied_before_profile_resolution ... ok
+test a_default_template_missing_a_binding_uses_the_server_default_for_that_slot ... ok
+test a_session_without_a_template_assignment_is_never_offered_the_switch_tool ... ok
+test a_switch_applies_at_the_next_turn_boundary_on_the_candidates_loaded_runtime ... ok
+test a_turn_arriving_after_a_reported_boundary_keeps_its_frames_and_uses_the_switched_profile ... ok
+test a_switch_uses_the_admission_snapshot_even_after_the_database_changes ... ok
+test an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_switch ... ok
+test an_admitted_profile_stays_immutable_while_a_new_session_sees_the_mutation ... ok
+test an_agent_without_an_enabled_default_assignment_returns_coarse_503 ... ok
+test an_agent_with_only_a_disabled_assignment_uses_server_defaults ... ok
+test an_agent_without_any_assignment_row_uses_server_defaults ... ok
+test concurrent_sessions_each_resolve_their_own_immutable_profile ... ok
+test database_backed_admission_uses_the_default_template_prompt_and_language ... ok
+test an_interrupted_turn_drops_the_switch_it_armed ... ok
+test an_invalid_non_default_candidate_is_excluded_while_a_valid_default_still_starts ... ok
+test managed_template_acquires_deployment_runtimes_for_missing_slots ... ok
+test prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood ... ok
+test public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_session_version ... ok
+test the_switch_tool_offers_exactly_the_candidates_admission_validated ... ok
+test the_turn_after_a_switch_keeps_every_audio_frame_and_runs_the_new_profile ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.46s
+
+     Running tests/session_state.rs (/mnt/storage/ai-agent-voice/target/debug/deps/session_state-2f1b75c828b12270)
+
+running 2 tests
+test raw_binary_is_only_accepted_while_listening ... ok
+test auto_replaces_manual_capture_and_never_falls_back_when_vad_is_unavailable ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/speaker_identification_builtin.rs (/mnt/storage/ai-agent-voice/target/debug/deps/speaker_identification_builtin-cde1c5427503210f)
+
+running 3 tests
+test capture_accepts_wav_above_json_limit_but_enforces_audio_limit ... ok
+test single_capture_registers_and_reenrolls_without_a_provider ... ok
+test required_authentication_and_template_provider_api_are_not_available ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.60s
+
+     Running tests/speaker_observe.rs (/mnt/storage/ai-agent-voice/target/debug/deps/speaker_observe-de23a5748fb431c2)
+
+running 7 tests
+test observe_accepts_detect_without_audio ... ok
+test observe_off_emits_no_speaker_frame_and_retains_nothing ... ok
+test off_session_still_accepts_detect ... ok
+test observe_emits_bounded_state_without_identity_or_score ... ok
+test observe_turn_verifies_and_commits ... ok
+test revoked_snapshot_closes_the_ingress_loop_before_accepting ... ok
+test observe_unavailable_runtime_does_not_block_core_path ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/speechoutput_tracer.rs (/mnt/storage/ai-agent-voice/target/debug/deps/speechoutput_tracer-9ddf760437d2f432)
+
+running 14 tests
+test explicit_abort_admits_urgent_stop_and_invalidates_queued_turn_payload_under_pressure ... ok
+test complete_vietnamese_sentences_announce_once_before_their_audio ... ok
+test full_outbound_audio_queue_retries_every_packet_without_a_gap ... ok
+test auto_listening_accepts_digital_human_detect_as_a_text_turn ... ok
+test listen_arm_during_delivery_does_not_interrupt_the_active_turn ... ok
+test llm_failure_before_audio_emits_no_playback_controls_or_assistant_history ... ok
+test non_empty_asr_final_delivers_started_canonical_opus_then_one_stop ... ok
+test full_segment_capacity_pauses_llm_until_all_segments_are_spoken ... ok
+test auto_greeting_then_rust_response_drains_on_the_same_session ... ok
+test streaming_llm_delivers_first_audio_before_eof_and_commits_only_after_drained ... ok
+test public_websocket_sends_each_complete_llm_sentence_once ... ok
+test public_abort_with_bounded_lanes_sends_one_stop_then_writer_stays_quiet ... ok
+test router_writes_tts_start_then_canonical_audio_then_one_stop ... ok
+test wrapped_long_llm_text_waits_for_speech_segment_capacity ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+
+     Running tests/tool_round_executor.rs (/mnt/storage/ai-agent-voice/target/debug/deps/tool_round_executor-3b4e95e729dc6da8)
+
+running 12 tests
+test a_refused_external_call_is_typed_and_does_not_stop_the_round ... ok
+test a_mixed_round_runs_its_calls_in_model_order_and_pairs_every_result ... ok
+test a_round_over_the_call_cap_executes_no_call_at_all ... ok
+test a_session_local_action_runs_in_the_same_order_as_the_mcp_calls_around_it ... ok
+test a_device_call_that_outlives_the_execution_budget_ends_the_turn_too ... ok
+test a_turn_over_the_round_cap_stops_before_another_round_starts ... ok
+test an_external_call_that_outlives_the_execution_budget_ends_the_turn ... ok
+test participating_agent_never_advertises_or_dispatches_unreviewed_external_tool ... ok
+test an_interrupted_turn_drops_its_in_flight_call_and_never_continues ... ok
+test reviewed_external_tool_is_advertised_and_dispatched_on_new_websocket ... ok
+test the_peer_really_is_a_device_mcp_server_and_the_external_catalog_really_resolves ... ok
+test two_sessions_calling_one_server_never_exceed_the_shared_per_server_bound ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.86s
+
+     Running tests/transcript_archive.rs (/mnt/storage/ai-agent-voice/target/debug/deps/transcript_archive-5c43dc1aad87e7b5)
+
+running 15 tests
+test a_contended_retention_run_is_abandoned_and_the_next_one_still_happens ... ok
+test a_full_archive_queue_drops_one_record_and_never_the_turn ... ok
+test a_database_that_refuses_a_record_drops_it_and_never_the_turn ... ok
+test a_server_default_session_archives_without_a_template ... ok
+test a_purge_never_reaches_an_open_sessions_dialogue_history ... ok
+test a_turn_that_speaks_a_tool_argument_never_archives_it ... ok
+test an_enabled_archive_stores_only_the_final_user_text_and_the_delivered_answer ... ok
+test an_interrupted_turn_archives_its_user_text_and_no_answer ... ok
+test an_unknown_device_cannot_start_a_session_or_archive_anything ... ok
+test a_switched_template_is_attributed_to_the_turn_that_ran_under_it ... ok
+test capture_off_still_prunes_what_an_earlier_deployment_archived ... ok
+test capture_is_off_by_default_so_a_turn_archives_nothing ... ok
+test retention_runs_at_startup_and_again_on_its_schedule ... ok
+test the_archive_stays_readable_and_prunable_while_capture_is_off ... ok
+test the_archive_is_readable_and_prunable_through_the_authenticated_admin_api ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.35s
+
+     Running tests/tts_worker_runtime.rs (/mnt/storage/ai-agent-voice/target/debug/deps/tts_worker_runtime-effe3703e8282494)
+
+running 15 tests
+test a_stream_rejects_a_segment_from_a_different_logical_binding ... ok
+test initialization_cleanup_panic_is_quarantined_instead_of_a_retryable_load_failure ... ok
+test detached_cancel_drains_queued_pcm_and_releases_full_event_channel ... ok
+test native_slot_stays_occupied_until_runtime_consumes_terminal_acknowledgement ... ok
+test native_worker_init_failure_is_reported_before_runtime_is_published ... ok
+test logical_views_inject_their_own_binding_into_shared_workers ... ok
+test one_tts_stream_preserves_provider_state_across_speech_segments ... ok
+test retained_worker_warmup_failure_prevents_ready_publication ... ok
+test streaming_provider_delivers_each_pcm_chunk_before_terminal_acknowledgement ... ok
+test native_workers_are_created_once_per_pool_slot_not_per_synthesis ... ok
+test unload_refuses_an_open_stream_until_the_owner_closes_it ... ok
+test completed_synthesis_is_not_timed_out_while_pcm_waits_for_pacing ... ok
+test unload_waits_for_retained_native_worker_exit_and_closes_admission ... ok
+test detached_cancel_quarantines_a_worker_that_misses_cleanup_grace ... ok
+test timeout_starts_cleanup_from_worker_acceptance_and_quarantines_without_later_polling ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/vad_segmentation_correctness.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vad_segmentation_correctness-88a6110a87812305)
+
+running 4 tests
+test reset_allows_a_fresh_auto_utterance_timeline ... ok
+test segmenter_emits_confirmed_candidate_onset_and_trailing_silence_boundaries ... ok
+test segmenter_rejects_a_gap_before_endpointing ... ok
+test worker_fails_when_provider_mutates_the_canonical_sample_range ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vision_api.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vision_api-bb7dd30575aa7a39)
+
+running 5 tests
+test vision_api_options_preflight_works_over_tcp ... ok
+test vision_api_accepts_firmware_file_field_in_any_order ... ok
+test vision_api_get_probe_and_multipart_post_work_over_tcp ... ok
+test vision_api_rejects_invalid_public_contract_inputs ... ok
+test pilot_serializes_vision_requests_even_with_provider_capacity_two ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/vision_config.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vision_config-55fe675d85ed3621)
+
+running 1 test
+test vision_config_accepts_multiple_instances_and_redacts_secret ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vision_provider.rs (/mnt/storage/ai-agent-voice/target/debug/deps/vision_provider-a2673a53cbd090a4)
+
+running 1 test
+test openai_vision_sends_multimodal_payload_over_http ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/worker_runtime.rs (/mnt/storage/ai-agent-voice/target/debug/deps/worker_runtime-07d197a7099b7feb)
+
+running 4 tests
+test stale_cancel_acknowledgement_releases_its_pinned_stream_without_exposing_a_logical_event ... ok
+test vad_reset_and_close_are_acknowledgement_barriers_before_a_slot_is_reused ... ok
+test vad_probability_and_reset_acknowledgement_keep_the_capture_cycle_identity ... ok
+test cleanup_timeout_quarantines_the_exact_worker_instead_of_reusing_it ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/worker_runtime_review.rs (/mnt/storage/ai-agent-voice/target/debug/deps/worker_runtime_review-87cc3b3efc84b514)
+
+running 7 tests
+test supervisor_observation_does_not_pin_an_idle_runtime ... ok
+test disconnected_vad_session_releases_capacity_after_close_acknowledgement ... ok
+test vad_events_are_routed_to_the_registered_session_mailbox ... ok
+test vad_reset_timeout_quarantines_the_worker_and_routes_the_fatal_event ... ok
+test disconnected_session_releases_capacity_after_cancel_acknowledgement ... ok
+test final_timeout_fail_closes_the_affected_voice_session ... ok
+test worker_event_is_routed_only_to_its_own_voice_session ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/ws_protocol.rs (/mnt/storage/ai-agent-voice/target/debug/deps/ws_protocol-c879e589e0b10dd4)
+
+running 9 tests
+test binary_before_hello_closes_with_protocol_error ... ok
+test application_shutdown_controlled_closes_an_upgraded_voice_session ... ok
+test mcp_initialize_follows_server_hello_when_client_advertises_capability ... ok
+test ota_accepts_post_and_advertises_preflight_methods ... ok
+test oversized_post_handshake_frame_closes_with_1009 ... ok
+test websocket_accepts_browser_authorization_query ... ok
+test valid_hello_receives_canonical_server_hello ... ok
+test ota_advertises_ws_url_and_health_is_available ... ok
+test websocket_accepts_browser_identity_query_when_headers_are_absent ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.43s
+
+     Running tests/zerotts_assets.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_assets-94a4e9c252486f49)
+
+running 11 tests
+test assets_live_under_the_shared_models_directory ... ok
+test a_second_ensure_downloads_nothing_further ... ok
+test codec_external_data_stays_a_sibling_of_its_graphs ... ok
+test concurrent_ensures_install_every_asset_exactly_once ... ok
+test a_zero_byte_voice_is_reinstalled ... ok
+test every_url_is_pinned_to_the_declared_upstream_revision ... ok
+test every_core_asset_is_ensured ... ok
+test resolving_reports_a_missing_asset_instead_of_downloading_it ... ok
+test every_supported_voice_is_ensured_not_only_the_selected_one ... ok
+test resolving_assets_never_downloads ... ok
+test the_advertised_voice_catalog_is_the_downloaded_voice_catalog ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/zerotts_synthesis_core.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_synthesis_core-ade2d89f1e9919af)
+
+running 5 tests
+test startup_warmup_is_bounded_and_leaves_no_state_in_the_retained_runtime ... ignored, requires an installed ZeroTTS pack and ONNX runtime; set ZEROTTS_QUALIFICATION_PACK and VOICE_ONNX_RUNTIME_LIB
+test checked_in_parity_fixture_requires_a_bounded_eoa_checkpoint ... ok
+test tokenizer_contract_rejects_wrong_voice_or_graph_dimensions_before_inference ... ok
+test tokenizer_contract_rejects_special_token_drift_before_inference ... ok
+test tokenizer_contract_normalizes_then_wraps_pinned_special_tokens ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/zerotts_warmup_contract.rs (/mnt/storage/ai-agent-voice/target/debug/deps/zerotts_warmup_contract-b0d9fd9ee4290a91)
+
+running 1 test
+test warmup_pcm_requires_terminal_finite_non_empty_48khz_mono_audio ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests voice_agent_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+ Container voice-agent-test-web-check-run-8903db8b06ca Creating 
+ Container voice-agent-test-web-check-run-8903db8b06ca Created 
+
+> voice-agent-admin-web@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.3 /app
+
+ ✓ src/api/resources.test.ts (7 tests) 33ms
+ ✓ src/components/providers/ProviderTestPanel.test.ts (7 tests) 303ms
+ ✓ src/components/providers/ProviderCreateDrawer.test.ts (5 tests) 290ms
+ ✓ src/stores/admin.test.ts (4 tests) 24ms
+ ✓ src/api/live-tests.test.ts (14 tests) 44ms
+ ✓ src/pages/providers/ProviderDetailPage.test.ts (3 tests) 290ms
+ ✓ src/pages/devices/DeviceDetailPage.test.ts (3 tests) 363ms
+ ✓ src/components/agents/AgentSpeakerPolicy.test.ts (5 tests) 177ms
+ ✓ src/components/templates/TemplateFormDialog.test.ts (4 tests) 240ms
+ ✓ src/components/speakers/SpeakerEnrollmentWizard.test.ts (1 test) 163ms
+ ✓ src/composables/useMicrophoneRecorder.test.ts (3 tests) 33ms
+ ✓ src/api/client.test.ts (6 tests) 27ms
+ ✓ src/api/speakers.test.ts (6 tests) 25ms
+ ✓ src/pages/speakers/SpeakerDetailPage.test.ts (3 tests) 198ms
+ ✓ src/api/external-mcp.test.ts (3 tests) 18ms
+stderr | src/components/agents/AgentDeviceCard.test.ts > AgentDeviceCard > displays admission instead of mislabeling enabled as live online status
+[Vue warn]: Failed to resolve component: RouterLink
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <DeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effective-template= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} detail-link=""  ... > 
+  at <AgentDeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effectiveTemplate= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/components/agents/AgentDeviceCard.test.ts > AgentDeviceCard > labels disabled admission and template overrides correctly
+[Vue warn]: Failed to resolve component: RouterLink
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <DeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'offline',
+  lastSeen: '',
+  templateId: 'test'
+} effective-template= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} detail-link=""  ... > 
+  at <AgentDeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'offline',
+  lastSeen: '',
+  templateId: 'test'
+} effectiveTemplate= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/components/agents/AgentDeviceCard.test.ts > AgentDeviceCard > preserves independent edit and delete actions
+[Vue warn]: Failed to resolve component: RouterLink
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <DeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effective-template= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} detail-link=""  ... > 
+  at <AgentDeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effectiveTemplate= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/components/agents/AgentDeviceCard.test.ts > AgentDeviceCard > copies the actual, unmasked device ID on demand
+[Vue warn]: Failed to resolve component: RouterLink
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <DeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effective-template= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} detail-link=""  ... > 
+  at <AgentDeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effectiveTemplate= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/components/agents/AgentDeviceCard.test.ts > AgentDeviceCard > copies the actual, unmasked device ID on demand
+[Vue warn]: Failed to resolve component: RouterLink
+If this is a native custom element, make sure to exclude it from component resolution via compilerOptions.isCustomElement. 
+  at <DeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effective-template= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} detail-link=""  ... > 
+  at <AgentDeviceCard device= {
+  id: '1',
+  agentId: 'home',
+  name: 'Voice node',
+  deviceId: '67:28:43:1D:95:90',
+  description: 'ESP32 voice device',
+  status: 'online',
+  lastSeen: ''
+} effectiveTemplate= {
+  id: 'test',
+  name: 'Default Voice',
+  description: '',
+  language: 'vi-VN',
+  prompt: '',
+  providerBindings: {},
+  createdAt: '',
+  updatedAt: ''
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+ ✓ src/components/agents/AgentDeviceCard.test.ts (4 tests) 151ms
+ ✓ src/components/voice/VoiceRecordingDock.test.ts (2 tests) 178ms
+ ✓ src/components/admin/ProviderFormModal.test.ts (4 tests) 150ms
+ ✓ src/components/mcp/McpServerFormModal.test.ts (2 tests) 118ms
+ ✓ src/components/speakers/SpeakerCard.test.ts (3 tests) 231ms
+ ✓ src/components/agents/AgentHeader.test.ts (3 tests) 146ms
+ ✓ src/components/studio/VoicePipelineStrip.test.ts (3 tests) 112ms
+ ✓ src/lib/wav.test.ts (4 tests) 7ms
+ ✓ src/components/devices/DeviceCard.test.ts (2 tests) 149ms
+ ✓ src/components/agents/AgentTemplateSwitcher.test.ts (2 tests) 106ms
+ ✓ src/components/agents/AgentDeviceList.test.ts (2 tests) 61ms
+ ✓ src/components/agents/ClaimDeviceEnrollmentModal.test.ts (2 tests) 113ms
+stderr | src/views/McpServersView.test.ts > links the card to details while edit controls remain outside its link
+[VUE_ROUTER_R0004] No match found for location with path "/agents"
+├▶ fix: Add a route matching this path or check for typos in the location.
+╰▶ see: https://router.vuejs.org/guide/essentials/dynamic-matching.html#Catch-all-404-Not-found-Route
+
+ ✓ src/views/McpServersView.test.ts (1 test) 128ms
+ ✓ src/pages/mcp/McpServerDetailPage.test.ts (1 test) 108ms
+ ✓ src/components/admin/AgentCard.test.ts (2 tests) 85ms
+ ✓ src/api/errors.test.ts (3 tests) 16ms
+ ✓ src/stores/server.test.ts (2 tests) 14ms
+ ✓ src/components/mcp/McpDiagnosticPanel.test.ts (1 test) 106ms
+ ✓ src/components/devices/presentation.test.ts (3 tests) 7ms
+ ✓ src/api/provider-adapters.test.ts (3 tests) 18ms
+ ✓ src/components/templates/TemplateCard.test.ts (1 test) 107ms
+ ✓ src/components/admin/DetailHeader.test.ts (1 test) 60ms
+ ✓ src/components/mcp/McpToolCatalog.test.ts (1 test) 37ms
+
+ Test Files  38 passed (38)
+      Tests  126 passed (126)
+   Start at  18:34:11
+   Duration  25.96s (environment 68%, import 18%, transform 7%, tests 6%)
+
+Environment  jsdom was created 38 times · 47.20s total, 68% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+
+npm notice
+npm notice New major version of npm available! 10.9.9 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+
+> voice-agent-admin-web@0.1.0 build
+> npm run typecheck && vite build
+
+
+> voice-agent-admin-web@0.1.0 typecheck
+> vue-tsc -p tsconfig.app.json --noEmit
+
+vite v8.3.1 building client environment for production...
+transforming...
+✓ 2091 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                       0.67 kB │ gzip:  0.37 kB
+dist/assets/VoiceRecordingDock-YigSqvR6.css           1.81 kB │ gzip:  0.55 kB
+dist/assets/index-CBHKurj_.css                       56.82 kB │ gzip:  9.76 kB
+dist/assets/_plugin-vue_export-helper-BDNMzG2s.js     0.08 kB │ gzip:  0.09 kB
+dist/assets/chevron-right-Bb70CG7p.js                 0.14 kB │ gzip:  0.14 kB
+dist/assets/plus-1SUoYMXP.js                          0.16 kB │ gzip:  0.15 kB
+dist/assets/arrow-right-CPWcLmD6.js                   0.17 kB │ gzip:  0.16 kB
+dist/assets/arrow-up-right-Diuegkp6.js                0.17 kB │ gzip:  0.16 kB
+dist/assets/search-D9rYnZSp.js                        0.18 kB │ gzip:  0.17 kB
+dist/assets/circle-check-4jId2sI1.js                  0.22 kB │ gzip:  0.19 kB
+dist/assets/activity-CShs-njs.js                      0.24 kB │ gzip:  0.20 kB
+dist/assets/copy-rGPZhOuA.js                          0.24 kB │ gzip:  0.21 kB
+dist/assets/link-2-FZly_ny1.js                        0.25 kB │ gzip:  0.21 kB
+dist/assets/settings-2-nTeHfd-Z.js                    0.26 kB │ gzip:  0.20 kB
+dist/assets/CardDescription-C9trnwLE.js               0.26 kB │ gzip:  0.22 kB
+dist/assets/presentation-CBXYSK68.js                  0.32 kB │ gzip:  0.23 kB
+dist/assets/shield-check-K6HZNCgJ.js                  0.33 kB │ gzip:  0.25 kB
+dist/assets/refresh-cw-Dqc2OGfL.js                    0.33 kB │ gzip:  0.23 kB
+dist/assets/monitor-smartphone-B45cDmpD.js            0.33 kB │ gzip:  0.25 kB
+dist/assets/trash-BnEb0iI7.js                         0.35 kB │ gzip:  0.23 kB
+dist/assets/layers-CCN5QUg_.js                        0.45 kB │ gzip:  0.26 kB
+dist/assets/providerEndpoint-78dx_Pzk.js              0.58 kB │ gzip:  0.35 kB
+dist/assets/Badge-DPp93CEj.js                         0.70 kB │ gzip:  0.38 kB
+dist/assets/CardTitle-BSEAw6sO.js                     0.71 kB │ gzip:  0.37 kB
+dist/assets/PageHeader-QVRFF2f4.js                    0.76 kB │ gzip:  0.46 kB
+dist/assets/mcp-BFVPWBp0.js                           0.88 kB │ gzip:  0.42 kB
+dist/assets/server-B3PSZUJM.js                        1.05 kB │ gzip:  0.52 kB
+dist/assets/VoiceDeviceIcon-CCsdGhE7.js               1.09 kB │ gzip:  0.68 kB
+dist/assets/ProviderUsageList-BKSveFeJ.js             1.33 kB │ gzip:  0.76 kB
+dist/assets/providerTypeIcons-DZjONomV.js             1.47 kB │ gzip:  0.66 kB
+dist/assets/DetailHeader-DqJUQdVV.js                  1.65 kB │ gzip:  0.87 kB
+dist/assets/speakers-CgwZEEhD.js                      1.72 kB │ gzip:  0.70 kB
+dist/assets/TemplateActionsMenu-B9cd7voj.js           1.74 kB │ gzip:  0.72 kB
+dist/assets/ConfirmDialog-tcfXg_UQ.js                 2.00 kB │ gzip:  1.06 kB
+dist/assets/BaseModal-CXuB6J6o.js                     2.19 kB │ gzip:  1.21 kB
+dist/assets/ClaimDeviceEnrollmentModal-CNCRXeup.js    3.16 kB │ gzip:  1.60 kB
+dist/assets/MenuItem-CoiVcttJ.js                      4.24 kB │ gzip:  1.95 kB
+dist/assets/AgentFormModal-DFEnTIWK.js                4.95 kB │ gzip:  1.75 kB
+dist/assets/McpServerDetailPage-COuuc5Eb.js           5.08 kB │ gzip:  1.99 kB
+dist/assets/OverviewView-BV9OA2p5.js                  5.28 kB │ gzip:  1.91 kB
+dist/assets/AgentsView-CP9nUDR2.js                    5.77 kB │ gzip:  2.29 kB
+dist/assets/SystemView-C8HK4WoG.js                    6.04 kB │ gzip:  1.90 kB
+dist/assets/DeviceCard-DPcQphgl.js                    6.14 kB │ gzip:  2.34 kB
+dist/assets/SpeakerEnrollmentWizard-BHDlwf14.js       6.24 kB │ gzip:  2.73 kB
+dist/assets/DevicesView-R8wV_qx1.js                   8.28 kB │ gzip:  3.16 kB
+dist/assets/VoiceRecordingDock-C-xkBKPO.js            8.95 kB │ gzip:  3.92 kB
+dist/assets/TemplateDetailPage-23feH71O.js            9.14 kB │ gzip:  3.21 kB
+dist/assets/McpServersView-BKiXrvYg.js                9.73 kB │ gzip:  3.40 kB
+dist/assets/SpeakersView-DNaN9vMe.js                  9.97 kB │ gzip:  3.63 kB
+dist/assets/TemplatesPage-Bu55SyNN.js                 9.98 kB │ gzip:  3.59 kB
+dist/assets/McpServerFormModal-Dc8RFcDL.js           11.48 kB │ gzip:  3.86 kB
+dist/assets/SpeakerDetailPage-CJVWGz-E.js            11.91 kB │ gzip:  3.97 kB
+dist/assets/DeviceDetailPage-DUAZhsZ2.js             12.43 kB │ gzip:  3.98 kB
+dist/assets/TemplateFormDialog-B5oGTTxv.js           12.46 kB │ gzip:  3.70 kB
+dist/assets/ProviderFormModal-AJ0W_6U5.js            14.40 kB │ gzip:  5.18 kB
+dist/assets/ProviderDetailPage-DRR2G79U.js           16.73 kB │ gzip:  5.02 kB
+dist/assets/TemplateConfigurationPanel-VBiJM99g.js   23.29 kB │ gzip:  6.27 kB
+dist/assets/ProvidersView-3jEAfZNK.js                29.59 kB │ gzip:  9.21 kB
+dist/assets/AgentDetailPage-Bv-Ab8RO.js              47.37 kB │ gzip: 13.61 kB
+dist/assets/index-CK-YkBbY.js                        73.33 kB │ gzip: 26.49 kB
+dist/assets/client-CcgWzlUx.js                      161.85 kB │ gzip: 54.06 kB
+
+✓ built in 2.07s
+ Volume voice-agent-test_test-data Creating 
+ Volume voice-agent-test_test-data Creating 
+ Volume voice-agent-test_test-data Created 
+ Volume voice-agent-test_test-data Created 
+ Container voice-agent-test-server-1 Creating 
+ Container voice-agent-test-server-1 Created 
+ Container voice-agent-test-web-1 Creating 
+ Container voice-agent-test-web-1 Created 
+ Container voice-agent-test-server-1 Starting 
+ Container voice-agent-test-server-1 Started 
+ Container voice-agent-test-server-1 Waiting 
+ Container voice-agent-test-server-1 Healthy 
+ Container voice-agent-test-web-1 Starting 
+ Container voice-agent-test-web-1 Started 
+ Container voice-agent-test-server-1 Waiting 
+ Container voice-agent-test-web-1 Waiting 
+ Container voice-agent-test-server-1 Healthy 
+ Container voice-agent-test-web-1 Healthy 
+ Container voice-agent-test-smoke-run-cfe20331d473 Creating 
+ Container voice-agent-test-smoke-run-cfe20331d473 Created 
+Docker smoke passed: readiness, SPA, admin auth, WebSocket proxy/auth, SQLite
+ Container voice-agent-test-server-1 Restarting 
+ Container voice-agent-test-server-1 Started 
+ Container voice-agent-test-server-1 Running 
+ Container voice-agent-test-web-1 Running 
+ Container voice-agent-test-server-1 Waiting 
+ Container voice-agent-test-server-1 Healthy 
+ Container voice-agent-test-server-1 Waiting 
+ Container voice-agent-test-web-1 Waiting 
+ Container voice-agent-test-web-1 Healthy 
+ Container voice-agent-test-server-1 Healthy 
+ Container voice-agent-test-smoke-run-880a1cf6aeb9 Creating 
+ Container voice-agent-test-smoke-run-880a1cf6aeb9 Created 
+Docker smoke passed: readiness, SPA, admin auth, WebSocket proxy/auth, SQLite
+ Container voice-agent-test-web-1 Stopping 
+ Container voice-agent-test-web-1 Stopped 
+ Container voice-agent-test-web-1 Removing 
+ Container voice-agent-test-web-1 Removed 
+ Container voice-agent-test-server-1 Stopping 
+ Container voice-agent-test-server-1 Stopped 
+ Container voice-agent-test-server-1 Removing 
+ Container voice-agent-test-server-1 Removed 
+ Network voice-agent-test_default Removing 
+ Volume voice-agent-test_test-data Removing 
+ Volume voice-agent-test_test-data Removed 
+ Network voice-agent-test_default Removed 

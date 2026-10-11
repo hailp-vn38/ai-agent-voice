@@ -58,7 +58,7 @@ const upgradeStatus = await new Promise((resolve, reject) => {
 })
 assert.equal(upgradeStatus, 401, 'WebSocket proxy/auth')
 
-const speakerPath = '/api/admin/speakers/docker-smoke'
+const speakerPath = '/api/admin/speakers/docker_smoke'
 if (process.argv[2] === 'after-restart') {
   const response = await get(speakerPath, 'docker-test-admin')
   assert.equal(response.status, 200, 'SQLite data survives restart')
@@ -67,7 +67,7 @@ if (process.argv[2] === 'after-restart') {
   const response = await fetch(`${base}/api/admin/speakers`, {
     method: 'POST',
     headers: { Authorization: 'Bearer docker-test-admin', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: 'docker-smoke', name: 'Docker smoke' }),
+    body: JSON.stringify({ key: 'docker_smoke', name: 'Docker smoke' }),
     signal: AbortSignal.timeout(10_000),
   })
   assert.equal(response.status, 201, 'SQLite write through proxy')

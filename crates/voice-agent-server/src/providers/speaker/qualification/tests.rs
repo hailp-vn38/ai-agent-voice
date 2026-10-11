@@ -2,7 +2,7 @@ use super::*;
 use crate::audio::PcmF32Mono;
 
 fn clip(amplitude: f32) -> PcmF32Mono {
-    PcmF32Mono::new(vec![amplitude, -amplitude].repeat(8_000), 16_000)
+    PcmF32Mono::new([amplitude, -amplitude].repeat(8_000), 16_000)
 }
 
 #[test]

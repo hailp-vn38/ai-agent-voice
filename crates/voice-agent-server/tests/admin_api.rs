@@ -1144,25 +1144,36 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
         .await
         .unwrap();
     assert_eq!(listed.status(), StatusCode::OK);
+    let mut expected = serde_json::json!([
+        {
+            "adapter": "zerotts_onnx",
+            "type": "tts",
+            "display_name": "ZeroTTS"
+        },
+        {
+            "adapter": "chillaudio_ws",
+            "type": "tts",
+            "display_name": "ChillAudio WebSocket"
+        },
+        {
+            "adapter": "kokoro_vi_onnx",
+            "type": "tts",
+            "display_name": "Kokoro Vietnamese ONNX"
+        }
+    ]);
+    if cfg!(feature = "qualification-providers") {
+        expected.as_array_mut().unwrap().insert(
+            0,
+            serde_json::json!({
+                "adapter": "qualification_tts",
+                "type": "tts",
+                "display_name": "Qualification TTS"
+            }),
+        );
+    }
     assert_eq!(
         listed.json::<serde_json::Value>().await.unwrap()["items"],
-        serde_json::json!([
-            {
-                "adapter": "zerotts_onnx",
-                "type": "tts",
-                "display_name": "ZeroTTS"
-            },
-            {
-                "adapter": "chillaudio_ws",
-                "type": "tts",
-                "display_name": "ChillAudio WebSocket"
-            },
-            {
-                "adapter": "kokoro_vi_onnx",
-                "type": "tts",
-                "display_name": "Kokoro Vietnamese ONNX"
-            }
-        ])
+        expected
     );
     let bad_filter = client
         .get(format!("{adapters}?type=vision"))

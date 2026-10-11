@@ -1,0 +1,5 @@
+Production vad inference passed (silero_onnx)
+Production llm inference passed (openai)
+Production tts inference passed (chillaudio_ws)
+Production asr inference passed (gipformer_sherpa_offline)
+ASR: 20-second, 16000 Hz, mono PCM16 fixture.

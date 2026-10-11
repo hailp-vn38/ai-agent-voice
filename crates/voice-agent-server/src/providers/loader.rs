@@ -209,7 +209,11 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             Arc::new(LlmRuntime::new(
                 Arc::clone(&provider),
                 config.limits.llm_concurrency,
-                Duration::from_millis(instance.openai().timeout_ms),
+                Duration::from_millis(match instance {
+                    crate::config::LlmInstanceConfig::Openai(config) => config.timeout_ms,
+                    #[cfg(feature = "qualification-providers")]
+                    crate::config::LlmInstanceConfig::QualificationLlm(_) => 15_000,
+                }),
             )),
         );
         tracing::info!(provider_kind = "llm", provider_instance = %id, adapter = instance.adapter(), "provider runtime loaded");
@@ -320,4 +324,20 @@ fn deployment_tts_replicas(
         TtsInstanceConfig::QualificationTts(config) => serde_json::to_value(config).ok()?,
     };
     crate::providers::configured_physical_replicas(instance.adapter(), value, runtime)
+}
+
+#[cfg(all(test, feature = "qualification-providers"))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn qualification_defaults_load_without_openai_configuration() {
+        let config: AppConfig =
+            toml::from_str(include_str!("../../../../docker/config.test.toml")).unwrap();
+        let loaded = tokio::task::spawn_blocking(move || load_local(&config))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(loaded.runtimes.llm.contains_key("test_llm"));
+    }
 }

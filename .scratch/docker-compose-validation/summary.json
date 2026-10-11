@@ -1,0 +1,22 @@
+{
+  "rust_profiles": [
+    {
+      "passed": 602,
+      "failed": 0,
+      "ignored": 4
+    },
+    {
+      "passed": 605,
+      "failed": 0,
+      "ignored": 4
+    }
+  ],
+  "web_tests": [
+    "126"
+  ],
+  "smoke_passes": 2,
+  "exit_code": 0,
+  "free_before_cleanup": 810673999872,
+  "freed_gib": 61.02174377441406,
+  "cleanup_complete": true
+}

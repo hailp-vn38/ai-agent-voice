@@ -193,7 +193,7 @@ fn native_resource_identity_normalizes_defaults_and_isolates_execution_and_crede
     };
     let mut cfg = config();
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/onnxruntime/libonnxruntime.dylib");
+        .join("tests/fixtures/onnx-runtime-fingerprint.txt");
     let builder = FactoryMaterializer::new(
         Arc::new(cfg.clone()),
         Arc::new(Secrets(AtomicUsize::new(0))),
@@ -258,7 +258,7 @@ fn zerotts_resource_identity_shares_voices_but_isolates_delivery_mode() {
 
     let mut cfg = config();
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/onnxruntime/libonnxruntime.dylib");
+        .join("tests/fixtures/onnx-runtime-fingerprint.txt");
     let builder = FactoryMaterializer::new(
         Arc::new(cfg),
         Arc::new(Secrets(AtomicUsize::new(0))),
@@ -306,7 +306,7 @@ fn local_runtime_identity_uses_adapter_owned_physical_specs() {
 
     let mut cfg = config();
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/onnxruntime/libonnxruntime.dylib");
+        .join("tests/fixtures/onnx-runtime-fingerprint.txt");
     let builder = FactoryMaterializer::new(
         Arc::new(cfg),
         Arc::new(Secrets(AtomicUsize::new(0))),
@@ -581,7 +581,7 @@ delivery_mode="stream"
     )
     .unwrap();
     cfg.runtime.onnx.library = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/onnxruntime/libonnxruntime.dylib");
+        .join("tests/fixtures/onnx-runtime-fingerprint.txt");
     cfg
 }
 

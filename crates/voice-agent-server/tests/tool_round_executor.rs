@@ -508,13 +508,14 @@ fn config_with_external(
 ) -> AppConfig {
     let address: SocketAddr = ([127, 0, 0, 1], 0).into();
     let mut providers = ProvidersConfig::default();
-    let VadInstanceConfig::SileroOnnx(vad) = providers
-        .vad
-        .instances
-        .entry("test".into())
-        .or_insert_with(|| VadInstanceConfig::SileroOnnx(SileroOnnxConfig::default()));
-    vad.min_speech_ms = 32;
-    vad.end_silence_ms = 32;
+    providers.vad.instances.insert(
+        "test".into(),
+        VadInstanceConfig::SileroOnnx(SileroOnnxConfig {
+            min_speech_ms: 32,
+            end_silence_ms: 32,
+            ..Default::default()
+        }),
+    );
     AppConfig {
         speaker_recognition: Default::default(),
         server: ServerConfig {

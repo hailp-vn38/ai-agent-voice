@@ -226,7 +226,7 @@ fn every_advertised_local_voice_is_an_installed_voice_asset() {
     }
 }
 
-/// Every local adapter owns its model files, and every remote adapter owns none.
+/// Adapters with local models own assets; remote and qualification adapters own none.
 #[test]
 fn asset_ownership_follows_whether_a_provider_loads_local_files() {
     for adapter in compiled_provider_adapter_registry()
@@ -238,7 +238,8 @@ fn asset_ownership_follows_whether_a_provider_loads_local_files() {
             .is_some();
         assert_eq!(
             owns_assets,
-            !matches!(adapter, "openai" | "openai_vision" | "chillaudio_ws"),
+            !matches!(adapter, "openai" | "openai_vision" | "chillaudio_ws")
+                && !adapter.starts_with("qualification_"),
             "{adapter}"
         );
     }
@@ -301,6 +302,8 @@ fn native_transducers_accept_every_advertised_decoding_method() {
                 AsrInstanceConfig::GipformerSherpaOffline(options) => {
                     options.decoding_method = method
                 }
+                #[cfg(feature = "qualification-providers")]
+                AsrInstanceConfig::QualificationAsr(_) => unreachable!("native ASR adapter"),
             }
             let provider = factory
                 .build(&selected, &config.runtime, 480_000)
