@@ -175,6 +175,7 @@ impl SessionActor {
             pipeline_permit: None,
             pipeline_status: false,
             turn_status: false,
+            tool_status: false,
             turn_status_active: false,
             turn_status_outcome: "failed",
             pipeline_request: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
