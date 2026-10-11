@@ -10,6 +10,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   const error = ref('')
   const settings = shallowRef<AssistantSettings>()
   const messages = ref<AssistantMessage[]>([])
+  const activeTool = ref<{ name: string; turn_id: number } | null>(null)
   const muted = ref(true)
   const level = ref(0)
   const micEnabled = ref(false)
@@ -28,6 +29,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     microphone: enabled => { micEnabled.value = enabled },
     state: value => {
       state.value = value
+      if (!['listening', 'processing', 'speaking'].includes(value)) activeTool.value = null
       if (value === 'uncertain') {
         if (pendingUser) pendingUser.status = 'uncertain'
         if (response) response.status = 'uncertain'
@@ -44,7 +46,14 @@ export const useAssistantStore = defineStore('assistant', () => {
         response ??= add('assistant', '', 'pending')
         if (response.text.length + event.text.length > 262144) { error.value = 'response_too_large'; client.disconnect(); return }
         response.text += event.text
+      } else if (event.type === 'tool') {
+        if (event.state === 'started' && state.value === 'processing') {
+          activeTool.value = { name: event.name, turn_id: event.turn_id }
+        } else if (event.state !== 'started' && activeTool.value?.turn_id === event.turn_id && activeTool.value.name === event.name) {
+          activeTool.value = null
+        }
       } else if (event.type === 'turn_status' && event.state !== 'listening_ready') {
+        activeTool.value = null
         const status = event.state === 'rejected' ? 'failed' : event.state
         if (pendingUser) pendingUser.status = status
         if (response) response.status = status
@@ -60,16 +69,18 @@ export const useAssistantStore = defineStore('assistant', () => {
       error.value = e instanceof Error && /^[a-z_]{1,64}$/.test(e.message) ? e.message : 'operation_failed'
     }
   }
-  async function connect() { pendingUser = undefined; response = undefined; await run(() => client.connect()) }
+  async function connect() { pendingUser = undefined; response = undefined; activeTool.value = null; await run(() => client.connect()) }
   async function open() { visible.value = true; if (['disconnected', 'disabled', 'unconfigured', 'error', 'uncertain'].includes(state.value)) await connect() }
   async function sendText(text: string) {
     if (state.value !== 'ready') return
+    activeTool.value = null
     pendingUser = add('user', text.trim(), 'pending')
     response = undefined
     await run(() => client.sendText(text))
     if (pendingUser?.status === 'pending' && error.value) pendingUser.status = 'failed'
   }
   async function startMicrophone() {
+    activeTool.value = null
     pendingUser = undefined
     response = undefined
     // Unlock TTS playback from the microphone click's user gesture; respect explicit mute.
@@ -90,6 +101,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   }
   function disconnect() {
     client.disconnect()
+    activeTool.value = null
     messages.value = []
     pendingUser = response = undefined
     error.value = ''
@@ -98,6 +110,6 @@ export const useAssistantStore = defineStore('assistant', () => {
     micEnabled.value = false
     manuallyMuted = false
   }
-  return { visible, state, error, settings, messages, muted, micEnabled, level, open, connect, sendText, startMicrophone, toggleSpeaker, disconnect,
+  return { visible, state, error, settings, messages, activeTool, muted, micEnabled, level, open, connect, sendText, startMicrophone, toggleSpeaker, disconnect,
     stopMicrophone: () => run(() => client.stopMicrophone()), interrupt: () => client.interrupt() }
 })
