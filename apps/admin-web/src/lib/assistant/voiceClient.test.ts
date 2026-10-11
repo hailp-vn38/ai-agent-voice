@@ -139,6 +139,75 @@ describe('shared Voice WebSocket client', () => {
     expect(states.at(-1)).toBe('ready')
     expect(errors).not.toContain('protocol_error')
   })
+  it('streams Opus frames across multiple Auto VAD turns without another microphone click', async () => {
+    const socket = await open()
+    let emitFrame!: (frame: ArrayBuffer) => void
+    vi.spyOn(client.audio, 'startMicrophone').mockImplementation(async send => { emitFrame = send })
+    vi.spyOn(client.audio, 'stopMicrophone').mockResolvedValue(undefined)
+    await client.startMicrophone()
+    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({ type: 'listen', state: 'start', mode: 'auto' })
+    expect(states.at(-1)).toBe('listening')
+
+    const frame = new Uint8Array([24, 0]).buffer
+    emitFrame(frame)
+    expect(socket.sent.at(-1)).toBe(frame)
+
+    socket.event({ type: 'stt', text: 'First question' })
+    expect(states.at(-1)).toBe('processing')
+    socket.event({ type: 'tts', state: 'start' })
+    expect(states.at(-1)).toBe('speaking')
+    emitFrame(frame)
+    expect(socket.sent.at(-1)).toBe(frame)
+    socket.event({ type: 'tts', state: 'stop' })
+    socket.event({ type: 'turn_status', state: 'completed', turn_id: 1 })
+    expect(states.at(-1)).toBe('listening')
+
+    // The second speech segment reuses the same WebSocket and capture source.
+    emitFrame(frame)
+    expect(socket.sent.at(-1)).toBe(frame)
+    socket.event({ type: 'stt', text: 'Second question' })
+    expect(states.at(-1)).toBe('processing')
+    socket.event({ type: 'llm', text: 'Second answer' })
+    socket.event({ type: 'turn_status', state: 'completed', turn_id: 2 })
+    expect(states.at(-1)).toBe('listening')
+    expect(Socket.sockets).toHaveLength(1)
+  })
+
+  it('turns Auto microphone off during TTS without aborting playback or disconnecting', async () => {
+    const socket = await open()
+    let emitFrame!: (frame: ArrayBuffer) => void
+    vi.spyOn(client.audio, 'startMicrophone').mockImplementation(async send => { emitFrame = send })
+    vi.spyOn(client.audio, 'stopMicrophone').mockResolvedValue(undefined)
+    await client.startMicrophone()
+    socket.event({ type: 'stt', text: 'Hello' })
+    socket.event({ type: 'tts', state: 'start' })
+    await client.stopMicrophone()
+    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({ type: 'listen', state: 'stop' })
+    expect(states.at(-1)).toBe('speaking')
+    const count = socket.sent.length
+    emitFrame(new Uint8Array([24, 0]).buffer)
+    expect(socket.sent).toHaveLength(count)
+    socket.event({ type: 'turn_status', state: 'completed', turn_id: 1 })
+    expect(states.at(-1)).toBe('ready')
+    expect(socket.readyState).toBe(Socket.OPEN)
+    expect(socket.sent.some(s => s.includes('"type":"abort"'))).toBe(false)
+  })
+
+  it('cancels microphone permission safely if the user switches capture off before it resolves', async () => {
+    const socket = await open()
+    let rejectCapture!: (error: Error) => void
+    vi.spyOn(client.audio, 'startMicrophone').mockImplementation(() => new Promise((_resolve, reject) => { rejectCapture = reject }))
+    vi.spyOn(client.audio, 'stopMicrophone').mockResolvedValue(undefined)
+    const start = client.startMicrophone()
+    await vi.waitFor(() => expect(rejectCapture).toBeDefined())
+    await client.stopMicrophone()
+    rejectCapture(new Error('capture_cancelled'))
+    await expect(start).resolves.toBeUndefined()
+    expect(states.at(-1)).toBe('ready')
+    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({ type: 'listen', state: 'stop' })
+    expect(errors).toHaveLength(0)
+  })
+
 })
 
 it('validates session and typed events without exposing raw frames', () => {
