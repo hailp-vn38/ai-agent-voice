@@ -39,6 +39,7 @@ use uuid::Uuid;
 mod admin;
 mod cors;
 mod enrollment;
+pub(crate) mod mcp_server;
 mod ota;
 mod state;
 mod vision;
@@ -103,12 +104,15 @@ pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
     RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
 pub fn router_with_state(mut state: AppState) -> Router {
-    state.system_mcp = Some(Arc::new(crate::tools::system_mcp::SystemMcp::new(
-        state.config.system_mcp.enabled,
-        state.system_status(),
-        state.system_metrics.clone(),
-        state.config.llm.max_tool_result_chars,
-    )));
+    state.system_mcp = Some(Arc::new(
+        crate::tools::system_mcp::SystemMcp::new(
+            state.config.system_mcp.enabled,
+            state.system_status(),
+            state.system_metrics.clone(),
+            state.config.llm.max_tool_result_chars,
+        )
+        .with_discovery(state.external_mcp.clone(), state.secret_resolver.clone()),
+    ));
     let vision_enabled = state.config.vision.enabled;
     let vision_config = state.config.vision.clone();
     let router = Router::new()
@@ -171,6 +175,7 @@ pub fn router_with_state(mut state: AppState) -> Router {
         router
     };
     router
+        .merge(mcp_server::router(&state))
         .with_state(state)
         // Never include query parameters here: browser compatibility may carry an auth token.
         .layer(

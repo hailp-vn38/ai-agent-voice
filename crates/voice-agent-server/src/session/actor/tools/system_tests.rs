@@ -89,7 +89,9 @@ async fn system_results_use_llm_continuation_even_when_device_delivery_is_silent
         .collect();
     assert_eq!(states, ["started", "completed", "started", "failed"]);
     let caller = &actor.system_mcp.as_ref().unwrap().context.caller;
-    let crate::tools::system_mcp::SystemCaller::WebAssistant { agent_id, .. } = caller;
+    let crate::tools::system_mcp::SystemCaller::WebAssistant { agent_id, .. } = caller else {
+        panic!("expected Studio Assistant")
+    };
     db.tool_security.invalidate_agent(*agent_id);
     assert!(
         actor

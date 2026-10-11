@@ -3,6 +3,7 @@ import { AudioLines, Bot, History, Keyboard, LoaderCircle, Mic, Send, Square, Vo
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { toolStatusLabel } from '@/lib/assistant/toolLabels'
 import { AssistantAudio } from '@/lib/assistant/audio'
 import { useAssistantStore } from '@/stores/assistant'
 import { useAuthStore } from '@/stores/auth'
@@ -159,7 +160,7 @@ onBeforeUnmount(() => {
             </div>
             <p class="mt-1 text-xs font-semibold" role="status">{{ assistant.state === 'ready' ? t('assistant.readyVoice') : t(`assistant.state.${assistant.state}`) }}</p>
             <p class="mt-1 text-[11px] text-muted-foreground">
-              {{ assistant.state === 'ready' ? t('assistant.voiceHint') : assistant.state === 'listening' ? t('assistant.listeningHint') : assistant.state === 'speaking' ? t('assistant.speakingHint') : assistant.state === 'processing' ? (assistant.activeTool ? t('assistant.usingTool', { name: assistant.activeTool.name }) : t('assistant.processingHint')) : '' }}
+              {{ assistant.state === 'ready' ? t('assistant.voiceHint') : assistant.state === 'listening' ? t('assistant.listeningHint') : assistant.state === 'speaking' ? t('assistant.speakingHint') : assistant.state === 'processing' ? (assistant.activeTool ? t(toolStatusLabel(assistant.activeTool.name)) : t('assistant.processingHint')) : '' }}
             </p>
           </div>
 

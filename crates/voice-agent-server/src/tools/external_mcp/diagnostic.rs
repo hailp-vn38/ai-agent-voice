@@ -115,32 +115,11 @@ impl McpDiagnosticRunner<'_> {
             })?;
         let started = Instant::now();
         let (server, secrets, source) = match source {
-            McpProbeSource::Saved(key) => {
-                let row = mcp_by(self.database, &key)
-                    .await
-                    .map_err(McpProbeError::database)?;
-                let secret_ref = crate::database::credentials::reference(
-                    &format!("mcp:{}", row.key),
-                    row.credential_json.as_deref(),
-                    crate::database::secrets::mcp_secret_env(&row.key, &row.auth_type),
-                );
-                (
-                    AdmittedMcpServer {
-                        id: row.id,
-                        key: row.key,
-                        url: row.url,
-                        headers_json: "{}".into(),
-                        auth_type: row.auth_type,
-                        auth_header_name: row.auth_header_name,
-                        secret_ref,
-                        connect_timeout_ms: row.connect_timeout_ms,
-                        request_timeout_ms: row.request_timeout_ms,
-                        revision: row.revision,
-                    },
-                    self.secrets.clone(),
-                    "saved",
-                )
-            }
+            McpProbeSource::Saved(key) => (
+                saved_server(self.database, &key).await?,
+                self.secrets.clone(),
+                "saved",
+            ),
             McpProbeSource::Draft(config) => {
                 if config.key.is_empty()
                     || config.key.len() > 64
@@ -259,4 +238,70 @@ impl McpDiagnosticRunner<'_> {
         }
         Ok(result)
     }
+}
+
+/// Manual System discovery owns the existing probe quota until bounded SDK cleanup completes.
+pub(crate) async fn discover_saved(
+    database: &Database,
+    manager: Arc<ExternalMcpManager>,
+    secrets: Arc<dyn SecretResolver>,
+    key: &str,
+) -> Result<(AdmittedMcpServer, Vec<super::ResolvedExternalTool>), McpProbeError> {
+    let source = saved_server(database, key).await?;
+    let permit = manager
+        .probe_permits
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| McpProbeError {
+            status: http::StatusCode::TOO_MANY_REQUESTS,
+            code: "mcp_test_busy",
+        })?;
+    tokio::spawn(async move {
+        let _permit = permit;
+        if !manager.gate.is_open() {
+            return Err(McpProbeError {
+                status: http::StatusCode::SERVICE_UNAVAILABLE,
+                code: "shutting_down",
+            });
+        }
+        let catalog = manager
+            .probe_catalog(&source, secrets.as_ref(), true)
+            .await
+            .map_err(|_| McpProbeError {
+                status: http::StatusCode::BAD_GATEWAY,
+                code: "discovery_failed",
+            })?
+            .ok_or(McpProbeError {
+                status: http::StatusCode::BAD_GATEWAY,
+                code: "discovery_failed",
+            })?;
+        Ok((source, catalog.tools))
+    })
+    .await
+    .map_err(|_| McpProbeError {
+        status: http::StatusCode::SERVICE_UNAVAILABLE,
+        code: "discovery_failed",
+    })?
+}
+
+async fn saved_server(database: &Database, key: &str) -> Result<AdmittedMcpServer, McpProbeError> {
+    let row = mcp_by(database, key)
+        .await
+        .map_err(McpProbeError::database)?;
+    Ok(AdmittedMcpServer {
+        id: row.id,
+        revision: row.revision,
+        secret_ref: crate::database::credentials::reference(
+            &format!("mcp:{}", row.key),
+            row.credential_json.as_deref(),
+            crate::database::secrets::mcp_secret_env(&row.key, &row.auth_type),
+        ),
+        key: row.key,
+        url: row.url,
+        headers_json: "{}".into(),
+        auth_type: row.auth_type,
+        auth_header_name: row.auth_header_name,
+        connect_timeout_ms: row.connect_timeout_ms,
+        request_timeout_ms: row.request_timeout_ms,
+    })
 }

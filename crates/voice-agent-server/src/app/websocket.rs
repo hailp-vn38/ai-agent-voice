@@ -269,35 +269,40 @@ pub(super) async fn handler(
         assistant_auth.register_close(&guard.close);
     }
     // Only the consumed, origin-bound ticket plus managed admission can create this capability.
-    let system_mcp = assistant_connection.as_ref().and_then(|_| {
-        let core = state.system_mcp.as_ref()?.clone();
-        if profile.device_db_id <= 0 || profile.agent_id <= 0 {
-            return None;
-        }
-        let database = state.database.as_ref()?;
-        let context = crate::tools::system_mcp::SystemToolContext {
-            caller: crate::tools::system_mcp::SystemCaller::WebAssistant {
-                device_db_id: profile.device_db_id,
-                agent_id: profile.agent_id,
-            },
-            grants: crate::tools::system_mcp::SystemToolGrants {
-                system_read: true,
-                mcp_read: true,
-            },
-            revoked: database
-                .tool_security
-                .register(profile.agent_id, Vec::new()),
-            cancellation: CancellationToken::new(),
-            deadline: tokio::time::Instant::now(),
+    let system_mcp =
+        if assistant_connection.is_some() && profile.device_db_id > 0 && profile.agent_id > 0 {
+            if let (Some(core), Some(database)) = (&state.system_mcp, &state.database) {
+                let _publication = database.tool_security.publication.read().await;
+                match database
+                    .system_mcp_grants(state.config.system_mcp.enabled)
+                    .await
+                {
+                    Ok(settings) => {
+                        let context = crate::tools::system_mcp::SystemToolContext {
+                            caller: crate::tools::system_mcp::SystemCaller::WebAssistant {
+                                device_db_id: profile.device_db_id,
+                                agent_id: profile.agent_id,
+                            },
+                            grants: settings.grants,
+                            revoked: database.tool_security.register_system_mcp(profile.agent_id),
+                            cancellation: CancellationToken::new(),
+                            deadline: tokio::time::Instant::now(),
+                        };
+                        assistant_auth.register_close(&context.revoked);
+                        Some(crate::tools::system_mcp::SessionSystemMcp {
+                            core: core.clone(),
+                            tools: core.list_tools(&context),
+                            context,
+                        })
+                    }
+                    Err(_) => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
-        assistant_auth.register_close(&context.revoked);
-        let tools = core.list_tools(&context);
-        Some(crate::tools::system_mcp::SessionSystemMcp {
-            core,
-            context,
-            tools,
-        })
-    });
     let resolved_runtimes = match profile
         .selected_runtimes
         .clone()

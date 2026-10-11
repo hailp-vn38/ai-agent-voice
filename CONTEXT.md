@@ -694,9 +694,14 @@ A complete observation of the tool catalog advertised by an External MCP server 
 _Avoid_: tool approval, approved catalog
 
 **System MCP**:
-The deployment's management tools available to authenticated Studio Assistant sessions, with separate authority for reading system status and MCP metadata.
+The deployment's management tools available to authenticated Studio Assistant sessions and dedicated remote principals, with separate grants for reads, discovery and proposing changes.
 _Avoid_: Device MCP, External MCP server, Admin tool authority
 
 **System Tool Grant**:
 Permission for Studio Assistant to use a group of System MCP tools, independent of External MCP tool approval and never conferred by conversation content.
 _Avoid_: Agent–External MCP binding, tool execution status
+
+
+**System Change Request**:
+A fixed proposal to change an MCP Server, Agent binding or reviewed tool permission; only a separate authenticated Admin confirmation can apply it.
+_Avoid_: spoken approval, tool execution permission, automatic mutation

@@ -24,17 +24,17 @@ impl Database {
         server: Option<&str>,
         page: u32,
     ) -> Result<Vec<Value>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, (String, String, String, i64, bool, bool, bool)>(
+        let rows = sqlx::query_as::<_, (String, String, String, i64, bool, bool, bool, i64)>(
             "SELECT m.key,o.original_name,o.fingerprint,o.revision,
              (o.blocked=0 AND o.server_revision=m.revision),
              (COALESCE(a.allowed,0)=1 AND a.fingerprint=o.fingerprint AND o.blocked=0 AND o.server_revision=m.revision),
-             COALESCE(a.sensitive,0)=1
+             COALESCE(a.sensitive,0)=1,COALESCE(a.revision,1)
              FROM agent_mcp_bindings b JOIN mcp_servers m ON m.id=b.mcp_server_id
              JOIN external_tool_observations o ON o.server_id=m.id
              LEFT JOIN agent_external_tool_allowlist a ON a.agent_id=b.agent_id AND a.server_id=m.id AND a.original_name=o.original_name
              WHERE b.agent_id=? AND (? IS NULL OR m.key=?) ORDER BY m.key,o.original_name LIMIT 20 OFFSET ?")
             .bind(agent).bind(server).bind(server).bind(i64::from(page - 1) * 20).fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(|(server_key, name, fingerprint, revision, current, allowed, sensitive)|
-            json!({"server_key":server_key,"tool_name":name,"fingerprint":fingerprint,"observed_revision":revision,"current":current,"allowed":allowed,"sensitive":sensitive,"presence":"observed_only"})).collect())
+        Ok(rows.into_iter().map(|(server_key, name, fingerprint, revision, current, allowed, sensitive, review_revision)|
+            json!({"server_key":server_key,"tool_name":name,"fingerprint":fingerprint,"observed_revision":revision,"current":current,"allowed":allowed,"sensitive":sensitive,"review_revision":review_revision,"presence":"observed_only"})).collect())
     }
 }

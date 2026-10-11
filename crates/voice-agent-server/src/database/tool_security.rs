@@ -23,6 +23,7 @@ pub struct SpeakerDeps {
 #[derive(Default, Debug)]
 pub struct ToolSecurity {
     sessions: Mutex<Vec<(i64, Vec<i64>, WeakCancellation)>>,
+    system_mcp: Mutex<Vec<WeakCancellation>>,
     speakers: Mutex<Vec<(SpeakerDeps, WeakCancellation)>>,
     // ponytail: one deployment lock; split by resource if review traffic needs throughput.
     pub publication: Arc<tokio::sync::RwLock<()>>,
@@ -34,6 +35,24 @@ impl ToolSecurity {
         sessions.retain(|(_, _, token)| token.strong_count() != 0);
         sessions.push((agent, servers, Arc::downgrade(&token)));
         token
+    }
+    pub(crate) fn register_system_mcp(&self, agent: i64) -> Arc<CancellationToken> {
+        let token = self.register(agent, Vec::new());
+        let mut sessions = self.system_mcp.lock().unwrap_or_else(|e| e.into_inner());
+        sessions.retain(|token| token.strong_count() != 0);
+        sessions.push(Arc::downgrade(&token));
+        token
+    }
+    pub(crate) fn invalidate_system_mcp(&self) {
+        for token in self
+            .system_mcp
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter_map(|token| token.upgrade())
+        {
+            token.cancel();
+        }
     }
     pub fn invalidate_agent(&self, agent: i64) {
         for (_, _, token) in self

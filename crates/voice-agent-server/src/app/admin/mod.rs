@@ -1,5 +1,6 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
+mod system_mcp;
 use super::AppState;
 use crate::database::{external_mcp_policy, provider_config};
 use axum::{
@@ -43,6 +44,23 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route(
             "/mcp-servers/{key}/test/discover",
             axum::routing::post(mcp_tests::saved_discover),
+        )
+        .route(
+            "/system-mcp/grants",
+            get(system_mcp::grants).put(system_mcp::save_grants),
+        )
+        .route("/system-mcp/change-requests", get(system_mcp::requests))
+        .route(
+            "/system-mcp/change-requests/{id}/confirm",
+            axum::routing::post(system_mcp::confirm),
+        )
+        .route(
+            "/system-mcp/change-requests/{id}/reject",
+            axum::routing::post(system_mcp::reject),
+        )
+        .route(
+            "/system-mcp/token-revocations",
+            axum::routing::post(system_mcp::revoke_token),
         )
         .route("/system", get(get_system))
         .route("/system/resources", get(system::get_resources))

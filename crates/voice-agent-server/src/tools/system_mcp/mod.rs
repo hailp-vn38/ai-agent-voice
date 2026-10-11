@@ -1,5 +1,7 @@
 //! Transport-independent System MCP authority, validation and safe read dispatch.
 mod catalog;
+mod discovery;
+mod proposals;
 
 use crate::{
     database::{agents::get_agent_by, mcp_servers::mcp_by},
@@ -12,16 +14,29 @@ use std::sync::Arc;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, Deserialize, sqlx::FromRow)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SystemToolGrants {
     pub system_read: bool,
     pub mcp_read: bool,
+    #[serde(default)]
+    pub mcp_discover: bool,
+    #[serde(default)]
+    pub mcp_manage_request: bool,
 }
 
 // Not deserializable: only the authenticated admission boundary constructs this identity.
 #[derive(Clone)]
 pub(crate) enum SystemCaller {
-    WebAssistant { device_db_id: i64, agent_id: i64 },
+    WebAssistant {
+        device_db_id: i64,
+        agent_id: i64,
+    },
+    Remote {
+        subject: String,
+        jti: String,
+        expires_at: i64,
+    },
 }
 
 #[derive(Clone)]
@@ -38,6 +53,11 @@ pub(crate) struct SystemMcp {
     status: SystemStatus,
     metrics: Arc<SystemMetrics>,
     max_result_chars: usize,
+    discovery: Option<(
+        Arc<crate::tools::external_mcp::ExternalMcpManager>,
+        Arc<dyn crate::database::secrets::SecretResolver>,
+    )>,
+    pending: proposals::PendingRequests,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -79,7 +99,18 @@ impl SystemMcp {
             status,
             metrics,
             max_result_chars,
+            discovery: None,
+            pending: proposals::PendingRequests::default(),
         }
+    }
+
+    pub(crate) fn with_discovery(
+        mut self,
+        manager: Option<Arc<crate::tools::external_mcp::ExternalMcpManager>>,
+        secrets: Arc<dyn crate::database::secrets::SecretResolver>,
+    ) -> Self {
+        self.discovery = manager.map(|manager| (manager, secrets));
+        self
     }
 
     pub(crate) fn list_tools(&self, ctx: &SystemToolContext) -> Vec<ToolDefinition> {
@@ -133,16 +164,13 @@ impl SystemMcp {
             .database
             .as_ref()
             .ok_or(SystemToolError::Unavailable)?;
-        // Share publication ordering with Agent revocation; these tools never perform network I/O.
+        if name == "mcp_discover_tools" {
+            return self.discover(ctx, arguments).await;
+        }
         let _publication = db.tool_security.publication.read().await;
-        let SystemCaller::WebAssistant {
-            device_db_id,
-            agent_id,
-        } = ctx.caller;
-        if ctx.revoked.is_cancelled()
-            || !db.system_mcp_caller_allowed(device_db_id, agent_id).await?
-        {
-            return Err(SystemToolError::Denied);
+        self.authorize(ctx, name).await?;
+        if name.starts_with("mcp_request_") {
+            return self.propose(ctx, name, arguments);
         }
         match name {
             "system_get_status" => {
@@ -181,7 +209,12 @@ impl SystemMcp {
                         validate_key(&key)?;
                         get_agent_by(db, &key).await?.id
                     }
-                    None => agent_id,
+                    None => match ctx.caller {
+                        SystemCaller::WebAssistant { agent_id, .. } => agent_id,
+                        SystemCaller::Remote { .. } => {
+                            return Err(SystemToolError::InvalidArguments);
+                        }
+                    },
                 };
                 Ok(
                     json!({"items":db.system_mcp_tools(agent_id, args.server_key.as_deref(), args.page).await?,"page":args.page,"page_size":20}),
@@ -284,3 +317,9 @@ fn optional_key<'de, D: serde::Deserializer<'de>>(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod discovery_tests;
+
+#[cfg(test)]
+mod authority_tests;

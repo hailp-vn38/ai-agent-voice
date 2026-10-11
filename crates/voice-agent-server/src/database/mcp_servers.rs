@@ -105,9 +105,19 @@ impl Database {
         input: McpChanges<'_>,
         request_id: &str,
     ) -> Result<(), WriteError> {
+        let _publication = self.tool_security.publication.write().await;
+        self.update_mcp_server_published(old, expected, input, request_id)
+            .await
+    }
+    pub(crate) async fn update_mcp_server_published(
+        &self,
+        old: &McpServerRow,
+        expected: i64,
+        input: McpChanges<'_>,
+        request_id: &str,
+    ) -> Result<(), WriteError> {
         let pool = &self.pool;
         let security = &self.tool_security;
-        let _publication = security.publication.write().await;
         let mut tx = match pool.begin().await {
             Ok(v) => v,
             Err(_) => {
@@ -157,10 +167,21 @@ impl Database {
         if source_changed {
             security.invalidate_server(old.id);
         }
-        drop(_publication);
         Ok(())
     }
     pub(crate) async fn put_agent_mcp_binding(
+        &self,
+        key: &str,
+        server_key: &str,
+        enabled: bool,
+        expected: i64,
+        request_id: &str,
+    ) -> Result<(), WriteError> {
+        let _publication = self.tool_security.publication.write().await;
+        self.put_agent_mcp_binding_published(key, server_key, enabled, expected, request_id)
+            .await
+    }
+    pub(crate) async fn put_agent_mcp_binding_published(
         &self,
         key: &str,
         server_key: &str,
@@ -188,7 +209,6 @@ impl Database {
             Err(e) => return Err(WriteError::Sql(e)),
         };
         let security = &self.tool_security;
-        let _publication = security.publication.write().await;
         let mut tx = match pool.begin().await {
             Ok(v) => v,
             Err(_) => {

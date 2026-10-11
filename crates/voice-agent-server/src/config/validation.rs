@@ -68,6 +68,7 @@ impl AppConfig {
         validate_admin_api(self)?;
         validate_speaker_recognition(self)?;
         validate_shutdown(self)?;
+        crate::app::mcp_server::validate(self)?;
         if let Some(runtime) = &self.provider_runtime {
             if !(1000..=120_000).contains(&runtime.startup_timeout_ms) {
                 return Err(ConfigError::Validation(

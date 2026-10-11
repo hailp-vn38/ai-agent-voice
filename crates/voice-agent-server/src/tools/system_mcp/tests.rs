@@ -60,6 +60,7 @@ tts="test"
         grants: SystemToolGrants {
             system_read: true,
             mcp_read: true,
+            ..Default::default()
         },
         revoked: db.tool_security.register(agent_id, Vec::new()),
         cancellation: CancellationToken::new(),

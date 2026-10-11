@@ -28,13 +28,28 @@ pub(super) fn catalog(grants: SystemToolGrants) -> Vec<ToolDefinition> {
             json!({"server_key":key}),
             &["server_key"],
         ));
-        tools.push(definition("mcp_list_tools", "Read observed External MCP tools and approval state for an Agent; defaults to the current Agent. This does not execute or approve tools.", json!({"agent_key":key,"server_key":key,"page":page}), &[]));
+        tools.push(definition("mcp_list_tools", "Read observed External MCP tools, approval state and review_revision for an Agent; defaults to the current Voice Agent. Remote callers must supply agent_key. This does not execute or approve tools.", json!({"agent_key":key,"server_key":key,"page":page}), &[]));
         tools.push(definition(
             "mcp_get_agent_bindings",
             "Read an Agent's External MCP bindings and enabled states.",
             json!({"agent_key":key}),
             &["agent_key"],
         ));
+    }
+    if grants.mcp_discover {
+        tools.push(definition(
+            "mcp_discover_tools",
+            "Discover a bounded catalog and observe contract drift; never approve tools.",
+            json!({"server_key":key}),
+            &["server_key"],
+        ));
+    }
+    if grants.mcp_manage_request {
+        let revision = json!({"type":"integer","minimum":1});
+        let enabled = json!({"type":"boolean"});
+        tools.push(definition("mcp_request_server_change", "Propose changing a server's enabled state. Only a separate Admin confirmation can apply it.", json!({"server_key":key,"enabled":enabled,"expected_revision":revision}), &["server_key","enabled","expected_revision"]));
+        tools.push(definition("mcp_request_agent_binding_change", "Propose an Agent binding change for separate Admin confirmation.", json!({"agent_key":key,"server_key":key,"enabled":enabled,"expected_agent_revision":revision}), &["agent_key","server_key","enabled","expected_agent_revision"]));
+        tools.push(definition("mcp_request_tool_review", "Propose a tool review using review_revision from mcp_list_tools as expected_revision, for separate Admin confirmation; never approve from conversation.", json!({"agent_key":key,"server_key":key,"tool_name":{"type":"string","maxLength":128},"fingerprint":{"type":"string","pattern":"^[a-f0-9]{64}$"},"observed_revision":revision,"allow":enabled,"sensitive":enabled,"expected_revision":revision}), &["agent_key","server_key","tool_name","fingerprint","observed_revision","allow","sensitive","expected_revision"]));
     }
     tools
 }

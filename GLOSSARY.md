@@ -27,9 +27,14 @@ Tín hiệu quan sát tạm thời báo một Tool Call đã bắt đầu, hoàn
 _Avoid_: MCP response, assistant message, turn status
 
 **System MCP**:
-Tập công cụ quản trị do deployment cung cấp cho Studio Assistant đã xác thực, với quyền riêng cho việc đọc trạng thái hệ thống và đọc metadata MCP.
+Tập công cụ quản trị do deployment cung cấp cho Studio Assistant hoặc chủ thể remote đã xác thực, với quyền riêng cho đọc dữ liệu, khám phá công cụ và đề xuất thay đổi.
 _Avoid_: Device MCP, External MCP server, Admin tool authority
 
 **System Tool Grant**:
 Quyền cho Studio Assistant sử dụng một nhóm công cụ System MCP; độc lập với quyền gọi công cụ của External MCP và không được cấp bởi nội dung hội thoại.
 _Avoid_: Agent–External MCP binding, tool execution status
+
+
+**System Change Request**:
+Đề xuất cố định để thay đổi MCP Server, binding của Agent hoặc quyền công cụ đã review; chỉ thao tác xác nhận riêng của Admin đã xác thực mới được áp dụng.
+_Avoid_: spoken approval, tool execution permission, automatic mutation

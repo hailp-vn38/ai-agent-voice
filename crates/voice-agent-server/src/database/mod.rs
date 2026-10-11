@@ -225,3 +225,5 @@ pub(crate) fn is_busy(error: &sqlx::Error) -> bool {
 }
 
 pub(crate) mod system_mcp;
+
+mod system_mcp_grants;

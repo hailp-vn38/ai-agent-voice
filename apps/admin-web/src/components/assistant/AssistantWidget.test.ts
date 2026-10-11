@@ -108,7 +108,8 @@ describe('compact Studio Assistant', () => {
     assistant.state = 'processing'
     assistant.activeTool = { turn_id: 3, name: 'external.home_assistant.light_turn_on' }
     await nextTick()
-    expect(widget.text()).toContain('Using external.home_assistant.light_turn_on')
+    expect(widget.text()).toContain('Using a tool')
+    expect(widget.text()).not.toContain('external.home_assistant.light_turn_on')
     expect(widget.findAll('article')).toHaveLength(0)
     assistant.activeTool = null
     await nextTick()

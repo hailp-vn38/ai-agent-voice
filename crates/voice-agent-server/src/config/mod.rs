@@ -1273,4 +1273,19 @@ impl std::fmt::Debug for ChillAudioRuntimeConfig {
 pub struct SystemMcpConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub http: SystemMcpHttpConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemMcpHttpConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub issuer: String,
+    #[serde(default)]
+    pub audience: String,
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
