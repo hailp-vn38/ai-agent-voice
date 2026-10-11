@@ -65,7 +65,8 @@ describe('compact Studio Assistant', () => {
 
   it('uses a connection dot, prioritizes microphone, and reveals text input only on demand', async () => {
     expect(widget.find('.assistant-connection-dot.is-online').exists()).toBe(true)
-    expect(widget.text()).not.toContain('Connected')
+    expect(widget.get('header .sr-only').text()).toBe('Connected')
+    expect(widget.text()).not.toContain('Use Agent default')
     expect(widget.find('textarea').exists()).toBe(false)
     expect(widget.find('button[aria-label="Microphone"]').exists()).toBe(true)
     await widget.get('button[aria-label="Switch to text input"]').trigger('click')

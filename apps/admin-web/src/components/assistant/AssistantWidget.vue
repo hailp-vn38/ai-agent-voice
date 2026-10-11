@@ -97,7 +97,7 @@ watch(() => assistant.visible, async open => {
 watch(() => [assistant.messages.map(message => message.text).join(''), historyOpen.value, assistant.visible], async () => {
   if (!assistant.visible) return
   await nextTick()
-  transcript.value?.scrollTo({ top: transcript.value.scrollHeight })
+  if (transcript.value) transcript.value.scrollTop = transcript.value.scrollHeight
 })
 onMounted(() => {
   document.addEventListener('pointerdown', outside)
@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
                 <span class="px-1 text-[10px] text-muted-foreground">{{ message.role === 'user' ? t('assistant.you') : t('assistant.agentLabel') }}</span>
                 <div class="assistant-message max-w-[95%] rounded-xl px-3 py-2 text-[13px] leading-relaxed" :class="message.role === 'user' ? 'rounded-br-sm bg-primary/12' : 'rounded-bl-sm border bg-card'">
                   <p class="whitespace-pre-wrap break-words" :class="{ 'line-clamp-4': !historyOpen && message.role === 'assistant', 'line-clamp-2': !historyOpen && message.role === 'user' }">{{ message.text }}</p>
-                  <span v-if="message.role === 'assistant' && assistant.state === 'speaking' && message.id === latestMessages.at(-1)?.id" class="mt-2 inline-flex items-center gap-1 text-[10px] text-primary">
+                  <span v-if="message.role === 'assistant' && assistant.state === 'speaking' && !assistant.muted && message.id === latestMessages.at(-1)?.id" class="mt-2 inline-flex items-center gap-1 text-[10px] text-primary">
                     <Volume2 class="size-3" aria-hidden="true" />{{ t('assistant.playing') }}
                   </span>
                 </div>

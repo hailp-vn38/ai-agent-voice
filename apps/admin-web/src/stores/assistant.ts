@@ -15,6 +15,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   let id = 0
   let pendingUser: AssistantMessage | undefined
   let response: AssistantMessage | undefined
+  let manuallyMuted = false
   function add(role: AssistantMessage['role'], text: string, status: AssistantMessage['status']) {
     const message: AssistantMessage = { id: ++id, role, text, status }
     messages.value.push(message)
@@ -66,7 +67,15 @@ export const useAssistantStore = defineStore('assistant', () => {
     await run(() => client.sendText(text))
     if (pendingUser?.status === 'pending' && error.value) pendingUser.status = 'failed'
   }
-  async function startMicrophone() { pendingUser = undefined; response = undefined; await run(() => client.startMicrophone()) }
+  async function startMicrophone() {
+    pendingUser = undefined
+    response = undefined
+    // Unlock TTS playback from the microphone click's user gesture; respect explicit mute.
+    if (!manuallyMuted && client.audio.muted) {
+      try { await client.audio.enableSpeaker(); muted.value = false } catch { /* Microphone and transcript remain usable without playback support. */ }
+    }
+    await run(() => client.startMicrophone())
+  }
   async function toggleSpeaker() {
     await run(async () => {
       if (client.audio.muted) {
@@ -74,6 +83,7 @@ export const useAssistantStore = defineStore('assistant', () => {
         if (state.value === 'speaking') client.audio.beginPlayback()
       } else client.audio.muteSpeaker()
       muted.value = client.audio.muted
+      manuallyMuted = client.audio.muted
     })
   }
   function disconnect() {
@@ -83,6 +93,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     error.value = ''
     settings.value = undefined
     muted.value = true
+    manuallyMuted = false
   }
   return { visible, state, error, settings, messages, muted, level, open, connect, sendText, startMicrophone, toggleSpeaker, disconnect,
     stopMicrophone: () => run(() => client.stopMicrophone()), interrupt: () => client.interrupt() }
