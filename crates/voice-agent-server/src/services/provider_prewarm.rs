@@ -127,6 +127,12 @@ impl ProviderPrewarm {
         }
         self.enqueue_rows(rows).await
     }
+    pub async fn device(&self, device_id: &str) -> bool {
+        match self.database.device_prewarm_template(device_id).await {
+            Ok(Some(id)) => self.template(id).await,
+            _ => false,
+        }
+    }
 }
 async fn snapshots(
     database: &Database,

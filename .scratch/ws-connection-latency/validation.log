@@ -1,0 +1,20 @@
+Validation summary, 2026-10-11, source baseline 596d340
+
+cargo build --locked -p voice-agent-server --bin voice-agent-server --features qualification-providers
+PASS (dev build)
+
+cargo test --locked -p voice-agent-server --features qualification-providers --test ws_protocol --test external_mcp_admission --test provider_runtime_manager
+external_mcp_admission: 17 passed, 0 failed (2.46 s)
+provider_runtime_manager: 24 passed, 0 failed (1.01 s)
+ws_protocol: 9 passed, 0 failed (0.80 s)
+Total: 50 passed, 0 failed. This is a summary of captured tool output, not a raw cargo log.
+
+python3 .scratch/ws-connection-latency/probe.py --binary /mnt/storage/ai-agent-voice/target/debug/voice-agent-server --budget-ms 250
+EXPECTED FAIL: controlled slow MCP case exceeds the illustrative connection budget.
+Full output: budget-check.log
+
+python3 .scratch/ws-connection-latency/probe.py --binary /mnt/storage/ai-agent-voice/target/debug/voice-agent-server
+PASS: all controlled latency and valid ServerHello self-checks.
+Full output: probe-check.log
+
+No production code/config was changed. No production/hardware/cold-model latency qualification was run.

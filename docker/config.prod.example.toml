@@ -51,3 +51,8 @@ delivery_mode = "stream"
 # voice = "Mai Anh"
 # timeout_ms = 30000
 # api_key = ""
+
+[mcp.external]
+# Keep optional discovery within 500 ms; slow servers contribute no tools to this session.
+per_server_resolution_timeout_ms = 400
+overall_resolution_budget_ms = 500

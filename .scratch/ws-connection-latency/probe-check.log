@@ -1,0 +1,80 @@
+[
+  {
+    "case": "no_mcp",
+    "median_ms": {
+      "tcp_ms": 0.118,
+      "upgrade_after_tcp_ms": 2.094,
+      "hello_after_upgrade_ms": 0.848,
+      "total_ms": 3.046
+    },
+    "mcp_methods": []
+  },
+  {
+    "case": "fast_mcp",
+    "median_ms": {
+      "tcp_ms": 0.119,
+      "upgrade_after_tcp_ms": 7.927,
+      "hello_after_upgrade_ms": 0.796,
+      "total_ms": 8.828
+    },
+    "mcp_methods": [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list"
+    ]
+  },
+  {
+    "case": "slow_mcp",
+    "median_ms": {
+      "tcp_ms": 0.303,
+      "upgrade_after_tcp_ms": 622.058,
+      "hello_after_upgrade_ms": 2.038,
+      "total_ms": 624.291
+    },
+    "mcp_methods": [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list"
+    ]
+  },
+  {
+    "case": "slow_mcp_100ms_budget",
+    "median_ms": {
+      "tcp_ms": 0.338,
+      "upgrade_after_tcp_ms": 109.289,
+      "hello_after_upgrade_ms": 2.343,
+      "total_ms": 111.542
+    },
+    "mcp_methods": [
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize"
+    ]
+  }
+]

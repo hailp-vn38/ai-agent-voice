@@ -27,6 +27,16 @@ pub enum RuntimePhase {
     ProviderContract,
     /// Wall time of one complete native materialization, from preparation through retention.
     RuntimeTotal,
+    WsRouting,
+    WsRuntime,
+    WsExternalMcp,
+    WsSpeaker,
+    WsPreUpgrade,
+    WsHelloWait,
+    WsHelloInit,
+    WsHelloSend,
+    /// Handler entry to successful ServerHello send; excludes TCP/TLS and client receipt.
+    WsConnect,
 }
 #[derive(Clone, Copy)]
 pub enum RuntimeCounter {
@@ -52,7 +62,7 @@ struct DurationSummary {
 }
 pub struct RuntimeMetrics {
     counters: [AtomicU64; 10],
-    durations: [Mutex<DurationSummary>; 14],
+    durations: [Mutex<DurationSummary>; RuntimePhase::WsConnect as usize + 1],
 }
 impl Default for RuntimeMetrics {
     fn default() -> Self {
@@ -111,6 +121,15 @@ impl RuntimeMetrics {
             "artifact_verify",
             "provider_contract",
             "runtime_total",
+            "ws_routing",
+            "ws_runtime",
+            "ws_external_mcp",
+            "ws_speaker",
+            "ws_pre_upgrade",
+            "ws_hello_wait",
+            "ws_hello_init",
+            "ws_hello_send",
+            "ws_connect",
         ];
         let counters: serde_json::Map<_, _> = names
             .into_iter()

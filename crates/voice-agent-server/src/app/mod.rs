@@ -386,11 +386,11 @@ async fn managed_startup(
         drop(lease);
     }
     if let (Some(database), Some(prewarm)) = (&state.database, &state.provider_prewarm) {
-        let defaults: Vec<(i64,)> = database
-            .default_prewarm_templates()
+        let selected: Vec<(i64,)> = database
+            .selected_prewarm_templates()
             .await
             .map_err(|_| BootstrapError::Provider)?;
-        for (id,) in defaults {
+        for (id,) in selected {
             prewarm.template(id).await;
         }
     }

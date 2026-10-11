@@ -1,0 +1,446 @@
+[
+  {
+    "case": "no_mcp",
+    "samples": [
+      {
+        "tcp_ms": 0.15658896882086992,
+        "upgrade_after_tcp_ms": 3.865606035105884,
+        "hello_after_upgrade_ms": 0.903830979950726,
+        "total_ms": 4.92602598387748
+      },
+      {
+        "tcp_ms": 0.11389696737751365,
+        "upgrade_after_tcp_ms": 3.534085990395397,
+        "hello_after_upgrade_ms": 0.768310041166842,
+        "total_ms": 4.416292998939753
+      },
+      {
+        "tcp_ms": 0.10990601731464267,
+        "upgrade_after_tcp_ms": 2.306084963493049,
+        "hello_after_upgrade_ms": 0.7141330279409885,
+        "total_ms": 3.1301240087486804
+      },
+      {
+        "tcp_ms": 0.10630598990246654,
+        "upgrade_after_tcp_ms": 2.164172998163849,
+        "hello_after_upgrade_ms": 0.7945340475998819,
+        "total_ms": 3.0650130356661975
+      },
+      {
+        "tcp_ms": 0.11243001790717244,
+        "upgrade_after_tcp_ms": 2.1278279600664973,
+        "hello_after_upgrade_ms": 0.777950044721365,
+        "total_ms": 3.0182080226950347
+      },
+      {
+        "tcp_ms": 0.09905797196552157,
+        "upgrade_after_tcp_ms": 2.193124033510685,
+        "hello_after_upgrade_ms": 0.790986989159137,
+        "total_ms": 3.0831689946353436
+      },
+      {
+        "tcp_ms": 0.11218199506402016,
+        "upgrade_after_tcp_ms": 1.9690420012921095,
+        "hello_after_upgrade_ms": 0.6845390307717025,
+        "total_ms": 2.765763027127832
+      },
+      {
+        "tcp_ms": 0.11622702004387975,
+        "upgrade_after_tcp_ms": 2.0347979734651744,
+        "hello_after_upgrade_ms": 0.7475800230167806,
+        "total_ms": 2.898605016525835
+      },
+      {
+        "tcp_ms": 0.1034419983625412,
+        "upgrade_after_tcp_ms": 2.117049996741116,
+        "hello_after_upgrade_ms": 0.6954859709367156,
+        "total_ms": 2.915977966040373
+      },
+      {
+        "tcp_ms": 0.10044901864603162,
+        "upgrade_after_tcp_ms": 2.47677497100085,
+        "hello_after_upgrade_ms": 0.9451690129935741,
+        "total_ms": 3.522393002640456
+      }
+    ],
+    "median_ms": {
+      "tcp_ms": 0.111,
+      "upgrade_after_tcp_ms": 2.179,
+      "hello_after_upgrade_ms": 0.773,
+      "total_ms": 3.074
+    },
+    "mcp_methods": []
+  },
+  {
+    "case": "fast_mcp",
+    "samples": [
+      {
+        "tcp_ms": 0.10303198359906673,
+        "upgrade_after_tcp_ms": 10.21267002215609,
+        "hello_after_upgrade_ms": 0.9385519661009312,
+        "total_ms": 11.254253971856087
+      },
+      {
+        "tcp_ms": 0.11232902761548758,
+        "upgrade_after_tcp_ms": 8.057767001446337,
+        "hello_after_upgrade_ms": 0.7868179818615317,
+        "total_ms": 8.956914010923356
+      },
+      {
+        "tcp_ms": 0.10243896394968033,
+        "upgrade_after_tcp_ms": 7.8913390170782804,
+        "hello_after_upgrade_ms": 0.7986359996721148,
+        "total_ms": 8.792413980700076
+      },
+      {
+        "tcp_ms": 0.1132130273617804,
+        "upgrade_after_tcp_ms": 7.840915990527719,
+        "hello_after_upgrade_ms": 0.6865320028737187,
+        "total_ms": 8.640661020763218
+      },
+      {
+        "tcp_ms": 0.10635994840413332,
+        "upgrade_after_tcp_ms": 7.65641505131498,
+        "hello_after_upgrade_ms": 0.7204499561339617,
+        "total_ms": 8.483224955853075
+      },
+      {
+        "tcp_ms": 0.10962795931845903,
+        "upgrade_after_tcp_ms": 7.857507036533207,
+        "hello_after_upgrade_ms": 0.8414139738306403,
+        "total_ms": 8.808548969682306
+      },
+      {
+        "tcp_ms": 0.10266498429700732,
+        "upgrade_after_tcp_ms": 7.80927698360756,
+        "hello_after_upgrade_ms": 0.6905270274728537,
+        "total_ms": 8.602468995377421
+      },
+      {
+        "tcp_ms": 0.10422797640785575,
+        "upgrade_after_tcp_ms": 7.726876996457577,
+        "hello_after_upgrade_ms": 0.6653210148215294,
+        "total_ms": 8.496425987686962
+      },
+      {
+        "tcp_ms": 0.10146998101845384,
+        "upgrade_after_tcp_ms": 7.608362997416407,
+        "hello_after_upgrade_ms": 0.6991279660724103,
+        "total_ms": 8.408960944507271
+      },
+      {
+        "tcp_ms": 0.10295695392414927,
+        "upgrade_after_tcp_ms": 7.5642100418917835,
+        "hello_after_upgrade_ms": 0.7372009567916393,
+        "total_ms": 8.404367952607572
+      }
+    ],
+    "median_ms": {
+      "tcp_ms": 0.104,
+      "upgrade_after_tcp_ms": 7.825,
+      "hello_after_upgrade_ms": 0.729,
+      "total_ms": 8.622
+    },
+    "mcp_methods": [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list"
+    ]
+  },
+  {
+    "case": "slow_mcp",
+    "samples": [
+      {
+        "tcp_ms": 0.11908297892659903,
+        "upgrade_after_tcp_ms": 621.0042760358192,
+        "hello_after_upgrade_ms": 2.1486079785972834,
+        "total_ms": 623.2719669933431
+      },
+      {
+        "tcp_ms": 0.3052569809369743,
+        "upgrade_after_tcp_ms": 622.4925399874337,
+        "hello_after_upgrade_ms": 2.008928044233471,
+        "total_ms": 624.8067250126041
+      },
+      {
+        "tcp_ms": 0.2655269927345216,
+        "upgrade_after_tcp_ms": 621.5122360154055,
+        "hello_after_upgrade_ms": 1.5827349852770567,
+        "total_ms": 623.3604979934171
+      },
+      {
+        "tcp_ms": 0.28276798548176885,
+        "upgrade_after_tcp_ms": 622.5158619927242,
+        "hello_after_upgrade_ms": 2.1389040048234165,
+        "total_ms": 624.9375339830294
+      },
+      {
+        "tcp_ms": 0.3181850188411772,
+        "upgrade_after_tcp_ms": 622.8875740198418,
+        "hello_after_upgrade_ms": 1.3167369761504233,
+        "total_ms": 624.5224960148335
+      },
+      {
+        "tcp_ms": 0.1717560226097703,
+        "upgrade_after_tcp_ms": 620.7817529793829,
+        "hello_after_upgrade_ms": 2.1269189892336726,
+        "total_ms": 623.0804279912263
+      },
+      {
+        "tcp_ms": 0.378248980268836,
+        "upgrade_after_tcp_ms": 624.2450919817202,
+        "hello_after_upgrade_ms": 2.1128749940544367,
+        "total_ms": 626.7362159560435
+      },
+      {
+        "tcp_ms": 0.2892949851229787,
+        "upgrade_after_tcp_ms": 623.7943320302293,
+        "hello_after_upgrade_ms": 2.295351994689554,
+        "total_ms": 626.3789790100418
+      },
+      {
+        "tcp_ms": 0.3006120095960796,
+        "upgrade_after_tcp_ms": 623.6678519635461,
+        "hello_after_upgrade_ms": 1.754519995301962,
+        "total_ms": 625.7229839684442
+      },
+      {
+        "tcp_ms": 0.3227010020054877,
+        "upgrade_after_tcp_ms": 620.2255960088223,
+        "hello_after_upgrade_ms": 1.020228024572134,
+        "total_ms": 621.5685250354
+      }
+    ],
+    "median_ms": {
+      "tcp_ms": 0.295,
+      "upgrade_after_tcp_ms": 622.504,
+      "hello_after_upgrade_ms": 2.061,
+      "total_ms": 624.665
+    },
+    "mcp_methods": [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list"
+    ]
+  },
+  {
+    "case": "slow_mcp_100ms_budget",
+    "samples": [
+      {
+        "tcp_ms": 0.10055600432679057,
+        "upgrade_after_tcp_ms": 107.0284399902448,
+        "hello_after_upgrade_ms": 2.550588978920132,
+        "total_ms": 109.67958497349173
+      },
+      {
+        "tcp_ms": 0.3172180149704218,
+        "upgrade_after_tcp_ms": 112.28588997619227,
+        "hello_after_upgrade_ms": 2.216430031694472,
+        "total_ms": 114.81953802285716
+      },
+      {
+        "tcp_ms": 0.27698499616235495,
+        "upgrade_after_tcp_ms": 109.23215298680589,
+        "hello_after_upgrade_ms": 3.4526209929026663,
+        "total_ms": 112.96175897587091
+      },
+      {
+        "tcp_ms": 0.2945679589174688,
+        "upgrade_after_tcp_ms": 108.60830399906263,
+        "hello_after_upgrade_ms": 1.7850800068117678,
+        "total_ms": 110.68795196479186
+      },
+      {
+        "tcp_ms": 0.29795797308906913,
+        "upgrade_after_tcp_ms": 109.44385704351589,
+        "hello_after_upgrade_ms": 2.3174089728854597,
+        "total_ms": 112.05922398949042
+      },
+      {
+        "tcp_ms": 0.29470399022102356,
+        "upgrade_after_tcp_ms": 108.61857701092958,
+        "hello_after_upgrade_ms": 2.5068409740924835,
+        "total_ms": 111.42012197524309
+      },
+      {
+        "tcp_ms": 0.2987409825436771,
+        "upgrade_after_tcp_ms": 108.35017502540722,
+        "hello_after_upgrade_ms": 1.888073980808258,
+        "total_ms": 110.53698998875916
+      },
+      {
+        "tcp_ms": 0.31603698153048754,
+        "upgrade_after_tcp_ms": 108.47922699758783,
+        "hello_after_upgrade_ms": 2.1317650098353624,
+        "total_ms": 110.92702898895368
+      },
+      {
+        "tcp_ms": 0.318984966725111,
+        "upgrade_after_tcp_ms": 108.1952039967291,
+        "hello_after_upgrade_ms": 1.7621699953451753,
+        "total_ms": 110.27635895879939
+      },
+      {
+        "tcp_ms": 0.3086149808950722,
+        "upgrade_after_tcp_ms": 109.30431901942939,
+        "hello_after_upgrade_ms": 1.8790889880619943,
+        "total_ms": 111.49202298838645
+      }
+    ],
+    "median_ms": {
+      "tcp_ms": 0.298,
+      "upgrade_after_tcp_ms": 108.613,
+      "hello_after_upgrade_ms": 2.174,
+      "total_ms": 111.174
+    },
+    "mcp_methods": [
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize"
+    ]
+  },
+  {
+    "case": "slow_mcp_production_budget",
+    "samples": [
+      {
+        "tcp_ms": 0.1018000184558332,
+        "upgrade_after_tcp_ms": 407.32242999365553,
+        "hello_after_upgrade_ms": 2.3776490124873817,
+        "total_ms": 409.80187902459875
+      },
+      {
+        "tcp_ms": 0.3066819626837969,
+        "upgrade_after_tcp_ms": 411.11334098968655,
+        "hello_after_upgrade_ms": 1.9896860467270017,
+        "total_ms": 413.40970899909735
+      },
+      {
+        "tcp_ms": 0.29852695297449827,
+        "upgrade_after_tcp_ms": 409.173334017396,
+        "hello_after_upgrade_ms": 1.8649569828994572,
+        "total_ms": 411.33681795326993
+      },
+      {
+        "tcp_ms": 0.32477296190336347,
+        "upgrade_after_tcp_ms": 407.904141000472,
+        "hello_after_upgrade_ms": 0.8391340379603207,
+        "total_ms": 409.0680480003357
+      },
+      {
+        "tcp_ms": 0.12992002302780747,
+        "upgrade_after_tcp_ms": 405.23406997090206,
+        "hello_after_upgrade_ms": 2.2423590417020023,
+        "total_ms": 407.60634903563187
+      },
+      {
+        "tcp_ms": 0.31270203180611134,
+        "upgrade_after_tcp_ms": 407.90716401534155,
+        "hello_after_upgrade_ms": 1.8499669968150556,
+        "total_ms": 410.0698330439627
+      },
+      {
+        "tcp_ms": 0.3300280077382922,
+        "upgrade_after_tcp_ms": 407.50542597379535,
+        "hello_after_upgrade_ms": 1.885458012111485,
+        "total_ms": 409.72091199364513
+      },
+      {
+        "tcp_ms": 0.33311103470623493,
+        "upgrade_after_tcp_ms": 409.2087469762191,
+        "hello_after_upgrade_ms": 1.946248987223953,
+        "total_ms": 411.4881069981493
+      },
+      {
+        "tcp_ms": 0.3229280118830502,
+        "upgrade_after_tcp_ms": 409.11612199852243,
+        "hello_after_upgrade_ms": 1.796383992768824,
+        "total_ms": 411.2354340031743
+      },
+      {
+        "tcp_ms": 0.31500699697062373,
+        "upgrade_after_tcp_ms": 408.6911579943262,
+        "hello_after_upgrade_ms": 1.8017060356214643,
+        "total_ms": 410.8078710269183
+      }
+    ],
+    "median_ms": {
+      "tcp_ms": 0.314,
+      "upgrade_after_tcp_ms": 408.299,
+      "hello_after_upgrade_ms": 1.875,
+      "total_ms": 410.439
+    },
+    "mcp_methods": [
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize"
+    ]
+  }
+]

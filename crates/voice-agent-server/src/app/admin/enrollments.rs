@@ -62,7 +62,12 @@ pub(super) async fn claim(State(state): State<AppState>, request: Request) -> Re
         )
         .await
     {
-        Ok(device) => (StatusCode::CREATED, Json(device)).into_response(),
+        Ok(device) => {
+            if let Some(prewarm) = &state.provider_prewarm {
+                prewarm.device(&device.device_id).await;
+            }
+            (StatusCode::CREATED, Json(device)).into_response()
+        }
         Err(cause) => write_error(&request, cause),
     }
 }

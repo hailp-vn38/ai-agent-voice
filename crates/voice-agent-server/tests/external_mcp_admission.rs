@@ -516,11 +516,21 @@ async fn start(secrets: ConstantSecrets) -> Voice {
 }
 
 async fn start_with_config(app_config: AppConfig, secrets: impl SecretResolver + 'static) -> Voice {
+    start_with_materializer(app_config, secrets, None).await
+}
+
+async fn start_with_materializer(
+    app_config: AppConfig,
+    secrets: impl SecretResolver + 'static,
+    materializer: Option<
+        Arc<dyn voice_agent_server::services::provider_runtime::RuntimeMaterializer>,
+    >,
+) -> Voice {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let url = app_config.database.url.clone();
     let database = Database::connect(&app_config.database).await.unwrap();
-    let state = AppState::from_provider_set_with_database_resolver_and_shutdown(
+    let mut state = AppState::from_provider_set_with_database_resolver_and_shutdown(
         app_config,
         Arc::new(ProviderSet::with_all(
             Arc::new(SilentVad),
@@ -534,6 +544,28 @@ async fn start_with_config(app_config: AppConfig, secrets: impl SecretResolver +
             1_024,
         )),
     );
+    if let Some(materializer) = materializer {
+        use voice_agent_server::services::provider_runtime::{
+            ProviderRuntimeManager, RuntimeLimits,
+        };
+        let manager = ProviderRuntimeManager::new(
+            RuntimeLimits {
+                max_parallel_loads: 1,
+                max_pending_loads: 8,
+                max_waiters: 16,
+                max_resident_bytes: 16,
+                max_resources: 8,
+                max_version_entries: 16,
+                admission_timeout_ms: 5000,
+                failure_cooldown_ms: 100,
+                idle_ttl_ms: 60000,
+            },
+            materializer,
+            state.admission_gate().clone(),
+        )
+        .unwrap();
+        state = state.with_runtime_manager(manager);
+    }
     let served = state.clone();
     let task = tokio::spawn(async move {
         axum::serve(listener, voice_agent_server::app::router_with_state(served))
@@ -547,6 +579,9 @@ async fn start_with_config(app_config: AppConfig, secrets: impl SecretResolver +
         task,
     }
 }
+
+#[path = "external_mcp_admission/connection_latency.rs"]
+mod connection_latency;
 
 impl Voice {
     /// The migrated control plane this server admitted against.

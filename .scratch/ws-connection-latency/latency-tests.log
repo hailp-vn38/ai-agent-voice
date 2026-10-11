@@ -1,0 +1,13 @@
+    Blocking waiting for file lock on build directory
+   Compiling voice-agent-server v0.1.0 (/home/hailp/ai-agent-voice/crates/voice-agent-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 40.46s
+     Running tests/external_mcp_admission.rs (/mnt/storage/ai-agent-voice/target/debug/deps/external_mcp_admission-6e45d2de665bfe9e)
+
+running 5 tests
+test connection_latency::a_failed_runtime_rejects_upgrade_without_waiting_for_optional_mcp ... ok
+test connection_latency::claiming_enrollment_prewarms_the_selected_override_before_reconnect ... ok
+test connection_latency::updating_a_device_prewarms_its_new_override_without_a_websocket ... ok
+test connection_latency::creating_a_device_prewarms_its_override_before_its_first_websocket ... ok
+test connection_latency::websocket_discovers_mcp_while_selected_runtime_is_still_cold ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.78s

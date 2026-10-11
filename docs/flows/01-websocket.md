@@ -2,16 +2,72 @@
 
 ## 1. Phạm vi
 
-Tài liệu này bắt đầu **sau khi HTTP đã chấp nhận WebSocket upgrade** cho một
-Voice Session. Nó mô tả handshake ứng dụng, routing frame, lifecycle của
-`SessionActor`, writer và đóng kết nối. OTA discovery, bearer authentication,
-Device/Agent admission và enrollment không nằm trong flow này; xem
+Tài liệu này mô tả admission trước HTTP upgrade, handshake ứng dụng, routing
+frame, lifecycle của `SessionActor`, writer và đóng kết nối. OTA discovery và
+Enrollment Session riêng được mô tả trong
 [ADR 0073](../adr/0073-required-database-and-device-admission.md) và
 [ADR 0074](../adr/0074-websocket-enrollment-session.md).
 
 Một Voice Session thuộc đúng một WebSocket connection và một `Device ID`.
 `session_id` được cấp trước upgrade, dùng cho cả Voice Session và persistent
 transcript (nếu profile bật), nhưng không phải credential.
+
+### Admission trước HTTP upgrade
+
+Handler kiểm tra Admission Gate, bearer và identity trước khi route Device.
+Device chưa đăng ký có thể đi vào Enrollment Session; Device đã đăng ký được
+admit bằng một configuration snapshot bounded từ SQLite. Sau đó resolver chạy
+chuẩn bị selected runtime và discovery External MCP song song:
+
+```mermaid
+flowchart LR
+    C[HTTP Upgrade request] --> V[Validate auth / identity]
+    V --> D[Device routing + DB admission]
+    D --> R[Acquire exact provider versions]
+    D --> M[Fresh External MCP discovery / review]
+    R --> J[Immutable profile + Resource Leases]
+    M --> J
+    J --> S[Speaker Observe snapshot]
+    S --> H[HTTP 101]
+```
+
+Runtime bắt buộc lỗi vẫn trả HTTP 503 trước upgrade, hủy phần discovery còn
+chờ; native attempts vẫn do manager giữ accounting đến completion. MCP lỗi
+chỉ exclude tools. Hai phần cùng thành công hoặc MCP bị exclude mới hoàn tất
+profile; không dùng tool catalog cũ hoặc bổ sung tools vào session sau hello.
+
+Deployment defaults được nạp trước bind. Startup prewarm thêm enabled default
+Templates và overrides của enabled Devices có assignment hợp lệ. Admin create,
+đổi Agent/override, re-enable Device hoặc claim enrollment enqueue prewarm sau
+DB commit. Đây là hint bounded, best-effort, không phải bảo đảm mọi Template
+đã Ready khi `/ready` trả 200.
+
+Production config dành tối đa 500 ms cho tổng External MCP discovery, 400 ms
+cho mỗi server. Server vượt budget không đóng Voice Session nhưng có thể làm
+session thiếu tools. Budget discovery không thay đổi timeout thực thi tool.
+
+Managed runtime metrics bổ sung các phase dưới `provider_runtime.metrics.duration_ms.phases`
+trong Admin system status:
+
+| Phase | Khoảng thời gian |
+| --- | --- |
+| `ws_routing` | Device/enrollment routing sau kiểm tra identity |
+| `ws_runtime` | Chuẩn bị selected profile và acquire runtime |
+| `ws_external_mcp` | Đọc bindings, discovery và review tool contracts |
+| `ws_speaker` | Speaker Observe snapshot |
+| `ws_pre_upgrade` | Handler entry đến trả response upgrade/rejection |
+| `ws_hello_wait` | Trong socket, chờ frame ClientHello đầu tiên |
+| `ws_hello_init` | Validate hello và khởi tạo audio/actor đến enqueue ServerHello |
+| `ws_hello_send` | Enqueue ServerHello đến writer send thành công |
+| `ws_connect` | Handler entry đến writer send ServerHello thành công |
+
+Các phase stage tính cả lần lỗi/hủy; `ws_hello_send` và `ws_connect` chỉ tính
+lần send thành công. Vì runtime và MCP overlap, không cộng các stage để suy
+ra total. Log `ws_connected` chỉ phát sau send thành công, kèm total,
+pre-upgrade và after-upgrade ms, không chứa identity hoặc payload.
+`ws_connect` không gồm DNS/TCP/TLS trước handler và không chứng minh client đã
+nhận hello. SLO end-to-end phải đo tại Voice Protocol Client; first audio là
+một mốc riêng của Conversational Turn.
 
 ## 2. Tổng quan
 

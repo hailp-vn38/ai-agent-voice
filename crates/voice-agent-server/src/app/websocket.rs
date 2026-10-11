@@ -1,4 +1,6 @@
 use super::*;
+use crate::services::provider_runtime::{RuntimeMetrics, RuntimePhase};
+use std::time::Instant;
 
 pub(super) async fn handler(
     State(state): State<AppState>,
@@ -6,6 +8,14 @@ pub(super) async fn handler(
     Query(query): Query<WebsocketQuery>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    let connect_started = Instant::now();
+    let metrics = state
+        .provider_runtime_manager
+        .as_ref()
+        .map(|manager| manager.metrics().clone());
+    let _pre_upgrade_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsPreUpgrade));
     let config = state.config.clone();
     let bearer_auth_enabled = !config.auth.token.is_empty();
     // Registered before anything else happens, so the drain can observe and close a connection
@@ -101,6 +111,9 @@ pub(super) async fn handler(
         );
         return (StatusCode::BAD_REQUEST, "invalid Client-Id").into_response();
     }
+    let routing_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsRouting));
     match super::enrollment::route(&state, device_id, client_id).await {
         Ok(super::enrollment::Route::Voice) => {}
         Ok(super::enrollment::Route::Pending(connection)) => {
@@ -127,6 +140,7 @@ pub(super) async fn handler(
             return *response;
         }
     }
+    drop(routing_timer);
     // One immutable Effective Session Profile per connection.  Resolution is fail-closed: a
     // database-backed Agent whose default Template cannot be materialized is never silently
     // downgraded to the deployment's server defaults.
@@ -214,11 +228,15 @@ pub(super) async fn handler(
     let transcript = state.transcript_capture(&session_id, &profile);
     let admission_gate = Arc::clone(state.admission_gate());
     // Resolve the immutable, Agent-scoped candidate snapshot before the upgrade closure owns state.
+    let speaker_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsSpeaker));
     let speaker_observe =
         match resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await {
             Ok(resolved) => resolved,
             Err(response) => return response,
         };
+    drop(speaker_timer);
     let active_turn_limiter = state.active_turn_limiter;
     let pilot_admission = state.pilot_admission;
     let stopping = state.lifecycle.stopping().clone();
@@ -257,6 +275,8 @@ pub(super) async fn handler(
                     transcript,
                     speaker_observe,
                     admission_gate,
+                    connect_started,
+                    metrics,
                 },
                 SessionControl {
                     stopping,
@@ -408,6 +428,8 @@ fn valid_device_identity(value: &str) -> bool {
 }
 
 struct SocketRuntimes {
+    connect_started: Instant,
+    metrics: Option<Arc<RuntimeMetrics>>,
     asr: Arc<AsrWorkerRuntime>,
     vad: Arc<VadWorkerRuntime>,
     llm: Arc<LlmRuntime>,
@@ -452,6 +474,9 @@ async fn handle_socket(
     runtimes: SocketRuntimes,
     control: SessionControl,
 ) {
+    let socket_started = Instant::now();
+    let connect_started = runtimes.connect_started;
+    let metrics = runtimes.metrics;
     // The profile stays owned by the connection lifetime. SessionActor receives only the
     // materialized snapshot, its admission-time switch catalog and the External MCP tools it may
     // call, never a Database/pool or a live Device/Agent row.
@@ -476,12 +501,19 @@ async fn handle_socket(
     // `control` itself is held to the end of this function: its registration is the connection's
     // place in the drain registry, and dropping it early would un-count a live session.
     let (mut sender, mut receiver) = socket.split();
+    let hello_wait_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsHelloWait));
     let first = tokio::select! {
         _ = stopping.cancelled() => return,
         _ = tool_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         _ = speaker_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
     };
+    drop(hello_wait_timer);
+    let hello_init_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsHelloInit));
     let hello = match first {
         Ok(Some(Ok(message))) => message,
         _ => {
@@ -599,12 +631,14 @@ async fn handle_socket(
         close_direct(&mut sender, 1011).await;
         return;
     }
+    drop(hello_init_timer);
+    let hello_queued = Instant::now();
     actor.start_mcp_discovery();
-    info!("ServerHello sent; voice session connected");
     let writer = tokio::spawn(async move {
         let probe = writer_probe.clone();
         let mut active_turn: Option<PlaybackTurn> = None;
         let mut deferred_finish: Option<OutboundMessage> = None;
+        let mut hello_pending = true;
         loop {
             tokio::select! {
                 biased;
@@ -674,8 +708,22 @@ async fn handle_socket(
                                 report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
                             }
                         }
-                        message => if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
-                            break;
+                        message => {
+                            let sends_hello = hello_pending && matches!(&message, OutboundMessage::Text(_));
+                            if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
+                                break;
+                            }
+                            if sends_hello {
+                                hello_pending = false;
+                                if let Some(metrics) = &metrics {
+                                    metrics.observe(RuntimePhase::WsHelloSend, hello_queued.elapsed());
+                                    metrics.observe(RuntimePhase::WsConnect, connect_started.elapsed());
+                                }
+                                info!(event = "ws_connected", elapsed_ms = connect_started.elapsed().as_millis() as u64,
+                                    pre_upgrade_ms = socket_started.duration_since(connect_started).as_millis() as u64,
+                                    after_upgrade_ms = socket_started.elapsed().as_millis() as u64,
+                                    "ServerHello sent; voice session connected");
+                            }
                         },
                     }
                 },

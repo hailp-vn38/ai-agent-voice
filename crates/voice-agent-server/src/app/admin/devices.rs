@@ -80,6 +80,9 @@ pub(super) async fn create_device(State(state): State<AppState>, request: Reques
     {
         return write_error(&request, cause);
     }
+    if let Some(prewarm) = &state.provider_prewarm {
+        prewarm.device(&body.device_id).await;
+    }
     get_device_by(database, &body.device_id)
         .await
         .map(|v| (StatusCode::CREATED, Json(v)).into_response())
@@ -231,6 +234,14 @@ pub(super) async fn patch_device(
         .await
     {
         return write_error(&request, cause);
+    }
+    if enabled == 1
+        && (old.agent_key != agent_key
+            || old.template_key != requested_template_key
+            || old.enabled == 0)
+        && let Some(prewarm) = &state.provider_prewarm
+    {
+        prewarm.device(&device_id).await;
     }
     get_device_by(database, &device_id)
         .await

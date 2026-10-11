@@ -1,0 +1,11 @@
+    Blocking waiting for file lock on build directory
+   Compiling voice-agent-server v0.1.0 (/home/hailp/ai-agent-voice/crates/voice-agent-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 35s
+     Running unittests src/lib.rs (/mnt/storage/ai-agent-voice/target/debug/deps/voice_agent_server-46393d3b31bbda9f)
+
+running 3 tests
+test services::provider_prewarm::tests::pending_snapshots_coalesce_by_resource_and_reject_a_new_resource_at_capacity ... ok
+test database::providers::tests::prewarm_selects_enabled_defaults_and_device_overrides_with_their_assignments ... ok
+test services::provider_prewarm::tests::obsolete_unbound_and_disabled_intents_never_produce_build_snapshots ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 221 filtered out; finished in 0.09s

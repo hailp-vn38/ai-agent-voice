@@ -257,6 +257,9 @@ impl Database {
         Ok((total, rows))
     }
 }
+
+#[cfg(test)]
+mod tests;
 /// Desired provider copied out of SQLite before runtime construction.  It contains no resolved
 /// credential and is deliberately independent from the read-only runtime catalog.
 #[derive(Clone, PartialEq, Eq)]
@@ -363,8 +366,15 @@ impl Database {
     ) -> Result<DiagnosticProviderRow, sqlx::Error> {
         sqlx::query_as("SELECT id,key,type,adapter,CASE WHEN length(CAST(config_json AS BLOB))<=65536 THEN config_json ELSE NULL END,revision,enabled,credential_json FROM providers WHERE key=? AND length(CAST(key AS BLOB))<=128 AND length(CAST(type AS BLOB))<=16 AND length(CAST(adapter AS BLOB))<=64").bind(key).fetch_one(&self.pool).await
     }
-    pub(crate) async fn default_prewarm_templates(&self) -> Result<Vec<(i64,)>, sqlx::Error> {
-        sqlx::query_as("SELECT DISTINCT t.id FROM agent_templates t JOIN agent_template_assignments a ON a.template_id=t.id JOIN agents g ON g.id=a.agent_id WHERE a.enabled=1 AND a.is_default=1 AND t.enabled=1 AND g.enabled=1 LIMIT 256").fetch_all(&self.pool).await
+    pub(crate) async fn selected_prewarm_templates(&self) -> Result<Vec<(i64,)>, sqlx::Error> {
+        sqlx::query_as("SELECT DISTINCT t.id FROM agent_templates t JOIN agent_template_assignments a ON a.template_id=t.id JOIN agents g ON g.id=a.agent_id LEFT JOIN devices d ON d.agent_id=g.id AND d.enabled=1 AND d.template_id=t.id WHERE a.enabled=1 AND t.enabled=1 AND g.enabled=1 AND (a.is_default=1 OR d.id IS NOT NULL) LIMIT 256").fetch_all(&self.pool).await
+    }
+    pub(crate) async fn device_prewarm_template(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT t.id FROM devices d JOIN agents g ON g.id=d.agent_id JOIN agent_template_assignments a ON a.agent_id=g.id JOIN agent_templates t ON t.id=a.template_id WHERE d.device_id=? AND d.enabled=1 AND g.enabled=1 AND a.enabled=1 AND t.enabled=1 AND ((d.template_id IS NOT NULL AND a.template_id=d.template_id) OR (d.template_id IS NULL AND a.is_default=1)) LIMIT 1")
+            .bind(device_id).fetch_optional(&self.pool).await
     }
     pub(crate) async fn provider_capability_identity(
         &self,

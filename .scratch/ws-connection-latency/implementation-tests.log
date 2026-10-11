@@ -1,0 +1,194 @@
+   Compiling voice-agent-server v0.1.0 (/home/hailp/ai-agent-voice/crates/voice-agent-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 49s
+     Running tests/admin_api.rs (/mnt/storage/ai-agent-voice/target/debug/deps/admin_api-88b9faa759760f0f)
+
+running 38 tests
+test admin_router_auth_crud_revision_and_transport_contract ... ok
+test a_generated_provider_key_binds_a_template_without_being_retyped ... ok
+test admin_p1_read_models_and_device_template_override_are_public_contracts ... ok
+test admin_relationship_reads_and_unlinks_are_revisioned_public_contracts ... ok
+test admin_system_reports_database_unavailable_without_leaking_runtime_details ... ok
+test descriptor_language_fields_match_provider_config_migration_and_validation ... ok
+test conditional_delete_requires_a_current_revision_and_preserves_linked_templates ... ok
+test disabled_admin_route_is_not_mounted ... ok
+test draft_tests_reject_invalid_sources_without_creating_resources ... ok
+test draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime ... ok
+test asr_provider_test_accepts_bounded_pcm_wav_and_rejects_other_media ... ok
+test external_mcp_configuration_is_redacted_validated_and_revisioned ... ok
+test external_mcp_http_can_be_created_and_updated_without_network_configuration ... ok
+test external_tool_reviews_are_admin_authenticated_and_default_empty ... ok
+test failed_success_audit_rolls_back_each_new_desired_resource ... ok
+test first_assignment_to_an_agent_becomes_its_enabled_default ... ok
+test first_assignment_with_a_partial_core_becomes_the_default ... ok
+test kokoro_desired_configuration_accepts_catalog_selection_and_rejects_factory_incompatible_voice ... ok
+test legacy_provider_runtime_fields_are_removed_by_migration_before_admin_reads ... ok
+test mcp_credentials_require_encryption_and_never_create_a_partial_resource ... ok
+test mcp_credentials_are_write_only_replaceable_and_persist_after_restart ... ok
+test llm_provider_test_uses_only_the_loaded_runtime_and_a_tool_free_request ... ok
+test openai_provider_mutations_accept_http_and_https_base_urls ... ok
+test provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_only_contracts ... ok
+test provider_credentials_replace_only_when_supplied ... ok
+test provider_credentials_require_encryption_and_never_create_a_partial_resource ... ok
+test provider_credentials_are_write_only_masked_and_persist_after_restart ... ok
+test provider_key_is_generated_by_the_server_and_never_accepted_from_a_client ... ok
+test speaker_provider_creation_is_rejected ... ok
+test retired_device_tool_routes_return_not_found ... ok
+test provider_mutations_reject_server_owned_configuration ... ok
+test speaker_provider_diagnostic_route_is_not_exposed ... ok
+test speaker_waiter_timeout_retains_exact_lease_and_capacity_until_native_completion ... ok
+test templates_and_provider_desired_configuration_are_bounded_and_restart_honest ... ok
+test tts_provider_test_passes_typed_override_to_loaded_adapter_and_returns_provider_wav ... ok
+test vieneu_remote_discovery_uses_write_only_credentials_without_materializing_a_runtime ... ok
+test vad_provider_test_uses_one_canonical_silent_frame_from_the_loaded_runtime ... ok
+test vieneu_saved_credentials_survive_restart_and_authenticate_draft_tts ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.03s
+
+     Running tests/config_provider_bindings.rs (/mnt/storage/ai-agent-voice/target/debug/deps/config_provider_bindings-a5d8198064837234)
+
+running 4 tests
+test websocket_admits_mixed_sources_and_refuses_a_removed_explicit_config_binding ... ok
+test legacy_rejects_config_binding_before_mutating_template ... ok
+test bindings_round_trip_replace_sources_preserve_revision_audit_and_admission ... ok
+test catalog_merges_sources_before_filtering_paging_and_never_loads_or_exposes_secrets ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests/device_enrollment_ws.rs (/mnt/storage/ai-agent-voice/target/debug/deps/device_enrollment_ws-acf14816abd28ecd)
+
+running 4 tests
+test abort_cancels_audio_without_consuming_enrollment_and_replay_has_cooldown ... ok
+test missing_assets_fail_bootstrap_before_router_publication ... ok
+test auth_capacity_disabled_and_expiry_fail_closed ... ok
+test ota_ws_prompt_claim_and_reconnect_preserve_database_admission ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
+
+     Running tests/external_mcp_admission.rs (/mnt/storage/ai-agent-voice/target/debug/deps/external_mcp_admission-6e45d2de665bfe9e)
+
+running 21 tests
+test connection_latency::a_failed_runtime_rejects_upgrade_without_waiting_for_optional_mcp ... ok
+test an_agent_without_mcp_bindings_admits_without_external_tools ... ok
+test admin_draft_connection_does_not_list_or_call_tools_and_discovery_is_complete ... ok
+test connection_latency::creating_a_device_prewarms_its_override_before_its_first_websocket ... ok
+test connection_latency::updating_a_device_prewarms_its_new_override_without_a_websocket ... ok
+test connection_latency::websocket_discovers_mcp_while_selected_runtime_is_still_cold ... ok
+test admin_mcp_credential_is_decrypted_for_requests_after_restart_and_rotation ... ok
+test external_mcp_admission_snapshot_is_fresh_bounded_and_immutable ... ok
+test external_mcp_aggregate_tool_cap_drops_the_whole_snapshot ... ok
+test external_mcp_diagnostics_stay_bounded_classes ... ok
+test external_agent_reviews_exact_contract_and_drift_requires_new_review ... ok
+test external_mcp_aggregate_tool_cap_is_counted_once_and_not_as_a_server_failure ... ok
+test external_mcp_https_never_falls_back_to_an_unvalidated_connection ... ok
+test external_mcp_publishes_only_enabled_bindings_of_enabled_servers ... ok
+test external_mcp_outbound_policy_refuses_unlisted_destinations_and_redirects ... ok
+test external_mcp_secret_failure_excludes_its_server_and_redacts_its_reason ... ok
+test external_mcp_refuses_server_keys_that_normalize_alike ... ok
+test manual_discovery_rejects_an_invalid_later_page_without_partial_catalog ... ok
+test manual_probe_admission_stays_bounded_after_waiter_cancellation_and_shutdown ... ok
+test manual_saved_probes_keep_disabled_config_and_credentials_and_reject_stale_reuse ... ok
+test external_mcp_discovery_refuses_caps_namespaces_and_collisions ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.27s
+
+     Running tests/lifecycle.rs (/mnt/storage/ai-agent-voice/target/debug/deps/lifecycle-8d023a0f0d9c4b42)
+
+running 19 tests
+test a_closed_gate_refuses_database_admission_regardless_of_the_caller ... ok
+test a_closed_gate_refuses_a_new_voice_connection ... ok
+test a_capture_off_process_reports_nothing_left_to_flush ... ok
+test a_degraded_database_degrades_readiness_without_taking_the_process_down ... ok
+test a_session_open_at_the_deadline_is_controlled_closed_not_aborted ... ok
+test a_session_admitted_before_a_database_outage_keeps_its_profile ... ok
+test a_healthy_process_is_both_live_and_ready ... ok
+test application_shutdown_uses_its_existing_deadline_for_managed_resources ... ok
+test a_session_that_finishes_on_its_own_drains_before_the_deadline ... ok
+test an_unreachable_external_mcp_server_does_not_make_the_process_unready ... ok
+test missing_database_reports_startup_incomplete ... ok
+test a_shutting_down_process_is_live_but_no_longer_ready ... ok
+test readiness_never_resolves_a_device ... ok
+test shutdown_is_bounded_even_when_a_session_never_answers ... ok
+test the_grace_deadline_comes_from_the_deployment_configuration ... ok
+test readiness_never_runs_full_admission ... ok
+test readiness_never_discovers_external_mcp ... ok
+test the_drain_counts_and_closes_exactly_the_sessions_still_open ... ok
+test the_history_flush_never_decides_how_long_shutdown_takes ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.06s
+
+     Running tests/provider_runtime_manager.rs (/mnt/storage/ai-agent-voice/target/debug/deps/provider_runtime_manager-4cfac757eca8d7ed)
+
+running 24 tests
+test active_lease_prevents_eviction_and_last_clone_release_starts_idle_lifetime ... ok
+test cold_preparation_keeps_envelope_after_waiter_timeout_until_late_completion ... ok
+test deployment_defaults_have_a_separate_identity_and_are_retained_until_shutdown ... ok
+test cold_start_holds_the_envelope_until_terminal_so_voice_sees_busy ... ok
+test draft_versions_are_isolated_from_database_and_deployment_and_bounded ... ok
+test draining_resource_keeps_memory_until_actual_unload_acknowledgement ... ok
+test equivalent_versions_and_instances_share_one_backing_resource_with_exact_provenance ... ok
+test active_enrollment_refuses_cold_start_as_busy_not_permanent_failure ... ok
+test failed_attempt_is_coalesced_during_cooldown_and_does_not_publish_ready ... ok
+test installed_identity_drift_and_metadata_panics_quarantine_until_unload_ack ... ok
+test concurrent_exact_version_acquisition_coalesces_and_retains_provenance ... ok
+test metadata_pressure_never_prunes_a_retained_deployment_alias ... ok
+test native_completion_remains_owned_when_the_original_async_executor_is_gone ... ok
+test load_queue_is_bounded_without_allocating_an_extra_native_resource ... ok
+test ready_backing_runtime_hot_acquire_keeps_capacity_while_voice_holds_envelope ... ok
+test equivalent_revision_churn_keeps_alias_metadata_bounded ... ok
+test revisions_share_logical_provider_capacity ... ok
+test shutdown_uses_supplied_deadline_and_keeps_active_resource_accounted ... ok
+test status_polling_does_not_extend_idle_ttl ... ok
+test pressure_evicts_only_lru_idle_resource_and_preserves_active_lease ... ok
+test unhealthy_retained_worker_is_quarantined_without_releasing_memory_or_rebuilding ... ok
+test waiter_timeout_retains_native_attempt_memory_and_load_capacity ... ok
+test sequential_cold_acquisitions_release_the_only_load_slot_before_ready ... ok
+test uncertain_cleanup_retains_memory_and_loader_and_refuses_replacement ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+     Running tests/session_profile.rs (/mnt/storage/ai-agent-voice/target/debug/deps/session_profile-53b4284e32769455)
+
+running 26 tests
+test a_closed_database_pool_degrades_admission_to_coarse_503 ... ok
+test a_default_template_bound_to_a_disabled_provider_fails_closed ... ok
+test a_default_template_bound_to_an_unloaded_provider_fails_closed ... ok
+test a_default_template_binding_selects_a_loaded_runtime_other_than_the_server_default ... ok
+test a_candidate_excluded_at_admission_can_never_be_switched_to ... ok
+test a_disabled_default_template_fails_closed ... ok
+test a_default_template_missing_a_binding_uses_the_server_default_for_that_slot ... ok
+test a_disabled_device_is_still_denied_before_profile_resolution ... ok
+test a_switch_applies_at_the_next_turn_boundary_on_the_candidates_loaded_runtime ... ok
+test a_turn_arriving_after_a_reported_boundary_keeps_its_frames_and_uses_the_switched_profile ... ok
+test a_switch_uses_the_admission_snapshot_even_after_the_database_changes ... ok
+test a_session_without_a_template_assignment_is_never_offered_the_switch_tool ... ok
+test an_agent_without_an_enabled_default_assignment_returns_coarse_503 ... ok
+test an_abort_arriving_after_a_reported_boundary_cannot_undo_the_committed_switch ... ok
+test an_agent_with_only_a_disabled_assignment_uses_server_defaults ... ok
+test an_admitted_profile_stays_immutable_while_a_new_session_sees_the_mutation ... ok
+test an_agent_without_any_assignment_row_uses_server_defaults ... ok
+test an_interrupted_turn_drops_the_switch_it_armed ... ok
+test an_invalid_non_default_candidate_is_excluded_while_a_valid_default_still_starts ... ok
+test concurrent_sessions_each_resolve_their_own_immutable_profile ... ok
+test database_backed_admission_uses_the_default_template_prompt_and_language ... ok
+test managed_template_acquires_deployment_runtimes_for_missing_slots ... ok
+test prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood ... ok
+test the_switch_tool_offers_exactly_the_candidates_admission_validated ... ok
+test public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_session_version ... ok
+test the_turn_after_a_switch_keeps_every_audio_frame_and_runs_the_new_profile ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.27s
+
+     Running tests/ws_protocol.rs (/mnt/storage/ai-agent-voice/target/debug/deps/ws_protocol-c879e589e0b10dd4)
+
+running 9 tests
+test binary_before_hello_closes_with_protocol_error ... ok
+test application_shutdown_controlled_closes_an_upgraded_voice_session ... ok
+test ota_accepts_post_and_advertises_preflight_methods ... ok
+test mcp_initialize_follows_server_hello_when_client_advertises_capability ... ok
+test ota_advertises_ws_url_and_health_is_available ... ok
+test websocket_accepts_browser_authorization_query ... ok
+test oversized_post_handshake_frame_closes_with_1009 ... ok
+test valid_hello_receives_canonical_server_hello ... ok
+test websocket_accepts_browser_identity_query_when_headers_are_absent ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s

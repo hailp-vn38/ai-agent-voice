@@ -357,8 +357,8 @@ impl AppState {
     /// admission is fail-closed: an unknown Device is denied and any resolution failure is coarse,
     /// so a broken intended configuration can never be masked by deployment defaults.
     ///
-    /// External MCP is the one part that is fail-soft in V1: its snapshot is resolved after the
-    /// profile and a server that cannot be reached, validated or budgeted simply contributes no
+    /// External MCP is the one part that is fail-soft in V1: its snapshot resolves alongside the
+    /// runtime and a server that cannot be reached, validated or budgeted simply contributes no
     /// tools, because an unavailable optional capability must never refuse a Voice Session.
     pub async fn resolve_session_profile(
         &self,
@@ -394,35 +394,47 @@ impl AppState {
                 }
             })?;
         drop(snapshot_timer);
-        let profile = if let Some(manager) = &self.provider_runtime_manager {
-            crate::session::resolve_managed_session_profile(
-                crate::session::ManagedSessionProfileInput {
-                    device_db_id: graph.device_db_id,
-                    template_override_id: graph.template_override_id,
-                    agent_id: graph.agent.id,
-                    agent_key: &graph.agent.key,
-                    assignments: &graph.assignments,
-                    config: &self.config,
-                    manager,
-                    deployment_snapshots: &self.deployment_snapshots,
-                },
-            )
-            .await
-            .map_err(SessionProfileAdmissionError::Runtime)?
-        } else {
-            resolve_effective_session_profile_with_override(
-                graph.device_db_id,
-                graph.template_override_id,
-                graph.agent.id,
-                &graph.agent.key,
-                &graph.assignments,
-                &self.config,
-                &self.runtimes,
-            )
-            .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)?
+        let prepare = async {
+            let _runtime_timer = self.provider_runtime_manager.as_ref().map(|manager| {
+                manager
+                    .metrics()
+                    .timer(crate::services::provider_runtime::RuntimePhase::WsRuntime)
+            });
+            let profile = if let Some(manager) = &self.provider_runtime_manager {
+                crate::session::resolve_managed_session_profile(
+                    crate::session::ManagedSessionProfileInput {
+                        device_db_id: graph.device_db_id,
+                        template_override_id: graph.template_override_id,
+                        agent_id: graph.agent.id,
+                        agent_key: &graph.agent.key,
+                        assignments: &graph.assignments,
+                        config: &self.config,
+                        manager,
+                        deployment_snapshots: &self.deployment_snapshots,
+                    },
+                )
+                .await
+                .map_err(SessionProfileAdmissionError::Runtime)?
+            } else {
+                resolve_effective_session_profile_with_override(
+                    graph.device_db_id,
+                    graph.template_override_id,
+                    graph.agent.id,
+                    &graph.agent.key,
+                    &graph.assignments,
+                    &self.config,
+                    &self.runtimes,
+                )
+                .map_err(|ProfileUnavailable| SessionProfileAdmissionError::ProfileUnavailable)?
+            };
+            self.prepare_server_default(profile).await
         };
-        let profile = self.prepare_server_default(profile).await?;
-        Ok(profile.with_external_mcp(self.resolve_external_mcp(graph.agent.id).await))
+        let discover = async {
+            Ok::<_, SessionProfileAdmissionError>(self.resolve_external_mcp(graph.agent.id).await)
+        };
+        // Reject mandatory failures promptly; native attempts retain their manager-owned accounting.
+        let (profile, external_mcp) = tokio::try_join!(prepare, discover)?;
+        Ok(profile.with_external_mcp(external_mcp))
     }
 
     async fn prepare_server_default(
@@ -480,6 +492,11 @@ impl AppState {
     /// binding read, a transport that could not be built, and a server that will not resolve all
     /// produce a session with fewer tools, never a rejected admission.
     async fn resolve_external_mcp(&self, agent_id: i64) -> SessionExternalMcp {
+        let _timer = self.provider_runtime_manager.as_ref().map(|manager| {
+            manager
+                .metrics()
+                .timer(crate::services::provider_runtime::RuntimePhase::WsExternalMcp)
+        });
         let Some(manager) = self.external_mcp.as_ref() else {
             return SessionExternalMcp::default();
         };

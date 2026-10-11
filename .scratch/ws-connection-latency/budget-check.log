@@ -1,0 +1,85 @@
+[
+  {
+    "case": "no_mcp",
+    "median_ms": {
+      "tcp_ms": 0.131,
+      "upgrade_after_tcp_ms": 2.379,
+      "hello_after_upgrade_ms": 0.963,
+      "total_ms": 3.433
+    },
+    "mcp_methods": []
+  },
+  {
+    "case": "fast_mcp",
+    "median_ms": {
+      "tcp_ms": 0.127,
+      "upgrade_after_tcp_ms": 8.986,
+      "hello_after_upgrade_ms": 0.964,
+      "total_ms": 9.993
+    },
+    "mcp_methods": [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list"
+    ]
+  },
+  {
+    "case": "slow_mcp",
+    "median_ms": {
+      "tcp_ms": 0.127,
+      "upgrade_after_tcp_ms": 609.324,
+      "hello_after_upgrade_ms": 0.974,
+      "total_ms": 610.323
+    },
+    "mcp_methods": [
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list"
+    ]
+  },
+  {
+    "case": "slow_mcp_100ms_budget",
+    "median_ms": {
+      "tcp_ms": 0.12,
+      "upgrade_after_tcp_ms": 104.176,
+      "hello_after_upgrade_ms": 0.854,
+      "total_ms": 105.084
+    },
+    "mcp_methods": [
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize",
+      "initialize"
+    ]
+  }
+]
+Traceback (most recent call last):
+  File "/home/hailp/ai-agent-voice/.scratch/ws-connection-latency/probe.py", line 183, in <module>
+    assert all(r["median_ms"]["total_ms"] <= args.budget_ms for r in results), "connection budget exceeded"
+           ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: connection budget exceeded
