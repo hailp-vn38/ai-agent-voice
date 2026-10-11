@@ -212,7 +212,7 @@ onBeforeUnmount(() => {
                 type="button"
                 class="assistant-microphone absolute left-1/2 grid size-[60px] -translate-x-1/2 place-items-center rounded-full bg-primary text-primary-foreground shadow-md focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-not-allowed disabled:opacity-40"
                 :class="{ 'is-listening': assistant.micEnabled }"
-                :disabled="!micSupported || (!assistant.micEnabled && assistant.state !== 'ready')"
+                :disabled="!assistant.micEnabled && (!micSupported || assistant.state !== 'ready')"
                 :aria-label="assistant.micEnabled ? t('assistant.stopMic') : t('assistant.mic')"
                 :aria-pressed="assistant.micEnabled"
                 :title="!micSupported ? t('assistant.micUnsupported') : undefined"
