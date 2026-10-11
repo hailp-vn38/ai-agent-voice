@@ -1,0 +1,31 @@
+# Optional production overlay; see docs/vieneu.md.
+services:
+  vieneu:
+    image: voice-agent-vieneu:85344322
+    build:
+      context: https://github.com/pnnbao97/VieNeu-TTS.git#85344322b7258b4e25479b692e8e3396baf9db34
+      dockerfile: docker/Dockerfile.cpu
+    command: [python, -m, apps.openai_speech]
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8000'
+      HF_HOME: /home/app/.cache/huggingface
+      VIENEU_BACKEND: onnx
+      VIENEU_PRECISION: fp32
+      VIENEU_MAX_STREAMS: '1'
+      VIENEU_QUEUE: '4'
+      VIENEU_QUEUE_TIMEOUT: '10'
+      VIENEU_API_KEY: ${VIENEU_API_KEY:-}
+    volumes:
+      # The existing app-owned home gives a fresh volume writable UID 1000 ownership.
+      - vieneu-cache:/home/app
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30m
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  vieneu-cache:

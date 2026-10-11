@@ -245,6 +245,10 @@ _Avoid_: skipped sentence, best-effort speech queue
 A compile-time implementation of a provider trait, selected by typed provider configuration when materializing a runtime. Legacy deployment mode selects the adapter at startup; managed runtime mode may materialize the adapter at acquisition. The adapter has no knowledge of Voice Sessions, WebSockets, or worker runtimes.
 _Avoid_: dynamic plugin, provider platform, service locator
 
+**Remote TTS Service**:
+An independently deployed speech synthesizer called by a Provider Adapter. It owns inference availability and capacity; the server owns Voice Session delivery and cancellation semantics.
+_Avoid_: server worker, native TTS runtime
+
 **Provider Instance**:
 A configuration with a stable ID for exactly one Provider Adapter; the ID is the value bound by an agent, while the adapter specifies the implementation.
 _Avoid_: adapter name, active provider

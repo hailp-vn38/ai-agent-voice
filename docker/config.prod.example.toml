@@ -43,3 +43,11 @@ model = "REPLACE_WITH_MODEL_NAME"
 adapter = "zerotts_onnx"
 voice = "maichi"
 delivery_mode = "stream"
+
+# Optional remote VieNeu; start compose.vieneu.yaml before selecting it.
+# [providers.tts.instances.vieneu_default]
+# adapter = "vieneu_http"
+# base_url = "http://vieneu:8000/v1"
+# voice = "Mai Anh"
+# timeout_ms = 30000
+# api_key = ""

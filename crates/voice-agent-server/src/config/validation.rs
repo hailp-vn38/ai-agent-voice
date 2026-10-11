@@ -571,6 +571,11 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                     "ZeroTTS instance `{id}` has invalid model, voice, or thread count"
                 )));
             }
+            TtsInstanceConfig::VieneuHttp(tts) if !tts.valid() => {
+                return Err(ConfigError::Validation(format!(
+                    "VieNeu instance `{id}` has invalid URL, voice, language, or timeout"
+                )));
+            }
             TtsInstanceConfig::ChillAudioWs(tts)
                 if tts.ws_url.scheme() != "wss"
                     || tts.ws_url.host_str().is_none()

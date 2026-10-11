@@ -110,7 +110,7 @@ function submit() {
     status: form.status,
     endpoint: form.endpoint.trim() || undefined,
     configJson: { ...form.configJson },
-    ...(form.apiKey && ['openai', 'chillaudio_ws'].includes(form.adapter) ? { apiKey: form.apiKey } : {}),
+    ...(form.apiKey && ['openai', 'chillaudio_ws', 'vieneu_http'].includes(form.adapter) ? { apiKey: form.apiKey } : {}),
   })
   form.apiKey = ''
   open.value = false
@@ -175,14 +175,14 @@ function submit() {
 
       <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor v-model="form.configJson" :schema="descriptor?.config_schema" /></div>
 
-      <label v-if="['openai', 'chillaudio_ws'].includes(form.adapter)" class="block space-y-1.5 sm:col-span-2">
+      <label v-if="['openai', 'chillaudio_ws', 'vieneu_http'].includes(form.adapter)" class="block space-y-1.5 sm:col-span-2">
         <span class="text-sm font-medium">API key / token mới (tùy chọn)</span>
         <p v-if="provider?.credential" class="text-xs text-muted-foreground">Key hiện tại: {{ provider.credential.masked_key }}</p>
         <input v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
         <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server.</small>
       </label>
 
-      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :capabilities="descriptor?.capabilities" :draft="{ type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
+      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :capabilities="descriptor?.capabilities" :draft="{ type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws', 'vieneu_http'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
 
       <div class="flex justify-end gap-2 pt-2 sm:col-span-2">
         <Button type="button" variant="outline" @click="open = false">{{ t('common.cancel') }}</Button>

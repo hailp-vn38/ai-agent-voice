@@ -43,6 +43,10 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
         "kokoro_vi_onnx" => canonical::<Kokoro, _>(&value, Kokoro::valid),
+        "vieneu_http" => canonical::<crate::config::VieneuHttpConfig, _>(
+            &value,
+            crate::config::VieneuHttpConfig::valid,
+        ),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
         #[cfg(feature = "qualification-providers")]
         "qualification_vad" | "qualification_asr" | "qualification_llm" | "qualification_tts" => {

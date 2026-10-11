@@ -11,6 +11,7 @@ pub use crate::providers::{
     tts::{
         chillaudio::config::ChillAudioWsConfig,
         kokoro_vi::config::KokoroViOnnxConfig,
+        vieneu::config::VieneuHttpConfig,
         zerotts::config::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig},
     },
 };
@@ -188,6 +189,8 @@ pub enum TtsInstanceConfig {
     ZeroTtsOnnx(ZeroTtsOnnxConfig),
     #[serde(rename = "chillaudio_ws")]
     ChillAudioWs(ChillAudioWsConfig),
+    #[serde(rename = "vieneu_http")]
+    VieneuHttp(VieneuHttpConfig),
     #[serde(rename = "kokoro_vi_onnx")]
     KokoroViOnnx(KokoroViOnnxConfig),
     #[cfg(feature = "qualification-providers")]
@@ -199,6 +202,7 @@ impl TtsInstanceConfig {
         match self {
             Self::ZeroTtsOnnx(_) => "zerotts_onnx",
             Self::ChillAudioWs(_) => "chillaudio_ws",
+            Self::VieneuHttp(_) => "vieneu_http",
             Self::KokoroViOnnx(_) => "kokoro_vi_onnx",
             #[cfg(feature = "qualification-providers")]
             Self::QualificationTts(_) => "qualification_tts",
@@ -208,6 +212,7 @@ impl TtsInstanceConfig {
         match self {
             Self::ZeroTtsOnnx(config) => config.preload,
             Self::ChillAudioWs(config) => config.preload,
+            Self::VieneuHttp(config) => config.preload,
             Self::KokoroViOnnx(config) => config.preload,
             #[cfg(feature = "qualification-providers")]
             Self::QualificationTts(_) => false,

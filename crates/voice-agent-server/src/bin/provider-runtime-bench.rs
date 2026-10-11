@@ -52,7 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         AppConfig::parse_and_resolve(positional[0]).map_err(|_| "invalid qualification config")?;
     let snapshot = deployment_provider_snapshot(&config, positional[1], positional[2])
         .map_err(|_| "invalid qualification provider")?;
-    if !client_only && matches!(snapshot.adapter.as_str(), "openai" | "chillaudio_ws") {
+    if !client_only
+        && matches!(
+            snapshot.adapter.as_str(),
+            "openai" | "chillaudio_ws" | "vieneu_http"
+        )
+    {
         return Err("native offline providers only".into());
     }
     let supervisor = Arc::new(WorkerSupervisor::start_many(vec![], vec![]));

@@ -543,6 +543,9 @@ fn typed_tts_instance(
     adapter: &str,
     secret: Option<&crate::database::secrets::SecretValue>,
 ) -> Result<TtsInstanceConfig, ()> {
+    if adapter == "vieneu_http" {
+        return typed_instance(value, adapter, secret.map(|value| value.expose()));
+    }
     if adapter != "chillaudio_ws" {
         return reject_secret_value(secret).and_then(|()| typed_instance(value, adapter, None));
     }

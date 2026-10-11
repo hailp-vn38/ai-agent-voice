@@ -138,6 +138,14 @@ adapter = "chillaudio_ws"
 token = "set-deployment-token-here"
 # voice = "BV421_vivn_streaming"
 
+# Optional VieNeu service: compose.vieneu.yaml and docs/vieneu.md.
+# [providers.tts.instances.vieneu_default]
+# adapter = "vieneu_http"
+# base_url = "http://vieneu:8000/v1"
+# voice = "Mai Anh"
+# timeout_ms = 30000
+# api_key = ""
+
 # Local Vietnamese Kokoro. Model Preparation acquires and converts all pinned
 # voicepacks. Install the deployment-owned G2P sidecar before selecting it.
 # [providers.tts.instances.kokoro_vi]
@@ -283,6 +291,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # zerotts_onnx = 4294967296
 # openai = 67108864
 # chillaudio_ws = 67108864
+# vieneu_http = 67108864
 
 [mcp]
 enabled = true

@@ -197,6 +197,8 @@ Trước khi chạy production, tạo `docker/config.prod.toml` và `docker/secr
 
 Compose và storage checker hiện gắn với host có storage tại `/mnt/storage/ai-agent-voice`; cần đối chiếu [storage checker](scripts/check-docker-storage.py) và volume paths khi dùng máy khác. Backend production không publish cổng trực tiếp ra host.
 
+TTS tiếng Việt qua VieNeu: [service Docker Compose và provider HTTP streaming](docs/vieneu.md).
+
 ```bash
 bash scripts/compose.sh test run
 ```

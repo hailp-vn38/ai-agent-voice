@@ -102,6 +102,7 @@ static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
     super::llm::openai::descriptor::REGISTRATION,
     super::tts::zerotts::descriptor::REGISTRATION,
     super::tts::chillaudio::descriptor::REGISTRATION,
+    super::tts::vieneu::descriptor::REGISTRATION,
     super::tts::kokoro_vi::descriptor::REGISTRATION,
 ];
 

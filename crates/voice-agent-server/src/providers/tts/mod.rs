@@ -13,8 +13,10 @@ mod file_delivery;
 pub mod kokoro_vi;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
+pub mod vieneu;
 pub mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
+pub(crate) use vieneu::VieneuHttpProvider;
 /// Compatibility exports for native ZeroTTS tooling.
 pub mod zerotts_onnx {
     pub use super::zerotts::runtime::{

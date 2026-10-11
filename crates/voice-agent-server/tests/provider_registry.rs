@@ -238,8 +238,10 @@ fn asset_ownership_follows_whether_a_provider_loads_local_files() {
             .is_some();
         assert_eq!(
             owns_assets,
-            !matches!(adapter, "openai" | "openai_vision" | "chillaudio_ws")
-                && !adapter.starts_with("qualification_"),
+            !matches!(
+                adapter,
+                "openai" | "openai_vision" | "chillaudio_ws" | "vieneu_http"
+            ) && !adapter.starts_with("qualification_"),
             "{adapter}"
         );
     }

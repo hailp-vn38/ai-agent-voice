@@ -319,6 +319,7 @@ fn deployment_tts_replicas(
     let value = match instance {
         TtsInstanceConfig::ZeroTtsOnnx(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::ChillAudioWs(config) => serde_json::to_value(config).ok()?,
+        TtsInstanceConfig::VieneuHttp(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::KokoroViOnnx(config) => serde_json::to_value(config).ok()?,
         #[cfg(feature = "qualification-providers")]
         TtsInstanceConfig::QualificationTts(config) => serde_json::to_value(config).ok()?,

@@ -1156,6 +1156,11 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
             "display_name": "ChillAudio WebSocket"
         },
         {
+            "adapter": "vieneu_http",
+            "type": "tts",
+            "display_name": "VieNeu HTTP Streaming"
+        },
+        {
             "adapter": "kokoro_vi_onnx",
             "type": "tts",
             "display_name": "Kokoro Vietnamese ONNX"
@@ -3548,6 +3553,152 @@ async fn draft_tests_reject_invalid_sources_without_creating_resources() {
             .unwrap();
         assert!(response["items"].as_array().unwrap().is_empty());
     }
+    task.abort();
+}
+
+#[tokio::test]
+async fn vieneu_saved_credentials_survive_restart_and_authenticate_draft_tts() {
+    async fn managed_server(
+        uri: &str,
+        resolver: Arc<dyn voice_agent_server::database::secrets::SecretResolver>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use voice_agent_server::{
+            lifecycle::RuntimeLifecycle,
+            services::provider_runtime::{
+                FactoryMaterializer, ProviderRuntimeManager, RuntimeLimits,
+            },
+        };
+        let config: AppConfig = toml::from_str(&format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "{uri}"
+[api]
+enabled = true
+admin_token = "admin-test-token"
+"#
+        ))
+        .unwrap();
+        let lifecycle = RuntimeLifecycle::from_config(&config);
+        let database = Database::connect(&config.database).await.unwrap();
+        let state = AppState::from_provider_set_with_database_resolver_and_shutdown(
+            config.clone(),
+            Arc::new(ProviderSet::unavailable()),
+            Some(database),
+            resolver.clone(),
+            lifecycle.clone(),
+        );
+        let builder = FactoryMaterializer::new(
+            Arc::new(config),
+            resolver,
+            std::collections::HashMap::from([("vieneu_http".into(), 67108864)]),
+            state.worker_supervisor.clone(),
+        )
+        .unwrap();
+        let manager = ProviderRuntimeManager::new(
+            RuntimeLimits {
+                max_parallel_loads: 1,
+                max_pending_loads: 2,
+                max_waiters: 8,
+                max_resident_bytes: 134217728,
+                max_resources: 2,
+                max_version_entries: 8,
+                admission_timeout_ms: 2000,
+                failure_cooldown_ms: 10,
+                idle_ttl_ms: 1000,
+            },
+            Arc::new(builder),
+            lifecycle.gate().clone(),
+        )
+        .unwrap();
+        let router = router_with_state(state.with_runtime_manager(manager));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        (base, task)
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (sent, mut received) = tokio::sync::mpsc::channel(1);
+    let mock = axum::Router::new().route(
+        "/v1/audio/speech",
+        axum::routing::post(move |headers: axum::http::HeaderMap| {
+            let sent = sent.clone();
+            async move {
+                sent.send(headers).await.unwrap();
+                axum::http::Response::builder()
+                    .header("content-type", "audio/pcm")
+                    .header("x-sample-rate", "24000")
+                    .body(axum::body::Body::from(vec![0u8; 480]))
+                    .unwrap()
+            }
+        }),
+    );
+    let upstream = tokio::spawn(async move {
+        axum::serve(listener, mock).await.unwrap();
+    });
+    let uri = database_url();
+    let cipher: Arc<dyn voice_agent_server::database::secrets::SecretResolver> = Arc::new(
+        voice_agent_server::database::credentials::CredentialCipher::new(1, &[7; 32]).unwrap(),
+    );
+    let (base, task) = managed_server(&uri, cipher.clone()).await;
+    let client = Client::new();
+    let config = serde_json::json!({"base_url":endpoint, "voice":"Mai Anh"});
+    let response = client
+        .post(format!("{base}/api/admin/providers"))
+        .bearer_auth("admin-test-token")
+        .json(
+            &serde_json::json!({"name":"VieNeu", "type":"tts", "adapter":"vieneu_http",
+            "config_json":config, "api_key":"vieneu-private-credential"}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = response.text().await.unwrap();
+    assert!(!body.contains("vieneu-private-credential"));
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let key = created["key"].as_str().unwrap();
+    task.abort();
+    let _ = task.await;
+    let (base, task) = managed_server(&uri, cipher).await;
+    let fetched: serde_json::Value = client
+        .get(format!("{base}/api/admin/providers/{key}"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(fetched["credential"], created["credential"]);
+    assert!(!fetched.to_string().contains("vieneu-private-credential"));
+    let response = client.post(format!("{base}/api/admin/provider-tests/tts"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"provider":{"type":"tts", "adapter":"vieneu_http", "config_json":config,
+            "saved_credential":{"key":key, "expected_revision":1}}, "input":{"text":"Xin chào"}}))
+        .send().await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{}",
+        response.text().await.unwrap()
+    );
+    assert_eq!(
+        received.recv().await.unwrap()["authorization"],
+        "Bearer vieneu-private-credential"
+    );
+    upstream.abort();
     task.abort();
 }
 

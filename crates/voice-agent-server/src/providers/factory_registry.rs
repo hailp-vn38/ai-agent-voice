@@ -18,7 +18,7 @@ use crate::{
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
         llm::openai::provider::ConfiguredOpenAiLlm,
         tts::{
-            ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts,
+            ChillAudioWsProvider, ConfiguredZeroTts, VieneuHttpProvider, ZeroTtsArtifacts,
             kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts, assets as kokoro_assets},
             zerotts::assets as zerotts_assets,
         },
@@ -463,6 +463,37 @@ impl TtsFactory for ZeroTtsOnnxFactory {
     }
 }
 
+struct VieneuHttpFactory;
+
+impl TtsFactory for VieneuHttpFactory {
+    fn adapter(&self) -> &'static str {
+        "vieneu_http"
+    }
+    fn model_identity<'a>(
+        &self,
+        _: &'a TtsInstanceConfig,
+    ) -> Result<Option<&'a str>, ProviderLoadError> {
+        Ok(None)
+    }
+    fn build(
+        &self,
+        config: &TtsInstanceConfig,
+        _: &RuntimeConfig,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        let TtsInstanceConfig::VieneuHttp(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "vieneu_http factory received another adapter config".into(),
+            ));
+        };
+        if !options.valid() {
+            return Err(ProviderLoadError::Configuration(
+                "invalid VieNeu URL, voice, language, or timeout".into(),
+            ));
+        }
+        Ok(Arc::new(VieneuHttpProvider::new(options.clone())))
+    }
+}
+
 struct ChillAudioWsFactory;
 struct KokoroViOnnxFactory;
 
@@ -685,6 +716,7 @@ static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
+static VIENEU_HTTP_FACTORY: VieneuHttpFactory = VieneuHttpFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
 static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
 #[cfg(feature = "qualification-providers")]
@@ -714,6 +746,7 @@ static LLM_FACTORIES: &[&dyn LlmFactory] = &[
 static TTS_FACTORIES: &[&dyn TtsFactory] = &[
     &ZEROTTS_ONNX_FACTORY,
     &CHILLAUDIO_WS_FACTORY,
+    &VIENEU_HTTP_FACTORY,
     &KOKORO_VI_ONNX_FACTORY,
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_TTS_FACTORY,
