@@ -59,12 +59,16 @@ URI paths. The supplied Nginx config logs paths only and suppresses WS-location
 error logs because Nginx error messages include the full request URL. Apply the
 same policy at any outer proxy/CDN/error reporter.
 
-## Opt-in tool execution status
+## Tool execution status (mặc định cho Studio Assistant)
 
-Compact Voice gửi `features.tool_status=true` trong ClientHello và vẫn giữ
-`features.mcp=false`, `features.turn_status=true`. Tool status không phải
-Device MCP request và không tạo thêm quyền tool; Agent-scoped External MCP vẫn
-chạy phía server như trước.
+Mọi Virtual Device phiên Studio Assistant được server tự bật tool status sau
+xác thực, ngay cả khi ClientHello không khai báo `features.tool_status`.
+Compact Voice hiện vẫn gửi `features.tool_status=true` và giữ
+`features.mcp=false`, `features.turn_status=true`. `mcp:false` **chỉ tắt
+Device MCP**; Builtin Tool và Agent-scoped External MCP chạy phía server và
+vẫn phát event `type:"tool"` khi LLM thực sự gọi tool. `tool_status` nằm trong
+ClientHello (client → server), không phải field server echo ở ServerHello.
+Không thêm quyền tool mới và không lộ arguments/results.
 
 ```json
 {"type":"tool","session_id":"...","turn_id":1,"name":"external.home_assistant.light_turn_on","state":"started"}
