@@ -1,46 +1,30 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { reactive, watch } from 'vue'
 
 import BaseModal from '@/components/admin/BaseModal.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import {
-  providerTypes,
-  templateLanguageOptions,
-  type Agent,
-  type ProviderInstance,
-  type ProviderType,
-} from '@/domain/admin'
-import type { AgentTemplateInput } from '@/stores/admin'
+import type { Agent, AgentTemplate } from '@/domain/admin'
 
 const props = defineProps<{
   agent?: Agent
-  providers?: ProviderInstance[]
+  templates?: AgentTemplate[]
 }>()
 
 const open = defineModel<boolean>({ required: true })
 
 const emit = defineEmits<{
   save: [payload: { name: string; description: string }]
-  createWithTemplate: [payload: { agent: { name: string; description: string }; template: AgentTemplateInput }]
+  createWithTemplate: [payload: { agent: { name: string; description: string }; templateId: string }]
 }>()
 
-const { t, providerTypeLabel } = useI18n()
+const { t } = useI18n()
 
 const form = reactive({
   name: '',
   description: '',
-  templateName: '',
-  language: templateLanguageOptions[0] as string,
-  prompt: '',
-  providerBindings: {} as Partial<Record<ProviderType, string>>,
+  templateId: '',
 })
-
-const editing = computed(() => Boolean(props.agent))
-
-function candidatesFor(type: ProviderType) {
-  return (props.providers ?? []).filter((provider) => provider.type === type)
-}
 
 watch(
   () => [open.value, props.agent] as const,
@@ -48,34 +32,20 @@ watch(
     if (!open.value) return
     form.name = props.agent?.name ?? ''
     form.description = props.agent?.description ?? ''
-    form.templateName = ''
-    form.language = templateLanguageOptions[0]
-    form.prompt = ''
-    form.providerBindings = {}
+    form.templateId = ''
   },
   { immediate: true },
 )
 
-function buildTemplate(): AgentTemplateInput {
-  const providerBindings = Object.fromEntries(
-    Object.entries(form.providerBindings).filter(([, providerId]) => Boolean(providerId)),
-  ) as Partial<Record<ProviderType, string>>
-  return {
-    name: form.templateName.trim() || `${form.name.trim()} template`,
-    language: form.language.trim() || templateLanguageOptions[0],
-    prompt: form.prompt,
-    providerBindings,
-  }
-}
-
 function submit() {
   if (!form.name.trim()) return
-  if (editing.value) {
+  if (props.agent) {
     emit('save', { name: form.name.trim(), description: form.description.trim() })
   } else {
+    if (!props.templates?.some((template) => template.id === form.templateId)) return
     emit('createWithTemplate', {
       agent: { name: form.name.trim(), description: form.description.trim() },
-      template: buildTemplate(),
+      templateId: form.templateId,
     })
   }
   open.value = false
@@ -117,63 +87,22 @@ function submit() {
         <p class="text-xs text-muted-foreground">{{ t('agents.firstTemplateHint') }}</p>
 
         <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('agents.templateName') }}</span>
-          <input
-            v-model="form.templateName"
-            class="admin-input"
-            :placeholder="t('agents.templateNamePlaceholder')"
-          />
+          <span class="text-sm font-medium">{{ t('agents.firstTemplate') }}</span>
+          <select v-model="form.templateId" class="admin-input" required>
+            <option disabled value="">{{ t('agents.selectTemplate') }}</option>
+            <option v-for="template in templates" :key="template.id" :value="template.id">
+              {{ template.name }} · {{ template.language }}
+            </option>
+          </select>
         </label>
-
-        <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('templateForm.language') }}</span>
-          <input
-            v-model="form.language"
-            class="admin-input"
-            list="agent-template-language-options"
-            :placeholder="t('templateForm.languagePlaceholder')"
-          />
-          <datalist id="agent-template-language-options">
-            <option v-for="option in templateLanguageOptions" :key="option" :value="option" />
-          </datalist>
-        </label>
-
-        <label class="block space-y-1.5">
-          <span class="text-sm font-medium">{{ t('templateForm.prompt') }}</span>
-          <textarea
-            v-model="form.prompt"
-            class="admin-textarea min-h-32 font-mono text-xs"
-            spellcheck="false"
-            :placeholder="t('templateForm.promptPlaceholder')"
-          />
-        </label>
-
-        <div class="space-y-3">
-          <p class="text-sm font-medium">{{ t('templateForm.providers') }}</p>
-          <p class="text-xs text-muted-foreground">{{ t('templateForm.providersHint') }}</p>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label v-for="type in providerTypes" :key="type" class="block space-y-1.5">
-              <span class="text-xs font-medium text-muted-foreground">
-                {{ providerTypeLabel(type) }}
-              </span>
-              <select
-                v-model="form.providerBindings[type]"
-                class="admin-input"
-                :aria-label="providerTypeLabel(type)"
-              >
-                <option value="">{{ t('templateForm.noProvider') }}</option>
-                <option v-for="provider in candidatesFor(type)" :key="provider.id" :value="provider.id">
-                  {{ provider.name }} · {{ provider.adapter }}
-                </option>
-              </select>
-            </label>
-          </div>
-        </div>
+        <p v-if="!templates?.length" class="text-xs text-muted-foreground">
+          {{ t('agents.noTemplatesHint') }}
+        </p>
       </fieldset>
 
       <div class="flex justify-end gap-2 pt-1">
         <Button type="button" variant="outline" @click="open = false">{{ t('common.cancel') }}</Button>
-        <Button type="submit">
+        <Button type="submit" :disabled="!agent && !templates?.some((template) => template.id === form.templateId)">
           {{ agent ? t('common.saveChanges') : t('agents.createSubmit') }}
         </Button>
       </div>

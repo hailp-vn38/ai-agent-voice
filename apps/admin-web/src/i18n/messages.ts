@@ -307,7 +307,7 @@ export const en = {
   'agents.noProviders': 'No provider instance yet.',
   'agents.noTemplate': 'No template yet.',
   'agents.createTitle': 'Create agent',
-  'agents.createDescription': 'The first template is created with the agent and becomes its default.',
+  'agents.createDescription': 'Choose an existing template as the agent default.',
   'agents.editDescription':
     'Agent-level identity only. Language, prompt and providers belong to a template.',
   'agents.legend': 'Agent',
@@ -318,8 +318,8 @@ export const en = {
   'agents.firstTemplate': 'First template',
   'agents.firstTemplateHint':
     'This template becomes the agent default. More templates can be added from the agent page.',
-  'agents.templateName': 'Template name',
-  'agents.templateNamePlaceholder': 'Vietnamese Home',
+  'agents.selectTemplate': 'Select a template',
+  'agents.noTemplatesHint': 'Create a template on the Templates page first.',
   'agents.createSubmit': 'Create agent',
   'agents.deleteDescription':
     'This removes {name} and its {devices}. Its {templates} stay in the catalog, shared with any other agent using them.',
@@ -1133,7 +1133,7 @@ export const vi: Record<MessageKey, MessageValue> = {
   'agents.noProviders': 'Chưa có provider instance.',
   'agents.noTemplate': 'Chưa có template.',
   'agents.createTitle': 'Tạo agent',
-  'agents.createDescription': 'Template đầu tiên được tạo cùng agent và trở thành template mặc định.',
+  'agents.createDescription': 'Chọn template có sẵn làm template mặc định của agent.',
   'agents.editDescription':
     'Chỉ thông tin cấp agent. Language, prompt và provider thuộc về template.',
   'agents.legend': 'Agent',
@@ -1144,8 +1144,8 @@ export const vi: Record<MessageKey, MessageValue> = {
   'agents.firstTemplate': 'Template đầu tiên',
   'agents.firstTemplateHint':
     'Template này trở thành mặc định của agent. Có thể thêm template khác từ trang agent.',
-  'agents.templateName': 'Tên template',
-  'agents.templateNamePlaceholder': 'Vietnamese Home',
+  'agents.selectTemplate': 'Chọn template',
+  'agents.noTemplatesHint': 'Hãy tạo template ở trang Templates trước.',
   'agents.createSubmit': 'Tạo agent',
   'agents.deleteDescription':
     'Xóa {name} và {devices} của agent. {templates} vẫn còn trong catalog, dùng chung với các agent khác.',

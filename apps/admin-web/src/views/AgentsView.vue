@@ -13,7 +13,7 @@ import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import type { Agent, ProviderInstance } from '@/domain/admin'
-import { useAdminStore, type AgentTemplateInput } from '@/stores/admin'
+import { useAdminStore } from '@/stores/admin'
 
 const store = useAdminStore()
 const router = useRouter()
@@ -76,8 +76,8 @@ async function claimDevice(input: ClaimDeviceEnrollmentInput) {
   }
 }
 
-function createAgent(payload: { agent: { name: string; description: string }; template: AgentTemplateInput }) {
-  store.createAgent(payload.agent, payload.template)
+function createAgent(payload: { agent: { name: string; description: string }; templateId: string }) {
+  store.createAgent(payload.agent, payload.templateId)
 }
 </script>
 
@@ -116,7 +116,7 @@ function createAgent(payload: { agent: { name: string; description: string }; te
 
     <AgentFormModal
       v-model="agentModalOpen"
-      :providers="store.providers"
+      :templates="store.templates"
       @create-with-template="createAgent"
     />
     <ClaimDeviceEnrollmentModal

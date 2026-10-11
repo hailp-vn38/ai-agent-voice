@@ -505,18 +505,13 @@ export const useAdminStore = defineStore('admin', () => {
   }
 
   // ---- agent actions ---------------------------------------------------
-  async function createAgent(input: { name: string; description?: string }, firstTemplate?: AgentTemplateInput) {
+  async function createAgent(input: { name: string; description?: string }, firstTemplateId?: string) {
     return run(async () => {
       const key = uniqueKey(input.name, (candidate) => Boolean(getAgent(candidate)))
       const agent = await agentsApi.create({ key, name: input.name, description: input.description })
       upsertAgent(agent)
 
-      // The only agent-scoped case that creates a template: the agent flow, where
-      // the first template is linked and becomes the default.
-      if (firstTemplate) {
-        const template = await createTemplateInternal(firstTemplate)
-        await linkTemplateToAgent(template.id, agent.key)
-      }
+      if (firstTemplateId) await linkTemplateToAgent(firstTemplateId, agent.key)
       return getAgent(agent.key)
     })
   }

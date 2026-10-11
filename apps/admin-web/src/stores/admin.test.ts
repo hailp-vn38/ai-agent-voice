@@ -5,8 +5,8 @@ import { Badge } from '@/components/ui/badge'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-const agentsApi = vi.hoisted(() => ({ list: vi.fn(), templates: vi.fn(), setDefaultTemplate: vi.fn() }))
-const templatesApi = vi.hoisted(() => ({ list: vi.fn(), providers: vi.fn(), bindProvider: vi.fn(), unlinkProvider: vi.fn() }))
+const agentsApi = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), assignTemplate: vi.fn(), templates: vi.fn(), setDefaultTemplate: vi.fn() }))
+const templatesApi = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), providers: vi.fn(), bindProvider: vi.fn(), unlinkProvider: vi.fn() }))
 const providersApi = vi.hoisted(() => ({ listAll: vi.fn(), update: vi.fn() }))
 const devicesApi = vi.hoisted(() => ({ list: vi.fn() }))
 
@@ -47,6 +47,25 @@ describe('admin store', () => {
     providersApi.listAll.mockResolvedValue({ items: [] })
     devicesApi.list.mockResolvedValue({ items: [] })
     agentsApi.setDefaultTemplate.mockResolvedValue(undefined)
+  })
+
+  it('links an existing template as the new agent default without creating a template', async () => {
+    const store = useAdminStore()
+    await store.loadAll()
+    agentsApi.create.mockResolvedValue({ key: 'home', name: 'Home', description: '', enabled: true, revision: 1 })
+    agentsApi.templates.mockReset()
+    agentsApi.templates
+      .mockResolvedValueOnce({ items: [{ key: 'first', is_default: false }], revision: 2 })
+      .mockResolvedValueOnce({ items: [{ key: 'first', is_default: true }], revision: 3 })
+
+    const agent = await store.createAgent({ name: 'Home', description: '' }, 'first')
+
+    expect(templatesApi.create).not.toHaveBeenCalled()
+    expect(agentsApi.assignTemplate).toHaveBeenCalledWith('home', 'first', 1)
+    expect(agentsApi.setDefaultTemplate).toHaveBeenCalledWith('home', 'first', 2)
+    expect(agent?.defaultTemplateId).toBe('first')
+    expect(store.getTemplatesForAgent('home').map((template) => template.id)).toEqual(['first'])
+    expect(store.templates).toHaveLength(2)
   })
 
   it('rejects config mutations before requests or template unlink', async () => {
