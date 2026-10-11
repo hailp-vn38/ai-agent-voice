@@ -33,6 +33,8 @@ pub struct ClientFeatures {
     pub pipeline_status: bool,
     #[serde(default)]
     pub turn_status: bool,
+    #[serde(default)]
+    pub tool_status: bool,
     /// Ticket 10: opt-in to bounded `speaker` Observe state frames. Off by default.
     #[serde(default)]
     pub speaker_status: bool,
