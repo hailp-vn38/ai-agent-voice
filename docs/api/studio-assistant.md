@@ -98,6 +98,7 @@ Clicking the bubble reopens the same client and in-memory conversation. The head
 X deliberately ends the session (confirming first if a turn is active); logout
 and layout teardown also disconnect. A backgrounded browser tab still interrupts
 active microphone capture, while TTS downlink remains unaffected by panel collapse.
+Manual microphone capture is interrupted on panel collapse to avoid hidden recording.
 The default microphone action unlocks TTS playback within the user gesture, unless
 the user explicitly muted the speaker. Statuses remain separate: a completed
 WebSocket handshake does not guarantee success of the current Agent turn.

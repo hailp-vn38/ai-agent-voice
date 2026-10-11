@@ -63,6 +63,18 @@ describe('compact Studio Assistant', () => {
     expect(disconnect).not.toHaveBeenCalled()
   })
 
+  it('stops hidden microphone capture while keeping the WebSocket session', async () => {
+    const store = useAssistantStore()
+    store.state = 'listening'
+    const interrupt = vi.spyOn(store, 'interrupt').mockImplementation(() => {})
+    const disconnect = vi.spyOn(store, 'disconnect')
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    await nextTick()
+    expect(store.visible).toBe(false)
+    expect(interrupt).toHaveBeenCalledOnce()
+    expect(disconnect).not.toHaveBeenCalled()
+  })
+
   it('uses a connection dot, prioritizes microphone, and reveals text input only on demand', async () => {
     expect(widget.find('.assistant-connection-dot.is-online').exists()).toBe(true)
     expect(widget.get('header .sr-only').text()).toBe('Connected')

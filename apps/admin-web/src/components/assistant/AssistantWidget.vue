@@ -48,6 +48,8 @@ function barHeight(index: number) {
   return Math.round(3 + shape * 4) + 'px'
 }
 function collapse(focusLauncher = true) {
+  // Never leave an active microphone capturing while the UI is hidden.
+  if (assistant.state === 'listening') assistant.interrupt()
   assistant.visible = false
   historyOpen.value = false
   if (focusLauncher) launcher.value?.focus()
