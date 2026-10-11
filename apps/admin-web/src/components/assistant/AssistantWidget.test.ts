@@ -63,16 +63,32 @@ describe('compact Studio Assistant', () => {
     expect(disconnect).not.toHaveBeenCalled()
   })
 
-  it('stops hidden microphone capture while keeping the WebSocket session', async () => {
+  it('stops hidden microphone capture without aborting or disconnecting the session', async () => {
     const store = useAssistantStore()
     store.state = 'listening'
+    store.micEnabled = true
+    const stop = vi.spyOn(store, 'stopMicrophone').mockResolvedValue(undefined)
     const interrupt = vi.spyOn(store, 'interrupt').mockImplementation(() => {})
     const disconnect = vi.spyOn(store, 'disconnect')
     document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
     await nextTick()
     expect(store.visible).toBe(false)
-    expect(interrupt).toHaveBeenCalledOnce()
+    expect(stop).toHaveBeenCalledOnce()
+    expect(interrupt).not.toHaveBeenCalled()
     expect(disconnect).not.toHaveBeenCalled()
+  })
+
+  it('keeps the microphone stop control available while the assistant speaks', async () => {
+    const store = useAssistantStore()
+    store.micEnabled = true
+    store.state = 'speaking'
+    const stop = vi.spyOn(store, 'stopMicrophone').mockResolvedValue(undefined)
+    await nextTick()
+    const button = widget.get('button[aria-label="Stop recording"]')
+    expect(button.attributes('aria-pressed')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
+    expect(stop).toHaveBeenCalledOnce()
   })
 
   it('uses a connection dot, prioritizes microphone, and reveals text input only on demand', async () => {

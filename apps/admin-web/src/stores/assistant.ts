@@ -12,6 +12,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   const messages = ref<AssistantMessage[]>([])
   const muted = ref(true)
   const level = ref(0)
+  const micEnabled = ref(false)
   let id = 0
   let pendingUser: AssistantMessage | undefined
   let response: AssistantMessage | undefined
@@ -24,6 +25,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   }
   const client = new WebAssistantClient({
     level: value => { level.value = value },
+    microphone: enabled => { micEnabled.value = enabled },
     state: value => {
       state.value = value
       if (value === 'uncertain') {
@@ -93,8 +95,9 @@ export const useAssistantStore = defineStore('assistant', () => {
     error.value = ''
     settings.value = undefined
     muted.value = true
+    micEnabled.value = false
     manuallyMuted = false
   }
-  return { visible, state, error, settings, messages, muted, level, open, connect, sendText, startMicrophone, toggleSpeaker, disconnect,
+  return { visible, state, error, settings, messages, muted, micEnabled, level, open, connect, sendText, startMicrophone, toggleSpeaker, disconnect,
     stopMicrophone: () => run(() => client.stopMicrophone()), interrupt: () => client.interrupt() }
 })

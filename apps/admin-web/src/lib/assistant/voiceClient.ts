@@ -11,6 +11,7 @@ interface Callbacks {
   error: (code: string) => void
   settings: (settings: AssistantSettings) => void
   level?: (value: number) => void
+  microphone?: (enabled: boolean) => void
 }
 interface Waiter { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 
@@ -26,11 +27,13 @@ export class WebAssistantClient {
   private retry?: ReturnType<typeof setTimeout>
   private retries = 0
   private turnTimeout?: ReturnType<typeof setTimeout>
+  private continuousMicrophone = false
   readonly audio: AssistantAudio
   constructor(private readonly callbacks: Callbacks) {
     this.audio = new AssistantAudio(code => {
       this.callbacks.error(code)
-      if (this.state === 'listening') this.interrupt()
+      if (this.continuousMicrophone) void this.stopMicrophone().catch(() => this.fail('capture_stop_failed'))
+      else if (this.state === 'listening') this.interrupt()
     }, callbacks.level)
   }
   private setState(state: AssistantState) { this.state = state; this.callbacks.state(state) }
@@ -145,10 +148,19 @@ export class WebAssistantClient {
       } else {
         this.settle(new Error(event.reason ?? event.state))
         clearTimeout(this.turnTimeout)
-        this.audio.cancelMicrophone()
+        if (!this.continuousMicrophone) this.audio.cancelMicrophone()
         if (event.state !== 'completed') this.audio.cancelPlayback()
-        this.setState('ready')
+        // A rejected Auto listen:start has no VAD worker; do not leave the
+        // microphone streaming into a session that cannot accept audio.
+        if (event.state === 'rejected' && this.continuousMicrophone) {
+          void this.stopMicrophone().catch(() => this.fail('capture_stop_failed'))
+        }
+        this.setState(this.continuousMicrophone ? 'listening' : 'ready')
       }
+    } else if (event.type === 'stt' || event.type === 'llm') {
+      // Auto VAD has no per-cycle listening_ready ACK. A transcript is the
+      // observable boundary between live capture and response generation.
+      if (this.continuousMicrophone && this.state === 'listening') this.processing()
     } else if (event.type === 'tts') {
       if (this.state === 'aborting') return
       if (event.state === 'start') { this.audio.beginPlayback(); this.setState('speaking') }
@@ -177,6 +189,7 @@ export class WebAssistantClient {
     }
   }
   private processing() {
+    clearTimeout(this.turnTimeout)
     this.setState('processing')
     this.turnTimeout = setTimeout(() => { this.callbacks.error('delivery_unknown'); this.cleanup(); this.setState('uncertain') }, 120000)
   }
@@ -187,32 +200,53 @@ export class WebAssistantClient {
     this.processing()
   }
   async startMicrophone() {
-    await this.listen()
+    if (this.state !== 'ready' || this.continuousMicrophone) throw new Error('turn_busy')
     const generation = this.generation
-    const turn = this.turnGeneration
+    // The server's Auto VAD detects end-of-speech; the microphone remains open
+    // across ASR, LLM, TTS and subsequent turns until explicitly disabled.
+    this.continuousMicrophone = true
+    this.callbacks.microphone?.(true)
+    this.setState('listening')
     try {
+      this.send({ type: 'listen', state: 'start', mode: 'auto' })
       await this.audio.startMicrophone(packet => {
-        if (generation !== this.generation || turn !== this.turnGeneration || this.state !== 'listening') return
-        if (!this.socket || this.socket.bufferedAmount > 65536) { this.callbacks.error('audio_backpressure'); this.interrupt(); return }
+        if (generation !== this.generation || !this.continuousMicrophone) return
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > 65536) {
+          this.callbacks.error('audio_backpressure')
+          void this.stopMicrophone().catch(() => this.fail('capture_stop_failed'))
+          return
+        }
         this.socket.send(packet)
       })
     } catch (error) {
-      if (generation === this.generation && turn === this.turnGeneration) this.interrupt()
+      // Permission can resolve after Stop/Disconnect; it must not revive capture
+      // or interfere with a later conversation.
+      if (generation !== this.generation || !this.continuousMicrophone) return
+      this.continuousMicrophone = false
+      this.callbacks.microphone?.(false)
+      this.audio.cancelMicrophone()
+      try { this.send({ type: 'listen', state: 'stop' }) } catch { /* A closed socket is cleaned up elsewhere. */ }
+      this.setState('ready')
       throw error
     }
   }
   async stopMicrophone() {
-    if (this.state !== 'listening') return
+    if (!this.continuousMicrophone) return
+    this.continuousMicrophone = false
+    this.callbacks.microphone?.(false)
     const generation = this.generation
-    const turn = this.turnGeneration
-    await this.audio.stopMicrophone()
-    if (generation !== this.generation || turn !== this.turnGeneration || this.state !== 'listening') return
-    this.send({ type: 'listen', state: 'stop' })
-    this.processing()
+    try {
+      await this.audio.stopMicrophone()
+    } finally {
+      if (generation === this.generation && this.session) {
+        this.send({ type: 'listen', state: 'stop' })
+        if (this.state === 'listening') this.setState('ready')
+      }
+    }
   }
   interrupt() {
     if (!this.session || !['listening', 'processing', 'speaking'].includes(this.state)) return
-    this.audio.cancelMicrophone()
+    if (!this.continuousMicrophone) this.audio.cancelMicrophone()
     this.audio.cancelPlayback()
     this.settle(new Error('cancelled'))
     this.send({ type: 'abort' })
@@ -226,6 +260,8 @@ export class WebAssistantClient {
   }
   private cleanup() {
     ++this.generation
+    this.continuousMicrophone = false
+    this.callbacks.microphone?.(false)
     this.request?.abort()
     this.request = undefined
     clearTimeout(this.retry)

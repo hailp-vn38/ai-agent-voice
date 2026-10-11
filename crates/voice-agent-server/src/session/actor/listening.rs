@@ -28,6 +28,26 @@ impl SessionActor {
                         self.emit_turn_status("rejected", Some("empty_capture"));
                         self.turn_status_active = false;
                     }
+                } else if matches!(
+                    self.listening_mode,
+                    Some(ListenMode::Auto | ListenMode::Realtime)
+                ) {
+                    // Turning off continuous capture must release VAD without
+                    // cancelling a response that is already being generated or spoken.
+                    self.close_vad();
+                    self.vad_session = None;
+                    self.vad_cycle = None;
+                    self.pending_vad_cycle = None;
+                    self.listening_mode = None;
+                    self.listen_arm_pending = false;
+                    self.auto_speech_active = false;
+                    self.auto_reset_pending = false;
+                    self.auto_retention.reset();
+                    self.vad_segmenter.reset();
+                    if self.turn.is_none() {
+                        self.cancel_asr();
+                        self.phase = SessionPhase::Ready;
+                    }
                 }
             }
         }
