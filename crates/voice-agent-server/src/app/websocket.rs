@@ -972,10 +972,7 @@ fn checked_text(message: Message, max: usize) -> Result<String, u16> {
 
 /// Web Assistant must observe server-owned tool execution even if its ClientHello
 /// predates the optional tool_status feature. This is independent of Device MCP.
-fn tool_status_enabled(
-    is_web_assistant: bool,
-    features: &crate::protocol::ClientFeatures,
-) -> bool {
+fn tool_status_enabled(is_web_assistant: bool, features: &crate::protocol::ClientFeatures) -> bool {
     is_web_assistant || features.tool_status
 }
 
