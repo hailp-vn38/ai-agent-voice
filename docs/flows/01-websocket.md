@@ -356,10 +356,13 @@ publication giữ profile snapshot không bị xen một settings write trước
 
 ### Tool execution status (opt-in)
 
-Voice Client có thể khai báo `features.tool_status=true` trong `ClientHello` để nhận
-message server-to-client `type:"tool"`. Mặc định `false` để tương thích firmware/client cũ.
-Không phụ thuộc `features.mcp` hay `features.turn_status`; Physical Device và
-Studio Assistant đều có thể bật.
+Physical Device chỉ nhận message server-to-client `type:"tool"` khi khai báo
+`features.tool_status=true` trong `ClientHello` (mặc định false để giữ tương thích).
+**Studio Assistant luôn nhận trạng thái tool** sau khi xác thực Virtual Device, kể cả
+khi `features.tool_status` vắng mặt/false. Đây là chính sách server, độc lập với
+`features.mcp=false` (chỉ tắt Device MCP) và `features.turn_status`.
+ClientHello là frame **client → server**; server không gửi riêng field `tool_status`
+trong ServerHello. Chỉ khi LLM thực sự dispatch tool đã admit mới có event `type:"tool"`.
 
 ```json
 {"type":"tool","session_id":"...","turn_id":1,"name":"handle_exit_intent","state":"started"}
