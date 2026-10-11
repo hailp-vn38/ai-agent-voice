@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { Bot, Mic, MicOff, Minus, Send, Square, Volume2, VolumeX, X } from '@lucide/vue'
+import { AudioLines, Bot, History, Keyboard, LoaderCircle, Mic, Send, Square, Volume2, VolumeX, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import { AssistantAudio } from '@/lib/assistant/audio'
@@ -10,57 +9,104 @@ import { useAuthStore } from '@/stores/auth'
 
 const assistant = useAssistantStore()
 const auth = useAuthStore()
-const route = useRoute()
 const { t } = useI18n()
 const draft = ref('')
+const textMode = ref(false)
+const historyOpen = ref(false)
 const launcher = ref<HTMLElement>()
 const panel = ref<HTMLElement>()
 const input = ref<HTMLTextAreaElement>()
 const transcript = ref<HTMLElement>()
-const mobile = ref(false)
-const contextVisible = ref(true)
-const context = computed(() => {
-  const resource = Object.values(route.params).find(value => typeof value === 'string')
-  const page = route.path.split('/')[1] || 'overview'
-  return resource ? `${page}: ${resource}` : page
-})
-const active = computed(() => ['listening', 'processing', 'speaking', 'aborting'].includes(assistant.state))
 const micSupported = AssistantAudio.microphoneSupported()
-watch(() => route.path, () => { contextVisible.value = true })
+const bars = Array.from({ length: 39 }, (_, index) => index)
+const active = computed(() => ['listening', 'processing', 'speaking', 'aborting'].includes(assistant.state))
+const connected = computed(() => ['ready', 'listening', 'processing', 'speaking', 'aborting'].includes(assistant.state))
+const connecting = computed(() => ['connecting', 'handshaking', 'reconnecting'].includes(assistant.state))
+const connectionTone = computed(() => connected.value ? 'online' : connecting.value ? 'connecting' : 'offline')
+const voiceMode = computed(() => {
+  if (assistant.state === 'listening') return 'listening'
+  if (assistant.state === 'speaking') return 'speaking'
+  if (['processing', 'aborting'].includes(assistant.state)) return 'thinking'
+  return 'idle'
+})
+const latestMessages = computed(() => {
+  const all = assistant.messages
+  // One ASR/user message and its LLM response form the compact live turn.
+  for (let index = all.length - 1; index >= 0; index--) {
+    if (all[index]?.role === 'user') return all.slice(index)
+  }
+  return all.slice(-1)
+})
+const displayedMessages = computed(() => historyOpen.value ? assistant.messages : latestMessages.value)
+const canReconnect = computed(() => ['unconfigured', 'disabled', 'error', 'uncertain', 'disconnected', 'auth_error'].includes(assistant.state))
+
+function barHeight(index: number) {
+  const shape = 0.22 + 0.78 * Math.abs(Math.sin((index + 2) * 1.07) * Math.cos(index * 0.47))
+  if (voiceMode.value === 'listening') return Math.round(4 + Math.min(1, assistant.level * 6) * 43 * shape) + 'px'
+  if (voiceMode.value === 'speaking') return Math.round(9 + shape * 30) + 'px'
+  if (voiceMode.value === 'thinking') return Math.round(5 + shape * 13) + 'px'
+  return Math.round(3 + shape * 4) + 'px'
+}
+function collapse(focusLauncher = true) {
+  assistant.visible = false
+  historyOpen.value = false
+  if (focusLauncher) launcher.value?.focus()
+}
+function closeSession() {
+  if (active.value && !window.confirm(t('assistant.endConfirm'))) return
+  assistant.disconnect()
+  draft.value = ''
+  textMode.value = false
+  collapse()
+}
+async function send() {
+  const value = draft.value.trim()
+  if (!value || assistant.state !== 'ready') return
+  draft.value = ''
+  await assistant.sendText(value)
+}
+async function microphone() {
+  if (assistant.state === 'listening') await assistant.stopMicrophone()
+  else if (assistant.state === 'ready' && micSupported) await assistant.startMicrophone()
+}
+async function toggleTextMode() {
+  textMode.value = !textMode.value
+  if (textMode.value) {
+    await nextTick()
+    input.value?.focus()
+  } else panel.value?.focus()
+}
+function outside(event: PointerEvent) {
+  if (!assistant.visible || !(event.target instanceof Node)) return
+  if (!panel.value?.contains(event.target) && !launcher.value?.contains(event.target)) collapse(false)
+}
+function keydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && assistant.visible) { event.preventDefault(); collapse() }
+}
+function visibility() {
+  // Background microphone capture is not permitted; an ongoing TTS downlink is preserved.
+  if (document.hidden && assistant.state === 'listening') assistant.interrupt()
+}
 watch(() => auth.adminToken, () => { assistant.disconnect(); assistant.visible = false })
 watch(() => assistant.visible, async open => {
-  if (mobile.value) document.body.style.overflow = open ? 'hidden' : ''
-  await nextTick()
-  if (open) { if (!input.value?.disabled) input.value?.focus(); else panel.value?.focus() } else launcher.value?.focus()
+  if (open) {
+    await nextTick()
+    panel.value?.focus()
+  }
 })
-watch(() => assistant.messages.map(m => m.text).join(''), async () => {
+watch(() => [assistant.messages.map(message => message.text).join(''), historyOpen.value, assistant.visible], async () => {
+  if (!assistant.visible) return
   await nextTick()
   transcript.value?.scrollTo({ top: transcript.value.scrollHeight })
 })
-function collapse() { assistant.visible = false }
-function disconnect() { assistant.disconnect(); draft.value = ''; collapse() }
-async function send() {
-  const text = draft.value.trim()
-  if (!text || assistant.state !== 'ready') return
-  draft.value = ''
-  await assistant.sendText(text)
-}
-function keydown(event: KeyboardEvent) {
-  if (event.defaultPrevented || (document.activeElement instanceof HTMLElement && !panel.value?.contains(document.activeElement) && document.activeElement !== launcher.value)) return
-  if (event.key === 'Escape' && assistant.visible) { event.preventDefault(); collapse() }
-  if (event.key !== 'Tab' || !mobile.value || !assistant.visible) return
-  const elements = Array.from(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), a, textarea:not(:disabled)') ?? [])
-  const first = elements[0], last = elements.at(-1)
-  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
-}
-function visibility() { if (document.hidden && assistant.state === 'listening') assistant.interrupt() }
-function resize() { mobile.value = window.matchMedia('(max-width: 639px)').matches }
-onMounted(() => { resize(); window.addEventListener('resize', resize); document.addEventListener('visibilitychange', visibility); window.addEventListener('keydown', keydown) })
+onMounted(() => {
+  document.addEventListener('pointerdown', outside)
+  document.addEventListener('visibilitychange', visibility)
+  window.addEventListener('keydown', keydown)
+})
 onBeforeUnmount(() => {
   assistant.disconnect()
-  document.body.style.overflow = ''
-  window.removeEventListener('resize', resize)
+  document.removeEventListener('pointerdown', outside)
   document.removeEventListener('visibilitychange', visibility)
   window.removeEventListener('keydown', keydown)
 })
@@ -69,48 +115,117 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <div v-if="auth.adminToken" class="text-foreground">
-      <button ref="launcher" class="assistant-launcher fixed z-30 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-2 focus-visible:outline-offset-4" :aria-label="t('assistant.open')" :aria-expanded="assistant.visible" aria-controls="studio-assistant" @click="assistant.visible ? collapse() : assistant.open()"><Bot class="size-6" /></button>
-      <Transition enter-active-class="transition duration-150 motion-reduce:transition-none" enter-from-class="opacity-0 scale-95" leave-active-class="transition duration-150 motion-reduce:transition-none" leave-to-class="opacity-0 scale-95">
-        <section v-if="assistant.visible" id="studio-assistant" ref="panel" tabindex="-1" class="assistant-panel fixed z-40 flex flex-col overflow-hidden border bg-card shadow-xl" role="dialog" :aria-modal="mobile || undefined" :aria-label="t('assistant.title')">
-          <header class="flex shrink-0 items-center gap-2 border-b p-3">
-            <Bot class="size-5" /><strong class="flex-1">{{ t('assistant.title') }}</strong>
-            <Button size="icon" variant="ghost" :aria-label="t('assistant.collapse')" @click="collapse"><Minus class="size-4" /></Button>
-            <Button size="icon" variant="ghost" :aria-label="t('assistant.disconnect')" @click="disconnect"><X class="size-4" /></Button>
+      <button
+        ref="launcher" type="button"
+        class="assistant-launcher fixed z-30 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-2 focus-visible:outline-offset-4"
+        :class="{ 'assistant-launcher-active': active, 'assistant-launcher-listening': assistant.state === 'listening' }"
+        :aria-label="assistant.visible ? t('assistant.collapse') : t('assistant.open')"
+        :aria-expanded="assistant.visible" aria-controls="studio-assistant"
+        @click="assistant.visible ? collapse() : assistant.open()"
+      >
+        <AudioLines v-if="active" class="size-6" aria-hidden="true" />
+        <Bot v-else class="size-6" aria-hidden="true" />
+        <span class="assistant-launcher-dot" :class="'is-' + connectionTone" aria-hidden="true" />
+      </button>
+      <Transition enter-active-class="transition duration-150 motion-reduce:transition-none" enter-from-class="opacity-0 translate-y-2 scale-95" leave-active-class="transition duration-150 motion-reduce:transition-none" leave-to-class="opacity-0 translate-y-2 scale-95">
+        <section
+          v-if="assistant.visible" id="studio-assistant" ref="panel" tabindex="-1"
+          class="assistant-panel fixed z-40 flex flex-col overflow-hidden border bg-card shadow-2xl"
+          role="dialog" :aria-label="t('assistant.title')"
+        >
+          <header class="flex h-14 shrink-0 items-center gap-2 border-b px-3">
+            <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Bot class="size-5" aria-hidden="true" /></span>
+            <div class="min-w-0 flex-1">
+              <strong class="block truncate text-sm">{{ t('assistant.title') }}</strong>
+              <span class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span class="assistant-connection-dot" :class="'is-' + connectionTone" aria-hidden="true" />
+                <span>{{ t('assistant.state.' + assistant.state) }}</span>
+              </span>
+            </div>
+            <Button size="icon" variant="ghost" class="size-8 shrink-0 rounded-full" :aria-label="t('assistant.disconnect')" :title="t('assistant.disconnect')" @click="closeSession">
+              <X class="size-4" aria-hidden="true" />
+            </Button>
           </header>
-          <div class="shrink-0 space-y-1 border-b px-3 py-2 text-xs">
-            <p role="status">{{ t(`assistant.state.${assistant.state}`) }}</p>
-            <p v-if="assistant.settings?.agent_key">{{ assistant.settings.agent_key }} · {{ assistant.settings.template_key ?? t('assistant.agentDefault') }}</p>
-            <p v-if="contextVisible" class="flex items-center gap-2">{{ t('assistant.context') }}: {{ context }} <button :aria-label="t('common.close')" @click="contextVisible = false">×</button></p>
+
+          <div class="assistant-voice shrink-0 px-4 pb-3 pt-3 text-center" :class="'is-' + voiceMode">
+            <div class="assistant-wave mx-auto flex h-[74px] max-w-[270px] items-center justify-center gap-[3px] overflow-hidden" aria-hidden="true">
+              <span
+                v-for="index in bars" :key="index"
+                class="assistant-wave-bar min-w-[2px] max-w-1 flex-1 rounded-full"
+                :style="{ height: barHeight(index), animationDelay: '-' + index * 87 + 'ms', animationDuration: 950 + (index % 5) * 140 + 'ms' }"
+              />
+            </div>
+            <p class="mt-1 text-xs font-semibold" role="status">{{ t('assistant.state.' + assistant.state) }}</p>
+            <p class="mt-1 text-[11px] text-muted-foreground">
+              {{ assistant.state === 'ready' ? t('assistant.voiceHint') : assistant.state === 'listening' ? t('assistant.listeningHint') : assistant.state === 'speaking' ? t('assistant.speakingHint') : assistant.state === 'processing' ? t('assistant.processingHint') : '' }}
+            </p>
           </div>
-          <div ref="transcript" class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" role="log" aria-live="polite" :aria-label="t('assistant.conversation')">
-            <p v-if="!assistant.messages.length" class="text-sm text-muted-foreground">{{ t('assistant.empty') }}</p>
-            <article v-for="message in assistant.messages" :key="message.id" class="rounded-lg p-3 text-sm" :class="message.role === 'user' ? 'ml-8 bg-primary/10' : 'mr-8 bg-muted'">
-              <p class="whitespace-pre-wrap break-words">{{ message.text }}</p>
-              <small v-if="['pending', 'failed', 'cancelled', 'uncertain'].includes(message.status)" class="text-muted-foreground">{{ t(`assistant.message.${message.status}`) }}</small>
-            </article>
+
+          <div class="mx-3 mb-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-muted/35">
+            <div class="flex h-9 shrink-0 items-center justify-between border-b px-3">
+              <span class="text-xs font-semibold text-muted-foreground">{{ historyOpen ? t('assistant.history') : t('assistant.liveConversation') }}</span>
+              <button type="button" class="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-ring"
+                :aria-pressed="historyOpen" @click="historyOpen = !historyOpen">
+                <History class="size-3.5" aria-hidden="true" />
+                {{ historyOpen ? t('assistant.latest') : t('assistant.history') }}
+              </button>
+            </div>
+            <div ref="transcript" class="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3" role="log" aria-live="polite" :aria-label="t('assistant.conversation')">
+              <p v-if="!displayedMessages.length" class="py-6 text-center text-xs text-muted-foreground">{{ t('assistant.emptyVoice') }}</p>
+              <article v-for="message in displayedMessages" :key="message.id" class="flex flex-col gap-1" :class="message.role === 'user' ? 'items-end' : 'items-start'">
+                <span class="px-1 text-[10px] text-muted-foreground">{{ message.role === 'user' ? t('assistant.you') : t('assistant.agentLabel') }}</span>
+                <div class="assistant-message max-w-[95%] rounded-xl px-3 py-2 text-[13px] leading-relaxed" :class="message.role === 'user' ? 'rounded-br-sm bg-primary/12' : 'rounded-bl-sm border bg-card'">
+                  <p class="whitespace-pre-wrap break-words" :class="{ 'line-clamp-4': !historyOpen && message.role === 'assistant', 'line-clamp-2': !historyOpen && message.role === 'user' }">{{ message.text }}</p>
+                  <span v-if="message.role === 'assistant' && assistant.state === 'speaking' && message.id === latestMessages.at(-1)?.id" class="mt-2 inline-flex items-center gap-1 text-[10px] text-primary">
+                    <Volume2 class="size-3" aria-hidden="true" />{{ t('assistant.playing') }}
+                  </span>
+                </div>
+              </article>
+              <div v-if="assistant.state === 'processing' && (!latestMessages.length || latestMessages.at(-1)?.role !== 'assistant')" class="flex items-center gap-2 text-xs text-muted-foreground">
+                <LoaderCircle class="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />{{ t('assistant.processingHint') }}
+              </div>
+            </div>
           </div>
-          <footer class="shrink-0 space-y-2 border-t p-3">
-            <p v-if="assistant.error" role="alert" class="text-xs text-danger">{{ t('assistant.error') }}: {{ assistant.error }}</p>
-            <p class="text-xs text-muted-foreground">{{ t('assistant.retention') }}</p>
-            <div v-if="['unconfigured', 'disabled', 'error', 'uncertain', 'disconnected', 'auth_error'].includes(assistant.state)" class="flex gap-2">
-              <RouterLink to="/system" class="text-sm underline" @click="collapse">{{ t('assistant.settings') }}</RouterLink>
+
+          <footer class="shrink-0 space-y-2 border-t px-3 py-3">
+            <div v-if="assistant.error" role="alert" class="flex items-start gap-2 rounded-lg bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+              <span class="min-w-0 flex-1">{{ t('assistant.friendlyError') }}</span>
+              <button type="button" class="shrink-0 underline" :aria-label="t('common.close')" @click="assistant.error = ''">{{ t('common.close') }}</button>
+            </div>
+            <div v-if="canReconnect" class="flex items-center justify-between gap-2 text-xs">
+              <RouterLink to="/system" class="text-primary underline" @click="collapse()">{{ t('assistant.settings') }}</RouterLink>
               <Button size="sm" variant="outline" @click="assistant.connect()">{{ t('common.retry') }}</Button>
             </div>
-            <div v-if="assistant.state === 'ready'" class="flex flex-wrap gap-1">
-              <Button size="sm" variant="outline" @click="draft = t('assistant.suggestSystem')">{{ t('assistant.suggestSystem') }}</Button>
-              <Button size="sm" variant="outline" @click="draft = `${t('assistant.suggestContext')}: ${context}`">{{ t('assistant.suggestContext') }}</Button>
-            </div>
-            <form class="flex items-end gap-2" @submit.prevent="send">
-              <textarea ref="input" v-model="draft" class="admin-input min-h-12 min-w-0 flex-1 resize-none" rows="2" :aria-label="t('assistant.input')" :placeholder="t('assistant.input')" :disabled="assistant.state !== 'ready'" @keydown.enter.exact.prevent="send" />
-              <Button size="icon" type="submit" :disabled="assistant.state !== 'ready' || !draft.trim()" :aria-label="t('assistant.send')"><Send class="size-4" /></Button>
+            <form v-if="textMode" class="flex items-end gap-2" @submit.prevent="send">
+              <Button size="icon" type="button" variant="outline" class="size-10 shrink-0" :aria-label="t('assistant.voiceMode')" @click="toggleTextMode"><Mic class="size-4" aria-hidden="true" /></Button>
+              <textarea ref="input" v-model="draft" rows="1" class="admin-input max-h-24 min-h-10 min-w-0 flex-1 resize-y py-2 text-sm" :aria-label="t('assistant.input')" :placeholder="t('assistant.input')" :disabled="assistant.state !== 'ready'" @keydown.enter.exact.prevent="send" />
+              <Button size="icon" type="submit" class="size-10 shrink-0" :disabled="assistant.state !== 'ready' || !draft.trim()" :aria-label="t('assistant.send')"><Send class="size-4" aria-hidden="true" /></Button>
             </form>
-            <meter v-if="assistant.state === 'listening'" :value="assistant.level" min="0" max="1" :aria-label="t('assistant.mic')" class="w-full" />
-            <div class="flex gap-2">
-              <Button v-if="assistant.state === 'listening'" size="sm" variant="outline" @click="assistant.stopMicrophone()"><MicOff class="size-4" />{{ t('assistant.stopMic') }}</Button>
-              <Button v-else size="sm" variant="outline" :disabled="assistant.state !== 'ready' || !micSupported" :title="!micSupported ? t('assistant.micUnsupported') : undefined" @click="assistant.startMicrophone()"><Mic class="size-4" />{{ t('assistant.mic') }}</Button>
-              <Button size="icon" variant="outline" :aria-label="assistant.muted ? t('assistant.unmute') : t('assistant.mute')" :aria-pressed="!assistant.muted" @click="assistant.toggleSpeaker()"><VolumeX v-if="assistant.muted" class="size-4" /><Volume2 v-else class="size-4" /></Button>
-              <Button size="sm" variant="outline" :disabled="!active || assistant.state === 'aborting'" @click="assistant.interrupt()"><Square class="size-4" />{{ t('assistant.interrupt') }}</Button>
+            <div v-else class="relative flex h-[60px] items-center justify-between px-2">
+              <Button size="icon" variant="outline" class="size-10 rounded-full" :aria-label="t('assistant.textMode')" @click="toggleTextMode">
+                <Keyboard class="size-4" aria-hidden="true" />
+              </Button>
+              <button
+                type="button"
+                class="assistant-microphone absolute left-1/2 grid size-[60px] -translate-x-1/2 place-items-center rounded-full bg-primary text-primary-foreground shadow-md focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-not-allowed disabled:opacity-40"
+                :class="{ 'is-listening': assistant.state === 'listening' }"
+                :disabled="!micSupported || !['ready', 'listening'].includes(assistant.state)"
+                :aria-label="assistant.state === 'listening' ? t('assistant.stopMic') : t('assistant.mic')"
+                :aria-pressed="assistant.state === 'listening'"
+                :title="!micSupported ? t('assistant.micUnsupported') : undefined"
+                @click="microphone"
+              >
+                <Square v-if="assistant.state === 'listening'" class="size-5" fill="currentColor" aria-hidden="true" />
+                <Mic v-else class="size-6" aria-hidden="true" />
+              </button>
+              <Button size="icon" variant="outline" class="ml-auto size-10 rounded-full" :aria-label="assistant.muted ? t('assistant.unmute') : t('assistant.mute')" :aria-pressed="!assistant.muted" @click="assistant.toggleSpeaker()">
+                <VolumeX v-if="assistant.muted" class="size-4" aria-hidden="true" />
+                <Volume2 v-else class="size-4" aria-hidden="true" />
+              </Button>
             </div>
+            <button v-if="active && assistant.state !== 'listening'" type="button" class="mx-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50" :disabled="assistant.state === 'aborting'" @click="assistant.interrupt()">
+              <Square class="size-3" aria-hidden="true" />{{ t('assistant.interrupt') }}
+            </button>
           </footer>
         </section>
       </Transition>
@@ -119,9 +234,28 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.assistant-launcher { right: 24px; bottom: calc(24px + env(safe-area-inset-bottom)); }
-.assistant-panel { right: 24px; bottom: calc(92px + env(safe-area-inset-bottom)); width: min(420px, calc(100vw - 32px)); height: min(650px, calc(100dvh - 110px)); border-radius: 16px; }
+.assistant-launcher { right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); }
+.assistant-launcher-active { box-shadow: 0 0 0 5px color-mix(in oklch, var(--primary) 18%, transparent), 0 10px 30px rgb(0 0 0 / 16%); }
+.assistant-launcher-listening { box-shadow: 0 0 0 6px color-mix(in oklch, var(--primary) 25%, transparent), 0 10px 30px rgb(0 0 0 / 18%); }
+.assistant-launcher-dot { position: absolute; bottom: 1px; right: 1px; width: 12px; height: 12px; border: 2px solid var(--card); border-radius: 50%; }
+.assistant-connection-dot { width: 7px; height: 7px; border-radius: 50%; }
+.is-online { background: #34c99b; }
+.is-connecting { background: #e5b35e; }
+.is-offline { background: #ec6f78; }
+.assistant-panel { right: 20px; bottom: calc(88px + env(safe-area-inset-bottom)); width: min(375px, calc(100vw - 24px)); height: min(490px, calc(100dvh - 108px)); border-radius: 20px; }
+.assistant-voice { background: radial-gradient(ellipse at 50% 35%, color-mix(in oklch, var(--primary) 12%, transparent), transparent 74%); }
+.assistant-wave-bar { background: linear-gradient(180deg, var(--studio-violet, var(--primary)), var(--studio-cyan, var(--primary))); transition: height 100ms linear; }
+.assistant-voice.is-speaking .assistant-wave-bar { animation: assistant-speaking 1s ease-in-out infinite alternate; transform-origin: center; }
+.assistant-voice.is-thinking .assistant-wave-bar { animation: assistant-thinking 1.6s ease-in-out infinite alternate; transform-origin: center; opacity: .65; }
+.assistant-voice.is-idle .assistant-wave-bar { opacity: .5; }
+.assistant-microphone.is-listening { background: var(--destructive); color: var(--destructive-foreground); box-shadow: 0 0 0 5px color-mix(in oklch, var(--destructive) 18%, transparent); }
+@keyframes assistant-speaking { from { transform: scaleY(.36); opacity: .55; } to { transform: scaleY(1); opacity: 1; } }
+@keyframes assistant-thinking { from { transform: scaleY(.65); } to { transform: scaleY(1.2); } }
 @media (max-width: 639px) {
-  .assistant-panel { inset: 0; width: 100%; height: 100dvh; border-radius: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .assistant-launcher { right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .assistant-panel { right: 12px; bottom: calc(78px + env(safe-area-inset-bottom)); height: min(490px, calc(100dvh - 98px)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-wave-bar { animation: none !important; transition: none !important; }
 }
 </style>
