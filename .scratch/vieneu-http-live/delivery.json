@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "workload_version": "tts-vi-v1",
+  "mode": "delivery",
+  "runs": 3,
+  "warmup_runs": 1,
+  "samples": [
+    {
+      "processing_ms": 5681.547281,
+      "pcm_chunks": 13,
+      "provider_samples": 86400,
+      "provider_audio_duration_ms": 3600.0,
+      "ttfa_ms": null,
+      "first_packet_ms": 1219.291006,
+      "synthesis_with_delivery_ms": 5681.5456300000005,
+      "delivery_total_ms": 5681.547281,
+      "packet_count": 60,
+      "opus_bytes": 13209,
+      "delivery_audio_duration_ms": 3600,
+      "rtf": 1.5782075780555556
+    },
+    {
+      "processing_ms": 6249.9257720000005,
+      "pcm_chunks": 14,
+      "provider_samples": 97920,
+      "provider_audio_duration_ms": 4080.0,
+      "ttfa_ms": null,
+      "first_packet_ms": 1161.406636,
+      "synthesis_with_delivery_ms": 6249.924403,
+      "delivery_total_ms": 6249.9257720000005,
+      "packet_count": 68,
+      "opus_bytes": 14774,
+      "delivery_audio_duration_ms": 4080,
+      "rtf": 1.5318445519607844
+    },
+    {
+      "processing_ms": 5890.479804,
+      "pcm_chunks": 14,
+      "provider_samples": 94080,
+      "provider_audio_duration_ms": 3920.0,
+      "ttfa_ms": null,
+      "first_packet_ms": 1146.8989279999998,
+      "synthesis_with_delivery_ms": 5877.097828,
+      "delivery_total_ms": 5890.479804,
+      "packet_count": 66,
+      "opus_bytes": 14307,
+      "delivery_audio_duration_ms": 3960,
+      "rtf": 1.502673419387755
+    }
+  ],
+  "processing_ms": {
+    "sample_count": 3,
+    "min": 5681.547281,
+    "mean": 5940.650952333333,
+    "p50": 5890.479804,
+    "median": 5890.479804,
+    "max": 6249.9257720000005,
+    "p95": 6249.9257720000005,
+    "p99": 6249.9257720000005
+  },
+  "rtf": {
+    "sample_count": 3,
+    "min": 1.502673419387755,
+    "mean": 1.5375751831346982,
+    "p50": 1.5318445519607844,
+    "median": 1.5318445519607844,
+    "max": 1.5782075780555556,
+    "p95": 1.5782075780555556,
+    "p99": 1.5782075780555556
+  },
+  "first_packet_ms": {
+    "sample_count": 3,
+    "min": 1146.8989279999998,
+    "mean": 1175.8655233333332,
+    "p50": 1161.406636,
+    "median": 1161.406636,
+    "max": 1219.291006,
+    "p95": 1219.291006,
+    "p99": 1219.291006
+  },
+  "synthesis_with_delivery_ms": {
+    "sample_count": 3,
+    "min": 5681.5456300000005,
+    "mean": 5936.189287,
+    "p50": 5877.097828,
+    "median": 5877.097828,
+    "max": 6249.924403,
+    "p95": 6249.924403,
+    "p99": 6249.924403
+  },
+  "delivery_total_ms": {
+    "sample_count": 3,
+    "min": 5681.547281,
+    "mean": 5940.650952333333,
+    "p50": 5890.479804,
+    "median": 5890.479804,
+    "max": 6249.9257720000005,
+    "p95": 6249.9257720000005,
+    "p99": 6249.9257720000005
+  },
+  "adapter": "vieneu_http",
+  "model_preparation_ms": 0.000176,
+  "provider_build_and_readiness_ms": 0.0053029999999999996,
+  "worker_open_ms": 64.480093,
+  "overall_elapsed_ms": 24417.721251
+}

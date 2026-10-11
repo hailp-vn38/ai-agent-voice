@@ -1,0 +1,112 @@
+{
+  "status": "passed",
+  "timestamp": "2026-10-11T03:32:05.253608+00:00",
+  "web_url": "http://192.168.1.157:8080/",
+  "compose_project": "voice-agent-prod",
+  "docker_endpoint": "unix:///mnt/storage/ai-agent-voice/docker/engine/run/docker.sock",
+  "storage_root": "/mnt/storage/ai-agent-voice/docker/engine",
+  "configs": {
+    "host": "config.toml",
+    "docker": "docker/config.prod.toml",
+    "container": "/app/config.toml",
+    "default_tts": "vieneu_default",
+    "adapter": "vieneu_http",
+    "docker_base_url": "http://vieneu:8000/v1",
+    "voice": "Mai Anh",
+    "public_ws_url": "ws://192.168.1.157:8080/voice/v1/"
+  },
+  "services": [
+    {
+      "Service": "server",
+      "Name": "voice-agent-prod-server-1",
+      "Image": "voice-agent-server:local",
+      "State": "running",
+      "Health": "healthy"
+    },
+    {
+      "Service": "vieneu",
+      "Name": "voice-agent-prod-vieneu-1",
+      "Image": "voice-agent-vieneu:85344322",
+      "State": "running",
+      "Health": "healthy"
+    },
+    {
+      "Service": "web",
+      "Name": "voice-agent-prod-web-1",
+      "Image": "voice-agent-web:local",
+      "State": "running",
+      "Health": ""
+    }
+  ],
+  "vieneu_upstream_commit": "85344322b7258b4e25479b692e8e3396baf9db34",
+  "smoke": {
+    "status": "passed",
+    "provider_key": "tts_42e9447d9cac4165b5d560c4cb198582",
+    "checks": [
+      "web",
+      "health",
+      "ready",
+      "sealed credential",
+      "real TTS",
+      "idle reconnect"
+    ],
+    "runs": [
+      {
+        "iteration": 1,
+        "elapsed_ms": 5262,
+        "audio_seconds": 2.96,
+        "bytes": 142124,
+        "sample_rate": 24000
+      },
+      {
+        "iteration": 2,
+        "elapsed_ms": 5187,
+        "audio_seconds": 3.28,
+        "bytes": 157484,
+        "sample_rate": 24000
+      }
+    ],
+    "engine_restart_with_persisted_credential": "passed"
+  },
+  "script_tests": "12 passed",
+  "review": {
+    "standards_findings": 0,
+    "spec_findings": 0
+  },
+  "source_commit": "26e7d8c",
+  "not_checked": [
+    "real microphone and LLM dialogue",
+    "unused Kokoro runtime"
+  ],
+  "limits": [
+    "CPU fp32 slower than realtime in this run",
+    "new Docker database, host database not migrated"
+  ],
+  "local_web_url": "http://127.0.0.1:8080/",
+  "lan_checks": [
+    {
+      "url": "http://192.168.1.157:8080/",
+      "status": 200
+    },
+    {
+      "url": "http://192.168.1.157:8080/health",
+      "status": 200
+    },
+    {
+      "url": "http://192.168.1.157:8080/ready",
+      "status": 200
+    },
+    {
+      "url": "http://127.0.0.1:8080/",
+      "status": 200
+    },
+    {
+      "url": "http://127.0.0.1:8080/health",
+      "status": 200
+    },
+    {
+      "url": "http://127.0.0.1:8080/ready",
+      "status": 200
+    }
+  ]
+}

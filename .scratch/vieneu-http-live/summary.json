@@ -1,0 +1,52 @@
+{
+  "status": "passed",
+  "checked_at": "2026-10-11T03:01:17.599545+00:00",
+  "upstream_commit": "85344322b7258b4e25479b692e8e3396baf9db34",
+  "backend": "onnx",
+  "precision": "fp32",
+  "device": "cpu",
+  "voice": "Mai Anh",
+  "vieneu_base_url": "http://127.0.0.1:18090/v1",
+  "voice_server_url": "http://127.0.0.1:18091",
+  "runtime_directory": "/mnt/storage/ai-agent-voice/runtime/vieneu-live",
+  "checks": {
+    "admin_saved_credentials_after_restart": "passed",
+    "runtime_manager_websocket": "passed",
+    "provider_streaming": "passed",
+    "opus_delivery": "passed",
+    "repeated_requests_after_idle": "passed",
+    "unauthenticated_vieneu_api_rejected": "passed",
+    "clippy_all_targets_all_features": "passed",
+    "format": "passed"
+  },
+  "provider_runs": 3,
+  "provider_first_pcm_median_ms": 1172.384735,
+  "provider_rtf_median": 1.5067213026041666,
+  "delivery_first_opus_median_ms": 1161.406636,
+  "websocket_first_packet_ms": 4763.427311962005,
+  "websocket_opus_packets": 32,
+  "admin_wav_seconds": 6.64,
+  "artifacts": [
+    "vieneu-server.wav",
+    "vieneu-websocket.wav",
+    "provider.json",
+    "delivery.json",
+    "admin-flow.json",
+    "websocket-flow.json",
+    "http-idle-flow.json"
+  ],
+  "limitations": [
+    "Python runtime rather than Docker due DockerRootDir outside /mnt/storage",
+    "WebSocket sends text via listen.detect; no microphone or real ASR exercised",
+    "Deterministic qualification LLM; no external LLM API exercised",
+    "CPU FP32 generation slower than realtime"
+  ],
+  "rust_tests_passed": 613,
+  "rust_tests_ignored": 4,
+  "idle_connection_regression_test": "failed before fix, passed after fix",
+  "idle_http_real_requests": 3,
+  "idle_http_gap_seconds": 6,
+  "matching_voice_and_language_overrides": "passed",
+  "websocket_decoded_audio_seconds": 1.92,
+  "fix_commit": "d0b2c81"
+}

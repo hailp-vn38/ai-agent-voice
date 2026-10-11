@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "workload_version": "tts-vi-v1",
+  "mode": "provider",
+  "runs": 3,
+  "warmup_runs": 1,
+  "samples": [
+    {
+      "processing_ms": 5993.255558999999,
+      "pcm_chunks": 14,
+      "provider_samples": 96000,
+      "provider_audio_duration_ms": 4000.0,
+      "ttfa_ms": 1144.779488,
+      "first_packet_ms": null,
+      "synthesis_with_delivery_ms": null,
+      "delivery_total_ms": null,
+      "packet_count": null,
+      "opus_bytes": null,
+      "delivery_audio_duration_ms": null,
+      "rtf": 1.49831388975
+    },
+    {
+      "processing_ms": 5719.840809,
+      "pcm_chunks": 13,
+      "provider_samples": 90240,
+      "provider_audio_duration_ms": 3760.0,
+      "ttfa_ms": 1202.3982420000002,
+      "first_packet_ms": null,
+      "synthesis_with_delivery_ms": null,
+      "delivery_total_ms": null,
+      "packet_count": null,
+      "opus_bytes": null,
+      "delivery_audio_duration_ms": null,
+      "rtf": 1.521234257712766
+    },
+    {
+      "processing_ms": 5785.809802,
+      "pcm_chunks": 13,
+      "provider_samples": 92160,
+      "provider_audio_duration_ms": 3840.0,
+      "ttfa_ms": 1172.384735,
+      "first_packet_ms": null,
+      "synthesis_with_delivery_ms": null,
+      "delivery_total_ms": null,
+      "packet_count": null,
+      "opus_bytes": null,
+      "delivery_audio_duration_ms": null,
+      "rtf": 1.5067213026041666
+    }
+  ],
+  "processing_ms": {
+    "sample_count": 3,
+    "min": 5719.840809,
+    "mean": 5832.968723333334,
+    "p50": 5785.809802,
+    "median": 5785.809802,
+    "max": 5993.255558999999,
+    "p95": 5993.255558999999,
+    "p99": 5993.255558999999
+  },
+  "rtf": {
+    "sample_count": 3,
+    "min": 1.49831388975,
+    "mean": 1.5087564833556442,
+    "p50": 1.5067213026041666,
+    "median": 1.5067213026041666,
+    "max": 1.521234257712766,
+    "p95": 1.521234257712766,
+    "p99": 1.521234257712766
+  },
+  "ttfa_ms": {
+    "sample_count": 3,
+    "min": 1144.779488,
+    "mean": 1173.1874883333332,
+    "p50": 1172.384735,
+    "median": 1172.384735,
+    "max": 1202.3982420000002,
+    "p95": 1202.3982420000002,
+    "p99": 1202.3982420000002
+  },
+  "adapter": "vieneu_http",
+  "model_preparation_ms": 0.000228,
+  "provider_build_and_readiness_ms": 0.011291,
+  "worker_open_ms": 68.309209,
+  "overall_elapsed_ms": 23676.813065000002
+}

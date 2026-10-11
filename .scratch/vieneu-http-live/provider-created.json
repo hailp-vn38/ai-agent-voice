@@ -1,0 +1,29 @@
+{
+  "adapter": "vieneu_http",
+  "config_json": "{\"base_url\":\"http://127.0.0.1:18090/v1\",\"voice\":\"Mai Anh\",\"language\":\"vi-VN\",\"timeout_ms\":120000,\"preload\":false}",
+  "created_at": 1791686485,
+  "credential": {
+    "id": "4d5344c8-81dc-4839-b1a8-4388cf8e6227",
+    "key_version": 1,
+    "masked_key": "…fc0c",
+    "status": "active"
+  },
+  "credential_env": "VOICE_PROVIDER_TTS_8F47B462F11348D6A229A8219FC123D1_API_KEY",
+  "enabled": 1,
+  "id": 1,
+  "key": "tts_8f47b462f11348d6a229a8219fc123d1",
+  "name": "VieNeu live flow",
+  "requires_restart": false,
+  "revision": 1,
+  "runtime": {
+    "can_prepare": true,
+    "desired_revision": 1,
+    "desired_state": "cold",
+    "failure_code": null,
+    "ready_revisions": []
+  },
+  "runtime_matches_desired": false,
+  "runtime_status": "not_loaded",
+  "type": "tts",
+  "updated_at": 1791686485
+}

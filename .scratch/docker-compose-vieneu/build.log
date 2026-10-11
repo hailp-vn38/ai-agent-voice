@@ -1,0 +1,1740 @@
+ Image voice-agent-server:local Building 
+ Image voice-agent-web:local Building 
+ Image voice-agent-vieneu:85344322 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.51kB done
+#1 DONE 0.0s
+
+#2 [vieneu internal] load git source https://github.com/pnnbao97/VieNeu-TTS.git#85344322b7258b4e25479b692e8e3396baf9db34
+#2 CACHED
+
+#3 [vieneu internal] load metadata for docker.io/library/python:3.12-slim-bookworm
+#3 DONE 0.0s
+
+#4 [web internal] load build definition from web.Dockerfile
+#4 transferring dockerfile: 625B done
+#4 DONE 0.3s
+
+#5 [server internal] load build definition from server.Dockerfile
+#5 transferring dockerfile: 2.63kB done
+#5 DONE 0.5s
+
+#6 [server] resolve image config for docker-image://docker.io/docker/dockerfile:1
+#6 ...
+
+#7 [vieneu internal] load metadata for ghcr.io/astral-sh/uv:latest
+#7 DONE 1.5s
+
+#8 [vieneu] FROM ghcr.io/astral-sh/uv:latest@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168
+#8 CACHED
+
+#9 [vieneu stage-0  1/10] FROM docker.io/library/python:3.12-slim-bookworm
+#9 DONE 0.0s
+
+#10 [vieneu stage-0  2/10] COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+#10 ...
+
+#6 [server] resolve image config for docker-image://docker.io/docker/dockerfile:1
+#6 DONE 2.7s
+
+#11 [web] docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#11 CACHED
+
+#10 [vieneu stage-0  2/10] COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+#10 DONE 2.3s
+
+#12 [vieneu stage-0  3/10] RUN useradd --create-home --uid 1000 app && mkdir -p /workspace /opt/venv && chown -R app:app /workspace /opt/venv
+#12 DONE 4.3s
+
+#13 [web internal] load metadata for docker.io/library/node:22-bookworm-slim
+#13 ...
+
+#14 [vieneu stage-0  4/10] WORKDIR /workspace
+#14 DONE 2.6s
+
+#15 [web internal] load metadata for docker.io/library/nginx:1.28-bookworm
+#15 ...
+
+#16 [vieneu stage-0  5/10] COPY --chown=app:app pyproject.toml uv.lock ./
+#16 ...
+
+#17 [server internal] load metadata for docker.io/library/debian:bookworm-slim
+#17 DONE 7.4s
+
+#18 [server internal] load metadata for docker.io/library/rust:1.98.1-bookworm
+#18 DONE 7.6s
+
+#15 [web internal] load metadata for docker.io/library/nginx:1.28-bookworm
+#15 ...
+
+#19 [server internal] load .dockerignore
+#19 ...
+
+#15 [web internal] load metadata for docker.io/library/nginx:1.28-bookworm
+#15 DONE 7.9s
+
+#16 [vieneu stage-0  5/10] COPY --chown=app:app pyproject.toml uv.lock ./
+#16 ...
+
+#13 [web internal] load metadata for docker.io/library/node:22-bookworm-slim
+#13 DONE 8.4s
+
+#19 [web internal] load .dockerignore
+#19 transferring context: 295B done
+#19 DONE 1.4s
+
+#16 [vieneu stage-0  5/10] COPY --chown=app:app pyproject.toml uv.lock ./
+#16 DONE 3.5s
+
+#20 [server runtime 1/4] FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+#20 resolve docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+#20 ...
+
+#21 [web internal] load build context
+#21 transferring context: 914.35kB 0.4s done
+#21 DONE 3.2s
+
+#20 [server runtime 1/4] FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+#20 resolve docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 3.0s done
+#20 sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 5.65kB / 5.65kB done
+#20 sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 1.02kB / 1.02kB done
+#20 sha256:d4c45f66efc59f89b0597d343a9bd72808493c0eacecde5285961743252cee23 453B / 453B done
+#20 DONE 6.0s
+
+#22 [web production 1/3] FROM docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+#22 resolve docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609 1.9s done
+#22 sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609 10.23kB / 10.23kB done
+#22 sha256:3b03dfd827515a07ccf4946000f0bbdd2a4fb6aca7499249fcb6b1f9726823d6 2.29kB / 2.29kB done
+#22 sha256:34e04bb6b4bb37d45845842374be0cd181723daffb230849b1984aaeaa96faba 8.76kB / 8.76kB done
+#22 sha256:ae4ce04d0e1ccb5db08fa441b79635de5590399fae652d10bd3379b231be0ead 28.23MB / 28.23MB 2.7s done
+#22 sha256:049fab013ee9578efd1a2b852e929746604a84227cac41598ba83c36691a180a 41.94MB / 44.15MB 2.8s
+#22 sha256:7f0da823c3c67d772bb4a4d32cf0297d7feb2e289ef7f3e02eb5564d7a636bc9 629B / 629B 1.8s done
+#22 sha256:e92ea34e4fd27efdcc15618de9871d33ddce300d74f45b06e72503b384cef0b7 955B / 955B 2.8s
+#22 extracting sha256:ae4ce04d0e1ccb5db08fa441b79635de5590399fae652d10bd3379b231be0ead
+#22 sha256:049fab013ee9578efd1a2b852e929746604a84227cac41598ba83c36691a180a 44.15MB / 44.15MB 2.9s
+#22 sha256:e92ea34e4fd27efdcc15618de9871d33ddce300d74f45b06e72503b384cef0b7 955B / 955B 3.1s done
+#22 sha256:276a6b624459838cc90bc7303dd433ee069a77ae8dd787258ea6dff2278c885b 0B / 1.21kB 4.0s
+#22 sha256:276a6b624459838cc90bc7303dd433ee069a77ae8dd787258ea6dff2278c885b 1.21kB / 1.21kB 4.4s
+#22 sha256:049fab013ee9578efd1a2b852e929746604a84227cac41598ba83c36691a180a 44.15MB / 44.15MB 4.3s done
+#22 sha256:d9cafe4fb0f5097aa7320bba842a1df5e683410392732066de0f6de9ba6670b2 0B / 404B 4.9s
+#22 sha256:d9cafe4fb0f5097aa7320bba842a1df5e683410392732066de0f6de9ba6670b2 404B / 404B 5.3s
+#22 sha256:9aec91fa40af2ca57c358a3436e8fa2dc48a8b3ed015eb3b5d61ddc9cf086374 0B / 1.40kB 5.3s
+#22 sha256:276a6b624459838cc90bc7303dd433ee069a77ae8dd787258ea6dff2278c885b 1.21kB / 1.21kB 5.4s done
+#22 sha256:9aec91fa40af2ca57c358a3436e8fa2dc48a8b3ed015eb3b5d61ddc9cf086374 1.40kB / 1.40kB 5.5s
+#22 sha256:d9cafe4fb0f5097aa7320bba842a1df5e683410392732066de0f6de9ba6670b2 404B / 404B 5.7s done
+#22 sha256:9aec91fa40af2ca57c358a3436e8fa2dc48a8b3ed015eb3b5d61ddc9cf086374 1.40kB / 1.40kB 5.8s done
+#22 ...
+
+#23 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#23 resolve docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 2.7s done
+#23 sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 5.22kB / 5.22kB done
+#23 sha256:efd0ab5780c2d9ab1f0f869571a00d5edb17793bff4cce4a2792e3eb0ffc7562 1.93kB / 1.93kB done
+#23 sha256:d0a16be756b6ec6658aecb8b7bcf87fa6c7d0d7fcc6ca53ad14bb49a4c90bdd7 6.77kB / 6.77kB done
+#23 sha256:f0400f4b55b0ad346bf6167a1b64a258e4d73db608c457798ce35e4ffeebfaaf 3.31kB / 3.31kB 5.3s done
+#23 sha256:2cfab517365cfc6b4bd1f8c4cb01754884ef75bc38758b3c41e291c696f019f5 0B / 1.71MB 5.5s
+#23 extracting sha256:f0400f4b55b0ad346bf6167a1b64a258e4d73db608c457798ce35e4ffeebfaaf done
+#23 ...
+
+#24 [server internal] load build context
+#24 transferring context: 504.58MB 8.2s
+#24 ...
+
+#22 [web production 1/3] FROM docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+#22 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 resolve docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e 2.9s done
+#25 sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e 6.48kB / 6.48kB done
+#25 sha256:c49256cbe5ea0188bc658a689500d70c41eb51f009a7a7be209caf60a944f3ec 1.94kB / 1.94kB done
+#25 sha256:26d41993b1f2f78dbd010160b83b06b0a38e17b57a269e9bf0be7f2078073f98 4.55kB / 4.55kB done
+#25 ...
+
+#23 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 0B / 49.84MB 6.0s
+#23 ...
+
+#26 [vieneu stage-0  6/10] RUN uv sync --frozen --no-dev --no-install-project --no-build
+#26 9.832 Using CPython 3.12.15 interpreter at: /usr/local/bin/python3
+#26 9.882 Creating virtual environment at: /opt/venv
+#26 ...
+
+#23 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#23 sha256:a8de9fa052209313d8e45435a8486e29b20eebaa820e2e7f63a7c3c94b4fa567 0B / 448B 6.4s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 9.44MB / 49.84MB 6.5s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 15.73MB / 49.84MB 6.6s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 26.21MB / 49.84MB 6.8s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 29.36MB / 49.84MB 6.9s
+#23 sha256:a8de9fa052209313d8e45435a8486e29b20eebaa820e2e7f63a7c3c94b4fa567 448B / 448B 6.9s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 33.55MB / 49.84MB 7.0s
+#23 sha256:2cfab517365cfc6b4bd1f8c4cb01754884ef75bc38758b3c41e291c696f019f5 1.71MB / 1.71MB 7.1s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 37.75MB / 49.84MB 7.1s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 45.09MB / 49.84MB 7.3s
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 49.84MB / 49.84MB 7.5s
+#23 sha256:a8de9fa052209313d8e45435a8486e29b20eebaa820e2e7f63a7c3c94b4fa567 448B / 448B 8.1s done
+#23 sha256:2cfab517365cfc6b4bd1f8c4cb01754884ef75bc38758b3c41e291c696f019f5 1.71MB / 1.71MB 9.0s done
+#23 sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 49.84MB / 49.84MB 9.9s done
+#23 extracting sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856
+#23 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 ...
+
+#23 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#23 ...
+
+#24 [server internal] load build context
+#24 transferring context: 955.92MB 16.9s
+#24 ...
+
+#22 [web production 1/3] FROM docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+#22 extracting sha256:ae4ce04d0e1ccb5db08fa441b79635de5590399fae652d10bd3379b231be0ead 4.2s done
+#22 extracting sha256:049fab013ee9578efd1a2b852e929746604a84227cac41598ba83c36691a180a 5.9s
+#22 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 sha256:81578410df169380efec491bfdc60a7e586d4b48ef4c0aeb9b6ff085812d9a7d 64.42MB / 64.42MB 15.7s
+#25 sha256:eaac70c68abdf6ffacf6de10d31ed9de4813505d1a794eb7393cb27fceb624a6 48.50MB / 48.50MB 15.9s
+#25 sha256:7b2de2423ebd9d3290883175c0e46dccd6de955b08e6e9a5bd20909e3face240 24.06MB / 24.06MB 15.9s
+#25 sha256:81578410df169380efec491bfdc60a7e586d4b48ef4c0aeb9b6ff085812d9a7d 64.42MB / 64.42MB 16.1s done
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 0B / 211.71MB 17.4s
+#25 sha256:7b2de2423ebd9d3290883175c0e46dccd6de955b08e6e9a5bd20909e3face240 24.06MB / 24.06MB 17.9s done
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 14.68MB / 211.71MB 18.6s
+#25 ...
+
+#24 [server internal] load build context
+#24 transferring context: 960.87MB 19.0s done
+#24 DONE 23.2s
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 sha256:eaac70c68abdf6ffacf6de10d31ed9de4813505d1a794eb7393cb27fceb624a6 48.50MB / 48.50MB 18.4s done
+#25 ...
+
+#26 [vieneu stage-0  6/10] RUN uv sync --frozen --no-dev --no-install-project --no-build
+#26 13.01 Downloading sympy (6.0MiB)
+#26 13.01 Downloading hf-xet (4.0MiB)
+#26 13.11 Downloading pillow (6.3MiB)
+#26 13.11 Downloading onnxruntime (16.4MiB)
+#26 13.11 Downloading gradio (60.6MiB)
+#26 13.11 Downloading llvmlite (53.7MiB)
+#26 13.11 Downloading pandas (11.8MiB)
+#26 13.12 Downloading numpy (15.9MiB)
+#26 13.12 Downloading scipy (34.0MiB)
+#26 13.12 Downloading brotli (2.8MiB)
+#26 13.12 Downloading scikit-learn (9.0MiB)
+#26 13.12 Downloading pygments (1.2MiB)
+#26 13.12 Downloading tokenizers (3.1MiB)
+#26 13.12 Downloading ruff (12.7MiB)
+#26 13.12 Downloading numba (3.6MiB)
+#26 13.12 Downloading pydantic-core (1.9MiB)
+#26 13.12 Downloading soundfile (1.3MiB)
+#26 13.12 Downloading sea-g2p (26.6MiB)
+#26 16.01  Downloaded soundfile
+#26 16.12  Downloaded pydantic-core
+#26 16.17  Downloaded pygments
+#26 21.83  Downloaded brotli
+#26 22.64  Downloaded tokenizers
+#26 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 31.46MB / 211.71MB 19.4s
+#25 extracting sha256:eaac70c68abdf6ffacf6de10d31ed9de4813505d1a794eb7393cb27fceb624a6
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 42.99MB / 211.71MB 19.7s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 0B / 213.84MB 19.7s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 60.82MB / 211.71MB 20.1s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 75.50MB / 211.71MB 20.6s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 88.08MB / 211.71MB 21.1s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 12.58MB / 213.84MB 21.1s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 24.12MB / 213.84MB 21.6s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 100.66MB / 211.71MB 21.9s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 35.65MB / 213.84MB 22.1s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 48.23MB / 213.84MB 22.6s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 114.29MB / 211.71MB 22.8s
+#25 extracting sha256:eaac70c68abdf6ffacf6de10d31ed9de4813505d1a794eb7393cb27fceb624a6 3.5s done
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 63.96MB / 213.84MB 23.2s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 76.55MB / 213.84MB 23.6s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 126.88MB / 211.71MB 23.9s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 88.08MB / 213.84MB 24.2s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 140.51MB / 211.71MB 24.8s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 102.76MB / 213.84MB 24.8s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 116.39MB / 213.84MB 25.4s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 156.24MB / 211.71MB 25.6s
+#25 ...
+
+#23 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#23 extracting sha256:d22c69a95cf463f4cb74462bd2899597ce505d82bd4c01ceddf7845e12f13856 8.9s done
+#23 extracting sha256:2cfab517365cfc6b4bd1f8c4cb01754884ef75bc38758b3c41e291c696f019f5 1.3s done
+#23 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 ...
+
+#22 [web production 1/3] FROM docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+#22 extracting sha256:049fab013ee9578efd1a2b852e929746604a84227cac41598ba83c36691a180a 8.7s done
+#22 extracting sha256:7f0da823c3c67d772bb4a4d32cf0297d7feb2e289ef7f3e02eb5564d7a636bc9 done
+#22 extracting sha256:e92ea34e4fd27efdcc15618de9871d33ddce300d74f45b06e72503b384cef0b7 done
+#22 ...
+
+#23 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#23 extracting sha256:a8de9fa052209313d8e45435a8486e29b20eebaa820e2e7f63a7c3c94b4fa567
+#23 extracting sha256:a8de9fa052209313d8e45435a8486e29b20eebaa820e2e7f63a7c3c94b4fa567 done
+#23 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 16.14 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#27 16.56 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#27 16.56 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#27 19.82 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+#27 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 207.70MB / 211.71MB 28.2s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 171.97MB / 213.84MB 28.2s
+#25 extracting sha256:7b2de2423ebd9d3290883175c0e46dccd6de955b08e6e9a5bd20909e3face240 1.0s done
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 186.65MB / 213.84MB 28.9s
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 199.23MB / 213.84MB 29.5s
+#25 ...
+
+#26 [vieneu stage-0  6/10] RUN uv sync --frozen --no-dev --no-install-project --no-build
+#26 23.91  Downloaded numba
+#26 24.39  Downloaded hf-xet
+#26 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 212.86MB / 213.84MB 30.1s
+#25 sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 211.71MB / 211.71MB 32.6s done
+#25 extracting sha256:81578410df169380efec491bfdc60a7e586d4b48ef4c0aeb9b6ff085812d9a7d
+#25 sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 213.84MB / 213.84MB 35.1s done
+#25 ...
+
+#22 [web production 1/3] FROM docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+#22 extracting sha256:d9cafe4fb0f5097aa7320bba842a1df5e683410392732066de0f6de9ba6670b2 done
+#22 extracting sha256:276a6b624459838cc90bc7303dd433ee069a77ae8dd787258ea6dff2278c885b done
+#22 extracting sha256:9aec91fa40af2ca57c358a3436e8fa2dc48a8b3ed015eb3b5d61ddc9cf086374 done
+#22 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 extracting sha256:81578410df169380efec491bfdc60a7e586d4b48ef4c0aeb9b6ff085812d9a7d 5.0s
+#25 extracting sha256:81578410df169380efec491bfdc60a7e586d4b48ef4c0aeb9b6ff085812d9a7d 6.6s done
+#25 extracting sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a
+#25 ...
+
+#26 [vieneu stage-0  6/10] RUN uv sync --frozen --no-dev --no-install-project --no-build
+#26 37.13  Downloaded sympy
+#26 37.59  Downloaded pillow
+#26 39.99  Downloaded scikit-learn
+#26 41.85  Downloaded pandas
+#26 42.18  Downloaded ruff
+#26 43.38  Downloaded numpy
+#26 43.62  Downloaded onnxruntime
+#26 45.20  Downloaded sea-g2p
+#26 45.89  Downloaded scipy
+#26 46.85  Downloaded llvmlite
+#26 47.11  Downloaded gradio
+#26 47.17 Prepared 81 packages in 36.13s
+#26 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 32.33 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#27 32.42 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [349 kB]
+#27 34.08 Fetched 9388 kB in 24s (389 kB/s)
+#27 34.08 Reading package lists...
+#27 35.68 Reading package lists...
+#27 36.68 Building dependency tree...
+#27 36.88 Reading state information...
+#27 37.31 libstdc++6 is already the newest version (12.2.0-14+deb12u1).
+#27 37.31 libstdc++6 set to manually installed.
+#27 37.31 The following additional packages will be installed:
+#27 37.31   libbrotli1 libcurl4 libgssapi-krb5-2 libk5crypto3 libkeyutils1 libkrb5-3
+#27 37.31   libkrb5support0 libldap-2.5-0 libnghttp2-14 libpsl5 librtmp1 libsasl2-2
+#27 37.32   libsasl2-modules-db libssh2-1 libssl3 openssl
+#27 37.32 Suggested packages:
+#27 37.32   krb5-doc krb5-user
+#27 37.32 Recommended packages:
+#27 37.32   krb5-locales libldap-common publicsuffix libsasl2-modules
+#27 37.55 The following NEW packages will be installed:
+#27 37.55   ca-certificates curl libbrotli1 libcurl4 libgomp1 libgssapi-krb5-2
+#27 37.55   libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libldap-2.5-0
+#27 37.55   libnghttp2-14 libpsl5 librtmp1 libsasl2-2 libsasl2-modules-db libssh2-1
+#27 37.56   libssl3 openssl
+#27 38.02 0 upgraded, 19 newly installed, 0 to remove and 1 not upgraded.
+#27 38.02 Need to get 5963 kB of archives.
+#27 38.02 After this operation, 15.1 MB of additional disk space will be used.
+#27 38.02 Get:1 http://deb.debian.org/debian-security bookworm-security/main amd64 libssl3 amd64 3.0.22-1~deb12u1 [2039 kB]
+#27 38.42 Get:2 http://deb.debian.org/debian-security bookworm-security/main amd64 openssl amd64 3.0.22-1~deb12u1 [1442 kB]
+#27 38.46 Get:3 http://deb.debian.org/debian-security bookworm-security/main amd64 ca-certificates all 20250419~deb12u1 [162 kB]
+#27 38.49 Get:4 http://deb.debian.org/debian bookworm/main amd64 libbrotli1 amd64 1.0.9-2+b6 [275 kB]
+#27 38.63 Get:5 http://deb.debian.org/debian bookworm/main amd64 libkrb5support0 amd64 1.20.1-2+deb12u5 [33.2 kB]
+#27 38.68 Get:6 http://deb.debian.org/debian bookworm/main amd64 libk5crypto3 amd64 1.20.1-2+deb12u5 [79.7 kB]
+#27 38.79 Get:7 http://deb.debian.org/debian bookworm/main amd64 libkeyutils1 amd64 1.6.3-2 [8808 B]
+#27 38.86 Get:8 http://deb.debian.org/debian bookworm/main amd64 libkrb5-3 amd64 1.20.1-2+deb12u5 [332 kB]
+#27 39.09 Get:9 http://deb.debian.org/debian bookworm/main amd64 libgssapi-krb5-2 amd64 1.20.1-2+deb12u5 [135 kB]
+#27 39.12 Get:10 http://deb.debian.org/debian bookworm/main amd64 libsasl2-modules-db amd64 2.1.28+dfsg-10 [20.3 kB]
+#27 39.16 Get:11 http://deb.debian.org/debian bookworm/main amd64 libsasl2-2 amd64 2.1.28+dfsg-10 [59.7 kB]
+#27 39.23 Get:12 http://deb.debian.org/debian bookworm/main amd64 libldap-2.5-0 amd64 2.5.13+dfsg-5 [183 kB]
+#27 39.28 Get:13 http://deb.debian.org/debian bookworm/main amd64 libnghttp2-14 amd64 1.52.0-1+deb12u3 [72.4 kB]
+#27 39.43 Get:14 http://deb.debian.org/debian bookworm/main amd64 libpsl5 amd64 0.21.2-1 [58.7 kB]
+#27 39.51 Get:15 http://deb.debian.org/debian bookworm/main amd64 librtmp1 amd64 2.4+20151223.gitfa8646d.1-2+b2 [60.8 kB]
+#27 39.51 Get:16 http://deb.debian.org/debian-security bookworm-security/main amd64 libssh2-1 amd64 1.10.0-3+deb12u1 [176 kB]
+#27 39.62 Get:17 http://deb.debian.org/debian bookworm/main amd64 libcurl4 amd64 7.88.1-10+deb12u15 [392 kB]
+#27 39.77 Get:18 http://deb.debian.org/debian bookworm/main amd64 curl amd64 7.88.1-10+deb12u15 [316 kB]
+#27 39.77 Get:19 http://deb.debian.org/debian bookworm/main amd64 libgomp1 amd64 12.2.0-14+deb12u1 [116 kB]
+#27 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 ...
+
+#23 [web source 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#23 DONE 51.2s
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 extracting sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 5.2s
+#25 extracting sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 10.3s
+#25 extracting sha256:de9e8d0a007171cac57d643a3982902d45431cd860400eea55e18df75fc0b12a 11.6s done
+#25 ...
+
+#28 [web source 2/5] WORKDIR /app
+#28 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 46.43 debconf: delaying package configuration, since apt-utils is not installed
+#27 46.65 Fetched 5963 kB in 2s (2471 kB/s)
+#27 50.45 Selecting previously unselected package libssl3:amd64.
+#27 50.45 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6096 files and directories currently installed.)
+#27 54.72 Preparing to unpack .../00-libssl3_3.0.22-1~deb12u1_amd64.deb ...
+#27 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 extracting sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357
+#25 ...
+
+#22 [web production 1/3] FROM docker.io/library/nginx:1.28-bookworm@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+#22 DONE 67.7s
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 extracting sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 5.1s
+#25 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 56.05 Unpacking libssl3:amd64 (3.0.22-1~deb12u1) ...
+#27 61.06 Selecting previously unselected package openssl.
+#27 61.06 Preparing to unpack .../01-openssl_3.0.22-1~deb12u1_amd64.deb ...
+#27 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 extracting sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 10.3s
+#25 extracting sha256:47495189b3619615361bf1ba54a703b2a44cb7d76757ae1cd6a77d4f845bd357 14.4s done
+#25 ...
+
+#29 [web production 2/3] COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+#29 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 61.34 Unpacking openssl (3.0.22-1~deb12u1) ...
+#27 68.10 Selecting previously unselected package ca-certificates.
+#27 68.11 Preparing to unpack .../02-ca-certificates_20250419~deb12u1_all.deb ...
+#27 68.89 Unpacking ca-certificates (20250419~deb12u1) ...
+#27 75.16 Selecting previously unselected package libbrotli1:amd64.
+#27 75.17 Preparing to unpack .../03-libbrotli1_1.0.9-2+b6_amd64.deb ...
+#27 76.13 Unpacking libbrotli1:amd64 (1.0.9-2+b6) ...
+#27 80.20 Selecting previously unselected package libkrb5support0:amd64.
+#27 80.21 Preparing to unpack .../04-libkrb5support0_1.20.1-2+deb12u5_amd64.deb ...
+#27 80.89 Unpacking libkrb5support0:amd64 (1.20.1-2+deb12u5) ...
+#27 84.95 Selecting previously unselected package libk5crypto3:amd64.
+#27 84.95 Preparing to unpack .../05-libk5crypto3_1.20.1-2+deb12u5_amd64.deb ...
+#27 85.65 Unpacking libk5crypto3:amd64 (1.20.1-2+deb12u5) ...
+#27 ...
+
+#25 [server source  1/10] FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
+#25 DONE 92.7s
+
+#26 [vieneu stage-0  6/10] RUN uv sync --frozen --no-dev --no-install-project --no-build
+#26 ...
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 89.51 Selecting previously unselected package libkeyutils1:amd64.
+#27 89.52 Preparing to unpack .../06-libkeyutils1_1.6.3-2_amd64.deb ...
+#27 89.99 Unpacking libkeyutils1:amd64 (1.6.3-2) ...
+#27 93.61 Selecting previously unselected package libkrb5-3:amd64.
+#27 93.61 Preparing to unpack .../07-libkrb5-3_1.20.1-2+deb12u5_amd64.deb ...
+#27 94.02 Unpacking libkrb5-3:amd64 (1.20.1-2+deb12u5) ...
+#27 ...
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 7.344 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#30 7.563 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#30 7.669 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#30 7.886 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+#30 8.287 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#30 8.330 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [349 kB]
+#30 9.449 Fetched 9388 kB in 2s (4181 kB/s)
+#30 9.449 Reading package lists...
+#30 10.01 Reading package lists...
+#30 10.55 Building dependency tree...
+#30 10.68 Reading state information...
+#30 10.87 pkg-config is already the newest version (1.8.1-1).
+#30 10.87 pkg-config set to manually installed.
+#30 10.87 The following additional packages will be installed:
+#30 10.87   cmake-data libarchive13 libjsoncpp25 librhash0 libuv1
+#30 10.87 Suggested packages:
+#30 10.87   cmake-doc cmake-format elpa-cmake-mode ninja-build lrzip
+#30 10.92 The following NEW packages will be installed:
+#30 10.93   cmake cmake-data libarchive13 libjsoncpp25 librhash0 libuv1
+#30 11.12 0 upgraded, 6 newly installed, 0 to remove and 22 not upgraded.
+#30 11.12 Need to get 11.4 MB of archives.
+#30 11.12 After this operation, 42.0 MB of additional disk space will be used.
+#30 11.12 Get:1 http://deb.debian.org/debian-security bookworm-security/main amd64 libarchive13 amd64 3.6.2-1+deb12u5 [345 kB]
+#30 11.34 Get:2 http://deb.debian.org/debian bookworm/main amd64 libjsoncpp25 amd64 1.9.5-4 [78.6 kB]
+#30 11.45 Get:3 http://deb.debian.org/debian bookworm/main amd64 librhash0 amd64 1.4.3-3 [134 kB]
+#30 11.49 Get:4 http://deb.debian.org/debian bookworm/main amd64 libuv1 amd64 1.44.2-1+deb12u1 [136 kB]
+#30 11.52 Get:5 http://deb.debian.org/debian bookworm/main amd64 cmake-data all 3.25.1-1 [2026 kB]
+#30 11.84 Get:6 http://deb.debian.org/debian bookworm/main amd64 cmake amd64 3.25.1-1 [8692 kB]
+#30 13.09 debconf: delaying package configuration, since apt-utils is not installed
+#30 13.90 Fetched 11.4 MB in 1s (8354 kB/s)
+#30 16.72 Selecting previously unselected package libarchive13:amd64.
+#30 16.72 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 23263 files and directories currently installed.)
+#30 16.77 Preparing to unpack .../0-libarchive13_3.6.2-1+deb12u5_amd64.deb ...
+#30 17.85 Unpacking libarchive13:amd64 (3.6.2-1+deb12u5) ...
+#30 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 97.57 Selecting previously unselected package libgssapi-krb5-2:amd64.
+#27 97.58 Preparing to unpack .../08-libgssapi-krb5-2_1.20.1-2+deb12u5_amd64.deb ...
+#27 97.96 Unpacking libgssapi-krb5-2:amd64 (1.20.1-2+deb12u5) ...
+#27 100.5 Selecting previously unselected package libsasl2-modules-db:amd64.
+#27 100.5 Preparing to unpack .../09-libsasl2-modules-db_2.1.28+dfsg-10_amd64.deb ...
+#27 101.5 Unpacking libsasl2-modules-db:amd64 (2.1.28+dfsg-10) ...
+#27 105.1 Selecting previously unselected package libsasl2-2:amd64.
+#27 105.1 Preparing to unpack .../10-libsasl2-2_2.1.28+dfsg-10_amd64.deb ...
+#27 105.8 Unpacking libsasl2-2:amd64 (2.1.28+dfsg-10) ...
+#27 ...
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 22.41 Selecting previously unselected package libjsoncpp25:amd64.
+#30 22.41 Preparing to unpack .../1-libjsoncpp25_1.9.5-4_amd64.deb ...
+#30 23.10 Unpacking libjsoncpp25:amd64 (1.9.5-4) ...
+#30 27.98 Selecting previously unselected package librhash0:amd64.
+#30 28.00 Preparing to unpack .../2-librhash0_1.4.3-3_amd64.deb ...
+#30 28.80 Unpacking librhash0:amd64 (1.4.3-3) ...
+#30 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 110.6 Selecting previously unselected package libldap-2.5-0:amd64.
+#27 110.6 Preparing to unpack .../11-libldap-2.5-0_2.5.13+dfsg-5_amd64.deb ...
+#27 111.2 Unpacking libldap-2.5-0:amd64 (2.5.13+dfsg-5) ...
+#27 116.7 Selecting previously unselected package libnghttp2-14:amd64.
+#27 116.7 Preparing to unpack .../12-libnghttp2-14_1.52.0-1+deb12u3_amd64.deb ...
+#27 117.5 Unpacking libnghttp2-14:amd64 (1.52.0-1+deb12u3) ...
+#27 ...
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 33.57 Selecting previously unselected package libuv1:amd64.
+#30 33.59 Preparing to unpack .../3-libuv1_1.44.2-1+deb12u1_amd64.deb ...
+#30 34.27 Unpacking libuv1:amd64 (1.44.2-1+deb12u1) ...
+#30 39.69 Selecting previously unselected package cmake-data.
+#30 39.72 Preparing to unpack .../4-cmake-data_3.25.1-1_all.deb ...
+#30 40.34 Unpacking cmake-data (3.25.1-1) ...
+#30 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 122.7 Selecting previously unselected package libpsl5:amd64.
+#27 122.7 Preparing to unpack .../13-libpsl5_0.21.2-1_amd64.deb ...
+#27 123.6 Unpacking libpsl5:amd64 (0.21.2-1) ...
+#27 127.2 Selecting previously unselected package librtmp1:amd64.
+#27 127.2 Preparing to unpack .../14-librtmp1_2.4+20151223.gitfa8646d.1-2+b2_amd64.deb ...
+#27 127.8 Unpacking librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2+b2) ...
+#27 ...
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 44.11 Selecting previously unselected package cmake.
+#30 44.12 Preparing to unpack .../5-cmake_3.25.1-1_amd64.deb ...
+#30 44.80 Unpacking cmake (3.25.1-1) ...
+#30 49.03 Setting up libarchive13:amd64 (3.6.2-1+deb12u5) ...
+#30 51.63 Setting up libuv1:amd64 (1.44.2-1+deb12u1) ...
+#30 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 131.9 Selecting previously unselected package libssh2-1:amd64.
+#27 131.9 Preparing to unpack .../15-libssh2-1_1.10.0-3+deb12u1_amd64.deb ...
+#27 132.4 Unpacking libssh2-1:amd64 (1.10.0-3+deb12u1) ...
+#27 137.3 Selecting previously unselected package libcurl4:amd64.
+#27 137.3 Preparing to unpack .../16-libcurl4_7.88.1-10+deb12u15_amd64.deb ...
+#27 138.5 Unpacking libcurl4:amd64 (7.88.1-10+deb12u15) ...
+#27 ...
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 54.20 Setting up libjsoncpp25:amd64 (1.9.5-4) ...
+#30 ...
+
+#28 [web source 2/5] WORKDIR /app
+#28 DONE 97.2s
+
+#26 [vieneu stage-0  6/10] RUN uv sync --frozen --no-dev --no-install-project --no-build
+#26 ...
+
+#31 [web source 3/5] COPY apps/admin-web/package.json apps/admin-web/package-lock.json ./
+#31 ...
+
+#29 [web production 2/3] COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+#29 DONE 82.1s
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 56.79 Setting up librhash0:amd64 (1.4.3-3) ...
+#30 58.50 Setting up cmake-data (3.25.1-1) ...
+#30 60.34 Setting up cmake (3.25.1-1) ...
+#30 62.64 Processing triggers for libc-bin (2.36-9+deb12u14) ...
+#30 ...
+
+#31 [web source 3/5] COPY apps/admin-web/package.json apps/admin-web/package-lock.json ./
+#31 DONE 6.5s
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 143.1 Selecting previously unselected package curl.
+#27 143.1 Preparing to unpack .../17-curl_7.88.1-10+deb12u15_amd64.deb ...
+#27 143.7 Unpacking curl (7.88.1-10+deb12u15) ...
+#27 147.7 Selecting previously unselected package libgomp1:amd64.
+#27 147.7 Preparing to unpack .../18-libgomp1_12.2.0-14+deb12u1_amd64.deb ...
+#27 148.3 Unpacking libgomp1:amd64 (12.2.0-14+deb12u1) ...
+#27 ...
+
+#32 [web source 4/5] RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+#32 ...
+
+#30 [server source  2/10] RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config     && rm -rf /var/lib/apt/lists/*
+#30 DONE 68.5s
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 152.5 Setting up libkeyutils1:amd64 (1.6.3-2) ...
+#27 154.5 Setting up libpsl5:amd64 (0.21.2-1) ...
+#27 155.9 Setting up libbrotli1:amd64 (1.0.9-2+b6) ...
+#27 157.1 Setting up libssl3:amd64 (3.0.22-1~deb12u1) ...
+#27 158.6 Setting up libnghttp2-14:amd64 (1.52.0-1+deb12u3) ...
+#27 159.9 Setting up libgomp1:amd64 (12.2.0-14+deb12u1) ...
+#27 ...
+
+#33 [server source  3/10] WORKDIR /app
+#33 DONE 6.3s
+
+#32 [web source 4/5] RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+#32 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 161.7 Setting up libkrb5support0:amd64 (1.20.1-2+deb12u5) ...
+#27 163.4 Setting up libsasl2-modules-db:amd64 (2.1.28+dfsg-10) ...
+#27 165.1 Setting up librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2+b2) ...
+#27 166.4 Setting up libk5crypto3:amd64 (1.20.1-2+deb12u5) ...
+#27 168.5 Setting up libsasl2-2:amd64 (2.1.28+dfsg-10) ...
+#27 ...
+
+#34 [server source  4/10] COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+#34 DONE 8.4s
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 170.4 Setting up libssh2-1:amd64 (1.10.0-3+deb12u1) ...
+#27 171.8 Setting up libkrb5-3:amd64 (1.20.1-2+deb12u5) ...
+#27 173.8 Setting up openssl (3.0.22-1~deb12u1) ...
+#27 176.2 Setting up libldap-2.5-0:amd64 (2.5.13+dfsg-5) ...
+#27 178.4 Setting up ca-certificates (20250419~deb12u1) ...
+#27 ...
+
+#35 [server source  5/10] COPY .cargo .cargo
+#35 DONE 8.3s
+
+#32 [web source 4/5] RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+#32 ...
+
+#36 [server source  6/10] COPY crates crates
+#36 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 181.5 debconf: unable to initialize frontend: Dialog
+#27 181.5 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#27 181.5 debconf: falling back to frontend: Readline
+#27 181.6 debconf: unable to initialize frontend: Readline
+#27 181.6 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC contains: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.36.0 /usr/local/share/perl/5.36.0 /usr/lib/x86_64-linux-gnu/perl5/5.36 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.36 /usr/share/perl/5.36 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 7.)
+#27 181.6 debconf: falling back to frontend: Teletype
+#27 183.5 Updating certificates in /etc/ssl/certs...
+#27 184.7 150 added, 0 removed; done.
+#27 186.7 Setting up libgssapi-krb5-2:amd64 (1.20.1-2+deb12u5) ...
+#27 188.0 Setting up libcurl4:amd64 (7.88.1-10+deb12u15) ...
+#27 189.1 Setting up curl (7.88.1-10+deb12u15) ...
+#27 190.3 Processing triggers for libc-bin (2.36-9+deb12u14) ...
+#27 ...
+
+#32 [web source 4/5] RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+#32 40.77 npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+#32 42.76 
+#32 42.76 added 217 packages in 9s
+#32 42.76 npm notice
+#32 42.76 npm notice New major version of npm available! 10.9.9 -> 12.2.0
+#32 42.76 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+#32 42.76 npm notice To update run: npm install -g npm@12.2.0
+#32 42.76 npm notice
+#32 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 192.7 Processing triggers for ca-certificates (20250419~deb12u1) ...
+#27 193.2 Updating certificates in /etc/ssl/certs...
+#27 193.9 0 added, 0 removed; done.
+#27 193.9 Running hooks in /etc/ca-certificates/update.d...
+#27 194.0 done.
+#27 ...
+
+#32 [web source 4/5] RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+#32 DONE 53.7s
+
+#37 [web source 5/5] COPY apps/admin-web/ ./
+#37 ...
+
+#27 [server runtime 2/4] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1     && rm -rf /var/lib/apt/lists/*
+#27 DONE 204.0s
+
+#38 [server runtime 3/4] WORKDIR /app
+#38 DONE 3.7s
+
+#36 [server source  6/10] COPY crates crates
+#36 ...
+
+#39 [server runtime 4/4] COPY assets/enrollment assets/enrollment
+#39 ...
+
+#26 [vieneu stage-0  6/10] RUN uv sync --frozen --no-dev --no-install-project --no-build
+#26 214.8 Installed 81 packages in 2m 47s
+#26 214.8  + aiofiles==24.1.0
+#26 214.8  + annotated-doc==0.0.3
+#26 214.8  + annotated-types==0.7.0
+#26 214.8  + anyio==4.11.0
+#26 214.8  + audioread==3.1.0
+#26 214.8  + brotli==1.1.0
+#26 214.8  + certifi==2025.10.5
+#26 214.8  + cffi==2.0.0
+#26 214.8  + charset-normalizer==3.4.4
+#26 214.8  + click==8.2.1
+#26 214.8  + decorator==5.2.1
+#26 214.8  + fastapi==0.120.2
+#26 214.8  + ffmpy==0.6.4
+#26 214.8  + filelock==3.20.0
+#26 214.8  + flatbuffers==25.9.23
+#26 214.8  + fsspec==2025.9.0
+#26 214.8  + gradio==5.49.1
+#26 214.8  + gradio-client==1.13.3
+#26 214.8  + groovy==0.1.2
+#26 214.8  + h11==0.16.0
+#26 214.8  + hf-xet==1.4.3
+#26 214.8  + httpcore==1.0.9
+#26 214.8  + httpx==0.28.1
+#26 214.8  + huggingface-hub==0.36.0
+#26 214.8  + idna==3.11
+#26 214.8  + jinja2==3.1.6
+#26 214.8  + joblib==1.5.2
+#26 214.8  + kaldi-native-fbank==1.22.3
+#26 214.8  + lazy-loader==0.4
+#26 214.8  + librosa==0.11.0
+#26 214.8  + llvmlite==0.45.1
+#26 214.8  + markdown-it-py==4.0.0
+#26 214.8  + markupsafe==3.0.3
+#26 214.8  + mdurl==0.1.2
+#26 214.8  + mpmath==1.3.0
+#26 214.8  + msgpack==1.1.2
+#26 214.8  + numba==0.62.1
+#26 214.8  + numpy==2.3.4
+#26 214.8  + onnxruntime==1.24.4
+#26 214.8  + orjson==3.11.4
+#26 214.8  + packaging==25.0
+#26 214.8  + pandas==2.3.3
+#26 214.8  + pillow==11.3.0
+#26 214.8  + platformdirs==4.5.0
+#26 214.8  + pooch==1.8.2
+#26 214.8  + protobuf==6.33.2
+#26 214.8  + pycparser==2.23
+#26 214.8  + pydantic==2.11.10
+#26 214.8  + pydantic-core==2.33.2
+#26 214.8  + pydub==0.25.1
+#26 214.8  + pygments==2.19.2
+#26 214.8  + python-dateutil==2.9.0.post0
+#26 214.8  + python-multipart==0.0.20
+#26 214.8  + pytz==2025.2
+#26 214.8  + pyyaml==6.0.3
+#26 214.8  + requests==2.32.5
+#26 214.8  + rich==14.2.0
+#26 214.8  + ruff==0.14.2
+#26 214.8  + safehttpx==0.1.7
+#26 214.8  + scikit-learn==1.7.2
+#26 214.8  + scipy==1.16.2
+#26 214.8  + sea-g2p==0.9.1
+#26 214.8  + semantic-version==2.10.0
+#26 214.8  + shellingham==1.5.4
+#26 214.8  + six==1.17.0
+#26 214.8  + sniffio==1.3.1
+#26 214.8  + soundfile==0.13.1
+#26 214.8  + soxr==1.0.0
+#26 214.8  + starlette==0.49.1
+#26 214.8  + sympy==1.14.0
+#26 214.8  + threadpoolctl==3.6.0
+#26 214.8  + tokenizers==0.22.2
+#26 214.8  + tomlkit==0.13.3
+#26 214.8  + tqdm==4.67.1
+#26 214.8  + typer==0.20.0
+#26 214.8  + typing-extensions==4.15.0
+#26 214.8  + typing-inspection==0.4.2
+#26 214.8  + tzdata==2025.2
+#26 214.8  + urllib3==2.5.0
+#26 214.8  + uvicorn==0.38.0
+#26 214.8  + websockets==15.0.1
+#26 DONE 216.9s
+
+#40 [vieneu stage-0  7/10] COPY --chown=app:app src/ src/
+#40 ...
+
+#39 [server runtime 4/4] COPY assets/enrollment assets/enrollment
+#39 DONE 3.6s
+
+#40 [vieneu stage-0  7/10] COPY --chown=app:app src/ src/
+#40 ...
+
+#37 [web source 5/5] COPY apps/admin-web/ ./
+#37 DONE 9.9s
+
+#41 [server production 1/2] RUN case "amd64" in amd64) ort_arch=x64 ;; arm64) ort_arch=aarch64 ;; *) exit 1 ;; esac     && curl --fail --location --retry 3        "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-${ort_arch}-1.23.2.tgz"        --output /tmp/onnxruntime.tgz     && mkdir -p runtime/onnxruntime     && tar -xzf /tmp/onnxruntime.tgz --strip-components=2 -C runtime/onnxruntime        "onnxruntime-linux-${ort_arch}-1.23.2/lib"     && rm /tmp/onnxruntime.tgz
+#41 3.046   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+#41 3.046                                  Dload  Upload   Total   Spent    Left  Speed
+#41 3.046   0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+#41 4.041   8 8114k    8  668k    0     0   671k      0  0:00:12 --:--:--  0:00:12  671k100 8114k  100 8114k    0     0  7375k      0  0:00:01  0:00:01 --:--:-- 69.2M
+#41 DONE 6.2s
+
+#42 [web build 1/1] RUN npm run build
+#42 ...
+
+#40 [vieneu stage-0  7/10] COPY --chown=app:app src/ src/
+#40 DONE 7.2s
+
+#43 [vieneu stage-0  8/10] COPY --chown=app:app apps/ apps/
+#43 DONE 2.0s
+
+#36 [server source  6/10] COPY crates crates
+#36 ...
+
+#44 [vieneu stage-0  9/10] COPY --chown=app:app config.yaml ./
+#44 DONE 1.9s
+
+#36 [server source  6/10] COPY crates crates
+#36 ...
+
+#45 [vieneu stage-0 10/10] COPY --chown=app:app examples/audio_ref/ examples/audio_ref/
+#45 DONE 2.6s
+
+#36 [server source  6/10] COPY crates crates
+#36 ...
+
+#46 [vieneu] exporting to image
+#46 exporting layers
+#46 ...
+
+#42 [web build 1/1] RUN npm run build
+#42 13.79 
+#42 13.79 > voice-agent-admin-web@0.1.0 build
+#42 13.79 > npm run typecheck && vite build
+#42 13.79 
+#42 14.01 
+#42 14.01 > voice-agent-admin-web@0.1.0 typecheck
+#42 14.01 > vue-tsc -p tsconfig.app.json --noEmit
+#42 14.01 
+#42 ...
+
+#36 [server source  6/10] COPY crates crates
+#36 DONE 59.2s
+
+#47 [server source  7/10] COPY prompts prompts
+#47 DONE 2.0s
+
+#42 [web build 1/1] RUN npm run build
+#42 ...
+
+#48 [server source  8/10] COPY assets assets
+#48 DONE 1.6s
+
+#42 [web build 1/1] RUN npm run build
+#42 27.12 vite v8.3.1 building client environment for production...
+#42 27.14 transforming...
+#42 28.51 ✓ 2091 modules transformed.
+#42 28.59 rendering chunks...
+#42 28.72 computing gzip size...
+#42 28.73 dist/index.html                                       0.67 kB │ gzip:  0.38 kB
+#42 28.73 dist/assets/VoiceRecordingDock-YigSqvR6.css           1.81 kB │ gzip:  0.55 kB
+#42 28.73 dist/assets/index-CBHKurj_.css                       56.82 kB │ gzip:  9.76 kB
+#42 28.73 dist/assets/_plugin-vue_export-helper-BDNMzG2s.js     0.08 kB │ gzip:  0.09 kB
+#42 28.73 dist/assets/chevron-right-Bb70CG7p.js                 0.14 kB │ gzip:  0.14 kB
+#42 28.73 dist/assets/plus-1SUoYMXP.js                          0.16 kB │ gzip:  0.15 kB
+#42 28.73 dist/assets/arrow-right-CPWcLmD6.js                   0.17 kB │ gzip:  0.16 kB
+#42 28.73 dist/assets/arrow-up-right-Diuegkp6.js                0.17 kB │ gzip:  0.16 kB
+#42 28.73 dist/assets/search-D9rYnZSp.js                        0.18 kB │ gzip:  0.17 kB
+#42 28.73 dist/assets/circle-check-4jId2sI1.js                  0.22 kB │ gzip:  0.19 kB
+#42 28.73 dist/assets/activity-CShs-njs.js                      0.24 kB │ gzip:  0.20 kB
+#42 28.73 dist/assets/copy-rGPZhOuA.js                          0.24 kB │ gzip:  0.21 kB
+#42 28.73 dist/assets/link-2-FZly_ny1.js                        0.25 kB │ gzip:  0.21 kB
+#42 28.73 dist/assets/settings-2-nTeHfd-Z.js                    0.26 kB │ gzip:  0.20 kB
+#42 28.73 dist/assets/CardDescription-C9trnwLE.js               0.26 kB │ gzip:  0.22 kB
+#42 28.73 dist/assets/presentation-CBXYSK68.js                  0.32 kB │ gzip:  0.23 kB
+#42 28.73 dist/assets/shield-check-K6HZNCgJ.js                  0.33 kB │ gzip:  0.25 kB
+#42 28.73 dist/assets/refresh-cw-Dqc2OGfL.js                    0.33 kB │ gzip:  0.23 kB
+#42 28.73 dist/assets/monitor-smartphone-B45cDmpD.js            0.33 kB │ gzip:  0.25 kB
+#42 28.73 dist/assets/trash-BnEb0iI7.js                         0.35 kB │ gzip:  0.23 kB
+#42 28.73 dist/assets/layers-CCN5QUg_.js                        0.45 kB │ gzip:  0.26 kB
+#42 28.73 dist/assets/providerEndpoint-78dx_Pzk.js              0.58 kB │ gzip:  0.35 kB
+#42 28.73 dist/assets/Badge-DPp93CEj.js                         0.70 kB │ gzip:  0.38 kB
+#42 28.73 dist/assets/CardTitle-BSEAw6sO.js                     0.71 kB │ gzip:  0.37 kB
+#42 28.73 dist/assets/PageHeader-QVRFF2f4.js                    0.76 kB │ gzip:  0.46 kB
+#42 28.73 dist/assets/mcp-BFVPWBp0.js                           0.88 kB │ gzip:  0.42 kB
+#42 28.73 dist/assets/server-B3PSZUJM.js                        1.05 kB │ gzip:  0.52 kB
+#42 28.73 dist/assets/VoiceDeviceIcon-CCsdGhE7.js               1.09 kB │ gzip:  0.68 kB
+#42 28.73 dist/assets/ProviderUsageList-CC7slimF.js             1.33 kB │ gzip:  0.76 kB
+#42 28.73 dist/assets/providerTypeIcons-CORbdnN5.js             1.47 kB │ gzip:  0.66 kB
+#42 28.73 dist/assets/DetailHeader-DqJUQdVV.js                  1.65 kB │ gzip:  0.87 kB
+#42 28.73 dist/assets/speakers-CgwZEEhD.js                      1.72 kB │ gzip:  0.70 kB
+#42 28.73 dist/assets/TemplateActionsMenu-9jdp6w3E.js           1.74 kB │ gzip:  0.72 kB
+#42 28.73 dist/assets/ConfirmDialog-tcfXg_UQ.js                 2.00 kB │ gzip:  1.06 kB
+#42 28.73 dist/assets/BaseModal-CXuB6J6o.js                     2.19 kB │ gzip:  1.21 kB
+#42 28.73 dist/assets/ClaimDeviceEnrollmentModal-D_OBv5XI.js    3.16 kB │ gzip:  1.60 kB
+#42 28.73 dist/assets/MenuItem-CaK5R2X9.js                      4.24 kB │ gzip:  1.95 kB
+#42 28.73 dist/assets/AgentFormModal-CjCQvDam.js                4.95 kB │ gzip:  1.75 kB
+#42 28.73 dist/assets/McpServerDetailPage-B_26yYFI.js           5.08 kB │ gzip:  1.99 kB
+#42 28.73 dist/assets/OverviewView-BuL-uWk6.js                  5.28 kB │ gzip:  1.91 kB
+#42 28.73 dist/assets/AgentsView-DVMc9YlL.js                    5.77 kB │ gzip:  2.29 kB
+#42 28.73 dist/assets/SystemView-Cxlr7XmD.js                    6.04 kB │ gzip:  1.90 kB
+#42 28.73 dist/assets/DeviceCard-Dq0Z3Uh0.js                    6.14 kB │ gzip:  2.34 kB
+#42 28.73 dist/assets/SpeakerEnrollmentWizard-Doksl--d.js       6.24 kB │ gzip:  2.73 kB
+#42 28.73 dist/assets/DevicesView-DSz83L_o.js                   8.28 kB │ gzip:  3.16 kB
+#42 28.73 dist/assets/VoiceRecordingDock-Be0a2w5w.js            8.95 kB │ gzip:  3.92 kB
+#42 28.73 dist/assets/TemplateDetailPage-Df9IaK9S.js            9.14 kB │ gzip:  3.21 kB
+#42 28.73 dist/assets/McpServersView-BKqrbqxW.js                9.73 kB │ gzip:  3.40 kB
+#42 28.73 dist/assets/SpeakersView-r3xcNG8i.js                  9.97 kB │ gzip:  3.63 kB
+#42 28.73 dist/assets/TemplatesPage-D04nwMYQ.js                 9.98 kB │ gzip:  3.59 kB
+#42 28.73 dist/assets/McpServerFormModal-BipSj1bB.js           11.48 kB │ gzip:  3.86 kB
+#42 28.73 dist/assets/SpeakerDetailPage-Be-qM8LR.js            11.91 kB │ gzip:  3.97 kB
+#42 28.73 dist/assets/DeviceDetailPage-CjyJXv2S.js             12.43 kB │ gzip:  3.98 kB
+#42 28.73 dist/assets/TemplateFormDialog-DTMTBhbW.js           12.46 kB │ gzip:  3.70 kB
+#42 28.73 dist/assets/ProviderFormModal-DIE2nEzd.js            14.44 kB │ gzip:  5.19 kB
+#42 28.73 dist/assets/ProviderDetailPage-_aHxJ2yS.js           16.73 kB │ gzip:  5.02 kB
+#42 28.73 dist/assets/TemplateConfigurationPanel-B-efF7Cg.js   23.29 kB │ gzip:  6.27 kB
+#42 28.73 dist/assets/ProvidersView-BMSF87PT.js                29.61 kB │ gzip:  9.22 kB
+#42 28.73 dist/assets/AgentDetailPage-Cst1W8bv.js              47.37 kB │ gzip: 13.61 kB
+#42 28.73 dist/assets/index-DyHYXb-m.js                        73.33 kB │ gzip: 26.49 kB
+#42 28.73 dist/assets/client-CcgWzlUx.js                      161.85 kB │ gzip: 54.06 kB
+#42 28.73 
+#42 28.73 ✓ built in 1.61s
+#42 28.80 npm notice
+#42 28.80 npm notice New major version of npm available! 10.9.9 -> 12.2.0
+#42 28.80 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+#42 28.80 npm notice To update run: npm install -g npm@12.2.0
+#42 28.80 npm notice
+#42 DONE 30.1s
+
+#49 [server source  9/10] COPY config.example.toml ./
+#49 DONE 2.6s
+
+#50 [web production 3/3] COPY --from=build /app/dist /usr/share/nginx/html
+#50 ...
+
+#51 [server source 10/10] COPY docker docker
+#51 DONE 2.3s
+
+#50 [web production 3/3] COPY --from=build /app/dist /usr/share/nginx/html
+#50 DONE 3.1s
+
+#46 [vieneu] exporting to image
+#46 ...
+
+#52 [server release 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked --release -p voice-agent-server --bin voice-agent-server     && cp /mnt/storage/ai-agent-voice/target/release/voice-agent-server /voice-agent-server
+#52 ...
+
+#53 [web] exporting to image
+#53 exporting layers 1.9s done
+#53 writing image sha256:c544b12e62363d9cbaf381c6143246286f7d3e831430ee5722adc4c3f1f4aef8 0.2s done
+#53 naming to docker.io/library/voice-agent-web:local 0.3s done
+#53 DONE 3.4s
+
+#52 [server release 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked --release -p voice-agent-server --bin voice-agent-server     && cp /mnt/storage/ai-agent-voice/target/release/voice-agent-server /voice-agent-server
+#52 ...
+
+#54 [web] resolving provenance for metadata file
+#54 DONE 0.0s
+
+#46 [vieneu] exporting to image
+#46 ...
+
+#52 [server release 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked --release -p voice-agent-server --bin voice-agent-server     && cp /mnt/storage/ai-agent-voice/target/release/voice-agent-server /voice-agent-server
+#52 13.54 info: syncing channel updates for 1.98.1-x86_64-unknown-linux-gnu
+#52 14.78 info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+#52 14.82 info: downloading 2 components
+#52 16.68     Updating crates.io index
+#52 21.13  Downloading crates ...
+#52 21.34   Downloaded getrandom v0.4.3
+#52 21.38   Downloaded adler2 v2.0.1
+#52 21.38   Downloaded heck v0.5.0
+#52 21.38   Downloaded home v0.5.12
+#52 21.38   Downloaded http-body v1.1.0
+#52 21.39   Downloaded lazy_static v1.5.0
+#52 21.40   Downloaded monostate v0.1.18
+#52 21.40   Downloaded num-conv v0.2.2
+#52 21.41   Downloaded macro_rules_attribute-proc_macro v0.2.3
+#52 21.41   Downloaded pkcs1 v0.7.5
+#52 21.42   Downloaded percent-encoding v2.3.2
+#52 21.42   Downloaded md-5 v0.10.6
+#52 21.43   Downloaded num-iter v0.1.46
+#52 21.44   Downloaded monostate-impl v0.1.18
+#52 21.44   Downloaded lru-slab v0.1.3
+#52 21.44   Downloaded pbkdf2 v0.12.2
+#52 21.45   Downloaded option-ext v0.2.0
+#52 21.46   Downloaded mime v0.3.17
+#52 21.47   Downloaded matchers v0.2.0
+#52 21.47   Downloaded openssl-probe v0.2.1
+#52 21.47   Downloaded parking v2.2.1
+#52 21.48   Downloaded tokio-macros v2.7.2
+#52 21.48   Downloaded ident_case v1.0.1
+#52 21.48   Downloaded multiversion_no_op v1.0.0
+#52 21.48   Downloaded idna_adapter v1.2.2
+#52 21.49   Downloaded itoa v1.0.18
+#52 21.52   Downloaded httpdate v1.0.3
+#52 21.52   Downloaded macro_rules_attribute v0.2.3
+#52 21.53   Downloaded toml_datetime v0.6.11
+#52 21.53   Downloaded tinyvec v1.13.3
+#52 21.55   Downloaded http-body-util v0.1.5
+#52 21.55   Downloaded ipnet v2.12.2
+#52 21.55   Downloaded jobserver v0.1.35
+#52 21.57   Downloaded nu-ansi-term v0.50.3
+#52 21.57   Downloaded opus2 v0.4.0
+#52 21.57   Downloaded pest_generator v2.9.2
+#52 21.57   Downloaded hex v0.4.3
+#52 21.58   Downloaded inout v0.1.4
+#52 21.58   Downloaded num-complex v0.4.6
+#52 21.58   Downloaded num-integer v0.1.47
+#52 21.58   Downloaded pest_derive v2.9.2
+#52 21.58   Downloaded paste v1.0.15
+#52 21.59   Downloaded pem-rfc7468 v0.7.0
+#52 21.59   Downloaded hmac v0.12.1
+#52 21.59   Downloaded httparse v1.10.1
+#52 21.60   Downloaded pastey v0.2.3
+#52 21.60   Downloaded pin-project-lite v0.2.17
+#52 21.61   Downloaded lock_api v0.4.14
+#52 21.61   Downloaded lzma-rs v0.3.0
+#52 21.62   Downloaded onig v6.5.3
+#52 21.63   Downloaded sha1 v0.11.0
+#52 21.63   Downloaded hashlink v0.10.0
+#52 21.63   Downloaded hybrid-array v0.4.15
+#52 21.63   Downloaded hyper-rustls v0.27.10
+#52 21.64   Downloaded iana-time-zone v0.1.65
+#52 21.64   Downloaded libloading v0.9.0
+#52 21.64   Downloaded litemap v0.8.3
+#52 21.65   Downloaded matchit v0.8.4
+#52 21.65   Downloaded mime_guess v2.0.5
+#52 21.65   Downloaded multer v3.1.0
+#52 21.66   Downloaded ndarray-npy v0.10.0
+#52 21.66   Downloaded once_cell v1.21.4
+#52 21.67   Downloaded parking_lot v0.12.5
+#52 21.67   Downloaded parking_lot_core v0.9.12
+#52 21.67   Downloaded serde_urlencoded v0.7.1
+#52 21.68   Downloaded hashbrown v0.15.5
+#52 21.68   Downloaded hound v3.5.1
+#52 21.69   Downloaded serde_bytes v0.11.19
+#52 21.69   Downloaded tracing-log v0.2.0
+#52 21.70   Downloaded stable_deref_trait v1.2.1
+#52 21.70   Downloaded icu_provider v2.3.1
+#52 21.70   Downloaded matrixmultiply v0.3.11
+#52 21.71   Downloaded rustversion v1.0.23
+#52 21.71   Downloaded untrusted v0.9.0
+#52 21.71   Downloaded num-traits v0.2.19
+#52 21.72   Downloaded ort-sys v2.0.0-rc.13
+#52 21.72   Downloaded rustls-native-certs v0.8.4
+#52 21.72   Downloaded simd-adler32 v0.3.10
+#52 21.73   Downloaded icu_normalizer_data v2.3.0
+#52 21.73   Downloaded indicatif v0.18.6
+#52 21.74   Downloaded log v0.4.34
+#52 21.74   Downloaded pest_meta v2.9.2
+#52 21.74   Downloaded rayon-core v1.13.0
+#52 21.75   Downloaded socket2 v0.6.5
+#52 21.75   Downloaded sqlx-macros-core v0.8.6
+#52 21.76   Downloaded static_assertions v1.1.0
+#52 21.76   Downloaded sync_wrapper v1.0.2
+#52 21.76   Downloaded thiserror v2.0.20
+#52 21.77   Downloaded thiserror-impl v1.0.69
+#52 21.77   Downloaded bitflags v2.13.2
+#52 21.78   Downloaded http v1.5.0
+#52 21.79   Downloaded icu_collections v2.3.0
+#52 21.80   Downloaded icu_locale_core v2.3.0
+#52 21.81   Downloaded memchr v2.8.3
+#52 21.82   Downloaded minimal-lexical v0.2.1
+#52 21.82   Downloaded miniz_oxide v0.9.1
+#52 21.83   Downloaded rsa v0.9.10
+#52 21.84   Downloaded bzip2 v0.5.2
+#52 21.84   Downloaded const-oid v0.9.6
+#52 21.84   Downloaded serde v1.0.229
+#52 21.84   Downloaded crc32fast v1.5.2
+#52 21.85   Downloaded hashbrown v0.17.1
+#52 21.86   Downloaded nom v7.1.3
+#52 21.87   Downloaded num-bigint v0.4.8
+#52 21.87   Downloaded symphonia-bundle-mp3 v0.5.5
+#52 21.88   Downloaded thiserror-impl v2.0.20
+#52 21.88   Downloaded tokenizers v0.22.2
+#52 21.89   Downloaded const-oid v0.10.2
+#52 21.90   Downloaded hyper-util v0.1.20
+#52 21.91   Downloaded icu_properties v2.3.0
+#52 21.91   Downloaded indexmap v2.14.2
+#52 21.92   Downloaded mio v1.2.3
+#52 21.93   Downloaded num-bigint-dig v0.8.6
+#52 21.93   Downloaded tracing-subscriber v0.3.23
+#52 21.95   Downloaded hkdf v0.12.4
+#52 21.95   Downloaded hyper v1.11.1
+#52 21.96   Downloaded idna v1.1.0
+#52 21.97   Downloaded itertools v0.14.0
+#52 21.98   Downloaded libm v0.2.16
+#52 21.99   Downloaded ort v2.0.0-rc.13
+#52 22.01   Downloaded pest v2.9.2
+#52 22.01   Downloaded icu_properties_data v2.3.0
+#52 22.03   Downloaded reqwest v0.12.28
+#52 22.03   Downloaded sqlx v0.8.6
+#52 22.06   Downloaded crossbeam-utils v0.8.23
+#52 22.06   Downloaded digest v0.11.3
+#52 22.06   Downloaded dirs-sys v0.5.0
+#52 22.06   Downloaded unit-prefix v0.5.2
+#52 22.07   Downloaded ndarray v0.17.2
+#52 22.08   Downloaded derive_builder v0.20.2
+#52 22.08   Downloaded displaydoc v0.2.7
+#52 22.09   Downloaded dotenvy v0.15.7
+#52 22.09   Downloaded fs_extra v1.3.0
+#52 22.09   Downloaded fnv v1.0.7
+#52 22.09   Downloaded form_urlencoded v1.2.2
+#52 22.09   Downloaded pkcs8 v0.10.2
+#52 22.10   Downloaded pkg-config v0.3.34
+#52 22.10   Downloaded rand_chacha v0.3.1
+#52 22.10   Downloaded rand_core v0.6.4
+#52 22.10   Downloaded scopeguard v1.2.0
+#52 22.10   Downloaded dirs v6.0.0
+#52 22.11   Downloaded foldhash v0.1.5
+#52 22.11   Downloaded futures v0.3.34
+#52 22.11   Downloaded icu_normalizer v2.3.0
+#52 22.13   Downloaded llm v1.3.8
+#52 22.17   Downloaded rand v0.10.3
+#52 22.18   Downloaded rand_chacha v0.9.0
+#52 22.18   Downloaded ryu v1.0.23
+#52 22.18   Downloaded toml_write v0.1.2
+#52 22.18   Downloaded utf8_iter v1.0.4
+#52 22.19   Downloaded want v0.3.1
+#52 22.19   Downloaded zeroize_derive v1.5.0
+#52 22.19   Downloaded atomic-waker v1.1.2
+#52 22.19   Downloaded block-buffer v0.10.4
+#52 22.19   Downloaded tower-service v0.3.3
+#52 22.19   Downloaded onig_sys v69.9.3
+#52 22.22   Downloaded tokio-tungstenite v0.29.0
+#52 22.22   Downloaded version_check v0.9.5
+#52 22.22   Downloaded try-lock v0.2.5
+#52 22.22   Downloaded smallvec v1.16.1
+#52 22.23   Downloaded bzip2-sys v0.1.13+1.0.8
+#52 22.25   Downloaded signature v2.2.0
+#52 22.25   Downloaded zerofrom v0.1.8
+#52 22.25   Downloaded potential_utf v0.1.6
+#52 22.25   Downloaded serde_path_to_error v0.1.20
+#52 22.25   Downloaded serde_spanned v0.6.9
+#52 22.26   Downloaded serde_spanned v1.1.1
+#52 22.26   Downloaded sha1 v0.10.7
+#52 22.26   Downloaded shlex v2.0.1
+#52 22.26   Downloaded signal-hook-registry v1.4.8
+#52 22.26   Downloaded simdutf8 v0.1.5
+#52 22.27   Downloaded slab v0.4.12
+#52 22.27   Downloaded chacha20 v0.10.2
+#52 22.27   Downloaded cipher v0.4.4
+#52 22.28   Downloaded dunce v1.0.5
+#52 22.28   Downloaded filetime v0.2.29
+#52 22.28   Downloaded find-msvc-tools v0.1.13
+#52 22.28   Downloaded flate2 v1.1.10
+#52 22.29   Downloaded generic-array v0.14.7
+#52 22.29   Downloaded getrandom v0.2.17
+#52 22.29   Downloaded lzma-sys v0.1.20
+#52 22.34   Downloaded rustls v0.23.45
+#52 22.36   Downloaded serde_yaml v0.9.34+deprecated
+#52 22.36   Downloaded sha2 v0.11.0
+#52 22.37   Downloaded sharded-slab v0.1.7
+#52 22.38   Downloaded sherpa-onnx v1.13.8
+#52 22.38   Downloaded sherpa-onnx-sys v1.13.8
+#52 22.38   Downloaded libc v0.2.189
+#52 22.44   Downloaded chrono v0.4.45
+#52 22.45   Downloaded portable-atomic v1.15.0
+#52 22.46   Downloaded webpki-roots v0.26.11
+#52 22.46   Downloaded zerofrom-derive v0.1.8
+#52 22.46   Downloaded subtle v2.6.1
+#52 22.46   Downloaded rayon-cond v0.4.0
+#52 22.46   Downloaded rustc-hash v2.1.3
+#52 22.46   Downloaded sqlx-macros v0.8.6
+#52 22.46   Downloaded strsim v0.11.1
+#52 22.47   Downloaded constant_time_eq v0.3.1
+#52 22.47   Downloaded crypto-common v0.2.2
+#52 22.47   Downloaded futures-task v0.3.34
+#52 22.47   Downloaded crypto-common v0.1.7
+#52 22.47   Downloaded powerfmt v0.2.0
+#52 22.47   Downloaded castaway v0.2.4
+#52 22.48   Downloaded toml_datetime v1.1.1+spec-1.1.0
+#52 22.48   Downloaded spki v0.7.3
+#52 22.48   Downloaded stringprep v0.1.5
+#52 22.48   Downloaded synstructure v0.14.0
+#52 22.48   Downloaded thiserror v1.0.69
+#52 22.49   Downloaded crossbeam-queue v0.3.14
+#52 22.49   Downloaded darling_macro v0.20.11
+#52 22.49   Downloaded ppv-lite86 v0.2.21
+#52 22.50   Downloaded py_literal v0.4.0
+#52 22.50   Downloaded whoami v1.6.1
+#52 22.50   Downloaded zerovec-derive v0.11.6
+#52 22.50   Downloaded crossbeam-deque v0.8.8
+#52 22.51   Downloaded reqwest v0.13.5
+#52 22.51   Downloaded spin v0.9.9
+#52 22.52   Downloaded axum-core v0.5.6
+#52 22.52   Downloaded rustls-pki-types v1.15.1
+#52 22.52   Downloaded base64ct v1.8.3
+#52 22.53   Downloaded cpufeatures v0.2.17
+#52 22.53   Downloaded sse-stream v0.2.4
+#52 22.53   Downloaded crossbeam-epoch v0.9.21
+#52 22.54   Downloaded crc-catalog v2.5.0
+#52 22.54   Downloaded darling v0.20.11
+#52 22.54   Downloaded derive_builder_core v0.20.2
+#52 22.55   Downloaded getrandom v0.3.4
+#52 22.55   Downloaded proc-macro2 v1.0.107
+#52 22.56   Downloaded regex v1.13.1
+#52 22.56   Downloaded rustls-platform-verifier v0.7.0
+#52 22.57   Downloaded sqlx-core v0.8.6
+#52 22.58   Downloaded sqlx-mysql v0.8.6
+#52 22.59   Downloaded darling_core v0.20.11
+#52 22.59   Downloaded tokio-rustls v0.26.5
+#52 22.60   Downloaded sqlx-sqlite v0.8.6
+#52 22.60   Downloaded tar v0.4.46
+#52 22.61   Downloaded axum-macros v0.5.1
+#52 22.62   Downloaded zeroize v1.9.0
+#52 22.62   Downloaded event-listener v5.4.2
+#52 22.63   Downloaded rustls-webpki v0.103.15
+#52 22.63   Downloaded symphonia-core v0.5.5
+#52 22.64   Downloaded tower-layer v0.3.3
+#52 22.64   Downloaded atoi v2.0.0
+#52 22.64   Downloaded block-buffer v0.12.1
+#52 22.64   Downloaded sqlx-postgres v0.8.6
+#52 22.65   Downloaded serde_json v1.0.151
+#52 22.66   Downloaded xattr v1.6.1
+#52 22.66   Downloaded symphonia v0.5.5
+#52 22.67   Downloaded futures-util v0.3.34
+#52 22.68   Downloaded rayon v1.12.0
+#52 22.70   Downloaded secrecy v0.8.0
+#52 22.70   Downloaded yoke-derive v0.8.3
+#52 22.70   Downloaded cfg-if v1.0.5
+#52 22.70   Downloaded futures-io v0.3.34
+#52 22.70   Downloaded xz2 v0.1.7
+#52 22.71   Downloaded async-trait v0.1.92
+#52 22.71   Downloaded rand_core v0.9.5
+#52 22.71   Downloaded toml_writer v1.1.2+spec-1.1.0
+#52 22.71   Downloaded byteorder v1.5.0
+#52 22.72   Downloaded zstd-safe v7.3.0
+#52 22.72   Downloaded cfg_aliases v0.2.2
+#52 22.72   Downloaded bitflags v1.3.2
+#52 22.72   Downloaded crc v3.4.0
+#52 22.73   Downloaded rand_core v0.10.1
+#52 22.73   Downloaded cpufeatures v0.3.1
+#52 22.73   Downloaded writeable v0.6.4
+#52 22.73   Downloaded tokio-tungstenite v0.30.0
+#52 22.74   Downloaded bzip2 v0.4.4
+#52 22.74   Downloaded errno v0.3.14
+#52 22.74   Downloaded sha2 v0.10.9
+#52 22.75   Downloaded toml_parser v1.1.3+spec-1.1.0
+#52 22.75   Downloaded console v0.16.6
+#52 22.75   Downloaded serde_core v1.0.229
+#52 22.76   Downloaded tokio-stream v0.1.19
+#52 22.76   Downloaded anyhow v1.0.104
+#52 22.77   Downloaded regex-syntax v0.8.11
+#52 22.78   Downloaded zmij v1.0.23
+#52 22.78   Downloaded zstd v0.13.3
+#52 22.79   Downloaded cmake v0.1.58
+#52 22.79   Downloaded bytes v1.12.1
+#52 22.79   Downloaded bytemuck v1.25.2
+#52 22.80   Downloaded futures-sink v0.3.34
+#52 22.80   Downloaded derive_builder_macro v0.20.2
+#52 22.80   Downloaded quinn v0.11.12
+#52 22.80   Downloaded ahash v0.8.12
+#52 22.81   Downloaded compact_str v0.9.1
+#52 22.81   Downloaded autocfg v1.5.1
+#52 22.81   Downloaded dary_heap v0.3.9
+#52 22.82   Downloaded futures-intrusive v0.5.0
+#52 22.82   Downloaded toml v0.8.23
+#52 22.83   Downloaded arrayvec v0.7.8
+#52 22.83   Downloaded unicase v2.9.0
+#52 22.84   Downloaded unicode-ident v1.0.26
+#52 22.84   Downloaded rawpointer v0.2.1
+#52 22.84   Downloaded time-core v0.1.9
+#52 22.84   Downloaded futures-macro v0.3.34
+#52 22.84   Downloaded thread_local v1.1.10
+#52 22.85   Downloaded equivalent v1.0.2
+#52 22.85   Downloaded cc v1.4.7
+#52 22.85   Downloaded yoke v0.8.3
+#52 22.86   Downloaded rand_pcg v0.10.2
+#52 22.86   Downloaded rand v0.8.8
+#52 22.86   Downloaded futures-core v0.3.34
+#52 22.86   Downloaded futures-executor v0.3.34
+#52 22.87   Downloaded digest v0.10.7
+#52 22.87   Downloaded quinn-udp v0.5.15
+#52 22.88   Downloaded unsafe-libyaml v0.2.11
+#52 22.88   Downloaded deranged v0.5.8
+#52 22.88   Downloaded either v1.18.0
+#52 22.88   Downloaded rand v0.9.5
+#52 22.89   Downloaded ucd-trie v0.1.7
+#52 22.89   Downloaded tinystr v0.8.4
+#52 22.89   Downloaded quote v1.0.47
+#52 22.90   Downloaded futures-channel v0.3.34
+#52 22.90   Downloaded tracing-attributes v0.1.31
+#52 22.90   Downloaded serde_derive v1.0.229
+#52 22.91   Downloaded deflate64 v0.1.12
+#52 22.91   Downloaded core_detect v1.0.0
+#52 22.91   Downloaded data-encoding v2.11.1
+#52 22.91   Downloaded symphonia-metadata v0.5.5
+#52 22.92   Downloaded unicode-bidi v0.3.18
+#52 22.92   Downloaded toml v1.1.6+spec-1.1.0
+#52 22.93   Downloaded tracing-core v0.1.36
+#52 22.93   Downloaded esaxx-rs v0.1.10
+#52 22.94   Downloaded allocator-api2 v0.2.21
+#52 22.94   Downloaded rustix v1.1.5
+#52 22.97   Downloaded base64 v0.13.1
+#52 22.98   Downloaded quinn-proto v0.11.18
+#52 22.99   Downloaded base64 v0.22.1
+#52 23.00   Downloaded flume v0.11.1
+#52 23.00   Downloaded uuid v1.26.1
+#52 23.01   Downloaded base64 v0.23.1
+#52 23.01   Downloaded zerotrie v0.2.5
+#52 23.02   Downloaded toml_edit v0.22.27
+#52 23.02   Downloaded unicode_categories v0.1.1
+#52 23.03   Downloaded spm_precompiled v0.1.4
+#52 23.04   Downloaded zopfli v0.8.3
+#52 23.04   Downloaded unicode-properties v0.1.4
+#52 23.04   Downloaded regex-automata v0.4.18
+#52 23.07   Downloaded tungstenite v0.30.0
+#52 23.07   Downloaded rmcp v3.5.0
+#52 23.10   Downloaded time v0.3.55
+#52 23.12   Downloaded encoding_rs v0.8.42
+#52 23.13   Downloaded url v2.5.8
+#52 23.14   Downloaded tungstenite v0.29.0
+#52 23.14   Downloaded unicode-normalization-alignments v0.1.12
+#52 23.15   Downloaded zip v2.4.2
+#52 23.15   Downloaded winnow v0.7.15
+#52 23.17   Downloaded bumpalo v3.20.3
+#52 23.17   Downloaded ureq v2.12.1
+#52 23.18   Downloaded unicode-segmentation v1.13.3
+#52 23.18   Downloaded tower v0.5.3
+#52 23.19   Downloaded unicode-normalization v0.1.25
+#52 23.20   Downloaded typenum v1.20.1
+#52 23.20   Downloaded der v0.7.10
+#52 23.21   Downloaded zerovec v0.11.8
+#52 23.22   Downloaded aes v0.8.4
+#52 23.22   Downloaded zip v6.0.0
+#52 23.23   Downloaded tokio-util v0.7.19
+#52 23.24   Downloaded tower-http v0.6.11
+#52 23.25   Downloaded axum v0.8.9
+#52 23.27   Downloaded tower-http v0.7.1
+#52 23.28   Downloaded aho-corasick v1.1.5
+#52 23.29   Downloaded tokio v1.53.1
+#52 23.35   Downloaded ring v0.17.14
+#52 23.41   Downloaded webpki-roots v1.0.9
+#52 23.41   Downloaded vcpkg v0.2.15
+#52 23.48   Downloaded linux-raw-sys v0.12.1
+#52 23.57   Downloaded winnow v1.0.4
+#52 23.59   Downloaded zlib-rs v0.6.8
+#52 23.60   Downloaded aws-lc-rs v1.18.1
+#52 23.61   Downloaded zerocopy v0.8.57
+#52 23.64   Downloaded unicode-width v0.2.2
+#52 23.65   Downloaded syn v2.0.119
+#52 23.66   Downloaded syn v3.0.6
+#52 23.68   Downloaded tracing v0.1.44
+#52 23.70   Downloaded libopus_sys v0.3.3
+#52 23.82   Downloaded zstd-sys v2.1.0+zstd.1.5.7
+#52 23.84   Downloaded libsqlite3-sys v0.30.1
+#52 24.95   Downloaded aws-lc-sys v0.45.0
+#52 25.81    Compiling proc-macro2 v1.0.107
+#52 30.18    Compiling unicode-ident v1.0.26
+#52 30.38    Compiling quote v1.0.47
+#52 32.03    Compiling libc v0.2.189
+#52 32.62    Compiling syn v3.0.6
+#52 38.19    Compiling jobserver v0.1.35
+#52 38.46    Compiling find-msvc-tools v0.1.13
+#52 38.73    Compiling shlex v2.0.1
+#52 38.83    Compiling cc v1.4.7
+#52 40.46    Compiling cfg-if v1.0.5
+#52 40.51    Compiling pkg-config v0.3.34
+#52 40.86    Compiling syn v2.0.119
+#52 ...
+
+#46 [vieneu] exporting to image
+#46 exporting layers 67.4s done
+#46 writing image sha256:7de1b469c92c96a737ea24be85f6676dcc82c95a39235a7fc36cdb1219ba30db 0.0s done
+#46 naming to docker.io/library/voice-agent-vieneu:85344322 0.1s done
+#46 DONE 67.8s
+
+#52 [server release 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked --release -p voice-agent-server --bin voice-agent-server     && cp /mnt/storage/ai-agent-voice/target/release/voice-agent-server /voice-agent-server
+#52 46.17    Compiling synstructure v0.14.0
+#52 46.55    Compiling zerofrom-derive v0.1.8
+#52 ...
+
+#55 [vieneu] resolving provenance for metadata file
+#55 DONE 0.0s
+
+#52 [server release 1/1] RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=voice-agent-target,target=/mnt/storage/ai-agent-voice/target,sharing=locked     cargo build --locked --release -p voice-agent-server --bin voice-agent-server     && cp /mnt/storage/ai-agent-voice/target/release/voice-agent-server /voice-agent-server
+#52 47.53    Compiling yoke-derive v0.8.3
+#52 48.22    Compiling serde_core v1.0.229
+#52 48.34    Compiling version_check v0.9.5
+#52 50.65    Compiling zerovec-derive v0.11.6
+#52 51.34    Compiling serde v1.0.229
+#52 51.45    Compiling displaydoc v0.2.7
+#52 51.85    Compiling serde_derive v1.0.229
+#52 54.18    Compiling generic-array v0.14.7
+#52 54.25    Compiling memchr v2.8.3
+#52 56.64    Compiling parking_lot_core v0.9.12
+#52 56.73    Compiling ring v0.17.14
+#52 57.02    Compiling log v0.4.34
+#52 57.22    Compiling smallvec v1.16.1
+#52 57.37    Compiling pin-project-lite v0.2.17
+#52 57.42    Compiling scopeguard v1.2.0
+#52 57.46    Compiling itoa v1.0.18
+#52 58.21    Compiling icu_normalizer_data v2.3.0
+#52 58.27    Compiling futures-core v0.3.34
+#52 58.34    Compiling bytes v1.12.1
+#52 59.04    Compiling icu_properties_data v2.3.0
+#52 59.13    Compiling once_cell v1.21.4
+#52 59.27    Compiling autocfg v1.5.1
+#52 59.52    Compiling lock_api v0.4.14
+#52 59.68    Compiling zerofrom v0.1.8
+#52 59.74    Compiling cmake v0.1.58
+#52 59.98    Compiling stable_deref_trait v1.2.1
+#52 60.01    Compiling thiserror v2.0.20
+#52 60.17    Compiling futures-sink v0.3.34
+#52 60.21    Compiling yoke v0.8.3
+#52 60.53    Compiling futures-channel v0.3.34
+#52 60.77    Compiling tracing-attributes v0.1.31
+#52 61.57    Compiling thiserror-impl v2.0.20
+#52 62.36    Compiling typenum v1.20.1
+#52 63.27    Compiling parking_lot v0.12.5
+#52 64.02    Compiling zerovec v0.11.8
+#52 64.48    Compiling errno v0.3.14
+#52 64.56    Compiling futures-macro v0.3.34
+#52 65.01    Compiling futures-task v0.3.34
+#52 65.12    Compiling slab v0.4.12
+#52 65.87    Compiling futures-io v0.3.34
+#52 65.96    Compiling futures-util v0.3.34
+#52 68.48    Compiling signal-hook-registry v1.4.8
+#52 68.80    Compiling http v1.5.0
+#52 70.54    Compiling socket2 v0.6.5
+#52 71.35    Compiling mio v1.2.3
+#52 71.86    Compiling tokio-macros v2.7.2
+#52 72.23    Compiling dunce v1.0.5
+#52 72.27    Compiling fs_extra v1.3.0
+#52 72.45    Compiling zeroize v1.9.0
+#52 73.02    Compiling aws-lc-sys v0.45.0
+#52 73.90    Compiling tokio v1.53.1
+#52 183.7    Compiling tinystr v0.8.4
+#52 183.9    Compiling crypto-common v0.1.7
+#52 183.9    Compiling tracing-core v0.1.36
+#52 184.7    Compiling getrandom v0.2.17
+#52 184.9    Compiling zeroize_derive v1.5.0
+#52 185.2    Compiling litemap v0.8.3
+#52 185.3    Compiling writeable v0.6.4
+#52 185.5    Compiling subtle v2.6.1
+#52 185.7    Compiling icu_locale_core v2.3.0
+#52 186.6    Compiling rustls-pki-types v1.15.1
+#52 187.4    Compiling potential_utf v0.1.6
+#52 187.4    Compiling zerotrie v0.2.5
+#52 187.6    Compiling aws-lc-rs v1.18.1
+#52 187.7    Compiling utf8_iter v1.0.4
+#52 187.8    Compiling zmij v1.0.23
+#52 187.9    Compiling icu_collections v2.3.0
+#52 188.2    Compiling icu_provider v2.3.1
+#52 188.4    Compiling tracing v0.1.44
+#52 188.7    Compiling block-buffer v0.10.4
+#52 197.9    Compiling crc32fast v1.5.2
+#52 198.1    Compiling digest v0.10.7
+#52 199.1    Compiling num-traits v0.2.19
+#52 203.9    Compiling httparse v1.10.1
+#52 204.0    Compiling percent-encoding v2.3.2
+#52 204.2    Compiling untrusted v0.9.0
+#52 213.8    Compiling icu_properties v2.3.0
+#52 214.8    Compiling icu_normalizer v2.3.0
+#52 215.3    Compiling http-body v1.1.0
+#52 215.8    Compiling equivalent v1.0.2
+#52 215.9    Compiling rustls v0.23.45
+#52 216.1    Compiling cpufeatures v0.2.17
+#52 216.2    Compiling zerocopy v0.8.57
+#52 216.4    Compiling rustversion v1.0.23
+#52 218.6    Compiling form_urlencoded v1.2.2
+#52 219.2    Compiling idna_adapter v1.2.2
+#52 219.2    Compiling rustls-webpki v0.103.15
+#52 222.8    Compiling crc-catalog v2.5.0
+#52 222.8    Compiling crossbeam-utils v0.8.23
+#52 223.0    Compiling crc v3.4.0
+#52 244.3    Compiling idna v1.1.0
+#52 248.7    Compiling webpki-roots v1.0.9
+#52 248.9    Compiling hashbrown v0.17.1
+#52 250.1    Compiling indexmap v2.14.2
+#52 251.4    Compiling webpki-roots v0.26.11
+#52 255.6    Compiling url v2.5.8
+#52 259.4    Compiling zstd-sys v2.1.0+zstd.1.5.7
+#52 259.5    Compiling vcpkg v0.2.15
+#52 260.0    Compiling tower-service v0.3.3
+#52 260.0    Compiling base64 v0.22.1
+#52 260.2    Compiling getrandom v0.3.4
+#52 260.5    Compiling libsqlite3-sys v0.30.1
+#52 272.6    Compiling ppv-lite86 v0.2.21
+#52 273.2    Compiling bzip2-sys v0.1.13+1.0.8
+#52 273.3    Compiling simd-adler32 v0.3.10
+#52 273.4    Compiling ryu v1.0.23
+#52 274.1    Compiling serde_json v1.0.151
+#52 278.3    Compiling either v1.18.0
+#52 278.5    Compiling lzma-sys v0.1.20
+#52 278.6    Compiling try-lock v0.2.5
+#52 278.7    Compiling rustix v1.1.5
+#52 278.8    Compiling zstd-safe v7.3.0
+#52 279.0    Compiling tower-layer v0.3.3
+#52 279.2    Compiling adler2 v2.0.1
+#52 279.3    Compiling miniz_oxide v0.9.1
+#52 279.9    Compiling want v0.3.1
+#52 285.5    Compiling encoding_rs v0.8.42
+#52 285.6    Compiling http-body-util v0.1.5
+#52 285.8    Compiling hybrid-array v0.4.15
+#52 286.2    Compiling inout v0.1.4
+#52 286.3    Compiling sync_wrapper v1.0.2
+#52 287.0    Compiling crossbeam-epoch v0.9.21
+#52 287.1    Compiling bitflags v2.13.2
+#52 287.3    Compiling atomic-waker v1.1.2
+#52 287.4    Compiling httpdate v1.0.3
+#52 287.7    Compiling allocator-api2 v0.2.21
+#52 287.9    Compiling ident_case v1.0.1
+#52 287.9    Compiling linux-raw-sys v0.12.1
+#52 288.2    Compiling strsim v0.11.1
+#52 288.4    Compiling foldhash v0.1.5
+#52 288.5    Compiling fnv v1.0.7
+#52 288.9    Compiling mime v0.3.17
+#52 297.0    Compiling darling_core v0.20.11
+#52 298.9    Compiling hashbrown v0.15.5
+#52 299.4    Compiling hyper v1.11.1
+#52 303.1    Compiling cipher v0.4.4
+#52 304.0    Compiling flate2 v1.1.10
+#52 304.3    Compiling rand_core v0.9.5
+#52 304.8    Compiling hmac v0.12.1
+#52 304.8    Compiling aho-corasick v1.1.5
+#52 310.6    Compiling time-core v0.1.9
+#52 310.7    Compiling zip v2.4.2
+#52 310.8    Compiling simdutf8 v0.1.5
+#52 310.9    Compiling cpufeatures v0.3.1
+#52 311.0    Compiling regex-syntax v0.8.11
+#52 318.1    Compiling ipnet v2.12.2
+#52 319.2    Compiling multiversion_no_op v1.0.0
+#52 319.3    Compiling crossbeam-deque v0.8.8
+#52 319.4    Compiling getrandom v0.4.3
+#52 319.5    Compiling core_detect v1.0.0
+#52 319.6    Compiling powerfmt v0.2.0
+#52 319.7    Compiling lazy_static v1.5.0
+#52 319.8    Compiling rand_core v0.10.1
+#52 319.9    Compiling unicase v2.9.0
+#52 320.0    Compiling ucd-trie v0.1.7
+#52 320.1    Compiling num-conv v0.2.2
+#52 320.2    Compiling deranged v0.5.8
+#52 321.0    Compiling byteorder v1.5.0
+#52 321.1    Compiling parking v2.2.1
+#52 321.2    Compiling bumpalo v3.20.3
+#52 321.4    Compiling zopfli v0.8.3
+#52 321.8    Compiling event-listener v5.4.2
+#52 322.0    Compiling lzma-rs v0.3.0
+#52 322.4    Compiling time v0.3.55
+#52 322.8    Compiling pest v2.9.2
+#52 323.9    Compiling mime_guess v2.0.5
+#52 328.7    Compiling hyper-util v0.1.20
+#52 331.4    Compiling regex-automata v0.4.18
+#52 347.0    Compiling pbkdf2 v0.12.2
+#52 347.3    Compiling rand_chacha v0.9.0
+#52 347.7    Compiling crossbeam-queue v0.3.14
+#52 347.8    Compiling xz2 v0.1.7
+#52 347.9    Compiling futures-intrusive v0.5.0
+#52 348.2    Compiling zstd v0.13.3
+#52 348.4    Compiling aes v0.8.4
+#52 349.6    Compiling hashlink v0.10.0
+#52 349.8    Compiling darling_macro v0.20.11
+#52 350.0    Compiling xattr v1.6.1
+#52 350.3    Compiling tokio-stream v0.1.19
+#52 350.6    Compiling tower v0.5.3
+#52 351.0    Compiling crypto-common v0.2.2
+#52 352.2    Compiling block-buffer v0.12.1
+#52 352.3    Compiling bzip2 v0.5.2
+#52 352.6    Compiling serde_urlencoded v0.7.1
+#52 359.3    Compiling spin v0.9.9
+#52 359.4    Compiling tokio-rustls v0.26.5
+#52 359.6    Compiling sha1 v0.10.7
+#52 359.7    Compiling sha2 v0.10.9
+#52 360.0    Compiling futures-executor v0.3.34
+#52 360.4    Compiling filetime v0.2.29
+#52 360.5    Compiling const-oid v0.10.2
+#52 361.3    Compiling data-encoding v2.11.1
+#52 364.1    Compiling rayon-core v1.13.0
+#52 364.1    Compiling deflate64 v0.1.12
+#52 364.3    Compiling constant_time_eq v0.3.1
+#52 366.2    Compiling digest v0.11.3
+#52 366.3    Compiling tar v0.4.46
+#52 367.1    Compiling sqlx-core v0.8.6
+#52 369.5    Compiling flume v0.11.1
+#52 369.8    Compiling darling v0.20.11
+#52 370.0    Compiling atoi v2.0.0
+#52 370.0    Compiling rand v0.9.5
+#52 370.7    Compiling pest_meta v2.9.2
+#52 372.0    Compiling ureq v2.12.1
+#52 373.0    Compiling bzip2 v0.4.4
+#52 373.3    Compiling num-integer v0.1.47
+#52 374.1    Compiling tokio-util v0.7.19
+#52 375.9    Compiling matrixmultiply v0.3.11
+#52 376.0    Compiling onig_sys v69.9.3
+#52 376.3    Compiling bytemuck v1.25.2
+#52 376.4    Compiling arrayvec v0.7.8
+#52 376.7    Compiling bitflags v1.3.2
+#52 376.8    Compiling portable-atomic v1.15.0
+#52 377.2    Compiling symphonia-core v0.5.5
+#52 392.4    Compiling sqlx-sqlite v0.8.6
+#52 395.1    Compiling sherpa-onnx-sys v1.13.8
+#52 395.6    Compiling pest_generator v2.9.2
+#52 397.5    Compiling derive_builder_core v0.20.2
+#52 399.3    Compiling hyper-rustls v0.27.10
+#52 399.7    Compiling tower-http v0.6.11
+#52 400.2    Compiling chacha20 v0.10.2
+#52 452.3    Compiling num-complex v0.4.6
+#52 452.7    Compiling rand_core v0.6.4
+#52 452.9    Compiling libopus_sys v0.3.3
+#52 453.4    Compiling serde_spanned v0.6.9
+#52 453.5    Compiling toml_datetime v0.6.11
+#52 453.7    Compiling multer v3.1.0
+#52 453.8    Compiling ahash v0.8.12
+#52 453.9    Compiling esaxx-rs v0.1.10
+#52 454.0    Compiling openssl-probe v0.2.1
+#52 454.3    Compiling zlib-rs v0.6.8
+#52 457.9    Compiling heck v0.5.0
+#52 458.1    Compiling toml_write v0.1.2
+#52 458.2    Compiling hex v0.4.3
+#52 458.4    Compiling paste v1.0.15
+#52 458.5    Compiling ort-sys v2.0.0-rc.13
+#52 458.6    Compiling minimal-lexical v0.2.1
+#52 458.9    Compiling rawpointer v0.2.1
+#52 458.9    Compiling option-ext v0.2.0
+#52 458.9    Compiling dotenvy v0.15.7
+#52 459.1    Compiling unicode-width v0.2.2
+#52 459.3    Compiling thiserror v1.0.69
+#52 459.9    Compiling winnow v0.7.15
+#52 463.5    Compiling toml_edit v0.22.27
+#52 474.4    Compiling console v0.16.6
+#52 475.6    Compiling sqlx-macros-core v0.8.6
+#52 476.8    Compiling dirs-sys v0.5.0
+#52 479.4    Compiling nom v7.1.3
+#52 481.5    Compiling rustls-native-certs v0.8.4
+#52 514.5    Compiling rand_chacha v0.3.1
+#52 515.2    Compiling tungstenite v0.29.0
+#52 517.8    Compiling rand v0.10.3
+#52 518.4    Compiling derive_builder_macro v0.20.2
+#52 518.5    Compiling rayon v1.12.0
+#52 520.6    Compiling pest_derive v2.9.2
+#52 527.8    Compiling symphonia-metadata v0.5.5
+#52 529.9    Compiling num-bigint v0.4.8
+#52 533.8    Compiling sha1 v0.11.0
+#52 534.4    Compiling futures v0.3.34
+#52 534.4    Compiling regex v1.13.1
+#52 535.7    Compiling itertools v0.14.0
+#52 537.1    Compiling castaway v0.2.4
+#52 537.2    Compiling chrono v0.4.45
+#52 539.6    Compiling monostate-impl v0.1.18
+#52 539.8    Compiling thiserror-impl v1.0.69
+#52 540.5    Compiling pastey v0.2.3
+#52 540.8    Compiling unit-prefix v0.5.2
+#52 540.9    Compiling base64 v0.13.1
+#52 541.1    Compiling macro_rules_attribute-proc_macro v0.2.3
+#52 541.3    Compiling rmcp v3.5.0
+#52 541.4    Compiling anyhow v1.0.104
+#52 541.6    Compiling unicode-segmentation v1.13.3
+#52 542.1    Compiling static_assertions v1.1.0
+#52 542.1    Compiling winnow v1.0.4
+#52 542.4    Compiling base64 v0.23.1
+#52 543.0    Compiling unsafe-libyaml v0.2.11
+#52 545.2    Compiling serde_yaml v0.9.34+deprecated
+#52 548.8    Compiling toml_parser v1.1.3+spec-1.1.0
+#52 550.0    Compiling compact_str v0.9.1
+#52 550.9    Compiling spm_precompiled v0.1.4
+#52 551.4    Compiling macro_rules_attribute v0.2.3
+#52 551.4    Compiling indicatif v0.18.6
+#52 554.2    Compiling monostate v0.1.18
+#52 566.5    Compiling rayon-cond v0.4.0
+#52 566.7    Compiling tungstenite v0.30.0
+#52 571.2    Compiling py_literal v0.4.0
+#52 575.6    Compiling symphonia-bundle-mp3 v0.5.5
+#52 577.9    Compiling onig v6.5.3
+#52 578.9    Compiling derive_builder v0.20.2
+#52 579.0    Compiling tokio-tungstenite v0.29.0
+#52 579.2    Compiling rand v0.8.8
+#52 581.5    Compiling rustls-platform-verifier v0.7.0
+#52 582.0    Compiling zip v6.0.0
+#52 584.7    Compiling ndarray v0.17.2
+#52 589.3    Compiling dirs v6.0.0
+#52 589.5    Compiling sqlx-macros v0.8.6
+#52 590.1    Compiling toml v0.8.23
+#52 592.7    Compiling reqwest v0.12.28
+#52 607.5    Compiling matchers v0.2.0
+#52 607.5    Compiling sharded-slab v0.1.7
+#52 608.0    Compiling axum-core v0.5.6
+#52 610.0    Compiling sse-stream v0.2.4
+#52 610.2    Compiling tracing-log v0.2.0
+#52 610.4    Compiling secrecy v0.8.0
+#52 610.5    Compiling dary_heap v0.3.9
+#52 610.6    Compiling serde_path_to_error v0.1.20
+#52 611.0    Compiling unicode-normalization-alignments v0.1.12
+#52 611.5    Compiling serde_bytes v0.11.19
+#52 611.7    Compiling serde_spanned v1.1.1
+#52 611.7    Compiling toml_datetime v1.1.1+spec-1.1.0
+#52 612.1    Compiling axum-macros v0.5.1
+#52 613.0    Compiling thread_local v1.1.10
+#52 613.2    Compiling libloading v0.9.0
+#52 613.4    Compiling async-trait v0.1.92
+#52 614.1    Compiling nu-ansi-term v0.50.3
+#52 614.5    Compiling toml_writer v1.1.2+spec-1.1.0
+#52 614.7    Compiling unicode_categories v0.1.1
+#52 614.8    Compiling tinyvec v1.13.3
+#52 615.2    Compiling matchit v0.8.4
+#52 615.7    Compiling axum v0.8.9
+#52 622.6    Compiling unicode-normalization v0.1.25
+#52 623.0    Compiling tokenizers v0.22.2
+#52 656.7    Compiling toml v1.1.6+spec-1.1.0
+#52 660.9    Compiling tracing-subscriber v0.3.23
+#52 666.6    Compiling ndarray-npy v0.10.0
+#52 667.6    Compiling llm v1.3.8
+#52 684.6    Compiling ort v2.0.0-rc.13
+#52 709.8    Compiling sqlx v0.8.6
+#52 709.8    Compiling reqwest v0.13.5
+#52 727.7    Compiling opus2 v0.4.0
+#52 728.1    Compiling sherpa-onnx v1.13.8
+#52 729.8    Compiling symphonia v0.5.5
+#52 730.0    Compiling tokio-tungstenite v0.30.0
+#52 730.8    Compiling uuid v1.26.1
+#52 731.2    Compiling sha2 v0.11.0
+#52 732.9    Compiling tower-http v0.7.1
+#52 734.4    Compiling hound v3.5.1
+#52 734.6    Compiling voice-agent-server v0.1.0 (/app/crates/voice-agent-server)
+#52 972.4     Finished `release` profile [optimized] target(s) in 15m 55s
+#52 DONE 974.8s
+
+#56 [server production 2/2] COPY --from=release /voice-agent-server /usr/local/bin/voice-agent-server
+#56 DONE 2.0s
+
+#57 [server] exporting to image
+#57 exporting layers
+#57 exporting layers 4.1s done
+#57 writing image sha256:9d793be6041ac6cb59d284a450b19088f74fecdd981bb4e53231f6145db67c32 0.0s done
+#57 naming to docker.io/library/voice-agent-server:local 0.1s done
+#57 DONE 4.4s
+
+#58 [server] resolving provenance for metadata file
+#58 DONE 0.0s
+ Image voice-agent-vieneu:85344322 Built 
+ Image voice-agent-web:local Built 
+ Image voice-agent-server:local Built 
