@@ -193,6 +193,17 @@ describe('shared Voice WebSocket client', () => {
     expect(socket.sent.some(s => typeof s === 'string' && s.includes('"type":"abort"'))).toBe(false)
   })
 
+  it('stops continuous capture if server rejects the Auto VAD arm', async () => {
+    const socket = await open()
+    vi.spyOn(client.audio, 'startMicrophone').mockResolvedValue(undefined)
+    vi.spyOn(client.audio, 'stopMicrophone').mockResolvedValue(undefined)
+    await client.startMicrophone()
+    socket.event({ type: 'turn_status', state: 'rejected', reason: 'pipeline_capacity' })
+    await vi.waitFor(() => expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({ type: 'listen', state: 'stop' }))
+    expect(states.at(-1)).toBe('ready')
+    expect(socket.readyState).toBe(Socket.OPEN)
+  })
+
   it('cancels microphone permission safely if the user switches capture off before it resolves', async () => {
     const socket = await open()
     let rejectCapture!: (error: Error) => void
