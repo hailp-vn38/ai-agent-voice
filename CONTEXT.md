@@ -230,7 +230,7 @@ A unit of speakable text extracted by Sentence Segmenter from the Generated Assi
 _Avoid_: token, full response, TTS chunk
 
 **TTS Plain Text**:
-The separate text representation of a Speech Segment sent to TTS: it contains only Unicode letters or numbers, periods, and commas; colons and semicolons become commas, and exclamation/question marks become periods to retain speech pauses. Each run of other characters is replaced with at most one ASCII space. A segment with no remaining letters/numbers is not sent to TTS. This rule does not change the text displayed over WS.
+The separate text representation of a Speech Segment sent to TTS: it contains only Unicode letters or numbers, periods, and commas; colons and semicolons become commas, and exclamation/question marks and hyphens become periods to retain speech pauses. Each run of other characters is replaced with at most one ASCII space. A segment with no remaining letters/numbers is not sent to TTS. This rule does not change the text displayed over WS.
 _Avoid_: display text, formatted text, provider-normalized text
 
 **LLM Operation**:

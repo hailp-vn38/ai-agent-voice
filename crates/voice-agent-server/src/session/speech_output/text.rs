@@ -165,7 +165,7 @@ pub(super) fn sanitize_tts_text(input: &str) -> String {
     for ch in normalized.chars() {
         let ch = match ch {
             ':' | ';' => ',',
-            '!' | '?' => '.',
+            '!' | '?' | '-' => '.',
             _ => ch,
         };
         if ch.is_alphanumeric() || matches!(ch, '.' | ',') {

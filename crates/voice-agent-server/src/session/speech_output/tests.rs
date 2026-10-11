@@ -606,7 +606,7 @@ fn sanitizes_tts_input_to_unicode_words_with_decimal_separators() {
     assert_eq!(sanitize_tts_text("**Xin chào!** 😊"), "Xin chào.");
     assert_eq!(
         sanitize_tts_text("### Kết quả:\n- Bạn có thể **khởi động lại** server 🚀"),
-        "Kết quả, Bạn có thể khởi động lại server"
+        "Kết quả, . Bạn có thể khởi động lại server"
     );
     assert_eq!(
         sanitize_tts_text("Mình có thể giúp bạn #hôm_nay?"),
@@ -614,7 +614,7 @@ fn sanitizes_tts_input_to_unicode_words_with_decimal_separators() {
     );
     assert_eq!(
         sanitize_tts_text("Ví dụ: - Bạn muốn xem **tình trạng thiết bị** (pin, kết nối, nhiệt độ."),
-        "Ví dụ, Bạn muốn xem tình trạng thiết bị pin, kết nối, nhiệt độ."
+        "Ví dụ, . Bạn muốn xem tình trạng thiết bị pin, kết nối, nhiệt độ."
     );
 }
 
@@ -623,6 +623,14 @@ fn converts_tts_punctuation_to_pause_markers() {
     assert_eq!(
         sanitize_tts_text("Lưu ý: nói chậm; ngắt rõ! Được không?"),
         "Lưu ý, nói chậm, ngắt rõ. Được không."
+    );
+}
+
+#[test]
+fn converts_list_hyphens_to_tts_sentence_breaks() {
+    assert_eq!(
+        sanitize_tts_text("Các bước\n- Khởi động lại server\n- Kiểm tra kết nối"),
+        "Các bước . Khởi động lại server . Kiểm tra kết nối"
     );
 }
 
