@@ -54,7 +54,7 @@ Các path dưới đây là path mà frontend gọi, không phải bản sao to�
 | `speakers.ts` | `/api/admin/speakers`; CRUD; `/captures`, `/from-capture`; `/{key}/voiceprint` PUT; `/voiceprint/purge` POST; `/bindings`; summary `/api/admin/speaker-recognition` |
 | `history.ts` | `/api/admin/history` GET và `/purge` POST; chưa có route/page History |
 | `assistant.ts` | GET/PUT `/api/admin/system/assistant-device`; POST `/api/admin/assistant/ws-ticket`; [contract](../../../docs/api/studio-assistant.md) |
-| `system.ts` | `/health`, `/ready`, `/api/admin/system` |
+| `system.ts` | `/health`, `/ready`, `/api/admin/system`, `/api/admin/system/resources` |
 
 Đối chiếu DTO cụ thể trong `src/api/types/`. Raw response có thể dùng boolean hoặc số `0/1` tùy resource; không suy từ `enabled` của resource khác.
 
@@ -102,3 +102,21 @@ Test thành công chỉ chứng minh request diagnostic đó; không tự bind r
 Backend conditional hard-delete từ chối resource còn reference và không tự purge history. Template còn provider bindings cũng bị chặn, kể cả khi chưa link Agent. Agent còn Device/MCP/history không xóa được. MCP còn Agent binding không xóa được. Speaker phải unlink khỏi Agent trước.
 
 Provider có hai hành vi UI: detail page từ chối xóa khi usage còn; catalog gọi store để unlink lần lượt các Template rồi xóa Provider. Chuỗi này không atomic: lỗi cuối có thể để Provider tồn tại nhưng đã mất một số bindings. Đây là hạn chế có tác động dữ liệu, ghi ở review.
+
+
+### System resources
+
+`GET /api/admin/system/resources` requires the existing Admin bearer token. It reads
+an OS snapshot collected every 5 seconds, independent of database/provider status.
+A fresh snapshot returns `200` with `Cache-Control: no-store`; an absent snapshot
+or one older than 15 seconds returns `503` with error code
+`system_metrics_unavailable` in the standard error envelope. Disabled Admin API
+returns `404`; missing/wrong bearer returns `401`.
+
+The wire DTO is [`SystemResources`](../src/api/types/system.ts): nullable system
+CPU/RAM, current process PID/raw core-based CPU/RSS, and root filesystem capacity,
+with UTC `sampled_at` and `sample_interval_ms`. First-sample CPU is null. Values are
+OS-visible, potentially host-wide in Docker, and do not describe container quotas.
+Process CPU can exceed 100%; provider `reserved_bytes` from the existing system
+status is an **Estimated reservation**, never added to measured RSS. No paths,
+configuration, credentials or history are returned.

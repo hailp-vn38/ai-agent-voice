@@ -30,6 +30,20 @@ function expectJsonMutation(init: RequestInit, method: string, body: unknown, re
 describe('Admin resource APIs', () => {
   afterEach(() => vi.unstubAllGlobals())
 
+  it('requests resource snapshots with Admin bearer and the caller abort signal', async () => {
+    const fetch = installFetch()
+    sessionStorage.setItem('voice-agent-admin-token', 'resource-test-token')
+    const controller = new AbortController()
+    try {
+      await systemApi.resources(controller.signal)
+      expect(call(fetch, 0)[0]).toBe('/api/admin/system/resources')
+      expect(call(fetch, 0)[1].signal).toBe(controller.signal)
+      expect((call(fetch, 0)[1].headers as Headers).get('Authorization')).toBe('Bearer resource-test-token')
+    } finally {
+      sessionStorage.removeItem('voice-agent-admin-token')
+    }
+  })
+
   it('maps system probes to their text and status endpoints', async () => {
     const fetch = installFetch()
     await Promise.all([systemApi.health(), systemApi.ready(), systemApi.status()])

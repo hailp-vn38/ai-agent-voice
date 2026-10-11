@@ -227,6 +227,13 @@ async fn seeded_provider(body: serde_json::Value) -> (String, String) {
 /// Keeps the Admin router mounted while making the already-configured database unavailable.
 /// This exercises the public status route's degradation response rather than a startup failure.
 async fn server_with_closed_database() -> (String, tokio::task::JoinHandle<()>) {
+    resource_server(true, false).await
+}
+
+async fn resource_server(
+    api_enabled: bool,
+    collect: bool,
+) -> (String, tokio::task::JoinHandle<()>) {
     let config_path = std::env::temp_dir().join(format!(
         "voice-agent-admin-closed-{}.toml",
         uuid::Uuid::new_v4()
@@ -246,10 +253,11 @@ tts = "test"
 [database]
 url = "{}"
 [api]
-enabled = true
+enabled = {}
 admin_token = "admin-test-token"
 "#,
-            database_url()
+            database_url(),
+            api_enabled
         ),
     )
     .unwrap();
@@ -261,6 +269,19 @@ admin_token = "admin-test-token"
         Some(Database::connect(&config.database).await.unwrap()),
     );
     state.database.as_ref().unwrap().pool().close().await;
+    if collect {
+        let stop = state.lifecycle.listening().clone();
+        let sampler = state.system_metrics.clone().start(stop.clone());
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while state.system_metrics.latest().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        stop.cancel();
+        sampler.await.unwrap();
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -3871,5 +3892,78 @@ async fn draft_asr_rejects_ambiguous_multipart_and_invalid_wav_before_runtime() 
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    task.abort();
+}
+
+#[tokio::test]
+async fn system_resources_are_authenticated_uncached_and_independent_of_database() {
+    let client = Client::new();
+    let (base, task) = resource_server(true, true).await;
+    let url = format!("{base}/api/admin/system/resources");
+    for token in [None, Some("wrong-token")] {
+        let request = client.get(&url);
+        let response = match token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        }
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    let response = client
+        .get(&url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert!(response.headers().contains_key("x-request-id"));
+    let snapshot: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(snapshot["sample_interval_ms"], 5000);
+    assert_eq!(snapshot["process"]["pid"], std::process::id());
+    assert!(chrono::DateTime::parse_from_rfc3339(snapshot["sampled_at"].as_str().unwrap()).is_ok());
+    assert_eq!(snapshot.as_object().unwrap().len(), 5);
+    assert!(snapshot["system"]["cpu_percent"].is_null());
+    assert!(snapshot["process"]["cpu_percent"].is_null());
+    assert_eq!(snapshot["storage"].as_object().unwrap().len(), 2);
+    assert_eq!(
+        client
+            .get(format!("{base}/health"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "ok"
+    );
+    task.abort();
+
+    let (base, task) = resource_server(true, false).await;
+    let response = client
+        .get(format!("{base}/api/admin/system/resources"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "system_metrics_unavailable");
+    assert!(body["error"]["request_id"].is_string());
+    task.abort();
+
+    let (base, task) = resource_server(false, false).await;
+    assert_eq!(
+        client
+            .get(format!("{base}/api/admin/system/resources"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
     task.abort();
 }

@@ -50,6 +50,20 @@
           "response": []
         },
         {
+          "name": "Admin system resources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/admin/system/resources",
+            "description": "Current OS-visible CPU/RAM, Rust process CPU/RSS and root filesystem capacity. DTO: apps/admin-web/src/api/types/system.ts (SystemResources). 200 Cache-Control: no-store; 503 system_metrics_unavailable before first sample or after 15 seconds. First-sample CPU and unsupported fields are null. No history, paths or container quotas.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }]
+            }
+          },
+          "response": []
+        },
+        {
           "name": "OTA",
           "item": [
             {

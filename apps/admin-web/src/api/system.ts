@@ -1,7 +1,10 @@
 import { requestJson, requestText } from './client'
-import type { SystemStatus } from './types/system'
+import type { SystemResources, SystemStatus } from './types/system'
 
 export const systemApi = {
+  resources(signal?: AbortSignal) {
+    return requestJson<SystemResources>('/api/admin/system/resources', {}, { signal })
+  },
   health(signal?: AbortSignal) {
     return requestText('/health', { headers: { Accept: 'text/plain' } }, { signal })
   },

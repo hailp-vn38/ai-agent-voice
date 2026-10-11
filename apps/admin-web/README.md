@@ -34,7 +34,7 @@ Mở `http://localhost:5173`, nhập token vào form Connect. Vite listen trên 
 | `/devices`, `/devices/:deviceId` | Enrollment claim, chỉnh thông tin/Agent/override, admission enable/disable, xóa |
 | `/speakers`, `/speakers/:speakerKey` | Hồ sơ người nói, thu mẫu, thay/purge voiceprint, liên kết Agent |
 | `/mcp`, `/mcp/:key` | Streamable HTTP server, credentials, connection/discovery diagnostics |
-| `/system` | Health probe mỗi 30 giây và thông tin/cache quản trị |
+| `/system` | CPU/RAM/process/root filesystem snapshot mỗi 5 giây; health/runtime mỗi 30 giây; Studio Assistant settings |
 
 `/` và `/dashboard` chuyển đến `/overview`. Route không tồn tại cũng chuyển về Overview. Chi tiết hành vi và giới hạn ở [luồng sử dụng](docs/workflows.md).
 
@@ -111,3 +111,9 @@ profile mới. Mạng gián đoạn xin ticket mới với backoff tối đa ba 
 lại tin nhắn hoặc tool call. Nếu kết quả lượt trước bị mất, UI báo unknown outcome.
 Server có thể lưu transcript theo profile; UI không cam kết chỉ lưu phía browser.
 Xem [API và bảo mật](../../docs/api/studio-assistant.md).
+
+
+System monitoring uses OS-visible figures, which may reflect the host in Docker;
+it does not report container quotas or retain resource history. Missing/stale
+readings show `—`. Resource polling pauses in hidden tabs and is aborted when
+leaving System. Monitoring Refresh preserves unsaved Studio Assistant settings.

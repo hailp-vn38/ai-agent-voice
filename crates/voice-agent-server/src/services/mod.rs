@@ -7,3 +7,5 @@ pub mod provider_prewarm;
 
 pub mod provider_test;
 pub(crate) mod test_credentials;
+
+pub mod system_metrics;

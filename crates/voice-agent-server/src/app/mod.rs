@@ -251,6 +251,10 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     );
     prepare_builtin_speaker(&mut state).await;
     prepare_enrollment(&mut state).await?;
+    state
+        .system_metrics
+        .clone()
+        .start(state.lifecycle.listening().clone());
     Ok(router_with_state(state))
 }
 
@@ -397,6 +401,10 @@ async fn managed_startup(
     }
     prepare_builtin_speaker(&mut state).await;
     prepare_enrollment(&mut state).await?;
+    state
+        .system_metrics
+        .clone()
+        .start(state.lifecycle.listening().clone());
     Ok(router_with_state(state))
 }
 

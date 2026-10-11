@@ -45,6 +45,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             axum::routing::post(mcp_tests::saved_discover),
         )
         .route("/system", get(get_system))
+        .route("/system/resources", get(system::get_resources))
         .route(
             "/system/assistant-device",
             get(assistant_device::get).put(assistant_device::put),

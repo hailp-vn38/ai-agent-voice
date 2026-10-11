@@ -6,7 +6,9 @@ Nhập Admin token trong form Connect. `App.vue` giữ token, tải admin cache 
 
 Overview hiển thị số Agent, Template, Provider, Device từ cache và `/ready`, `/api/admin/system` cho active sessions, loaded/failed providers, database status. Khi cache loading/error, counts là dấu gạch ngang. Counts hiện bị giới hạn bởi pagination của store, không phải tổng server.
 
-Overview refresh chạy cả cache và server status. System tự probe `/health` mỗi 30 giây; readiness/system aggregates được tải ở Overview, không phải một polling loop đầy đủ trong System.
+Overview refresh chạy cả cache và server status. System tải health/readiness/status ngay khi mount và mỗi 30 giây khi tab visible. Resources được đọc riêng từ `/api/admin/system/resources` mỗi 5 giây, skip request đang chạy, pause khi tab hidden và refresh ngay khi visible trở lại. Unmount hủy request và timer.
+
+System render bốn card CPU/RAM hệ thống (OS-visible), tiến trình Rust và Root filesystem; `null` hiển thị `—`, số liệu quá 15 giây hiển thị Stale. Process CPU là core-based, có thể vượt 100%, chỉ hiển thị text. AI Runtime dùng status hiện có; Estimated reservation không cộng vào RSS. Refresh thủ công chỉ tải probes/status/resources, không reload management cache hoặc lưu/reset cấu hình Studio Assistant. Lỗi resources (401/503) không đổi health hay form đang sửa. AssistantDeviceSettings vẫn render đúng một lần giữa AI Runtime và Server / Voice transport.
 
 ## Agents và Studio
 

@@ -21,6 +21,8 @@ name = "provider-bench"
 path = "src/bin/provider-bench.rs"
 
 [dependencies]
+chrono.workspace = true
+sysinfo.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true

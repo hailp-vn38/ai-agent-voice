@@ -15,6 +15,14 @@ Commit only after both commands exit successfully. Resolve any failures and reru
 
 ## Language
 
+**System Resources**:
+The current CPU, memory and root filesystem capacity visible to the server's operating system, together with the server process CPU and resident memory. These figures do not represent container quotas.
+_Avoid_: container utilization, model storage
+
+**Estimated Reservation**:
+The provider runtime capacity reserved according to estimated requirements; it is distinct from measured resident memory and must not be added to it.
+_Avoid_: provider RAM usage, total RAM
+
 **Virtual Device**:
 The single System-managed Device representing Studio Assistant for a deployment, with its own Agent and optional Template assignment.
 _Avoid_: browser identity, per-tab Device, Assistant Profile
