@@ -188,7 +188,7 @@ onBeforeUnmount(() => {
           </div>
 
           <footer class="shrink-0 space-y-2 border-t px-3 py-3">
-            <div v-if="assistant.error" role="alert" class="flex items-start gap-2 rounded-lg bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            <div v-if="assistant.error" role="alert" class="flex items-start gap-2 rounded-lg bg-danger/10 px-2.5 py-2 text-xs text-danger">
               <span class="min-w-0 flex-1">{{ t('assistant.friendlyError') }}</span>
               <button type="button" class="shrink-0 underline" :aria-label="t('common.close')" @click="assistant.error = ''">{{ t('common.close') }}</button>
             </div>
@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
 .assistant-voice.is-speaking .assistant-wave-bar { animation: assistant-speaking 1s ease-in-out infinite alternate; transform-origin: center; }
 .assistant-voice.is-thinking .assistant-wave-bar { animation: assistant-thinking 1.6s ease-in-out infinite alternate; transform-origin: center; opacity: .65; }
 .assistant-voice.is-idle .assistant-wave-bar { opacity: .5; }
-.assistant-microphone.is-listening { background: var(--destructive); color: var(--destructive-foreground); box-shadow: 0 0 0 5px color-mix(in oklch, var(--destructive) 18%, transparent); }
+.assistant-microphone.is-listening { background: var(--danger); color: white; box-shadow: 0 0 0 5px color-mix(in oklch, var(--danger) 18%, transparent); }
 @keyframes assistant-speaking { from { transform: scaleY(.36); opacity: .55; } to { transform: scaleY(1); opacity: 1; } }
 @keyframes assistant-thinking { from { transform: scaleY(.65); } to { transform: scaleY(1.2); } }
 @media (max-width: 639px) {
