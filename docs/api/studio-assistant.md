@@ -4,7 +4,7 @@ Studio Assistant is a browser Voice Protocol Client using the shared `/voice/v1/
 endpoint and the existing Device → Agent → Template → Provider admission pipeline.
 The System-owned singleton is a real Device with immutable `kind=web_assistant`;
 existing Devices default to `physical`. Browser tabs share the Device, not a Voice
-Session. No enrollment, second runtime, Admin MCP tools, or text-only mode is added.
+Session. It shares the existing voice runtime and ASR/LLM/TTS flow.
 
 All three HTTP routes require the existing Admin bearer and `api.enabled=true`.
 Responses use the existing typed Admin error envelope.
@@ -126,3 +126,32 @@ Manual microphone capture is interrupted on panel collapse to avoid hidden recor
 The default microphone action unlocks TTS playback within the user gesture, unless
 the user explicitly muted the speaker. Statuses remain separate: a completed
 WebSocket handshake does not guarantee success of the current Agent turn.
+
+## Read-only System MCP
+
+`[system_mcp] enabled = false` is the default deployment ceiling. Set `enabled = true`
+and reconnect Studio Assistant to publish six read tools: `system_get_status`,
+`system_get_resources`, `mcp_list_servers`, `mcp_get_server`, `mcp_list_tools`, and
+`mcp_get_agent_bindings`. Only an origin-bound ticket admitted to the managed Virtual
+Device receives `system:read` and `mcp:read`. Physical Devices, including ones assigned
+to the same Agent, never receive these tools. `features.mcp=false` continues to disable
+Device MCP only; `tool_status=true` reports existing `tool` progress messages.
+
+System MCP calls run sequentially within the existing turn budget and cancellation
+boundary. The catalog is fixed at admission; dispatch rechecks the enabled Device and
+Agent and revocation. Results use the existing bounded Tool Result path and continue
+the LLM/TTS response. MCP metadata excludes endpoints, headers, credentials, prompts,
+raw errors, and tool schemas/descriptions. Reading observed tools never approves or
+executes External MCP tools.
+
+`mcp_list_servers` accepts `page` (1–10000) and `page_size` (1–100, default 20).
+`mcp_list_tools` accepts optional `agent_key` (defaults to the admitted Agent),
+`server_key`, and `page`; pages contain at most 20 observed tools, including stale
+contracts marked `current=false`. `allowed` describes current contract approval;
+`sensitive` is separate, and these fields do not assert that a tool is callable.
+`mcp_get_agent_bindings` returns at most 100 bindings with both binding/server enabled
+states, or a bounded error. All outputs are subject to `llm.max_tool_result_chars`;
+oversized results fail with `tool_result_too_large`, and server lists can be requested
+with a smaller page. An unavailable/stale OS resource snapshot returns a typed error.
+
+There are no System MCP HTTP routes, discovery, grant settings, or mutations in P1.

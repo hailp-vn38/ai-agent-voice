@@ -485,6 +485,7 @@ fn config(url: String) -> AppConfig {
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
+        system_mcp: Default::default(),
         mcp: McpConfig {
             external: ExternalMcpConfig::default(),
             ..McpConfig::default()

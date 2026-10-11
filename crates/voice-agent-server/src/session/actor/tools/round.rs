@@ -134,6 +134,7 @@ impl SessionActor {
         };
         self.emit_tool_status(&call.name, "started");
         match target {
+            ToolTarget::SystemMcp(system) => self.dispatch_system_tool(call, system, budget),
             ToolTarget::Builtin(tool) => self.execute_builtin_tool(call, tool),
             ToolTarget::DeviceMcp(tool) => self.dispatch_device_mcp_tool(call, tool, budget),
             ToolTarget::ExternalMcp(server, tool) => {

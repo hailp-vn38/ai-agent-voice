@@ -42,6 +42,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
+    pub system_mcp: SystemMcpConfig,
+    #[serde(default)]
     pub vision: VisionConfig,
     #[serde(default)]
     pub database: DatabaseConfig,
@@ -1263,4 +1265,12 @@ impl std::fmt::Debug for ChillAudioRuntimeConfig {
             .field("timeout_ms", &self.timeout_ms)
             .finish()
     }
+}
+
+/// Deployment ceiling: only authenticated Studio Assistant sessions receive read tools.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemMcpConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }

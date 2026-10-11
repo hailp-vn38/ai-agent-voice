@@ -268,6 +268,36 @@ pub(super) async fn handler(
     {
         assistant_auth.register_close(&guard.close);
     }
+    // Only the consumed, origin-bound ticket plus managed admission can create this capability.
+    let system_mcp = assistant_connection.as_ref().and_then(|_| {
+        let core = state.system_mcp.as_ref()?.clone();
+        if profile.device_db_id <= 0 || profile.agent_id <= 0 {
+            return None;
+        }
+        let database = state.database.as_ref()?;
+        let context = crate::tools::system_mcp::SystemToolContext {
+            caller: crate::tools::system_mcp::SystemCaller::WebAssistant {
+                device_db_id: profile.device_db_id,
+                agent_id: profile.agent_id,
+            },
+            grants: crate::tools::system_mcp::SystemToolGrants {
+                system_read: true,
+                mcp_read: true,
+            },
+            revoked: database
+                .tool_security
+                .register(profile.agent_id, Vec::new()),
+            cancellation: CancellationToken::new(),
+            deadline: tokio::time::Instant::now(),
+        };
+        assistant_auth.register_close(&context.revoked);
+        let tools = core.list_tools(&context);
+        Some(crate::tools::system_mcp::SessionSystemMcp {
+            core,
+            context,
+            tools,
+        })
+    });
     let resolved_runtimes = match profile
         .selected_runtimes
         .clone()
@@ -341,6 +371,7 @@ pub(super) async fn handler(
                     connect_started,
                     metrics,
                     assistant_connection,
+                    system_mcp,
                 },
                 SessionControl {
                     stopping,
@@ -493,6 +524,7 @@ fn valid_device_identity(value: &str) -> bool {
 }
 
 struct SocketRuntimes {
+    system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     assistant_connection: Option<super::web_assistant_auth::Connection>,
     connect_started: Instant,
     metrics: Option<Arc<RuntimeMetrics>>,
@@ -545,6 +577,11 @@ async fn handle_socket(
         .as_ref()
         .map(|c| c.close.clone())
         .unwrap_or_else(|| Arc::new(CancellationToken::new()));
+    let system_security_close = runtimes
+        .system_mcp
+        .as_ref()
+        .map(|system| system.context.revoked.clone())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
     let socket_started = Instant::now();
     let connect_started = runtimes.connect_started;
     let metrics = runtimes.metrics;
@@ -578,6 +615,7 @@ async fn handle_socket(
     let first = tokio::select! {
         _ = stopping.cancelled() => return,
         _ = assistant_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
+        _ = system_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         _ = tool_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         _ = speaker_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
         first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
@@ -684,6 +722,7 @@ async fn handle_socket(
     // Ticket 10: install Observe only when the Agent policy enables it. Best-effort and
     // admission-time: a resolution/DB failure degrades to `off`, never fails the session.
     let mut actor = actor
+        .with_system_mcp(runtimes.system_mcp)
         .with_transcript(runtimes.transcript)
         .with_speaker_observe(
             runtimes.speaker_observe.clone(),
@@ -860,6 +899,11 @@ async fn handle_socket(
                 let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
                 break;
             }
+            _ = system_security_close.cancelled() => {
+                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
+                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
+                break;
+            }
             _ = tool_security_close.cancelled() => {
                 let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
                 let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
@@ -974,30 +1018,6 @@ fn checked_text(message: Message, max: usize) -> Result<String, u16> {
 /// predates the optional tool_status feature. This is independent of Device MCP.
 fn tool_status_enabled(is_web_assistant: bool, features: &crate::protocol::ClientFeatures) -> bool {
     is_web_assistant || features.tool_status
-}
-
-#[cfg(test)]
-mod tool_status_negotiation_tests {
-    use super::*;
-
-    #[test]
-    fn web_assistant_sees_server_tool_status_even_with_mcp_disabled_and_no_opt_in() {
-        let features = crate::protocol::ClientFeatures {
-            mcp: false,
-            tool_status: false,
-            ..Default::default()
-        };
-        assert!(tool_status_enabled(true, &features));
-        assert!(!tool_status_enabled(false, &features));
-
-        let opted_in = crate::protocol::ClientFeatures {
-            tool_status: true,
-            mcp: false,
-            ..Default::default()
-        };
-        assert!(tool_status_enabled(false, &opted_in));
-        assert!(tool_status_enabled(true, &opted_in));
-    }
 }
 
 async fn send_outbound(
@@ -1169,3 +1189,7 @@ async fn resolve_speaker_observe(
         observe_config.join_timeout_ms,
     ))))
 }
+
+#[cfg(test)]
+#[path = "websocket/tool_status_tests.rs"]
+mod tool_status_negotiation_tests;

@@ -25,9 +25,10 @@ pub(super) fn is_builtin_tool_name(name: &str) -> bool {
 ///
 /// Every arm is a capability this session was actually admitted with, so resolving to one is a
 /// statement about this session's immutable catalog rather than about what exists anywhere.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(in super::super) enum ToolTarget {
     Builtin(BuiltinTool),
+    SystemMcp(crate::tools::system_mcp::SessionSystemMcp),
     DeviceMcp(LlmVisibleTool),
     ExternalMcp(ResolvedExternalMcp, ResolvedExternalTool),
 }
@@ -62,12 +63,20 @@ impl SessionActor {
                 parameters: tool.input_schema.clone(),
             })
         }));
+        if let Some(system) = &self.system_mcp {
+            tools.extend(system.tools.clone());
+        }
         tools
     }
 
     /// Whether this session holds a tool that can change the final answer.
     pub(in super::super) fn offers_answer_changing_tools(&self) -> bool {
-        !self.mcp.visible.is_empty() || !self.external_mcp.is_empty()
+        !self.mcp.visible.is_empty()
+            || !self.external_mcp.is_empty()
+            || self
+                .system_mcp
+                .as_ref()
+                .is_some_and(|system| !system.tools.is_empty())
     }
 
     pub(in super::super) fn resolve_tool(&self, name: &str) -> Option<ToolTarget> {
@@ -85,6 +94,11 @@ impl SessionActor {
             .cloned()
         {
             return Some(ToolTarget::DeviceMcp(tool));
+        }
+        if let Some(system) = &self.system_mcp
+            && system.tools.iter().any(|tool| tool.name == name)
+        {
+            return Some(ToolTarget::SystemMcp(system.clone()));
         }
         self.external_mcp
             .find(name)
@@ -104,7 +118,11 @@ impl SessionActor {
                     .and_then(|tool| self.mcp.tool_delivery.get(&tool.original_name))
                     .copied()
                     .unwrap_or(self.mcp.result_delivery);
-                if self.external_mcp.find(&call.name).is_some() {
+                if self.external_mcp.find(&call.name).is_some()
+                    || self.system_mcp.as_ref().is_some_and(|system| {
+                        system.tools.iter().any(|tool| tool.name == call.name)
+                    })
+                {
                     return McpResultDelivery::LlmThenTts;
                 }
                 match (selected, delivery) {

@@ -102,7 +102,13 @@ pub fn new_lifecycle(config: &AppConfig) -> Arc<RuntimeLifecycle> {
 pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
     RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
-pub fn router_with_state(state: AppState) -> Router {
+pub fn router_with_state(mut state: AppState) -> Router {
+    state.system_mcp = Some(Arc::new(crate::tools::system_mcp::SystemMcp::new(
+        state.config.system_mcp.enabled,
+        state.system_status(),
+        state.system_metrics.clone(),
+        state.config.llm.max_tool_result_chars,
+    )));
     let vision_enabled = state.config.vision.enabled;
     let vision_config = state.config.vision.clone();
     let router = Router::new()

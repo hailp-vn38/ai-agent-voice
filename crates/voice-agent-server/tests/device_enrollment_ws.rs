@@ -87,6 +87,7 @@ async fn start() -> Server {
         speech_output: Default::default(),
         barge_in: Default::default(),
         mcp: Default::default(),
+        system_mcp: Default::default(),
         vision: Default::default(),
         database: DatabaseConfig {
             url: format!("sqlite://{}", directory.join("database.db").display()),

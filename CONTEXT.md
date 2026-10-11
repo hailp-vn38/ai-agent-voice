@@ -692,3 +692,11 @@ _Avoid_: connected flag, Agent availability
 **MCP Tool Discovery**:
 A complete observation of the tool catalog advertised by an External MCP server at the time of testing. This catalog is neither a Reviewed Tool Contract nor an Agent Tool Allowlist.
 _Avoid_: tool approval, approved catalog
+
+**System MCP**:
+The deployment's management tools available to authenticated Studio Assistant sessions, with separate authority for reading system status and MCP metadata.
+_Avoid_: Device MCP, External MCP server, Admin tool authority
+
+**System Tool Grant**:
+Permission for Studio Assistant to use a group of System MCP tools, independent of External MCP tool approval and never conferred by conversation content.
+_Avoid_: Agent–External MCP binding, tool execution status

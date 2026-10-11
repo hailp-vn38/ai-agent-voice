@@ -227,6 +227,7 @@ async fn start(tool_was_advertised: Arc<AtomicBool>) -> (String, JoinHandle<()>)
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
+        system_mcp: Default::default(),
         mcp: McpConfig {
             enabled: false,
             ..McpConfig::default()

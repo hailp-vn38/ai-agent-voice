@@ -328,3 +328,6 @@ max_pages_per_server = 32
 # An empty allowed_hosts list accepts any host; redirects are never followed.
 [mcp.external.network]
 allowed_hosts = []
+
+[system_mcp]
+enabled = false # Read-only tools for authenticated Studio Assistant sessions.

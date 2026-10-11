@@ -223,3 +223,5 @@ async fn ensure_schema_is_current(pool: &SqlitePool) -> Result<(), DatabaseError
 pub(crate) fn is_busy(error: &sqlx::Error) -> bool {
     matches!(error, sqlx::Error::Database(error) if matches!(error.code().as_deref(), Some("5" | "6" | "SQLITE_BUSY" | "SQLITE_LOCKED")))
 }
+
+pub(crate) mod system_mcp;

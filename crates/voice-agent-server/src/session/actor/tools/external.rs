@@ -37,7 +37,7 @@ impl SessionActor {
         let client = Arc::clone(&server.client);
         let limiter = Arc::clone(&server.limiter);
         let call_id = call.id.clone();
-        let completions = self.external_calls_tx.clone();
+        let completions = self.async_calls_tx.clone();
         let tool = tool.clone();
         let server_key = server.server_key.clone();
         tracing::info!(
@@ -60,19 +60,19 @@ impl SessionActor {
                 }
                 outcome = client.call_tool_guarded(&limiter, &tool, &arguments, budget, &guard) => outcome,
             };
-            let completion = ExternalCallCompletion {
+            let completion = AsyncCallCompletion {
                 turn_id,
                 generation,
                 call_id,
                 server_key: server_key.clone(),
-                outcome,
+                outcome: AsyncToolOutcome::External(outcome),
             };
             if completions.try_send(completion).is_err() {
                 client.telemetry().late_response_discarded(&server_key);
             }
         });
         if let Some(batch) = self.tool_batch.as_mut() {
-            batch.in_flight = Some(InFlightExternalCall {
+            batch.in_flight = Some(InFlightAsyncCall {
                 call,
                 turn_id,
                 generation,
@@ -102,8 +102,8 @@ impl SessionActor {
     }
 
     /// Drops completions which no longer match the one External call in flight.
-    pub(in super::super) fn drain_external_call_completions(&mut self) {
-        while let Ok(completion) = self.external_calls.try_recv() {
+    pub(in super::super) fn drain_async_call_completions(&mut self) {
+        while let Ok(completion) = self.async_calls.try_recv() {
             let in_flight = self.tool_batch.as_ref().and_then(|batch| {
                 batch.in_flight.as_ref().filter(|in_flight| {
                     in_flight.call.id == completion.call_id
@@ -113,18 +113,36 @@ impl SessionActor {
             });
             let Some(in_flight) = in_flight.map(|in_flight| in_flight.call.clone()) else {
                 tracing::info!(
-                    event = "external_tool_late_response_discarded",
+                    event = "async_tool_late_response_discarded",
                     generation = completion.generation,
                     turn_id = completion.turn_id.get(),
                     server_key = %completion.server_key,
-                    "External MCP tool result arrived after its round ended and was discarded"
+                    "Tool result arrived after its round ended and was discarded"
                 );
                 if let Some(telemetry) = self.external_telemetry(&completion.server_key) {
                     telemetry.late_response_discarded(&completion.server_key);
                 }
                 continue;
             };
-            self.complete_external_tool_call(in_flight, completion.outcome.as_ref());
+            match completion.outcome {
+                AsyncToolOutcome::External(outcome) => {
+                    self.complete_external_tool_call(in_flight, outcome.as_ref())
+                }
+                AsyncToolOutcome::System(outcome) => {
+                    if let Some(batch) = self.tool_batch.as_mut() {
+                        batch.in_flight = None;
+                    }
+                    match outcome {
+                        Ok(value) => self.complete_tool_call(
+                            in_flight,
+                            Ok(serde_json::json!({
+                                "content": [{"type":"text", "text":value.to_string()}]
+                            })),
+                        ),
+                        Err(error) => self.complete_tool_call(in_flight, Err(&error.to_string())),
+                    }
+                }
+            }
         }
     }
 

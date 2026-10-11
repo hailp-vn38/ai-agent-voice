@@ -63,6 +63,7 @@ fn config(url: String) -> AppConfig {
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: McpConfig::default(),
+        system_mcp: Default::default(),
         vision: VisionConfig::default(),
         database: DatabaseConfig {
             url,

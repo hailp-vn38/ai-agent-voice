@@ -166,7 +166,7 @@ impl SessionActor {
         let llm_events = runtimes
             .llm
             .register_session(&session_id, LLM_EVENT_CAPACITY);
-        let (external_calls_tx, external_calls) = mpsc::channel(EXTERNAL_CALL_CAPACITY);
+        let (async_calls_tx, async_calls) = mpsc::channel(ASYNC_CALL_CAPACITY);
         let (gate_tx, gate_rx) = mpsc::unbounded_channel();
         Ok(Self {
             session_id,
@@ -240,8 +240,8 @@ impl SessionActor {
             llm_round: None,
             // The documented defaults, until a deployment installs its own validated caps.
             tool_rounds: ToolRoundState::new(ToolRoundLimits::default()),
-            external_calls_tx,
-            external_calls,
+            async_calls_tx,
+            async_calls,
             max_tool_result_chars: 4_096,
             template_prepare: None,
             managed_switch_boundary: None,
@@ -254,6 +254,7 @@ impl SessionActor {
             switch_catalog: TemplateSwitchCatalog::default(),
             // Likewise no External MCP tools: a session only ever calls what admission resolved.
             external_mcp: SessionExternalMcp::default(),
+            system_mcp: None,
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             // Capture is opt-in, so an actor that is never bound archives nothing.
             transcript: None,

@@ -16,6 +16,13 @@ async fn server(_: bool) -> (String, tokio::task::JoinHandle<()>) {
     start(Arc::new(ProviderSet::unavailable()), "").await
 }
 async fn start(providers: Arc<ProviderSet>, token: &str) -> (String, tokio::task::JoinHandle<()>) {
+    start_with_system_mcp(providers, token, false).await
+}
+async fn start_with_system_mcp(
+    providers: Arc<ProviderSet>,
+    token: &str,
+    enabled: bool,
+) -> (String, tokio::task::JoinHandle<()>) {
     let path = std::env::temp_dir().join(format!("assistant-{}.toml", uuid::Uuid::new_v4()));
     let database = std::env::temp_dir().join(format!("assistant-{}.db", uuid::Uuid::new_v4()));
     fs::write(
@@ -25,6 +32,8 @@ async fn start(providers: Arc<ProviderSet>, token: &str) -> (String, tokio::task
 [server]
 bind="127.0.0.1:0"
 public_ws_url="ws://127.0.0.1:0/voice/v1/"
+[system_mcp]
+enabled={enabled}
 [auth]
 token="{token}"
 [provider_defaults]
@@ -46,6 +55,19 @@ admin_token="admin-test-token"
     fs::remove_file(path).unwrap();
     let db = Database::connect(&config.database).await.unwrap();
     let state = AppState::from_provider_set_with_database(config, providers, Some(db));
+    if enabled {
+        let stop = tokio_util::sync::CancellationToken::new();
+        let sampler = state.system_metrics.clone().start(stop.clone());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while state.system_metrics.latest().is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        stop.cancel();
+        sampler.await.unwrap();
+    }
     let router = router_with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -543,3 +565,6 @@ impl voice_agent_server::providers::VadProvider for VoiceVad {
         ))
     }
 }
+
+#[path = "web_assistant/system_mcp.rs"]
+mod system_mcp;

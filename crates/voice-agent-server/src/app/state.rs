@@ -33,6 +33,7 @@ use std::{
 pub struct AppState {
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
+    pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
     pub(crate) web_assistant: Arc<super::web_assistant_auth::WebAssistantAuth>,
     /// Identity of this process incarnation, pinned into enrollment drafts as provenance so a
@@ -105,54 +106,24 @@ impl AppState {
     /// is still there — so a busy database or a degraded archive shows up here as reachable while
     /// an actually-unreachable one does not.
     pub async fn readiness(&self) -> Readiness {
-        if !self.lifecycle.gate().is_open() {
-            return Readiness::ShuttingDown;
-        }
-        if self.database.is_none() {
-            // The database is configured but this process never opened one, so nothing about the
-            // schema is authoritative.  Startup refused to bind in that case; reaching here means
-            // a test or an embedder constructed the state directly, and it is still not ready.
-            return Readiness::StartupIncomplete;
-        }
-        let enrollment = &self.config.database.devices.enrollment;
-        if enrollment.enabled
-            && enrollment.transport == crate::config::EnrollmentTransport::Websocket
-            && self.enrollment_runtime.is_none()
-        {
-            return Readiness::StartupIncomplete;
-        }
-        if self.required_runtime_missing() {
-            return Readiness::RequiredRuntimeUnavailable;
-        }
-        if let Some(database) = &self.database
-            && database.is_reachable().await.is_err()
-        {
-            return Readiness::DatabaseUnreachable;
-        }
-        Readiness::Ready
+        self.system_status().readiness().await
     }
 
-    /// Whether a provider instance this deployment's own server defaults require is missing.
-    ///
-    /// This is a map lookup against the already-loaded RuntimeCatalog.  It prepares nothing, opens
-    /// no model and resolves no secret — a required provider that could not be materialized never
-    /// reached the listener in the first place, so this only catches state assembled some other
-    /// way.
-    fn required_runtime_missing(&self) -> bool {
-        let providers = self.config.provider_defaults.effective_bindings();
-        if let Some(manager) = &self.provider_runtime_manager
-            && !self.deployment_snapshots.is_empty()
-        {
-            return [
-                ("vad", &providers.vad),
-                ("asr", &providers.asr),
-                ("llm", &providers.llm),
-                ("tts", &providers.tts),
-            ]
-            .into_iter()
-            .any(|(kind, key)| !manager.deployment_ready(kind, key));
+    pub(crate) fn system_status(&self) -> crate::services::system_status::SystemStatus {
+        let enrollment = &self.config.database.devices.enrollment;
+        crate::services::system_status::SystemStatus {
+            database: self.database.clone(),
+            started_at: self.started_at,
+            lifecycle: self.lifecycle.clone(),
+            provider_runtime_manager: self.provider_runtime_manager.clone(),
+            database_runtime_snapshot: self.database_runtime_snapshot.clone(),
+            runtimes: self.runtimes.clone(),
+            required_providers: self.config.provider_defaults.effective_bindings(),
+            startup_complete: !(enrollment.enabled
+                && enrollment.transport == crate::config::EnrollmentTransport::Websocket
+                && self.enrollment_runtime.is_none()),
+            managed_deployment: !self.deployment_snapshots.is_empty(),
         }
-        self.runtimes.resolve(&providers).is_err()
     }
 
     pub fn bound_vision_runtime(&self) -> Option<Arc<crate::workers::VisionRuntime>> {
@@ -689,6 +660,7 @@ impl AppState {
         );
         let state = Self {
             started_at: Instant::now(),
+            system_mcp: None,
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
             web_assistant: Arc::new(Default::default()),
             runtime_id: format!("voice-agent-server-{}", uuid::Uuid::new_v4()),

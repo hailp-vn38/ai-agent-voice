@@ -390,7 +390,7 @@ fn admitted_external_mcp() -> SessionExternalMcp {
     )])
 }
 
-fn session_with_external_mcp(external_mcp: SessionExternalMcp) -> SessionActor {
+pub(super) fn session_with_external_mcp(external_mcp: SessionExternalMcp) -> SessionActor {
     let catalog = catalog();
     let profile = resolve_effective_session_profile(
         1,
@@ -511,7 +511,7 @@ async fn a_closed_gate_stops_a_round_that_was_already_running() {
 
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            actor.drain_external_call_completions();
+            actor.drain_async_call_completions();
             if !tool_round(&actor).is_empty() {
                 return;
             }
@@ -520,7 +520,7 @@ async fn a_closed_gate_stops_a_round_that_was_already_running() {
     })
     .await
     .expect("the call that was already in flight reports its outcome");
-    actor.drain_external_call_completions();
+    actor.drain_async_call_completions();
 
     assert_eq!(
         tool_round(&actor),
@@ -873,7 +873,7 @@ async fn a_response_that_lands_after_its_round_is_discarded_and_acts_on_nothing(
     server.release();
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            actor.drain_external_call_completions();
+            actor.drain_async_call_completions();
             if counted(
                 &telemetry,
                 crate::telemetry::EXTERNAL_TOOL_LATE_RESPONSE_DISCARDED_TOTAL,
@@ -946,7 +946,7 @@ async fn an_interrupted_turn_drops_its_in_flight_call_without_producing_a_result
         crate::telemetry::EXTERNAL_TOOL_CALL_CANCELLED_TOTAL,
     )
     .await;
-    actor.drain_external_call_completions();
+    actor.drain_async_call_completions();
 
     assert_eq!(
         counted(
@@ -1552,7 +1552,7 @@ async fn server_external_mcp_reports_tool_lifecycle_without_client_device_mcp() 
     server.release();
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while actor.tool_batch.is_some() {
-            actor.drain_external_call_completions();
+            actor.drain_async_call_completions();
             tokio::task::yield_now().await;
         }
     })

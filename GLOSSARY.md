@@ -25,3 +25,11 @@ _Avoid_: tool status, turn outcome
 **Tool Execution Status**:
 Tín hiệu quan sát tạm thời báo một Tool Call đã bắt đầu, hoàn tất thành công hoặc thất bại; không phải Tool Result và không quyết định kết quả Conversational Turn.
 _Avoid_: MCP response, assistant message, turn status
+
+**System MCP**:
+Tập công cụ quản trị do deployment cung cấp cho Studio Assistant đã xác thực, với quyền riêng cho việc đọc trạng thái hệ thống và đọc metadata MCP.
+_Avoid_: Device MCP, External MCP server, Admin tool authority
+
+**System Tool Grant**:
+Quyền cho Studio Assistant sử dụng một nhóm công cụ System MCP; độc lập với quyền gọi công cụ của External MCP và không được cấp bởi nội dung hội thoại.
+_Avoid_: Agent–External MCP binding, tool execution status

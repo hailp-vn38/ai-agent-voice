@@ -49,12 +49,12 @@ const MAX_DETECT_TEXT_SCALARS: usize = 4_096;
 /// so the capacity must not drift between the initial registration and a switched one.
 const LLM_EVENT_CAPACITY: usize = 64;
 
-/// The Tool-round Executor's own mailbox for External Tool Call completions.
+/// The Tool-round Executor's bounded mailbox for asynchronous tool completions.
 ///
 /// The executor is strictly sequential, so at most one completion is ever outstanding and this
 /// never queues.  The bound is two only so a completion that arrives between the executor applying
 /// it and starting the next call still has somewhere to land.
-const EXTERNAL_CALL_CAPACITY: usize = 2;
+const ASYNC_CALL_CAPACITY: usize = 2;
 
 /// The only mutable owner of an accepted Voice Session's phase.
 pub struct SessionActor {
@@ -140,8 +140,8 @@ pub struct SessionActor {
     /// started at its first ToolCall.
     tool_rounds: ToolRoundState,
     /// Where an External Tool Call this session started reports back.
-    external_calls_tx: mpsc::Sender<ExternalCallCompletion>,
-    external_calls: mpsc::Receiver<ExternalCallCompletion>,
+    async_calls_tx: mpsc::Sender<AsyncCallCompletion>,
+    async_calls: mpsc::Receiver<AsyncCallCompletion>,
     /// Device discovery completes out of band so its observation write cannot block the actor.
     max_tool_result_chars: usize,
     /// The one configuration snapshot this session runs with.  Admission installs it; a successful
@@ -156,6 +156,7 @@ pub struct SessionActor {
     /// and no hot path can re-resolve anything.  Admitting, calling and advertising these tools
     /// belongs to the shared Tool-round Executor, which this snapshot exists to feed.
     external_mcp: SessionExternalMcp,
+    system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     /// The Device tool review this Voice Session was admitted under, if any.  A session admitted
     /// without one keeps the legacy Device allowlist behavior; one admitted with a participating
     /// Agent only calls what that Agent approved for this Device incarnation.
@@ -394,39 +395,43 @@ struct ToolBatchState {
     next: usize,
     results: Vec<ChatMessage>,
     direct_response: Option<String>,
-    /// The External Tool Call this round is waiting for, if any.
+    /// The asynchronous Tool Call this round is waiting for, if any.
     ///
     /// The executor is strictly sequential, so there is never more than one: a second call cannot
     /// start until this one has produced its terminal result or has been dropped by cancellation.
-    in_flight: Option<InFlightExternalCall>,
+    in_flight: Option<InFlightAsyncCall>,
     /// Resolved once, when the round began, so nothing re-derives it while the round runs.
     delivery: crate::config::McpResultDelivery,
 }
 
-/// The one External Tool Call a round is waiting for.
+/// The one asynchronous Tool Call a round is waiting for.
 ///
 /// Its turn and generation are recorded so a completion arriving after either moved on is
 /// recognisable as late rather than as the next round's work.
-struct InFlightExternalCall {
+struct InFlightAsyncCall {
     /// The LLM ToolCall this call will produce a result for.
     call: ToolCall,
     turn_id: TurnId,
     generation: u64,
 }
 
-/// What one External Tool Call left behind.
+/// What one asynchronous Tool Call left behind.
 ///
 /// Identity rides along instead of being looked up: recognising a completion as late is the whole
 /// purpose of this type, and a lookup could not tell a late response from a fresh one.
-struct ExternalCallCompletion {
+struct AsyncCallCompletion {
     turn_id: TurnId,
     generation: u64,
     /// The `tool_call_id` this completion answers, matched against the in-flight call.
     call_id: String,
-    /// The server that answered, so a discarded response is still counted against the right one.
-    /// Bounded to `[a-z0-9_]` at admission, which is what makes it a safe metric label.
+    /// External server key for telemetry; empty for System MCP completions.
     server_key: String,
-    outcome: Result<ExternalToolOutcome, ExternalMcpError>,
+    outcome: AsyncToolOutcome,
+}
+
+enum AsyncToolOutcome {
+    External(Result<ExternalToolOutcome, ExternalMcpError>),
+    System(Result<serde_json::Value, crate::tools::system_mcp::SystemToolError>),
 }
 
 #[derive(Default)]

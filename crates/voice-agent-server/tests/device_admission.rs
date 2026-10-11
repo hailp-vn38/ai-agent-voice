@@ -62,6 +62,7 @@ fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
         mcp: voice_agent_server::config::McpConfig::default(),
+        system_mcp: Default::default(),
         vision: voice_agent_server::config::VisionConfig::default(),
         database: DatabaseConfig {
             url: database_url,

@@ -546,6 +546,7 @@ fn config_with_external(
         tts: TtsConfig::default(),
         speech_output: SpeechOutputConfig::default(),
         barge_in: BargeInConfig::default(),
+        system_mcp: Default::default(),
         mcp: McpConfig {
             external: ExternalMcpConfig {
                 network: ExternalMcpNetworkConfig {
