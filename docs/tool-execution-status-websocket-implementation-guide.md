@@ -6,7 +6,7 @@
 
 ## 1. Quyết định
 
-Bổ sung message server-to-client `type: "tool"`, gồm ba trạng thái `started`, `completed`, `failed`, để client biết LLM **đang thực thi tool nào**. Client opt-in bằng `ClientHello.features.tool_status=true`.
+Bổ sung message server-to-client `type: "tool"`, gồm ba trạng thái `started`, `completed`, `failed`, để client biết LLM **đang thực thi tool nào**. Physical Device opt-in bằng `ClientHello.features.tool_status=true`; Studio Assistant được bật mặc định sau khi xác thực, bất kể field này.
 
 **Giữ interface nhỏ:**
 
@@ -59,7 +59,7 @@ ClientHello thêm một field trong `features`:
 }
 ```
 
-`tool_status` mặc định `false`. Server cũ bỏ qua feature chưa biết; client cũ không nhận event mới. Không đổi protocol version, handshake hoặc codec.
+`tool_status` mặc định `false` cho Physical Device. Riêng Studio Assistant đã xác thực luôn nhận `type:"tool"` khi một tool thật sự chạy; không yêu cầu ClientHello chứa `tool_status`. Server cũ bỏ qua feature chưa biết. Không đổi protocol version, handshake hoặc codec.
 
 Feature này có thể bật trên Physical Device hoặc Virtual Device, độc lập với `turn_status` (hiện chỉ bật cho Web Assistant) và `mcp`. Floating Chat giữ `mcp:false`, nhưng Agent vẫn có thể dùng External MCP phía server.
 
@@ -106,7 +106,7 @@ Chỉ gửi status cho tool resolve thành công và có tên trong giới hạn
 
 1. `protocol/client.rs`: thêm `#[serde(default)] pub tool_status: bool` vào `ClientFeatures`.
 2. `session/actor/mod.rs`, `construct.rs`: thêm `tool_status: bool` mặc định false, setter `with_tool_status(bool)` tương tự pattern `with_turn_status`.
-3. `app/websocket.rs`: sau ClientHello, chuyển `hello.features.tool_status` vào actor, **không** phụ thuộc `assistant_connection`, `features.mcp` hoặc `features.turn_status`.
+3. `app/websocket.rs`: bật status nếu `assistant_connection.is_some() || hello.features.tool_status`. Không phụ thuộc `features.mcp` hoặc `features.turn_status`; Physical Device không opt-in vẫn tắt.
 4. Phát event bằng `send_turn_control(payload.to_string())` trong `session/actor/ingress.rs`, qua `OutboundMessage::TurnText { generation, turn_id, text }`; writer đã có `GenerationGate`. **Không** dùng `send_control` / `OutboundMessage::Text`.
 5. Nếu `try_send` trả Full/Closed: bỏ event và log bounded (nếu cần); tuyệt đối không `fail_closed` hoặc `fail_speech_delivery` vì observational event.
 
@@ -120,7 +120,7 @@ Pseudo-Rust (gợi ý shape, không phải patch compile-ready):
 enum ToolStatusState { Started, Completed, Failed }
 
 fn emit_tool_status(&self, name: &str, state: ToolStatusState) {
-    // Return unless opt-in + active turn + admitted, bounded name.
+    // Return unless status enabled + active turn + admitted, bounded name.
     // Serialize {type:"tool", session_id, turn_id, name, state}.
     // send_turn_control; a dropped observational event is not a turn failure.
 }
@@ -194,7 +194,8 @@ Thêm vào `ServerEvent` union và `parseServerEvent`; validate type, state, `se
 | DirectTts / Silent | Vẫn phát terminal sau ToolResult, trước hand-off delivery. |
 | Abort/barge-in/late MCP completion | Không record/emit stale result; generation gate drop outbound stale; UI clear khi turn kết thúc. |
 | Control queue đầy | Bỏ status, tool và turn tiếp tục như hiện tại. |
-| Client không opt-in | Zero `tool` event; không ảnh hưởng firmware/legacy client. |
+| Physical Device không opt-in | Zero `tool` event; không ảnh hưởng firmware/legacy client. |
+| Web Assistant không khai báo `tool_status`, dùng `mcp:false` | Vẫn nhận `type:"tool"` khi External MCP/Builtin thực sự chạy. |
 
 Sự kiện tool không thay `turn_status`, không cấp thêm quyền truy cập tool, không chứa arguments, result, credentials, URL, response body hoặc error diagnostics. Status chỉ có tên đã admit và giới hạn độ dài. Trong hàng đợi control, giữ FIFO của các event được enqueue; khi message bị drop, client không được phụ thuộc vào cặp started/terminal tuyệt đối.
 
@@ -211,7 +212,7 @@ Sự kiện tool không thay `turn_status`, không cấp thêm quyền truy cậ
 
 | Layer | Kiểm tra cần đạt |
 | --- | --- |
-| ClientHello | Default `tool_status=false`; true được nhận; unknown feature vẫn tương thích. |
+| ClientHello | Default `tool_status=false` (Physical Device); Web Assistant luôn có trạng thái tool, không phụ thuộc MCP flag. |
 | Actor | Chưa LLM `Finished` / round bị reject => không status. |
 | Executor | Builtin, Device MCP, External MCP đều `started`/terminal đúng; nhiều calls vẫn tuần tự; unknown tool không status. |
 | Outcome | Builtin argument error, Device `isError`/timeout, External `is_error`/`Err`; Xiaozhi direct response vẫn có terminal. |
@@ -233,7 +234,7 @@ npm --prefix apps/admin-web run build
 
 ## 8. Definition of Done
 
-- [ ] Message `tool` chỉ phát khi `features.tool_status=true`, tương thích WebSocket V1.
+- [ ] Message `tool` phát khi Physical Device opt-in **hoặc** Studio Assistant đã xác thực; `mcp:false` không chặn External MCP.
 - [ ] Payload đúng bốn field nghiệp vụ/định danh `session_id`, `turn_id`, `name`, `state`; không chứa `call_id`, `source`, `reason`, arguments hoặc results.
 - [ ] `started` chỉ phát tại execution seam, terminal dựa trên typed outcome và recorder hiện có.
 - [ ] Builtin, Device MCP, External MCP dùng cùng contract; cancellation/backpressure không tạo regression.
