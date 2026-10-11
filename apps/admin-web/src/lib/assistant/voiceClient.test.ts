@@ -190,7 +190,7 @@ describe('shared Voice WebSocket client', () => {
     socket.event({ type: 'turn_status', state: 'completed', turn_id: 1 })
     expect(states.at(-1)).toBe('ready')
     expect(socket.readyState).toBe(Socket.OPEN)
-    expect(socket.sent.some(s => s.includes('"type":"abort"'))).toBe(false)
+    expect(socket.sent.some(s => typeof s === 'string' && s.includes('"type":"abort"'))).toBe(false)
   })
 
   it('cancels microphone permission safely if the user switches capture off before it resolves', async () => {
