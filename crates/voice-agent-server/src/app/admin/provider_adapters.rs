@@ -60,11 +60,39 @@ pub(super) async fn get_provider_capabilities(
     request: Request,
 ) -> Response {
     if key.starts_with("config:") {
-        return error(
-            &request,
-            StatusCode::CONFLICT,
-            "config_provider_operation_unsupported",
-        );
+        use crate::{
+            providers::config_catalog::ProviderRef,
+            services::provider_runtime::{ProviderIdentity, ProviderVersion},
+        };
+        let reference = match ProviderRef::parse(&key, None) {
+            Ok(value) => value,
+            Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_provider"),
+        };
+        let snapshot = match reference.snapshot(&state.config) {
+            Ok(value) => value,
+            Err(()) => return error(&request, StatusCode::NOT_FOUND, "provider_not_found"),
+        };
+        let version = ProviderVersion {
+            identity: ProviderIdentity::Deployment {
+                kind: snapshot.kind,
+                key: snapshot.key,
+            },
+            revision: snapshot.revision,
+        };
+        let Some(capabilities) = state
+            .provider_runtime_manager
+            .as_ref()
+            .and_then(|manager| manager.ready_capabilities_version(&version))
+        else {
+            return error(
+                &request,
+                StatusCode::CONFLICT,
+                "provider_runtime_not_loaded",
+            );
+        };
+        return Json(serde_json::json!({ "provider_key": key, "source": "config", "capabilities": capabilities,
+            "runtime": { "runtime_status": "loaded", "tested_provider_id": null, "tested_revision": snapshot.revision, "runtime_matches_desired": true, "requires_restart": false }
+        })).into_response();
     }
     let database = match database(&state) {
         Ok(database) => database,

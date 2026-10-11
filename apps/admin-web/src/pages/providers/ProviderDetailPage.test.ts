@@ -143,3 +143,15 @@ it('enables Prepare only on explicit click and prevents deletion while bound', a
   expect(wrapper.text()).toContain('Default')
   wrapper.unmount()
 })
+
+it.each(['cold', 'ready'])('config mutations stay disabled when runtime is %s', async (state) => {
+  api.get.mockResolvedValue({ ...fixture, key: 'config:llm:primary', source: 'config', config_json: '{}', runtime: { ...fixture.runtime, desired_state: state } })
+  const wrapper = render()
+  await flushPromises()
+  const mutations = wrapper.findAll('button').filter((button) => /Edit|Disable|Delete/.test(button.text()))
+  expect(mutations).toHaveLength(4)
+  for (const button of mutations) expect(button.attributes('disabled')).toBeDefined()
+  expect(wrapper.find('[data-test-panel]').exists()).toBe(true)
+  expect(api.update).not.toHaveBeenCalled()
+  expect(api.remove).not.toHaveBeenCalled()
+})

@@ -257,6 +257,14 @@ _Avoid_: adapter name, active provider
 The authority declaring a Provider Instance: either Admin-managed database configuration or read-only deployment configuration. Equal names from different origins identify different instances.
 _Avoid_: runtime state, adapter source
 
+**Config Provider**:
+A Provider Instance declared by deployment configuration, whose configuration is read-only through Admin regardless of runtime readiness. Template bindings and diagnostics do not change its configuration authority.
+_Avoid_: database copy, ready-only provider
+
+**Provider Diagnostic**:
+A bounded test of one Provider Instance using diagnostic input independently of Template binding. It observes provider behavior without editing its declared configuration.
+_Avoid_: configuration edit, Template test
+
 **Provider Reference**:
 An unambiguous reference to a Provider Instance that retains its origin and provider kind. A Template binding names one instance independently of whether its runtime is resident.
 _Avoid_: display name, loaded provider

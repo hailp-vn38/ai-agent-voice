@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import ProviderVoiceDiscovery from './ProviderVoiceDiscovery.vue'
 import ProviderConfigEditor from './ProviderConfigEditor.vue'
 
-const api = vi.hoisted(() => ({ discoverCapabilities: vi.fn(), get: vi.fn() }))
+const api = vi.hoisted(() => ({ discoverCapabilities: vi.fn(), get: vi.fn(), capabilities: vi.fn() }))
 vi.mock('@/api/provider-adapters', () => ({ providerAdaptersApi: api }))
 vi.mock('@/api/providers', () => ({ providersApi: api }))
 const global = { stubs: { Button: { template: '<button><slot /></button>' } } }
@@ -42,4 +42,15 @@ it('selects discovered voice IDs while preserving an existing custom selection',
   expect(wrapper.get('select').element.value).toBe('Custom')
   await wrapper.get('select').setValue('Trúc Ly')
   expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual({ voice: 'Trúc Ly' })
+})
+
+it('config discovery reads ready runtime capabilities without draft or credential lookup', async () => {
+  api.get.mockResolvedValue({ key: 'config:tts:primary', source: 'config', adapter: 'vieneu_http', config_json: '{}', credential_env: 'CANARY' })
+  api.capabilities.mockResolvedValue({ capabilities: { voices: ['ready-voice'] } })
+  const wrapper = mount(ProviderVoiceDiscovery, { props: { savedKey: 'config:tts:primary' }, global })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(api.capabilities).toHaveBeenCalledWith('config:tts:primary', expect.any(AbortSignal))
+  expect(api.discoverCapabilities).not.toHaveBeenCalled()
+  expect(wrapper.emitted('discovered')?.[0]?.[0]).toEqual({ voices: ['ready-voice'] })
 })

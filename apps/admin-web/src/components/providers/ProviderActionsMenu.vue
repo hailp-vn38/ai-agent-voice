@@ -27,7 +27,7 @@ const { t } = useI18n()
       {{ t('pipeline.viewProvider') }}
     </MenuItem>
 
-    <MenuItem @select="emit('edit')">
+    <MenuItem :disabled="provider.source === 'config'" @select="provider.source !== 'config' && emit('edit')">
       <Pencil class="size-4 shrink-0" aria-hidden="true" />
       {{ t('common.edit') }}
     </MenuItem>
@@ -37,14 +37,14 @@ const { t } = useI18n()
       {{ t('providers.linkTemplate') }}
     </MenuItem>
 
-    <MenuItem @select="emit('duplicate')">
+    <MenuItem :disabled="provider.source === 'config'" @select="provider.source !== 'config' && emit('duplicate')">
       <Copy class="size-4 shrink-0" aria-hidden="true" />
       {{ t('common.duplicate') }}
     </MenuItem>
 
     <div class="my-1 h-px bg-border" role="separator" />
 
-    <MenuItem variant="danger" @select="emit('delete')">
+    <MenuItem variant="danger" :disabled="provider.source === 'config'" @select="provider.source !== 'config' && emit('delete')">
       <Trash2 class="size-4 shrink-0" aria-hidden="true" />
       {{ t('providers.delete') }}
     </MenuItem>

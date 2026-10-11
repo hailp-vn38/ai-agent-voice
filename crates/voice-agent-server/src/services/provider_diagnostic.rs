@@ -52,6 +52,8 @@ pub enum ProviderDiagnosticError {
 /// Coarse, privacy-safe result for a public Admin provider diagnostic request.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderDiagnosticRequestError {
+    #[error("config provider requires managed runtime")]
+    ConfigManagerRequired,
     #[error("speaker runtime manager is required")]
     SpeakerManagerRequired,
     #[error("provider desired revision changed")]
@@ -181,6 +183,7 @@ pub struct ProviderDiagnosticService {
     /// acknowledged cancellation.
     quarantined_capacity: Arc<Mutex<Vec<QuarantinedDiagnosticCapacity>>>,
     manager: Option<Arc<ProviderRuntimeManager>>,
+    config: Option<Arc<crate::config::AppConfig>>,
     managed_target: Option<DesiredProvider>,
     managed_admission: Mutex<Option<ProviderDiagnosticPermit>>,
     _managed_lease: Option<ResourceLease>,
@@ -219,6 +222,7 @@ impl ProviderDiagnosticService {
             database,
             quarantined_capacity: Arc::new(Mutex::new(Vec::new())),
             manager: None,
+            config: None,
             managed_target: None,
             managed_admission: Mutex::new(None),
             _managed_lease: None,
@@ -235,6 +239,11 @@ impl ProviderDiagnosticService {
         self
     }
 
+    pub fn with_config(mut self, config: Arc<crate::config::AppConfig>) -> Self {
+        self.config = Some(config);
+        self
+    }
+
     async fn request_snapshot(
         &self,
         key: &str,
@@ -242,6 +251,19 @@ impl ProviderDiagnosticService {
     ) -> Result<DesiredProvider, ProviderDiagnosticRequestError> {
         if let Some(snapshot) = &self.managed_target {
             return Ok(snapshot.clone());
+        }
+        let reference = crate::providers::config_catalog::ProviderRef::parse(
+            key,
+            (!kind.is_empty()).then_some(kind),
+        )
+        .map_err(|_| ProviderDiagnosticRequestError::TypeMismatch)?;
+        if reference.origin == crate::providers::config_catalog::ProviderOrigin::Config {
+            if self.manager.is_none() {
+                return Err(ProviderDiagnosticRequestError::ConfigManagerRequired);
+            }
+            return reference
+                .snapshot(self.config.as_deref().ok_or(RuntimeError::Configuration)?)
+                .map_err(|_| ProviderDiagnosticRequestError::NotFound);
         }
         let database = self
             .database
@@ -293,7 +315,20 @@ impl ProviderDiagnosticService {
         let snapshot = self.request_snapshot(key, kind).await?;
         let admission = self.limiter.try_acquire()?;
         let manager = self.manager.as_ref().expect("managed path checked");
-        let lease = manager.acquire(snapshot.clone()).await?;
+        let test_deadline = tokio::time::Instant::now() + self.execution_timeout;
+        let deadline = manager.admission_deadline().min(test_deadline);
+        let reference = crate::providers::config_catalog::ProviderRef::parse(key, Some(kind))
+            .map_err(|_| ProviderDiagnosticRequestError::TypeMismatch)?;
+        let lease = match reference.origin {
+            crate::providers::config_catalog::ProviderOrigin::Config => {
+                manager
+                    .acquire_deployment_until(snapshot.clone(), deadline)
+                    .await?
+            }
+            crate::providers::config_catalog::ProviderOrigin::Database => {
+                manager.acquire_until(snapshot.clone(), deadline).await?
+            }
+        };
         let registry = lease.runtimes().ok_or(RuntimeError::Unavailable)?;
         let runtime_snapshot = DatabaseRuntimeSnapshot::from_states([(
             snapshot.key.clone(),
@@ -307,12 +342,13 @@ impl ProviderDiagnosticService {
         Ok(Self {
             limiter: self.limiter.clone(),
             pilot: self.pilot.clone(),
-            execution_timeout: self.execution_timeout,
+            execution_timeout: test_deadline.saturating_duration_since(tokio::time::Instant::now()),
             registry: Arc::new(registry),
             runtime_snapshot: Some(Arc::new(runtime_snapshot)),
             database: self.database.clone(),
             quarantined_capacity: Arc::clone(&self.quarantined_capacity),
             manager: None,
+            config: None,
             managed_target: Some(snapshot),
             managed_admission: Mutex::new(Some(admission)),
             _managed_lease: Some(lease),
@@ -344,6 +380,7 @@ impl ProviderDiagnosticService {
             database: None,
             quarantined_capacity: self.quarantined_capacity.clone(),
             manager: None,
+            config: None,
             managed_target: Some(snapshot),
             managed_admission: Mutex::new(Some(admission)),
             _managed_lease: Some(lease),
@@ -537,7 +574,9 @@ impl ProviderDiagnosticService {
     ) -> Result<LlmDiagnosticResult, ProviderDiagnosticRequestError> {
         if self.manager.is_some() {
             let service = self.managed_request(key, "llm").await?;
-            return Box::pin(service.execute_llm(key, input)).await;
+            let mut result = Box::pin(service.execute_llm(key, input)).await?;
+            result.provider_key = key.to_owned();
+            return Ok(result);
         }
         let snapshot = self.request_snapshot(key, "llm").await?;
         let provider_key = snapshot.key.clone();
@@ -571,7 +610,9 @@ impl ProviderDiagnosticService {
     ) -> Result<TtsDiagnosticResult, ProviderDiagnosticRequestError> {
         if self.manager.is_some() {
             let service = self.managed_request(key, "tts").await?;
-            return Box::pin(service.execute_tts(key, request)).await;
+            let mut result = Box::pin(service.execute_tts(key, request)).await?;
+            result.provider_key = key.to_owned();
+            return Ok(result);
         }
         let snapshot = self.request_snapshot(key, "tts").await?;
         let provider_key = snapshot.key.clone();
@@ -617,7 +658,9 @@ impl ProviderDiagnosticService {
     ) -> Result<VadDiagnosticResult, ProviderDiagnosticRequestError> {
         if self.manager.is_some() {
             let service = self.managed_request(key, "vad").await?;
-            return Box::pin(service.execute_vad(key)).await;
+            let mut result = Box::pin(service.execute_vad(key)).await?;
+            result.provider_key = key.to_owned();
+            return Ok(result);
         }
         let snapshot = self.request_snapshot(key, "vad").await?;
         let provider_key = snapshot.key.clone();
@@ -654,7 +697,9 @@ impl ProviderDiagnosticService {
     ) -> Result<AsrDiagnosticResult, ProviderDiagnosticRequestError> {
         if self.manager.is_some() {
             let service = self.managed_request(key, "asr").await?;
-            return Box::pin(service.execute_asr(key, pcm)).await;
+            let mut result = Box::pin(service.execute_asr(key, pcm)).await?;
+            result.provider_key = key.to_owned();
+            return Ok(result);
         }
         let snapshot = self.request_snapshot(key, "asr").await?;
         let provider_key = snapshot.key.clone();
@@ -815,6 +860,20 @@ impl ProviderDiagnosticService {
         &self,
         target: &ProviderDiagnosticTarget,
     ) -> ProviderDiagnosticRuntimeMetadata {
+        if self._managed_lease.as_ref().is_some_and(|lease| {
+            matches!(
+                lease.version().identity,
+                crate::services::provider_runtime::ProviderIdentity::Deployment { .. }
+            )
+        }) {
+            return ProviderDiagnosticRuntimeMetadata {
+                tested_provider_id: None,
+                tested_revision: Some(1),
+                tested_runtime: DatabaseRuntimeStatus::Loaded,
+                runtime_matches_desired: true,
+                requires_restart: false,
+            };
+        }
         if self._managed_lease.as_ref().is_some_and(|lease| {
             matches!(
                 lease.version().identity,

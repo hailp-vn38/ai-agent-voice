@@ -31,7 +31,7 @@ const shared = computed(() => (props.sharedWith?.length ?? 0) > 0)
       {{ t('pipeline.viewProvider') }}
     </MenuItem>
 
-    <MenuItem @select="emit('edit', provider)">
+    <MenuItem :disabled="provider.source === 'config'" @select="provider.source !== 'config' && emit('edit', provider)">
       <Pencil class="size-4 shrink-0" aria-hidden="true" />
       {{ t('pipeline.editProvider') }}
     </MenuItem>

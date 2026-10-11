@@ -30,6 +30,8 @@ const props = withDefaults(
   { initialType: 'llm', providers: () => [], usageCount: 0 },
 )
 
+const isReadOnly = computed(() => props.provider?.source === 'config')
+
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{
   save: [payload: { name: string; type: ProviderType; adapter: string; model: string; description: string; status: ProviderStatus; endpoint?: string; apiKey?: string; configJson?: Record<string, unknown> }]
@@ -68,10 +70,12 @@ const adapterHints = computed(() => [
 ])
 
 const typeChanged = (next: ProviderType) => {
+  if (isReadOnly.value) return
   if (!adapterHints.value.includes(form.adapter)) form.adapter = ''
 }
 
 watch(() => form.adapter, (adapter, previous) => {
+  if (isReadOnly.value) return
   form.apiKey = ''
   if (previous && adapter !== props.provider?.adapter) form.configJson = {}
 })
@@ -101,6 +105,7 @@ watch(
 )
 
 function submit() {
+  if (isReadOnly.value) return
   if (!form.name.trim() || !form.adapter.trim()) return
   emit('save', {
     name: form.name.trim(),
@@ -149,12 +154,12 @@ function submit() {
 
       <label class="block space-y-1.5">
         <span class="text-sm font-medium">{{ t('providers.name') }}</span>
-        <input v-model="form.name" class="admin-input" :placeholder="t('providers.namePlaceholder')" required />
+        <input :disabled="isReadOnly" v-model="form.name" class="admin-input" :placeholder="t('providers.namePlaceholder')" required />
       </label>
 
       <label class="block space-y-1.5">
         <span class="text-sm font-medium">{{ t('providers.adapter') }}</span>
-        <input
+        <input :disabled="isReadOnly"
           v-model="form.adapter"
           class="admin-input font-mono text-sm"
           :list="adapterListId"
@@ -167,28 +172,28 @@ function submit() {
 
       <label class="block space-y-1.5">
         <span class="text-sm font-medium">{{ t('providers.status') }}</span>
-        <select v-model="form.status" class="admin-input">
+        <select :disabled="isReadOnly" v-model="form.status" class="admin-input">
           <option value="ready">{{ t('status.provider.ready') }}</option>
           <option value="disabled">{{ t('status.provider.disabled') }}</option>
           <option value="error">{{ t('status.provider.error') }}</option>
         </select>
       </label>
 
-      <ProviderVoiceDiscovery v-if="descriptor?.discovery?.voices === 'remote'" class="sm:col-span-2" :draft="{ type: 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && (provider.credential || provider.credentialEnv) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" @discovered="descriptor = { ...descriptor!, capabilities: { ...descriptor?.capabilities, ...$event } }" />
-      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor v-model="form.configJson" :schema="descriptor?.config_schema" :capabilities="descriptor?.capabilities" /></div>
+      <ProviderVoiceDiscovery v-if="!isReadOnly && descriptor?.discovery?.voices === 'remote'" class="sm:col-span-2" :draft="{ type: 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && (provider.credential || provider.credentialEnv) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" @discovered="descriptor = { ...descriptor!, capabilities: { ...descriptor?.capabilities, ...$event } }" />
+      <div class="sm:col-span-2"><p v-if="configError" class="text-sm text-danger">{{ configError }}</p><ProviderConfigEditor :readonly="isReadOnly" v-model="form.configJson" :schema="descriptor?.config_schema" :capabilities="descriptor?.capabilities" /></div>
 
       <label v-if="['openai', 'chillaudio_ws', 'vieneu_http'].includes(form.adapter)" class="block space-y-1.5 sm:col-span-2">
         <span class="text-sm font-medium">API key / token mới (tùy chọn)</span>
         <p v-if="provider?.credential" class="text-xs text-muted-foreground">Key hiện tại: {{ provider.credential.masked_key }}</p>
-        <input v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
+        <input :disabled="isReadOnly" v-model="form.apiKey" type="password" autocomplete="new-password" maxlength="4096" class="admin-input" />
         <small class="block text-xs text-muted-foreground">Để trống để giữ key hiện tại. Key mới được mã hóa trên server.</small>
       </label>
 
-      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :capabilities="descriptor?.capabilities" :draft="{ type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws', 'vieneu_http'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
+      <ProviderTestPanel v-if="open && ['asr','llm','tts'].includes(form.type)" class="sm:col-span-2" :type="form.type" :adapter="form.adapter" :capabilities="descriptor?.capabilities" :saved-key="isReadOnly ? provider?.id : undefined" :draft="isReadOnly ? undefined : { type: form.type as 'asr' | 'llm' | 'tts', adapter: form.adapter, config_json: form.configJson, ...(form.apiKey ? { api_key: form.apiKey } : provider && ['openai', 'chillaudio_ws', 'vieneu_http'].includes(form.adapter) && form.adapter === provider.adapter && provider.desiredRevision ? { saved_credential: { key: provider.id, expected_revision: provider.desiredRevision } } : {}) }" />
 
       <div class="flex justify-end gap-2 pt-2 sm:col-span-2">
         <Button type="button" variant="outline" @click="open = false">{{ t('common.cancel') }}</Button>
-        <Button type="submit">
+        <Button type="submit" :disabled="isReadOnly">
           {{ provider ? t('common.saveChanges') : t('providers.create') }}
         </Button>
       </div>

@@ -737,6 +737,7 @@ export const useAdminStore = defineStore('admin', () => {
   }
 
   async function updateProvider(providerId: string, patch: Partial<Omit<ProviderInstance, 'id' | 'type'>> & { apiKey?: string }) {
+    if (getProvider(providerId)?.source === 'config') return
     return run(async () => {
       const current = getProvider(providerId)
       const revision = providerRevisions.value[providerId]
@@ -762,6 +763,7 @@ export const useAdminStore = defineStore('admin', () => {
 
   /** Copies the provider configuration only; the copy starts unbound. */
   async function duplicateProvider(providerId: string, name?: string) {
+    if (getProvider(providerId)?.source === 'config') return
     return run(async () => {
       const source = getProvider(providerId)
       if (!source) throw new Error(`Unknown provider ${providerId}`)
@@ -775,6 +777,7 @@ export const useAdminStore = defineStore('admin', () => {
    * agents and devices are never removed: only the reference is cleared.
    */
   async function deleteProvider(providerId: string) {
+    if (getProvider(providerId)?.source === 'config') return
     return run(async () => {
       const affected = templatesUsingProvider(providerId)
       for (const template of affected) {

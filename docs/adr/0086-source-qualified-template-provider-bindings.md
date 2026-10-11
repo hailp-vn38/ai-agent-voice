@@ -18,4 +18,4 @@ Managed runtime mode resolves immutable deployment snapshots and uses the existi
 
 ## Consequences
 
-The forward migration preserves database binding identities and SQLite integrity. Config rename/removal requires explicit rebinding; it never deletes Template relationships automatically. This extends ADR-0052 and ADR-0071 while retaining immutable per-session profiles and forward-only migrations under ADR-0063. Web components stay unchanged; existing config edit/delete controls receive a read-only API error.
+The forward migration preserves database binding identities and SQLite integrity. Config rename/removal requires explicit rebinding; it never deletes Template relationships automatically. This extends ADR-0052 and ADR-0071 while retaining immutable per-session profiles and forward-only migrations under ADR-0063. Web components retain their layouts; config mutation controls and configuration inputs are disabled, with callback/store guards and read-only API enforcement. Diagnostics and Template binding actions remain available.

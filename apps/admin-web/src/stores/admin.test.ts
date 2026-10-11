@@ -49,6 +49,21 @@ describe('admin store', () => {
     agentsApi.setDefaultTemplate.mockResolvedValue(undefined)
   })
 
+  it('rejects config mutations before requests or template unlink', async () => {
+    const key = 'config:llm:primary'
+    providersApi.listAll.mockResolvedValue({ items: [{ id: 0, key, name: 'Config', source: 'config', type: 'llm', adapter: 'openai', config_json: '{}', enabled: 1, revision: 1 }] })
+    templatesApi.providers.mockResolvedValue({ bindings: { llm: key }, revision: 1 })
+    const store = useAdminStore()
+    await store.loadAll()
+    const before = JSON.stringify(store.providers)
+    await store.updateProvider(key, { name: 'changed' })
+    await store.duplicateProvider(key)
+    await store.deleteProvider(key)
+    expect(providersApi.update).not.toHaveBeenCalled()
+    expect(templatesApi.unlinkProvider).not.toHaveBeenCalled()
+    expect(JSON.stringify(store.providers)).toBe(before)
+  })
+
   it('preserves speaker config when the metadata form sends generic provider fields', async () => {
     const provider = { id: 3, key: 'speaker_test', name: 'Voice', type: 'speaker', adapter: 'campplus_sherpa', config_json: '{"min_speech_ms":3000,"target_speech_ms":4000,"max_window_ms":6000}', enabled: 1, revision: 1, runtime_status: 'not_loaded' }
     providersApi.listAll.mockResolvedValue({ items: [provider] })

@@ -27,6 +27,11 @@ async function discover() {
     let draft = props.draft
     if (!draft && props.savedKey) {
       const saved = await providersApi.get(props.savedKey, pending.signal)
+      if (saved.source === 'config') {
+        const result = await providersApi.capabilities(saved.key, pending.signal)
+        if (!pending.signal.aborted) emit('discovered', result.capabilities)
+        return
+      }
       draft = { type: 'tts', adapter: saved.adapter, config_json: JSON.parse(saved.config_json),
         ...(saved.credential || saved.credential_env ? { saved_credential: { key: saved.key, expected_revision: saved.revision } } : {}) }
     }

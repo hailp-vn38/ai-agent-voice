@@ -924,10 +924,17 @@ impl ProviderRuntimeManager {
     }
 
     pub fn ready_capabilities(&self, provider_id: i64, revision: i64) -> Option<serde_json::Value> {
+        self.ready_capabilities_version(&ProviderVersion::database(provider_id, revision))
+    }
+
+    pub fn ready_capabilities_version(
+        &self,
+        version: &ProviderVersion,
+    ) -> Option<serde_json::Value> {
         let registry = self.registry.lock().expect("runtime registry poisoned");
         registry
             .entries
-            .get(&ProviderVersion::database(provider_id, revision))
+            .get(version)
             .filter(|entry| entry.state == RuntimeState::Ready && entry.healthy())
             .and_then(|entry| entry.capabilities.clone())
     }

@@ -231,6 +231,7 @@ impl AppState {
                 ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
                 Duration::from_millis(self.config.api.provider_tests.timeout_ms),
             )
+            .with_config(Arc::clone(&self.config))
             .with_pilot_admission(self.pilot_admission.clone()),
         );
         self
@@ -267,6 +268,7 @@ impl AppState {
                 ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
                 Duration::from_millis(self.config.api.provider_tests.timeout_ms),
             )
+            .with_config(Arc::clone(&self.config))
             .with_pilot_admission(self.pilot_admission.clone()),
         );
         self
@@ -303,6 +305,7 @@ impl AppState {
                 ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
                 Duration::from_millis(self.config.api.provider_tests.timeout_ms),
             )
+            .with_config(Arc::clone(&self.config))
             .with_pilot_admission(self.pilot_admission.clone()),
         );
         self
@@ -348,6 +351,7 @@ impl AppState {
                 ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
                 Duration::from_millis(self.config.api.provider_tests.timeout_ms),
             )
+            .with_config(Arc::clone(&self.config))
             .with_pilot_admission(self.pilot_admission.clone()),
         );
         self
@@ -569,6 +573,7 @@ impl AppState {
                 ProviderDiagnosticLimiter::new(self.config.api.provider_tests.max_concurrency),
                 Duration::from_millis(self.config.api.provider_tests.timeout_ms),
             )
+            .with_config(Arc::clone(&self.config))
             .with_pilot_admission(self.pilot_admission.clone())
             .with_runtime_manager(Arc::clone(&manager)),
         );
@@ -677,6 +682,7 @@ impl AppState {
                 ProviderDiagnosticLimiter::new(config.api.provider_tests.max_concurrency),
                 Duration::from_millis(config.api.provider_tests.timeout_ms),
             )
+            .with_config(Arc::clone(&config))
             .with_pilot_admission(pilot_admission.clone()),
         );
         let state = Self {

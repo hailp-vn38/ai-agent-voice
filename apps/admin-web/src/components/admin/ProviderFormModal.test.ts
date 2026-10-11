@@ -41,3 +41,19 @@ describe('Provider edit draft credential selection', () => {
     else expect(draft).not.toHaveProperty('saved_credential')
   })
 })
+
+
+it('locks config edits and submit while keeping the saved diagnostic available', async () => {
+  const wrapper = mount(ProviderFormModal, {
+    props: { modelValue: true, provider: { ...provider, id: 'config:llm:primary', source: 'config', configJson: {} } },
+    global: { stubs: { ...stubs, ProviderTestPanel: true } },
+  })
+  for (const control of wrapper.findAll('input, select, button[type="submit"]')) {
+    expect(control.attributes('disabled')).toBeDefined()
+  }
+  await wrapper.get('form').trigger('submit')
+  expect(wrapper.emitted('save')).toBeUndefined()
+  const test = wrapper.getComponent(ProviderTestPanel)
+  expect(test.props('savedKey')).toBe('config:llm:primary')
+  expect(test.props('draft')).toBeUndefined()
+})

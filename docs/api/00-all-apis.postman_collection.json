@@ -1215,7 +1215,7 @@
                 "method": "GET",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}/capabilities",
-                "description": "Requires the DB provider runtime to be loaded and its compiled adapter descriptor to expose capabilities. Config references return 409 config_provider_operation_unsupported.",
+                "description": "Reads safe cached capabilities from an exact ready runtime. Qualified config references use Deployment ProviderVersion in managed mode. Cold config runtime returns 409 provider_runtime_not_loaded; GET never materializes a runtime.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1255,7 +1255,7 @@
                     }
                   }
                 },
-                "description": "Tests the loaded LLM runtime only. JSON body rejects unknown fields. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
+                "description": "Tests the loaded LLM runtime only. JSON body rejects unknown fields. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Qualified config references support managed diagnostics without binding or prepare; use exact Deployment identity and return 409 config_provider_requires_managed_runtime in legacy mode. JSON includes source; TTS WAV includes X-Provider-Source and a qualified X-Provider-Key, with no database provider ID.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1290,7 +1290,7 @@
                     }
                   }
                 },
-                "description": "Returns audio/wav on success. voice and language are optional typed overrides. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
+                "description": "Returns audio/wav on success. voice and language are optional typed overrides. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Qualified config references support managed diagnostics without binding or prepare; use exact Deployment identity and return 409 config_provider_requires_managed_runtime in legacy mode. JSON includes source; TTS WAV includes X-Provider-Source and a qualified X-Provider-Key, with no database provider ID.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1322,7 +1322,7 @@
                     "src": []
                   }
                 },
-                "description": "Upload PCM WAV. Expected: mono 16 kHz PCM, duration <= 30 s, request body <= 5 MiB. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
+                "description": "Upload PCM WAV. Expected: mono 16 kHz PCM, duration <= 30 s, request body <= 5 MiB. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Qualified config references support managed diagnostics without binding or prepare; use exact Deployment identity and return 409 config_provider_requires_managed_runtime in legacy mode. JSON includes source; TTS WAV includes X-Provider-Source and a qualified X-Provider-Key, with no database provider ID.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [
@@ -1342,7 +1342,7 @@
                 "method": "POST",
                 "header": [],
                 "url": "{{base_url}}/api/admin/providers/{{provider_key}}/test/vad",
-                "description": "No request body. Tests exactly one canonical silent VAD inference frame on the already-loaded runtime. Returns probability, sample range, elapsed time and runtime provenance; provider_key must identify a VAD Provider Instance. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Config references return 409 config_provider_operation_unsupported.",
+                "description": "No request body. Tests exactly one canonical silent VAD inference frame on the already-loaded runtime. Returns probability, sample range, elapsed time and runtime provenance; provider_key must identify a VAD Provider Instance. With the manager enabled, an enabled unbound or cold provider can be acquired under bounded load/RAM capacity. JSON results include exact provider_id and provider_revision; TTS WAV returns X-Provider-Id and X-Provider-Revision. Qualified config references support managed diagnostics without binding or prepare; use exact Deployment identity and return 409 config_provider_requires_managed_runtime in legacy mode. JSON includes source; TTS WAV includes X-Provider-Source and a qualified X-Provider-Key, with no database provider ID.",
                 "auth": {
                   "type": "bearer",
                   "bearer": [

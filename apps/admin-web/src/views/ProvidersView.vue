@@ -169,6 +169,7 @@ function openDetail(provider: ProviderInstance) {
 }
 
 function openEdit(provider: ProviderInstance) {
+  if (provider.source === 'config') return
   editingProvider.value = provider
 }
 
@@ -188,7 +189,7 @@ function saveProvider(payload: {
   apiKey?: string
   configJson?: Record<string, unknown>
 }) {
-  if (!editingProvider.value) return
+  if (!editingProvider.value || editingProvider.value.source === 'config') return
   // The type of an existing instance is fixed: its bindings already rely on it.
   const { type: _type, ...patch } = payload
   store.updateProvider(editingProvider.value.id, patch)
@@ -200,7 +201,7 @@ function linkProvider(templateId: string) {
 }
 
 function confirmDelete() {
-  if (!deleteTarget.value) return
+  if (!deleteTarget.value || deleteTarget.value.source === 'config') return
   store.deleteProvider(deleteTarget.value.id)
   deleteTarget.value = undefined
 }

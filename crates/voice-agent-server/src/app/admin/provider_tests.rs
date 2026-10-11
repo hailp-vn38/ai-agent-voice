@@ -16,13 +16,6 @@ pub(super) async fn test_vad_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    if key.starts_with("config:") {
-        return error(
-            &request,
-            StatusCode::CONFLICT,
-            "config_provider_operation_unsupported",
-        );
-    }
     let (parts, body) = request.into_parts();
     let request = Request::from_parts(parts, Body::empty());
     match to_bytes(body, 1).await {
@@ -35,6 +28,7 @@ pub(super) async fn test_vad_provider(
         Err(value) => return request_error_response(&request, value),
     };
     Json(serde_json::json!({
+        "source": if diagnostic.provider_key.starts_with("config:") { "config" } else { "database" },
         "provider_key": diagnostic.provider_key,
         "type": "vad",
         "status": "success",
@@ -63,13 +57,6 @@ pub(super) async fn test_llm_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    if key.starts_with("config:") {
-        return error(
-            &request,
-            StatusCode::CONFLICT,
-            "config_provider_operation_unsupported",
-        );
-    }
     let (request, body): (_, LlmTestRequest) = match json(request).await {
         Ok(value) => value,
         Err(response) => return response,
@@ -87,6 +74,7 @@ pub(super) async fn test_llm_provider(
         Err(diagnostic_error) => return request_error_response(&request, diagnostic_error),
     };
     Json(serde_json::json!({
+        "source": if diagnostic.provider_key.starts_with("config:") { "config" } else { "database" },
         "provider_key": diagnostic.provider_key,
         "type": "llm",
         "status": "success",
@@ -107,13 +95,6 @@ pub(super) async fn test_tts_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    if key.starts_with("config:") {
-        return error(
-            &request,
-            StatusCode::CONFLICT,
-            "config_provider_operation_unsupported",
-        );
-    }
     let (request, body): (_, TtsTestRequest) = match json(request).await {
         Ok(value) => value,
         Err(response) => return response,
@@ -147,6 +128,14 @@ pub(super) async fn test_tts_provider(
         Err(error_value) => return request_error_response(&request, error_value),
     };
     let mut response = diagnostic.wav.into_response();
+    response.headers_mut().insert(
+        "x-provider-source",
+        HeaderValue::from_static(if diagnostic.provider_key.starts_with("config:") {
+            "config"
+        } else {
+            "database"
+        }),
+    );
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/wav"));
     headers.insert(
@@ -194,13 +183,6 @@ pub(super) async fn test_asr_provider(
     Path(key): Path<String>,
     request: Request,
 ) -> Response {
-    if key.starts_with("config:") {
-        return error(
-            &request,
-            StatusCode::CONFLICT,
-            "config_provider_operation_unsupported",
-        );
-    }
     if request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -234,6 +216,7 @@ pub(super) async fn test_asr_provider(
             serde_json::json!(started.elapsed().as_secs_f64() / (duration_ms as f64 / 1_000.0));
     }
     Json(serde_json::json!({
+        "source": if diagnostic.provider_key.starts_with("config:") { "config" } else { "database" },
         "provider_key": diagnostic.provider_key,
         "type": "asr",
         "status": "success",
@@ -286,6 +269,11 @@ pub(super) fn request_error_response(
     error_value: ProviderDiagnosticRequestError,
 ) -> Response {
     match error_value {
+        ProviderDiagnosticRequestError::ConfigManagerRequired => error(
+            request,
+            StatusCode::CONFLICT,
+            "config_provider_requires_managed_runtime",
+        ),
         ProviderDiagnosticRequestError::SpeakerManagerRequired => error(
             request,
             StatusCode::SERVICE_UNAVAILABLE,

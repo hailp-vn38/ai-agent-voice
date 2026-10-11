@@ -74,7 +74,7 @@ export const providersApi = {
     return requestJson<ProviderPrepareResult>(`${providerPath(key)}/prepare`, jsonRequest('POST', {}), { signal })
   },
   capabilities(key: string, signal?: AbortSignal) {
-    return requestJson<unknown>(`${providerPath(key)}/capabilities`, {}, { signal })
+    return requestJson<{ capabilities: Record<string, unknown> }>(`${providerPath(key)}/capabilities`, {}, { signal })
   },
   testVad(key: string, signal?: AbortSignal) {
     return requestJson<VadDiagnosticResult>(`${providerPath(key)}/test/vad`, { method: 'POST' }, { signal })

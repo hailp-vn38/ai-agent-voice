@@ -79,7 +79,7 @@ watch(
           <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
           {{ providerStatusLabel(provider.status) }}
         </span>
-        <Button size="sm" variant="outline" class="ml-auto" @click="emit('edit', provider)">
+        <Button size="sm" variant="outline" class="ml-auto" :disabled="provider.source === 'config'" @click="provider.source !== 'config' && emit('edit', provider)">
           <Pencil class="size-4" />
           {{ t('common.edit') }}
         </Button>

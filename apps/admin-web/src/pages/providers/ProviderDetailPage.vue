@@ -36,6 +36,7 @@ const loading = ref(false)
 const loadingBindings = ref(false)
 const busy = ref(false)
 const error = ref('')
+const isConfigProvider = computed(() => provider.value?.source === 'config')
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 let loadController: AbortController | undefined
@@ -78,6 +79,7 @@ const editableProvider = computed<ProviderInstance | undefined>(() => {
       ? 'error' : 'ready'
   return {
     id: item.key,
+    source: item.source,
     name: item.name,
     type: item.type as ProviderType,
     adapter: item.adapter,
@@ -171,7 +173,7 @@ async function mutate(action: () => Promise<unknown>) {
 }
 
 function toggleEnabled() {
-  if (!provider.value) return
+  if (!provider.value || isConfigProvider.value) return
   const current = provider.value
   void mutate(() => providersApi.update(current.key, { enabled: !enabled.value }, current.revision))
 }
@@ -191,7 +193,7 @@ function save(payload: {
   apiKey?: string
   configJson?: Record<string, unknown>
 }) {
-  if (!provider.value) return
+  if (!provider.value || isConfigProvider.value) return
   const current = provider.value
   void mutate(() => providersApi.update(current.key, {
     name: payload.name,
@@ -202,7 +204,7 @@ function save(payload: {
   }, current.revision))
 }
 async function remove() {
-  if (!provider.value || !bindingsLoaded.value || bindingTotal.value > 0 || busy.value) return
+  if (!provider.value || isConfigProvider.value || !bindingsLoaded.value || bindingTotal.value > 0 || busy.value) return
   const current = provider.value
   busy.value = true
   error.value = ''
@@ -251,13 +253,13 @@ onBeforeUnmount(() => {
         <Button variant="outline" size="sm" :disabled="busy" @click="load">
           <RefreshCw class="size-4" aria-hidden="true" />{{ t('common.refresh') }}
         </Button>
-        <Button variant="outline" size="sm" :disabled="busy" @click="editOpen = true">
+        <Button variant="outline" size="sm" :disabled="busy || isConfigProvider" :title="isConfigProvider ? 'Managed by deployment config' : undefined" @click="editOpen = true">
           <Pencil class="size-4" aria-hidden="true" />{{ t('common.edit') }}
         </Button>
-        <Button variant="outline" size="sm" :disabled="busy" @click="toggleEnabled">
+        <Button variant="outline" size="sm" :disabled="busy || isConfigProvider" @click="toggleEnabled">
           {{ enabled ? t('providerDetail.disable') : t('providerDetail.enable') }}
         </Button>
-        <Button variant="ghost" size="sm" class="text-danger" :disabled="busy || !bindingsLoaded || bindingTotal > 0" @click="deleteOpen = true">
+        <Button variant="ghost" size="sm" class="text-danger" :disabled="busy || isConfigProvider || !bindingsLoaded || bindingTotal > 0" @click="deleteOpen = true">
           <Trash2 class="size-4" aria-hidden="true" />{{ t('common.delete') }}
         </Button>
       </template>
@@ -403,7 +405,7 @@ onBeforeUnmount(() => {
               <CircleHelp class="size-3.5 shrink-0" aria-hidden="true" />
               {{ t('providerDetail.secretHint') }}
             </p>
-            <Button size="sm" variant="outline" :disabled="busy" @click="editOpen = true">
+            <Button size="sm" variant="outline" :disabled="busy || isConfigProvider" :title="isConfigProvider ? 'Managed by deployment config' : undefined" @click="editOpen = true">
               <Pencil class="size-3.5" aria-hidden="true" />{{ t('common.edit') }}
             </Button>
           </section>

@@ -145,6 +145,7 @@ function openProvider(provider: ProviderInstance) {
 }
 
 function editProvider(provider: ProviderInstance) {
+  if (provider.source === 'config') return
   editingProvider.value = provider
   providerDetailOpen.value = false
   providerEditOpen.value = true
@@ -218,7 +219,7 @@ function saveEditedProvider(payload: {
   status: ProviderInstance['status']
   endpoint?: string
 }) {
-  if (!editingProvider.value) return
+  if (!editingProvider.value || editingProvider.value.source === 'config') return
   const { type: _type, ...patch } = payload
   store.updateProvider(editingProvider.value.id, patch)
 }
