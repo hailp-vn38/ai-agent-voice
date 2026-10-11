@@ -648,7 +648,10 @@ async fn handle_socket(
     let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
     let actor = actor
         .with_turn_status(assistant_connection.is_some() && hello.features.turn_status)
-        .with_tool_status(hello.features.tool_status);
+        .with_tool_status(tool_status_enabled(
+            assistant_connection.is_some(),
+            &hello.features,
+        ));
     let actor = actor.with_pipeline_writer_terminal(pipeline_writer_terminal);
     let actor =
         actor.with_pilot_admission(runtimes.pilot_admission, hello.features.pipeline_status);
@@ -964,6 +967,39 @@ fn checked_text(message: Message, max: usize) -> Result<String, u16> {
         Message::Text(_) => Err(1009),
         Message::Binary(_) => Err(1002),
         _ => Err(1002),
+    }
+}
+
+/// Web Assistant must observe server-owned tool execution even if its ClientHello
+/// predates the optional tool_status feature. This is independent of Device MCP.
+fn tool_status_enabled(
+    is_web_assistant: bool,
+    features: &crate::protocol::ClientFeatures,
+) -> bool {
+    is_web_assistant || features.tool_status
+}
+
+#[cfg(test)]
+mod tool_status_negotiation_tests {
+    use super::*;
+
+    #[test]
+    fn web_assistant_sees_server_tool_status_even_with_mcp_disabled_and_no_opt_in() {
+        let features = crate::protocol::ClientFeatures {
+            mcp: false,
+            tool_status: false,
+            ..Default::default()
+        };
+        assert!(tool_status_enabled(true, &features));
+        assert!(!tool_status_enabled(false, &features));
+
+        let opted_in = crate::protocol::ClientFeatures {
+            tool_status: true,
+            mcp: false,
+            ..Default::default()
+        };
+        assert!(tool_status_enabled(false, &opted_in));
+        assert!(tool_status_enabled(true, &opted_in));
     }
 }
 
