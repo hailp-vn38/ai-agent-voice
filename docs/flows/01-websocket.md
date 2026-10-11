@@ -352,3 +352,26 @@ có reason code an toàn. Accepted text tiếp tục dùng đúng một `stt` ec
 ESP32 không nhận extension này dù quảng cáo flag trên Physical Device.
 System Save invalidate ticket và đóng cả web socket đang đợi ClientHello;
 publication giữ profile snapshot không bị xen một settings write trước upgrade.
+
+
+### Tool execution status (opt-in)
+
+Voice Client có thể khai báo `features.tool_status=true` trong `ClientHello` để nhận
+message server-to-client `type:"tool"`. Mặc định `false` để tương thích firmware/client cũ.
+Không phụ thuộc `features.mcp` hay `features.turn_status`; Physical Device và
+Studio Assistant đều có thể bật.
+
+```json
+{"type":"tool","session_id":"...","turn_id":1,"name":"handle_exit_intent","state":"started"}
+```
+
+`state` có ba giá trị `started`, `completed`, `failed`. Payload chỉ có
+`type`, `session_id`, `turn_id`, `name`, `state`; không có arguments,
+results, secrets hoặc tool error diagnostics. Chỉ phát khi executor đã admit và
+resolve tool; `completed/failed` được phát sau khi ToolResult ghi nhận.
+Các event đi qua `OutboundMessage::TurnText` và generation gate hiện có;
+trường hợp cancel/stale hoặc bounded control queue đầy có thể bỏ event mà không
+thay đổi việc thực thi tool hoặc kết quả turn. Client chỉ dùng status để hiển
+thị tạm thời; không suy luận turn đã hoàn thành từ tool status.
+
+Chi tiết: [Tool Execution Status guide](../tool-execution-status-websocket-implementation-guide.md).
