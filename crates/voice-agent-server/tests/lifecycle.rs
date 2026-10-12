@@ -910,3 +910,33 @@ async fn application_shutdown_uses_its_existing_deadline_for_managed_resources()
             .await
     );
 }
+
+#[tokio::test]
+async fn shutdown_rejects_admin_direct_speech_on_an_existing_session() {
+    let mut app_config = config(database_url());
+    app_config.api.enabled = true;
+    app_config.api.admin_token = "direct-admin".into();
+    let voice = start(app_config, Duration::from_secs(15)).await;
+    seed(&voice.database().await).await;
+    let (mut socket, _) = connect_async(request(&voice.base, "device")).await.unwrap();
+    socket.send(Message::Text(serde_json::json!({"type":"hello","version":1,"transport":"websocket","features":{"direct_tts":true}}).to_string().into())).await.unwrap();
+    let _ = timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(voice.lifecycle.begin_shutdown());
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/admin/devices/device/speak", voice.base))
+        .bearer_auth("direct-admin")
+        .json(&serde_json::json!({"request_id":"shutdown-1","text":"Do not start new speech."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "shutting_down"
+    );
+    voice.task.abort();
+}

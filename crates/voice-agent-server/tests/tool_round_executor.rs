@@ -622,7 +622,7 @@ async fn seed(url: &str, external_url: &str) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('device',1,1,1,1)")
+    sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('device',1,1,1,1), ('second',1,1,1,1)")
         .execute(&pool)
         .await
         .unwrap();
@@ -718,9 +718,13 @@ struct Peer {
 
 impl Peer {
     async fn open(base: &str) -> Self {
+        Self::open_device(base, "device").await
+    }
+
+    async fn open_device(base: &str, device_id: &str) -> Self {
         let ota: serde_json::Value = reqwest::Client::new()
             .post(format!("{base}/voice/ota/"))
-            .header("Device-Id", "device")
+            .header("Device-Id", device_id)
             .header("Client-Id", "tool-round")
             .json(&serde_json::json!({}))
             .send()
@@ -737,7 +741,7 @@ impl Peer {
         {
             let headers = request.headers_mut();
             headers.insert("Protocol-Version", "1".parse().unwrap());
-            headers.insert("Device-Id", "device".parse().unwrap());
+            headers.insert("Device-Id", device_id.parse().unwrap());
             headers.insert("Client-Id", "tool-round".parse().unwrap());
         }
         let (mut socket, _) = connect_async(request).await.unwrap();
@@ -1363,7 +1367,7 @@ async fn two_sessions_calling_one_server_never_exceed_the_shared_per_server_boun
     first.run_turn().await;
     gate.wait_until_held(1).await;
 
-    let mut second = Peer::open(&voice.base).await;
+    let mut second = Peer::open_device(&voice.base, "second").await;
     second.run_turn().await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 

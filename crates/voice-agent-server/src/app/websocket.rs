@@ -377,6 +377,7 @@ pub(super) async fn handler(
                     metrics,
                     assistant_connection,
                     system_mcp,
+                    active_device_sessions: state.active_device_sessions.clone(),
                 },
                 SessionControl {
                     stopping,
@@ -529,6 +530,7 @@ fn valid_device_identity(value: &str) -> bool {
 }
 
 struct SocketRuntimes {
+    active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     assistant_connection: Option<super::web_assistant_auth::Connection>,
     connect_started: Instant,
@@ -577,6 +579,10 @@ async fn handle_socket(
     runtimes: SocketRuntimes,
     control: SessionControl,
 ) {
+    let active_device_sessions = runtimes.active_device_sessions;
+    let device_db_id = runtimes.profile.device_db_id;
+    let physical_connection = runtimes.assistant_connection.is_none();
+    let replacement_close = CancellationToken::new();
     let assistant_connection = runtimes.assistant_connection;
     let assistant_close = assistant_connection
         .as_ref()
@@ -663,7 +669,7 @@ async fn handle_socket(
     // and is released explicitly once the actor has finished and every lane has been closed.
     let writer_shutdown_tx = shutdown_tx.clone();
     let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
-        session_id,
+        session_id.clone(),
         control_tx.clone(),
         urgent_tx.clone(),
         audio_tx,
@@ -690,6 +696,14 @@ async fn handle_socket(
     };
     let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
     let actor = actor
+        .with_direct_session_close(replacement_close.clone())
+        .with_direct_session_close((*tool_security_close).clone())
+        .with_direct_session_close((*system_security_close).clone())
+        .with_direct_session_close((*speaker_security_close).clone())
+        .with_direct_session_close((*assistant_close).clone())
+        .with_direct_session_close(stopping.clone())
+        .with_direct_session_close(drain_close.clone())
+        .with_direct_metadata(hello.features.direct_tts || hello.features.reminders)
         .with_turn_status(assistant_connection.is_some() && hello.features.turn_status)
         .with_tool_status(tool_status_enabled(
             assistant_connection.is_some(),
@@ -893,6 +907,15 @@ async fn handle_socket(
     });
 
     let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
+    if physical_connection {
+        active_device_sessions.register(
+            device_db_id,
+            session_id.clone(),
+            hello.features.clone(),
+            ingress_tx.clone(),
+            replacement_close.clone(),
+        );
+    }
     let session = tokio::spawn(actor.run(ingress_rx));
 
     loop {
@@ -900,6 +923,10 @@ async fn handle_socket(
             // The deadline reached this session. It closes cleanly: the actor is told to stop,
             // sends its terminal close frame and lets the writer drain, and this loop only exits
             // once the connection itself is done. No task is aborted.
+            _ = replacement_close.cancelled() => {
+                let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
+                break;
+            }
             _ = assistant_close.cancelled() => {
                 let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
                 break;
@@ -980,6 +1007,9 @@ async fn handle_socket(
                 }
             }
         }
+    }
+    if physical_connection {
+        active_device_sessions.unregister(device_db_id, &session_id);
     }
     drop(ingress_tx);
     let _ = session.await;

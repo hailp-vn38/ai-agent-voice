@@ -117,7 +117,14 @@ pub(super) async fn get_device(
         }
     };
     match get_device_by(database, &device_id).await {
-        Ok(v) => Json(v).into_response(),
+        Ok(v) => {
+            let session = state.active_device_sessions.current(v.id);
+            let mut value = serde_json::to_value(v).expect("device is serializable");
+            value["ws_online"] = serde_json::json!(session.is_some());
+            value["direct_tts_supported"] =
+                serde_json::json!(session.is_some_and(|s| s.features.direct_tts));
+            Json(value).into_response()
+        }
         Err(sqlx::Error::RowNotFound) => error(&request, StatusCode::NOT_FOUND, "not_found"),
         Err(error_value) => sql_error(&request, &error_value),
     }
@@ -270,4 +277,69 @@ pub(super) async fn patch_device(
                 "database_unavailable",
             )
         })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeakDevice {
+    request_id: String,
+    text: String,
+}
+
+pub(super) async fn speak(
+    State(state): State<AppState>,
+    Path(device_id): Path<String>,
+    request: Request,
+) -> Response {
+    let (request, body): (_, SpeakDevice) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let database = match database(&state) {
+        Ok(v) => v,
+        Err(_) => {
+            return error(
+                &request,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "database_unavailable",
+            );
+        }
+    };
+    let device = match get_device_by(database, &device_id).await {
+        Ok(v) => v,
+        Err(sqlx::Error::RowNotFound) => {
+            return error(&request, StatusCode::NOT_FOUND, "not_found");
+        }
+        Err(e) => return sql_error(&request, &e),
+    };
+    if device.enabled != 1 || device.kind != "physical" {
+        return error(&request, StatusCode::FORBIDDEN, "unauthorized");
+    }
+    if !state.admission_gate().is_open() {
+        return error(&request, StatusCode::SERVICE_UNAVAILABLE, "shutting_down");
+    }
+    let request_id = body.request_id.clone();
+    let speech = crate::session::DirectSpeechRequest {
+        request_id: body.request_id,
+        text: body.text,
+        origin: crate::session::SpeechOrigin::AdminDirect,
+    };
+    match state.active_device_sessions.speak(device.id, speech).await {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({ "request_id": request_id, "status": "accepted" })),
+        )
+            .into_response(),
+        Err(e) => {
+            use crate::session::DirectSpeechError::*;
+            let status = match e {
+                InvalidText | InvalidRequestId | InvalidSession => StatusCode::BAD_REQUEST,
+                Unauthorized => StatusCode::FORBIDDEN,
+                UnsupportedFeature | SessionBusy => StatusCode::CONFLICT,
+                RateLimited => StatusCode::TOO_MANY_REQUESTS,
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            error(&request, status, e.code())
+        }
+    }
 }

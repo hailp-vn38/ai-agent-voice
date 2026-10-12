@@ -19,6 +19,7 @@ impl SpeechOutput {
         self.audio_starved_at = None;
         self.playback_end_deadline = None;
         self.json_filter.reset();
+        self.direct_text = false;
         self.segmenter.reset();
         self.pending_filtered_text.clear();
         self.finish_requested = false;
