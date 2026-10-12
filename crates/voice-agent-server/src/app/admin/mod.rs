@@ -1,5 +1,6 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
+mod notifications;
 mod system_mcp;
 use super::AppState;
 use crate::database::{external_mcp_policy, provider_config};
@@ -29,6 +30,14 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route(
+            "/devices/{device_id}/reminders",
+            get(notifications::list).post(notifications::create),
+        )
+        .route(
+            "/agents/{key}/reminder-policy",
+            get(notifications::grant).patch(notifications::patch_grant),
+        )
         .route(
             "/mcp-tests/connection",
             axum::routing::post(mcp_tests::draft_connection),

@@ -3972,3 +3972,397 @@ async fn system_resources_are_authenticated_uncached_and_independent_of_database
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn reminders_create_replay_and_restart_are_saved_not_played() {
+    let uri = database_url();
+    let (base, task) = server_with_database(true, &uri).await;
+    let client = Client::new();
+    client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"key":"reminder_agent","name":"Reminders"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    client
+        .post(format!("{base}/api/admin/devices"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id":"clock-device","agent_key":"reminder_agent"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let url = format!("{base}/api/admin/devices/clock-device/reminders");
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let payload = serde_json::json!({"message":"Kiểm tra máy giặt", "delay_seconds":600});
+    let created = client
+        .post(&url)
+        .bearer_auth("admin-test-token")
+        .header("Idempotency-Key", "create-one")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let saved: serde_json::Value = created.json().await.unwrap();
+    assert_eq!(saved["status"], "pending");
+    assert_eq!(saved["sync_status"], "pending");
+    assert_eq!(saved["row_revision"], 1);
+    assert_eq!(saved["schedule_revision"], 1);
+    let replay: serde_json::Value = client
+        .post(&url)
+        .bearer_auth("admin-test-token")
+        .header("Idempotency-Key", "create-one")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(replay, saved);
+    task.abort();
+    let (base, task) = server_with_database(true, &uri).await;
+    let url = format!("{base}/api/admin/devices/clock-device/reminders");
+    let replay: serde_json::Value = client
+        .post(&url)
+        .bearer_auth("admin-test-token")
+        .header("Idempotency-Key", "create-one")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(replay, saved);
+    let list: serde_json::Value = client
+        .get(&url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["schedule_summary"]["schedule_revision"], 1);
+    assert_eq!(list["schedule_summary"]["last_acked_revision"], 0);
+    let conflict = client
+        .post(&url)
+        .bearer_auth("admin-test-token")
+        .header("Idempotency-Key", "create-one")
+        .json(&serde_json::json!({"message":"changed", "delay_seconds":600}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    task.abort();
+}
+
+#[tokio::test]
+async fn reminder_server_clock_validation_quota_and_agent_permission() {
+    use voice_agent_server::database::notifications::{CreateReminder, DeviceNotifications};
+    let uri = database_url();
+    let (base, task) = server_with_database(true, &uri).await;
+    let client = Client::new();
+    client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"key":"timing_agent","name":"Timing"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    client
+        .post(format!("{base}/api/admin/devices"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id":"timing-device","agent_key":"timing_agent"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let policy_url = format!("{base}/api/admin/agents/timing_agent/reminder-policy");
+    let policy: serde_json::Value = client
+        .get(&policy_url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(policy["reminders_enabled"], false);
+    assert_eq!(
+        client
+            .patch(&policy_url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"reminders_enabled":true}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .patch(&policy_url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .json(&serde_json::json!({"reminders_enabled":false}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let config = voice_agent_server::config::DatabaseConfig {
+        url: uri,
+        ..Default::default()
+    };
+    let database = Database::connect(&config).await.unwrap();
+    let notifications = DeviceNotifications::with_clock(database, Arc::new(|| 1_800_000_000_000));
+    let input = CreateReminder {
+        message: "Wake".into(),
+        delay_seconds: Some(600),
+        scheduled_at: None,
+        timezone: None,
+    };
+    let reminder = notifications
+        .create(
+            "timing-device",
+            "clock-test",
+            "first",
+            input.clone(),
+            "web",
+            &uuid::Uuid::new_v4().to_string(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reminder.due_at_ms, 1_800_000_600_000);
+    let mut invalid = input.clone();
+    invalid.scheduled_at = Some("2026-10-12T07:00:00+07:00".into());
+    assert!(
+        notifications
+            .create(
+                "timing-device",
+                "clock-test",
+                "bad",
+                invalid,
+                "web",
+                &uuid::Uuid::new_v4().to_string()
+            )
+            .await
+            .is_err()
+    );
+    let url = format!("{base}/api/admin/devices/timing-device/reminders");
+    for body in [
+        serde_json::json!({"message":"\u{0007}","delay_seconds":1}),
+        serde_json::json!({"message":"wake","delay_seconds":0}),
+        serde_json::json!({"message":"wake","scheduled_at":"2026-10-12T07:00:00"}),
+    ] {
+        assert_eq!(
+            client
+                .post(&url)
+                .bearer_auth("admin-test-token")
+                .header("idempotency-key", uuid::Uuid::new_v4().to_string())
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    for i in 1..500 {
+        notifications
+            .create(
+                "timing-device",
+                "clock-test",
+                &format!("quota-{i}"),
+                input.clone(),
+                "web",
+                &uuid::Uuid::new_v4().to_string(),
+            )
+            .await
+            .unwrap();
+    }
+    assert!(
+        notifications
+            .create(
+                "timing-device",
+                "clock-test",
+                "overflow",
+                input,
+                "web",
+                &uuid::Uuid::new_v4().to_string()
+            )
+            .await
+            .is_err()
+    );
+    let list: serde_json::Value = client
+        .get(format!("{url}?page=10&page_size=50"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 50);
+    assert_eq!(list["schedule_summary"]["schedule_revision"], 500);
+    assert_eq!(list["total"], 500);
+    assert_eq!(list["has_more"], false);
+    task.abort();
+}
+
+#[tokio::test]
+async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    for key in ["original_agent", "next_agent"] {
+        client
+            .post(format!("{base}/api/admin/agents"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"key":key,"name":key}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    client
+        .post(format!("{base}/api/admin/devices"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id":"owned-device","agent_key":"original_agent"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let virtual_device: serde_json::Value = client
+        .put(format!("{base}/api/admin/system/assistant-device"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"agent_key":"original_agent","enabled":true}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .post(format!(
+                "{base}/api/admin/devices/{}/reminders",
+                virtual_device["device_id"].as_str().unwrap()
+            ))
+            .bearer_auth("admin-test-token")
+            .header("idempotency-key", "virtual")
+            .json(&serde_json::json!({"message":"no wake","delay_seconds":600}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let url = format!("{base}/api/admin/devices/owned-device/reminders");
+    let payload = serde_json::json!({"message":"Persistent owner","delay_seconds":600});
+    let (left, right) = tokio::join!(
+        client
+            .post(&url)
+            .bearer_auth("admin-test-token")
+            .header("idempotency-key", "same-concurrent")
+            .json(&payload)
+            .send(),
+        client
+            .post(&url)
+            .bearer_auth("admin-test-token")
+            .header("idempotency-key", "same-concurrent")
+            .json(&payload)
+            .send()
+    );
+    let left: serde_json::Value = left
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let right: serde_json::Value = right
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(left, right);
+    client
+        .patch(format!("{base}/api/admin/devices/owned-device"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"agent_key":"next_agent"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let list: serde_json::Value = client
+        .get(&url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["items"][0]["device_id"], "owned-device");
+    assert_eq!(list["schedule_summary"]["schedule_revision"], 1);
+    assert_eq!(
+        client
+            .get(format!("{url}?page_size=201"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        client
+            .post(format!("{base}/api/admin/devices/not-a-device/reminders"))
+            .bearer_auth("admin-test-token")
+            .header("idempotency-key", "missing")
+            .json(&payload)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    task.abort();
+}

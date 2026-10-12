@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { formatApiError } from '@/api/errors'
+import DeviceReminders from '@/components/devices/DeviceReminders.vue'
 import { devicesApi } from '@/api/devices'
 import type { AdminDevice } from '@/api/types/devices'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
@@ -322,5 +323,6 @@ onBeforeUnmount(() => activeRequest?.abort())
 
     <ConfirmDialog v-model="deleteOpen" :title="t('agentDevices.deleteTitle', { name: device?.name || device?.device_id || '' })"
       :description="t('agentDevices.deleteDescription')" :confirm-label="t('agentDevices.delete')" tone="danger" @confirm="deleteDevice" />
+    <DeviceReminders v-if="device?.kind === 'physical'" :device-id="device.device_id" />
   </section>
 </template>

@@ -7,6 +7,7 @@ import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
 import type { ClaimDeviceEnrollmentInput } from '@/api/types/devices'
 import AgentToolAllowlist from '@/components/agents/AgentToolAllowlist.vue'
 import AgentMcpBindings from '@/components/agents/AgentMcpBindings.vue'
+import AgentReminderPolicy from '@/components/agents/AgentReminderPolicy.vue'
 import AgentSpeakerPolicy from '@/components/agents/AgentSpeakerPolicy.vue'
 import AgentDeviceList from '@/components/agents/AgentDeviceList.vue'
 import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmentModal.vue'
@@ -455,6 +456,7 @@ async function confirmDeleteDevice() {
       <section class="studio-panel p-5">
         <AgentToolAllowlist :key="toolReviewKey" :agent-id="agentId" />
       </section>
+      <AgentReminderPolicy :agent-id="agentId" />
     </div>
     <div v-if="activeTab === 'speakers'" id="studio-panel-speakers" role="tabpanel" aria-labelledby="studio-tab-speakers" class="studio-panel p-5">
       <AgentSpeakerPolicy :agent-id="agentId" />

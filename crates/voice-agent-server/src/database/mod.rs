@@ -20,6 +20,7 @@ pub mod external_mcp_policy;
 pub mod history;
 pub mod load_plan;
 pub(crate) mod mcp_servers;
+pub mod notifications;
 pub mod provider_config;
 pub(crate) mod providers;
 pub mod secrets;
