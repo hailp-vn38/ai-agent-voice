@@ -120,6 +120,7 @@ impl std::fmt::Debug for SecretString {
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum LlmInstanceConfig {
     Openai(OpenAiConfig),
+    #[serde(rename = "opencode_free")]
     OpenCodeFree(OpenCodeFreeConfig),
     #[cfg(feature = "qualification-providers")]
     QualificationLlm(QualificationConfig),
