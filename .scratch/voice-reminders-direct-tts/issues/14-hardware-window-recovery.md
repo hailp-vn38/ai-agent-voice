@@ -11,3 +11,7 @@ Status: ready-for-agent
 - [ ] Mất Wi-Fi mười phút, stale overdue, clock skew, output error, result/ACK mất và reconnect thay session có bounded backoff/dedupe; không fake completed.
 - [ ] Create/cancel/complete/expire races vẫn current schedule ACK trước safe sleep hoặc explicit backoff; cache ACK global không biến out-of-window thành acked.
 - [ ] Ghi firmware build/repo/commit/hardware profile/calibration và logs từng gate; failures/NOT_RUN có lý do, không báo hardware verified chỉ từ harness.
+
+## Comments
+
+2026-10-12: Người dùng chỉ đạo triển khai Web/server trước. Ticket firmware/phần cứng này được để mở cho giai đoạn sau; không dùng server harness để thay bằng chứng NVS/audio sink/RTC thật.

@@ -9,3 +9,7 @@ Admission materialize đúng một Effective Session Profile và SessionActor kh
 ## Provider binding vắng mặt
 
 Theo quyết định ngày 2026-10-04, Template được phép thiếu một hoặc nhiều binding VAD/ASR/LLM/TTS. Mỗi slot vắng mặt dùng provider tương ứng từ effective server defaults và runtime deployment đã nạp; binding tồn tại vẫn phải trỏ tới Provider enabled và runtime dùng được. Quy tắc này không thay đổi yêu cầu Agent có default Template enabled khi đã có assignment, cũng không chọn non-default Template thay default. Profile sau admission vẫn là snapshot bất biến.
+
+## Reminder authorization (proposed)
+
+[ADR-0091](0091-reminder-authorization-and-turn-context.md) đề xuất kiểm tra lại quyền Reminder và Admin-bound target tại execution boundary, kể cả với session đã admit. Điều này bổ sung live security guard riêng, không đổi provider/profile snapshot, không sửa nóng Session Tool Catalog và không biến mọi Admin mutation thành hot reload. Chưa triển khai.

@@ -12,3 +12,7 @@ Status: ready-for-agent
 - [ ] End-of-stream stop không là played; decode/I2S/DAC/DMA buffers drain mới gửi đúng attempt ACK, output/decode/abort lỗi gửi failed.
 - [ ] Đợi delivery_result đúng attempt, ACK terminal/current snapshot rồi mới cho idle sleep; dedupe recent attempt và duplicate ACK an toàn.
 - [ ] Hardware online create/update/cancel → cache ACK → due playback → drain ACK → completed → terminal sync được chứng minh; old firmware regression không controls mới.
+
+## Comments
+
+2026-10-12: Người dùng chỉ đạo triển khai Web/server trước. Ticket firmware/phần cứng này được để mở cho giai đoạn sau; không dùng server harness để thay bằng chứng NVS/audio sink/RTC thật.

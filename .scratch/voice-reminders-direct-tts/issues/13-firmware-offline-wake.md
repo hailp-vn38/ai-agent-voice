@@ -12,3 +12,7 @@ Status: ready-for-agent
 - [ ] Software timer khi cần wake word; Deep Sleep chỉ hardware/profile cho phép, measured margin/sink signal được ghi rõ.
 - [ ] Cancel khi Device ngủ có thể wake thừa nhưng không phát; Web create lúc ngủ UI sync_pending không hứa đúng giờ; firmware chỉ cache wake metadata không offline TTS.
 - [ ] Real hardware gate chứng minh cache ACK → WS close → timer → authenticated reconnect → due Direct Speech → sink drain ACK → terminal sync → future wake và wake-word vẫn hoạt động.
+
+## Comments
+
+2026-10-12: Người dùng chỉ đạo triển khai Web/server trước. Ticket firmware/phần cứng này được để mở cho giai đoạn sau; không dùng server harness để thay bằng chứng NVS/audio sink/RTC thật.

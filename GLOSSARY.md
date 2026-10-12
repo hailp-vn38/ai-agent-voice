@@ -38,3 +38,29 @@ _Avoid_: Agent–External MCP binding, tool execution status
 **System Change Request**:
 Đề xuất cố định để thay đổi MCP Server, binding của Agent hoặc quyền công cụ đã review; chỉ thao tác xác nhận riêng của Admin đã xác thực mới được áp dụng.
 _Avoid_: spoken approval, tool execution permission, automatic mutation
+
+## Reminders and Direct Speech
+
+**Reminder**:
+Lời nhắc gồm nội dung và thời điểm đến hạn, thuộc đúng một Device; việc đổi Agent hoặc Template không thay đổi Device sở hữu.
+_Avoid_: Agent-owned reminder, countdown của LLM
+
+**Schedule Revision**:
+Phiên bản tăng đơn điệu của tập lời nhắc đang chờ trên một Device; khác phiên bản của từng Reminder và của Voice Session.
+_Avoid_: Reminder row revision, Session Profile Revision
+
+**Device Cache ACK**:
+Xác nhận Device đã lưu bền vững một bản lịch đánh thức; không phải xác nhận phát lời nhắc.
+_Avoid_: saved on server, Playback ACK
+
+**Delivery Attempt**:
+Một lần thử phát Reminder đến đúng Device, có danh tính riêng gắn với Voice Session thực hiện lần thử.
+_Avoid_: Reminder, Conversational Turn, waiting for device
+
+**Playback ACK**:
+Xác nhận client đã phát hết dữ liệu qua lớp audio output; không chứng minh âm vật lý đã phát ra loa.
+_Avoid_: end of network stream, WebSocket delivery, Device Cache ACK
+
+**Direct Speech**:
+Lần phát nội dung đã có bằng giọng tổng hợp, không nhận dạng lời nói hoặc sinh nội dung bằng mô hình ngôn ngữ.
+_Avoid_: generated assistant response, Reminder (khi nói về khả năng phát dùng chung)
