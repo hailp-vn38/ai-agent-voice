@@ -4,6 +4,9 @@ const encoderConfig: AudioEncoderConfig & { opus: { frameDuration: number; forma
   opus: { frameDuration: 60000, format: 'opus' },
 }
 const decoderConfig: AudioDecoderConfig = { codec: 'opus', sampleRate: 24000, numberOfChannels: 1 }
+const PLAYBACK_BUFFER_SECONDS = 1.28 // One maximum ZeroTTS codec chunk (16 × 80 ms).
+const PLAYBACK_LEAD_SECONDS = 0.02
+const PLAYBACK_FADE_SECONDS = 0.008
 
 export class AssistantAudio {
   muted = true
@@ -14,7 +17,14 @@ export class AssistantAudio {
   private encoder?: AudioEncoder
   private decoder?: AudioDecoder
   private sources = new Set<AudioBufferSourceNode>()
+  private playbackGain?: GainNode
+  private pendingPlayback: AudioBuffer[] = []
+  private pendingSeconds = 0
+  private buffering = true
+  private playbackFinished = false
+  private playbackDone?: () => void
   private nextPlayback = 0
+  private playbackStart = 0
   private timestamp = 0
   private generation = 0
   private playbackGeneration = 0
@@ -30,34 +40,86 @@ export class AssistantAudio {
     await this.context.resume()
     this.muted = false
   }
-  muteSpeaker() { this.muted = true; this.cancelPlayback() }
+  muteSpeaker() {
+    const done = this.playbackDone
+    this.muted = true
+    this.cancelPlayback()
+    done?.()
+  }
   beginPlayback() {
     this.cancelPlayback()
     if (this.muted || !this.context) return
     const generation = this.playbackGeneration
+    this.playbackGain = this.context.createGain()
+    this.playbackGain.connect(this.context.destination)
     this.decoder = new AudioDecoder({
       output: (data) => {
         try {
           if (generation !== this.playbackGeneration || this.muted || !this.context) return
-          if (this.nextPlayback - this.context.currentTime > 2) { this.muteSpeaker(); this.fail('audio_backpressure'); return }
+          if (Math.max(0, this.nextPlayback - this.context.currentTime) + this.pendingSeconds + data.numberOfFrames / data.sampleRate > 2) { this.muteSpeaker(); this.fail('audio_backpressure'); return }
           const pcm = new Float32Array(data.numberOfFrames)
           data.copyTo(pcm, { planeIndex: 0, format: 'f32-planar' })
           const buffer = this.context.createBuffer(1, pcm.length, data.sampleRate)
           buffer.copyToChannel(pcm, 0)
-          const source = this.context.createBufferSource()
-          source.buffer = buffer
-          source.connect(this.context.destination)
-          this.sources.add(source)
-          source.onended = () => { this.sources.delete(source); source.disconnect() }
-          this.nextPlayback = Math.max(this.nextPlayback, this.context.currentTime + 0.02)
-          source.start(this.nextPlayback)
-          this.nextPlayback += buffer.duration
+          this.pendingPlayback.push(buffer)
+          this.pendingSeconds += buffer.duration
+          this.schedulePlayback()
         } finally { data.close() }
       },
-      error: () => { this.muteSpeaker(); this.fail('audio_decode_failed') },
+      error: () => { if (generation === this.playbackGeneration) { this.muteSpeaker(); this.fail('audio_decode_failed') } },
     })
     this.decoder.configure(decoderConfig)
     this.timestamp = 0
+  }
+  private schedulePlayback() {
+    if (!this.context || !this.playbackGain || !this.pendingPlayback.length) return
+    const now = this.context.currentTime
+    const restarting = this.nextPlayback < now + PLAYBACK_LEAD_SECONDS
+    if (restarting) this.buffering = true
+    // Keep one codec chunk in reserve; after starvation wait for another instead of stuttering.
+    if (this.buffering && !this.playbackFinished && this.pendingSeconds < PLAYBACK_BUFFER_SECONDS) return
+    this.buffering = false
+    const gain = this.playbackGain.gain
+    gain.cancelAndHoldAtTime(now)
+    if (restarting) {
+      this.nextPlayback = now + PLAYBACK_LEAD_SECONDS
+      this.playbackStart = this.nextPlayback
+    }
+    if (now <= this.playbackStart) gain.setValueAtTime(0, this.playbackStart)
+    gain.linearRampToValueAtTime(1, Math.max(now, this.playbackStart) + PLAYBACK_FADE_SECONDS)
+    for (const buffer of this.pendingPlayback) {
+      const source = this.context.createBufferSource()
+      source.buffer = buffer
+      source.connect(this.playbackGain)
+      this.sources.add(source)
+      source.onended = () => { this.sources.delete(source); source.disconnect(); this.finishIfDrained() }
+      source.start(this.nextPlayback)
+      this.nextPlayback += buffer.duration
+    }
+    this.pendingPlayback = []
+    this.pendingSeconds = 0
+    // Cancel this fade when more audio arrives; otherwise end the queued waveform smoothly.
+    gain.setValueAtTime(1, this.nextPlayback - PLAYBACK_FADE_SECONDS)
+    gain.linearRampToValueAtTime(0, this.nextPlayback)
+  }
+  finishPlayback(onDrained: () => void) {
+    if (!this.decoder || this.decoder.state !== 'configured') { onDrained(); return }
+    const generation = this.playbackGeneration
+    this.playbackDone = onDrained
+    void this.decoder.flush().then(() => {
+      if (generation !== this.playbackGeneration) return
+      this.playbackFinished = true
+      this.schedulePlayback()
+      this.finishIfDrained()
+    }).catch(() => {
+      if (generation === this.playbackGeneration) { this.muteSpeaker(); this.fail('audio_decode_failed') }
+    })
+  }
+  private finishIfDrained() {
+    if (!this.playbackFinished || this.sources.size || this.pendingPlayback.length) return
+    const done = this.playbackDone
+    this.playbackDone = undefined
+    done?.()
   }
   receive(packet: ArrayBuffer) {
     if (!isCanonicalOpusPacket(packet)) throw new Error('invalid_audio_frame')
@@ -73,7 +135,15 @@ export class AssistantAudio {
     this.decoder = undefined
     for (const source of this.sources) { source.onended = null; source.stop(); source.disconnect() }
     this.sources.clear()
+    this.playbackGain?.disconnect()
+    this.playbackGain = undefined
+    this.pendingPlayback = []
+    this.pendingSeconds = 0
+    this.buffering = true
+    this.playbackFinished = false
+    this.playbackDone = undefined
     this.nextPlayback = 0
+    this.playbackStart = 0
   }
 
   async startMicrophone(send: (packet: ArrayBuffer) => void) {

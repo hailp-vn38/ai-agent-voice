@@ -48,6 +48,57 @@ beforeEach(() => {
 afterEach(() => { client.disconnect(); vi.unstubAllGlobals(); vi.clearAllMocks() })
 
 describe('shared Voice WebSocket client', () => {
+  it('keeps the turn busy until buffered speaker audio drains', async () => {
+    const socket = await open()
+    const sending = client.sendText('Xin chào')
+    socket.event({ type: 'turn_status', state: 'listening_ready' })
+    await sending
+    socket.event({ type: 'tts', state: 'start' })
+    let drained!: () => void
+    vi.spyOn(client.audio, 'finishPlayback').mockImplementation(done => { drained = done })
+    socket.event({ type: 'turn_status', state: 'completed', turn_id: 1 })
+    expect(states.at(-1)).toBe('speaking')
+    await expect(client.sendText('next')).rejects.toThrow('turn_busy')
+    drained()
+    expect(states.at(-1)).toBe('ready')
+  })
+
+  it('can stop local playback after server completion without waiting for an abort acknowledgement', async () => {
+    const socket = await open()
+    const sending = client.sendText('Xin chào')
+    socket.event({ type: 'turn_status', state: 'listening_ready' })
+    await sending
+    socket.event({ type: 'tts', state: 'start' })
+    let drained!: () => void
+    vi.spyOn(client.audio, 'finishPlayback').mockImplementation(done => { drained = done })
+    socket.event({ type: 'turn_status', state: 'completed', turn_id: 1 })
+    client.interrupt()
+    expect(states.at(-1)).toBe('ready')
+    expect(socket.sent.some(message => JSON.parse(message).type === 'abort')).toBe(false)
+    drained()
+    expect(states.at(-1)).toBe('ready')
+  })
+
+  it('holds Auto uplink while buffered playback finishes and resumes without a new listen', async () => {
+    const socket = await open()
+    let emitFrame!: (frame: ArrayBuffer) => void
+    vi.spyOn(client.audio, 'startMicrophone').mockImplementation(async send => { emitFrame = send })
+    await client.startMicrophone()
+    socket.event({ type: 'stt', text: 'Hello' })
+    socket.event({ type: 'tts', state: 'start' })
+    let drained!: () => void
+    vi.spyOn(client.audio, 'finishPlayback').mockImplementation(done => { drained = done })
+    socket.event({ type: 'turn_status', state: 'completed', turn_id: 1 })
+    const count = socket.sent.length
+    const frame = new Uint8Array([24, 0]).buffer
+    emitFrame(frame)
+    expect(socket.sent).toHaveLength(count)
+    drained()
+    expect(states.at(-1)).toBe('listening')
+    emitFrame(frame)
+    expect(socket.sent.at(-1)).toBe(frame)
+  })
+
   it('waits for ServerHello and listening_ready before detect, then waits for terminal status', async () => {
     const socket = await open()
     const sending = client.sendText('Xin chào')

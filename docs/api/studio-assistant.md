@@ -102,6 +102,12 @@ sending `listen:detect` or microphone Opus. `stt` is the accepted-user echo.
 60 ms Opus. Terminal states are `completed`, `failed`, and `cancelled`; a Turn ID
 is included once one exists. Normal completion follows the writer's terminal
 outcome after `tts:stop`; early LLM/TTS/recognition failures also release the UI.
+For normal completion, Floating Chat waits for the decoder flush and all queued
+audio to finish before accepting another turn. Playback buffers 1.28 seconds at
+startup and after starvation, bounded to two seconds; a short final tail plays
+after the flush without waiting for the buffer threshold. An 8 ms gain fade
+smooths playback starts and ends. Auto microphone uplink pauses during the final
+local drain and resumes after it; Interrupt can stop that drain immediately.
 Empty capture and admission denial use `rejected`. Capture-only abort may have no
 Turn ID. A protocol/transport timeout reports an unknown outcome, never success.
 

@@ -48,29 +48,47 @@ impl SpeechOutput {
             .tts
             .synthesize(&text)
             .map_err(|_| SpeechOutputError::Synthesis)?;
-        self.push_provider_pcm(pcm)
+        self.push_provider_pcm(pcm)?;
+        self.finish_segment();
+        Ok(())
     }
 
     pub(super) fn push_provider_pcm(&mut self, pcm: PcmF32Mono) -> Result<(), SpeechOutputError> {
-        for packet in self
+        let packets = self
             .downlink_pipeline
             .push_provider_pcm(pcm)
-            .map_err(|_| SpeechOutputError::Synthesis)?
+            .map_err(|_| SpeechOutputError::Synthesis)?;
+        if self
+            .segment_packet_limit
+            .is_some_and(|limit| self.segment_packets.len() + packets.len() > limit)
         {
-            if !self.started && self.packets.is_empty() {
+            return Err(SpeechOutputError::Backpressure);
+        }
+        for packet in packets {
+            if !self.started && self.packets.is_empty() && self.segment_packets.is_empty() {
                 tracing::info!(
                     packet_bytes = packet.as_bytes().len(),
                     "First downlink Opus packet ready"
                 );
             }
-            self.packets.push_back(packet.as_bytes().to_vec());
+            if self.segment_packet_limit.is_some() {
+                self.segment_packets.push_back(packet.as_bytes().to_vec());
+            } else {
+                self.packets.push_back(packet.as_bytes().to_vec());
+            }
         }
         tracing::debug!(
             buffered_packets = self.packets.len(),
-            buffered_ms = self.packets.len() * PACED_FRAME_DURATION.as_millis() as usize,
+            staged_packets = self.segment_packets.len(),
+            buffered_ms = (self.packets.len() + self.segment_packets.len())
+                * PACED_FRAME_DURATION.as_millis() as usize,
             "TTS Opus buffer"
         );
         Ok(())
+    }
+
+    pub(super) fn finish_segment(&mut self) {
+        self.packets.append(&mut self.segment_packets);
     }
 
     pub(super) fn flush_downlink_tail(&mut self) -> Result<(), SpeechOutputError> {

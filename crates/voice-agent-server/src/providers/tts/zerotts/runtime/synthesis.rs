@@ -8,7 +8,7 @@ const FIRST_CHUNK_FRAMES: usize = 4;
 const MAX_CHUNK_FRAMES: usize = 16;
 const MIN_FRAMES: usize = 4;
 const EOA_EXTRA_FRAMES: usize = 1;
-const INTER_SEGMENT_SILENCE_FRAMES: usize = 4;
+const INTER_SEGMENT_SILENCE_SAMPLES: usize = 4 * 3_840;
 /// Shortest text that still drives every startup hot-path graph once. Readiness must not scale
 /// with utterance length: it validates native sessions, not linguistic quality.
 const WARMUP_TEXT: &str = "Xin chao ZeroTTS";
@@ -114,19 +114,17 @@ impl ZeroTtsFullPcm {
                 "ZeroTTS synthesis reached its frame bound".into(),
             ));
         }
+        if cancelled.load(Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
+        let mut pcm = self.codec.decode(&frames.frames)?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(TtsError::Failed);
+        }
         if !self.first_segment {
-            let silence = &self.replica.contract.silence_frame;
-            frames.frames.splice(
-                ..0,
-                std::iter::repeat_n(silence.clone(), INTER_SEGMENT_SILENCE_FRAMES),
-            );
-        }
-        if cancelled.load(Ordering::Acquire) {
-            return Err(TtsError::Failed);
-        }
-        let pcm = self.codec.decode(&frames.frames)?;
-        if cancelled.load(Ordering::Acquire) {
-            return Err(TtsError::Failed);
+            let mut samples = vec![0.0; INTER_SEGMENT_SILENCE_SAMPLES];
+            samples.extend_from_slice(pcm.samples());
+            pcm = PcmF32Mono::new(samples, pcm.sample_rate_hz());
         }
         self.first_segment = false;
         Ok(pcm)
@@ -189,17 +187,16 @@ impl ZeroTtsPcmStream {
             "ZeroTTS inference started"
         );
         let mut frames = Vec::new();
-        let mut target = if self.first_segment {
-            FIRST_CHUNK_FRAMES
-        } else {
-            MAX_CHUNK_FRAMES
-        };
+        let mut target = FIRST_CHUNK_FRAMES;
+        // Each AR utterance needs independent codec history, as in upstream synthesize_stream.
+        self.codec.reset()?;
         if !self.first_segment {
-            let silence =
-                vec![self.replica.contract.silence_frame.clone(); INTER_SEGMENT_SILENCE_FRAMES];
-            on_pcm(self.codec.decode_step(&silence)?)?;
+            on_pcm(PcmF32Mono::new(
+                vec![0.0; INTER_SEGMENT_SILENCE_SAMPLES],
+                self.replica.contract.config.sample_rate,
+            ))?;
         }
-        let ramp = self.first_segment;
+        let first_segment = self.first_segment;
         let result = self.replica.synthesize_with_frame_sink(
             &spoken_text,
             FrameBudget::UntilEndOfAudio(max_frames),
@@ -209,7 +206,7 @@ impl ZeroTtsPcmStream {
                 frames.push(frame.to_vec());
                 if frames.len() >= target {
                     let pcm = self.codec.decode_step(&frames)?;
-                    if ramp && target == FIRST_CHUNK_FRAMES {
+                    if first_segment && target == FIRST_CHUNK_FRAMES {
                         let samples = pcm.samples();
                         let peak = samples
                             .iter()
@@ -226,9 +223,7 @@ impl ZeroTtsPcmStream {
                     }
                     on_pcm(pcm)?;
                     frames.clear();
-                    if ramp {
-                        target = (target * 2).min(MAX_CHUNK_FRAMES);
-                    }
+                    target = (target * 2).min(MAX_CHUNK_FRAMES);
                 }
                 Ok(())
             },

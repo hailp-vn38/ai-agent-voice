@@ -43,6 +43,8 @@ pub struct SpeechOutput {
     downlink_pipeline: CanonicalDownlinkPipeline,
     pending: VecDeque<SpeechSegment>,
     packets: VecDeque<Vec<u8>>,
+    segment_packets: VecDeque<Vec<u8>>,
+    segment_packet_limit: Option<usize>,
     packets_sent: usize,
     finish_input: bool,
     started: bool,
@@ -77,6 +79,12 @@ impl SpeechOutput {
         config: SpeechOutputConfig,
     ) -> Result<Self, crate::audio::AudioError> {
         let max_pending = config.pending_segments;
+        let segment_packet_limit = tts.segment_prebuffer_limit().map(|duration| {
+            duration
+                .as_millis()
+                .div_ceil(PACED_FRAME_DURATION.as_millis()) as usize
+                + 1
+        });
         Ok(Self {
             tts,
             tts_runtime: None,
@@ -85,6 +93,8 @@ impl SpeechOutput {
             downlink_pipeline: CanonicalDownlinkPipeline::new(MAX_DOWNLINK_OPUS_PACKET_BYTES)?,
             pending: VecDeque::new(),
             packets: VecDeque::new(),
+            segment_packets: VecDeque::new(),
+            segment_packet_limit,
             packets_sent: 0,
             finish_input: false,
             started: false,

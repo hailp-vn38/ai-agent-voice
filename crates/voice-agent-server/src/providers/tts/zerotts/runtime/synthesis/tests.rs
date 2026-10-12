@@ -1,5 +1,93 @@
 use super::*;
 
+#[test]
+#[ignore = "requires ZEROTTS_QUALIFICATION_PACK and VOICE_ONNX_RUNTIME_LIB"]
+fn each_segment_matches_independent_codec_decode() {
+    let contract = installed_contract();
+    let voice = contract.voice("huuduc").unwrap();
+    let mut stream = ZeroTtsPcmStream::new(&contract).unwrap();
+    let mut full = ZeroTtsFullPcm::new(&contract).unwrap();
+    let mut file_delivery = ZeroTtsFullPcm::new(&contract).unwrap();
+    let cancelled = AtomicBool::new(false);
+    for (index, text) in [
+        "Xin chào các bạn.",
+        "Rust là một ngôn ngữ lập trình hệ thống được thiết kế để đạt được hiệu suất cao, an toàn và đồng thời.",
+        "Xin chào các bạn.",
+    ]
+    .iter()
+    .enumerate()
+    {
+        full.reset();
+        let expected = full
+            .synthesize_with_voice(text, 256, &cancelled, &voice)
+            .unwrap();
+        let actual_file = file_delivery
+            .synthesize_with_voice(text, 256, &cancelled, &voice)
+            .unwrap();
+        let mut actual = Vec::new();
+        stream
+            .synthesize_with_voice(text, 256, &voice, &mut |pcm| {
+                actual.extend_from_slice(pcm.samples());
+                Ok(())
+            })
+            .unwrap();
+        let gap = if index == 0 {
+            0
+        } else {
+            INTER_SEGMENT_SILENCE_SAMPLES
+        };
+        for (mode, actual) in [
+            ("stream", actual.as_slice()),
+            ("file", actual_file.samples()),
+        ] {
+            assert_eq!(actual.len(), expected.samples().len() + gap);
+            let rmse = (actual[gap..]
+                .iter()
+                .zip(expected.samples())
+                .map(|(actual, expected)| f64::from(actual - expected).powi(2))
+                .sum::<f64>()
+                / expected.samples().len() as f64)
+                .sqrt();
+            assert!(
+                rmse < 1e-5,
+                "{mode} segment {index} codec waveform differs: RMSE {rmse}"
+            );
+            assert!(actual[..gap].iter().all(|sample| *sample == 0.0));
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires ZEROTTS_QUALIFICATION_PACK and VOICE_ONNX_RUNTIME_LIB"]
+fn every_segment_ramps_small_chunks_without_dropping_codec_audio() {
+    let contract = installed_contract();
+    let mut stream = ZeroTtsPcmStream::new(&contract).unwrap();
+    let voice = contract.voice("maichi").unwrap();
+    let mut first_samples = 0;
+    for segment in 0..2 {
+        let mut actual = Vec::new();
+        stream
+            .synthesize_with_voice("ZeroTTS parity fixture.", 256, &voice, &mut |pcm| {
+                assert!(pcm.samples().iter().all(|sample| sample.is_finite()));
+                actual.push(pcm.samples().len());
+                Ok(())
+            })
+            .unwrap();
+        let speech_start = usize::from(segment != 0);
+        assert_eq!(
+            actual.get(speech_start..speech_start + 3),
+            Some([4 * 3_840, 8 * 3_840, 16 * 3_840].as_slice())
+        );
+        let total: usize = actual.iter().sum();
+        if segment == 0 {
+            first_samples = total;
+        } else {
+            assert_eq!(actual[0], INTER_SEGMENT_SILENCE_SAMPLES);
+            assert_eq!(total, first_samples + INTER_SEGMENT_SILENCE_SAMPLES);
+        }
+    }
+}
+
 fn installed_contract() -> ZeroTtsContract {
     let root = PathBuf::from(std::env::var_os("ZEROTTS_QUALIFICATION_PACK").unwrap());
     let assets = crate::providers::tts::zerotts::assets::resolve_assets_from(&root).unwrap();

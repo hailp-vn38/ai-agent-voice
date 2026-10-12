@@ -79,12 +79,11 @@ pub(super) struct AttentionCache {
     pub(super) positions_dtype: String,
 }
 
-/// Retained streaming codec replica for one native worker. The session outlives every turn; only the
-/// streaming cache below is per-delivery state and is reset before this worker is handed to another
-/// Voice Session.
+/// Retained streaming codec replica for one native worker. The session outlives every turn;
+/// streaming caches reset for each independently generated utterance and before worker reuse.
 pub(super) struct ZeroTtsCodecReplica {
     pub(super) contract: ZeroTtsContract,
-    // The step graph is owned by one native worker; only its cache is reset between leases.
+    // Resetting utterance history keeps this native session resident.
     pub(super) decode_step: Session,
     pub(super) streaming_state: BTreeMap<String, ZeroTtsCodecStreamState>,
 }

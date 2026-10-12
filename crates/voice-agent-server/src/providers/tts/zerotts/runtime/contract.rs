@@ -28,13 +28,12 @@ pub(in crate::providers::tts::zerotts) struct Config {
 }
 
 /// Immutable values for one pinned pack: the tokenizer, the pinned graph dimensions, the verified
-/// silence frame, and the voice registry shared by every replica and every voice.
+/// voice registry shared by every replica and every voice.
 #[derive(Clone)]
 pub struct ZeroTtsContract {
     pub(super) tokenizer: Tokenizer,
     pub(super) config: Config,
     pub(super) voices: Arc<ZeroTtsVoiceRegistry>,
-    pub(super) silence_frame: Vec<i32>,
     pub(super) graphs: Option<GraphPaths>,
 }
 
@@ -78,7 +77,6 @@ impl ZeroTtsContract {
             tokenizer,
             config,
             voices: Arc::new(ZeroTtsVoiceRegistry::default()),
-            silence_frame: Vec::new(),
             graphs: None,
         })
     }
@@ -105,7 +103,7 @@ impl ZeroTtsContract {
         validate_config(&config)?;
         let tokenizer = load_tokenizer(tokenizer_path)?;
         let voice = load_voice(voice_path, &config)?;
-        let silence_frame = load_silence_frame(
+        load_silence_frame(
             silence_frame_path,
             config.num_codebooks,
             config.codebook_size,
@@ -129,7 +127,6 @@ impl ZeroTtsContract {
             tokenizer,
             config,
             voices: Arc::new(ZeroTtsVoiceRegistry::from_legacy(voice)),
-            silence_frame,
             graphs: Some(GraphPaths {
                 text_encoder: text_encoder_path.into(),
                 prefix_step: prefix_step_path.into(),

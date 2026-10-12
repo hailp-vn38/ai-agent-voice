@@ -206,6 +206,128 @@ fn long_streaming_segment_starts_at_bounded_initial_buffer() {
     release_tx.send(()).unwrap();
 }
 
+#[tokio::test(start_paused = true)]
+async fn slow_native_segments_finish_before_playback_without_losing_progress() {
+    use super::{MAX_BUFFERED_PACKETS, SpeechOutput, SpeechOutputEvent};
+    use crate::{
+        audio::PcmF32Mono,
+        providers::{TtsError, TtsProvider},
+        workers::{TtsWorkerRuntime, WorkerRuntimeConfig},
+    };
+    use std::{
+        sync::{Arc, Mutex, mpsc},
+        time::Duration,
+    };
+    struct ControlledTts {
+        emitted: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<usize>>,
+    }
+    impl TtsProvider for ControlledTts {
+        fn adapter(&self) -> &'static str {
+            "controlled-native"
+        }
+        fn segment_prebuffer_limit(&self) -> Option<Duration> {
+            Some(Duration::from_secs(21))
+        }
+        fn synthesize_stream(
+            &self,
+            _: &str,
+            on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+        ) -> Result<(), TtsError> {
+            loop {
+                let frames = self
+                    .release
+                    .lock()
+                    .unwrap()
+                    .recv()
+                    .map_err(|_| TtsError::Failed)?;
+                if frames == 0 {
+                    return Ok(());
+                }
+                on_pcm(PcmF32Mono::new(vec![0.1; 2_880 * frames], 48_000))?;
+                self.emitted.send(()).map_err(|_| TtsError::Failed)?;
+            }
+        }
+    }
+    let (emitted_tx, emitted_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let provider: Arc<dyn TtsProvider> = Arc::new(ControlledTts {
+        emitted: emitted_tx,
+        release: Mutex::new(release_rx),
+    });
+    let runtime = Arc::new(TtsWorkerRuntime::new(
+        Arc::clone(&provider),
+        WorkerRuntimeConfig {
+            final_timeout: Duration::from_secs(15),
+            ..WorkerRuntimeConfig::default()
+        },
+    ));
+    let mut output =
+        SpeechOutput::with_worker(provider, runtime, SpeechOutputConfig::default()).unwrap();
+    output
+        .push_delta("Rust là một ngôn ngữ lập trình hệ thống.")
+        .unwrap();
+    output.finish_input().unwrap();
+    assert!(matches!(
+        output.poll().unwrap(),
+        Some(SpeechOutputEvent::SegmentReady { .. })
+    ));
+    output.poll().unwrap();
+    for frames in [MAX_BUFFERED_PACKETS, 10, 10] {
+        tokio::time::advance(Duration::from_secs(6)).await;
+        release_tx.send(frames).unwrap();
+        emitted_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            output.poll().unwrap().is_none(),
+            "segment started before all its audio existed"
+        );
+    }
+    release_tx.send(0).unwrap();
+    let mut started = false;
+    for _ in 0..10_000 {
+        if matches!(output.poll().unwrap(), Some(SpeechOutputEvent::Started)) {
+            started = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(started);
+    assert_eq!(output.packets.len(), MAX_BUFFERED_PACKETS + 20);
+    output.cancel();
+    assert!(output.packets.is_empty());
+}
+
+#[test]
+fn staged_audio_is_bounded_and_cancellation_discards_it() {
+    use super::{SpeechOutput, SpeechOutputError};
+    use crate::{audio::PcmF32Mono, providers::TtsProvider};
+    use std::{sync::Arc, time::Duration};
+    struct BufferedTts;
+    impl TtsProvider for BufferedTts {
+        fn adapter(&self) -> &'static str {
+            "buffered"
+        }
+        fn segment_prebuffer_limit(&self) -> Option<Duration> {
+            Some(Duration::from_millis(60))
+        }
+    }
+    let mut output =
+        SpeechOutput::with_config(Arc::new(BufferedTts), SpeechOutputConfig::default()).unwrap();
+    output
+        .push_provider_pcm(PcmF32Mono::new(vec![0.1; 2_880], 48_000))
+        .unwrap();
+    assert!(output.packets.is_empty());
+    assert_eq!(output.segment_packets.len(), 1);
+    output.cancel();
+    assert!(output.segment_packets.is_empty());
+    assert_eq!(
+        output.push_provider_pcm(PcmF32Mono::new(vec![0.1; 2_880 * 3], 48_000)),
+        Err(SpeechOutputError::Backpressure)
+    );
+    assert!(output.packets.is_empty());
+    assert!(output.segment_packets.is_empty());
+}
+
 #[test]
 fn first_five_packets_are_sent_before_realtime_pacing() {
     use super::{SpeechOutput, SpeechOutputEvent};

@@ -11,6 +11,7 @@ impl SpeechOutput {
         self.downlink_pipeline = CanonicalDownlinkPipeline::new(MAX_DOWNLINK_OPUS_PACKET_BYTES)
             .expect("canonical downlink pipeline was initialized previously");
         self.packets.clear();
+        self.segment_packets.clear();
         self.packets_sent = 0;
         self.finish_input = false;
         self.started = false;
@@ -61,12 +62,10 @@ impl SpeechOutput {
             }
             self.synthesize_next()?;
         }
-        // Keep native PCM production behind the audio high-water mark. The runtime's
-        // event channel supplies backpressure while paced packets leave this queue.
-        if let Some(lease) = self
-            .active_worker
-            .filter(|_| self.packets.len() < MAX_BUFFERED_PACKETS)
-        {
+        // Complete-segment delivery must keep consuming PCM to observe progress and Finished.
+        if let Some(lease) = self.active_worker.filter(|_| {
+            self.segment_packet_limit.is_some() || self.packets.len() < MAX_BUFFERED_PACKETS
+        }) {
             let event = self
                 .tts_runtime
                 .as_ref()
@@ -76,7 +75,10 @@ impl SpeechOutput {
             match event {
                 None => {}
                 Some(TtsWorkerEvent::Pcm(pcm)) => self.push_provider_pcm(pcm)?,
-                Some(TtsWorkerEvent::Finished) => self.active_worker = None,
+                Some(TtsWorkerEvent::Finished) => {
+                    self.active_worker = None;
+                    self.finish_segment();
+                }
                 Some(
                     TtsWorkerEvent::Cancelled
                     | TtsWorkerEvent::Failed
@@ -124,7 +126,8 @@ impl SpeechOutput {
             // A five-packet burst alone cannot cover the native decoder's next-chunk
             // latency. Finish short initial segments before playback; a long segment
             // starts at the bounded audio high-water mark so the worker can continue.
-            if self.packets.len() < MAX_BUFFERED_PACKETS
+            if self.segment_packet_limit.is_none()
+                && self.packets.len() < MAX_BUFFERED_PACKETS
                 && (self.active_worker.is_some() || !self.pending.is_empty())
             {
                 return Ok(None);

@@ -139,14 +139,14 @@ fn run() -> Result<(), String> {
             Ok(())
         })
         .map_err(|error| error.to_string())?;
-    if next_chunks.len() != 3
+    if next_chunks.len() != 5
         || next_chunks.iter().any(|pcm| {
             pcm.sample_rate_hz() != 48_000
                 || pcm.samples().is_empty()
                 || pcm.samples().iter().any(|sample| !sample.is_finite())
         })
     {
-        return Err("ZeroTTS continuous codec stream did not produce finite PCM".into());
+        return Err("ZeroTTS next segment did not produce finite PCM".into());
     }
     let mut full = ZeroTtsFullPcm::new(&core).map_err(|error| error.to_string())?;
     for _ in 0..2 {

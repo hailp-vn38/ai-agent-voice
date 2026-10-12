@@ -68,14 +68,18 @@ Opus encoder đóng `DownlinkPcmFrame` đúng 60 ms (1.440 samples ở 24 kHz). 
 
 ## 5. AudioPacer
 
-Pacer giữ audio đầu turn cho đến khi các segment ngắn đã tổng hợp xong, hoặc hàng đợi của segment dài đạt ngưỡng 32 Opus packet. Sau `tts:start`, 5 packet đầu được gửi ngay; từ packet thứ 6, deadline tính từ thời điểm gói 1 được release: gói 6 ở mốc +60 ms, gói 7 ở +120 ms. Một tick trễ không cộng dồn vào các deadline sau. Ngưỡng ban đầu 32 packet giới hạn thời gian chờ trước phát cho segment dài và tránh kẹt worker khi hàng đợi đầy. `Drained` và `tts:stop` chờ hết thời lượng playback danh nghĩa của các gói đã gửi, kể cả những gói trong burst đầu. Nếu TTS vẫn tạo PCM chậm hơn playback sau ngưỡng này, client có thể thiếu audio; log `TTS Opus buffer` ghi độ sâu hàng đợi khi encode, `Downlink Opus packet ready for WebSocket` ghi trạng thái khi release, còn `WebSocket audio sent` ghi khoảng cách gửi thực tế khi bật mức log `debug`.
+ZeroTTS ở `delivery_mode=stream` giữ Opus của từng segment đến `SegmentFinished` rồi mới đưa vào hàng đợi phát. Native worker vẫn stream PCM, nên tiến triển tiếp tục refresh stall timeout và cancel vẫn có hiệu lực. Buffer segment giới hạn 21 giây audio, bao phủ hard bound 256 × 80 ms của model và khoảng nghỉ 320 ms; vượt giới hạn làm fail generation. Cách này tránh hụt giữa câu khi inference chậm hơn realtime, nhưng audio đầu tiên phải đợi tổng hợp xong segment. Segment sau có thể có khoảng chờ nếu inference chưa hoàn tất.
+
+Với các provider khác và ZeroTTS `file`, pacer giữ audio đầu turn cho đến khi các segment ngắn đã tổng hợp xong, hoặc hàng đợi của segment dài đạt ngưỡng 32 Opus packet. Ngưỡng này giới hạn thời gian chờ và tránh kẹt worker khi hàng đợi đầy; nếu inference vẫn chậm hơn playback, client có thể thiếu audio.
+
+Sau `tts:start`, 5 packet đầu được gửi ngay; từ packet thứ 6, deadline tính từ thời điểm gói 1 được release: gói 6 ở mốc +60 ms, gói 7 ở +120 ms. Một tick trễ không cộng dồn vào các deadline sau. `Drained` và `tts:stop` chờ hết thời lượng playback danh nghĩa của các gói đã gửi, kể cả những gói trong burst đầu. Log `TTS Opus buffer` ghi cả hàng đợi phát và buffer segment khi encode, `Downlink Opus packet ready for WebSocket` ghi trạng thái khi release, còn `WebSocket audio sent` ghi khoảng cách gửi thực tế khi bật mức log `debug`.
 
 ```text
 prebuffer N frames -> send nhanh
 sau đó -> ~frame_ms giữa các packet
 ```
 
-Giới hạn dispatch/poll PCM khi hàng đợi Opus đạt 32 packet. Segment N+1 có thể bắt đầu trước khi hàng đợi N cạn, miễn chỉ một worker synthesis đang active.
+Giới hạn dispatch khi hàng đợi phát đạt 32 packet. Với stream thông thường, poll PCM cũng dừng ở ngưỡng này; ZeroTTS stream tiếp tục nhận PCM vào buffer segment bounded để không chặn `SegmentFinished`. Segment N+1 có thể bắt đầu trước khi hàng đợi N cạn, miễn chỉ một worker synthesis đang active.
 
 ## 6. Segment lifecycle và backpressure
 

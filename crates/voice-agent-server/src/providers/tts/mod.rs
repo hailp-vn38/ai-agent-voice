@@ -56,6 +56,12 @@ pub fn validate_warmup_pcm(pcm: WarmupPcm) -> Result<(), TtsError> {
 
 pub trait TtsProvider: Send + Sync {
     fn adapter(&self) -> &'static str;
+
+    /// Stage complete segments before playback when inference can run below realtime.
+    /// PCM still streams through the worker; this duration bounds staged audio.
+    fn segment_prebuffer_limit(&self) -> Option<std::time::Duration> {
+        None
+    }
     fn synthesize(&self, _: &str) -> Result<PcmF32Mono, TtsError> {
         Err(TtsError::Failed)
     }
@@ -306,6 +312,12 @@ impl ConfiguredZeroTts {
 impl TtsProvider for ConfiguredZeroTts {
     fn adapter(&self) -> &'static str {
         "zerotts_onnx"
+    }
+
+    fn segment_prebuffer_limit(&self) -> Option<std::time::Duration> {
+        // The worker caps speech at 256 × 80 ms, plus the 320 ms inter-segment gap.
+        (self.delivery_mode == ZeroTtsDeliveryMode::Stream)
+            .then_some(std::time::Duration::from_secs(21))
     }
 
     fn synthesize(&self, _: &str) -> Result<PcmF32Mono, TtsError> {
