@@ -10,6 +10,18 @@ export interface PluralMessage {
 export type MessageValue = string | PluralMessage
 
 export const en = {
+  'reminders.device': 'Device',
+  'reminders.from': 'Due from',
+  'reminders.to': 'Due through',
+  'reminders.apply': 'Apply filters',
+  'reminders.kpiHelp': 'Counts include the selected Device and time range across all pages; status is shown separately.',
+  'reminders.timeFilterError': 'Enter RFC3339 times with UTC offsets.',
+  'reminders.previousDevices': 'Previous Devices',
+  'reminders.nextDevices': 'Next Devices',
+  'reminders.manage': 'Manage Device reminders',
+  'reminders.manageDevice': 'Create or manage on Device',
+  'reminders.chooseDevice': 'Choose a physical Device',
+
   'reminders.title': 'Reminders',
   'reminders.edit': 'Edit',
   'reminders.cancel': 'Cancel reminder',
@@ -942,6 +954,18 @@ export const en = {
 export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
+  'reminders.device': 'Thiết bị',
+  'reminders.from': 'Đến hạn từ',
+  'reminders.to': 'Đến hạn đến',
+  'reminders.apply': 'Áp dụng bộ lọc',
+  'reminders.kpiHelp': 'Số lượng theo thiết bị và khoảng thời gian đã chọn trên tất cả trang; trạng thái được tách riêng.',
+  'reminders.timeFilterError': 'Nhập giờ RFC3339 có độ lệch UTC.',
+  'reminders.previousDevices': 'Thiết bị trước',
+  'reminders.nextDevices': 'Thiết bị tiếp',
+  'reminders.manage': 'Quản lý lời nhắc thiết bị',
+  'reminders.manageDevice': 'Tạo hoặc quản lý trên thiết bị',
+  'reminders.chooseDevice': 'Chọn thiết bị vật lý',
+
   'reminders.title': 'Lời nhắc',
   'reminders.edit': 'Sửa',
   'reminders.cancel': 'Hủy lời nhắc',

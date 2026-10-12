@@ -4707,3 +4707,213 @@ async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_casca
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn agent_reminders_join_current_assignment_and_scope_mutations() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    for key in ["aggregate_a", "aggregate_b"] {
+        client
+            .post(format!("{base}/api/admin/agents"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"key":key,"name":key}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    for (device, key) in [
+        ("agg-one", "aggregate_a"),
+        ("agg-two", "aggregate_a"),
+        ("agg-other", "aggregate_b"),
+    ] {
+        client
+            .post(format!("{base}/api/admin/devices"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"device_id":device,"agent_key":key}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    client
+        .put(format!("{base}/api/admin/system/assistant-device"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"agent_key":"aggregate_a","enabled":true}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let url = format!("{base}/api/admin/agents/aggregate_a/reminders");
+    assert_eq!(
+        client.get(&url).send().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let mut ids = Vec::new();
+    for (i, device) in ["agg-one", "agg-two", "agg-other"].into_iter().enumerate() {
+        let v: serde_json::Value = client
+            .post(format!("{base}/api/admin/devices/{device}/reminders"))
+            .bearer_auth("admin-test-token")
+            .header("idempotency-key", format!("agg-{i}"))
+            .json(&serde_json::json!({"message":device,"scheduled_at":"2030-01-02T00:00:00Z"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        ids.push(v["id"].as_str().unwrap().to_string());
+    }
+    let page: serde_json::Value = client
+        .get(format!("{url}?page_size=1"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["total"], 2);
+    assert_eq!(page["has_more"], true);
+    assert_eq!(page["kpi"]["pending"], 2);
+    assert_eq!(page["devices"].as_array().unwrap().len(), 2);
+    let filtered: serde_json::Value = client
+        .get(format!(
+            "{url}?device_id=agg-two&due_from_ms=1893542400000&due_to_ms=1893542400000"
+        ))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(filtered["items"][0]["device_id"], "agg-two");
+    assert_eq!(filtered["total"], 1);
+    let second: serde_json::Value = client
+        .get(format!("{url}?page=2&page_size=1"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_ne!(second["items"][0]["id"], page["items"][0]["id"]);
+    assert_eq!(second["has_more"], false);
+    client
+        .post(format!(
+            "{base}/api/admin/agents/aggregate_a/devices/agg-two/reminders/{}/cancel",
+            ids[1]
+        ))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .header("idempotency-key", "agg-cancel")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let cancelled: serde_json::Value = client
+        .get(format!("{url}?status=cancelled"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cancelled["total"], 1);
+    assert_eq!(cancelled["kpi"]["pending"], 1);
+    assert_eq!(cancelled["kpi"]["cancelled"], 1);
+    assert_eq!(
+        client
+            .get(format!("{url}?due_from_ms=2&due_to_ms=1"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let scoped = format!(
+        "{base}/api/admin/agents/aggregate_a/devices/agg-one/reminders/{}",
+        ids[0]
+    );
+    client
+        .patch(format!("{base}/api/admin/devices/agg-one"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"agent_key":"aggregate_b"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(
+        client
+            .patch(&scoped)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .header("idempotency-key", "stale-agent-edit")
+            .json(&serde_json::json!({"message":"wrong"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        client
+            .post(format!(
+                "{base}/api/admin/agents/aggregate_a/devices/agg-other/reminders"
+            ))
+            .bearer_auth("admin-test-token")
+            .header("idempotency-key", "wrong-agent-create")
+            .json(&serde_json::json!({"message":"wrong","delay_seconds":600}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let moved: serde_json::Value = client
+        .get(format!("{base}/api/admin/agents/aggregate_b/reminders"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(moved["total"], 2);
+    assert_eq!(moved["kpi"]["pending"], 2);
+    assert_eq!(
+        client
+            .get(format!("{url}?device_id=agg-one"))
+            .bearer_auth("admin-test-token")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    task.abort();
+}

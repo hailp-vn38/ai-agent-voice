@@ -2,7 +2,7 @@
 import { nextTick } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 
-type AgentStudioTab = 'studio' | 'tools' | 'speakers' | 'devices'
+type AgentStudioTab = 'studio' | 'tools' | 'speakers' | 'devices' | 'reminders'
 
 const props = defineProps<{ modelValue: AgentStudioTab }>()
 const emit = defineEmits<{ 'update:modelValue': [tab: AgentStudioTab] }>()
@@ -12,6 +12,7 @@ const items = [
   { key: 'tools', label: 'studio.tab.tools' },
   { key: 'speakers', label: 'studio.tab.speakers' },
   { key: 'devices', label: 'studio.tab.devices' },
+  { key: 'reminders', label: 'reminders.title' },
 ] as const
 
 function activate(index: number) {

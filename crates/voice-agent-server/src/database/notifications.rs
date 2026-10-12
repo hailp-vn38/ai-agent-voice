@@ -1,9 +1,11 @@
 //! Durable Device-owned notifications, shared by HTTP, tools and schedule delivery.
+mod aggregate;
 mod mutations;
 use super::{
     Database,
     audit::{AuditOutcome, audit},
 };
+pub use aggregate::AgentReminderQuery;
 pub use mutations::UpdateReminder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -48,6 +50,7 @@ pub struct Reminder {
 #[derive(Clone)]
 pub struct DeviceNotifications {
     database: Database,
+    agent_scope: Option<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 impl DeviceNotifications {
@@ -55,7 +58,15 @@ impl DeviceNotifications {
         Self::with_clock(database, Arc::new(|| chrono::Utc::now().timestamp_millis()))
     }
     pub fn with_clock(database: Database, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
-        Self { database, clock }
+        Self {
+            database,
+            clock,
+            agent_scope: None,
+        }
+    }
+    pub fn scoped_to_agent(mut self, key: &str) -> Self {
+        self.agent_scope = Some(key.into());
+        self
     }
     #[allow(clippy::too_many_arguments)] // Audit correlation is distinct from the durable mutation identity.
     pub async fn create(
@@ -82,8 +93,9 @@ impl DeviceNotifications {
             .collect::<String>();
         let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
         let (device_row_id, kind): (i64, String) =
-            sqlx::query_as("SELECT id,kind FROM devices WHERE device_id=?")
+            sqlx::query_as("SELECT d.id,d.kind FROM devices d JOIN agents a ON a.id=d.agent_id WHERE d.device_id=? AND (? IS NULL OR a.key=?)")
                 .bind(device_id)
+                .bind(self.agent_scope.as_deref()).bind(self.agent_scope.as_deref())
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or(NotificationError::NotFound)?;
@@ -160,8 +172,9 @@ impl DeviceNotifications {
             return Err(NotificationError::Invalid("invalid_query"));
         }
         let mut tx = self.database.pool().begin().await?;
-        let row: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE device_id=?")
+        let row: i64 = sqlx::query_scalar("SELECT d.id FROM devices d JOIN agents a ON a.id=d.agent_id WHERE d.device_id=? AND (? IS NULL OR a.key=?)")
             .bind(device_id)
+            .bind(self.agent_scope.as_deref()).bind(self.agent_scope.as_deref())
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(NotificationError::NotFound)?;
