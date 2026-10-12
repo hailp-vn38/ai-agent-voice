@@ -14,6 +14,13 @@ pub const MODEL_REVISION: &str = "8b7e9cffb4b41918cb638b9f62f0a751184d14a6";
 pub const CODEC_REVISION: &str = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4";
 pub const PRESET_REVISION: &str = "85344322b7258b4e25479b692e8e3396baf9db34";
 pub const G2P_REVISION: &str = "e825173f235d08ea19315b2b279fb11153b44cea";
+/// All pinned upstream sources contribute to the physical asset profile.
+pub const ASSET_REVISION: &str = concat!(
+    "8b7e9cffb4b41918cb638b9f62f0a751184d14a6:",
+    "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4:",
+    "85344322b7258b4e25479b692e8e3396baf9db34:",
+    "e825173f235d08ea19315b2b279fb11153b44cea"
+);
 
 macro_rules! model_asset {
     ($name:literal) => {
@@ -143,7 +150,7 @@ impl ProviderAssetManager for VieneuNativeAssetManager {
         ensure_assets_into(http_acquirer(), &model_dir())
     }
     fn revision(&self) -> &'static str {
-        MODEL_REVISION
+        ASSET_REVISION
     }
 }
 
