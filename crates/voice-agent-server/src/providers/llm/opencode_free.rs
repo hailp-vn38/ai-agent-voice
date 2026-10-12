@@ -38,15 +38,19 @@ pub struct OpenCodeFreeConfig {
     pub timeout_ms: u64,
 }
 
+pub(crate) fn valid_free_chat_model_id(model: &str) -> bool {
+    model.len() <= 256
+        && model.ends_with("-free")
+        && model.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'-' | b'.' | b'_')
+        })
+}
+
 impl OpenCodeFreeConfig {
     pub fn valid(&self) -> bool {
-        self.model.len() <= 256
-            && self.model.ends_with("-free")
-            && self
-                .model
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'_'))
-            && (1_000..=120_000).contains(&self.timeout_ms)
+        valid_free_chat_model_id(&self.model) && (1_000..=120_000).contains(&self.timeout_ms)
     }
 }
 
@@ -87,14 +91,46 @@ impl LlmProvider for OpenCodeFreeProvider {
 // from https://opencode.ai/zen/v1/models and may become unavailable at any time.
 // No assumption of quota availability or guaranteed tool support is made.
 const FREE_MODELS: &[ModelOption] = &[
-    ModelOption { id: "nemotron-3-ultra-free", name: "Nemotron 3 Ultra Free", description: None },
-    ModelOption { id: "mimo-v2.5-free", name: "MiMo V2.5 Free", description: None },
-    ModelOption { id: "deepseek-v4-flash-free", name: "DeepSeek V4 Flash Free", description: None },
-    ModelOption { id: "ling-3.0-flash-free", name: "Ling 3.0 Flash Free", description: None },
-    ModelOption { id: "ling-3.0-tiny-free", name: "Ling 3.0 Tiny Free", description: None },
-    ModelOption { id: "north-mini-code-free", name: "North Mini Code Free", description: None },
-    ModelOption { id: "laguna-s-2.1-free", name: "Laguna S 2.1 Free", description: None },
-    ModelOption { id: "longcat-2.0-free", name: "LongCat 2.0 Free", description: None },
+    ModelOption {
+        id: "nemotron-3-ultra-free",
+        name: "Nemotron 3 Ultra Free",
+        description: None,
+    },
+    ModelOption {
+        id: "mimo-v2.5-free",
+        name: "MiMo V2.5 Free",
+        description: None,
+    },
+    ModelOption {
+        id: "deepseek-v4-flash-free",
+        name: "DeepSeek V4 Flash Free",
+        description: None,
+    },
+    ModelOption {
+        id: "ling-3.0-flash-free",
+        name: "Ling 3.0 Flash Free",
+        description: None,
+    },
+    ModelOption {
+        id: "ling-3.0-tiny-free",
+        name: "Ling 3.0 Tiny Free",
+        description: None,
+    },
+    ModelOption {
+        id: "north-mini-code-free",
+        name: "North Mini Code Free",
+        description: None,
+    },
+    ModelOption {
+        id: "laguna-s-2.1-free",
+        name: "Laguna S 2.1 Free",
+        description: None,
+    },
+    ModelOption {
+        id: "longcat-2.0-free",
+        name: "LongCat 2.0 Free",
+        description: None,
+    },
 ];
 
 const FIELDS: &[ProviderConfigField] = &[
@@ -153,39 +189,61 @@ pub static REGISTRATION: ProviderAdapterRegistration =
 mod tests {
     use super::*;
 
+    fn config(model: &str) -> OpenCodeFreeConfig {
+        OpenCodeFreeConfig {
+            model: model.into(),
+            timeout_ms: 60_000,
+        }
+    }
+
     #[test]
     fn accepts_free_chat_ids_and_rejects_paid_and_unsafe_ids() {
-        assert!(OpenCodeFreeConfig { model: "nemotron-3-ultra-free".into(), timeout_ms: 60_000 }.valid());
-        assert!(OpenCodeFreeConfig { model: "future-2027-free".into(), timeout_ms: 60_000 }.valid());
-        assert!(!OpenCodeFreeConfig { model: "claude-opus-4-5".into(), timeout_ms: 60_000 }.valid());
-        assert!(!OpenCodeFreeConfig { model: "a/../../b-free".into(), timeout_ms: 60_000 }.valid());
+        assert!(config("nemotron-3-ultra-free").valid());
+        assert!(config("future-2027-free").valid());
+        assert!(!config("claude-opus-4-5").valid());
+        assert!(!config("a/../../b-free").valid());
     }
 
     #[test]
     fn admin_config_and_deployment_discriminator_are_consistent() {
         let canonical = crate::database::provider_config::validate(
             "opencode_free",
-            &serde_json::json!({"model": "nemotron-3-ultra-free", "timeout_ms": 60000}),
+            &serde_json::json!({
+                "model": "nemotron-3-ultra-free",
+                "timeout_ms": 60000,
+            }),
         )
         .unwrap();
         let mut value: serde_json::Value = serde_json::from_str(&canonical).unwrap();
         value["adapter"] = serde_json::json!("opencode_free");
         let instance: crate::config::LlmInstanceConfig = serde_json::from_value(value).unwrap();
         assert_eq!(instance.adapter(), "opencode_free");
-        assert!(crate::database::provider_config::validate(
-            "opencode_free",
-            &serde_json::json!({"model": "claude-sonnet-5", "timeout_ms": 60000}),
-        ).is_err());
-        assert!(crate::database::provider_config::validate(
-            "opencode_free",
-            &serde_json::json!({"model": "nemotron-3-ultra-free", "base_url": "https://example.com"}),
-        ).is_err());
+
+        assert!(
+            crate::database::provider_config::validate(
+                "opencode_free",
+                &serde_json::json!({
+                    "model": "claude-sonnet-5",
+                    "timeout_ms": 60000,
+                }),
+            )
+            .is_err()
+        );
+        assert!(
+            crate::database::provider_config::validate(
+                "opencode_free",
+                &serde_json::json!({
+                    "model": "nemotron-3-ultra-free",
+                    "base_url": "https://example.com",
+                }),
+            )
+            .is_err()
+        );
     }
 
-    #[tokio::test]
-    async fn builds_without_network_or_user_credentials() {
-        let config = OpenCodeFreeConfig { model: "nemotron-3-ultra-free".into(), timeout_ms: 30_000 };
-        let provider = OpenCodeFreeProvider::build(&config).unwrap();
+    #[test]
+    fn builds_without_network_or_user_credentials() {
+        let provider = OpenCodeFreeProvider::build(&config("nemotron-3-ultra-free")).unwrap();
         assert_eq!(provider.adapter(), "opencode_free");
     }
 }
