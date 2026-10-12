@@ -7,7 +7,7 @@ pub use crate::providers::{
     asr::{
         gipformer::config::GipformerSherpaOfflineConfig, zipformer::config::ZipformerSherpaConfig,
     },
-    llm::openai::config::OpenAiConfig,
+    llm::{openai::config::OpenAiConfig, opencode_free::OpenCodeFreeConfig},
     tts::{
         chillaudio::config::ChillAudioWsConfig,
         kokoro_vi::config::KokoroViOnnxConfig,
@@ -120,6 +120,7 @@ impl std::fmt::Debug for SecretString {
 #[serde(tag = "adapter", rename_all = "snake_case")]
 pub enum LlmInstanceConfig {
     Openai(OpenAiConfig),
+    OpenCodeFree(OpenCodeFreeConfig),
     #[cfg(feature = "qualification-providers")]
     QualificationLlm(QualificationConfig),
 }
@@ -128,6 +129,7 @@ impl LlmInstanceConfig {
     pub const fn adapter(&self) -> &'static str {
         match self {
             Self::Openai(_) => "openai",
+            Self::OpenCodeFree(_) => "opencode_free",
             #[cfg(feature = "qualification-providers")]
             Self::QualificationLlm(_) => "qualification_llm",
         }
@@ -135,6 +137,7 @@ impl LlmInstanceConfig {
     pub fn openai(&self) -> &OpenAiConfig {
         match self {
             Self::Openai(config) => config,
+            Self::OpenCodeFree(_) => unreachable!("OpenCode Free has no OpenAI config"),
             #[cfg(feature = "qualification-providers")]
             Self::QualificationLlm(_) => unreachable!("qualification LLM has no OpenAI config"),
         }
