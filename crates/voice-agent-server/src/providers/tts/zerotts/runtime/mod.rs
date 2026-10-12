@@ -1,6 +1,6 @@
 //! ZeroTTS model inference and streaming 48 kHz PCM for native TTS workers.
 
-mod codec;
+pub(crate) mod codec;
 mod contract;
 mod loading;
 mod synthesis;

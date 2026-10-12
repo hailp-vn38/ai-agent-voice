@@ -147,6 +147,14 @@ token = "set-deployment-token-here"
 # timeout_ms = 30000
 # api_key = ""
 
+# Native VieNeu v3 Turbo (CPU FP32). Model Preparation installs the pinned assets.
+# To select it, set [provider_defaults].tts = "vieneu_native_default".
+# [providers.tts.instances.vieneu_native_default]
+# adapter = "vieneu_native"
+# voice = "hai_dang"
+# language = "vi-VN"
+# preload = false
+
 # Local Vietnamese Kokoro. Model Preparation acquires and converts all pinned
 # voicepacks. Install the deployment-owned G2P sidecar before selecting it.
 # [providers.tts.instances.kokoro_vi]
@@ -227,6 +235,7 @@ silero_onnx = 1
 zipformer_sherpa = 2
 gipformer_sherpa_offline = 4
 zerotts_onnx = 2
+vieneu_native = 2
 kokoro_vi_onnx = 2
 
 [runtime.chillaudio]
@@ -290,6 +299,9 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # gipformer_sherpa_offline = 536870912
 # kokoro_vi_onnx = 3221225472
 # zerotts_onnx = 4294967296
+# Native VieNeu: local smoke peak RSS was 1230424 KiB with one replica / 2 threads.
+# Requalify this reservation for your machine and workload.
+# vieneu_native = 2147483648
 # openai = 67108864
 # chillaudio_ws = 67108864
 # vieneu_http = 67108864

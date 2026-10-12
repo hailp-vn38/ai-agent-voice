@@ -1182,6 +1182,11 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
             "display_name": "VieNeu HTTP Streaming"
         },
         {
+            "adapter": "vieneu_native",
+            "type": "tts",
+            "display_name": "VieNeu v3 Turbo Native"
+        },
+        {
             "adapter": "kokoro_vi_onnx",
             "type": "tts",
             "display_name": "Kokoro Vietnamese ONNX"

@@ -98,6 +98,10 @@ fn run(args: Args) -> Result<TtsBenchmarkResult, BenchmarkErrorCategory> {
             voice: configuration.voice.clone(),
             language: configuration.language.clone(),
         },
+        voice_agent_server::config::TtsInstanceConfig::VieneuNative(configuration) => TtsBinding {
+            voice: configuration.voice.clone(),
+            language: configuration.language.clone(),
+        },
         _ => TtsBinding::readiness(),
     };
     let factory = registry

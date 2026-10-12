@@ -577,6 +577,11 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                     "VieNeu instance `{id}` has invalid URL, voice, language, or timeout"
                 )));
             }
+            TtsInstanceConfig::VieneuNative(tts) if !tts.valid_selection() => {
+                return Err(ConfigError::Validation(format!(
+                    "Native VieNeu instance `{id}` has invalid voice, language, model, or threads"
+                )));
+            }
             TtsInstanceConfig::ChillAudioWs(tts)
                 if tts.ws_url.scheme() != "wss"
                     || tts.ws_url.host_str().is_none()

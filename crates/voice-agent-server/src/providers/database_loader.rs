@@ -496,6 +496,10 @@ fn tts_binding(instance: &TtsInstanceConfig) -> TtsBinding {
             voice: config.voice.clone(),
             language: config.language.clone(),
         },
+        TtsInstanceConfig::VieneuNative(config) => TtsBinding {
+            voice: config.voice.clone(),
+            language: config.language.clone(),
+        },
         _ => TtsBinding::readiness(),
     }
 }

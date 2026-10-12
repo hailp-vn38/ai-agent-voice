@@ -1228,6 +1228,7 @@ fn default_runtime_threads() -> std::collections::BTreeMap<String, i32> {
         ("zipformer_sherpa", 2),
         ("gipformer_sherpa_offline", 4),
         ("zerotts_onnx", 2),
+        ("vieneu_native", 2),
         ("kokoro_vi_onnx", 2),
     ]
     .into_iter()
