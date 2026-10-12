@@ -31,6 +31,14 @@ const PAGE_MAX: u32 = 200;
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route(
+            "/devices/{device_id}/reminders/{reminder_id}",
+            axum::routing::patch(notifications::update),
+        )
+        .route(
+            "/devices/{device_id}/reminders/{reminder_id}/cancel",
+            axum::routing::post(notifications::cancel),
+        )
+        .route(
             "/devices/{device_id}/reminders",
             get(notifications::list).post(notifications::create),
         )

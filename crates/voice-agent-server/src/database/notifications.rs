@@ -1,8 +1,10 @@
 //! Durable Device-owned notifications, shared by HTTP, tools and schedule delivery.
+mod mutations;
 use super::{
     Database,
     audit::{AuditOutcome, audit},
 };
+pub use mutations::UpdateReminder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
@@ -72,14 +74,6 @@ impl DeviceNotifications {
         {
             return Err(NotificationError::Invalid("validation_failed"));
         }
-        let message = input.message.trim();
-        if message.is_empty()
-            || message.chars().count() > 1024
-            || message.len() > 4096
-            || message.chars().any(char::is_control)
-        {
-            return Err(NotificationError::Invalid("validation_failed"));
-        }
         let payload = serde_json::to_vec(&input)
             .map_err(|_| NotificationError::Invalid("validation_failed"))?;
         let hash = Sha256::digest(&payload)
@@ -101,30 +95,8 @@ impl DeviceNotifications {
             return serde_json::from_str(&response).map_err(|_| NotificationError::Invalid("stored_response_invalid"));
         }
         let now = (self.clock)();
-        // Mutation retries are supported for seven days; prune at most one quota-sized batch.
-        sqlx::query("DELETE FROM reminder_mutation_keys WHERE rowid IN (SELECT rowid FROM reminder_mutation_keys WHERE created_at_ms < ? ORDER BY created_at_ms LIMIT 500)").bind(now.saturating_sub(7 * 24 * 60 * 60 * 1000)).execute(&mut *tx).await?;
-        let due_at_ms = match (&input.delay_seconds, &input.scheduled_at) {
-            (Some(delay), None) if (1..=31_536_000).contains(delay) => now
-                .checked_add(delay * 1000)
-                .ok_or(NotificationError::Invalid("validation_failed"))?,
-            (None, Some(at)) => chrono::DateTime::parse_from_rfc3339(at)
-                .map_err(|_| NotificationError::Invalid("timezone_required"))?
-                .timestamp_millis(),
-            _ => return Err(NotificationError::Invalid("validation_failed")),
-        };
-        let timezone = input.timezone.clone().unwrap_or_else(|| {
-            if let Some(at) = &input.scheduled_at {
-                chrono::DateTime::parse_from_rfc3339(at)
-                    .unwrap()
-                    .offset()
-                    .to_string()
-            } else {
-                "UTC".into()
-            }
-        });
-        if timezone.is_empty() || timezone.len() > 128 || timezone.chars().any(char::is_control) {
-            return Err(NotificationError::Invalid("validation_failed"));
-        }
+        prune_keys(&mut tx, now).await?;
+        let (message, due_at_ms, timezone) = validate_input(&input, now)?;
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM device_reminders WHERE device_row_id=? AND status='pending'",
         )
@@ -144,7 +116,7 @@ impl DeviceNotifications {
         let reminder = Reminder {
             id: uuid::Uuid::new_v4().to_string(),
             device_id: device_id.into(),
-            message: message.into(),
+            message,
             due_at_ms,
             timezone,
             status: "pending".into(),
@@ -257,4 +229,49 @@ impl DeviceNotifications {
         tx.commit().await?;
         Ok(revision + 1)
     }
+}
+
+async fn prune_keys(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    // Mutation retries are supported for seven days; prune at most one quota-sized batch.
+    sqlx::query("DELETE FROM reminder_mutation_keys WHERE rowid IN (SELECT rowid FROM reminder_mutation_keys WHERE created_at_ms < ? ORDER BY created_at_ms LIMIT 500)").bind(now.saturating_sub(7*24*60*60*1000)).execute(&mut **tx).await?;
+    Ok(())
+}
+fn validate_input(
+    input: &CreateReminder,
+    now: i64,
+) -> Result<(String, i64, String), NotificationError> {
+    let message = input.message.trim();
+    if message.is_empty()
+        || message.chars().count() > 1024
+        || message.len() > 4096
+        || message.chars().any(char::is_control)
+    {
+        return Err(NotificationError::Invalid("validation_failed"));
+    }
+    let due_at_ms = match (&input.delay_seconds, &input.scheduled_at) {
+        (Some(delay), None) if (1..=31_536_000).contains(delay) => now
+            .checked_add(delay * 1000)
+            .ok_or(NotificationError::Invalid("validation_failed"))?,
+        (None, Some(at)) => chrono::DateTime::parse_from_rfc3339(at)
+            .map_err(|_| NotificationError::Invalid("timezone_required"))?
+            .timestamp_millis(),
+        _ => return Err(NotificationError::Invalid("validation_failed")),
+    };
+    let timezone = input.timezone.clone().unwrap_or_else(|| {
+        if let Some(at) = &input.scheduled_at {
+            chrono::DateTime::parse_from_rfc3339(at)
+                .unwrap()
+                .offset()
+                .to_string()
+        } else {
+            "UTC".into()
+        }
+    });
+    if timezone.is_empty() || timezone.len() > 128 || timezone.chars().any(char::is_control) {
+        return Err(NotificationError::Invalid("validation_failed"));
+    }
+    Ok((message.into(), due_at_ms, timezone))
 }

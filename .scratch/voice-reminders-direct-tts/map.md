@@ -10,6 +10,8 @@ Server/Web implementation first; firmware and hardware acceptance deferred by th
 
 - [04: Durable Device Reminder create/list](issues/04-device-reminder-create-list.md): migration0104, atomic replay/quota/revisions, route-bound Admin API, default-deny Agent policy and accessible Device/Agent UI with honest awaiting-sync state.
 
+- [05: Reminder edit/cancel](issues/05-device-reminder-update-cancel.md): scoped rowCAS, atomic schedule revision/idempotent replay, immutable terminal cancellation, edit/conflict/confirmation UI, public ownership/delete/restart regressions.
+
 ## Fog
 
 Firmware offline wake and physical sink calibration remain outside the current server/Web scope.

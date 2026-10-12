@@ -1,9 +1,11 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
+import { ApiError } from '@/api/errors'
+import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import DeviceReminders from './DeviceReminders.vue'
-const api = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn() }))
+const api = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), update:vi.fn(), cancel:vi.fn() }))
 vi.mock('@/api/reminders', () => ({ remindersApi: api }))
-beforeEach(() => { api.list.mockResolvedValue({items:[],page:1,page_size:50,schedule_summary:{schedule_revision:0,last_acked_revision:0,session_connected:null,reminder_capable:null}}) })
+beforeEach(() => { vi.clearAllMocks(); api.list.mockResolvedValue({items:[],page:1,page_size:50,schedule_summary:{schedule_revision:0,last_acked_revision:0,session_connected:null,reminder_capable:null}}) })
 it('shows saved awaiting sync and keeps mutation identity on retry', async () => {
  const wrapper=mount(DeviceReminders,{props:{deviceId:'physical'}})
  await flushPromises()
@@ -24,4 +26,35 @@ it('shows unsupported firmware without claiming online or playback', async () =>
  await flushPromises()
  expect(wrapper.text()).toContain('does not support')
  expect(wrapper.text()).not.toContain('Online')
+})
+
+it('edits with the observed revision and reports conflicts without claiming a save', async () => {
+ api.list.mockResolvedValue({items:[{id:'r1',device_id:'physical',message:'Before',due_at_ms:1893542400000,timezone:'UTC',status:'pending',row_revision:2,schedule_revision:2,sync_status:'pending'}],has_more:false,schedule_summary:{reminder_capable:null}})
+ api.update.mockRejectedValue(new ApiError('conflict',409,'revision_conflict'))
+ const wrapper=mount(DeviceReminders,{props:{deviceId:'physical'}})
+ await flushPromises()
+ await wrapper.get('[data-action="edit"]').trigger('click')
+ await wrapper.get('textarea').setValue('After')
+ await wrapper.get('form').trigger('submit')
+ await flushPromises()
+ expect(api.update.mock.calls[0]?.slice(0,3)).toEqual(['physical','r1',2])
+ expect(wrapper.text()).toContain('changed')
+ expect(wrapper.text()).not.toContain('Playback is not confirmed')
+})
+
+it('asks confirmation before cancellation and preserves its key on retry', async () => {
+ api.list.mockResolvedValue({items:[{id:'cancel-one',message:'Pending',due_at_ms:1893542400000,status:'pending',row_revision:4}],has_more:false,schedule_summary:{reminder_capable:null}})
+ api.cancel.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({status:'cancelled'})
+ const wrapper=mount(DeviceReminders,{props:{deviceId:'physical'}})
+ await flushPromises()
+ await wrapper.get('[data-action="cancel-reminder"]').trigger('click')
+ expect(api.cancel).not.toHaveBeenCalled()
+ expect(wrapper.findComponent(ConfirmDialog).props('modelValue')).toBe(true)
+ wrapper.findComponent(ConfirmDialog).vm.$emit('confirm')
+ await flushPromises()
+ await wrapper.get('[data-action="cancel-reminder"]').trigger('click')
+ wrapper.findComponent(ConfirmDialog).vm.$emit('confirm')
+ await flushPromises()
+ expect(api.cancel.mock.calls[0]?.slice(0,3)).toEqual(['physical','cancel-one',4])
+ expect(api.cancel.mock.calls[0]?.[3]).toBe(api.cancel.mock.calls[1]?.[3])
 })

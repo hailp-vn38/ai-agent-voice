@@ -24,19 +24,9 @@ pub(super) async fn create(
         Ok(v) => v,
         Err(e) => return e,
     };
-    let key = match request
-        .headers()
-        .get("idempotency-key")
-        .and_then(|v| v.to_str().ok())
-    {
-        Some(v) => v,
-        None => {
-            return error(
-                &request,
-                StatusCode::BAD_REQUEST,
-                "idempotency_key_required",
-            );
-        }
+    let key = match mutation_key(&request) {
+        Ok(v) => v,
+        Err(e) => return e,
     };
     let database = match database(&state) {
         Ok(v) => v,
@@ -128,4 +118,83 @@ pub(super) async fn patch_grant(
         .into_response(),
         Err(e) => failure(&request, e),
     }
+}
+
+pub(super) async fn update(
+    State(state): State<AppState>,
+    Path((device, reminder)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, crate::database::notifications::UpdateReminder) =
+        match json(request).await {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+    let revision = match expected(request.headers()) {
+        Ok(v) => v,
+        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
+    };
+    let key = match mutation_key(&request) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let db = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match DeviceNotifications::new(db.clone())
+        .update(
+            &device,
+            &reminder,
+            revision,
+            "admin",
+            key,
+            input,
+            id(&request),
+        )
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => failure(&request, e),
+    }
+}
+pub(super) async fn cancel(
+    State(state): State<AppState>,
+    Path((device, reminder)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, Value) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if !input.as_object().is_some_and(|v| v.is_empty()) {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    let revision = match expected(request.headers()) {
+        Ok(v) => v,
+        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
+    };
+    let key = match mutation_key(&request) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let db = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match DeviceNotifications::new(db.clone())
+        .cancel(&device, &reminder, revision, "admin", key, id(&request))
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => failure(&request, e),
+    }
+}
+#[allow(clippy::result_large_err)]
+fn mutation_key(request: &Request) -> Result<&str, Response> {
+    request
+        .headers()
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| error(request, StatusCode::BAD_REQUEST, "idempotency_key_required"))
 }

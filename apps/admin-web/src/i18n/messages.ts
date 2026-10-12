@@ -11,6 +11,11 @@ export type MessageValue = string | PluralMessage
 
 export const en = {
   'reminders.title': 'Reminders',
+  'reminders.edit': 'Edit',
+  'reminders.cancel': 'Cancel reminder',
+  'reminders.cancelTitle': 'Cancel this reminder?',
+  'reminders.cancelHelp': 'This removes the pending schedule on the server. A sleeping device may wake once before synchronizing the cancellation.',
+  'reminders.conflict': 'This reminder changed. The latest schedule was loaded; review it before trying again.',
   'reminders.syncHelp': 'Saving stores the reminder on the server. Offline wake requires device sync; playback is confirmed separately.',
   'reminders.empty': 'No reminders match this filter.',
   'reminders.pending': 'Pending',
@@ -931,6 +936,11 @@ export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
   'reminders.title': 'Lời nhắc',
+  'reminders.edit': 'Sửa',
+  'reminders.cancel': 'Hủy lời nhắc',
+  'reminders.cancelTitle': 'Hủy lời nhắc này?',
+  'reminders.cancelHelp': 'Xóa lịch chờ trên máy chủ. Thiết bị đang ngủ có thể thức một lần trước khi đồng bộ việc hủy.',
+  'reminders.conflict': 'Lời nhắc đã thay đổi. Đã tải lịch mới nhất; kiểm tra trước khi thử lại.',
   'reminders.syncHelp': 'Lưu lời nhắc trên máy chủ. Đánh thức ngoại tuyến cần thiết bị đồng bộ; việc phát được xác nhận riêng.',
   'reminders.empty': 'Không có lời nhắc phù hợp bộ lọc.',
   'reminders.pending': 'Chờ phát',

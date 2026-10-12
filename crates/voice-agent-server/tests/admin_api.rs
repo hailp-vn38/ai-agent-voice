@@ -4366,3 +4366,344 @@ async fn reminder_concurrent_retry_and_reassignment_preserve_device_ownership() 
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn reminder_edit_and_cancel_are_scoped_revisioned_and_replayed_after_restart() {
+    let uri = database_url();
+    let (base, task) = server_with_database(true, &uri).await;
+    let client = Client::new();
+    client
+        .post(format!("{base}/api/admin/agents"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"key":"edit_agent","name":"Edit"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    for device in ["edit-device", "other-device"] {
+        client
+            .post(format!("{base}/api/admin/devices"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"device_id":device,"agent_key":"edit_agent"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    let list_url = format!("{base}/api/admin/devices/edit-device/reminders");
+    let saved: serde_json::Value = client
+        .post(&list_url)
+        .bearer_auth("admin-test-token")
+        .header("idempotency-key", "new-edit")
+        .json(&serde_json::json!({"message":"Before","delay_seconds":600}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let reminder = saved["id"].as_str().unwrap();
+    let url = format!("{list_url}/{reminder}");
+    assert_eq!(
+        client
+            .patch(&url)
+            .json(&serde_json::json!({"message":"No auth"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let update = serde_json::json!({"message":"After","scheduled_at":"2030-01-02T07:00:00+07:00"});
+    let changed: serde_json::Value = client
+        .patch(&url)
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .header("idempotency-key", "edit-once")
+        .json(&update)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(changed["message"], "After");
+    assert_eq!(changed["row_revision"], 2);
+    assert_eq!(changed["schedule_revision"], 2);
+    assert_eq!(
+        client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .header("idempotency-key", "stale-writer")
+            .json(&update)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        client
+            .patch(format!(
+                "{base}/api/admin/devices/other-device/reminders/{reminder}"
+            ))
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"2\"")
+            .header("idempotency-key", "wrong-owner")
+            .json(&update)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let cancelled: serde_json::Value = client
+        .post(format!("{url}/cancel"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"2\"")
+        .header("idempotency-key", "cancel-once")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cancelled["status"], "cancelled");
+    assert_eq!(cancelled["row_revision"], 3);
+    assert_eq!(cancelled["schedule_revision"], 3);
+    task.abort();
+    let (base, task) = server_with_database(true, &uri).await;
+    let url = format!("{base}/api/admin/devices/edit-device/reminders/{reminder}");
+    let replay: serde_json::Value = client
+        .post(format!("{url}/cancel"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"2\"")
+        .header("idempotency-key", "cancel-once")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(replay, cancelled);
+    let edit_replay: serde_json::Value = client
+        .patch(&url)
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .header("idempotency-key", "edit-once")
+        .json(&update)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(edit_replay, changed);
+    assert_eq!(
+        client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"3\"")
+            .header("idempotency-key", "terminal-edit")
+            .json(&update)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let list: serde_json::Value = client
+        .get(format!(
+            "{base}/api/admin/devices/edit-device/reminders?status=cancelled"
+        ))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["schedule_summary"]["schedule_revision"], 3);
+    task.abort();
+}
+
+#[tokio::test]
+async fn reminder_concurrent_edits_conflict_without_lost_update_and_delete_cascades() {
+    let (base, task) = server(true).await;
+    let client = Client::new();
+    for agent in ["owner_before", "owner_after"] {
+        client
+            .post(format!("{base}/api/admin/agents"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"key":agent,"name":agent}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    client
+        .post(format!("{base}/api/admin/devices"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id":"race-edit","agent_key":"owner_before"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let list_url = format!("{base}/api/admin/devices/race-edit/reminders");
+    let saved: serde_json::Value = client
+        .post(&list_url)
+        .bearer_auth("admin-test-token")
+        .header("idempotency-key", "race-new")
+        .json(&serde_json::json!({"message":"Before","delay_seconds":600}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = saved["id"].as_str().unwrap();
+    let url = format!("{list_url}/{id}");
+    let (left, right) = tokio::join!(
+        client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .header("idempotency-key", "writer-a")
+            .json(&serde_json::json!({"message":"A"}))
+            .send(),
+        client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .header("idempotency-key", "writer-b")
+            .json(&serde_json::json!({"message":"B"}))
+            .send()
+    );
+    let (a, b) = (left.unwrap(), right.unwrap());
+    assert!(
+        (a.status() == StatusCode::OK && b.status() == StatusCode::CONFLICT)
+            || (b.status() == StatusCode::OK && a.status() == StatusCode::CONFLICT)
+    );
+    let (winner, key) = if a.status() == StatusCode::OK {
+        (a.json::<serde_json::Value>().await.unwrap(), "writer-a")
+    } else {
+        (b.json::<serde_json::Value>().await.unwrap(), "writer-b")
+    };
+    assert_eq!(winner["due_at_ms"], saved["due_at_ms"]);
+    assert_eq!(
+        client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"1\"")
+            .header("idempotency-key", key)
+            .json(&serde_json::json!({"message":"changed payload"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        client
+            .patch(&url)
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"2\"")
+            .header("idempotency-key", "bad-time")
+            .json(&serde_json::json!({"delay_seconds":600,"scheduled_at":"2030-01-02T00:00:00Z"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    client
+        .patch(format!("{base}/api/admin/devices/race-edit"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"1\"")
+        .json(&serde_json::json!({"agent_key":"owner_after"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let list: serde_json::Value = client
+        .get(&list_url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["items"][0]["id"], id);
+    assert_eq!(list["schedule_summary"]["schedule_revision"], 2);
+    client
+        .delete(format!("{base}/api/admin/devices/race-edit"))
+        .bearer_auth("admin-test-token")
+        .header("if-match", "\"2\"")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    client
+        .post(format!("{base}/api/admin/devices"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({"device_id":"race-edit","agent_key":"owner_after"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let list: serde_json::Value = client
+        .get(&list_url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 0);
+    assert_eq!(list["schedule_summary"]["schedule_revision"], 0);
+    assert_eq!(
+        client
+            .post(format!("{url}/cancel"))
+            .bearer_auth("admin-test-token")
+            .header("if-match", "\"2\"")
+            .header("idempotency-key", "deleted-reminder")
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    task.abort();
+}

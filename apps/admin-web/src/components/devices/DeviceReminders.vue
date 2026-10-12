@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from 'vue'
-import { remindersApi, type ReminderInput, type ReminderPage } from '@/api/reminders'
-import { formatApiError } from '@/api/errors'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { remindersApi, type ReminderInput, type ReminderPage, type Reminder } from '@/api/reminders'
+import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
+import { formatApiError, isApiError } from '@/api/errors'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
@@ -18,6 +19,57 @@ const at = ref('')
 const mode = ref('relative')
 const status = ref('pending')
 const page = ref(1)
+const editing = ref<Reminder>()
+const cancelling = ref<Reminder>()
+const cancelOpen = ref(false)
+let cancelMutation: { id: string; revision: number; key: string } | undefined
+const validTime = computed(() => mode.value === 'relative'
+  ? Number.isInteger(delay.value) && delay.value >= 1 && delay.value <= 31536000
+  : /(?:Z|[+-]\d{2}:\d{2})$/.test(at.value) && Number.isFinite(Date.parse(at.value)))
+
+function edit(item: Reminder) {
+  editing.value = item
+  message.value = item.message
+  mode.value = 'absolute'
+  at.value = new Date(item.due_at_ms).toISOString()
+  mutation = undefined
+  saved.value = false
+  error.value = ''
+}
+function closeEdit() {
+  editing.value = undefined
+  message.value = ''
+  mutation = undefined
+}
+function confirmCancel(item: Reminder) {
+  cancelling.value = item
+  cancelOpen.value = true
+}
+async function cancelReminder() {
+  const item = cancelling.value
+  if (!item || saving.value) return
+  const target = props.deviceId
+  if (cancelMutation?.id !== item.id || cancelMutation.revision !== item.row_revision) {
+    cancelMutation = { id: item.id, revision: item.row_revision, key: crypto.randomUUID() }
+  }
+  saving.value = true
+  saved.value = false
+  error.value = ''
+  try {
+    await remindersApi.cancel(target, item.id, item.row_revision, cancelMutation.key)
+    if (props.deviceId !== target) return
+    cancelMutation = undefined
+    await load()
+  } catch (cause) {
+    if (props.deviceId === target) {
+      await load()
+      error.value = isApiError(cause) && cause.code === 'revision_conflict'
+        ? t('reminders.conflict') : formatApiError(cause)
+    }
+  } finally {
+    saving.value = false
+  }
+}
 let active: AbortController | undefined
 let mutation: { payload: string; key: string } | undefined
 
@@ -38,26 +90,37 @@ async function load() {
 }
 
 async function create() {
-  if (saving.value) return
+  if (saving.value || !validTime.value) return
   const input: ReminderInput = mode.value === 'relative'
     ? { message: message.value, delay_seconds: delay.value }
     : { message: message.value, scheduled_at: at.value }
   const target = props.deviceId
-  const payload = JSON.stringify(input)
+  const item = editing.value
+  if (item) input.timezone = item.timezone
+  const payload = JSON.stringify([item?.id, item?.row_revision, input])
   if (mutation?.payload !== payload) mutation = { payload, key: crypto.randomUUID() }
   saving.value = true
   saved.value = false
   error.value = ''
   try {
-    await remindersApi.create(target, input, mutation.key)
+    if (item) await remindersApi.update(target, item.id, item.row_revision, input, mutation.key)
+    else await remindersApi.create(target, input, mutation.key)
     if (props.deviceId !== target) return
     mutation = undefined
+    editing.value = undefined
     message.value = ''
     saved.value = true
     page.value = 1
     await load()
   } catch (cause) {
-    if (props.deviceId === target) error.value = formatApiError(cause)
+    if (props.deviceId === target) {
+      if (item && isApiError(cause) && cause.code === 'revision_conflict') {
+        await load()
+        closeEdit()
+        error.value = t('reminders.conflict')
+      }
+      else error.value = formatApiError(cause)
+    }
   } finally {
     saving.value = false
   }
@@ -65,6 +128,10 @@ async function create() {
 
 watch(() => props.deviceId, () => {
   result.value = undefined
+  editing.value = undefined
+  cancelling.value = undefined
+  cancelOpen.value = false
+  cancelMutation = undefined
   mutation = undefined
   saved.value = false
   page.value = 1
@@ -86,12 +153,14 @@ onBeforeUnmount(() => active?.abort())
    <label class="block">{{t('reminders.timeMode')}}<select v-model="mode" class="block rounded border p-2"><option value="relative">{{t('reminders.relative')}}</option><option value="absolute">{{t('reminders.absolute')}}</option></select></label>
    <label v-if="mode==='relative'" class="block">{{t('reminders.seconds')}}<input v-model.number="delay" class="block rounded border p-2" type="number" required min="1" max="31536000" /></label>
    <label v-else class="block">{{t('reminders.timestamp')}}<input v-model="at" class="block w-full rounded border p-2" required placeholder="2026-10-13T07:00:00+07:00" /></label>
-   <Button type="submit" :disabled="saving || !message.trim()">{{t('common.save')}}</Button>
+   <Button type="submit" :disabled="saving || !message.trim() || !validTime">{{t('common.save')}}</Button>
+   <Button v-if="editing" type="button" :disabled="saving" @click="closeEdit">{{t('common.cancel')}}</Button>
   </form>
   <label>{{t('reminders.filter')}}<select v-model="status" @change="page=1"><option value="">{{t('reminders.all')}}</option><option v-for="state in ['pending','completed','cancelled','expired']" :key="state" :value="state">{{t(`reminders.${state}` as Parameters<typeof t>[0])}}</option></select></label>
   <p v-if="loading" role="status">{{t('common.loading')}}</p>
   <p v-if="!loading && result?.items.length===0">{{t('reminders.empty')}}</p>
-  <ul v-if="!loading" class="space-y-3"><li v-for="item in result?.items" :key="item.id" class="rounded border p-3"><p>{{item.message}}</p><time>{{formatDateTime(new Date(item.due_at_ms))}}</time><p>{{t(`reminders.${item.status}` as Parameters<typeof t>[0])}} · {{t('reminders.syncPending')}}</p></li></ul>
+  <ul v-if="!loading" class="space-y-3"><li v-for="item in result?.items" :key="item.id" class="rounded border p-3"><p>{{item.message}}</p><time>{{formatDateTime(new Date(item.due_at_ms))}}</time><p>{{t(`reminders.${item.status}` as Parameters<typeof t>[0])}} · {{t('reminders.syncPending')}}</p><div v-if="item.status==='pending'" class="flex gap-2"><Button data-action="edit" :disabled="saving" @click="edit(item)">{{t('reminders.edit')}}</Button><Button data-action="cancel-reminder" :disabled="saving" @click="confirmCancel(item)">{{t('reminders.cancel')}}</Button></div></li></ul>
   <div class="flex gap-2"><Button :disabled="page===1 || loading" @click="page--">{{t('reminders.previous')}}</Button><span>{{page}}</span><Button :disabled="!result || !result.has_more || loading" @click="page++">{{t('reminders.next')}}</Button><Button :disabled="loading" @click="load">{{t('common.refresh')}}</Button></div>
+ <ConfirmDialog v-model="cancelOpen" :title="t('reminders.cancelTitle')" :description="t('reminders.cancelHelp')" :confirm-label="t('reminders.cancel')" @confirm="cancelReminder" />
  </section>
 </template>
