@@ -29,6 +29,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
     }
     match adapter {
         "openai" => canonical::<OpenAi, _>(&value, OpenAi::valid),
+        "opencode_free" => canonical::<OpenCodeFree, _>(&value, OpenCodeFree::valid),
         "campplus_sherpa" => canonical::<crate::config::CampPlusConfig, _>(
             &value,
             crate::config::CampPlusConfig::valid,
@@ -132,6 +133,27 @@ impl OpenAi {
         matches!(self.base_url.scheme(), "http" | "https")
             && string(&self.model, 256)
             && (1..=120_000).contains(&self.timeout_ms)
+            && self.max_tokens.is_none_or(|v| v > 0 && v <= 65_536)
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct OpenCodeFree {
+    model: String,
+    #[serde(default = "default_timeout")]
+    timeout_ms: u64,
+    #[serde(default)]
+    max_tokens: Option<u32>,
+}
+impl OpenCodeFree {
+    fn valid(&self) -> bool {
+        self.model.len() <= 256
+            && self.model.ends_with("-free")
+            && self
+                .model
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'_'))
+            && (1_000..=120_000).contains(&self.timeout_ms)
             && self.max_tokens.is_none_or(|v| v > 0 && v <= 65_536)
     }
 }
