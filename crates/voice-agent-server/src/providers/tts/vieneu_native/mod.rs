@@ -6,3 +6,4 @@ pub mod assets;
 pub mod config;
 pub mod contract;
 pub mod descriptor;
+pub mod text;
