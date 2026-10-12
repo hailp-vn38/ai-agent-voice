@@ -17,6 +17,13 @@ pub struct ActiveDeviceSession {
     pub sender: mpsc::Sender<SessionEvent>,
     pub close: CancellationToken,
     last_speech: Option<Instant>,
+    snapshots: HashMap<String, ReminderSnapshot>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReminderSnapshot {
+    pub revision: i64,
+    pub item_ids: Vec<String>,
 }
 
 #[derive(Default)]
@@ -43,6 +50,7 @@ impl ActiveDeviceSessions {
                 sender,
                 close,
                 last_speech: None,
+                snapshots: HashMap::new(),
             },
         );
     }
@@ -64,6 +72,59 @@ impl ActiveDeviceSessions {
             .get(&device)
             .filter(|s| !s.close.is_cancelled() && !s.sender.is_closed())
             .cloned()
+    }
+
+    /// Best effort after a committed mutation. Reconnect always requests a complete snapshot.
+    pub fn sync_required(&self, device: i64, revision: i64) {
+        let Some(session) = self.current(device) else {
+            return;
+        };
+        if !session.features.reminders {
+            return;
+        }
+        let text = serde_json::json!({"type":"reminder","event":"sync_required","session_id":session.session_id,"revision":revision}).to_string();
+        let _ = session
+            .sender
+            .try_send(SessionEvent::ReminderControl { text });
+    }
+
+    pub fn remember_snapshot(
+        &self,
+        device: i64,
+        session_id: &str,
+        snapshot_id: String,
+        revision: i64,
+        item_ids: Vec<String>,
+    ) -> bool {
+        let mut entries = self.0.lock().unwrap();
+        let Some(session) = entries
+            .get_mut(&device)
+            .filter(|s| s.session_id == session_id && s.features.reminders)
+        else {
+            return false;
+        };
+        if session.snapshots.len() >= 4 {
+            session.snapshots.clear();
+        }
+        session
+            .snapshots
+            .insert(snapshot_id, ReminderSnapshot { revision, item_ids });
+        true
+    }
+
+    pub fn acknowledge_snapshot(
+        &self,
+        device: i64,
+        session_id: &str,
+        snapshot_id: &str,
+        revision: i64,
+    ) -> Option<ReminderSnapshot> {
+        let mut entries = self.0.lock().unwrap();
+        let session = entries
+            .get_mut(&device)
+            .filter(|s| s.session_id == session_id && s.features.reminders)?;
+        let snapshot = session.snapshots.remove(snapshot_id)?;
+        (snapshot.revision == revision).then_some(snapshot)
     }
 
     pub async fn speak(

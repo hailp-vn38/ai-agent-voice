@@ -12,6 +12,23 @@ use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use std::sync::Arc;
 
+pub const SNAPSHOT_LIMIT: i64 = 64;
+
+#[derive(Clone, Debug)]
+pub struct ReminderSnapshot {
+    pub revision: i64,
+    pub items: Vec<SnapshotItem>,
+    pub has_more: bool,
+    pub server_time_ms: i64,
+}
+
+#[derive(Clone, Debug, Serialize, FromRow)]
+pub struct SnapshotItem {
+    pub id: String,
+    pub due_at_ms: i64,
+    pub revision: i64,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum NotificationError {
     #[error("{0}")]
@@ -67,6 +84,73 @@ impl DeviceNotifications {
     pub fn scoped_to_agent(mut self, key: &str) -> Self {
         self.agent_scope = Some(key.into());
         self
+    }
+    /// Reads the fixed cache window in one transaction. The caller owns the ephemeral snapshot
+    /// token because it is tied to a current WebSocket session, never persisted identity.
+    pub async fn snapshot(
+        &self,
+        device_row_id: i64,
+    ) -> Result<ReminderSnapshot, NotificationError> {
+        let mut tx = self.database.pool().begin().await?;
+        let revision = sqlx::query_scalar::<_, i64>(
+            "SELECT schedule_revision FROM device_reminder_sync WHERE device_row_id=?",
+        )
+        .bind(device_row_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or(0);
+        let rows: Vec<SnapshotItem> = sqlx::query_as("SELECT id,due_at_ms,schedule_revision AS revision FROM device_reminders WHERE device_row_id=? AND status='pending' ORDER BY due_at_ms,id LIMIT ?")
+            .bind(device_row_id).bind(SNAPSHOT_LIMIT + 1).fetch_all(&mut *tx).await?;
+        let has_more = rows.len() as i64 > SNAPSHOT_LIMIT;
+        let items = rows.into_iter().take(SNAPSHOT_LIMIT as usize).collect();
+        tx.commit().await?;
+        Ok(ReminderSnapshot {
+            revision,
+            items,
+            has_more,
+            server_time_ms: (self.clock)(),
+        })
+    }
+
+    pub async fn acknowledge_snapshot(
+        &self,
+        device_row_id: i64,
+        revision: i64,
+        item_ids: &[String],
+        next_wake_at_ms: Option<i64>,
+    ) -> Result<(), NotificationError> {
+        let now = (self.clock)();
+        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let current = sqlx::query_scalar::<_, i64>(
+            "SELECT schedule_revision FROM device_reminder_sync WHERE device_row_id=?",
+        )
+        .bind(device_row_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(NotificationError::NotFound)?;
+        if revision > current {
+            return Err(NotificationError::Invalid("invalid_snapshot"));
+        }
+        let previous = sqlx::query_scalar::<_, i64>(
+            "SELECT last_acked_revision FROM device_reminder_sync WHERE device_row_id=?",
+        )
+        .bind(device_row_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if revision >= previous {
+            sqlx::query("DELETE FROM device_reminder_cached_items WHERE device_row_id=?")
+                .bind(device_row_id)
+                .execute(&mut *tx)
+                .await?;
+            for id in item_ids {
+                sqlx::query("INSERT INTO device_reminder_cached_items(device_row_id,reminder_id,snapshot_revision) SELECT ?,id,? FROM device_reminders WHERE id=? AND device_row_id=? AND status='pending'")
+                    .bind(device_row_id).bind(revision).bind(id).bind(device_row_id).execute(&mut *tx).await?;
+            }
+            sqlx::query("UPDATE device_reminder_sync SET last_acked_revision=?,last_acked_at_ms=?,last_reported_wake_at_ms=? WHERE device_row_id=?")
+                .bind(revision).bind(now).bind(next_wake_at_ms).bind(device_row_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
     #[allow(clippy::too_many_arguments)] // Audit correlation is distinct from the durable mutation identity.
     pub async fn create(
@@ -180,7 +264,7 @@ impl DeviceNotifications {
             .ok_or(NotificationError::NotFound)?;
         let mut items:Vec<Reminder>=sqlx::query_as("SELECT r.id,d.device_id,r.message,r.due_at_ms,r.timezone,r.status,r.row_revision,r.schedule_revision,r.attempts_used,r.created_at_ms,r.updated_at_ms FROM device_reminders r JOIN devices d ON d.id=r.device_row_id WHERE r.device_row_id=? AND (? IS NULL OR r.status=?) ORDER BY r.due_at_ms,r.id LIMIT ? OFFSET ?").bind(row).bind(status).bind(status).bind(page_size).bind(i64::from(page-1)*i64::from(page_size)).fetch_all(&mut *tx).await?;
         for item in &mut items {
-            item.sync_status = "pending".into();
+            item.sync_status = sync_status(&mut tx, row, item).await?;
         }
         let (revision,acked,at,wake)=sqlx::query_as::<_,(i64,i64,Option<i64>,Option<i64>)>("SELECT schedule_revision,last_acked_revision,last_acked_at_ms,last_reported_wake_at_ms FROM device_reminder_sync WHERE device_row_id=?").bind(row).fetch_optional(&mut *tx).await?.unwrap_or((0,0,None,None));
         let total: i64 = sqlx::query_scalar("SELECT count(*) FROM device_reminders WHERE device_row_id=? AND (? IS NULL OR status=?)").bind(row).bind(status).bind(status).fetch_one(&mut *tx).await?;
@@ -242,6 +326,27 @@ impl DeviceNotifications {
         tx.commit().await?;
         Ok(revision + 1)
     }
+}
+
+async fn sync_status(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device: i64,
+    item: &Reminder,
+) -> Result<String, sqlx::Error> {
+    let cached = sqlx::query_scalar::<_, i64>("SELECT snapshot_revision FROM device_reminder_cached_items WHERE device_row_id=? AND reminder_id=?")
+        .bind(device).bind(&item.id).fetch_optional(&mut **tx).await?;
+    Ok(match cached {
+        Some(revision) if revision >= item.schedule_revision => "acked".into(),
+        _ => {
+            let position = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM device_reminders WHERE device_row_id=? AND status='pending' AND (due_at_ms<? OR (due_at_ms=? AND id<?))")
+                .bind(device).bind(item.due_at_ms).bind(item.due_at_ms).bind(&item.id).fetch_one(&mut **tx).await?;
+            if position >= SNAPSHOT_LIMIT {
+                "out_of_window".into()
+            } else {
+                "pending".into()
+            }
+        }
+    })
 }
 
 async fn prune_keys(

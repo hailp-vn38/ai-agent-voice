@@ -36,7 +36,10 @@ pub(super) async fn create(
         .create(&device, "admin", key, input, "web", id(&request))
         .await
     {
-        Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
+        Ok(v) => {
+            publish_sync(&state, &device, v.schedule_revision).await;
+            (StatusCode::CREATED, Json(v)).into_response()
+        }
         Err(e) => failure(&request, e),
     }
 }
@@ -65,7 +68,26 @@ pub(super) async fn list(
         )
         .await
     {
-        Ok(v) => Json(v).into_response(),
+        Ok(mut v) => {
+            if let Some(summary) = v.get_mut("schedule_summary").and_then(Value::as_object_mut) {
+                let id = sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE device_id=?")
+                    .bind(&device)
+                    .fetch_optional(database.pool())
+                    .await
+                    .ok()
+                    .flatten();
+                let session = id.and_then(|id| state.active_device_sessions.current(id));
+                summary.insert(
+                    "session_connected".into(),
+                    serde_json::json!(session.is_some()),
+                );
+                summary.insert(
+                    "reminder_capable".into(),
+                    serde_json::json!(session.is_some_and(|s| s.features.reminders)),
+                );
+            }
+            Json(v).into_response()
+        }
         Err(e) => failure(&request, e),
     }
 }
@@ -154,7 +176,10 @@ pub(super) async fn update(
         )
         .await
     {
-        Ok(v) => Json(v).into_response(),
+        Ok(v) => {
+            publish_sync(&state, &device, v.schedule_revision).await;
+            Json(v).into_response()
+        }
         Err(e) => failure(&request, e),
     }
 }
@@ -207,6 +232,20 @@ fn notifications(database: &crate::database::Database, request: &Request) -> Dev
         Some(scope) => service.scoped_to_agent(&scope.0),
         None => service,
     }
+}
+
+async fn publish_sync(state: &AppState, device: &str, revision: i64) {
+    let Some(database) = &state.database else {
+        return;
+    };
+    let Ok(Some(id)) = sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE device_id=?")
+        .bind(device)
+        .fetch_optional(database.pool())
+        .await
+    else {
+        return;
+    };
+    state.active_device_sessions.sync_required(id, revision);
 }
 pub(super) async fn agent_list(
     State(state): State<AppState>,
