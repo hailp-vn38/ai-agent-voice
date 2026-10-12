@@ -214,7 +214,7 @@ impl SessionActor {
             llm_finish_pending: false,
             generated_response: String::new(),
             // Nothing has been generated yet, so no text can be the model's yet either.
-            generated_by_model: false,
+            speech_origin: SpeechOrigin::Llm,
             tts_runtime: std::sync::Arc::clone(&runtimes.tts),
             speech_output: SpeechOutput::with_worker(
                 std::sync::Arc::new(UnavailableTts),

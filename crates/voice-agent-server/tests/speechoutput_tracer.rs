@@ -1227,6 +1227,9 @@ async fn router_writes_tts_start_then_canonical_audio_then_one_stop() {
     }));
     assert!(matches!(&observed[2], Message::Text(text) if {
         let value: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(value.get("source").is_none());
+        assert!(value.get("request_id").is_none());
+        assert!(value.get("attempt_id").is_none());
         value["type"] == "tts" && value["state"] == "start"
     }));
     let Message::Binary(packet) = &observed[3] else {
@@ -1382,5 +1385,165 @@ async fn auto_listening_accepts_digital_human_detect_as_a_text_turn() {
     assert!(saw_start);
     assert!(saw_audio);
 
+    task.abort();
+}
+
+struct ControlledFailureTts {
+    calls: Arc<AtomicUsize>,
+    after_audio: Option<Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl TtsProvider for ControlledFailureTts {
+    fn adapter(&self) -> &'static str {
+        "controlled_failure"
+    }
+
+    fn synthesize_stream(
+        &self,
+        _: &str,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), voice_agent_server::providers::TtsError>,
+    ) -> Result<(), voice_agent_server::providers::TtsError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(release) = &self.after_audio {
+            // Fill the public streaming high-water mark so playback starts before failure.
+            on_pcm(PcmF32Mono::new(vec![0.1; 48_000 * 2], 48_000))?;
+            let _ = release.lock().unwrap().recv_timeout(Duration::from_secs(5));
+        }
+        Err(voice_agent_server::providers::TtsError::Failed)
+    }
+}
+
+#[tokio::test]
+async fn public_tts_failure_before_first_packet_emits_no_playback_controls() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(FakeLlm),
+        Arc::new(ControlledFailureTts {
+            calls: Arc::clone(&calls),
+            after_audio: None,
+        }),
+    ));
+    let (base, task) = start_router_with(providers).await;
+    let mut socket = connect_router(&base).await;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type":"listen","state":"start","mode":"auto"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type":"listen","state":"detect","text":"speak"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+    while let Ok(Some(Ok(frame))) = tokio::time::timeout_at(deadline, socket.next()).await {
+        match frame {
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_ne!(
+                    value["type"], "tts",
+                    "provider failure fabricated playback: {value}"
+                );
+            }
+            Message::Binary(_) => panic!("failed provider emitted audio"),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the request must reach TTS"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn public_tts_failure_after_first_packet_stops_once_and_fences_late_audio() {
+    let (release, held) = std::sync::mpsc::channel();
+    let providers = Arc::new(ProviderSet::with_all(
+        Arc::new(FakeVad),
+        Arc::new(FakeAsr),
+        Arc::new(FakeLlm),
+        Arc::new(ControlledFailureTts {
+            calls: Arc::new(AtomicUsize::new(0)),
+            after_audio: Some(Mutex::new(held)),
+        }),
+    ));
+    let (base, task) = start_router_with(providers).await;
+    let mut socket = connect_router(&base).await;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type":"listen","state":"start","mode":"auto"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            serde_json::json!({"type":"listen","state":"detect","text":"speak"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let mut started = false;
+    loop {
+        let frame = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        match frame {
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if value["type"] == "tts" {
+                    assert_eq!(value["state"], "start");
+                    assert!(!started, "duplicate start");
+                    started = true;
+                }
+            }
+            Message::Binary(packet) => {
+                assert!(started);
+                let mut decoder = Decoder::new(24_000, Channels::Mono).unwrap();
+                assert_eq!(
+                    decoder.decode(&packet, &mut [0_i16; 1_440], false).unwrap(),
+                    1_440
+                );
+                break;
+            }
+            other => panic!("unexpected frame {other:?}"),
+        }
+    }
+    release.send(()).unwrap();
+    loop {
+        let frame = timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Message::Text(text) = frame {
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert!(
+                value["type"] == "tts" && value["state"] == "stop",
+                "unexpected control {value}"
+            );
+            break;
+        }
+    }
+    assert!(
+        timeout(Duration::from_millis(150), socket.next())
+            .await
+            .is_err(),
+        "stale payload crossed the terminal stop"
+    );
     task.abort();
 }

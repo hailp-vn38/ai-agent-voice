@@ -704,6 +704,8 @@ struct Peer {
     device_calls: Vec<DeviceCall>,
     /// Every `llm` text segment the client was shown, in order.
     spoken: Vec<String>,
+    direct_spoken: Vec<String>,
+    playback: Vec<&'static str>,
     turn_closed: bool,
     /// When false, the peer records each `tools/call` and never answers it, so a test can watch a
     /// turn run out of time on a request that really was made.
@@ -762,6 +764,8 @@ impl Peer {
             session_id,
             device_calls: Vec::new(),
             spoken: Vec::new(),
+            direct_spoken: Vec::new(),
+            playback: Vec::new(),
             turn_closed: false,
             answer_device_calls: true,
             discovered: false,
@@ -827,6 +831,14 @@ impl Peer {
             else {
                 return;
             };
+            if let Message::Binary(packet) = &frame {
+                let mut decoder = opus2::Decoder::new(24_000, opus2::Channels::Mono).unwrap();
+                assert_eq!(
+                    decoder.decode(packet, &mut [0_i16; 1_440], false).unwrap(),
+                    1_440
+                );
+                self.playback.push("audio");
+            }
             let Message::Text(text) = frame else { continue };
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
                 continue;
@@ -838,7 +850,17 @@ impl Peer {
                         self.spoken.push(text.to_owned());
                     }
                 }
-                Some("tts") if value["state"] == "stop" => self.turn_closed = true,
+                Some("tts") if value["state"] == "start" => self.playback.push("start"),
+                Some("tts") if value["state"] == "sentence_start" => {
+                    self.playback.push("sentence_start");
+                    if let Some(text) = value["text"].as_str() {
+                        self.direct_spoken.push(text.to_owned());
+                    }
+                }
+                Some("tts") if value["state"] == "stop" => {
+                    self.playback.push("stop");
+                    self.turn_closed = true;
+                }
                 _ => {}
             }
         }
@@ -1060,10 +1082,17 @@ async fn a_session_local_action_runs_in_the_same_order_as_the_mcp_calls_around_i
          order and the action only decides what the client hears"
     );
     assert!(
-        peer.spoken.iter().any(|text| text.contains("Tạm biệt")),
+        peer.direct_spoken
+            .iter()
+            .any(|text| text.contains("Tạm biệt")),
         "the action's own answer is what the client hears: {:?}",
-        peer.spoken
+        peer.direct_spoken
     );
+    assert!(
+        peer.spoken.is_empty(),
+        "tool speech must not impersonate the LLM"
+    );
+    assert_eq!(peer.playback, ["start", "sentence_start", "audio", "stop"]);
     let observed = observed
         .lock()
         .expect("the observation mailbox is not poisoned");

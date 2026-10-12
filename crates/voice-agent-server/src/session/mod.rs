@@ -1,4 +1,5 @@
 mod actor;
+mod direct_speech;
 mod event;
 mod generation_gate;
 mod profile;
@@ -13,6 +14,7 @@ pub use actor::{
     BargeInPolicy, OutboundMessage, SessionActor, SessionRuntimes, WriterEvent, WriterOutcomeProbe,
     WriterTurnOutcome,
 };
+pub use direct_speech::{DirectSpeechRequest, SpeechOrigin};
 pub use event::SessionEvent;
 pub use generation_gate::GenerationGate;
 pub use profile::{

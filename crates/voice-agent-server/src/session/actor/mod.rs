@@ -1,6 +1,6 @@
 use crate::session::{
     ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ObserveDiagnostic, ProfileSource,
-    SessionPhase, SpeakerObserve, TemplateSwitchCatalog, TurnId,
+    SessionPhase, SpeakerObserve, SpeechOrigin, TemplateSwitchCatalog, TurnId,
     event::SessionEvent,
     speech_output::{SpeechOutput, SpeechOutputEvent},
     turn::{ActiveTurnPermit, DialogueHistory},
@@ -102,12 +102,7 @@ pub struct SessionActor {
     pending_llm_delta: Option<(String, usize)>,
     llm_finish_pending: bool,
     generated_response: String,
-    /// Whether `generated_response` holds the model's own text rather than a tool's result.
-    ///
-    /// A round that starts or continues an LLM operation clears it, so the only way it can be set
-    /// is the seam where a tool result is handed straight to speech.  It is what keeps a delivered
-    /// tool result out of the Persistent Transcript.
-    generated_by_model: bool,
+    speech_origin: SpeechOrigin,
     tts_runtime: std::sync::Arc<TtsWorkerRuntime>,
     speech_output: SpeechOutput,
     tts_started: bool,

@@ -1,0 +1,162 @@
+{
+  "contract": "voice-reminders-direct-tts-v1",
+  "status": "design-contract-not-production-implementation",
+  "feature_defaults": {
+    "reminders": false,
+    "direct_tts": false
+  },
+  "hello_opt_in": {
+    "type": "hello",
+    "version": 1,
+    "transport": "websocket",
+    "features": {
+      "reminders": true,
+      "direct_tts": true
+    },
+    "audio_params": {
+      "format": "opus",
+      "sample_rate": 16000,
+      "channels": 1,
+      "frame_duration": 60
+    }
+  },
+  "sync_required": {
+    "type": "reminder",
+    "event": "sync_required",
+    "session_id": "s-123",
+    "revision": 8
+  },
+  "sync_request": {
+    "type": "reminder",
+    "event": "sync_request",
+    "session_id": "s-123",
+    "known_revision": 7
+  },
+  "sync": {
+    "type": "reminder",
+    "event": "sync",
+    "session_id": "s-123",
+    "snapshot_id": "snap-9",
+    "revision": 8,
+    "server_time_ms": 1791760000000,
+    "items": [
+      {
+        "id": "r1",
+        "due_at_ms": 1791762000000,
+        "revision": 2
+      }
+    ],
+    "has_more": false,
+    "next_sync_at_ms": 1791765000000
+  },
+  "sync_ack": {
+    "type": "reminder",
+    "event": "sync_ack",
+    "session_id": "s-123",
+    "snapshot_id": "snap-9",
+    "revision": 8,
+    "next_wake_at_ms": 1791761940000
+  },
+  "reminder_start": {
+    "type": "tts",
+    "state": "start",
+    "session_id": "s-123",
+    "request_id": "a1",
+    "source": "reminder",
+    "reminder_id": "r1",
+    "attempt_id": "a1"
+  },
+  "reminder_stop": {
+    "type": "tts",
+    "state": "stop",
+    "session_id": "s-123",
+    "request_id": "a1",
+    "source": "reminder",
+    "reminder_id": "r1",
+    "attempt_id": "a1"
+  },
+  "played": {
+    "type": "reminder",
+    "event": "played",
+    "session_id": "s-123",
+    "reminder_id": "r1",
+    "attempt_id": "a1"
+  },
+  "failed": {
+    "type": "reminder",
+    "event": "failed",
+    "session_id": "s-123",
+    "reminder_id": "r1",
+    "attempt_id": "a1",
+    "reason": "decode_failed"
+  },
+  "delivery_result": {
+    "type": "reminder",
+    "event": "delivery_result",
+    "session_id": "s-123",
+    "reminder_id": "r1",
+    "attempt_id": "a1",
+    "outcome": "completed",
+    "revision": 9
+  },
+  "speak": {
+    "type": "tts",
+    "action": "speak",
+    "session_id": "s-123",
+    "request_id": "client-tts-1",
+    "text": "Xin chào, đây là thông báo thử nghiệm."
+  },
+  "accepted": {
+    "type": "tts",
+    "state": "accepted",
+    "session_id": "s-123",
+    "request_id": "client-tts-1"
+  },
+  "rejected": {
+    "type": "tts",
+    "state": "rejected",
+    "session_id": "s-123",
+    "request_id": "client-tts-1",
+    "reason": "session_busy"
+  },
+  "client_start": {
+    "type": "tts",
+    "state": "start",
+    "session_id": "s-123",
+    "request_id": "client-tts-1",
+    "source": "client_direct"
+  },
+  "client_stop": {
+    "type": "tts",
+    "state": "stop",
+    "session_id": "s-123",
+    "request_id": "client-tts-1",
+    "source": "client_direct"
+  },
+  "rejection_reasons": [
+    "invalid_text",
+    "unauthorized",
+    "unsupported_feature",
+    "session_busy",
+    "capacity_reached",
+    "tts_unavailable",
+    "invalid_session",
+    "invalid_request_id"
+  ],
+  "playback_failure_reasons": [
+    "output_unavailable",
+    "playback_aborted",
+    "decode_failed"
+  ],
+  "delivery_outcomes": [
+    "completed",
+    "failed",
+    "uncertain"
+  ],
+  "wire_audio": {
+    "format": "opus",
+    "sample_rate": 24000,
+    "channels": 1,
+    "frame_duration": 60
+  }
+}

@@ -86,10 +86,14 @@ impl SessionActor {
             response_chars = text.chars().count(),
             "Starting direct MCP response speech without LLM continuation"
         );
+        self.begin_direct_speech(text, SpeechOrigin::ToolDirect);
+    }
+
+    /// Caller admission owns the turn; every origin shares its worker, writer and cancellation.
+    pub(super) fn begin_direct_speech(&mut self, text: String, origin: SpeechOrigin) {
         self.generated_response = text.clone();
-        // This is a tool's own result, so it is never the model's Delivered Assistant Response and
-        // never belongs in the Persistent Transcript.
-        self.generated_by_model = false;
+        // Direct text is never a Delivered Assistant Response in the Persistent Transcript.
+        self.speech_origin = origin;
         self.pending_llm_delta = Some((text, 0));
         self.llm_finish_pending = true;
         self.flush_pending_llm_text();
@@ -109,7 +113,7 @@ impl SessionActor {
         self.llm_finish_pending = false;
         // Whatever this round produces comes from the model, whatever the previous turn's last
         // words were.
-        self.generated_by_model = true;
+        self.speech_origin = SpeechOrigin::Llm;
         let tools = if allow_tools {
             self.available_llm_tools()
         } else {
@@ -312,6 +316,9 @@ impl SessionActor {
             };
             match event {
                 SpeechOutputEvent::SegmentReady { text } => {
+                    if self.speech_origin != SpeechOrigin::Llm {
+                        continue;
+                    }
                     let payload = serde_json::json!({
                         "session_id": self.session_id,
                         "type": "llm",
@@ -351,6 +358,18 @@ impl SessionActor {
                         warn!("TTS start control could not enter outbound queue");
                         self.fail_speech_delivery();
                         break;
+                    }
+                    if self.speech_origin != SpeechOrigin::Llm {
+                        let payload = serde_json::json!({
+                            "session_id": self.session_id,
+                            "type": "tts",
+                            "state": "sentence_start",
+                            "text": self.generated_response,
+                        });
+                        if self.send_turn_control(payload.to_string()).is_err() {
+                            self.fail_speech_delivery();
+                            break;
+                        }
                     }
                 }
                 SpeechOutputEvent::AudioPacket(packet) => {
@@ -403,7 +422,7 @@ impl SessionActor {
                     self.pending_delivery = Some(PendingDelivery {
                         turn_id,
                         assistant_text: std::mem::take(&mut self.generated_response),
-                        archives_as_assistant: self.generated_by_model,
+                        archives_as_assistant: self.speech_origin == SpeechOrigin::Llm,
                     });
                     if self.writer_events.is_none() {
                         self.on_writer_event(WriterEvent::TurnClosed {
