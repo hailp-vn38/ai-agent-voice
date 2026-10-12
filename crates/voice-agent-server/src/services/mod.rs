@@ -13,3 +13,4 @@ pub mod system_metrics;
 pub(crate) mod system_status;
 
 pub mod active_device_sessions;
+pub mod reminder_scheduler;

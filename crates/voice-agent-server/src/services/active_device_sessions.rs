@@ -142,7 +142,14 @@ impl ActiveDeviceSessions {
                 .filter(|s| !s.close.is_cancelled() && !s.sender.is_closed())
                 .ok_or(DirectSpeechError::DeviceOffline)?;
             session_id = session.session_id.clone();
-            if !session.features.direct_tts {
+            if matches!(
+                request.origin,
+                crate::session::SpeechOrigin::Reminder { .. }
+            ) {
+                if !session.features.reminders {
+                    return Err(DirectSpeechError::UnsupportedFeature);
+                }
+            } else if !session.features.direct_tts {
                 return Err(DirectSpeechError::UnsupportedFeature);
             }
             if session

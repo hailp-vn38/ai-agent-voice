@@ -1092,6 +1092,23 @@ async fn handle_reminder_message(
                 )
                 .await;
         }
+        crate::protocol::ReminderEvent::Played {
+            reminder_id,
+            attempt_id,
+        } => {
+            let Ok(Some(revision)) = notifications
+                .complete_attempt(device, session_id, &reminder_id, &attempt_id)
+                .await
+            else {
+                return;
+            };
+            sessions.sync_required(device, revision);
+            let text = serde_json::json!({
+                "type":"reminder", "event":"delivery_result", "session_id":session_id,
+                "reminder_id":reminder_id, "attempt_id":attempt_id, "status":"completed", "revision":revision,
+            }).to_string();
+            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
+        }
     }
 }
 

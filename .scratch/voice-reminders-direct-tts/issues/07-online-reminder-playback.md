@@ -4,7 +4,7 @@
 
 **Blocked by:** 06: Đồng bộ lịch qua Voice WS và hiển thị Cache ACK.
 
-Status: ready-for-agent
+Status: claimed
 
 - [ ] Production bootstrap đúng một lifecycle-owned scheduler/process, scan bounded 1 giây và mutation/reconnect signals; router clones không thêm scanner, shutdown dừng claim/drain/join.
 - [ ] Due eligibility/atomic lease chỉ khi current capable session/capacity; offline/busy/enqueue failure trước start không tăng attempts; cancel/Device disable/quyền/session revalidate trước phát.

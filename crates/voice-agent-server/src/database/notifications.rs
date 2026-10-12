@@ -64,6 +64,12 @@ pub struct Reminder {
     #[sqlx(skip)]
     pub sync_status: String,
 }
+#[derive(Clone, Debug)]
+pub struct DueReminder {
+    pub reminder_id: String,
+    pub device_row_id: i64,
+    pub message: String,
+}
 #[derive(Clone)]
 pub struct DeviceNotifications {
     database: Database,
@@ -148,6 +154,104 @@ impl DeviceNotifications {
             }
             sqlx::query("UPDATE device_reminder_sync SET last_acked_revision=?,last_acked_at_ms=?,last_reported_wake_at_ms=? WHERE device_row_id=?")
                 .bind(revision).bind(now).bind(next_wake_at_ms).bind(device_row_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Claims one due item only while its pending row still exists. The caller must then fence the
+    /// claim against the current Device session before admitting speech.
+    pub async fn claim_due(
+        &self,
+        reminder_id: &str,
+        session_id: &str,
+    ) -> Result<Option<(DueReminder, String)>, NotificationError> {
+        let now = (self.clock)();
+        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let row = sqlx::query_as::<_, (String, i64, String)>("SELECT id,device_row_id,message FROM device_reminders WHERE id=? AND status='pending' AND due_at_ms<=? AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms<=?)")
+            .bind(reminder_id).bind(now).bind(now).fetch_optional(&mut *tx).await?;
+        let Some((reminder_id, device_row_id, message)) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let attempt_id = uuid::Uuid::new_v4().to_string();
+        let changed = sqlx::query("UPDATE device_reminders SET attempts_used=attempts_used+1,updated_at_ms=? WHERE id=? AND status='pending'")
+            .bind(now).bind(&reminder_id).execute(&mut *tx).await?.rows_affected();
+        if changed != 1 {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        sqlx::query("INSERT INTO reminder_delivery_attempts(attempt_id,reminder_id,session_instance_id,status,lease_until_ms,created_at_ms,updated_at_ms) VALUES (?,?,?,'claimed',?,?,?)")
+            .bind(&attempt_id).bind(&reminder_id).bind(session_id).bind(now.saturating_add(120_000)).bind(now).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(Some((
+            DueReminder {
+                reminder_id,
+                device_row_id,
+                message,
+            },
+            attempt_id,
+        )))
+    }
+
+    pub async fn due_ids(&self) -> Result<Vec<String>, NotificationError> {
+        let now = (self.clock)();
+        Ok(sqlx::query_scalar("SELECT id FROM device_reminders WHERE status='pending' AND due_at_ms<=? AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms<=?) ORDER BY due_at_ms,id LIMIT 64")
+            .bind(now).bind(now).fetch_all(self.database.pool()).await?)
+    }
+
+    pub async fn due_device(&self, reminder_id: &str) -> Result<Option<i64>, NotificationError> {
+        Ok(sqlx::query_scalar(
+            "SELECT device_row_id FROM device_reminders WHERE id=? AND status='pending'",
+        )
+        .bind(reminder_id)
+        .fetch_optional(self.database.pool())
+        .await?)
+    }
+
+    pub async fn complete_attempt(
+        &self,
+        device_row_id: i64,
+        session_id: &str,
+        reminder_id: &str,
+        attempt_id: &str,
+    ) -> Result<Option<i64>, NotificationError> {
+        let now = (self.clock)();
+        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let valid = sqlx::query_scalar::<_, i64>("SELECT 1 FROM reminder_delivery_attempts a JOIN device_reminders r ON r.id=a.reminder_id WHERE a.attempt_id=? AND a.reminder_id=? AND a.session_instance_id=? AND a.status='claimed' AND r.device_row_id=? AND r.status='pending'")
+            .bind(attempt_id).bind(reminder_id).bind(session_id).bind(device_row_id).fetch_optional(&mut *tx).await?.is_some();
+        if !valid {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        sqlx::query("UPDATE reminder_delivery_attempts SET status='played',updated_at_ms=? WHERE attempt_id=?").bind(now).bind(attempt_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE device_reminders SET status='completed',completed_at_ms=?,updated_at_ms=? WHERE id=?").bind(now).bind(now).bind(reminder_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO device_reminder_sync(device_row_id,schedule_revision) VALUES (?,1) ON CONFLICT(device_row_id) DO UPDATE SET schedule_revision=schedule_revision+1").bind(device_row_id).execute(&mut *tx).await?;
+        let revision = sqlx::query_scalar(
+            "SELECT schedule_revision FROM device_reminder_sync WHERE device_row_id=?",
+        )
+        .bind(device_row_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(revision))
+    }
+
+    /// An actor admission failure happens before the first playable packet, so it is not an
+    /// attempt. The session fence prevents this cleanup from touching a replacement claim.
+    pub async fn release_unstarted_attempt(
+        &self,
+        reminder_id: &str,
+        attempt_id: &str,
+        session_id: &str,
+    ) -> Result<(), NotificationError> {
+        let now = (self.clock)();
+        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let deleted = sqlx::query("DELETE FROM reminder_delivery_attempts WHERE attempt_id=? AND reminder_id=? AND session_instance_id=? AND status='claimed'")
+            .bind(attempt_id).bind(reminder_id).bind(session_id).execute(&mut *tx).await?.rows_affected();
+        if deleted == 1 {
+            sqlx::query("UPDATE device_reminders SET attempts_used=MAX(attempts_used-1,0),updated_at_ms=? WHERE id=? AND status='pending'")
+                .bind(now).bind(reminder_id).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())

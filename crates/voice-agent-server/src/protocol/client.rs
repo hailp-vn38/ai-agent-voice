@@ -127,6 +127,10 @@ pub enum ReminderEvent {
         revision: i64,
         next_wake_at_ms: Option<i64>,
     },
+    Played {
+        reminder_id: String,
+        attempt_id: String,
+    },
 }
 
 impl ClientMessage {
@@ -200,6 +204,22 @@ fn parse_reminder_message(value: &Value) -> Result<ClientMessage, ProtocolError>
                 snapshot_id: snapshot_id.into(),
                 revision,
                 next_wake_at_ms,
+            }
+        }
+        Some("played") => {
+            let id = |name| {
+                value
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .filter(|v| !v.is_empty() && v.len() <= 128)
+            };
+            let (Some(reminder_id), Some(attempt_id)) = (id("reminder_id"), id("attempt_id"))
+            else {
+                return Ok(ClientMessage::Unknown);
+            };
+            ReminderEvent::Played {
+                reminder_id: reminder_id.into(),
+                attempt_id: attempt_id.into(),
             }
         }
         _ => return Ok(ClientMessage::Unknown),
@@ -300,6 +320,21 @@ mod tool_status_feature_tests {
         assert!(matches!(
             parse_client_message(
                 r#"{"type":"reminder","event":"sync_ack","snapshot_id":"snap","revision":2}"#
+            ),
+            Ok(ClientMessage::Unknown)
+        ));
+        assert!(matches!(
+            parse_client_message(
+                r#"{"type":"reminder","event":"played","session_id":"s","reminder_id":"r","attempt_id":"a"}"#
+            ),
+            Ok(ClientMessage::Reminder {
+                event: ReminderEvent::Played { reminder_id, attempt_id },
+                ..
+            }) if reminder_id == "r" && attempt_id == "a"
+        ));
+        assert!(matches!(
+            parse_client_message(
+                r#"{"type":"reminder","event":"played","session_id":"s","reminder_id":"r"}"#
             ),
             Ok(ClientMessage::Unknown)
         ));

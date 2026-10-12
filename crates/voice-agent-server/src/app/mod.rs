@@ -104,6 +104,18 @@ pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
     RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
 pub fn router_with_state(mut state: AppState) -> Router {
+    if state
+        .reminder_scheduler_started
+        .swap(true, std::sync::atomic::Ordering::AcqRel)
+        == false
+        && let Some(database) = state.database.clone()
+    {
+        crate::services::reminder_scheduler::start(
+            crate::database::notifications::DeviceNotifications::new((*database).clone()),
+            state.active_device_sessions.clone(),
+            state.lifecycle.stopping().clone(),
+        );
+    }
     state.system_mcp = Some(Arc::new(
         crate::tools::system_mcp::SystemMcp::new(
             state.config.system_mcp.enabled,
