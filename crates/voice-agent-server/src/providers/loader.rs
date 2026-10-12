@@ -211,6 +211,7 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
                 config.limits.llm_concurrency,
                 Duration::from_millis(match instance {
                     crate::config::LlmInstanceConfig::Openai(config) => config.timeout_ms,
+                    crate::config::LlmInstanceConfig::OpenCodeFree(config) => config.timeout_ms,
                     #[cfg(feature = "qualification-providers")]
                     crate::config::LlmInstanceConfig::QualificationLlm(_) => 15_000,
                 }),

@@ -16,7 +16,7 @@ use crate::{
         AsrProvider, AssetError, LlmProvider, ProviderLoadError, ProviderType, TtsProvider,
         VadProvider, VisionProvider,
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
-        llm::openai::provider::ConfiguredOpenAiLlm,
+        llm::{openai::provider::ConfiguredOpenAiLlm, opencode_free::OpenCodeFreeProvider},
         tts::{
             ChillAudioWsProvider, ConfiguredZeroTts, VieneuHttpProvider, ZeroTtsArtifacts,
             kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts, assets as kokoro_assets},
@@ -392,6 +392,27 @@ impl LlmFactory for OpenAiFactory {
     }
 }
 
+struct OpenCodeFreeFactory;
+
+impl LlmFactory for OpenCodeFreeFactory {
+    fn adapter(&self) -> &'static str {
+        "opencode_free"
+    }
+
+    fn build(&self, config: &LlmInstanceConfig) -> Result<Arc<dyn LlmProvider>, ProviderLoadError> {
+        let LlmInstanceConfig::OpenCodeFree(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "OpenCode Free factory received another adapter config".into(),
+            ));
+        };
+        OpenCodeFreeProvider::build(options)
+            .map(|provider| Arc::new(provider) as Arc<dyn LlmProvider>)
+            .map_err(|_| {
+                ProviderLoadError::Configuration("invalid OpenCode Free model or timeout".into())
+            })
+    }
+}
+
 struct ZeroTtsOnnxFactory;
 
 impl TtsFactory for ZeroTtsOnnxFactory {
@@ -761,6 +782,7 @@ static ZIPFORMER_SHERPA_FACTORY: ZipformerSherpaFactory = ZipformerSherpaFactory
 static GIPFORMER_SHERPA_OFFLINE_FACTORY: GipformerSherpaOfflineFactory =
     GipformerSherpaOfflineFactory;
 static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
+static OPENCODE_FREE_FACTORY: OpenCodeFreeFactory = OpenCodeFreeFactory;
 static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static VIENEU_HTTP_FACTORY: VieneuHttpFactory = VieneuHttpFactory;
@@ -788,6 +810,7 @@ static ASR_FACTORIES: &[&dyn AsrFactory] = &[
 ];
 static LLM_FACTORIES: &[&dyn LlmFactory] = &[
     &OPENAI_FACTORY,
+    &OPENCODE_FREE_FACTORY,
     #[cfg(feature = "qualification-providers")]
     &QUALIFICATION_LLM_FACTORY,
 ];

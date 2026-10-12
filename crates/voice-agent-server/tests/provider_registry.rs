@@ -240,7 +240,7 @@ fn asset_ownership_follows_whether_a_provider_loads_local_files() {
             owns_assets,
             !matches!(
                 adapter,
-                "openai" | "openai_vision" | "chillaudio_ws" | "vieneu_http"
+                "openai" | "opencode_free" | "openai_vision" | "chillaudio_ws" | "vieneu_http"
             ) && !adapter.starts_with("qualification_"),
             "{adapter}"
         );

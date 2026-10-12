@@ -100,6 +100,7 @@ static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
     super::asr::zipformer::descriptor::REGISTRATION,
     super::asr::gipformer::descriptor::REGISTRATION,
     super::llm::openai::descriptor::REGISTRATION,
+    super::llm::opencode_free::REGISTRATION,
     super::tts::zerotts::descriptor::REGISTRATION,
     super::tts::chillaudio::descriptor::REGISTRATION,
     super::tts::vieneu::descriptor::REGISTRATION,
