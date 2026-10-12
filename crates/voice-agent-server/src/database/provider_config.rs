@@ -147,12 +147,7 @@ struct OpenCodeFree {
 }
 impl OpenCodeFree {
     fn valid(&self) -> bool {
-        self.model.len() <= 256
-            && self.model.ends_with("-free")
-            && self
-                .model
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'_'))
+        crate::providers::llm::opencode_free::valid_free_chat_model_id(&self.model)
             && (1_000..=120_000).contains(&self.timeout_ms)
             && self.max_tokens.is_none_or(|v| v > 0 && v <= 65_536)
     }
