@@ -161,6 +161,27 @@ mod tests {
         assert!(!OpenCodeFreeConfig { model: "a/../../b-free".into(), timeout_ms: 60_000 }.valid());
     }
 
+    #[test]
+    fn admin_config_and_deployment_discriminator_are_consistent() {
+        let canonical = crate::database::provider_config::validate(
+            "opencode_free",
+            &serde_json::json!({"model": "nemotron-3-ultra-free", "timeout_ms": 60000}),
+        )
+        .unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&canonical).unwrap();
+        value["adapter"] = serde_json::json!("opencode_free");
+        let instance: crate::config::LlmInstanceConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(instance.adapter(), "opencode_free");
+        assert!(crate::database::provider_config::validate(
+            "opencode_free",
+            &serde_json::json!({"model": "claude-sonnet-5", "timeout_ms": 60000}),
+        ).is_err());
+        assert!(crate::database::provider_config::validate(
+            "opencode_free",
+            &serde_json::json!({"model": "nemotron-3-ultra-free", "base_url": "https://example.com"}),
+        ).is_err());
+    }
+
     #[tokio::test]
     async fn builds_without_network_or_user_credentials() {
         let config = OpenCodeFreeConfig { model: "nemotron-3-ultra-free".into(), timeout_ms: 30_000 };
