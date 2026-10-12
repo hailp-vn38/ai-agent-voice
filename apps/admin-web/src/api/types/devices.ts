@@ -9,6 +9,8 @@ export interface AdminDevice {
   name: string | null
   description: string | null
   metadata_json: string | null
+  ws_online?: boolean
+  direct_tts_supported?: boolean
   enabled: number
   revision: number
   created_at?: number

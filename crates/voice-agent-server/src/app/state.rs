@@ -33,6 +33,7 @@ use std::{
 pub struct AppState {
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
+    pub active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
     pub(crate) web_assistant: Arc<super::web_assistant_auth::WebAssistantAuth>,
@@ -660,6 +661,7 @@ impl AppState {
         );
         let state = Self {
             started_at: Instant::now(),
+            active_device_sessions: Arc::new(Default::default()),
             system_mcp: None,
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
             web_assistant: Arc::new(Default::default()),

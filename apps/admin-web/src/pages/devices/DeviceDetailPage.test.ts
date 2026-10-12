@@ -26,7 +26,7 @@ vi.mock('@/stores/admin', () => ({
   }),
 }))
 vi.mock('@/api/devices', () => ({
-  devicesApi: { get: vi.fn(), update: vi.fn(), remove: vi.fn() },
+  devicesApi: { speak: vi.fn(), get: vi.fn(), update: vi.fn(), remove: vi.fn() },
 }))
 
 function sample(id: string): AdminDevice {
@@ -38,6 +38,21 @@ function sample(id: string): AdminDevice {
 }
 
 describe('DeviceDetailPage', () => {
+  it('shows live presence and labels admitted direct speech as awaiting playback', async () => {
+    vi.mocked(devicesApi.get).mockResolvedValue({ ...sample('device-a'), ws_online: true, direct_tts_supported: true })
+    vi.mocked(devicesApi.speak).mockResolvedValue({ request_id: 'test', status: 'accepted' })
+    const wrapper = shallowMount(DeviceDetailPage, { global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('WS online')
+    await wrapper.get('#direct-speech-text').setValue('hello from admin')
+    await wrapper.get('form[data-direct-speech]').trigger('submit')
+    await flushPromises()
+    expect(devicesApi.speak).toHaveBeenCalledWith('device-a', 'hello from admin', expect.any(String))
+    expect(wrapper.get('[role="status"]').text()).toContain('Accepted')
+    expect(wrapper.get('[role="status"]').text()).toContain('Playback is not confirmed')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     setLocale('en')
     route.params.deviceId = 'device-a'
@@ -79,7 +94,7 @@ describe('DeviceDetailPage', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-detail-actions]').exists()).toBe(true)
-    expect(wrapper.find('section.studio-panel h2').text()).toBe('Device information')
+    expect(wrapper.findAll('section.studio-panel h2').map((heading) => heading.text())).toContain('Device information')
     expect(wrapper.findAll('[data-device-delete-option]')).toHaveLength(1)
     await wrapper.get('[data-device-delete-option]').trigger('click')
     expect(devicesApi.remove).not.toHaveBeenCalled()

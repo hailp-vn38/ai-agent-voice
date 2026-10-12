@@ -29,3 +29,27 @@ Fixture rejection reasons are bounded machine-readable values. Server-side grant
 validation remain necessary even when the client advertises both capabilities. The new
 Direct TTS and Reminder adapters must run these golden payloads through their public seams
 as they are implemented; a fixture-only check is not production acceptance evidence.
+
+## Admin Direct TTS implementation
+
+`POST /api/admin/devices/{device_id}/speak` requires the Admin bearer token and a physical,
+enabled Device. Its only body fields are `request_id` and `text`; unknown routing/provider
+fields are rejected. Text is bounded to 1,024 Unicode characters/4,096 UTF-8 bytes with
+control-character validation. The active Device session must negotiate `features.direct_tts`.
+Direct text enters the same bounded segment queue without LLM JSON-artifact filtering or
+punctuation rewriting; supplied JSON and punctuation reach the admitted TTS provider intact.
+The request is ephemeral, with one admitted speech turn and a one-second request interval per
+session. Offline, unsupported, busy, rate, capacity and validation errors use existing typed
+Admin error envelopes. `202 {request_id,status:"accepted"}` follows actor admission, never just
+mailbox enqueue. Admission expires after two seconds; the actor drops expired reply channels.
+
+Current session registration occurs after ClientHello, profile/actor initialization and ServerHello
+admission. A successful replacement cancels the old connection; unregister is fenced by session
+identity, and retained old senders cannot remove the new handle. Device detail GET adds
+`ws_online` and `direct_tts_supported` from this registry. Enabled permission remains separate.
+
+Opted-in direct controls carry request ID and source (`admin_direct` or `client_direct`).
+After the writer's terminal outcome, `tts` state `result` carries `outcome` (`completed`, `failed`
+or `cancelled`), including failures before audio starts. `completed` here means the writer
+finished the stream; it does not prove the Device speaker drained. Reminder playback completion
+still requires its separate fenced `played` ACK. Legacy speech controls receive no new metadata.
