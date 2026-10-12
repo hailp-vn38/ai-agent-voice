@@ -3,7 +3,11 @@ use super::*;
 impl SpeechOutput {
     pub(super) fn enqueue(&mut self, text: String) -> Result<(), SpeechOutputError> {
         let display_text = text.trim().to_owned();
-        let tts_text = sanitize_tts_text(&display_text);
+        let tts_text = if self.direct_text {
+            display_text.clone()
+        } else {
+            sanitize_tts_text(&display_text)
+        };
         if display_text.is_empty() || tts_text.is_empty() {
             return Ok(());
         }

@@ -30,6 +30,10 @@ pub struct ClientHello {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ClientFeatures {
     #[serde(default)]
+    pub reminders: bool,
+    #[serde(default)]
+    pub direct_tts: bool,
+    #[serde(default)]
     pub pipeline_status: bool,
     #[serde(default)]
     pub turn_status: bool,

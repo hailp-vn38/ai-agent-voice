@@ -485,12 +485,25 @@ fn canonical_opus_packet() -> Vec<u8> {
 }
 
 async fn admit(base: &str) -> Socket {
-    let (mut socket, response) = connect_async(request(base)).await.unwrap();
+    admit_with_direct(base, false).await
+}
+
+async fn admit_with_direct(base: &str, direct_tts: bool) -> Socket {
+    admit_device(base, "device", direct_tts).await
+}
+
+async fn admit_device(base: &str, device_id: &str, direct_tts: bool) -> Socket {
+    let mut connection = request(base);
+    connection
+        .headers_mut()
+        .insert("Device-Id", device_id.parse().unwrap());
+    let (mut socket, response) = connect_async(connection).await.unwrap();
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
     socket
         .send(Message::Text(
             serde_json::json!({
                 "type": "hello", "version": 1, "transport": "websocket",
+                "features": {"direct_tts": direct_tts},
                 "audio_params": {"format": "opus", "sample_rate": 16000, "channels": 1, "frame_duration": 60}
             })
             .to_string()
@@ -913,7 +926,7 @@ async fn concurrent_sessions_each_resolve_their_own_immutable_profile() {
     assign(&pool, template, true, true).await;
 
     let mut first = admit(&base).await;
-    let mut second = admit(&base).await;
+    let mut second = admit_device(&base, "second", false).await;
     let (left, right) = tokio::join!(speak_once(&mut first), speak_once(&mut second));
     assert_eq!(left, "default-llm[TEMPLATE-PROMPT-V1]");
     assert_eq!(right, "default-llm[TEMPLATE-PROMPT-V1]");
@@ -1301,7 +1314,11 @@ async fn start_controlled_switch(
                 release,
                 hold,
             });
-            with_template_llm(state).with_writer_outcome_probe(probe)
+            let mut state = with_template_llm(state).with_writer_outcome_probe(probe);
+            let config = Arc::make_mut(&mut state.config);
+            config.api.enabled = true;
+            config.api.admin_token = "direct-admin".into();
+            state
         },
     )
     .await;
@@ -1635,7 +1652,8 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         state.with_runtime_manager(manager)
     })
     .await;
-    let _pool = seed(&url).await;
+    let pool = seed(&url).await;
+    sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('second',1,1,1,1)").execute(&pool).await.unwrap();
     let client = reqwest::Client::new();
     let auth = "managed-test-token";
     let providers = format!("{base}/api/admin/providers");
@@ -1730,7 +1748,7 @@ async fn public_api_created_provider_is_used_by_new_ws_and_patch_keeps_old_sessi
         serde_json::json!([1])
     );
     assert_eq!(builds.lock().unwrap().len(), 4);
-    let mut second = admit(&base).await;
+    let mut second = admit_device(&base, "second", false).await;
     assert!(
         speak_and_observe(&mut second)
             .await
@@ -1979,5 +1997,45 @@ async fn prepare_public_api_returns_accepted_then_ready_and_rejects_loader_flood
         .await
         .unwrap();
     assert_eq!(ready.status(), reqwest::StatusCode::OK);
+    task.abort();
+}
+
+#[tokio::test]
+async fn admin_direct_speech_applies_the_reported_template_boundary_before_admission() {
+    let (base, url, task, _, mut boundary) = start_controlled_switch(&["sales"]).await;
+    let pool = seed(&url).await;
+    seed_switchable_pair(&pool).await;
+    let mut socket = admit_with_direct(&base, true).await;
+    let switching = boundary
+        .run_turn_and_hold_at_its_boundary(&mut socket)
+        .await;
+    assert_eq!(switching.answer, "default-llm[TEMPLATE-PROMPT-V1]");
+    boundary.hold.store(false, Ordering::SeqCst);
+    boundary.release.notify_one();
+    let response = reqwest::Client::new().post(format!("{base}/api/admin/devices/device/speak")).bearer_auth("direct-admin").json(&serde_json::json!({"request_id":"boundary-direct","text":"Direct text after switching."})).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let mut audio = 0;
+    loop {
+        let frame = timeout(Duration::from_secs(5), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        match frame {
+            Message::Binary(_) => audio += 1,
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_ne!(value["type"], "llm");
+                assert_ne!(value["type"], "stt");
+                if value["type"] == "tts" && value["state"] == "result" {
+                    assert_eq!(value["request_id"], "boundary-direct");
+                    assert_eq!(value["outcome"], "completed");
+                    break;
+                }
+            }
+            other => panic!("unexpected frame {other:?}"),
+        }
+    }
+    assert!(audio > 0);
     task.abort();
 }

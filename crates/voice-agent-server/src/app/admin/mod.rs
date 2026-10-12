@@ -187,6 +187,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/agents/{key}/tool-allowlist",
             get(tool_allowlist::list).put(tool_allowlist::review),
         )
+        .route(
+            "/devices/{device_id}/speak",
+            axum::routing::post(devices::speak),
+        )
         .route("/devices", get(list_devices).post(create_device))
         .route(
             "/device-enrollments/claim",

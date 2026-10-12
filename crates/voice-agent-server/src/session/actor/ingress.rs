@@ -113,8 +113,13 @@ impl SessionActor {
                                 turn_id,
                             );
                         }
-                        self.dialogue_history
-                            .commit_assistant(turn_id, delivery.assistant_text);
+                        if matches!(
+                            self.speech_origin,
+                            SpeechOrigin::Llm | SpeechOrigin::ToolDirect
+                        ) {
+                            self.dialogue_history
+                                .commit_assistant(turn_id, delivery.assistant_text);
+                        }
                     }
                 }
                 let actions = self.pending_actions.take_for_turn(turn_id);
@@ -157,6 +162,16 @@ impl SessionActor {
                     self.drain_speech_output();
                 }
                 event = ingress.recv() => match event {
+                    Some(SessionEvent::DirectSpeech { request, reply }) => {
+                        self.apply_reported_turn_outcomes();
+                        if !reply.is_closed() {
+                            let result = self.admit_direct_speech(request);
+                            if reply.send(result).is_err() && result.is_ok() {
+                                self.interrupt_active_turn();
+                                self.complete_recognition();
+                            }
+                        }
+                    }
                     Some(SessionEvent::ClientMessage(message)) => {
                         if self.speaker_security_revoked() {
                             self.begin_application_shutdown();
@@ -296,7 +311,7 @@ impl SessionActor {
 
     /// Security epoch recheck: a revoked Speaker/grant/policy/template snapshot never restores
     /// authority, even if a message raced ahead of the close.
-    fn speaker_security_revoked(&self) -> bool {
+    pub(super) fn speaker_security_revoked(&self) -> bool {
         self.speaker_observe
             .as_ref()
             .is_some_and(|observe| observe.security_cancelled())

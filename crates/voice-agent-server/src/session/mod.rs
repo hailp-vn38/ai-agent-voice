@@ -14,7 +14,9 @@ pub use actor::{
     BargeInPolicy, OutboundMessage, SessionActor, SessionRuntimes, WriterEvent, WriterOutcomeProbe,
     WriterTurnOutcome,
 };
-pub use direct_speech::{DirectSpeechRequest, SpeechOrigin};
+pub use direct_speech::{
+    DirectSpeechError, DirectSpeechRequest, SpeechOrigin, validate_direct_speech,
+};
 pub use event::SessionEvent;
 pub use generation_gate::GenerationGate;
 pub use profile::{
