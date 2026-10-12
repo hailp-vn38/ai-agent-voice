@@ -103,6 +103,7 @@ static REGISTRATIONS: &[ProviderAdapterRegistration] = &[
     super::tts::zerotts::descriptor::REGISTRATION,
     super::tts::chillaudio::descriptor::REGISTRATION,
     super::tts::vieneu::descriptor::REGISTRATION,
+    super::tts::vieneu_native::descriptor::REGISTRATION,
     super::tts::kokoro_vi::descriptor::REGISTRATION,
 ];
 

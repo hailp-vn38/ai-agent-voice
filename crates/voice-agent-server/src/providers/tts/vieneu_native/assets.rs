@@ -29,7 +29,8 @@ macro_rules! model_asset {
             url: concat!(
                 "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo/resolve/",
                 "8b7e9cffb4b41918cb638b9f62f0a751184d14a6",
-                "/onnx_update/", $name
+                "/onnx_update/",
+                $name
             ),
         }
     };
@@ -42,7 +43,8 @@ macro_rules! codec_asset {
             url: concat!(
                 "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/",
                 "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4",
-                "/onnx/codec/", $name
+                "/onnx/codec/",
+                $name
             ),
         }
     };
@@ -88,7 +90,11 @@ pub struct PresetVoice {
 
 macro_rules! voice {
     ($id:literal, $name:literal) => {
-        PresetVoice { id: $id, name: $name, source_name: $name }
+        PresetVoice {
+            id: $id,
+            name: $name,
+            source_name: $name,
+        }
     };
 }
 
@@ -205,10 +211,16 @@ mod tests {
         assert_eq!(paths.len(), CORE_ASSETS.len());
         for asset in CORE_ASSETS {
             assert!(
-                [MODEL_REVISION, CODEC_REVISION, PRESET_REVISION, G2P_REVISION]
-                    .iter()
-                    .any(|revision| asset.url.contains(revision)),
-                "unpinned asset: {}", asset.path
+                [
+                    MODEL_REVISION,
+                    CODEC_REVISION,
+                    PRESET_REVISION,
+                    G2P_REVISION
+                ]
+                .iter()
+                .any(|revision| asset.url.contains(revision)),
+                "unpinned asset: {}",
+                asset.path
             );
             assert!(asset.url.starts_with("https://"));
             assert!(!asset.url.contains("/resolve/main/"));

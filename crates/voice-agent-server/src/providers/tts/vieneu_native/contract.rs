@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use serde::Deserialize;
 use tokenizers::Tokenizer;
 
-use super::assets::{VieneuNativeAssets, VOICES};
+use super::assets::{VOICES, VieneuNativeAssets};
 use crate::providers::tts::TtsError;
 
 fn invalid(reason: &str) -> TtsError {
@@ -38,16 +38,15 @@ pub struct ModelConfig {
 
 impl ModelConfig {
     pub fn parse(bytes: &[u8]) -> Result<Self, TtsError> {
-        let config: Self = serde_json::from_slice(bytes)
-            .map_err(|_| invalid("invalid config.json"))?;
+        let config: Self =
+            serde_json::from_slice(bytes).map_err(|_| invalid("invalid config.json"))?;
         if config.n_vq != 16
             || config.audio_vocab_size != 1024
             || config.text_vocab_size < 40
             || config.hidden_size != 768
             || config.num_hidden_layers != 12
-            || config.local_num_hidden_layers == 0
-            || config.local_num_attention_heads == 0
-            || config.hidden_size % config.local_num_attention_heads != 0
+            || config.local_num_hidden_layers != 1
+            || config.local_num_attention_heads != 8
             || config.audio_sample_rate != 48_000
             || config.audio_pad_token_id != 1024
             || !config.use_speaker_embedding
@@ -114,25 +113,39 @@ impl VoiceRegistry {
                 || entry.codes.len() > 512
                 || entry.codes.iter().any(|frame| {
                     frame.len() != model.n_vq
-                        || frame.iter().any(|code| *code < 0 || *code >= model.audio_vocab_size as i32)
+                        || frame
+                            .iter()
+                            .any(|code| *code < 0 || *code >= model.audio_vocab_size as i32)
                 })
             {
-                return Err(invalid("preset embedding or acoustic code contract mismatch"));
+                return Err(invalid(
+                    "preset embedding or acoustic code contract mismatch",
+                ));
             }
-            presets.insert(named.id.into(), PresetVoice {
-                speaker_embedding: entry.speaker_emb.clone(),
-                reference_codes: entry.codes.clone(),
-            });
+            presets.insert(
+                named.id.into(),
+                PresetVoice {
+                    speaker_embedding: entry.speaker_emb.clone(),
+                    reference_codes: entry.codes.clone(),
+                },
+            );
         }
-        let default_voice = VOICES.iter()
+        let default_voice = VOICES
+            .iter()
             .find(|preset| preset.source_name == document.default_voice)
             .ok_or_else(|| invalid("unknown upstream default voice"))?
-            .id.to_owned();
-        Ok(Self { default_voice, presets })
+            .id
+            .to_owned();
+        Ok(Self {
+            default_voice,
+            presets,
+        })
     }
 
     pub fn get(&self, id: &str) -> Result<&PresetVoice, TtsError> {
-        self.presets.get(id).ok_or_else(|| TtsError::UnsupportedVoice(id.into()))
+        self.presets
+            .get(id)
+            .ok_or_else(|| TtsError::UnsupportedVoice(id.into()))
     }
 }
 
@@ -164,8 +177,8 @@ struct StreamingMetadata {
 }
 
 fn validate_codec_metadata(bytes: &[u8], config: &ModelConfig) -> Result<(), TtsError> {
-    let metadata: CodecMetadata = serde_json::from_slice(bytes)
-        .map_err(|_| invalid("invalid MOSS codec metadata"))?;
+    let metadata: CodecMetadata =
+        serde_json::from_slice(bytes).map_err(|_| invalid("invalid MOSS codec metadata"))?;
     if metadata.format_version != 2
         || metadata.codec_config.sample_rate != 48_000
         || metadata.codec_config.channels != 2
@@ -188,11 +201,29 @@ pub struct VieneuContract {
 
 impl VieneuContract {
     pub fn load(assets: &VieneuNativeAssets) -> Result<Self, TtsError> {
-        let load = |path: &Path| fs::read(path)
-            .map_err(|_| invalid("model file could not be read"));
+        let load =
+            |path: &Path| fs::read(path).map_err(|_| invalid("model file could not be read"));
         let config = ModelConfig::parse(&load(&assets.config)?)?;
         let tokenizer = Tokenizer::from_file(&assets.tokenizer)
             .map_err(|_| invalid("invalid tokenizer.json"))?;
+        for (token, id) in [
+            ("<|TEXT_PROMPT_START|>", config.text_prompt_start_token_id),
+            ("<|TEXT_PROMPT_END|>", config.text_prompt_end_token_id),
+            (
+                "<|SPEECH_GENERATION_START|>",
+                config.speech_generation_start_token_id,
+            ),
+            (
+                "<|SPEECH_GENERATION_END|>",
+                config.speech_generation_end_token_id,
+            ),
+            ("<|audio_ref_slot|>", config.audio_ref_slot_token_id),
+            ("<|style_0|>", config.default_style_token_id),
+        ] {
+            if tokenizer.token_to_id(token) != Some(id as u32) {
+                return Err(invalid("tokenizer special IDs differ from model config"));
+            }
+        }
         let voices = VoiceRegistry::parse(&load(&assets.presets)?, &config)?;
         validate_codec_metadata(&load(&assets.codec_metadata)?, &config)?;
         // Ensure binary artifacts were resolved without accidentally treating empty stubs
@@ -211,7 +242,11 @@ impl VieneuContract {
                 return Err(invalid("missing or empty required binary asset"));
             }
         }
-        Ok(Self { config, tokenizer, voices })
+        Ok(Self {
+            config,
+            tokenizer,
+            voices,
+        })
     }
 }
 
@@ -220,7 +255,8 @@ mod tests {
     use super::*;
 
     fn model() -> ModelConfig {
-        ModelConfig::parse(br#"{
+        ModelConfig::parse(
+            br#"{
             "n_vq":16,"audio_vocab_size":1024,"text_vocab_size":419,
             "hidden_size":768,"num_hidden_layers":12,
             "local_num_hidden_layers":1,"local_num_attention_heads":8,
@@ -229,7 +265,9 @@ mod tests {
             "speech_generation_start_token_id":5,"speech_generation_end_token_id":6,
             "audio_ref_slot_token_id":7,"default_style_token_id":16,
             "use_speaker_embedding":true,"speaker_embedding_dim":192
-        }"#).unwrap()
+        }"#,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -254,10 +292,13 @@ mod tests {
 
     #[test]
     fn rejects_empty_or_unrecognized_preset_registry() {
-        assert!(VoiceRegistry::parse(
-            br#"{"default_voice":"Hải Đăng","presets":{}}"#,
-            &model(),
-        ).is_err());
+        assert!(
+            VoiceRegistry::parse(
+                r#"{"default_voice":"Hải Đăng","presets":{}}"#.as_bytes(),
+                &model(),
+            )
+            .is_err()
+        );
     }
 
     #[test]

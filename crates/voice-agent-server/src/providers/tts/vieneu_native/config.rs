@@ -23,10 +23,18 @@ pub struct VieneuNativeConfig {
 
 pub const MODEL_ID: &str = "vieneu_v3_turbo_fp32";
 
-fn default_model() -> String { MODEL_ID.into() }
-fn default_threads() -> i32 { 1 }
-fn default_voice() -> String { DEFAULT_VOICE.into() }
-fn default_language() -> String { "vi-VN".into() }
+fn default_model() -> String {
+    MODEL_ID.into()
+}
+fn default_threads() -> i32 {
+    1
+}
+fn default_voice() -> String {
+    DEFAULT_VOICE.into()
+}
+fn default_language() -> String {
+    "vi-VN".into()
+}
 
 impl Default for VieneuNativeConfig {
     fn default() -> Self {
@@ -75,8 +83,10 @@ mod tests {
 
     #[test]
     fn rejects_invalid_voice_language_threads_or_model() {
-        let mut value = VieneuNativeConfig::default();
-        value.voice = "not-in-catalog".into();
+        let mut value = VieneuNativeConfig {
+            voice: "not-in-catalog".into(),
+            ..Default::default()
+        };
         assert!(!value.valid_selection());
         value.voice = DEFAULT_VOICE.into();
         value.language = "en-US".into();

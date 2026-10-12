@@ -14,6 +14,46 @@ pub struct VieneuTextFrontend {
     g2p: G2PEngine,
 }
 
+/// The pinned upstream frame cap prevents short phrases from growing extra speech.
+pub(crate) fn frame_limit(phonemes: &str) -> usize {
+    let length = phonemes.chars().count();
+    let mut syllables = 0;
+    for token in phonemes.split_whitespace() {
+        let (mut groups, mut in_vowel, mut consonant_seen) = (0, false, true);
+        for ch in token.chars() {
+            if "aeiouyæɐɑɒɔəɘɛɜɤɯɵøœʉʊʌɪɨɚɝᵻᵿ".contains(ch) {
+                if !in_vowel && consonant_seen {
+                    groups += 1;
+                }
+                in_vowel = true;
+                consonant_seen = false;
+            } else if "ːˈˌ".contains(ch) || ch.is_ascii_digit() {
+                if "ˈˌ".contains(ch) && groups > 0 {
+                    consonant_seen = true;
+                }
+                in_vowel = false;
+            } else {
+                in_vowel = false;
+                consonant_seen = true;
+            }
+        }
+        if token.chars().any(char::is_alphabetic) {
+            syllables += groups.max(1);
+        }
+    }
+    let syllables = syllables.max(1);
+    let cap = (24 + 2 * length).min(300);
+    if syllables <= 4 && length <= 24 * syllables {
+        cap.min(13 + 5 * (syllables - 1))
+    } else {
+        cap
+    }
+}
+
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod tests;
+
 impl VieneuTextFrontend {
     pub fn load(dictionary: &Path) -> Result<Self, TtsError> {
         let path = dictionary.to_str().ok_or_else(|| {

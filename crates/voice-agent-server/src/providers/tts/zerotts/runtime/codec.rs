@@ -82,8 +82,8 @@ pub(super) struct AttentionCache {
 /// Retained streaming codec replica for one native worker. The session outlives every turn; only the
 /// streaming cache below is per-delivery state and is reset before this worker is handed to another
 /// Voice Session.
-pub(super) struct ZeroTtsCodecReplica {
-    pub(super) contract: ZeroTtsContract,
+pub(crate) struct ZeroTtsCodecReplica {
+    metadata: CodecMetadata,
     // The step graph is owned by one native worker; only its cache is reset between leases.
     pub(super) decode_step: Session,
     pub(super) streaming_state: BTreeMap<String, ZeroTtsCodecStreamState>,
@@ -100,28 +100,48 @@ impl ZeroTtsCodecReplica {
             .graphs
             .as_ref()
             .ok_or_else(|| TtsError::IncompatibleContract("ZeroTTS engine is not loaded".into()))?;
-        let streaming_state = Self::initial_streaming_state(contract)?;
+        Self::from_metadata(
+            &graphs.codec.decode_step,
+            graphs.codec.metadata.clone(),
+            graphs.threads,
+        )
+    }
+
+    pub(crate) fn from_assets(
+        metadata: &Path,
+        step: &Path,
+        shared_data: &Path,
+        codebooks: usize,
+        threads: usize,
+    ) -> Result<Self, TtsError> {
+        let full = step.with_file_name("moss_audio_tokenizer_decode_full.onnx");
+        let metadata = load_codec_metadata(metadata, &full, step, shared_data, codebooks)?;
+        Self::from_metadata(step, metadata, threads)
+    }
+
+    fn from_metadata(
+        path: &Path,
+        metadata: CodecMetadata,
+        threads: usize,
+    ) -> Result<Self, TtsError> {
+        let streaming_state = Self::initial_streaming_state(&metadata)?;
         Ok(Self {
-            contract: contract.clone(),
             decode_step: load_codec_graph(
-                &graphs.codec.decode_step,
-                graphs.threads,
-                &graphs.codec.metadata.onnx.decode_step_input_names,
-                &graphs.codec.metadata.onnx.decode_step_output_names,
+                path,
+                threads,
+                &metadata.onnx.decode_step_input_names,
+                &metadata.onnx.decode_step_output_names,
             )?,
+            metadata,
             streaming_state,
         })
     }
 
-    pub(super) fn initial_streaming_state(
-        contract: &ZeroTtsContract,
+    fn initial_streaming_state(
+        metadata: &CodecMetadata,
     ) -> Result<BTreeMap<String, ZeroTtsCodecStreamState>, TtsError> {
-        let graphs = contract
-            .graphs
-            .as_ref()
-            .ok_or_else(|| TtsError::IncompatibleContract("ZeroTTS engine is not loaded".into()))?;
         let mut streaming_state = BTreeMap::new();
-        for offset in &graphs.codec.metadata.streaming_decode.transformer_offsets {
+        for offset in &metadata.streaming_decode.transformer_offsets {
             streaming_state.insert(
                 offset.input_name.clone(),
                 ZeroTtsCodecStreamState::I32 {
@@ -130,7 +150,7 @@ impl ZeroTtsCodecReplica {
                 },
             );
         }
-        for cache in &graphs.codec.metadata.streaming_decode.attention_caches {
+        for cache in &metadata.streaming_decode.attention_caches {
             streaming_state.insert(
                 cache.offset_input_name.clone(),
                 ZeroTtsCodecStreamState::I32 {
@@ -161,19 +181,21 @@ impl ZeroTtsCodecReplica {
         Ok(streaming_state)
     }
 
-    pub(super) fn reset(&mut self) -> Result<(), TtsError> {
-        self.streaming_state = Self::initial_streaming_state(&self.contract)?;
+    pub(crate) fn reset(&mut self) -> Result<(), TtsError> {
+        self.streaming_state = Self::initial_streaming_state(&self.metadata)?;
         Ok(())
     }
 
-    pub(super) fn decode_step(&mut self, frames: &[Vec<i32>]) -> Result<PcmF32Mono, TtsError> {
-        let metadata = &self
-            .contract
-            .graphs
-            .as_ref()
-            .expect("engine invariant")
-            .codec
-            .metadata;
+    pub(crate) fn decode_step(&mut self, frames: &[Vec<i32>]) -> Result<PcmF32Mono, TtsError> {
+        let metadata = &self.metadata;
+        if frames.is_empty()
+            || frames.iter().any(|frame| {
+                frame.len() != metadata.codec_config.num_quantizers
+                    || frame.iter().any(|code| !(0..1024).contains(code))
+            })
+        {
+            return Err(TtsError::Failed);
+        }
         let codes = frames.iter().flatten().copied().collect::<Vec<_>>();
         let mut inputs = vec![
             (

@@ -1,5 +1,4 @@
-//! Local voice metadata. Registration is deferred until real native streaming
-//! is implemented and its worker passes the end-to-end model gate.
+//! Local voice metadata for the native VieNeu streaming adapter.
 
 use super::{assets, config::MODEL_ID};
 use crate::providers::{
@@ -52,12 +51,36 @@ const fn voice_options() -> [VoiceOption; assets::VOICES.len()] {
 
 const VOICES: &[VoiceOption] = &voice_options();
 const FIELDS: &[ProviderConfigField] = &[
-    field("voice", "Voice", ConfigFieldType::Select, true,
-        Some(CapabilitySource::Voices), None, None, Some(128)),
-    field("language", "Language", ConfigFieldType::Select, true,
-        Some(CapabilitySource::Languages), None, None, Some(32)),
-    field("preload", "Preload", ConfigFieldType::Boolean, false,
-        None, None, None, None),
+    field(
+        "voice",
+        "Voice",
+        ConfigFieldType::Select,
+        true,
+        Some(CapabilitySource::Voices),
+        None,
+        None,
+        Some(128),
+    ),
+    field(
+        "language",
+        "Language",
+        ConfigFieldType::Select,
+        true,
+        Some(CapabilitySource::Languages),
+        None,
+        None,
+        Some(32),
+    ),
+    field(
+        "preload",
+        "Preload",
+        ConfigFieldType::Boolean,
+        false,
+        None,
+        None,
+        None,
+        None,
+    ),
 ];
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
@@ -108,9 +131,11 @@ mod tests {
 
     #[test]
     fn discovered_voices_exactly_match_asset_catalog() {
-        let discovered = INSPECTOR.inspect(&serde_json::json!({
-            "model": MODEL_ID,
-        })).unwrap();
+        let discovered = INSPECTOR
+            .inspect(&serde_json::json!({
+                "model": MODEL_ID,
+            }))
+            .unwrap();
         let ids: HashSet<_> = discovered.voices.iter().map(|voice| voice.id).collect();
         assert_eq!(ids.len(), assets::VOICES.len());
         for voice in assets::VOICES {
@@ -120,8 +145,12 @@ mod tests {
 
     #[test]
     fn refuses_other_model_identity() {
-        assert!(INSPECTOR.inspect(&serde_json::json!({
-            "model": "vieneu_v4",
-        })).is_err());
+        assert!(
+            INSPECTOR
+                .inspect(&serde_json::json!({
+                    "model": "vieneu_v4",
+                }))
+                .is_err()
+        );
     }
 }

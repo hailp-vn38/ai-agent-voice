@@ -14,8 +14,6 @@ pub mod kokoro_vi;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
 pub mod vieneu;
-// Native model preparation remains private to the implementation branch until an
-// inference worker passes the real-model gate and can be registered safely.
 pub mod vieneu_native;
 pub mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
