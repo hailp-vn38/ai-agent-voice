@@ -303,6 +303,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # Requalify this reservation for your machine and workload.
 # vieneu_native = 2147483648
 # openai = 67108864
+# opencode_free = 67108864
 # chillaudio_ws = 67108864
 # vieneu_http = 67108864
 

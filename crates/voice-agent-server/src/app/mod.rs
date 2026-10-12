@@ -104,10 +104,9 @@ pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
     RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
 pub fn router_with_state(mut state: AppState) -> Router {
-    if state
+    if !state
         .reminder_scheduler_started
         .swap(true, std::sync::atomic::Ordering::AcqRel)
-        == false
         && let Some(database) = state.database.clone()
     {
         crate::services::reminder_scheduler::start(
