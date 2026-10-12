@@ -7,6 +7,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub(crate) mod openai;
+pub(crate) mod opencode_free;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
 

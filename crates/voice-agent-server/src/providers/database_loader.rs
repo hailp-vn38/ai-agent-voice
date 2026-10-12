@@ -429,6 +429,7 @@ fn materialize_one_from_source(
             };
             let timeout = Duration::from_millis(match &instance {
                 LlmInstanceConfig::Openai(config) => config.timeout_ms,
+                LlmInstanceConfig::OpenCodeFree(config) => config.timeout_ms,
                 #[cfg(feature = "qualification-providers")]
                 LlmInstanceConfig::QualificationLlm(_) => 15_000,
             });

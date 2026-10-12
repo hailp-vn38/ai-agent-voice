@@ -523,35 +523,36 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                 instance.adapter()
             ))
         })?;
-        #[allow(irrefutable_let_patterns)] // Qualification builds add another LLM variant.
-        let LlmInstanceConfig::Openai(openai) = instance else {
-            #[cfg(feature = "qualification-providers")]
-            {
-                continue;
+        match instance {
+            LlmInstanceConfig::Openai(openai) => {
+                let http_allowed = openai.base_url.scheme() == "http"
+                    && match openai.base_url.host_str() {
+                        Some("localhost") => true,
+                        Some(host) => host.parse::<IpAddr>().is_ok_and(|ip| match ip {
+                            IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_loopback(),
+                            IpAddr::V6(ip) => ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_loopback(),
+                        }),
+                        None => false,
+                    };
+                let scheme_allowed = openai.base_url.scheme() == "https" || http_allowed;
+                if !scheme_allowed
+                    || openai.base_url.host_str().is_none()
+                    || openai.model.trim().is_empty()
+                    || openai.timeout_ms == 0
+                {
+                    return Err(ConfigError::Validation(format!(
+                        "LLM instance `{id}` has invalid OpenAI URL, model, or timeout"
+                    )));
+                }
             }
-            #[cfg(not(feature = "qualification-providers"))]
-            unreachable!();
-        };
-        let http_allowed = openai.base_url.scheme() == "http"
-            && match openai.base_url.host_str() {
-                Some("localhost") => true,
-                Some(host) => host.parse::<IpAddr>().is_ok_and(|ip| match ip {
-                    IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_loopback(),
-                    IpAddr::V6(ip) => {
-                        ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_loopback()
-                    }
-                }),
-                None => false,
-            };
-        let scheme_allowed = openai.base_url.scheme() == "https" || http_allowed;
-        if !scheme_allowed
-            || openai.base_url.host_str().is_none()
-            || openai.model.trim().is_empty()
-            || openai.timeout_ms == 0
-        {
-            return Err(ConfigError::Validation(format!(
-                "LLM instance `{id}` has invalid OpenAI URL, model, or timeout"
-            )));
+            LlmInstanceConfig::OpenCodeFree(options) if !options.valid() => {
+                return Err(ConfigError::Validation(format!(
+                    "LLM instance `{id}` has invalid OpenCode Free model or timeout"
+                )));
+            }
+            LlmInstanceConfig::OpenCodeFree(_) => {}
+            #[cfg(feature = "qualification-providers")]
+            LlmInstanceConfig::QualificationLlm(_) => {}
         }
     }
     for (id, instance) in &config.providers.tts.instances {
