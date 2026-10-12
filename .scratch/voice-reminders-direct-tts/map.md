@@ -12,6 +12,8 @@ Server/Web implementation first; firmware and hardware acceptance deferred by th
 
 - [05: Reminder edit/cancel](issues/05-device-reminder-update-cancel.md): scoped rowCAS, atomic schedule revision/idempotent replay, immutable terminal cancellation, edit/conflict/confirmation UI, public ownership/delete/restart regressions.
 
+- [11: Agent Reminder aggregate](issues/11-agent-reminders-tab.md): current-assignment query/KPI/filter/pagination, transaction-bound Agent CRUD scope and keyboard-accessible Reminders tab reusing Device workflows.
+
 ## Fog
 
 Firmware offline wake and physical sink calibration remain outside the current server/Web scope.

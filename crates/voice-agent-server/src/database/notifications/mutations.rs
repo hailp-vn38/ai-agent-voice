@@ -67,8 +67,9 @@ impl DeviceNotifications {
             .collect::<String>();
         let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
         let (owner, kind): (i64, String) =
-            sqlx::query_as("SELECT id,kind FROM devices WHERE device_id=?")
+            sqlx::query_as("SELECT d.id,d.kind FROM devices d JOIN agents a ON a.id=d.agent_id WHERE d.device_id=? AND (? IS NULL OR a.key=?)")
                 .bind(device)
+                .bind(self.agent_scope.as_deref()).bind(self.agent_scope.as_deref())
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or(NotificationError::NotFound)?;

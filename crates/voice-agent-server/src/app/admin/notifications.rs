@@ -32,7 +32,7 @@ pub(super) async fn create(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match DeviceNotifications::new(database.clone())
+    match notifications(database, &request)
         .create(&device, "admin", key, input, "web", id(&request))
         .await
     {
@@ -56,7 +56,7 @@ pub(super) async fn list(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match DeviceNotifications::new(database.clone())
+    match notifications(database, &request)
         .list(
             &device,
             query.status.as_deref(),
@@ -142,7 +142,7 @@ pub(super) async fn update(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match DeviceNotifications::new(db.clone())
+    match notifications(db, &request)
         .update(
             &device,
             &reminder,
@@ -182,7 +182,7 @@ pub(super) async fn cancel(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match DeviceNotifications::new(db.clone())
+    match notifications(db, &request)
         .cancel(&device, &reminder, revision, "admin", key, id(&request))
         .await
     {
@@ -197,4 +197,65 @@ fn mutation_key(request: &Request) -> Result<&str, Response> {
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| error(request, StatusCode::BAD_REQUEST, "idempotency_key_required"))
+}
+
+#[derive(Clone)]
+struct AgentScope(String);
+fn notifications(database: &crate::database::Database, request: &Request) -> DeviceNotifications {
+    let service = DeviceNotifications::new(database.clone());
+    match request.extensions().get::<AgentScope>() {
+        Some(scope) => service.scoped_to_agent(&scope.0),
+        None => service,
+    }
+}
+pub(super) async fn agent_list(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Query(query): Query<crate::database::notifications::AgentReminderQuery>,
+    request: Request,
+) -> Response {
+    let db = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match DeviceNotifications::new(db.clone())
+        .list_agent(&key, &query)
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => failure(&request, e),
+    }
+}
+pub(super) async fn scoped_create(
+    state: State<AppState>,
+    Path((agent, device)): Path<(String, String)>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    create(state, Path(device), request).await
+}
+pub(super) async fn scoped_list(
+    state: State<AppState>,
+    Path((agent, device)): Path<(String, String)>,
+    query: Query<ListQuery>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    list(state, Path(device), query, request).await
+}
+pub(super) async fn scoped_update(
+    state: State<AppState>,
+    Path((agent, device, reminder)): Path<(String, String, String)>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    update(state, Path((device, reminder)), request).await
+}
+pub(super) async fn scoped_cancel(
+    state: State<AppState>,
+    Path((agent, device, reminder)): Path<(String, String, String)>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    cancel(state, Path((device, reminder)), request).await
 }

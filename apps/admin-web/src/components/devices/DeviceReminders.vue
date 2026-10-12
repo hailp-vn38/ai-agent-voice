@@ -6,7 +6,8 @@ import { formatApiError, isApiError } from '@/api/errors'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
-const props = defineProps<{ deviceId: string }>()
+const props = defineProps<{ deviceId: string; agentId?: string }>()
+const emit = defineEmits<{ changed: [] }>()
 const { t, formatDateTime } = useI18n()
 const result = ref<ReminderPage>()
 const error = ref('')
@@ -49,6 +50,7 @@ async function cancelReminder() {
   const item = cancelling.value
   if (!item || saving.value) return
   const target = props.deviceId
+  const agent = props.agentId
   if (cancelMutation?.id !== item.id || cancelMutation.revision !== item.row_revision) {
     cancelMutation = { id: item.id, revision: item.row_revision, key: crypto.randomUUID() }
   }
@@ -56,12 +58,13 @@ async function cancelReminder() {
   saved.value = false
   error.value = ''
   try {
-    await remindersApi.cancel(target, item.id, item.row_revision, cancelMutation.key)
-    if (props.deviceId !== target) return
+    await remindersApi.cancel(target, item.id, item.row_revision, cancelMutation.key, agent)
+    if (props.deviceId !== target || props.agentId !== agent) return
     cancelMutation = undefined
     await load()
+    emit('changed')
   } catch (cause) {
-    if (props.deviceId === target) {
+    if (props.deviceId === target && props.agentId === agent) {
       await load()
       error.value = isApiError(cause) && cause.code === 'revision_conflict'
         ? t('reminders.conflict') : formatApiError(cause)
@@ -80,7 +83,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const data = await remindersApi.list(props.deviceId, status.value, page.value, controller.signal)
+    const data = await remindersApi.list(props.deviceId, status.value, page.value, controller.signal, props.agentId)
     if (!controller.signal.aborted) result.value = data
   } catch (cause) {
     if (!controller.signal.aborted) error.value = formatApiError(cause)
@@ -95,6 +98,7 @@ async function create() {
     ? { message: message.value, delay_seconds: delay.value }
     : { message: message.value, scheduled_at: at.value }
   const target = props.deviceId
+  const agent = props.agentId
   const item = editing.value
   if (item) input.timezone = item.timezone
   const payload = JSON.stringify([item?.id, item?.row_revision, input])
@@ -103,17 +107,18 @@ async function create() {
   saved.value = false
   error.value = ''
   try {
-    if (item) await remindersApi.update(target, item.id, item.row_revision, input, mutation.key)
-    else await remindersApi.create(target, input, mutation.key)
-    if (props.deviceId !== target) return
+    if (item) await remindersApi.update(target, item.id, item.row_revision, input, mutation.key, agent)
+    else await remindersApi.create(target, input, mutation.key, agent)
+    if (props.deviceId !== target || props.agentId !== agent) return
     mutation = undefined
     editing.value = undefined
     message.value = ''
     saved.value = true
     page.value = 1
     await load()
+    emit('changed')
   } catch (cause) {
-    if (props.deviceId === target) {
+    if (props.deviceId === target && props.agentId === agent) {
       if (item && isApiError(cause) && cause.code === 'revision_conflict') {
         await load()
         closeEdit()
@@ -126,7 +131,7 @@ async function create() {
   }
 }
 
-watch(() => props.deviceId, () => {
+watch(() => [props.deviceId, props.agentId], () => {
   result.value = undefined
   editing.value = undefined
   cancelling.value = undefined
