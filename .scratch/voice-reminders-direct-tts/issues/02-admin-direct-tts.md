@@ -6,12 +6,12 @@
 
 Status: resolved
 
-- [ ] Active Device Sessions register sau admission/actor init; unregister có token fence, replacement cũ không gỡ handle mới; không giữ lock qua await.
-- [ ] Admin-authenticated speak route validate text 1–1.024 Unicode characters/4.096 UTF-8 bytes, rate và capacity; actor queued mới trả 202.
-- [ ] Chỉ dùng TTS profile đã admit, ASR=0/LLM=0/TTS=1; không stt/llm/history giả, không provider/source override từ payload.
-- [ ] Offline/busy/unsupported/unauthorized/capacity lỗi typed; ephemeral request không được lưu chờ reconnect.
-- [ ] Device Detail có Direct TTS Test với loading/error/i18n/keyboard; presence authoritative, enabled không là online và accepted không là phát xong.
-- [ ] HTTP + WS + Web tests bao phủ security, replacement, managed-template boundary, shutdown và writer backpressure; legacy controls/metadata giữ tương thích.
+- [x] Active Device Sessions register sau admission/actor init; unregister có token fence, replacement cũ không gỡ handle mới; không giữ lock qua await.
+- [x] Admin-authenticated speak route validate text 1–1.024 Unicode characters/4.096 UTF-8 bytes, rate và capacity; actor queued mới trả 202.
+- [x] Chỉ dùng TTS profile đã admit, ASR=0/LLM=0/TTS=1; không stt/llm/history giả, không provider/source override từ payload.
+- [x] Offline/busy/unsupported/unauthorized/capacity lỗi typed; ephemeral request không được lưu chờ reconnect.
+- [x] Device Detail có Direct TTS Test với loading/error/i18n/keyboard; presence authoritative, enabled không là online và accepted không là phát xong.
+- [x] HTTP + WS + Web tests bao phủ security, replacement, managed-template boundary, shutdown và writer backpressure; legacy controls/metadata giữ tương thích.
 
 ## Answer
 
