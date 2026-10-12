@@ -110,7 +110,23 @@ pub enum ClientMessage {
         session_id: Option<String>,
         payload: McpIncoming,
     },
+    Reminder {
+        session_id: String,
+        event: ReminderEvent,
+    },
     Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReminderEvent {
+    SyncRequest {
+        known_revision: Option<i64>,
+    },
+    SyncAck {
+        snapshot_id: String,
+        revision: i64,
+        next_wake_at_ms: Option<i64>,
+    },
 }
 
 impl ClientMessage {
@@ -145,8 +161,50 @@ pub fn parse_client_message(text: &str) -> Result<ClientMessage, ProtocolError> 
                 Ok(ClientMessage::Abort { session_id })
             }),
         Some("mcp") => parse_mcp_message(&value),
+        Some("reminder") => parse_reminder_message(&value),
         _ => Ok(ClientMessage::Unknown),
     }
+}
+
+fn parse_reminder_message(value: &Value) -> Result<ClientMessage, ProtocolError> {
+    let Some(Some(session_id)) = parse_session_id(value) else {
+        return Ok(ClientMessage::Unknown);
+    };
+    let event = match value.get("event").and_then(Value::as_str) {
+        Some("sync_request") => ReminderEvent::SyncRequest {
+            known_revision: value.get("known_revision").and_then(Value::as_i64),
+        },
+        Some("sync_ack") => {
+            let Some(snapshot_id) = value
+                .get("snapshot_id")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty() && v.len() <= 128)
+            else {
+                return Ok(ClientMessage::Unknown);
+            };
+            let Some(revision) = value
+                .get("revision")
+                .and_then(Value::as_i64)
+                .filter(|v| *v >= 0)
+            else {
+                return Ok(ClientMessage::Unknown);
+            };
+            let next_wake_at_ms = match value.get("next_wake_at_ms") {
+                None => None,
+                Some(v) => match v.as_i64() {
+                    Some(v) => Some(v),
+                    None => return Ok(ClientMessage::Unknown),
+                },
+            };
+            ReminderEvent::SyncAck {
+                snapshot_id: snapshot_id.into(),
+                revision,
+                next_wake_at_ms,
+            }
+        }
+        _ => return Ok(ClientMessage::Unknown),
+    };
+    Ok(ClientMessage::Reminder { session_id, event })
 }
 
 fn parse_mcp_message(value: &Value) -> Result<ClientMessage, ProtocolError> {
@@ -222,5 +280,28 @@ mod tool_status_feature_tests {
             panic!("hello")
         };
         assert!(parsed.features.tool_status);
+    }
+
+    #[test]
+    fn reminder_controls_require_a_current_session_and_typed_ack_fields() {
+        assert!(matches!(
+            parse_client_message(r#"{"type":"reminder","event":"sync_request","session_id":"s"}"#),
+            Ok(ClientMessage::Reminder { session_id, event: ReminderEvent::SyncRequest { .. } }) if session_id == "s"
+        ));
+        assert!(matches!(
+            parse_client_message(
+                r#"{"type":"reminder","event":"sync_ack","session_id":"s","snapshot_id":"snap","revision":2,"next_wake_at_ms":3}"#
+            ),
+            Ok(ClientMessage::Reminder {
+                event: ReminderEvent::SyncAck { revision: 2, .. },
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_client_message(
+                r#"{"type":"reminder","event":"sync_ack","snapshot_id":"snap","revision":2}"#
+            ),
+            Ok(ClientMessage::Unknown)
+        ));
     }
 }

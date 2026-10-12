@@ -84,3 +84,38 @@ async fn registry_capacity_and_timeout_are_not_accepted() {
         "actor must discard expired admission before starting speech"
     );
 }
+
+#[tokio::test]
+async fn reminder_snapshot_ack_is_fenced_to_current_session() {
+    let registry = ActiveDeviceSessions::default();
+    let (old_tx, mut old_rx) = mpsc::channel(4);
+    registry.register(
+        1,
+        "old".into(),
+        ClientFeatures {
+            reminders: true,
+            ..Default::default()
+        },
+        old_tx,
+        CancellationToken::new(),
+    );
+    registry.sync_required(1, 2);
+    assert!(matches!(
+        old_rx.recv().await,
+        Some(SessionEvent::ReminderControl { .. })
+    ));
+    assert!(registry.remember_snapshot(1, "old", "snap".into(), 2, vec!["one".into()]));
+    let (new_tx, _new_rx) = mpsc::channel(4);
+    registry.register(
+        1,
+        "new".into(),
+        ClientFeatures {
+            reminders: true,
+            ..Default::default()
+        },
+        new_tx,
+        CancellationToken::new(),
+    );
+    assert!(registry.acknowledge_snapshot(1, "old", "snap", 2).is_none());
+    assert!(registry.acknowledge_snapshot(1, "new", "snap", 2).is_none());
+}

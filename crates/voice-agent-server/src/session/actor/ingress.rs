@@ -172,6 +172,9 @@ impl SessionActor {
                             }
                         }
                     }
+                    Some(SessionEvent::ReminderControl { text }) => {
+                        let _ = self.send_control(text);
+                    }
                     Some(SessionEvent::ClientMessage(message)) => {
                         if self.speaker_security_revoked() {
                             self.begin_application_shutdown();
@@ -277,7 +280,7 @@ impl SessionActor {
                     self.on_mcp_message(payload);
                 }
             }
-            ClientMessage::Hello(_) | ClientMessage::Unknown => {}
+            ClientMessage::Hello(_) | ClientMessage::Reminder { .. } | ClientMessage::Unknown => {}
         }
     }
 

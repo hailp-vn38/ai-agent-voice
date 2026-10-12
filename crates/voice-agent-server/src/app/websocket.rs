@@ -378,6 +378,7 @@ pub(super) async fn handler(
                     assistant_connection,
                     system_mcp,
                     active_device_sessions: state.active_device_sessions.clone(),
+                    database: state.database.clone(),
                 },
                 SessionControl {
                     stopping,
@@ -531,6 +532,7 @@ fn valid_device_identity(value: &str) -> bool {
 
 struct SocketRuntimes {
     active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
+    database: Option<Arc<crate::database::Database>>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
     assistant_connection: Option<super::web_assistant_auth::Connection>,
     connect_started: Instant,
@@ -580,6 +582,7 @@ async fn handle_socket(
     control: SessionControl,
 ) {
     let active_device_sessions = runtimes.active_device_sessions;
+    let database = runtimes.database;
     let device_db_id = runtimes.profile.device_db_id;
     let physical_connection = runtimes.assistant_connection.is_none();
     let replacement_close = CancellationToken::new();
@@ -970,6 +973,15 @@ async fn handle_socket(
                 }
                 match parse_client_message(&text) {
                     Ok(message) => {
+                        if let ClientMessage::Reminder { session_id: inbound, event } = message {
+                            if hello.features.reminders && inbound == session_id {
+                                handle_reminder_message(
+                                    database.as_deref(), &active_device_sessions, device_db_id,
+                                    &session_id, event, &ingress_tx,
+                                ).await;
+                            }
+                            continue;
+                        }
                         if ingress_tx
                             .try_send(SessionEvent::ClientMessage(message))
                             .is_err()
@@ -1024,6 +1036,63 @@ async fn handle_socket(
     // is waiting observe that this connection is gone.
     drop(control.registration);
     info!("voice session disconnected");
+}
+
+async fn handle_reminder_message(
+    database: Option<&crate::database::Database>,
+    sessions: &crate::services::active_device_sessions::ActiveDeviceSessions,
+    device: i64,
+    session_id: &str,
+    event: crate::protocol::ReminderEvent,
+    ingress: &mpsc::Sender<SessionEvent>,
+) {
+    let Some(database) = database else { return };
+    let notifications = crate::database::notifications::DeviceNotifications::new(database.clone());
+    match event {
+        crate::protocol::ReminderEvent::SyncRequest { known_revision: _ } => {
+            let Ok(snapshot) = notifications.snapshot(device).await else {
+                return;
+            };
+            let snapshot_id = Uuid::new_v4().to_string();
+            let ids = snapshot.items.iter().map(|item| item.id.clone()).collect();
+            if !sessions.remember_snapshot(
+                device,
+                session_id,
+                snapshot_id.clone(),
+                snapshot.revision,
+                ids,
+            ) {
+                return;
+            }
+            let text = serde_json::json!({
+                "type":"reminder", "event":"sync", "session_id":session_id,
+                "snapshot_id":snapshot_id, "revision":snapshot.revision,
+                "server_time_ms":snapshot.server_time_ms, "items":snapshot.items,
+                "has_more":snapshot.has_more, "next_sync_at_ms":snapshot.server_time_ms + 60_000,
+            })
+            .to_string();
+            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
+        }
+        crate::protocol::ReminderEvent::SyncAck {
+            snapshot_id,
+            revision,
+            next_wake_at_ms,
+        } => {
+            let Some(snapshot) =
+                sessions.acknowledge_snapshot(device, session_id, &snapshot_id, revision)
+            else {
+                return;
+            };
+            let _ = notifications
+                .acknowledge_snapshot(
+                    device,
+                    snapshot.revision,
+                    &snapshot.item_ids,
+                    next_wake_at_ms,
+                )
+                .await;
+        }
+    }
 }
 
 fn vision_capability(config: &AppConfig) -> Option<crate::tools::device_mcp::VisionCapability> {

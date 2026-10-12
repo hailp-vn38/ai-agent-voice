@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: Thử Direct TTS trên Device từ Admin Web; 05: Sửa và hủy Reminder với CAS từ Admin Web.
 
-Status: ready-for-agent
+Status: claimed
 
 - [ ] Sau create/update/cancel commit gửi sync_required, coalesce giữ revision cao nhất; reconnect luôn sync_request, metadata/control không gửi client cũ.
 - [ ] Snapshot nhất quán tối đa 64 pending, sort due_at/id, snapshot ID/revision/server time/has_more/next sync; contracts cho terminal mutations dùng cùng publisher.
