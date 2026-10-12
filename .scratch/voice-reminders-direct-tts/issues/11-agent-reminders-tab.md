@@ -4,7 +4,7 @@
 
 **Blocked by:** 05: Sửa và hủy Reminder với CAS từ Admin Web.
 
-Status: claimed
+Status: resolved
 
 - [ ] Agent aggregate query join current Device assignment, không dùng Agent lúc tạo; reassignment chuyển view nhưng không chuyển/xóa Reminder owner.
 - [ ] Reminders tab có KPI dữ liệu thực, Device/status/time filters, pagination, create/edit/cancel và Device navigation tái dùng Device workflows.
@@ -20,4 +20,4 @@ GET `/api/admin/agents/{key}/reminders` exposes this query. Scoped Device CRUD/l
 
 Agent Detail now includes keyboard/ARIA Reminders tab with real KPI counts, Device/status/explicit-offset time filters, total/page navigation, Device detail links, paginated physical picker and shared `DeviceReminders` form/edit/cancel workflows. Shared component accepts optional Agent scope and fences both Device/Agent changes; mutations refresh aggregate data. Error/loading states and en/vi text are included. Sync status remains pending/unknown from current backend capability; enabled is never labeled WS-online and saved is never labeled played.
 
-Evidence: public HTTP test covers multi-Device filtering, stable page2, lifecycle KPI/status filtering, Virtual Device picker exclusion, invalid time range, authenticated routes, wrong-target create and reassignment race rejection; current Agent view moves while owner/reminder persists. Web full suite54 files/220 tests passed, focused3 suites/8 tests passed, typecheck/build passed. Mandatory fmt/clippy passed; full workspace gate runs before commit.
+Evidence: public HTTP test covers multi-Device filtering, stable page2, lifecycle KPI/status filtering, Virtual Device picker exclusion, invalid time range, authenticated routes, wrong-target create and reassignment race rejection; current Agent view moves while owner/reminder persists. Web full suite54 files/220 tests passed, focused3 suites/8 tests passed, typecheck/build passed. `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --workspace` passed using the isolated ticket build cache.
