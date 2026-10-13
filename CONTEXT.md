@@ -733,11 +733,11 @@ An identity of a normalized request used to distinguish a repeated submission fr
 _Avoid_: Job ID, prompt token
 
 **Plugin Package**:
-An immutable, versioned distribution of executable Python or Rust code, its declared runtime, instructions and operation schemas.
+An immutable, versioned bundle of executable plugin logic, runtime declaration, instructions and operation contracts, independent of installation availability.
 _Avoid_: MCP binding, installed status, Agent
 
 **Plugin Installation**:
-A deployment-owned, version-pinned package and executable image for one Plugin, with an Admin-controlled availability state. Installation alone does not make its operations eligible for Jobs.
+A deployment-owned, version-pinned package and runnable environment for one Plugin, with an Admin-controlled availability state. Installation alone does not make its operations eligible for Jobs.
 _Avoid_: Plugin Package, Job Step
 
 **Plugin Operation**:
