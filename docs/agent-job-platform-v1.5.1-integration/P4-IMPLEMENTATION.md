@@ -1,6 +1,6 @@
 # P4 source work and deployment qualification handoff
 
-The P4 ticket is `.scratch/agent-job-platform/issues/05-p4-deployment-qualification.md`. This source slice is an interim commit, not P4 acceptance. P1/P2 rootless gates and the P3 continuous Voice E2E gate also remain open on the target host.
+The P4 ticket is `.scratch/agent-job-platform/issues/05-p4-deployment-qualification.md`. Source code is implemented, but P4 acceptance is still open. P1/P2 rootless gates and the P3 continuous Voice E2E gate also remain open on the target host.
 
 ## Source changes
 
@@ -11,7 +11,10 @@ The P4 ticket is `.scratch/agent-job-platform/issues/05-p4-deployment-qualificat
 - Admin Plugin detail displays package/image digests and effective approved hosts. Approve/Uninstall use the shared confirmation dialog. Background displays scheduler readiness separately from the enabled switch.
 - The Vieneu HTTP reconnect test now switches an accepted socket back to blocking mode before its timed reads. On this macOS host, accepted sockets inherited the listener's nonblocking mode and caused a full-suite-only `WouldBlock` failure.
 
-Networked Plugin Activate/Run still returns `egress_policy_unavailable`. A host-enforced isolated-network/proxy/firewall implementation and its adversarial tests are required before enabling a crawler. Do not treat the declared `network_hosts` or a proxy environment variable as enforcement.
+- Networked Plugin attempts now create an owned internal worker bridge, an external proxy bridge, and a bounded per-attempt HTTPS CONNECT proxy sidecar. Only the sidecar joins both networks. The worker receives proxy variables; the proxy checks exact approved hosts, port 443, public DNS answers, and matching TLS SNI before forwarding. It pins the resolved numeric address for the connection, limits concurrent tunnels, bytes and lifetime, and rejects plain HTTP. The sidecar and bridges are removed after the worker, with startup owner-label reconciliation after a crash.
+- Activate/Test preflight provisions and removes this same topology. Networked activation also requires every approved host in `background.plugin_egress_qualified_hosts`; the default empty list fails closed with `egress_policy_unavailable`. Operators populate exact hosts only after target-host adversarial qualification. A missing local image ID or mismatched policy/base/source labels also fails closed. The image is built offline from the deployment's pinned Python 3.12 base using `scripts/build-agent-egress-proxy.sh`.
+
+This source implementation is not host enforcement evidence. The target Linux host must prove the internal bridge cannot reach the internet, host bridge gateway, metadata/private addresses, or other container networks except through the proxy. TLS CONNECT filtering checks SNI; shared-IP domain fronting or a server that serves another HTTP authority under the allowed SNI is a residual risk that the host qualification must investigate. Keep `plugin_egress_qualified_hosts` empty until rows 21 and 30 pass on the deployed engine for each exact host. If the intended crawler can reach an unapproved authority, keep it disabled and strengthen the proxy policy.
 
 ## Source gates
 
@@ -29,6 +32,8 @@ scripts/agent-test.sh full
 scripts/agent-test.sh web test
 scripts/agent-test.sh web typecheck
 scripts/agent-test.sh web build
+scripts/agent-test.sh run -- python3 -m unittest discover -s deploy/agent-egress-proxy -p 'test_*.py'
+scripts/agent-test.sh run -- bash -n scripts/build-agent-egress-proxy.sh
 ```
 
 ### Source evidence — 2026-10-13
@@ -48,6 +53,10 @@ scripts/agent-test.sh web build
 | Admin Web typecheck/build | PASS | `agent-test.web.iFgwlq`, `agent-test.web.WaTAPb` |
 
 After review, a 101-Job retention test and a 1,001-workspace cleanup test passed (`agent-test.targeted.DnQixI`, `agent-test.run.EkvTgs`). The final Background source gate passed 31 tests, 1 ignored (`agent-test.run.ltLxSu`); final format, strict Clippy and full workspace passed (`agent-test.run.ibbigA`, `agent-test.run.LGFXOM`, `agent-test.full.wk68j9`: 765 passed, 0 failed, 13 ignored). The first post-review full run (`agent-test.full.wcjyYa`) exposed test concurrency over a shared macOS temporary plugin directory; Linux-only startup cleanup and an isolated cleanup test fixed it. The failure log remains retained.
+
+The repo-owned proxy source unit suite passed (`agent-test.run.nvk9Ww`), shell syntax passed (`agent-test.run.1ZoR7l`), Rust package check passed (`agent-test.check.0WlaYu`), focused Plugin tests passed (5 passed, `agent-test.run.P05YdK`), Rust format passed (`agent-test.run.jlkCiH`), strict Clippy passed (`agent-test.run.dmqIa0`), and the full Rust workspace passed (`agent-test.full.P3xH5X`). These are source checks, not live Docker or egress evidence.
+
+After spec review, the empty-by-default qualification gate passed its targeted test (`agent-test.targeted.6Txl9O`: 1 passed). Strict Clippy and full workspace passed again (`agent-test.run.Q0Q4lo`, `agent-test.full.a7GBMC`). The review's two enforcement concerns remain explicit target-host acceptance criteria, not source PASS claims.
 
 The two earlier full-suite failure logs (`agent-test.full.4O3P2K` and `agent-test.full.ADuYWA`) are retained. Both exposed the inherited-nonblocking Vieneu test socket; the corrected full run passed. Ignored tests are not rootless or real LLM proof.
 
@@ -91,4 +100,4 @@ The following register covers all normative rows in the [canonical matrix](docs/
 | 30 | Allowlisted crawler with bypass denial | NOT_RUN | pending | pending |
 | 31 | Voice model without ToolCalls | NOT_RUN | pending | pending |
 
-For networked crawlers, first provision and verify an isolated worker network whose only external route is a controlled egress proxy/firewall. Test allowed host, denied host, direct proxy bypass, metadata/private/link-local/localhost addresses, HTTP redirects, CONNECT and DNS rebinding using actual worker containers. Until that proof and the source egress integration exist, leave networked plugins disabled; record acceptance rows 21 and 30 as NOT_RUN/FAIL, never PASS.
+For networked crawlers on the dedicated rootless Linux engine, first load the pinned `plugin_python_image`, then build the local sidecar with `scripts/agent-test.sh run -- scripts/build-agent-egress-proxy.sh 'python:3.12-slim@sha256:<digest>'`. Put the returned `sha256:<image-id>` in `background.plugin_egress_image`. Record the image ID, Python base digest, proxy source SHA, rootless socket and server revision. With the qualification list still empty, use a disposable worker attached to the same internal/proxy topology to test allowed host, denied host, direct proxy bypass, host bridge gateway, metadata/private/link-local/localhost addresses, HTTP redirects, CONNECT, DNS rebinding and shared-IP authority/domain-fronting. Stop/kill the worker and restart the server to verify labelled proxy/container/network cleanup. Only after those probes and the complete rows 21/30 pass, put the exact verified hosts in `background.plugin_egress_qualified_hosts`, then use Admin Test and Activate on the reviewed crawler package. A failed authority or bypass probe means the host stays unqualified and the proxy policy must be strengthened; record rows 21 and 30 as NOT_RUN/FAIL, never PASS.

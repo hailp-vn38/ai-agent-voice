@@ -38,4 +38,4 @@ Canonical design: [`docs/agent-job-plugin-platform-codebase-design.md`](docs/age
 
 ## Current P4 source scope
 
-[P4-IMPLEMENTATION.md](P4-IMPLEMENTATION.md) records bounded terminal/workspace cleanup, fail-stop plugin health, latency observations and Admin UI source changes. Networked crawler egress implementation and real Linux deployment qualification remain open; P4 is not complete.
+[P4-IMPLEMENTATION.md](P4-IMPLEMENTATION.md) records bounded terminal/workspace cleanup, fail-stop plugin health, latency observations, Admin UI changes, and a repo-owned per-attempt egress proxy sidecar. Real Linux rootless/egress qualification, including bypass and shared-IP authority tests, remains open; P4 is not complete.

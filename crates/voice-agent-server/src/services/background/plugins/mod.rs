@@ -2,6 +2,7 @@ mod archive;
 mod builder;
 mod contracts;
 mod dispatch;
+mod egress;
 #[allow(dead_code)]
 mod protocol;
 mod reaper;
@@ -386,10 +387,10 @@ impl PluginStore {
         {
             return Err(PluginError::PermissionRequired);
         }
-        if !manifest.permissions.network_hosts.is_empty() {
-            return Err(PluginError::EgressPolicyUnavailable);
-        }
         builder::preflight(&self.config).await?;
+        if !manifest.permissions.network_hosts.is_empty() {
+            egress::preflight(&self.config, &approval.network_hosts).await?;
+        }
         builder::verify_image(&self.config, &row.image_digest, &row.package_digest).await?;
         let package = self
             .root
@@ -460,10 +461,10 @@ impl PluginStore {
         {
             return Err(PluginError::PermissionRequired);
         }
-        if !manifest.permissions.network_hosts.is_empty() {
-            return Err(PluginError::EgressPolicyUnavailable);
-        }
         builder::preflight(&self.config).await?;
+        if !manifest.permissions.network_hosts.is_empty() {
+            egress::preflight(&self.config, &approval.network_hosts).await?;
+        }
         builder::verify_image(&self.config, &row.image_digest, &row.package_digest).await
     }
 
@@ -504,12 +505,11 @@ pub(crate) async fn frozen_choices(
         let manifest = row.manifest().map_err(|_| JobError::DatabaseUnavailable)?;
         let approval = row.approval().map_err(|_| JobError::DatabaseUnavailable)?;
         let Some(approval) = approval else { continue };
-        if !manifest.permissions.network_hosts.is_empty()
-            || manifest
-                .permissions
-                .network_hosts
-                .iter()
-                .any(|h| !approval.network_hosts.contains(h))
+        if manifest
+            .permissions
+            .network_hosts
+            .iter()
+            .any(|h| !approval.network_hosts.contains(h))
         {
             continue;
         }

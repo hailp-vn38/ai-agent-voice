@@ -9,6 +9,11 @@ pub struct BackgroundConfig {
     /// OCI digests supplied by deployment; mutable tags are rejected by preflight.
     pub plugin_python_image: Option<String>,
     pub plugin_uv_image: Option<String>,
+    /// Locally built, digest-pinned image from deploy/agent-egress-proxy/.
+    pub plugin_egress_image: Option<String>,
+    /// Exact hosts qualified by adversarial egress tests on this deployment.
+    #[serde(default)]
+    pub plugin_egress_qualified_hosts: Vec<String>,
     /// Dedicated rootless Engine socket, e.g. unix:///run/user/1001/docker.sock.
     pub plugin_docker_host: Option<String>,
     /// Directory of operator-provided ZIPs named <curated-id>.zip.
