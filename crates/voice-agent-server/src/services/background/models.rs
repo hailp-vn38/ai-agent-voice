@@ -175,13 +175,17 @@ impl ManagedModels {
         drop(connection);
         // The permit/lease remains owned by this call until completion.
         // An ambiguous remote failure retains the exact permit in quarantine.
-        let outcome = tokio::select! {
-            _=cancellation.cancelled()=>Err(JobError::Cancelled),
-            _=tokio::time::sleep_until(deadline)=>Err(JobError::DeadlineExceeded),
-            result=runtime.background_complete(request,schema)=>result.map_err(|_|JobError::ModelFailed),
+        let (outcome, unknown) = tokio::select! {
+            _=cancellation.cancelled()=>(Err(JobError::Cancelled),true),
+            _=tokio::time::sleep_until(deadline)=>(Err(JobError::DeadlineExceeded),true),
+            result=runtime.background_complete(request,schema)=>match result {
+                Ok(text)=>(Ok(text),false),
+                Err(crate::providers::LlmError::Rejected)=>(Err(JobError::ModelFailed),false),
+                Err(_)=>(Err(JobError::ModelFailed),true),
+            },
         };
         drop(publication);
-        if outcome.is_err() {
+        if outcome.is_err() && unknown {
             self.quarantine
                 .lock()
                 .expect("Background LLM quarantine")
