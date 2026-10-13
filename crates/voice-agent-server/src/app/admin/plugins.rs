@@ -1,5 +1,5 @@
 use super::*;
-use crate::services::background::plugins::{PermissionApproval, PluginError, PluginStore};
+use crate::services::background::plugins::{PluginError, PluginStore};
 use axum::extract::Multipart;
 
 pub(super) const MAX_UPLOAD_BODY: usize = 21 * 1024 * 1024;
@@ -112,31 +112,6 @@ pub(super) async fn install_curated(
     };
     match store.install_curated(&id).await {
         Ok(view) => (StatusCode::CREATED, Json(view)).into_response(),
-        Err(e) => failure(e),
-    }
-}
-pub(super) async fn permissions(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    request: Request,
-) -> Response {
-    let revision = match expected(request.headers()) {
-        Ok(v) => v,
-        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
-    };
-    let (request, input): (_, PermissionApproval) = match json(request).await {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let Some(store) = store(&state) else {
-        return error(
-            &request,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "sandbox_unavailable",
-        );
-    };
-    match store.approve(&id, revision, input).await {
-        Ok(view) => Json(view).into_response(),
         Err(e) => failure(e),
     }
 }
