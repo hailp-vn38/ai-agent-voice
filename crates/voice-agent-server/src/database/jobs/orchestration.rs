@@ -57,7 +57,7 @@ impl Database {
         let limit = if step.is_some() {
             snapshot.limits.max_worker_rounds
         } else {
-            1 + snapshot.limits.max_replans
+            (1 + snapshot.limits.max_replans) * (1 + snapshot.limits.max_plan_repairs)
         };
         if next > u64::from(limit) {
             return Err(JobError::CapacityUnavailable);
