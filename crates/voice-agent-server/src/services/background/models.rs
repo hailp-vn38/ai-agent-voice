@@ -28,10 +28,17 @@ pub(crate) trait JobModels: Send + Sync {
 
     /// Native output schema is used by Responses providers. Chat-only test adapters
     /// and providers retain the existing Rust validation semantics.
-    async fn complete_structured(&self, job_id: &str, pin: &ProviderPin, request: LlmRequest,
-        _schema: serde_json::Value, deadline_at: i64, cancellation: CancellationToken
+    async fn complete_structured(
+        &self,
+        job_id: &str,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        _schema: serde_json::Value,
+        deadline_at: i64,
+        cancellation: CancellationToken,
     ) -> Result<String, JobError> {
-        self.complete(job_id,pin,request,deadline_at,cancellation).await
+        self.complete(job_id, pin, request, deadline_at, cancellation)
+            .await
     }
 }
 
@@ -205,11 +212,34 @@ impl JobModels for ManagedModels {
             .map(|_| ())
     }
 
-    async fn complete(&self,job_id:&str,pin:&ProviderPin,request:LlmRequest,deadline_at:i64,cancellation:CancellationToken)->Result<String,JobError>{
-        self.complete_inner(job_id,pin,request,None,deadline_at,cancellation).await
+    async fn complete(
+        &self,
+        job_id: &str,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        deadline_at: i64,
+        cancellation: CancellationToken,
+    ) -> Result<String, JobError> {
+        self.complete_inner(job_id, pin, request, None, deadline_at, cancellation)
+            .await
     }
-    async fn complete_structured(&self,job_id:&str,pin:&ProviderPin,request:LlmRequest,
-        schema:serde_json::Value,deadline_at:i64,cancellation:CancellationToken)->Result<String,JobError>{
-        self.complete_inner(job_id,pin,request,Some(schema),deadline_at,cancellation).await
+    async fn complete_structured(
+        &self,
+        job_id: &str,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        schema: serde_json::Value,
+        deadline_at: i64,
+        cancellation: CancellationToken,
+    ) -> Result<String, JobError> {
+        self.complete_inner(
+            job_id,
+            pin,
+            request,
+            Some(schema),
+            deadline_at,
+            cancellation,
+        )
+        .await
     }
 }
