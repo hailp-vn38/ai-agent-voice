@@ -49,35 +49,34 @@ export interface PluginPage {
   total?: number
 }
 
-export type JobStatus = 'queued' | 'planning' | 'running' | 'cancelling' | 'succeeded' | 'partial' | 'failed' | 'cancelled'
+export type JobStatus = 'queued' | 'planning' | 'running' | 'cancelling' | 'succeeded' | 'partial_success' | 'failed' | 'cancelled'
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled'
 export interface JobStep {
   step_key: string
-  plugin_id: string
-  operation: string
+  plugin_id: string | null
+  operation: string | null
   status: StepStatus
-  required: boolean
   error_code?: string | null
-  artifact_ids?: string[]
+  attempt_state?: string | null
 }
 export interface JobArtifact {
   id: string
-  name: string
   media_type: string
-  size_bytes?: number
+  size_bytes: number
+  sha256: string
 }
 export interface AdminJob {
   id: string
   goal: string
   status: JobStatus
   created_at: string
-  updated_at?: string
-  requester_label?: string
-  steps?: JobStep[]
-  artifacts?: JobArtifact[]
-  result_summary?: string | null
+  requester_scope: string
+  plan_revision: number
+  retry_of_job_id: string | null
+  result: Record<string, unknown> | null
+  steps: JobStep[]
+  artifacts: JobArtifact[]
   error_code?: string | null
-  retry_of_job_id?: string | null
 }
 export interface JobPage {
   items: AdminJob[]

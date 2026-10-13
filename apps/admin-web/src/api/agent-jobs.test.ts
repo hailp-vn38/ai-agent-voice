@@ -58,15 +58,19 @@ describe('Agent Job admin clients', () => {
     expect(JSON.parse(String(init.body))).toEqual({ network_hosts: ['weibo.com'], scratch_storage: true })
   })
 
-  it('submits Admin-owned Jobs and retries through the new-Job endpoint', async () => {
+  it('submits Admin-owned Jobs', async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(json({ id: 'job-new', status: 'queued' })))
     vi.stubGlobal('fetch', fetch)
     await agentJobsApi.createJob('Collect public posts')
     const create = fetch.mock.calls[0]?.[1] as RequestInit
     expect(JSON.parse(String(create.body))).toEqual({ goal: 'Collect public posts', output_format: 'text', allow_partial: false })
-    await agentJobsApi.retryJob('job-old')
-    expect(fetch.mock.calls[1]?.[0]).toContain('/api/admin/jobs/job-old/retry')
-    const retry = fetch.mock.calls[1]?.[1] as RequestInit
-    expect(JSON.parse(String(retry.body))).toEqual({ confirm_safe_read_only: true })
+  })
+
+  it('downloads a Job artifact with the Admin request boundary', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response('fixture result', { status: 200, headers: { 'Content-Type': 'text/plain' } }))
+    vi.stubGlobal('fetch', fetch)
+    const artifact = await agentJobsApi.artifact('job 1', 'artifact/1')
+    expect(await artifact.text()).toBe('fixture result')
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs/job%201/artifacts/artifact%2F1')
   })
 })

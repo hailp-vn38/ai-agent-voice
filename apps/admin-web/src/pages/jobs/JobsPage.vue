@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, ArrowRight, ClipboardList, Clock3, FileText, Plus, RefreshCw, RotateCcw, Search, Square, Workflow } from '@lucide/vue'
+import { Activity, ArrowRight, ClipboardList, Clock3, FileText, Plus, RefreshCw, Search, Square, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
@@ -16,7 +16,7 @@ const search = ref('')
 const filter = ref('all')
 const page = ref(1)
 const hasMore = ref(false)
-const statusOptions: JobStatus[] = ['queued', 'planning', 'running', 'cancelling', 'succeeded', 'partial', 'failed', 'cancelled']
+const statusOptions: JobStatus[] = ['queued', 'planning', 'running', 'cancelling', 'succeeded', 'partial_success', 'failed', 'cancelled']
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -27,18 +27,19 @@ const detailOpen = ref(false)
 const createOpen = ref(false)
 const goal = ref('')
 let controller: AbortController | undefined
+let pollTimer: ReturnType<typeof setInterval> | undefined
 
 const activeCount = computed(() => jobs.value.filter((job) => ['queued', 'planning', 'running', 'cancelling'].includes(job.status)).length)
-const completedCount = computed(() => jobs.value.filter((job) => ['succeeded', 'partial'].includes(job.status)).length)
+const completedCount = computed(() => jobs.value.filter((job) => ['succeeded', 'partial_success'].includes(job.status)).length)
 const failedCount = computed(() => jobs.value.filter((job) => job.status === 'failed').length)
 
 function terminal(status: JobStatus) {
-  return ['succeeded', 'partial', 'failed', 'cancelled'].includes(status)
+  return ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
 }
 function tone(status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' {
   if (status === 'succeeded') return 'success'
   if (status === 'failed') return 'danger'
-  if (status === 'partial' || status === 'cancelled') return 'outline'
+  if (status === 'partial_success' || status === 'cancelled') return 'outline'
   return 'secondary'
 }
 function label(status: JobStatus) {
@@ -48,6 +49,25 @@ function date(value?: string) {
   if (!value) return '—'
   const stamp = new Date(value)
   return Number.isFinite(stamp.getTime()) ? stamp.toLocaleString() : value
+}
+function resultText(result: AdminJob['result']) {
+  if (!result) return ''
+  if (typeof result.summary === 'string') return result.summary
+  return JSON.stringify(result, null, 2)
+}
+async function downloadArtifact(jobId: string, artifactId: string) {
+  error.value = ''
+  try {
+    const blob = await agentJobsApi.artifact(jobId, artifactId)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = artifactId
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  }
 }
 async function load(nextPage = 1) {
   controller?.abort()
@@ -100,32 +120,37 @@ async function create() {
     busy.value = false
   }
 }
-async function action(kind: 'cancel' | 'retry') {
+async function cancel() {
   const item = detail.value
   if (!item || busy.value) return
-  if (kind === 'retry' && !window.confirm(t('jobUi.retryConfirm'))) return
   busy.value = true
   error.value = ''
   notice.value = ''
   try {
-    if (kind === 'retry') {
-      const newJob = await agentJobsApi.retryJob(item.id)
-      notice.value = t('jobUi.jobCreated')
-      await load()
-      detail.value = await agentJobsApi.job(newJob.id)
-    } else {
-      detail.value = await agentJobsApi.cancelJob(item.id)
-      notice.value = t('jobUi.cancelAccepted')
-      await load(page.value)
-    }
+    detail.value = await agentJobsApi.cancelJob(item.id)
+    notice.value = t('jobUi.cancelAccepted')
+    await load(page.value)
   } catch (cause) {
     error.value = formatApiError(cause)
   } finally {
     busy.value = false
   }
 }
-onMounted(() => { void load() })
-onBeforeUnmount(() => controller?.abort())
+onMounted(() => {
+  void load()
+  pollTimer = setInterval(async () => {
+    if (loading.value || busy.value) return
+    await load(page.value)
+    if (detailOpen.value && detail.value && !terminal(detail.value.status)) {
+      try { detail.value = await agentJobsApi.job(detail.value.id) }
+      catch (cause) { error.value = formatApiError(cause) }
+    }
+  }, 5000)
+})
+onBeforeUnmount(() => {
+  controller?.abort()
+  if (pollTimer) clearInterval(pollTimer)
+})
 </script>
 
 <template>
@@ -189,7 +214,7 @@ onBeforeUnmount(() => controller?.abort())
                 <button class="block w-full truncate text-left font-medium hover:text-studio-violet" type="button" @click="openDetail(job)">{{ job.goal }}</button>
                 <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ job.id }}</p>
               </td>
-              <td class="px-4 py-4 text-muted-foreground">{{ job.requester_label || '—' }}</td>
+              <td class="px-4 py-4 text-muted-foreground">{{ job.requester_scope }}</td>
               <td class="px-4 py-4"><Badge :variant="tone(job.status)">{{ label(job.status) }}</Badge></td>
               <td class="whitespace-nowrap px-4 py-4 text-xs text-muted-foreground">{{ date(job.created_at) }}</td>
               <td class="px-4 py-4 text-right"><Button variant="ghost" size="icon" :aria-label="t('jobUi.details')" @click="openDetail(job)"><ArrowRight class="size-4" /></Button></td>
@@ -226,12 +251,13 @@ onBeforeUnmount(() => controller?.abort())
         <div class="flex flex-wrap items-center gap-2">
           <Badge :variant="tone(detail.status)">{{ label(detail.status) }}</Badge>
           <span class="text-xs text-muted-foreground"><Clock3 class="mr-1 inline size-3.5" />{{ date(detail.created_at) }}</span>
-          <span v-if="detail.requester_label" class="text-xs text-muted-foreground">{{ detail.requester_label }}</span>
+          <span class="text-xs text-muted-foreground">{{ detail.requester_scope }}</span>
         </div>
         <div><h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('jobUi.goal') }}</h3><p class="mt-2 whitespace-pre-wrap">{{ detail.goal }}</p></div>
-        <div v-if="detail.result_summary" class="rounded-lg border bg-muted/25 p-3">
-          <h3 class="mb-2 font-semibold">{{ t('jobUi.result') }}</h3><p class="whitespace-pre-wrap">{{ detail.result_summary }}</p>
+        <div v-if="resultText(detail.result)" class="rounded-lg border bg-muted/25 p-3">
+          <h3 class="mb-2 font-semibold">{{ t('jobUi.result') }}</h3><p class="whitespace-pre-wrap">{{ resultText(detail.result) }}</p>
         </div>
+        <p v-if="detail.retry_of_job_id" class="break-all text-xs text-muted-foreground">{{ t('jobUi.retryJob') }}: {{ detail.retry_of_job_id }}</p>
         <div v-if="detail.error_code" class="rounded-lg border border-danger/25 p-3 text-danger">{{ detail.error_code }}</div>
         <section>
           <h3 class="mb-3 flex items-center gap-2 font-semibold"><Workflow class="size-4" />{{ t('jobUi.steps') }}</h3>
@@ -239,8 +265,8 @@ onBeforeUnmount(() => controller?.abort())
           <div v-for="step in detail.steps || []" :key="step.step_key" class="flex gap-3 border-t py-3">
             <div class="mt-1 size-2 shrink-0 rounded-full bg-studio-violet" />
             <div class="min-w-0 flex-1">
-              <p class="font-medium">{{ step.step_key }} · {{ step.plugin_id }} / {{ step.operation }}</p>
-              <p class="mt-1 text-xs text-muted-foreground">{{ step.status }}<span v-if="step.error_code"> · {{ step.error_code }}</span></p>
+              <p class="font-medium">{{ step.step_key }}<span v-if="step.plugin_id"> · {{ step.plugin_id }} / {{ step.operation }}</span></p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ step.status }}<span v-if="step.attempt_state"> · {{ step.attempt_state }}</span><span v-if="step.error_code"> · {{ step.error_code }}</span></p>
             </div>
           </div>
         </section>
@@ -248,15 +274,12 @@ onBeforeUnmount(() => controller?.abort())
           <h3 class="mb-2 flex items-center gap-2 font-semibold"><FileText class="size-4" />{{ t('jobUi.artifacts') }}</h3>
           <p v-if="!detail.artifacts?.length" class="text-muted-foreground">{{ t('jobUi.noArtifacts') }}</p>
           <div v-for="artifact in detail.artifacts || []" :key="artifact.id" class="flex justify-between gap-2 border-t py-2">
-            <span class="truncate">{{ artifact.name }}</span><span class="shrink-0 text-xs text-muted-foreground">{{ artifact.media_type }}</span>
+            <button class="truncate text-left text-studio-violet hover:underline" type="button" @click="downloadArtifact(detail.id, artifact.id)">{{ artifact.id }}</button><span class="shrink-0 text-xs text-muted-foreground">{{ artifact.media_type }} · {{ artifact.size_bytes }} B</span>
           </div>
         </section>
         <div class="flex justify-end gap-2 border-t pt-4">
-          <Button v-if="!terminal(detail.status) && detail.status !== 'cancelling'" variant="outline" :disabled="busy" @click="action('cancel')">
+          <Button v-if="!terminal(detail.status) && detail.status !== 'cancelling'" variant="outline" :disabled="busy" @click="cancel()">
             <Square class="size-4" />{{ t('jobUi.cancelJob') }}
-          </Button>
-          <Button v-if="['failed', 'partial', 'cancelled'].includes(detail.status)" :disabled="busy" @click="action('retry')">
-            <RotateCcw class="size-4" />{{ t('jobUi.retryJob') }}
           </Button>
         </div>
       </div>

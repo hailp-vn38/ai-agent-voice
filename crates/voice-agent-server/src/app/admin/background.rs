@@ -121,6 +121,50 @@ pub(super) async fn get(
         Err(e) => failure(&request, e),
     }
 }
+pub(super) async fn artifact(
+    State(state): State<AppState>,
+    Path((id, artifact_id)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let engine = match runtime(&state) {
+        Ok(engine) => engine,
+        Err(cause) => return failure(&request, cause),
+    };
+    let job = match engine.get(&id).await {
+        Ok(job) => job,
+        Err(cause) => return failure(&request, cause),
+    };
+    if !job
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.id == artifact_id)
+    {
+        return failure(&request, JobError::NotFound);
+    }
+    match engine.read_artifact(&id, &artifact_id).await {
+        Ok(bytes) => (
+            [
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/octet-stream"),
+                ),
+                (
+                    header::X_CONTENT_TYPE_OPTIONS,
+                    HeaderValue::from_static("nosniff"),
+                ),
+                (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+                (
+                    header::CONTENT_DISPOSITION,
+                    HeaderValue::from_str(&format!("attachment; filename=\"{artifact_id}\""))
+                        .expect("UUID header"),
+                ),
+            ],
+            Body::from(bytes),
+        )
+            .into_response(),
+        Err(cause) => failure(&request, cause),
+    }
+}
 pub(super) async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,

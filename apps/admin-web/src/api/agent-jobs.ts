@@ -1,4 +1,4 @@
-import { jsonRequest, requestJson, withQuery } from './client'
+import { jsonRequest, requestBlob, requestJson, withQuery } from './client'
 import type {
   AdminJob, BackgroundSettings, BackgroundSettingsUpdate, JobPage,
 } from './types/agent-jobs'
@@ -26,6 +26,9 @@ export const agentJobsApi = {
   job(id: string, signal?: AbortSignal) {
     return requestJson<AdminJob>(jobPath(id), {}, { signal })
   },
+  artifact(jobId: string, artifactId: string) {
+    return requestBlob(jobPath(jobId) + '/artifacts/' + encodeURIComponent(artifactId))
+  },
   createJob(goal: string) {
     return requestJson<AdminJob>(jobsPath, jsonRequest('POST', {
       goal, output_format: 'text', allow_partial: false,
@@ -33,11 +36,5 @@ export const agentJobsApi = {
   },
   cancelJob(id: string) {
     return requestJson<AdminJob>(jobPath(id) + '/cancel', jsonRequest('POST', {}))
-  },
-  /** Retry creates a new Job; it must not replay unsafe/unknown-outcome operations. */
-  retryJob(id: string) {
-    return requestJson<AdminJob>(jobPath(id) + '/retry', jsonRequest('POST', {
-      confirm_safe_read_only: true,
-    }))
   },
 }

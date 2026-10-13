@@ -27,6 +27,9 @@ pub(crate) struct JobRow {
     pub error_code: Option<String>,
     pub created_at: i64,
     pub scheduler_seen_at: Option<i64>,
+    pub plan_revision: i64,
+    pub retry_of_job_id: Option<String>,
+    pub result_json: Option<String>,
 }
 impl JobRow {
     pub(crate) fn requester(&self) -> Result<JobRequester, JobError> {
@@ -61,6 +64,12 @@ impl JobRow {
                 .to_rfc3339(),
             error_code: self.error_code,
             scheduler_seen_at: self.scheduler_seen_at,
+            plan_revision: self.plan_revision,
+            retry_of_job_id: self.retry_of_job_id,
+            result: self
+                .result_json
+                .map(|raw| serde_json::from_str(&raw).map_err(|_| JobError::DatabaseUnavailable))
+                .transpose()?,
             steps,
             artifacts,
         })

@@ -5,6 +5,92 @@ use crate::{
 };
 
 #[tokio::test]
+async fn admin_artifact_download_is_authenticated_and_scoped_to_job() {
+    use sha2::{Digest, Sha256};
+    let (db, config, runtime) = harness().await;
+    let job = runtime
+        .engine
+        .submit(
+            request("Download checked result"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap()
+        .job;
+    let artifact_id = uuid::Uuid::new_v4().to_string();
+    let bytes = b"fixture result";
+    let directory = super::super::artifacts::root(&db).unwrap().join(&job.id);
+    tokio::fs::create_dir_all(&directory).await.unwrap();
+    tokio::fs::write(directory.join(&artifact_id), bytes)
+        .await
+        .unwrap();
+    let sha: String = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    sqlx::query("INSERT INTO job_artifacts(id,job_id,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,0)")
+        .bind(&artifact_id).bind(&job.id).bind(format!("{}/{artifact_id}", job.id))
+        .bind("text/plain").bind(bytes.len() as i64).bind(sha)
+        .execute(db.pool()).await.unwrap();
+    sqlx::query("UPDATE jobs SET status='succeeded',result_json=?,plan_revision=1 WHERE id=?")
+        .bind(json!({"summary":"fixture result"}).to_string())
+        .bind(&job.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let mut state = AppState::from_provider_set_with_database(
+        (*config).clone(),
+        Arc::new(ProviderSet::unavailable()),
+        Some((*db).clone()),
+    );
+    state.background = Some(runtime.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin/jobs", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state))
+            .await
+            .unwrap()
+    });
+    let client = reqwest::Client::new();
+    let detail: Value = client
+        .get(format!("{base}/{}", job.id))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(detail["result"]["summary"], "fixture result");
+    assert_eq!(detail["plan_revision"], 1);
+    let url = format!("{base}/{}/artifacts/{artifact_id}", job.id);
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 401);
+    let response = client
+        .get(&url)
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(response.bytes().await.unwrap().as_ref(), bytes);
+    let other = uuid::Uuid::new_v4();
+    assert_eq!(
+        client
+            .get(format!("{base}/{other}/artifacts/{artifact_id}"))
+            .bearer_auth("background-test-token")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    server.abort();
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn plugin_upload_rejects_invalid_zip_at_admin_boundary() {
     let (db, config, runtime) = harness().await;
     let mut state = AppState::from_provider_set_with_database(

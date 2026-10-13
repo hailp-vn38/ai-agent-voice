@@ -128,6 +128,9 @@ pub struct JobView {
     pub created_at: String,
     pub error_code: Option<String>,
     pub scheduler_seen_at: Option<i64>,
+    pub plan_revision: i64,
+    pub retry_of_job_id: Option<String>,
+    pub result: Option<Value>,
     pub steps: Vec<JobStepView>,
     pub artifacts: Vec<JobArtifactView>,
 }
