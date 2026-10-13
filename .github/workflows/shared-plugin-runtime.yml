@@ -28,6 +28,16 @@ jobs:
       - name: Workspace formatting
         if: ${{ always() && !cancelled() }}
         run: cargo fmt --all --check
+      - name: Formatted Rust source handoff
+        if: ${{ always() && !cancelled() }}
+        run: |
+          rustfmt --edition 2024 --config skip_children=true crates/voice-agent-server/src/bin/plugin-runtime.rs crates/voice-agent-server/src/config/background.rs crates/voice-agent-server/src/services/background/plugins/archive.rs crates/voice-agent-server/src/services/background/plugins/builder.rs crates/voice-agent-server/src/services/background/plugins/contracts.rs crates/voice-agent-server/src/services/background/plugins/dispatch.rs crates/voice-agent-server/src/services/background/plugins/mod.rs crates/voice-agent-server/src/services/background/plugins/qualification.rs crates/voice-agent-server/src/services/background/plugins/reaper.rs crates/voice-agent-server/src/services/background/plugins/runner.rs crates/voice-agent-server/src/services/background/plugins/tests.rs crates/voice-agent-server/src/services/background/tests/execution.rs crates/voice-agent-server/src/database/jobs/execution.rs crates/voice-agent-server/src/database/jobs/orchestration.rs
+          for file in crates/voice-agent-server/src/bin/plugin-runtime.rs crates/voice-agent-server/src/config/background.rs crates/voice-agent-server/src/services/background/plugins/archive.rs crates/voice-agent-server/src/services/background/plugins/builder.rs crates/voice-agent-server/src/services/background/plugins/contracts.rs crates/voice-agent-server/src/services/background/plugins/dispatch.rs crates/voice-agent-server/src/services/background/plugins/mod.rs crates/voice-agent-server/src/services/background/plugins/qualification.rs crates/voice-agent-server/src/services/background/plugins/reaper.rs crates/voice-agent-server/src/services/background/plugins/runner.rs crates/voice-agent-server/src/services/background/plugins/tests.rs crates/voice-agent-server/src/services/background/tests/execution.rs crates/voice-agent-server/src/database/jobs/execution.rs crates/voice-agent-server/src/database/jobs/orchestration.rs; do
+            echo "__RUSTFMT_BEGIN__${file}"
+            base64 -w0 "${file}"
+            echo
+            echo "__RUSTFMT_END__${file}"
+          done
       - name: Python ZIP packaging contracts
         if: ${{ always() && !cancelled() }}
         run: python3 -m unittest discover -s scripts/tests -p test_rust_plugins.py
