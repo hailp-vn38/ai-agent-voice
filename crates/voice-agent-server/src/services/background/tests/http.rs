@@ -247,6 +247,29 @@ async fn admin_http_tracer_commits_queued_receipt_and_scheduler_observes_it() {
         response.json::<Value>().await.unwrap()["status"],
         "cancelled"
     );
+    let events_url = format!("{url}/{id}/events?after=0&limit=100");
+    assert_eq!(client.get(&events_url).send().await.unwrap().status(), 401);
+    let timeline: Value = client
+        .get(&events_url)
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(timeline["items"][0]["event_type"], "job_finished");
+    assert_eq!(timeline["items"][0]["payload"]["status"], "cancelled");
+    let no_more: Value = client
+        .get(format!("{url}/{id}/events?after=1"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(no_more["items"].as_array().unwrap().len(), 0);
     let response = client
         .post(format!("{url}/{id}/cancel"))
         .bearer_auth("background-test-token")

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Activity, ArrowRight, ClipboardList, Clock3, FileText, Plus, RefreshCw, RotateCcw, Search, Square, Workflow } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
-import type { AdminJob, JobStatus } from '@/api/types/agent-jobs'
+import type { AdminJob, JobEvent, JobStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
@@ -25,6 +25,12 @@ const notice = ref('')
 const backendPending = ref(false)
 const detail = ref<AdminJob | null>(null)
 const detailOpen = ref(false)
+const jobEvents = ref<JobEvent[]>([])
+const eventsError = ref('')
+const planningEvents = computed(() => jobEvents.value.filter(event => event.event_type.startsWith('plan_')))
+const executionEvents = computed(() => jobEvents.value.filter(event => !event.event_type.startsWith('plan_')))
+let eventCursor = 0
+let eventJobId = ''
 const createOpen = ref(false)
 const retryOpen = ref(false)
 const goal = ref('')
@@ -99,19 +105,50 @@ async function load(nextPage = 1) {
     if (controller === pending) loading.value = false
   }
 }
-async function openDetail(item: AdminJob) {
-  detail.value = item
-  detailOpen.value = true
+async function refreshEvents(id: string, signal: AbortSignal) {
+  eventsError.value = ''
   try {
-    detailController?.abort()
-    const pending = new AbortController()
-    detailController = pending
-    const loaded = await agentJobsApi.job(item.id, pending.signal)
-    if (!pending.signal.aborted && detail.value?.id === item.id) detail.value = loaded
+    // Cursor pagination: drain remaining records, including the terminal event.
+    for (let page = 0; page < 8; page += 1) {
+      const response = await agentJobsApi.events(id, eventCursor, signal)
+      if (signal.aborted || eventJobId !== id || !detailOpen.value) return
+      jobEvents.value.push(...response.items.filter(event => event.sequence > eventCursor))
+      if (response.items.length) eventCursor = response.items[response.items.length - 1]!.sequence
+      if (response.items.length < 100) break
+    }
   } catch (cause) {
-    error.value = formatApiError(cause)
+    if (!signal.aborted) eventsError.value = formatApiError(cause)
   }
 }
+async function openDetail(item: AdminJob) {
+  if (eventJobId !== item.id) {
+    eventJobId = item.id
+    eventCursor = 0
+    jobEvents.value = []
+  }
+  detail.value = item
+  detailOpen.value = true
+  detailController?.abort()
+  const pending = new AbortController()
+  detailController = pending
+  try {
+    const loaded = await agentJobsApi.job(item.id, pending.signal)
+    if (!pending.signal.aborted && detail.value?.id === item.id) {
+      detail.value = loaded
+      await refreshEvents(item.id, pending.signal)
+    }
+  } catch (cause) {
+    if (!pending.signal.aborted) error.value = formatApiError(cause)
+  }
+}
+watch(detailOpen, open => {
+  if (!open) {
+    detailController?.abort()
+    jobEvents.value = []
+    eventCursor = 0
+    eventJobId = ''
+  }
+})
 async function create() {
   if (goal.value.trim().length < 5 || busy.value) return
   busy.value = true
@@ -287,6 +324,27 @@ onBeforeUnmount(() => {
         </div>
         <p v-if="detail.retry_of_job_id" class="break-all text-xs text-muted-foreground">{{ t('jobUi.retryJob') }}: {{ detail.retry_of_job_id }}</p>
         <div v-if="detail.error_code" class="rounded-lg border border-danger/25 p-3 text-danger">{{ detail.error_code }}</div>
+        <section v-if="jobEvents.length || eventsError" class="space-y-3 rounded-lg border p-3">
+          <h3 class="font-semibold">Job execution timeline</h3>
+          <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>
+          <div v-if="planningEvents.length" class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Planning attempts</p>
+            <div v-for="event in planningEvents" :key="event.sequence" class="border-l-2 border-studio-violet pl-3 text-xs">
+              <p class="font-medium">{{ event.event_type }} · #{{ event.sequence }}</p>
+              <p class="text-muted-foreground">{{ date(event.created_at) }} · {{ event.payload.code || event.payload.phase || '' }}</p>
+              <p v-if="event.payload.path" class="break-all text-muted-foreground">{{ event.payload.path }}</p>
+              <p v-if="event.payload.message" class="whitespace-pre-wrap text-danger">{{ event.payload.message }}</p>
+            </div>
+          </div>
+          <div v-if="executionEvents.length" class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Execution</p>
+            <div v-for="event in executionEvents" :key="event.sequence" class="border-l-2 border-muted-foreground/40 pl-3 text-xs">
+              <p class="font-medium">{{ event.event_type }}<span v-if="event.step_key"> · {{ event.step_key }}</span></p>
+              <p class="text-muted-foreground">{{ date(event.created_at) }} · {{ event.payload.status || event.payload.attempt_state || '' }}</p>
+              <p v-if="event.payload.error_code" class="text-danger">{{ event.payload.error_code }}</p>
+            </div>
+          </div>
+        </section>
         <section>
           <h3 class="mb-3 flex items-center gap-2 font-semibold"><Workflow class="size-4" />{{ t('jobUi.steps') }}</h3>
           <p v-if="!detail.steps?.length" class="text-muted-foreground">{{ t('jobUi.noSteps') }}</p>

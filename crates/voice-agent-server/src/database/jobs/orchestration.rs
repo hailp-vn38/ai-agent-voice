@@ -57,7 +57,7 @@ impl Database {
         let limit = if step.is_some() {
             snapshot.limits.max_worker_rounds
         } else {
-            1 + snapshot.limits.max_replans
+            (1 + snapshot.limits.max_replans) * (1 + snapshot.limits.max_plan_repairs)
         };
         if next > u64::from(limit) {
             return Err(JobError::CapacityUnavailable);
@@ -70,6 +70,11 @@ impl Database {
         .bind(id)
         .execute(&mut *tx)
         .await?;
+        if step.is_none() {
+            events::append(&mut tx,id,"plan_attempt",None,&json!({
+                "attempt":next,"phase":if job.plan_revision == 0 {"initial_or_repair"}else{"replan_or_repair"}
+            })).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -127,6 +132,7 @@ impl Database {
                 }
             }
         }
+        let step_count = plan.steps.len();
         for step in plan.steps {
             if previous.is_some_and(|previous| {
                 previous
@@ -152,10 +158,21 @@ impl Database {
         if changed.rows_affected() != 1 {
             return Err(JobError::Terminal);
         }
+        events::append(&mut tx,id,"plan_accepted",None,&json!({"plan_revision":revision,"step_count":step_count})).await?;
         tx.commit().await?;
         Ok(())
     }
 
+    pub(crate) async fn skip_dependency_step(&self,id:&str,step:&str)->Result<(),JobError>{
+        let mut tx=self.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let now=crate::services::background::engine::now()?;
+        let updated=sqlx::query("UPDATE job_steps SET status='skipped',error_code='dependency_failed',updated_at=? WHERE job_id=? AND step_key=? AND status='pending'")
+            .bind(now).bind(id).bind(step).execute(&mut *tx).await?;
+        if updated.rows_affected()!=1 {return Err(JobError::Terminal);}
+        events::append(&mut tx,id,"step_finished",Some(step),&json!({"status":"skipped","error_code":"dependency_failed"})).await?;
+        tx.commit().await?;
+        Ok(())
+    }
     pub(crate) async fn checkpoint_llm_step(
         &self,
         id: &str,
@@ -168,18 +185,26 @@ impl Database {
             Ok(value) => ("succeeded", Some(encode(value)?), None),
             Err(error) => ("failed", None, Some(error.code())),
         };
+        let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let updated = sqlx::query("UPDATE job_steps SET status=?,result_json=?,error_code=?,attempt_state='finished',finished_at=?,updated_at=? WHERE job_id=? AND step_key=? AND attempt_id=? AND status='running' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='running' AND deadline_at>?)")
-            .bind(status).bind(result).bind(error).bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id).bind(now).execute(self.pool()).await?;
+            .bind(status).bind(result).bind(error).bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id).bind(now).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
-            let row = self.job_row(id).await?;
-            if row.deadline_at <= now {
+            // Stay on the same connection while BEGIN IMMEDIATE is held.
+            let (deadline_at, current_status): (i64, String) =
+                sqlx::query_as("SELECT deadline_at,status FROM jobs WHERE id=?")
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if deadline_at <= now {
                 return Err(JobError::DeadlineExceeded);
             }
-            if row.status == "cancelling" {
+            if current_status == "cancelling" {
                 return Err(JobError::Cancelled);
             }
             return Err(JobError::Terminal);
         }
+        events::append(&mut tx,id,"step_finished",Some(step),&json!({"status":status,"error_code":error})).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -269,6 +294,7 @@ impl Database {
             .bind(error.unwrap_or("dependency_failed")).bind(now).bind(now).bind(id).execute(&mut *tx).await?;
         sqlx::query("UPDATE jobs SET status=?,error_code=?,result_json=?,updated_at=? WHERE id=? AND status IN ('planning','running','cancelling')")
             .bind(status).bind(error).bind(result.map(encode).transpose()?).bind(now).bind(id).execute(&mut *tx).await?;
+        events::append(&mut tx,id,"job_finished",None,&json!({"status":status,"error_code":error})).await?;
         tx.commit().await?;
         Ok(())
     }

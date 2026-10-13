@@ -62,6 +62,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/jobs", get(background::list).post(background::create))
         .route("/jobs/{id}", get(background::get))
+        .route("/jobs/{id}/events", get(background::events))
         .route(
             "/jobs/{id}/artifacts/{artifact_id}",
             get(background::artifact),

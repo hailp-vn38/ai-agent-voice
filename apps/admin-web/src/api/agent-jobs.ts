@@ -1,6 +1,6 @@
 import { jsonRequest, requestBlob, requestJson, withQuery } from './client'
 import type {
-  AdminJob, BackgroundSettings, BackgroundSettingsUpdate, JobPage,
+  AdminJob, BackgroundSettings, BackgroundSettingsUpdate, JobEventPage, JobPage,
 } from './types/agent-jobs'
 
 const backgroundPath = '/api/admin/background/settings'
@@ -25,6 +25,9 @@ export const agentJobsApi = {
   },
   job(id: string, signal?: AbortSignal) {
     return requestJson<AdminJob>(jobPath(id), {}, { signal })
+  },
+  events(id: string, after = 0, signal?: AbortSignal) {
+    return requestJson<JobEventPage>(withQuery(jobPath(id) + '/events', { after, limit: 100 }), {}, { signal })
   },
   artifact(jobId: string, artifactId: string) {
     return requestBlob(jobPath(jobId) + '/artifacts/' + encodeURIComponent(artifactId))

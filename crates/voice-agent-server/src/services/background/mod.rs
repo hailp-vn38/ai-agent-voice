@@ -8,6 +8,7 @@ mod execution;
 pub(crate) mod model;
 mod models;
 mod orchestration;
+mod proposal;
 pub(crate) mod plan;
 pub mod plugins;
 pub(crate) mod providers;

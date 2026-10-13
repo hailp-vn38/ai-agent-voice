@@ -68,3 +68,25 @@ _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát
 ## Background Jobs and Executable Plugins
 
 Thuật ngữ của miền Job được định nghĩa tại [CONTEXT.md](CONTEXT.md#background-jobs-and-executable-plugins). Job độc lập với Reminder và Conversational Turn.
+
+## Agent Job Planning
+
+**Plan Proposal**:
+Ý định gồm các bước công việc mà Orchestrator đề xuất; chưa có quyền thực thi và có thể bị từ chối hoặc yêu cầu sửa.
+_Avoid_: executable plan, worker command
+
+**Executable Plan**:
+Kế hoạch được Rust xác thực và chấp nhận để điều phối; dựa trên các lựa chọn năng lực đã đóng băng của Job.
+_Avoid_: LLM response, proposal
+
+**Plan Repair**:
+Lượt sửa một Plan Proposal chưa được chấp nhận, trước khi bất kỳ bước mới nào được thực thi.
+_Avoid_: execution retry, replan
+
+**Replan**:
+Đề xuất bổ sung công việc sau khi đã có kết quả thực thi, chỉ được thêm bước mới mà không sửa các bước đã công bố.
+_Avoid_: plan repair, replay
+
+**Job Event**:
+Dấu mốc trạng thái được ghi bền vững, dành cho việc quan sát Job; không phải lệnh thực thi hoặc quyết định cấp quyền.
+_Avoid_: Tool Execution Status, authority
