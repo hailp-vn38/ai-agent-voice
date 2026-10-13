@@ -61,6 +61,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             get(background::settings).put(background::save_settings),
         )
         .route("/jobs", get(background::list).post(background::create))
+        .route("/jobs/stream", get(background::stream))
         .route("/jobs/{id}", get(background::get))
         .route("/jobs/{id}/events", get(background::events))
         .route(
