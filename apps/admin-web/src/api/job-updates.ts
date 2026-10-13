@@ -76,7 +76,10 @@ export async function listenJobChanges(callbacks: JobChangeCallbacks, signal: Ab
         cache: 'no-store',
         signal,
       })
-      if (response.status === 401 || response.status === 403) return
+      if (response.status === 401 || response.status === 403) {
+        callbacks.onResync()
+        return
+      }
       if (!response.ok || !response.body ||
         !response.headers.get('content-type')?.startsWith('text/event-stream')) {
         throw new Error('job_sse_unavailable')
