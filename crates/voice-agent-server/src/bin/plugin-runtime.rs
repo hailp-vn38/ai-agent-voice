@@ -179,7 +179,7 @@ async fn execute(request: &Value, state: &State) -> Result<Value> {
     let state=state.clone();
     tokio::spawn(async move {
         let _slot=slot;
-        let output = async {
+        let output = tokio::time::timeout(Duration::from_secs(300), async {
             let mut out=Vec::new();let mut err=Vec::new();
             let mut stdout=stdout.take(STDOUT_LIMIT+1);
             let mut stderr=stderr.take(STDERR_LIMIT+1);
@@ -188,7 +188,7 @@ async fn execute(request: &Value, state: &State) -> Result<Value> {
             let exit=c?;
             if out.len() as u64>STDOUT_LIMIT || err.len() as u64>STDERR_LIMIT { bail!("output limit exceeded"); }
             Ok::<Value,anyhow::Error>(json!({"state":"terminal","ok":exit.success(),"stdout":String::from_utf8(out)?,"stderr":String::from_utf8_lossy(&err),"exit_code":exit.code()}))
-        }.await;
+        }).await.unwrap_or_else(|_| Err(anyhow::anyhow!("process runtime timeout")));
         // Even a successful plugin can leave descendants behind; an Attempt
         // owns its whole process group, not just its original parent.
         signal_group(pgid);
