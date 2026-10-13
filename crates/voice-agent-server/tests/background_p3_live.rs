@@ -58,19 +58,6 @@ async fn live_voice_to_python_worker_and_admin_artifact() {
     )
     .await;
     assert_eq!(installed["digest"], package_digest);
-    let approved = checked(
-        client
-            .put(format!(
-                "{base}/api/admin/plugins/fixture-research/permissions"
-            ))
-            .bearer_auth(&token)
-            .header(
-                "If-Match",
-                format!("\"{}\"", installed["revision"].as_i64().unwrap()),
-            )
-            .json(&json!({"network_hosts":[],"scratch_storage":false})),
-    )
-    .await;
     let active = checked(
         client
             .post(format!(
@@ -79,7 +66,7 @@ async fn live_voice_to_python_worker_and_admin_artifact() {
             .bearer_auth(&token)
             .header(
                 "If-Match",
-                format!("\"{}\"", approved["revision"].as_i64().unwrap()),
+                format!("\"{}\"", installed["revision"].as_i64().unwrap()),
             )
             .json(&json!({})),
     )
