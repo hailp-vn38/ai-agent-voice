@@ -122,5 +122,5 @@ Output: exactly one newline-terminated JSON object
 - Store's Test endpoint currently verifies sandbox/image but does
   not invoke every plugin operation. Run unit and representative integration
   tests before activating in production.
-- Real Job workers use Docker's default network without a server-controlled egress proxy or host allowlist. Web Extractor still validates input URLs locally and does not follow redirects.
+- Real Job workers use Docker's default network without a server-controlled egress proxy or host allowlist. Web Extractor accepts HTTP(S) URLs without destination host/port filtering and does not follow redirects.
 - Network access depends on the Docker/host environment; plugins can attempt connections to reachable internal services. Install only trusted packages.
