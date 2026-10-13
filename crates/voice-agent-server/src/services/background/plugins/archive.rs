@@ -376,7 +376,7 @@ mod tests {
             writer.write_all(&std::fs::read(root.join(name)).unwrap()).unwrap();
         }
         let mut elf = vec![0u8; 64];
-        elf[..4].copy_from_slice(b"\\x7fELF");
+        elf[..4].copy_from_slice(b"\x7fELF");
         elf[4] = 2;
         elf[5] = 1;
         elf[16] = 2;
@@ -406,10 +406,10 @@ mod tests {
         let source = rust_fixture_zip();
         if source.is_empty() { return; }
         for (needle,replacement) in [
-            ("entrypoint = \\"bin/plugin\\"", "entrypoint = \\"other\\""),
-            ("kind = \\"rust\\"", "kind = \\"rust_container\\""),
-            ("protocol = \\"jsonl-v1\\"", "protocol = \\"jsonl-v2\\""),
-            ("protocol = \\"jsonl-v1\\"", "python = \\"3.12\\"\\nprotocol = \\"jsonl-v1\\""),
+            ("entrypoint = \"bin/plugin\"", "entrypoint = \"other\""),
+            ("kind = \"rust\"", "kind = \"rust_container\""),
+            ("protocol = \"jsonl-v1\"", "protocol = \"jsonl-v2\""),
+            ("protocol = \"jsonl-v1\"", "python = \"3.12\"\nprotocol = \"jsonl-v1\""),
         ] {
             let mut archive=ZipArchive::new(Cursor::new(&source)).unwrap();
             let mut writer=ZipWriter::new(Cursor::new(Vec::new()));
