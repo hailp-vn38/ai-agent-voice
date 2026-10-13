@@ -14,13 +14,13 @@ The Agent Job executable Plugin Store accepts Python packages through a validate
 - Rust packages contain a locked, non-workspace Cargo binary project. Cargo compiles with `--release --locked --offline` inside the restricted **build** environment; absent pre-cached dependencies cause install failure rather than network fallback.
 - Deployment pins an offline Rust builder and a runtime OCI base by repository digest. The server generates a two-stage Dockerfile and verifies package/OCI labels and architecture at activation and dispatch.
 - Both runtimes use `PluginStore::invoke`, the current rootless `runner::Prepared`, `jsonl-v1`, Step authority, cancellation, attempt history and Artifact Store. No new table, Admin route, Web page or Worker protocol is introduced.
-- Build-time package code is not trusted. No host credentials, Docker socket, unrestricted network or host interpreter access in either build or run stage.
+- Build-time package code is not trusted. No host credentials, Docker socket or host interpreter access in either build or run stage. Runtime outbound networking is governed by ADR 0101; builds remain offline.
 
 ## Alternatives and consequences
 
 In-process Rust dynamic libraries were rejected because plugin failure and privileges would leak into the Voice process. A second Rust-specific container runner was rejected because it would duplicate authorization, lifecycle, cancellation and artifact invariants. A general multi-language plugin framework was deferred because two build paths behind the existing interface suffice.
 
-Rust plugins require a compatible pinned Linux builder/runtime pair and an operator-managed offline Cargo cache. Build failure is explicit; a successful source build alone does not certify end-to-end rootless deployment, Voice or egress qualification. Python installation and running Jobs keep their original package/image pins.
+Rust plugins require a compatible pinned Linux builder/runtime pair and an operator-managed offline Cargo cache. Build failure is explicit; a successful source build alone does not certify end-to-end rootless deployment, Voice or deployment network qualification. Python installation and running Jobs keep their original package/image pins.
 
 ## References
 
