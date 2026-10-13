@@ -34,7 +34,11 @@ pub struct OpenCodeFreeConfig {
     pub model: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    /// Explicit capability for the selected free model; default preserves Chat.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_responses: bool,
 }
+fn is_false(value: &bool) -> bool { !*value }
 
 pub(crate) fn valid_free_chat_model_id(model: &str) -> bool {
     model.len() <= 256
@@ -53,6 +57,7 @@ impl OpenCodeFreeConfig {
 pub(crate) struct OpenCodeFreeProvider {
     model: String,
     timeout_seconds: u64,
+    supports_responses: bool,
 }
 
 impl OpenCodeFreeProvider {
@@ -63,6 +68,7 @@ impl OpenCodeFreeProvider {
         Ok(Self {
             model: config.model.clone(),
             timeout_seconds: config.timeout_ms.div_ceil(1_000),
+            supports_responses: config.supports_responses,
         })
     }
 }
@@ -74,6 +80,22 @@ impl LlmProvider for OpenCodeFreeProvider {
     }
     fn adapter(&self) -> &'static str {
         "opencode_free"
+    }
+
+    async fn background_complete(
+        &self,
+        request: LlmRequest,
+        schema: Option<serde_json::Value>,
+    ) -> Result<String, LlmError> {
+        if self.supports_responses {
+            // Only opted-in free models use Zen Responses. The public credential
+            // may be rejected upstream; never silently fall back to Chat.
+            super::openai::responses::complete_with(
+                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds, request, schema,
+            ).await
+        } else {
+            super::complete_background_chat(self.stream(request).await?).await
+        }
     }
 
     async fn stream(&self, mut request: LlmRequest) -> Result<LlmEventStream, LlmError> {
@@ -170,6 +192,11 @@ fn reject_placeholder_call(
 
 const FIELDS: &[ProviderConfigField] = &[
     field(
+        "supports_responses",
+        "Supports Responses (Agent Job only)",
+        ConfigFieldType::Boolean, false, None, None, None, None,
+    ),
+    field(
         "model",
         "Free model",
         ConfigFieldType::String,
@@ -195,7 +222,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     adapter: "opencode_free",
     provider_type: ProviderType::Llm,
     display_name: "OpenCode Free",
-    description: "OpenCode Zen free Chat Completions models; no personal API key required.",
+    description: "OpenCode Zen free models. Agent Job may opt into Responses per supported model; Voice uses Chat Completions.",
     config_schema: ProviderConfigSchema { fields: FIELDS },
     capabilities: ProviderCapabilities {
         models: None,
