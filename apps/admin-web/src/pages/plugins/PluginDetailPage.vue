@@ -31,6 +31,12 @@ const statusVariant = (status: PluginStatus): 'success' | 'danger' | 'secondary'
   status === 'ready' ? 'success' : status === 'error' ? 'danger' : 'secondary'
 const statusLabel = (status: PluginStatus) =>
   t(('jobUi.pluginStatus.' + status) as 'jobUi.pluginStatus.ready')
+const tabs = computed(() => [
+  { key: 'overview' as DetailTab, label: t('jobUi.detailOverview') },
+  { key: 'code' as DetailTab, label: t('jobUi.detailCode') },
+  { key: 'permissions' as DetailTab, label: t('jobUi.declaredPermissions') },
+  { key: 'logs' as DetailTab, label: t('jobUi.detailLogs') },
+])
 const permissionsApproved = computed(() => {
   const item = plugin.value
   if (!item) return false
@@ -137,12 +143,7 @@ onBeforeUnmount(() => controller?.abort())
       <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div class="min-w-0 space-y-4">
           <div role="tablist" :aria-label="t('jobUi.pluginDetailTabs')" class="flex flex-wrap gap-1 border-b">
-            <button v-for="item in ([
-              { key: 'overview', label: t('jobUi.detailOverview') },
-              { key: 'code', label: t('jobUi.detailCode') },
-              { key: 'permissions', label: t('jobUi.declaredPermissions') },
-              { key: 'logs', label: t('jobUi.detailLogs') },
-            ] as const)" :key="item.key" type="button" role="tab" :aria-selected="tab === item.key"
+            <button v-for="item in tabs" :key="item.key" type="button" role="tab" :aria-selected="tab === item.key"
               class="border-b-2 px-4 py-3 text-sm font-medium" :class="tab === item.key ? 'border-studio-violet text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'"
               @click="tab = item.key">{{ item.label }}</button>
           </div>
