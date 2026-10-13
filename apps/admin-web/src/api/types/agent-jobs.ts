@@ -95,3 +95,15 @@ export interface JobPage {
   page_size: number
   total?: number
 }
+
+export type JobEventType = 'plan_attempt' | 'plan_rejected' | 'plan_accepted' | 'step_started' | 'step_finished' | 'job_finished'
+export interface JobEvent {
+  sequence: number
+  event_type: JobEventType
+  created_at: string
+  step_key: string | null
+  payload: Record<string, unknown>
+}
+export interface JobEventPage {
+  items: JobEvent[]
+}
