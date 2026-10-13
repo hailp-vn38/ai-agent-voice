@@ -154,7 +154,7 @@ async fn run_case(
     }))?;
     ensure!(request.len() <= 65535, "case exceeds Job request limit");
     let request = [request.as_slice(), b"\n"].concat();
-    let prepared = runner::Prepared::create(config, image, &workspace, &job, &attempt, None)
+    let prepared = runner::Prepared::create(config, image, &workspace, &job, &attempt)
         .await
         .map_err(error)?;
     let outcome = prepared.execute(
