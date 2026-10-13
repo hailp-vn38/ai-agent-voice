@@ -145,7 +145,11 @@ impl Installation {
             revision: self.revision,
             runtime: RuntimeView {
                 kind: "isolated_worker",
-                language: "python",
+                language: if manifest.runtime.kind == "rust_container" {
+                    "rust"
+                } else {
+                    "python"
+                },
             },
             operations: manifest
                 .operations
@@ -295,7 +299,7 @@ impl PluginStore {
                 .await
                 .map_err(|_| PluginError::StorageUnavailable)?;
         }
-        let image = builder::build(&self.config, stage, &package.digest).await?;
+        let image = builder::build(&self.config, stage, &package.digest, &package.manifest.runtime).await?;
         tokio::fs::write(stage.join("package.zip"), &package.source_zip)
             .await
             .map_err(|_| PluginError::StorageUnavailable)?;
@@ -393,7 +397,7 @@ impl PluginStore {
         if !manifest.permissions.network_hosts.is_empty() {
             egress::preflight(&self.config, &approval.network_hosts).await?;
         }
-        builder::verify_image(&self.config, &row.image_digest, &row.package_digest).await?;
+        builder::verify_image(&self.config, &row.image_digest, &row.package_digest, &manifest.runtime).await?;
         let package = self
             .root
             .join("packages")
@@ -467,7 +471,7 @@ impl PluginStore {
         if !manifest.permissions.network_hosts.is_empty() {
             egress::preflight(&self.config, &approval.network_hosts).await?;
         }
-        builder::verify_image(&self.config, &row.image_digest, &row.package_digest).await
+        builder::verify_image(&self.config, &row.image_digest, &row.package_digest, &manifest.runtime).await
     }
 
     /// Package-attributable failures stop later dispatches even when the Job

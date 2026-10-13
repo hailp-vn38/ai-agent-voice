@@ -33,7 +33,8 @@ pub struct PluginIdentity {
 #[serde(deny_unknown_fields)]
 pub struct Runtime {
     pub kind: String,
-    pub python: String,
+    #[serde(default)]
+    pub python: Option<String>,
     pub entrypoint: String,
     pub protocol: String,
 }
@@ -158,24 +159,24 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
             .map_err(|_| PluginError::InvalidPackage)?,
     )
     .map_err(|_| PluginError::InvalidPackage)?;
+    let is_python = manifest.runtime.kind == "python_container";
+    let is_rust = manifest.runtime.kind == "rust_container";
     if manifest.manifest_version != 1
         || !token(&manifest.plugin.id, 64)
         || !token(&manifest.plugin.version, 64)
         || manifest.plugin.name.is_empty()
         || manifest.plugin.name.len() > 128
         || manifest.plugin.description.len() > 1024
-        || manifest.runtime.kind != "python_container"
-        || manifest.runtime.python != "3.12"
+        || !(is_python || is_rust)
         || manifest.runtime.protocol != "jsonl-v1"
-        || manifest.runtime.entrypoint != "src/main.py"
+        || (is_python && (manifest.runtime.python.as_deref() != Some("3.12")
+            || manifest.runtime.entrypoint != "src/main.py"))
+        || (is_rust && (manifest.runtime.python.is_some()
+            || manifest.runtime.entrypoint != "bin/plugin"))
         || manifest.operations.is_empty()
         || manifest.operations.len() > 16
         || manifest.permissions.network_hosts.len() > 16
-        || manifest
-            .permissions
-            .network_hosts
-            .iter()
-            .any(|h| !token(h, 128) || !h.contains('.'))
+        || manifest.permissions.network_hosts.iter().any(|h| !token(h, 128) || !h.contains('.'))
     {
         return Err(PluginError::InvalidPackage);
     }
@@ -183,59 +184,68 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
     if !relative(&manifest.agent.instructions) || instructions.len() > 16 * 1024 {
         return Err(PluginError::InvalidPackage);
     }
-    required(&files, &manifest.runtime.entrypoint)?;
-    let project: toml::Value = toml::from_str(
-        std::str::from_utf8(required(&files, "pyproject.toml")?)
-            .map_err(|_| PluginError::InvalidPackage)?,
-    )
-    .map_err(|_| PluginError::InvalidPackage)?;
-    let lock: toml::Value = toml::from_str(
-        std::str::from_utf8(required(&files, "uv.lock")?)
-            .map_err(|_| PluginError::InvalidPackage)?,
-    )
-    .map_err(|_| PluginError::InvalidPackage)?;
-    if project
-        .get("project")
-        .and_then(|p| p.get("requires-python"))
-        .and_then(toml::Value::as_str)
-        .is_none_or(|v| !v.contains("3.12"))
-        || lock
-            .get("requires-python")
-            .and_then(toml::Value::as_str)
-            .is_none_or(|v| !v.contains("3.12"))
-        || project
-            .get("project")
-            .and_then(|p| p.get("name"))
-            .and_then(toml::Value::as_str)
-            != Some(manifest.plugin.id.as_str())
-        || project
-            .get("project")
-            .and_then(|p| p.get("version"))
-            .and_then(toml::Value::as_str)
-            != Some(manifest.plugin.version.as_str())
-        || !lock
-            .get("package")
-            .and_then(toml::Value::as_array)
-            .is_some_and(|packages| {
-                packages.iter().any(|package| {
+    let executable = required(&files, &manifest.runtime.entrypoint)?;
+    if is_rust {
+        // Only a reviewed Linux ELF executable for the host architecture. Rust
+        // packages are cross-compiled before upload; no untrusted build scripts
+        // or dependency downloads run on the Plugin Store host.
+        let machine: u16 = match std::env::consts::ARCH {
+            "x86_64" => 62,
+            "aarch64" => 183,
+            _ => return Err(PluginError::InvalidPackage),
+        };
+        if executable.len() < 64
+            || !executable.starts_with(b"\x7fELF")
+            || executable[4] != 2 // ELFCLASS64
+            || executable[5] != 1 // little endian
+            || !matches!(u16::from_le_bytes([executable[16], executable[17]]), 2 | 3)
+            || u16::from_le_bytes([executable[18], executable[19]]) != machine
+        {
+            return Err(PluginError::InvalidPackage);
+        }
+    } else {
+        let project: toml::Value = toml::from_str(
+            std::str::from_utf8(required(&files, "pyproject.toml")?)
+                .map_err(|_| PluginError::InvalidPackage)?,
+        ).map_err(|_| PluginError::InvalidPackage)?;
+        let lock: toml::Value = toml::from_str(
+            std::str::from_utf8(required(&files, "uv.lock")?)
+                .map_err(|_| PluginError::InvalidPackage)?,
+        ).map_err(|_| PluginError::InvalidPackage)?;
+        if project.get("project")
+                .and_then(|p| p.get("requires-python"))
+                .and_then(toml::Value::as_str)
+                .is_none_or(|v| !v.contains("3.12"))
+            || lock.get("requires-python").and_then(toml::Value::as_str)
+                .is_none_or(|v| !v.contains("3.12"))
+            || project.get("project").and_then(|p| p.get("name"))
+                .and_then(toml::Value::as_str) != Some(manifest.plugin.id.as_str())
+            || project.get("project").and_then(|p| p.get("version"))
+                .and_then(toml::Value::as_str) != Some(manifest.plugin.version.as_str())
+            || !lock.get("package").and_then(toml::Value::as_array)
+                .is_some_and(|packages| packages.iter().any(|package| {
                     package.get("name").and_then(toml::Value::as_str)
                         == Some(manifest.plugin.id.as_str())
-                        && package.get("version").and_then(toml::Value::as_str)
-                            == Some(manifest.plugin.version.as_str())
-                })
-            })
-    {
-        return Err(PluginError::InvalidPackage);
+                    && package.get("version").and_then(toml::Value::as_str)
+                        == Some(manifest.plugin.version.as_str())
+                }))
+        {
+            return Err(PluginError::InvalidPackage);
+        }
+        let lock_text = std::str::from_utf8(required(&files, "uv.lock")?)
+            .map_err(|_| PluginError::InvalidPackage)?;
+        if ["git+", "http://", "https://", "editable =", "path =", "sdist ="]
+            .iter().any(|needle| lock_text.contains(needle))
+        {
+            return Err(PluginError::InvalidPackage);
+        }
     }
     for (name, operation) in &manifest.operations {
         if !token(name, 64)
             || operation.replay != "safe_read"
             || operation.provides.len() > 16
             || operation.sources.len() > 16
-            || operation
-                .provides
-                .iter()
-                .chain(&operation.sources)
+            || operation.provides.iter().chain(&operation.sources)
                 .any(|v| !token(v, 64))
             || !relative(&operation.input_schema)
             || !relative(&operation.output_schema)
@@ -249,22 +259,6 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
                 return Err(PluginError::InvalidPackage);
             }
         }
-    }
-    // No editable, VCS, URL, path or build dependencies in the first supported policy.
-    let lock_text = std::str::from_utf8(required(&files, "uv.lock")?)
-        .map_err(|_| PluginError::InvalidPackage)?;
-    if [
-        "git+",
-        "http://",
-        "https://",
-        "editable =",
-        "path =",
-        "sdist =",
-    ]
-    .iter()
-    .any(|needle| lock_text.contains(needle))
-    {
-        return Err(PluginError::InvalidPackage);
     }
     let digest = Sha256::digest(bytes)
         .iter()
@@ -293,7 +287,7 @@ mod tests {
     fn fixture_package_has_checked_manifest_and_lock() {
         let package = validate(FIXTURE).unwrap();
         assert_eq!(package.manifest.plugin.id, "fixture-research");
-        assert_eq!(package.manifest.runtime.python, "3.12");
+        assert_eq!(package.manifest.runtime.python.as_deref(), Some("3.12"));
         assert_eq!(package.manifest.operations.len(), 2);
     }
 
@@ -345,4 +339,56 @@ mod tests {
         let bytes = writer.finish().unwrap().into_inner();
         assert!(matches!(validate(&bytes), Err(PluginError::InvalidPackage)));
     }
+    #[test]
+    fn rust_packages_require_native_elf_and_no_python_lock() {
+        fn package(binary: &[u8]) -> Vec<u8> {
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            let files: Vec<(&str, Vec<u8>)> = vec![
+                ("plugin.toml", br#"manifest_version = 1
+[plugin]
+id = "rust-test"
+name = "Rust Test"
+version = "1.0.0"
+description = "A native worker"
+[runtime]
+kind = "rust_container"
+entrypoint = "bin/plugin"
+protocol = "jsonl-v1"
+[permissions]
+network_hosts = []
+[agent]
+instructions = "instructions.md"
+[operations.test]
+description = "Test"
+provides = ["test.run"]
+sources = ["fixture"]
+input_schema = "schemas/input.json"
+output_schema = "schemas/output.json"
+replay = "safe_read"
+"#.to_vec()),
+                ("instructions.md", b"Do a test".to_vec()),
+                ("schemas/input.json", br#"{"type":"object"}"#.to_vec()),
+                ("schemas/output.json", br#"{"type":"object"}"#.to_vec()),
+                ("bin/plugin", binary.to_vec()),
+            ];
+            for (name, content) in files {
+                zip.start_file(name, SimpleFileOptions::default()).unwrap();
+                zip.write_all(&content).unwrap();
+            }
+            zip.finish().unwrap().into_inner()
+        }
+        let mut elf = vec![0u8; 64];
+        elf[..4].copy_from_slice(b"\x7fELF");
+        elf[4] = 2;
+        elf[5] = 1;
+        elf[16] = 3;
+        elf[18] = match std::env::consts::ARCH {
+            "x86_64" => 62, "aarch64" => 183, _ => return,
+        };
+        assert!(validate(&package(&elf)).is_ok());
+        assert!(matches!(validate(&package(b"#!/bin/sh")), Err(PluginError::InvalidPackage)));
+        elf[18] = 0;
+        assert!(matches!(validate(&package(&elf)), Err(PluginError::InvalidPackage)));
+    }
+
 }

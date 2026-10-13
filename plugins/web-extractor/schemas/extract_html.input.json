@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "html": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50000
+    },
+    "url": {
+      "type": "string",
+      "maxLength": 2048
+    },
+    "max_chars": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20000
+    },
+    "max_links": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [
+    "html"
+  ],
+  "additionalProperties": false
+}
