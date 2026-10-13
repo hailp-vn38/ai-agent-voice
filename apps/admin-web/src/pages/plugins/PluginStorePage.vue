@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArrowRight, Boxes, PackagePlus, Power, RefreshCw, Search, ShieldAlert, UploadCloud } from '@lucide/vue'
+import { Archive, ArrowRight, Boxes, LoaderCircle, PackagePlus, Power, RefreshCw, Search, ShieldAlert, UploadCloud } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentPluginsApi } from '@/api/agent-plugins'
@@ -104,7 +104,7 @@ onBeforeUnmount(() => controller?.abort())
     <PageHeader :title="t('jobUi.plugins')" :description="t('jobUi.pluginsDescription')">
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}</Button>
-        <Button @click="installOpen = true"><PackagePlus class="size-4" />{{ t('jobUi.installZip') }}</Button>
+        <Button :disabled="busy" @click="installOpen = true"><PackagePlus class="size-4" />{{ t('jobUi.installZip') }}</Button>
       </template>
     </PageHeader>
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
@@ -156,20 +156,26 @@ onBeforeUnmount(() => controller?.abort())
       <Button variant="outline" :disabled="!hasMore || loading" @click="load(page + 1)">{{ t('jobUi.next') }}</Button>
     </div>
 
-    <BaseModal v-model="installOpen" :title="t('jobUi.installZip')" :description="t('jobUi.installHint')">
-      <div class="space-y-4">
+    <BaseModal v-model="installOpen" :title="t('jobUi.installZip')" :description="t('jobUi.installHint')" :close-disabled="busy">
+      <div class="space-y-4" :aria-busy="busy">
         <div class="rounded-lg border border-dashed p-6 text-center">
           <UploadCloud class="mx-auto size-8 text-studio-violet" />
           <label class="mt-3 block text-sm font-medium" for="plugin-zip">{{ t('jobUi.chooseZip') }}</label>
-          <input id="plugin-zip" ref="fileInput" type="file" accept=".zip,application/zip" class="mt-3 block w-full text-sm" @change="chooseFile" />
+          <input id="plugin-zip" ref="fileInput" type="file" accept=".zip,application/zip" class="mt-3 block w-full text-sm" :disabled="busy" @change="chooseFile" />
           <p class="mt-2 text-xs text-muted-foreground">{{ t('jobUi.zipLimit') }}</p>
         </div>
         <p class="text-sm text-muted-foreground">{{ t('jobUi.installSecurity') }}</p>
         <p v-if="selectedFile" class="text-sm font-medium">{{ selectedFile.name }}</p>
+        <p v-if="busy" role="status" class="flex items-center gap-2 text-sm text-muted-foreground">
+          <LoaderCircle class="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />{{ t('jobUi.installing') }}
+        </p>
         <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
         <div class="flex justify-end gap-2">
-          <Button variant="outline" @click="installOpen = false">{{ t('jobUi.close') }}</Button>
-          <Button :disabled="busy || !selectedFile" @click="install"><PackagePlus class="size-4" />{{ t('jobUi.install') }}</Button>
+          <Button variant="outline" :disabled="busy" @click="installOpen = false">{{ t('jobUi.close') }}</Button>
+          <Button :disabled="busy || !selectedFile" @click="install">
+            <LoaderCircle v-if="busy" class="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            <PackagePlus v-else class="size-4" />{{ busy ? t('jobUi.installingShort') : t('jobUi.install') }}
+          </Button>
         </div>
       </div>
     </BaseModal>

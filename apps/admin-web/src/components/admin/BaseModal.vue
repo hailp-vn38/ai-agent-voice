@@ -11,9 +11,11 @@ const props = withDefaults(defineProps<{
   title: string
   description?: string
   widthClass?: string
+  closeDisabled?: boolean
 }>(), {
   description: '',
   widthClass: 'max-w-2xl',
+  closeDisabled: false,
 })
 
 const open = defineModel<boolean>({ required: true })
@@ -24,6 +26,7 @@ const descriptionId = useId()
 let restoreFocusTo: HTMLElement | null = null
 
 function close() {
+  if (props.closeDisabled) return
   open.value = false
 }
 
@@ -49,7 +52,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <template>
   <Teleport to="body">
     <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-      <button class="absolute inset-0 bg-black/55 backdrop-blur-[2px]" :aria-label="t('common.closeDialog')" @click="close" />
+      <button class="absolute inset-0 bg-black/55 backdrop-blur-[2px]" :aria-label="t('common.closeDialog')" :disabled="closeDisabled" @click="close" />
       <section
         ref="panel"
         role="dialog"
@@ -64,7 +67,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <h2 :id="titleId" class="text-lg font-semibold tracking-tight">{{ title }}</h2>
             <p v-if="description" :id="descriptionId" class="mt-1 text-sm text-muted-foreground">{{ description }}</p>
           </div>
-          <Button variant="ghost" size="icon" :aria-label="t('common.closeDialog')" @click="close">
+          <Button variant="ghost" size="icon" :aria-label="t('common.closeDialog')" :disabled="closeDisabled" @click="close">
             <X class="size-4" />
           </Button>
         </header>
