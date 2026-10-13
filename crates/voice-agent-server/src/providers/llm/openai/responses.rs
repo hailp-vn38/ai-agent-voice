@@ -125,7 +125,7 @@ mod tests {
             assert_eq!(body["text"]["format"]["type"],"json_object");
             assert_eq!(body["store"],false);
             Json(json!({"status":"completed","output":[{"type":"message","role":"assistant",
-                "content":[{"type":"output_text","text":"{\\\"steps\\\":[]}"}]}]}))
+                "content":[{"type":"output_text","text":r#"{"steps":[]}"#}]}]}))
         }));
         let task=tokio::spawn(async move {axum::serve(listener,app).await.unwrap();});
         let p=ConfiguredOpenAiLlm::build_with_responses("test",&base,"gpt-test",5,true).unwrap();
