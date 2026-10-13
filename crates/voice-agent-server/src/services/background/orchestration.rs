@@ -26,10 +26,28 @@ pub(super) async fn execute(engine: Arc<JobEngine>, id: String, cancellation: Ca
         } else {
             error.code()
         };
-        let _ = engine
-            .database
-            .finish_job(&engine.config, &id, "failed", Some(code), None)
-            .await;
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                engine
+                    .database
+                    .finish_job(&engine.config, &id, "failed", Some(code), None),
+            )
+            .await
+            .unwrap_or(Err(JobError::DatabaseUnavailable))
+            {
+                Ok(()) | Err(JobError::Terminal) => break,
+                Err(error) => {
+                    tracing::warn!(event="background_terminal_checkpoint_failed", job_id=%id, code=%error.code());
+                    // Retain the execution owner while retrying only SQLite publication.
+                    if !engine.running.load(std::sync::atomic::Ordering::Acquire) {
+                        tracing::warn!(event="background_terminal_checkpoint_deferred", job_id=%id, "Restart recovery will terminalize this Job");
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
     }
     engine
         .cancellations

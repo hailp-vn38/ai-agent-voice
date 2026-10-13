@@ -81,3 +81,24 @@ async fn concurrent_idempotent_requests_commit_exactly_one_job() {
     assert_eq!(runtime.engine.list(1, 30, None, None).await.unwrap().1, 1);
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn background_stream_requires_finished_even_after_valid_json() {
+    use crate::providers::LlmEvent;
+    let json = r#"{"summary":"valid but unconfirmed"}"#;
+    let stream = Box::pin(futures_util::stream::iter([Ok(LlmEvent::TextDelta(
+        json.into(),
+    ))]));
+    assert_eq!(
+        super::super::models::consume_stream(stream).await,
+        Err(JobError::ModelFailed)
+    );
+    let stream = Box::pin(futures_util::stream::iter([
+        Ok(LlmEvent::TextDelta(json.into())),
+        Ok(LlmEvent::Finished),
+    ]));
+    assert_eq!(
+        super::super::models::consume_stream(stream).await.unwrap(),
+        json
+    );
+}

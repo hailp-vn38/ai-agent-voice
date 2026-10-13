@@ -389,3 +389,164 @@ async fn quiescent_replan_preserves_step_contracts_and_rejects_changed_arguments
     runtime.engine.cancel(&job.id).await.unwrap();
     runtime.shutdown().await;
 }
+
+struct FailingPlanner {
+    calls: std::sync::atomic::AtomicUsize,
+    started: tokio::sync::Notify,
+}
+#[async_trait::async_trait]
+impl JobModels for FailingPlanner {
+    async fn complete(
+        &self,
+        _: &str,
+        _: &ProviderPin,
+        _: LlmRequest,
+        _: i64,
+        _: CancellationToken,
+    ) -> Result<String, JobError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.started.notify_one();
+        Err(JobError::ModelFailed)
+    }
+}
+
+#[tokio::test]
+async fn terminal_checkpoint_retries_without_replaying_work_and_preserves_cancel() {
+    for cancel in [false, true] {
+        let config = Arc::new(config());
+        let db = Arc::new(Database::connect(&config.database).await.unwrap());
+        let models = Arc::new(FailingPlanner {
+            calls: Default::default(),
+            started: Default::default(),
+        });
+        let runtime = BackgroundRuntime::execution_harness(db.clone(), config, models.clone())
+            .await
+            .unwrap();
+        enable(&runtime.engine).await;
+        sqlx::query("CREATE TRIGGER reject_terminal BEFORE UPDATE OF status ON jobs WHEN NEW.status IN ('failed','cancelled') BEGIN SELECT RAISE(ABORT,'temporary terminal write failure'); END")
+            .execute(db.pool()).await.unwrap();
+        let job = runtime
+            .engine
+            .submit(
+                request("Retry terminal checkpoint"),
+                &JobRequester::Admin,
+                None,
+            )
+            .await
+            .unwrap()
+            .job;
+        tokio::time::timeout(std::time::Duration::from_secs(3), models.started.notified())
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(
+            runtime
+                .engine
+                .cancellations
+                .lock()
+                .unwrap()
+                .contains_key(&job.id),
+            "failed terminal write must retain its execution owner"
+        );
+        if cancel {
+            runtime.engine.cancel(&job.id).await.unwrap();
+        }
+        sqlx::query("DROP TRIGGER reject_terminal")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let terminal = wait_for(&runtime.engine, &job.id, |job| {
+            job.status == if cancel { "cancelled" } else { "failed" }
+        })
+        .await;
+        assert_eq!(terminal.budget_used["planner_calls"], 1);
+        assert_eq!(
+            models.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "checkpoint retry must not dispatch the model again"
+        );
+        runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn terminal_checkpoint_failure_does_not_block_shutdown_recovery() {
+    let (db, _, runtime) = harness().await;
+    let job = runtime
+        .engine
+        .submit(
+            request("Terminal write at shutdown"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap()
+        .job;
+    assert!(db.claim_job(&job.id, 2).await.unwrap());
+    sqlx::query("CREATE TRIGGER reject_terminal BEFORE UPDATE OF status ON jobs WHEN NEW.status='failed' BEGIN SELECT RAISE(ABORT,'terminal write unavailable'); END")
+        .execute(db.pool()).await.unwrap();
+    runtime
+        .engine
+        .running
+        .store(false, std::sync::atomic::Ordering::Release);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        super::super::orchestration::execute(
+            runtime.engine.clone(),
+            job.id.clone(),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        runtime.engine.get(&job.id).await.unwrap().status,
+        "planning"
+    );
+    sqlx::query("DROP TRIGGER reject_terminal")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    db.recover_jobs(crate::database::unix_seconds().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(runtime.engine.get(&job.id).await.unwrap().status, "failed");
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn terminal_checkpoint_shutdown_is_bounded_when_publication_is_blocked() {
+    let (db, _, runtime) = harness().await;
+    let job = runtime
+        .engine
+        .submit(
+            request("Shutdown with blocked publication"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap()
+        .job;
+    assert!(db.claim_job(&job.id, 2).await.unwrap());
+    let publication = db.tool_security.publication.write().await;
+    runtime
+        .engine
+        .running
+        .store(false, std::sync::atomic::Ordering::Release);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(6),
+        super::super::orchestration::execute(
+            runtime.engine.clone(),
+            job.id.clone(),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap();
+    drop(publication);
+    db.recover_jobs(crate::database::unix_seconds().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(runtime.engine.get(&job.id).await.unwrap().status, "failed");
+    runtime.shutdown().await;
+}

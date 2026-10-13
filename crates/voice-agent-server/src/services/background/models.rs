@@ -182,25 +182,8 @@ impl JobModels for ManagedModels {
         };
         drop(publication);
         let outcome = match opened {
-            Ok(mut stream) => {
-                use futures_util::StreamExt;
-                let consume = async {
-                    let mut text = String::new();
-                    while let Some(event) = stream.next().await {
-                        match event {
-                            Ok(crate::providers::LlmEvent::TextDelta(delta)) => {
-                                if text.len().saturating_add(delta.len()) > 65536 {
-                                    return Err(JobError::ModelFailed);
-                                }
-                                text.push_str(&delta);
-                            }
-                            Ok(crate::providers::LlmEvent::Finished) => return Ok(text),
-                            _ => return Err(JobError::ModelFailed),
-                        }
-                    }
-                    Ok(text)
-                };
-                tokio::select! {_=cancellation.cancelled()=>Err(JobError::Cancelled),_=tokio::time::sleep_until(deadline)=>Err(JobError::DeadlineExceeded),result=consume=>result}
+            Ok(stream) => {
+                tokio::select! {_=cancellation.cancelled()=>Err(JobError::Cancelled),_=tokio::time::sleep_until(deadline)=>Err(JobError::DeadlineExceeded),result=consume_stream(stream)=>result}
             }
             Err(error) => Err(error),
         };
@@ -212,4 +195,24 @@ impl JobModels for ManagedModels {
         }
         outcome
     }
+}
+
+pub(super) async fn consume_stream(
+    mut stream: crate::providers::llm::LlmEventStream,
+) -> Result<String, JobError> {
+    use futures_util::StreamExt;
+    let mut text = String::new();
+    while let Some(event) = stream.next().await {
+        match event {
+            Ok(crate::providers::LlmEvent::TextDelta(delta)) => {
+                if text.len().saturating_add(delta.len()) > 65536 {
+                    return Err(JobError::ModelFailed);
+                }
+                text.push_str(&delta);
+            }
+            Ok(crate::providers::LlmEvent::Finished) => return Ok(text),
+            _ => return Err(JobError::ModelFailed),
+        }
+    }
+    Err(JobError::ModelFailed)
 }

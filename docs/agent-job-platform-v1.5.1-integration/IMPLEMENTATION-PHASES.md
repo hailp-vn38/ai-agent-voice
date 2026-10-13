@@ -32,9 +32,9 @@ Canonical design: [`docs/agent-job-plugin-platform-codebase-design.md`](docs/age
 
 [P0-IMPLEMENTATION.md](P0-IMPLEMENTATION.md) records the foundation tracer and commands. The P0 harness is LLM-only with an immutable empty Plugin choice set. It observes `queued` through the scheduler but never claims planning or Python execution. Actual container-start races, orphan killing, Plugin eligibility and frozen permission tests require P1/P2/P4. Production has no switch to enable the harness.
 
-## Current P3 source scope
+## Current P3 qualification
 
-[P3-IMPLEMENTATION.md](P3-IMPLEMENTATION.md) records the managed planner/Worker, durable DAG/replan, Voice builtin, Admin retry and streaming implementation, deterministic source gates, and executable live-host tracer. The operator explicitly deferred real rootless/LLM/browser E2E to another host. P3 source work is recorded separately from its hard live exit gate, which stays `NOT_RUN`; deployment acceptance and P4 qualification are not claimed.
+[P3-IMPLEMENTATION.md](P3-IMPLEMENTATION.md) records the implementation and **PASS** first-functional exit gate on an isolated Linux rootless deployment: eight real LLM/Python Voice cases cover physical/Studio, MCP false/true and Silent/DirectTts; an additional continuous Voice/Chromium tracer checks polling, results and authenticated downloads. Browser failure/cancel/manual retry and origin-bound single-use Studio tickets passed. Source gates and both review axes passed. [Machine-readable evidence](../../.scratch/agent-job-platform/evidence/p3-qualification-2026-10-13.json) pins source and runtime identities. P4 qualification remains open.
 
 ## Current P4 source scope
 

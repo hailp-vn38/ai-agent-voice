@@ -14,6 +14,7 @@ use tokio_tungstenite::{
 };
 
 struct VoiceModel {
+    database: Arc<Database>,
     receipt: tokio::sync::Mutex<Option<Value>>,
     received: tokio::sync::Notify,
 }
@@ -62,6 +63,15 @@ impl LlmProvider for VoiceModel {
         }) {
             let receipt: Value = serde_json::from_str(content).unwrap();
             assert_eq!(receipt["created"], true);
+            let committed = self
+                .database
+                .job_view(receipt["job_id"].as_str().unwrap())
+                .await
+                .unwrap();
+            assert!(
+                committed.requester_scope.starts_with("voice:"),
+                "LLM continuation must receive a committed Voice receipt"
+            );
             *self.receipt.lock().await = Some(receipt);
             self.received.notify_one();
             Ok(Box::pin(futures_util::stream::iter([
@@ -95,6 +105,7 @@ async fn admitted_physical_ws_without_mcp_creates_durable_job_and_disconnect_doe
     .unwrap();
     enable(&runtime.engine).await;
     let model = Arc::new(VoiceModel {
+        database: db.clone(),
         receipt: Default::default(),
         received: Default::default(),
     });

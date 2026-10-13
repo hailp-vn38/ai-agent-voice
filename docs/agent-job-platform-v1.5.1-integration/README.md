@@ -2,9 +2,9 @@
 
 **Codebase baseline:** `hailp-vn38/ai-agent-voice`, branch `integration/voice-reminders-direct-tts` (as reviewed 2026-10-13).
 
-**Status:** P0 foundation and P3 source integration are implemented: managed LLM A/B, validated DAG execution, fenced Voice submission, Admin result/retry and checked artifact streaming. Production execution requires the managed ProviderRuntimeManager and an admissible provider pair; a deployment missing the backend still returns `runtime_unavailable`. Real Python/Voice/LLM/browser E2E and Linux sandbox qualification remain `NOT_RUN` here and are assigned to another host by the operator. See [P3 evidence and live commands](P3-IMPLEMENTATION.md) and [P0 evidence](P0-IMPLEMENTATION.md).
+**Status:** P0 foundation and P3 source integration are implemented: managed LLM A/B, validated DAG execution, fenced Voice submission, Admin result/retry and checked artifact streaming. Production execution requires the managed ProviderRuntimeManager and an admissible provider pair; a deployment missing the backend still returns `runtime_unavailable`. P3 first-functional qualification passed on an isolated Linux rootless deployment: eight physical/Studio × MCP × result-delivery cases and a continuous Voice/Chromium result/download tracer, plus browser failure/cancel/retry and ticket lifecycle checks. See [P3 evidence and live commands](P3-IMPLEMENTATION.md) and [P0 evidence](P0-IMPLEMENTATION.md).
 
-P1 installation and P2 execution groundwork have interim implementation commits/evidence; their rootless Linux acceptance gates remain open. See [P1 evidence](P1-IMPLEMENTATION.md) and [P2 evidence](P2-IMPLEMENTATION.md).
+The P3 fixture installation, rootless Python execution, checked artifacts and timeout/reap prerequisites passed on the same dedicated daemon. Remaining P1/P2 qualification criteria and P4 egress/deployment/load gates are tracked separately. See [P1 evidence](P1-IMPLEMENTATION.md) and [P2 evidence](P2-IMPLEMENTATION.md).
 
 ## Contents
 
