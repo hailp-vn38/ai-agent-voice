@@ -6,15 +6,11 @@ use serde::{Deserialize, Serialize};
 pub struct BackgroundConfig {
     #[serde(default)]
     pub limits: BackgroundLimits,
-    /// OCI digests supplied by deployment; mutable tags are rejected by preflight.
-    pub plugin_python_image: Option<String>,
-    pub plugin_uv_image: Option<String>,
-    /// Offline Cargo build image pinned by OCI repository digest.
-    pub plugin_rust_builder_image: Option<String>,
-    /// Minimal Rust runtime image pinned by OCI repository digest.
-    pub plugin_rust_runtime_image: Option<String>,
-    /// Dedicated rootless Engine socket, e.g. unix:///run/user/1001/docker.sock.
-    pub plugin_docker_host: Option<String>,
+    /// Private shared-runtime Unix sockets (mounted through Compose).
+    pub plugin_installer_socket: Option<std::path::PathBuf>,
+    pub plugin_runner_socket: Option<std::path::PathBuf>,
+    /// Read-only view of immutable installations, for activation verification.
+    pub plugin_installations_dir: Option<std::path::PathBuf>,
     /// Directory of operator-provided ZIPs named <curated-id>.zip.
     pub plugin_curated_dir: Option<std::path::PathBuf>,
 }
