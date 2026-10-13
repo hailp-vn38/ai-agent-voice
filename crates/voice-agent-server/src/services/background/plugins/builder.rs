@@ -116,6 +116,7 @@ pub async fn build(
     config: &BackgroundConfig,
     stage: &Path,
     package_digest: &str,
+    runtime: &super::archive::Runtime,
 ) -> Result<String, PluginError> {
     let python = pinned_image(
         config.plugin_python_image.as_deref(),
@@ -125,9 +126,14 @@ pub async fn build(
         config.plugin_uv_image.as_deref(),
         "ghcr.io/astral-sh/uv@sha256:",
     )?;
-    let dockerfile = format!(
-        "FROM {python}\nCOPY --from={uv} /uv /usr/local/bin/uv\nWORKDIR /plugin\nCOPY . /plugin\nRUN --network=none uv sync --locked --offline --no-dev --no-install-project\nRUN mkdir -p /work/out\nENV PYTHONDONTWRITEBYTECODE=1\nUSER 65532:65532\nENTRYPOINT [\"/plugin/.venv/bin/python\",\"/plugin/src/main.py\"]\n"
-    );
+    let dockerfile = if runtime.kind == "rust_container" {
+        // Precompiled ELF only; never cargo build arbitrary dependencies in installer.
+        format!("FROM {python}\nWORKDIR /plugin\nCOPY bin/plugin /plugin/bin/plugin\nRUN chmod 0555 /plugin/bin/plugin && mkdir -p /work/out\nUSER 65532:65532\nENTRYPOINT [\"/plugin/bin/plugin\"]\n")
+    } else {
+        format!(
+            "FROM {python}\nCOPY --from={uv} /uv /usr/local/bin/uv\nWORKDIR /plugin\nCOPY . /plugin\nRUN --network=none uv sync --locked --offline --no-dev --no-install-project\nRUN mkdir -p /work/out\nENV PYTHONDONTWRITEBYTECODE=1\nUSER 65532:65532\nENTRYPOINT [\"/plugin/.venv/bin/python\",\"/plugin/src/main.py\"]\n"
+        )
+    };
     let recipe = stage.join(".agent-plugin.Dockerfile");
     tokio::fs::write(&recipe, dockerfile)
         .await
@@ -148,6 +154,8 @@ pub async fn build(
         .arg(format!("agent.plugin.base={python}"))
         .arg("--label")
         .arg(format!("agent.plugin.uv={uv}"))
+        .arg("--label")
+        .arg(format!("agent.plugin.runtime={}", runtime.kind))
         .args(["-f"])
         .arg(&recipe)
         .args(["-t", &tag])
@@ -178,6 +186,7 @@ pub async fn verify_image(
     config: &BackgroundConfig,
     digest: &str,
     package_digest: &str,
+    runtime: &super::archive::Runtime,
 ) -> Result<(), PluginError> {
     if !digest.starts_with("sha256:") || digest.len() != 71 {
         return Err(PluginError::SandboxUnavailable);
@@ -197,6 +206,9 @@ pub async fn verify_image(
     ]);
     let json: serde_json::Value = serde_json::from_str(&output(labels, 5).await?)
         .map_err(|_| PluginError::SandboxUnavailable)?;
+    if runtime.kind == "rust_container" && json["agent.plugin.runtime"] != "rust_container" {
+        return Err(PluginError::SandboxUnavailable);
+    }
     if json["agent.plugin.package"] != package_digest
         || json["agent.plugin.base"]
             != pinned_image(
