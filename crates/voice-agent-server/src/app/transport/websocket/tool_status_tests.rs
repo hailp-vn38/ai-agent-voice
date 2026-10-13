@@ -1,3 +1,4 @@
+//! Tests for WebSocket tool-status negotiation.
 use super::*;
 
 #[test]

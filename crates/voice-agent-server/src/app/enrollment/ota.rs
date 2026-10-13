@@ -1,4 +1,4 @@
-use super::AppState;
+use crate::app::AppState;
 use crate::{
     database::{DeviceRegistration, EnrollmentClaim, EnrollmentCreateError, EnrollmentRequest},
     protocol::{Firmware, OtaActivation, OtaResponse, OtaWebsocket, ServerTime},
@@ -17,7 +17,7 @@ const OTA_BODY_MAX: usize = 32 * 1024;
 const ACTIVATE_BODY_MAX: usize = 8 * 1024;
 
 /// Include CORS on validation, admission and database errors as well as successful OTA replies.
-pub(super) async fn cors_response(request: Request, next: axum::middleware::Next) -> Response {
+pub(crate) async fn cors_response(request: Request, next: axum::middleware::Next) -> Response {
     let headers = request.headers().clone();
     let mut response = next.run(request).await;
     apply_cors(response.headers_mut(), &headers);
@@ -344,7 +344,7 @@ fn apply_cors(response_headers: &mut HeaderMap, request_headers: &HeaderMap) {
     let Some(origin) = request_headers.get(header::ORIGIN) else {
         return;
     };
-    if !super::cors::is_local_origin(origin) {
+    if !crate::app::transport::cors::is_local_origin(origin) {
         return;
     }
     response_headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());

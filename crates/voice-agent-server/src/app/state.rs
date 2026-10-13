@@ -38,7 +38,7 @@ pub struct AppState {
     pub reminder_scheduler_started: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
-    pub(crate) web_assistant: Arc<super::web_assistant_auth::WebAssistantAuth>,
+    pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,
     /// Identity of this process incarnation, pinned into enrollment drafts as provenance so a
     /// restart can detect a stale runtime and repin a still-compatible draft.
     pub runtime_id: String,

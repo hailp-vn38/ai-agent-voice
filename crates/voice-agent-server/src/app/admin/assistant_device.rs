@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::web_assistant_auth::trusted_origin;
+use crate::app::assistant::trusted_origin;
 use crate::database::devices::Device;
 
 fn settings(device: Option<Device>, active: usize) -> Value {

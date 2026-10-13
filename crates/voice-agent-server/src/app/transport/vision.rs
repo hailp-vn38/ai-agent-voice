@@ -1,4 +1,4 @@
-use super::AppState;
+use crate::app::AppState;
 use crate::providers::{VisionError, VisionRequest};
 use axum::{
     Json,
