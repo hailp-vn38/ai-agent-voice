@@ -223,6 +223,16 @@ async fn connection(mut stream:UnixStream,state:State)->Result<()> {
 async fn main()->Result<()> {
     let mode=std::env::args().nth(1).context("usage: plugin-runtime installer|runner")?;
     if mode!="installer" && mode!="runner" { bail!("invalid mode"); }
+    if mode=="installer" {
+        // A crash during preparation may leave incomplete hidden directories.
+        for entry in std::fs::read_dir("/installations")? {
+            let entry=entry?;
+            if entry.file_name().to_string_lossy().starts_with(".prepare-")
+                && entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+            }
+        }
+    }
     let path=format!("/control/{mode}.sock");
     std::fs::create_dir_all("/control")?;
     if Path::new(&path).exists() {std::fs::remove_file(&path)?;}
