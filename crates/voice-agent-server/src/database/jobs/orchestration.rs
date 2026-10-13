@@ -169,9 +169,9 @@ impl Database {
                     choice["plugin_id"] == *plugin && choice["operation"] == *operation
                 })
             });
-            sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,image_digest,operation,arguments_json,input_refs_json,output_schema_json,dependencies_json,required,instruction,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)")
+            sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,installation_digest,operation,arguments_json,input_refs_json,output_schema_json,dependencies_json,required,instruction,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)")
                 .bind(id).bind(&step.step_key).bind(revision).bind(&step.plugin_id)
-                .bind(choice.and_then(|v| v["version"].as_str())).bind(choice.and_then(|v| v["package_digest"].as_str())).bind(choice.and_then(|v| v["image_digest"].as_str()))
+                .bind(choice.and_then(|v| v["version"].as_str())).bind(choice.and_then(|v| v["package_digest"].as_str())).bind(choice.and_then(|v| v["installation_digest"].as_str()))
                 .bind(&step.operation).bind(encode(&step.arguments)?).bind(encode(&step.input_refs)?).bind(encode(&step.output_schema)?).bind(encode(&step.dependencies)?).bind(step.required)
                 .bind(&step.instruction).bind(now).bind(now).execute(&mut *tx).await?;
         }
@@ -300,12 +300,12 @@ impl Database {
                     .map_err(|_| JobError::DatabaseUnavailable)?;
                 for choice in choices {
                     let installed: Option<i64> = sqlx::query_scalar(
-                        "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'",
+                        "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",
                     )
                     .bind(choice["plugin_id"].as_str())
                     .bind(choice["version"].as_str())
                     .bind(choice["package_digest"].as_str())
-                    .bind(choice["image_digest"].as_str())
+                    .bind(choice["installation_digest"].as_str())
                     .fetch_optional(&mut *tx)
                     .await?;
                     if installed.is_none() {
