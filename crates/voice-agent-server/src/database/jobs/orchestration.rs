@@ -11,7 +11,7 @@ impl Database {
     ) -> Result<(), JobError> {
         let now = crate::services::background::engine::now()?;
         let updated = sqlx::query("UPDATE job_steps SET attempt_state='started',started_at=?,updated_at=? WHERE job_id=? AND step_key=? AND attempt_id=? AND status='running' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='running')")
-            .bind(now).bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id)
+            .bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id)
             .execute(self.pool()).await?;
         if updated.rows_affected() != 1 {
             return Err(JobError::Terminal);
