@@ -122,15 +122,17 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
     runtime.shutdown().await;
 }
 
-/// Run explicitly on a dedicated rootless Linux Docker host with pinned local images.
-/// This is the P2 acceptance gate, not a macOS/Docker Desktop simulation.
+/// Run explicitly on a Linux deployment with the shared Installer and Runner sockets.
+/// This is the P2 acceptance gate, not a local unit-test simulation.
 #[tokio::test]
-#[ignore = "requires dedicated rootless Linux Docker Engine and locally pinned images"]
+#[ignore = "requires deployed shared Installer/Runner and local test volumes"]
 async fn fixture_python_runs_through_job_step_and_checked_artifact() {
     let mut config = config();
-    config.background.plugin_docker_host = Some(std::env::var("AGENT_P2_DOCKER_HOST").unwrap());
-    config.background.plugin_python_image = Some(std::env::var("AGENT_P2_PYTHON_IMAGE").unwrap());
-    config.background.plugin_uv_image = Some(std::env::var("AGENT_P2_UV_IMAGE").unwrap());
+    config.background.plugin_installer_socket = Some(std::env::var("AGENT_P2_INSTALLER_SOCKET").unwrap().into());
+    config.background.plugin_runner_socket = Some(std::env::var("AGENT_P2_RUNNER_SOCKET").unwrap().into());
+    config.background.plugin_installations_dir = Some(std::env::var("AGENT_P2_INSTALLATIONS_DIR").unwrap().into());
+    config.background.plugin_staging_dir = Some(std::env::var("AGENT_P2_STAGING_DIR").unwrap().into());
+    config.background.plugin_attempts_dir = Some(std::env::var("AGENT_P2_ATTEMPTS_DIR").unwrap().into());
     config.background.limits.step_timeout_seconds = 10;
     let config = Arc::new(config);
     let db = Arc::new(Database::connect(&config.database).await.unwrap());
