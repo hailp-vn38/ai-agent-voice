@@ -101,10 +101,11 @@ function chooseFile(event: Event) {
   error.value = ''
   selectedFile.value = file
 }
-async function action(type: 'test' | 'activate' | 'disable' | 'uninstall') {
+async function action(type: 'test' | 'approve' | 'activate' | 'disable' | 'uninstall') {
   const item = selected.value
   if (!item || busy.value) return
   if (type === 'uninstall' && !window.confirm(t('jobUi.uninstallConfirm'))) return
+  if (type === 'approve' && !window.confirm(t('jobUi.approveConfirm'))) return
   busy.value = true
   error.value = ''
   notice.value = ''
@@ -112,6 +113,13 @@ async function action(type: 'test' | 'activate' | 'disable' | 'uninstall') {
     if (type === 'test') {
       const result = await agentPluginsApi.test(item.id, item.revision)
       notice.value = result.message || (result.ok ? t('jobUi.testPassed') : t('jobUi.testFailed'))
+    } else if (type === 'approve') {
+      selected.value = await agentPluginsApi.approvePermissions(item.id, item.revision, {
+        network_hosts: item.permissions?.network_hosts ?? [],
+        scratch_storage: item.permissions?.scratch_storage ?? false,
+      })
+      notice.value = t('jobUi.saved')
+      await load(page.value)
     } else if (type === 'uninstall') {
       await agentPluginsApi.uninstall(item.id, item.revision)
       detailsOpen.value = false
@@ -247,11 +255,15 @@ onBeforeUnmount(() => controller?.abort())
           <p class="text-muted-foreground">{{ t('jobUi.network') }}: {{ selected.permissions?.network_hosts.join(', ') || '—' }}</p>
           <p class="mt-1 text-muted-foreground">{{ t('jobUi.scratch') }}: {{ selected.permissions?.scratch_storage ? t('jobUi.yes') : t('jobUi.no') }}</p>
           <p class="mt-2 text-xs text-warning">{{ t('jobUi.permissionsHint') }}</p>
+          <p class="mt-2 text-xs font-medium" :class="selected.permissions_approved ? 'text-success' : 'text-warning'">
+            {{ selected.permissions_approved ? t('jobUi.permissionsApproved') : t('jobUi.permissionsPending') }}
+          </p>
         </div>
         <div class="flex flex-wrap justify-end gap-2 border-t pt-4">
+          <Button v-if="!selected.permissions_approved" variant="outline" :disabled="busy" @click="action('approve')">{{ t('jobUi.approve') }}</Button>
           <Button variant="outline" :disabled="busy" @click="action('test')"><FlaskConical class="size-4" />{{ t('jobUi.test') }}</Button>
           <Button v-if="selected.status !== 'disabled'" variant="outline" :disabled="busy" @click="action('disable')">{{ t('jobUi.disable') }}</Button>
-          <Button v-if="selected.status !== 'ready'" :disabled="busy" @click="action('activate')">{{ selected.status === 'error' ? t('jobUi.reset') : t('jobUi.activate') }}</Button>
+          <Button v-if="selected.status !== 'ready'" :disabled="busy || !selected.permissions_approved" @click="action('activate')">{{ selected.status === 'error' ? t('jobUi.reset') : t('jobUi.activate') }}</Button>
           <Button variant="outline" :disabled="busy" @click="action('uninstall')"><Trash2 class="size-4" />{{ t('jobUi.uninstall') }}</Button>
         </div>
       </div>
