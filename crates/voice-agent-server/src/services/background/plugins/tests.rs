@@ -3,7 +3,7 @@ use serde_json::json;
 use std::io::Read;
 
 #[tokio::test]
-async fn package_failure_persists_error_and_cannot_poison_new_image() {
+async fn package_failure_persists_error_and_cannot_poison_new_installation() {
     let (db, _, runtime) = crate::services::background::tests::harness().await;
     let bytes = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -21,12 +21,12 @@ async fn package_failure_persists_error_and_cannot_poison_new_image() {
         plugin_id: "fixture-research".into(),
         version: "1.0.0".into(),
         package_digest: "a".repeat(64),
-        image_digest: format!("sha256:{}", "b".repeat(64)),
+        installation_digest: format!("sha256:{}", "b".repeat(64)),
         operation: "collect".into(),
     };
-    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'ready',1,?,0,0)")
+    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,installation_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'ready',1,?,0,0)")
         .bind(&choice.plugin_id).bind(&choice.version).bind(&choice.package_digest)
-        .bind(&choice.image_digest).bind(manifest).execute(db.pool()).await.unwrap();
+        .bind(&choice.installation_digest).bind(manifest).execute(db.pool()).await.unwrap();
     runtime
         .engine
         .plugins
@@ -40,7 +40,7 @@ async fn package_failure_persists_error_and_cannot_poison_new_image() {
         Some("worker_protocol_error")
     );
     assert_eq!(failed.revision, 2);
-    sqlx::query("UPDATE plugin_installations SET status='ready',image_digest=?,revision=revision+1 WHERE plugin_id=?")
+    sqlx::query("UPDATE plugin_installations SET status='ready',installation_digest=?,revision=revision+1 WHERE plugin_id=?")
         .bind(format!("sha256:{}", "d".repeat(64))).bind(&choice.plugin_id).execute(db.pool()).await.unwrap();
     runtime
         .engine
