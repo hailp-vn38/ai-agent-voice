@@ -158,6 +158,33 @@ Device chưa đăng ký có Enrollment Session riêng để hiển thị và ph�
 - **Speaker:** `observe` chỉ điều chỉnh prompt của lượt hiện tại. Bật `[deployment].speaker_pilot = true` để giới hạn một voice pipeline xử lý trong toàn process; các socket idle vẫn có thể kết nối.
 - **Network:** V1 hướng tới trusted LAN. Khi cấu hình client ở máy khác, sửa `server.bind` và `server.public_ws_url` theo địa chỉ thực tế. Triển khai qua Internet cần WSS/reverse proxy/VPN và token; Provider credential submission trong production cần HTTPS termination.
 
+## Build và kiểm tra plugin Rust
+
+Chạy các lệnh dưới đây từ thư mục gốc repository. Cần Rust/Cargo, Python 3.11+ và các thư viện native để build server. Kiểm tra runtime cần Linux, Docker rootless có seccomp, socket và image Python/uv pin bằng digest trong `[background]` của `config.toml`.
+
+```bash
+# Test, build release và đóng gói cả ba plugin Rust.
+scripts/agent-test.sh run -- python3 scripts/package-rust-plugins.py
+
+# Chỉ đóng gói một plugin, chọn thư mục output khác.
+scripts/agent-test.sh run -- python3 scripts/package-rust-plugins.py web-extractor --output /tmp/rust-plugins
+
+# Kiểm tra ZIP, manifest, schema và kiến trúc ELF; chưa chạy container.
+scripts/check-rust-plugin.sh --static-only data/curated-plugins/document-analysis-1.0.0.zip
+
+# Chạy các mẫu offline trong container, kiểm tra JSONL, kết quả và artifact.
+scripts/check-rust-plugin.sh data/curated-plugins/document-analysis-1.0.0.zip plugins/document-analysis/check-cases.json
+scripts/check-rust-plugin.sh data/curated-plugins/web-extractor-1.0.0.zip plugins/web-extractor/check-cases.json
+scripts/check-rust-plugin.sh data/curated-plugins/fixture-rust-1.0.0.zip plugins/fixture-rust-1.0.0/check-cases.json
+
+# Tham số thứ ba chọn cấu hình deployment khác.
+scripts/check-rust-plugin.sh data/curated-plugins/document-analysis-1.0.0.zip plugins/document-analysis/check-cases.json docker/config.prod.toml
+```
+
+Output mặc định là `data/curated-plugins/`: `<id>-<version>.zip` để upload và `<id>.zip` cho curated install. ZIP chứa binary `bin/plugin`, nên installation không cần Cargo cache trên server. Upload ZIP trong Plugin Store, duyệt quyền rồi Activate.
+
+Checker tự dùng `scripts/agent-test.sh`, lưu báo cáo JSON trong log và trả exit code khác 0 khi lỗi. Chế độ static giữ `runtime: NOT_RUN`; kiểm tra container luôn offline, nên Web Extractor vẫn báo `network: NOT_RUN` và cần egress được qualification trước khi activate. Xem [hướng dẫn plugin Rust](plugins/RUST-STORE-PLUGINS.md) để viết check cases và chuẩn bị deployment.
+
 ## Kiểm thử
 
 Gate backend hiện có:

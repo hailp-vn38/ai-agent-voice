@@ -36,7 +36,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route(
             "/plugins/install",
             axum::routing::post(plugins::install)
-                .layer(axum::extract::DefaultBodyLimit::max(21 * 1024 * 1024)),
+                .layer(axum::extract::DefaultBodyLimit::max(plugins::MAX_UPLOAD_BODY)),
         )
         .route(
             "/plugins/curated/{id}/install",
@@ -363,7 +363,9 @@ async fn transport(request: Request, next: Next) -> Response {
         &http::Method::POST | &http::Method::PATCH | &http::Method::PUT
     );
     if is_mutation {
-        let max_body = if request.uri().path().ends_with("/test/asr")
+        let max_body = if request.uri().path().ends_with("/plugins/install") {
+            plugins::MAX_UPLOAD_BODY
+        } else if request.uri().path().ends_with("/test/asr")
             || request.uri().path().ends_with("/provider-tests/asr")
         {
             MAX_ASR_TEST_BODY + 80 * 1024

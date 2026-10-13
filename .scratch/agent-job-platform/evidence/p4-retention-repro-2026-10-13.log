@@ -1,0 +1,19 @@
+
+running 1 test
+services::background::tests::recovery::p4_acceptance_retention_preserves_inflight_artifacts --- FAILED
+
+failures:
+
+---- services::background::tests::recovery::p4_acceptance_retention_preserves_inflight_artifacts stdout ----
+
+thread 'services::background::tests::recovery::p4_acceptance_retention_preserves_inflight_artifacts' (1288173) panicked at crates/voice-agent-server/src/services/background/tests/recovery.rs:309:5:
+retention deleted an artifact of a running Job before metadata commit
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    services::background::tests::recovery::p4_acceptance_retention_preserves_inflight_artifacts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 341 filtered out; finished in 0.08s
+
+error: test failed, to rerun pass `-p voice-agent-server --lib`

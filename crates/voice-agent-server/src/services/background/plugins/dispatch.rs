@@ -293,59 +293,12 @@ impl PluginStore {
         }
         let result = async {
             let response = outcome?;
-            let mut artifacts = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            let mut total = 0usize;
-            for artifact in response.artifacts {
-                if artifact.path.is_empty()
-                    || !seen.insert(artifact.path.clone())
-                    || artifact.path.len() > 80
-                    || !artifact
-                        .path
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                    || !matches!(
-                        artifact.media_type.as_str(),
-                        "text/plain" | "application/json" | "text/markdown"
-                    )
-                {
-                    return Err(PluginError::WorkerProtocolError);
-                }
-                let path = out.join(&artifact.path);
-                let bytes = crate::services::background::artifacts::read_regular(
-                    path,
-                    self.config.limits.artifact_bytes_per_job,
-                )
-                .await
-                .map_err(|_| PluginError::WorkerProtocolError)?;
-                total = total
-                    .checked_add(bytes.len())
-                    .ok_or(PluginError::WorkerProtocolError)?;
-                if total as u64 > self.config.limits.artifact_bytes_per_job {
-                    return Err(PluginError::WorkerProtocolError);
-                }
-                let sha: String = {
-                    use sha2::{Digest, Sha256};
-                    Sha256::digest(&bytes)
-                        .iter()
-                        .map(|byte| format!("{byte:02x}"))
-                        .collect()
-                };
-                if artifact
-                    .size_bytes
-                    .is_some_and(|size| size != bytes.len() as u64)
-                    || artifact
-                        .sha256
-                        .as_ref()
-                        .is_some_and(|digest| digest != &sha)
-                {
-                    return Err(PluginError::WorkerProtocolError);
-                }
-                artifacts.push(ArtifactData {
-                    bytes,
-                    media_type: artifact.media_type,
-                });
-            }
+            let artifacts = read_artifacts(
+                &out,
+                response.artifacts,
+                self.config.limits.artifact_bytes_per_job,
+            )
+            .await?;
             Ok(InvokeResult {
                 result: response.result.ok_or(PluginError::WorkerProtocolError)?,
                 artifacts,
@@ -357,4 +310,62 @@ impl PluginStore {
         }
         result
     }
+}
+
+pub(super) async fn read_artifacts(
+    out: &std::path::Path,
+    refs: Vec<protocol::ArtifactRef>,
+    limit: u64,
+) -> Result<Vec<ArtifactData>, PluginError> {
+    let mut artifacts = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut total = 0usize;
+    for artifact in refs {
+        if artifact.path.is_empty()
+            || !seen.insert(artifact.path.clone())
+            || artifact.path.len() > 80
+            || !artifact
+                .path
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            || !matches!(
+                artifact.media_type.as_str(),
+                "text/plain" | "application/json" | "text/markdown"
+            )
+        {
+            return Err(PluginError::WorkerProtocolError);
+        }
+        let path = out.join(&artifact.path);
+        let bytes = crate::services::background::artifacts::read_regular(path, limit)
+            .await
+            .map_err(|_| PluginError::WorkerProtocolError)?;
+        total = total
+            .checked_add(bytes.len())
+            .ok_or(PluginError::WorkerProtocolError)?;
+        if total as u64 > limit {
+            return Err(PluginError::WorkerProtocolError);
+        }
+        let sha: String = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        };
+        if artifact
+            .size_bytes
+            .is_some_and(|size| size != bytes.len() as u64)
+            || artifact
+                .sha256
+                .as_ref()
+                .is_some_and(|digest| digest != &sha)
+        {
+            return Err(PluginError::WorkerProtocolError);
+        }
+        artifacts.push(ArtifactData {
+            bytes,
+            media_type: artifact.media_type,
+        });
+    }
+    Ok(artifacts)
 }

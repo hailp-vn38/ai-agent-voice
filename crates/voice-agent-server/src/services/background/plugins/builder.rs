@@ -191,6 +191,16 @@ pub async fn build(
     stage: &Path,
     package: &Package,
 ) -> Result<String, PluginError> {
+    let tag = format!("agent-plugin-build-{}", uuid::Uuid::new_v4());
+    build_named(config, stage, package, &tag).await
+}
+
+pub(super) async fn build_named(
+    config: &BackgroundConfig,
+    stage: &Path,
+    package: &Package,
+    tag: &str,
+) -> Result<String, PluginError> {
     let (dockerfile, builder_ref, secondary_label, secondary_ref) = if package.manifest.runtime.kind
         == "rust_container"
         && package.manifest.runtime.entrypoint != "bin/plugin"
@@ -234,7 +244,6 @@ pub async fn build(
     tokio::fs::write(&recipe, dockerfile)
         .await
         .map_err(|_| PluginError::StorageUnavailable)?;
-    let tag = format!("agent-plugin-build-{}", uuid::Uuid::new_v4());
     let mut build = command(config)?;
     build.stdout(Stdio::null());
     build
@@ -257,7 +266,7 @@ pub async fn build(
         ))
         .arg("-f")
         .arg(&recipe)
-        .args(["-t", &tag])
+        .args(["-t", tag])
         .arg(stage);
     let status = tokio::time::timeout(Duration::from_secs(120), build.status())
         .await
@@ -267,7 +276,7 @@ pub async fn build(
         return Err(PluginError::ImageBuildFailed);
     }
     let mut inspect = command(config)?;
-    inspect.args(["image", "inspect", "--format", "{{.Id}}", &tag]);
+    inspect.args(["image", "inspect", "--format", "{{.Id}}", tag]);
     let id = output(inspect, 5)
         .await
         .map_err(|_| PluginError::ImageBuildFailed)?;

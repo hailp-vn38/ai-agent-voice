@@ -110,22 +110,52 @@ async fn plugin_upload_rejects_invalid_zip_at_admin_boundary() {
             .unwrap()
     });
     let client = reqwest::Client::new();
-    let package = reqwest::multipart::Part::bytes(b"invalid ZIP".to_vec())
-        .file_name("bad.zip")
-        .mime_str("application/zip")
-        .unwrap();
-    let response = client
-        .post(base)
-        .bearer_auth("background-test-token")
-        .multipart(reqwest::multipart::Form::new().part("package", package))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 400);
-    assert_eq!(
-        response.json::<Value>().await.unwrap()["error"]["code"],
-        "invalid_plugin_package"
-    );
+    for size in [32, 1024 * 1024, 20 * 1024 * 1024] {
+        let package = reqwest::multipart::Part::bytes(vec![0; size])
+            .file_name("bad.zip")
+            .mime_str("application/zip")
+            .unwrap();
+        let response = client
+            .post(&base)
+            .bearer_auth("background-test-token")
+            .multipart(reqwest::multipart::Form::new().part("package", package))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            400,
+            "ZIP size {size} must reach package validation"
+        );
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"]["code"],
+            "invalid_plugin_package"
+        );
+    }
+    for url in [&base, &base.replace("plugins/install", "jobs")] {
+        let response = client
+            .post(url)
+            .bearer_auth("background-test-token")
+            .body(vec![
+                0;
+                if url == &base {
+                    21 * 1024 * 1024 + 1
+                } else {
+                    256 * 1024 + 1
+                }
+            ])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 413);
+        let request_id = response.headers()["x-request-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = response.json::<Value>().await.unwrap();
+        assert_eq!(body["error"]["code"], "request_too_large");
+        assert_eq!(body["error"]["request_id"], request_id);
+    }
     server.abort();
     let _ = server.await;
     runtime.shutdown().await;

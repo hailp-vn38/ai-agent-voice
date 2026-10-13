@@ -1,0 +1,14 @@
+[
+  {
+    "name": "offline collect and artifact",
+    "operation": "collect",
+    "arguments": {
+      "topic": "AI"
+    },
+    "expected": {
+      "/topic": "AI",
+      "/count": 1
+    },
+    "expected_artifacts": 1
+  }
+]

@@ -2,6 +2,8 @@ use super::*;
 use crate::services::background::plugins::{PermissionApproval, PluginError, PluginStore};
 use axum::extract::Multipart;
 
+pub(super) const MAX_UPLOAD_BODY: usize = 21 * 1024 * 1024;
+
 fn store(state: &AppState) -> Option<&PluginStore> {
     state
         .background

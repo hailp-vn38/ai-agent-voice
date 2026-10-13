@@ -5,6 +5,7 @@ mod dispatch;
 mod egress;
 #[allow(dead_code)]
 mod protocol;
+pub mod qualification;
 mod reaper;
 #[allow(dead_code)]
 mod runner;

@@ -34,4 +34,6 @@ Use dedicated rootless Linux Docker with seccomp. Configure `[background].plugin
 | Execution | Real `PluginStore::invoke` Rust worker, bounded JSONL, authenticated artifact fetch |
 | Regression | Python worker still runs; cancellation/reaper/Voice/Reminder and Web test/build remain intact |
 
-Record failures as FAIL/NOT_RUN. This branch's source changes were authored through the GitHub connector because the current sandbox lacks a cloneable GitHub network connection and Cargo toolchain; **no successful local Rust compile, Docker execution or full E2E claim** is made here.
+Record failures as FAIL/NOT_RUN. Native ZIP qualification on 2026-10-13 is recorded in [the integration evidence](../.scratch/agent-job-platform/evidence/rust-plugin-qualification-2026-10-13.json): release builds, actual Store ZIP validation, and nine offline rootless cases for Web Extractor, Document Analysis and the Rust fixture. The [packaging/check guide](../plugins/RUST-STORE-PLUGINS.md) uses committed Cargo locks and the production worker/artifact contracts. Curated installation reads the generated `<id>.zip` aliases.
+
+This evidence does not qualify successful remote fetches, source builds with uncached dependencies, the full LLM Job/Voice flow or P4 production deployment. Web Extractor's egress hosts still require the independent deployment gates; the checker explicitly reports network `NOT_RUN`.

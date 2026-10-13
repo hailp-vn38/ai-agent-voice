@@ -1,11 +1,74 @@
 # Rust plugins for Agent Job Plugin Store
 
-This feature branch adds support for a **precompiled Linux Rust ELF plugin**
-to the existing isolated Docker worker. It does not execute arbitrary Cargo
-build scripts on the server. The Store accepts a top-level ZIP with:
-`plugin.toml`, `instructions.md`, `schemas/*.json`, and `bin/plugin`.
-The fixed entrypoint is `bin/plugin`. The binary must be Linux ELF64 little
-endian matching the host's x86_64/aarch64 architecture.
+Rust plugins run in the existing isolated rootless Docker worker through
+`jsonl-v1`. Store accepts two ZIP layouts:
+
+- **Native binary:** `plugin.toml`, instructions, operation schemas and
+  `bin/plugin` (Linux ELF64 little endian, matching the host architecture).
+  This is the distribution format produced by the script below; Cargo and
+  dependency downloads run only on the trusted development/CI host.
+- **Cargo source:** a locked non-workspace binary project whose entrypoint is
+  the plugin ID. Store builds it offline using deployment-pinned Rust images.
+  The builder must already contain all locked crate dependencies. The stock
+  Rust image in local config has no such cache; use the native ZIP for the fixture.
+
+## Build and check
+
+Requires Rust/Cargo, Python 3.11+ and the server's native build prerequisites.
+Runtime checks additionally require the rootless Docker socket and the pinned
+Python/uv images configured under `[background]` in `config.toml`.
+No extra Python packages are needed.
+
+```sh
+# Tests, release builds, reproducible ZIPs and the actual server ZIP validator.
+# Defaults to all three plugins and data/curated-plugins (the local config path).
+scripts/agent-test.sh run -- python3 scripts/package-rust-plugins.py
+
+# Select one plugin or another output directory.
+scripts/agent-test.sh run -- python3 scripts/package-rust-plugins.py web-extractor --output /tmp/rust-plugins
+
+# Static check only: package/manifest/native architecture and valid operation schemas.
+scripts/check-rust-plugin.sh --static-only data/curated-plugins/document-analysis-1.0.0.zip
+
+# Real offline operations in the production container sandbox, with JSONL,
+# result schema, expected values, artifact count/size/hash/path and cleanup checks.
+scripts/check-rust-plugin.sh data/curated-plugins/document-analysis-1.0.0.zip plugins/document-analysis/check-cases.json
+scripts/check-rust-plugin.sh data/curated-plugins/web-extractor-1.0.0.zip plugins/web-extractor/check-cases.json
+scripts/check-rust-plugin.sh data/curated-plugins/fixture-rust-1.0.0.zip plugins/fixture-rust-1.0.0/check-cases.json
+```
+
+Checks use `scripts/agent-test.sh`: output is bounded, the full log contains the
+JSON report and the command exits nonzero on failure. An optional third argument
+selects another deployment config. Checks use temporary workspaces, containers
+and an image tag, and never change the Store database or approve permissions.
+Do not run qualification alongside startup reaping on the same daemon.
+The script launches containers with the same owner labels as Job workers.
+
+A `package: PASS` static report keeps `runtime: NOT_RUN`. Runtime checks always
+use `--network=none`; a plugin declaring hosts keeps `network: NOT_RUN`, even
+when its offline/error cases pass. This is compatibility evidence, not proof of
+successful URL fetches, egress qualification, activation or a full LLM Job.
+
+Each plugin provides `check-cases.json`. For a new plugin, supply a JSON array
+with at least one case for every declared operation:
+
+```json
+[
+  {
+    "name": "sample",
+    "operation": "collect",
+    "arguments": {"topic": "AI"},
+    "expected": {"/topic": "AI", "/count": 1},
+    "expected_artifacts": 1
+  }
+]
+```
+
+`expected` keys are JSON pointers within `result`. Use `expected_error` with
+the application error code for a negative case; omit successful result assertions
+in that case. Inputs must satisfy the operation's input schema. Files returned
+as artifacts are read only after the worker is removed and checked by the same
+code as Job dispatch.
 
 ## Packages
 
@@ -13,25 +76,20 @@ endian matching the host's x86_64/aarch64 architecture.
 | --- | --- | --- |
 | web-extractor | extract_html, fetch_url | Network hosts example.com and en.wikipedia.org; Admin approval and qualified egress required |
 | document-analysis | analyze_document | Offline only |
+| fixture-rust | collect | Offline deterministic qualification fixture |
 
-Use GitHub Actions workflow **Rust Agent Job Plugins** on this branch to build
-and test on Ubuntu 22.04 x86_64. GitHub downloads each Actions artifact as
-an *outer* ZIP archive; extract it first, then upload the *inner*
-`web-extractor-1.0.0.zip` or `document-analysis-1.0.0.zip` into Plugin Store.
-Alternatively, on a compatible x86_64 GNU/Linux Rust host:
+GitHub Actions workflow **Rust Agent Job Plugins** uses the same packaging
+script and produces native ZIPs for x86_64 Linux. GitHub wraps each downloadable
+artifact in an outer ZIP: extract that wrapper and upload the inner plugin ZIP.
+Other architectures must build on a compatible host and pass the check script.
+The packaging script discovers Cargo's actual target directory, honors
+`CARGO_TARGET_DIR`, and uses committed lockfiles with `--locked`.
 
-```sh
-cargo test --manifest-path plugins/web-extractor/Cargo.toml
-cargo test --manifest-path plugins/document-analysis/Cargo.toml
-cargo build --release --manifest-path plugins/web-extractor/Cargo.toml
-cargo build --release --manifest-path plugins/document-analysis/Cargo.toml
-```
-
-The workflow produces `web-extractor-1.0.0.zip` and
-`document-analysis-1.0.0.zip` for the Store. Upload each ZIP through the
-Plugin Store, review and approve declared permissions, then Test and Activate.
-Uploading source directories or source-only ZIPs is not supported: `bin/plugin`
-must contain the compiled ELF.
+Upload the ZIP through Plugin Store, review and approve declared permissions,
+then Test and Activate. The curated Store path may also read the generated ZIPs
+from `data/curated-plugins`. A bare source directory is not a Store package.
+The script publishes both `<id>-<version>.zip` for downloads and `<id>.zip`
+for the existing curated install endpoint; both contain the same validated bytes.
 
 For **Web Extractor**, the listed domains are example allowlist entries.
 Change `plugin.toml` before packaging to match your deployment. Admin must
@@ -67,8 +125,8 @@ Output: exactly one newline-terminated JSON object
   base and does not invoke Python. No new MCP dependency.
 - Plugin ZIPs are architecture-specific. Currently CI produces **x86_64**;
   aarch64 operators must build and package binaries on a compatible host.
-- Building release Rust crates downloads dependencies only on the trusted
-  CI/development host, never inside Agent Job installation. Check provenance
+- Building native release ZIPs downloads dependencies only on the trusted
+  CI/development host; source installation uses an already populated offline cache. Check provenance
   and dependency advisories before distributing the resulting ZIPs.
 - Store's Test endpoint currently verifies sandbox/image/permissions but does
   not invoke every plugin operation. Run unit and representative integration

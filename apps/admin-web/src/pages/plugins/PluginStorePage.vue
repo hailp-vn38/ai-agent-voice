@@ -26,6 +26,7 @@ const notice = ref('')
 const backendPending = ref(false)
 const installOpen = ref(false)
 const selectedFile = ref<File | null>(null)
+const dragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 let controller: AbortController | undefined
 
@@ -65,12 +66,28 @@ async function load(nextPage = 1) {
 function openDetail(id: string) {
   void router.push({ name: 'plugin-detail', params: { id } })
 }
+function openInstall() {
+  selectedFile.value = null
+  dragging.value = false
+  error.value = ''
+  if (fileInput.value) fileInput.value.value = ''
+  installOpen.value = true
+}
 function chooseFile(event: Event) {
-  const target = event.target as HTMLInputElement
-  const file = target.files?.[0] ?? null
+  selectFile((event.target as HTMLInputElement).files?.[0] ?? null)
+}
+function dropFile(event: DragEvent) {
+  dragging.value = false
+  const file = event.dataTransfer?.files[0]
+  if (!file || busy.value) return
+  if (fileInput.value) fileInput.value.value = ''
+  selectFile(file)
+}
+function selectFile(file: File | null) {
+  if (busy.value) return
   if (!file) { selectedFile.value = null; return }
   if (!file.name.toLowerCase().endsWith('.zip') || file.size > 20 * 1024 * 1024) {
-    target.value = ''
+    if (fileInput.value) fileInput.value.value = ''
     selectedFile.value = null
     error.value = t('jobUi.invalidZip')
     return
@@ -104,7 +121,7 @@ onBeforeUnmount(() => controller?.abort())
     <PageHeader :title="t('jobUi.plugins')" :description="t('jobUi.pluginsDescription')">
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}</Button>
-        <Button :disabled="busy" @click="installOpen = true"><PackagePlus class="size-4" />{{ t('jobUi.installZip') }}</Button>
+        <Button :disabled="busy" @click="openInstall"><PackagePlus class="size-4" />{{ t('jobUi.installZip') }}</Button>
       </template>
     </PageHeader>
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
@@ -158,10 +175,13 @@ onBeforeUnmount(() => controller?.abort())
 
     <BaseModal v-model="installOpen" :title="t('jobUi.installZip')" :description="t('jobUi.installHint')" :close-disabled="busy">
       <div class="space-y-4" :aria-busy="busy">
-        <div class="rounded-lg border border-dashed p-6 text-center">
+        <div class="rounded-lg border border-dashed p-6 text-center transition-colors"
+          :class="{ 'border-studio-violet bg-studio-violet/5': dragging }"
+          @dragover.prevent="dragging = !busy" @dragleave.prevent="dragging = false" @drop.prevent="dropFile">
           <UploadCloud class="mx-auto size-8 text-studio-violet" />
           <label class="mt-3 block text-sm font-medium" for="plugin-zip">{{ t('jobUi.chooseZip') }}</label>
-          <input id="plugin-zip" ref="fileInput" type="file" accept=".zip,application/zip" class="mt-3 block w-full text-sm" :disabled="busy" @change="chooseFile" />
+          <p class="mt-1 text-sm text-muted-foreground">{{ t('jobUi.dropZip') }}</p>
+          <input id="plugin-zip" ref="fileInput" type="file" accept=".zip,application/zip" :disabled="busy" class="mt-3 block w-full text-sm" @change="chooseFile" />
           <p class="mt-2 text-xs text-muted-foreground">{{ t('jobUi.zipLimit') }}</p>
         </div>
         <p class="text-sm text-muted-foreground">{{ t('jobUi.installSecurity') }}</p>

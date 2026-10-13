@@ -161,14 +161,6 @@ pub(crate) struct ConfiguredOpenAiLlm {
 }
 
 impl ConfiguredOpenAiLlm {
-    pub(crate) fn build(
-        api_key: &str,
-        base_url: &str,
-        model: &str,
-        timeout_seconds: u64,
-    ) -> Result<Self, LlmError> {
-        Self::build_with_responses(api_key, base_url, model, timeout_seconds, false)
-    }
     pub(crate) fn build_with_responses(
         api_key: &str,
         base_url: &str,
