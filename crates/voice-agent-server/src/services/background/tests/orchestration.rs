@@ -15,7 +15,7 @@ impl JobModels for ScriptedModels {
         _: CancellationToken,
     ) -> Result<String, JobError> {
         if request.messages.iter().any(|message| matches!(message, crate::providers::llm::ChatMessage::System { content } if content.contains("Orchestrator"))) {
-            Ok(json!({"steps":[{"step_key":"summary","instruction":"Summarize the goal","output_schema":{"type":"object","required":["summary"],"properties":{"summary":{"type":"string"}},"additionalProperties":false}}]}).to_string())
+            Ok(json!({"steps":[{"kind":"llm","step_key":"summary","instruction":"Summarize the goal"}]}).to_string())
         } else {
             Ok(json!({"summary":"Checked worker result"}).to_string())
         }
@@ -86,26 +86,29 @@ impl JobModels for ProposedModels {
         Ok(if planner { &self.plan } else { &self.worker }.to_string())
     }
 }
+fn proposal_step(key: &str) -> Value {
+    json!({"kind":"llm","step_key":key,"instruction":"Summarize"})
+}
 fn step(key: &str) -> Value {
     json!({"step_key":key,"instruction":"Summarize","output_schema":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}})
 }
 
 #[tokio::test]
 async fn scheduler_rejects_invalid_dags_without_dispatching_worker() {
-    let mut cycle_a = step("a");
+    let mut cycle_a = proposal_step("a");
     cycle_a["dependencies"] = json!(["b"]);
-    let mut cycle_b = step("b");
+    let mut cycle_b = proposal_step("b");
     cycle_b["dependencies"] = json!(["a"]);
-    let mut missing = step("a");
+    let mut missing = proposal_step("a");
     missing["input_refs"] = json!(["missing"]);
-    let mut unknown = step("a");
+    let mut unknown = proposal_step("a");
     unknown["plugin_id"] = json!("later-plugin");
     unknown["operation"] = json!("read");
     for proposal in [
         json!({"steps":[cycle_a,cycle_b]}),
         json!({"steps":[missing]}),
-        json!({"steps":[unknown,step("final")]}),
-        json!({"steps":[step("a")],"document_refs":[]}),
+        json!({"steps":[unknown,proposal_step("final")]}),
+        json!({"steps":[proposal_step("a")],"document_refs":[]}),
     ] {
         let config = Arc::new(config());
         let db = Arc::new(Database::connect(&config.database).await.unwrap());
@@ -137,10 +140,9 @@ async fn scheduler_rejects_invalid_dags_without_dispatching_worker() {
 
 #[tokio::test]
 async fn worker_schema_failure_skips_descendants_and_contract_stays_immutable() {
-    let first = step("first");
-    let mut last = step("last");
+    let first = proposal_step("first");
+    let mut last = proposal_step("last");
     last["dependencies"] = json!(["first"]);
-    last["input_refs"] = json!(["first"]);
     let config = Arc::new(config());
     let db = Arc::new(Database::connect(&config.database).await.unwrap());
     let runtime = BackgroundRuntime::execution_harness(
@@ -189,7 +191,7 @@ impl JobModels for DeadlineModels {
         deadline: i64,
         _: CancellationToken,
     ) -> Result<String, JobError> {
-        if request.messages.iter().any(|message|matches!(message,crate::providers::llm::ChatMessage::System {content} if content.contains("Orchestrator"))) {return Ok(json!({"steps":[step("worker")]}).to_string());}
+        if request.messages.iter().any(|message|matches!(message,crate::providers::llm::ChatMessage::System {content} if content.contains("Orchestrator"))) {return Ok(json!({"steps":[proposal_step("worker")]}).to_string());}
         tokio::time::sleep(
             crate::services::background::models::remaining(deadline).unwrap_or_default()
                 + std::time::Duration::from_millis(20),
@@ -387,5 +389,45 @@ async fn quiescent_replan_preserves_step_contracts_and_rejects_changed_arguments
     assert_eq!(published.steps[0].status, "succeeded");
     assert_eq!(published.steps[1].status, "pending");
     runtime.engine.cancel(&job.id).await.unwrap();
+    runtime.shutdown().await;
+}
+
+struct RepairModels {
+    planner_calls: std::sync::atomic::AtomicUsize,
+}
+#[async_trait::async_trait]
+impl JobModels for RepairModels {
+    async fn complete(
+        &self, _: &str, _: &ProviderPin, request: LlmRequest, _: i64, _: CancellationToken,
+    ) -> Result<String, JobError> {
+        let planner = request.messages.iter().any(|message|
+            matches!(message,crate::providers::llm::ChatMessage::System {content} if content.contains("Orchestrator")));
+        if !planner { return Ok(json!({"summary":"repaired successfully"}).to_string()); }
+        let count = self.planner_calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        if count==0 { Ok("not a JSON proposal".into()) }
+        else {
+            assert!(request.messages.iter().any(|message|
+                matches!(message,crate::providers::llm::ChatMessage::User {content} if content.contains("proposal_not_json"))));
+            Ok(json!({"steps":[proposal_step("final")]}).to_string())
+        }
+    }
+}
+#[tokio::test]
+async fn invalid_model_json_is_repaired_before_worker_and_visible_in_timeline() {
+    let config=Arc::new(config());
+    let db=Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime=BackgroundRuntime::execution_harness(db.clone(),config,Arc::new(RepairModels {
+        planner_calls: Default::default(),
+    })).await.unwrap();
+    enable(&runtime.engine).await;
+    let job=runtime.engine.submit(request("Repair malformed JSON"),&JobRequester::Admin,None).await.unwrap().job;
+    let done=wait_for(&runtime.engine,&job.id,|job|job.status=="succeeded").await;
+    assert_eq!(done.budget_used["planner_calls"],2);
+    assert_eq!(done.steps.len(),1);
+    assert_eq!(done.steps[0].status,"succeeded");
+    let events=db.job_events(&job.id,0,100).await.unwrap();
+    let kinds:Vec<_>=events.iter().map(|event|event.event_type.as_str()).collect();
+    assert_eq!(kinds,vec!["plan_attempt","plan_rejected","plan_attempt","plan_accepted","step_started","step_finished","job_finished"]);
+    assert_eq!(events[1].payload["code"],"proposal_not_json");
     runtime.shutdown().await;
 }
