@@ -40,14 +40,13 @@ scripts/check-rust-plugin.sh data/curated-plugins/fixture-rust-1.0.0.zip plugins
 Checks use `scripts/agent-test.sh`: output is bounded, the full log contains the
 JSON report and the command exits nonzero on failure. An optional third argument
 selects another deployment config. Checks use temporary workspaces, containers
-and an image tag, and never change the Store database or approve permissions.
+and an image tag, and never change the Store database.
 Do not run qualification alongside startup reaping on the same daemon.
 The script launches containers with the same owner labels as Job workers.
 
 A `package: PASS` static report keeps `runtime: NOT_RUN`. Runtime checks always
-use `--network=none`; a plugin declaring hosts keeps `network: NOT_RUN`, even
-when its offline/error cases pass. This is compatibility evidence, not proof of
-successful URL fetches, egress qualification, activation or a full LLM Job.
+use `--network=none` to exercise deterministic/offline cases. This is not proof of
+successful URL fetches on the regular Job worker network, activation or a full LLM Job.
 
 Each plugin provides `check-cases.json`. For a new plugin, supply a JSON array
 with at least one case for every declared operation:
@@ -72,11 +71,11 @@ code as Job dispatch.
 
 ## Packages
 
-| Package | Operations | Permissions |
+| Package | Operations | Network behavior |
 | --- | --- | --- |
-| web-extractor | extract_html, fetch_url | Network hosts example.com and en.wikipedia.org; Admin approval and qualified egress required |
-| document-analysis | analyze_document | Offline only |
-| fixture-rust | collect | Offline deterministic qualification fixture |
+| web-extractor | extract_html, fetch_url | `fetch_url` uses the worker's Docker network directly |
+| document-analysis | analyze_document | Requires no network for document parsing |
+| fixture-rust | collect | Deterministic offline fixture |
 
 GitHub Actions workflow **Rust Agent Job Plugins** uses the same packaging
 script and produces native ZIPs for x86_64 Linux. GitHub wraps each downloadable
@@ -85,18 +84,10 @@ Other architectures must build on a compatible host and pass the check script.
 The packaging script discovers Cargo's actual target directory, honors
 `CARGO_TARGET_DIR`, and uses committed lockfiles with `--locked`.
 
-Upload the ZIP through Plugin Store, review and approve declared permissions,
-then Test and Activate. The curated Store path may also read the generated ZIPs
+Upload the ZIP through Plugin Store, then Test and Activate. The curated Store path may also read the generated ZIPs
 from `data/curated-plugins`. A bare source directory is not a Store package.
 The script publishes both `<id>-<version>.zip` for downloads and `<id>.zip`
 for the existing curated install endpoint; both contain the same validated bytes.
-
-For **Web Extractor**, the listed domains are example allowlist entries.
-Change `plugin.toml` before packaging to match your deployment. Admin must
-approve the exact set of hosts; `plugin_egress_qualified_hosts` must include
-them and the pinned egress proxy must be operational. If the proxy fails
-qualification, activation fails closed. No login, JS rendering or unbounded
-crawling. `extract_html` parses caller-provided HTML without fetching.
 
 For **Document Analysis**, the current Job invocation uses a JSON envelope
 limited to 65,535 bytes. Base64 PDF/DOCX input must therefore be ~45 KiB
@@ -128,8 +119,8 @@ Output: exactly one newline-terminated JSON object
 - Building native release ZIPs downloads dependencies only on the trusted
   CI/development host; source installation uses an already populated offline cache. Check provenance
   and dependency advisories before distributing the resulting ZIPs.
-- Store's Test endpoint currently verifies sandbox/image/permissions but does
+- Store's Test endpoint currently verifies sandbox/image but does
   not invoke every plugin operation. Run unit and representative integration
   tests before activating in production.
-- No guarantee of arbitrary URL access; egress remains explicitly allowed by
-  deployment security policy.
+- Real Job workers use Docker's default network without a server-controlled egress proxy or host allowlist. Web Extractor still validates input URLs locally and does not follow redirects.
+- Network access depends on the Docker/host environment; plugins can attempt connections to reachable internal services. Install only trusted packages.
