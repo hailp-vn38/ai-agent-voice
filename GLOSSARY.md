@@ -71,6 +71,22 @@ _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát
 Môi trường mà Plugin Operation được thực hiện, độc lập với Voice Session, Agent và quyền sử dụng công cụ.
 _Avoid_: MCP Binding, LLM Provider, Inference Worker Runtime
 
+**Plugin Package**:
+Gói ZIP chứa mã thực thi, manifest và các operation contract; được nhận diện theo nội dung bất biến.
+_Avoid_: Plugin Installation, Docker image
+
+**Plugin Installation**:
+Môi trường plugin đã chuẩn bị đầy đủ dependencies và entrypoint, được định danh bất biến bằng Installation Digest, nhưng chưa mặc nhiên được kích hoạt.
+_Avoid_: Plugin Package, runtime image
+
+**Installation Digest**:
+Định danh cho đúng môi trường Plugin Installation mà một Job đã lựa chọn và đóng băng.
+_Avoid_: Docker Image Digest, mutable latest
+
+**Worker Attempt**:
+Một lần thực thi Plugin Operation có danh tính riêng; kết quả process chỉ là bằng chứng cho Job Engine.
+_Avoid_: Plugin Installation, Agent Job
+
 **Plugin Activation**:
 Quyết định quản trị đưa một Plugin Installation vào trạng thái có thể được Job lựa chọn; không phải phê duyệt quyền truy cập mạng.
 _Avoid_: Plugin Permission Grant, Network Hosts Approval, Agent grant
