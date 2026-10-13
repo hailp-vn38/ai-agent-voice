@@ -95,7 +95,7 @@ pub(crate) async fn complete(
     let url = format!("{base}/responses");
     let parsed = url::Url::parse(&url).map_err(|_| LlmError::Failed)?;
     if !matches!(parsed.scheme(), "https" | "http")
-        || parsed.username() != ""
+        || !parsed.username().is_empty()
         || parsed.password().is_some()
     {
         return Err(LlmError::Failed);
