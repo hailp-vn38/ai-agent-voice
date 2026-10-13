@@ -1,20 +1,29 @@
-# ADR 0101 — Direct network access for executable Agent Job plugins
+# ADR 0101 — Direct networking for executable plugin workers
 
 ## Status
-Accepted for the Agent Job plugin runtime, 2026-10-13.
+Accepted — 2026-10-13. Supersedes the **plugin networking and permission-approval** parts of [ADR 0093](0093-executable-python-plugin-runtime.md) and older Agent Job integration notes. Does not supersede the External MCP network decisions or the Python/Rust execution model.
 
-Supersedes the plugin network approval and egress-proxy decisions in ADR 0093 and the Agent Job integration notes. External MCP outbound policy is independent and unchanged.
+## Context
+Agent Job plugins previously declared `network_hosts` in `plugin.toml`, required a separate Admin permission approval, and received outbound access through a per-attempt egress proxy. This tied plugin installation, Job eligibility, network policy and worker lifecycle to one host allowlist. We chose a simpler, deployment-trusted executable Plugin Store: the server controls **which installed plugin may run**, not which destination that plugin may contact.
 
 ## Decision
-- `plugin.toml` has no `[permissions]` block and no `network_hosts` setting. An unknown `permissions` field is invalid in a new package.
-- Installation is followed by an explicit, revision-guarded **Activate** action. There is no extra network/storage permission approval API or UI.
-- Each Python/Rust plugin step starts in a short-lived rootless Docker worker **on the Engine's default network**. The server does not create an egress proxy, allocate per-step Docker networks, filter outbound hosts, or inject HTTP(S)_PROXY variables. The worker can reach services allowed by Docker and the host network.
-- Network access does not imply access to host mounts or the Docker socket. Keep non-root execution, read-only root filesystem, dropped capabilities, no-new-privileges, resource limits, a bounded artifact mount, timeouts, and ownership-based worker reaping.
-- Build stages remain offline (`docker build --network=none`, locked dependencies), independently of the runtime network choice, to maintain reproducible builds.
-- Frozen Job choices pin plugin ID, version, package digest, image digest, and operation. No permission digest or approval snapshot is stored or checked.
-- Remove the proxy image configuration, deployment build script, API permission endpoint, and approved-permission database column via a forward migration.
+- **Plugin Package** declares runtime, agent instructions, operations and schemas, **not network permissions**. Neither `[permissions]` nor `network_hosts` is part of the accepted manifest. There is no host grant, approved-host snapshot or `permission_digest`.
+- **Plugin Installation** initially has status `disabled`. **Plugin Activation** is an explicit Admin action guarded by the installation revision; it validates the package/image and makes operations eligible for Jobs. Activation is **not** a destination-specific network approval or a security audit of plugin behavior.
+- Every Python or Rust **Worker Attempt** uses a short-lived Docker container attached to the Docker Engine's **default runtime network**. The server does not create per-attempt networks, deploy an egress proxy, inject `HTTP_PROXY`/`HTTPS_PROXY`, or apply host/IP/domain allowlists. Any destination accessible from that Docker network is reachable in principle, including private services.
+- **Plugin Network Reachability** is an outcome of Docker/host connectivity, not a field of Plugin Package, an Agent grant or an Admin setting. It does not imply a successful request: DNS, routes, the remote endpoint or infrastructure can still prevent a connection.
+- Keep the independent **execution sandbox**: rootless Engine, non-root user, read-only root filesystem, dropped capabilities, no-new-privileges, resource/time/PID/output bounds and a controlled artifact mount. No host credential, database or Docker socket mount is introduced. Worker cleanup remains owner-scoped.
+- **Build-time network** is separate: source/image builds retain `--network=none` and locked offline dependencies. Offline plugin qualification also runs with `network=none`; it is **not proof of runtime Internet connectivity**. The Admin Test endpoint checks preflight/image validity, not a live fetch for each operation.
+- **Frozen Plugin Choices** pin plugin ID, version, package digest, image digest and operation. Admission, start and completion recheck the pinned installed plugin's `ready` status, without a network grant or permission digest.
+- Remove the plugin-permissions endpoint/UI, egress configuration and proxy dependency, and the `approved_permissions_json` column through a forward migration. Old installed packages and old queued Job snapshots are explicitly unsupported; no compatibility adapter is required.
 
-## Consequences
-**Outbound connections are unrestricted by the application**, including destinations on reachable private networks. A malicious or compromised plugin can attempt requests to internal services or metadata endpoints. The server does not promise SSRF prevention or network isolation. Install only trusted plugin code; apply external host or infrastructure policy only if the deployment independently requires it.
+## Boundary scenarios
+1. **Web Extractor** may request a public host, localhost, a private address or a non-standard HTTP(S) port if Docker networking permits it. Its HTTP(S) scheme/credential checks and no-redirect behavior are operation logic, not a server network policy.
+2. **Document Analysis** does not need outbound requests but runs under the same worker networking rule. There is no per-plugin `network=none` setting.
+3. **Offline checker succeeds, live fetch fails**: the package/runtime qualification may still be correct; live network behavior is tested separately.
+4. **An installation is disabled or replaced during a Job**: an unchanged frozen choice does not bypass the recheck of package/image identity and `ready` status.
+5. **External MCP** retains its own URL/hostname policy. It is not governed by this ADR and must not be modified as a side effect of deleting Plugin `network_hosts`.
 
-Old installed plugin packages and pending Job snapshots with permission claims are deliberately **not supported** by this change. Repackage/reinstall plugins and clear obsolete queued Jobs if necessary; no compatibility layer is provided. External MCP policy and the offline image-build boundary remain separate.
+## Trade-off and consequences
+Rejected alternatives were retaining manifest host grants, keeping a server-managed proxy without manifest declarations, and forcing `network=none` for all plugin operations. They add policy/operations complexity or prevent network-aware plugins. The chosen model deliberately trades application-level egress restrictions for simpler direct worker connectivity.
+
+**Security consequence:** an installed plugin can attempt connections to reachable internal services and metadata endpoints; the server does not promise SSRF protection or outbound network isolation. Only Admin-trusted code should be installed. No new runtime network-policy configuration is introduced. The resource/isolation constraints above remain distinct and mandatory.
