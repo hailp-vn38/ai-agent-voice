@@ -176,12 +176,23 @@ impl PluginStore {
             job_id,
             attempt_id,
         )
-        .await?;
+        .await;
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
+                    tracing::warn!(job_id, attempt_id, %cleanup, "Plugin workspace cleanup failed");
+                }
+                return Err(error);
+            }
+        };
         let outcome = async {
             let _publication = self.database.tool_security.publication.read().await;
             if cancellation.is_cancelled() { return Err(PluginError::JobRejected(crate::services::background::JobError::Cancelled)); }
             before_start().await?;
+            let start_time = std::time::Instant::now();
             prepared.start_container(&self.config).await?;
+            tracing::info!(event="background_container_started", job_id, attempt_id, container_start_ms=start_time.elapsed().as_millis() as u64, memory_mib=512, cpu_count=1, pids_limit=64);
             after_start().await?;
             drop(_publication);
             let mut envelope=json!({
@@ -217,7 +228,17 @@ impl PluginStore {
             Ok(response)
         }
         .await;
+        let reap_started = std::time::Instant::now();
         let reaped = prepared.remove(&self.config).await;
+        if cancellation.is_cancelled() {
+            tracing::info!(
+                event = "background_container_cancel_reaped",
+                job_id,
+                attempt_id,
+                reap_ms = reap_started.elapsed().as_millis() as u64,
+                reaped = reaped.is_ok()
+            );
+        }
         if reaped.is_err() {
             return Err(PluginError::WorkerUnreaped);
         }
@@ -282,7 +303,9 @@ impl PluginStore {
             })
         }
         .await;
-        let _ = tokio::fs::remove_dir_all(&workspace).await;
+        if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
+            tracing::warn!(job_id, attempt_id, %cleanup, "Plugin workspace cleanup failed");
+        }
         result
     }
 }

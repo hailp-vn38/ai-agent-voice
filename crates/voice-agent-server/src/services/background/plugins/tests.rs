@@ -1,5 +1,103 @@
 use super::protocol::parse_response;
 use serde_json::json;
+use std::io::Read;
+
+#[tokio::test]
+async fn package_failure_persists_error_and_cannot_poison_new_image() {
+    let (db, _, runtime) = crate::services::background::tests::harness().await;
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../plugins/fixture-research-1.0.0.zip"
+    ));
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut manifest = String::new();
+    zip.by_name("plugin.toml")
+        .unwrap()
+        .read_to_string(&mut manifest)
+        .unwrap();
+    let manifest =
+        serde_json::to_string(&toml::from_str::<toml::Value>(&manifest).unwrap()).unwrap();
+    let choice = super::FrozenChoice {
+        plugin_id: "fixture-research".into(),
+        version: "1.0.0".into(),
+        package_digest: "a".repeat(64),
+        image_digest: format!("sha256:{}", "b".repeat(64)),
+        operation: "collect".into(),
+        permission_digest: "c".repeat(64),
+    };
+    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES(?,?,?,?,'ready',1,'{}',?,0,0)")
+        .bind(&choice.plugin_id).bind(&choice.version).bind(&choice.package_digest)
+        .bind(&choice.image_digest).bind(manifest).execute(db.pool()).await.unwrap();
+    runtime
+        .engine
+        .plugins
+        .fail_package(&choice, "worker_protocol_error")
+        .await
+        .unwrap();
+    let failed = runtime.engine.plugins.get(&choice.plugin_id).await.unwrap();
+    assert_eq!(failed.status, "error");
+    assert_eq!(
+        failed.last_error_code.as_deref(),
+        Some("worker_protocol_error")
+    );
+    assert_eq!(failed.revision, 2);
+    sqlx::query("UPDATE plugin_installations SET status='ready',image_digest=?,revision=revision+1 WHERE plugin_id=?")
+        .bind(format!("sha256:{}", "d".repeat(64))).bind(&choice.plugin_id).execute(db.pool()).await.unwrap();
+    runtime
+        .engine
+        .plugins
+        .fail_package(&choice, "plugin_runtime_error")
+        .await
+        .unwrap();
+    assert_eq!(
+        runtime
+            .engine
+            .plugins
+            .get(&choice.plugin_id)
+            .await
+            .unwrap()
+            .status,
+        "ready"
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn startup_reaper_removes_only_owned_uuid_workspaces() {
+    let (db, config, runtime) = crate::services::background::tests::harness().await;
+    runtime.shutdown().await;
+    let mut store = super::PluginStore::new(db, config.background.clone());
+    store.root = std::env::temp_dir().join(format!("plugin-cleanup-{}", uuid::Uuid::new_v4()));
+    let job = uuid::Uuid::new_v4().to_string();
+    let attempt = uuid::Uuid::new_v4().to_string();
+    let stale = store.root.join("workspaces").join(&job).join(&attempt);
+    tokio::fs::create_dir_all(stale.join("out")).await.unwrap();
+    tokio::fs::write(stale.join("out").join("result"), b"old")
+        .await
+        .unwrap();
+    for _ in 0..1000 {
+        tokio::fs::create_dir_all(
+            store
+                .root
+                .join("workspaces")
+                .join(&job)
+                .join(uuid::Uuid::new_v4().to_string()),
+        )
+        .await
+        .unwrap();
+    }
+    store.drain_workspaces().await.unwrap();
+    assert!(!stale.exists());
+    let unexpected = store.root.join("workspaces").join("not-owned");
+    tokio::fs::create_dir_all(&unexpected).await.unwrap();
+    assert_eq!(
+        store.drain_workspaces().await.err(),
+        Some(super::PluginError::StorageUnavailable)
+    );
+    assert!(unexpected.exists());
+    tokio::fs::remove_dir_all(unexpected).await.unwrap();
+    tokio::fs::remove_dir_all(store.root).await.unwrap();
+}
 
 #[tokio::test]
 async fn worker_saturation_waits_for_release_and_expires_at_job_deadline() {

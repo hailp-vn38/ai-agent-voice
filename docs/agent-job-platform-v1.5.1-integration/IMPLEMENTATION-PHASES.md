@@ -35,3 +35,7 @@ Canonical design: [`docs/agent-job-plugin-platform-codebase-design.md`](docs/age
 ## Current P3 source scope
 
 [P3-IMPLEMENTATION.md](P3-IMPLEMENTATION.md) records the managed planner/Worker, durable DAG/replan, Voice builtin, Admin retry and streaming implementation, deterministic source gates, and executable live-host tracer. The operator explicitly deferred real rootless/LLM/browser E2E to another host. P3 source work is recorded separately from its hard live exit gate, which stays `NOT_RUN`; deployment acceptance and P4 qualification are not claimed.
+
+## Current P4 source scope
+
+[P4-IMPLEMENTATION.md](P4-IMPLEMENTATION.md) records bounded terminal/workspace cleanup, fail-stop plugin health, latency observations and Admin UI source changes. Networked crawler egress implementation and real Linux deployment qualification remain open; P4 is not complete.

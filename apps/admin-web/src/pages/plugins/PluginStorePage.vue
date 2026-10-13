@@ -6,6 +6,7 @@ import { formatApiError, isApiError } from '@/api/errors'
 import type { InstalledPlugin, PluginStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
+import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useI18n } from '@/composables/useI18n'
@@ -25,6 +26,8 @@ const selected = ref<InstalledPlugin | null>(null)
 const detailsOpen = ref(false)
 const installOpen = ref(false)
 const selectedFile = ref<File | null>(null)
+const pendingAction = ref<'approve' | 'uninstall' | null>(null)
+const confirmOpen = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 let controller: AbortController | undefined
 
@@ -104,8 +107,6 @@ function chooseFile(event: Event) {
 async function action(type: 'test' | 'approve' | 'activate' | 'disable' | 'uninstall') {
   const item = selected.value
   if (!item || busy.value) return
-  if (type === 'uninstall' && !window.confirm(t('jobUi.uninstallConfirm'))) return
-  if (type === 'approve' && !window.confirm(t('jobUi.approveConfirm'))) return
   busy.value = true
   error.value = ''
   notice.value = ''
@@ -141,6 +142,15 @@ async function action(type: 'test' | 'approve' | 'activate' | 'disable' | 'unins
   } finally {
     busy.value = false
   }
+}
+function confirmAction(type: 'approve' | 'uninstall') {
+  pendingAction.value = type
+  confirmOpen.value = true
+}
+function runConfirmedAction() {
+  const type = pendingAction.value
+  pendingAction.value = null
+  if (type) void action(type)
 }
 onMounted(() => { void load() })
 onBeforeUnmount(() => controller?.abort())
@@ -244,6 +254,10 @@ onBeforeUnmount(() => controller?.abort())
         <div v-if="selected.last_error_code" class="rounded-lg border border-danger/30 bg-danger/5 p-3 text-danger">
           {{ t('jobUi.lastError') }}: {{ selected.last_error_code }}
         </div>
+        <div class="space-y-1 break-all text-xs text-muted-foreground">
+          <p>{{ t('jobUi.packageDigest') }}: <code>{{ selected.digest }}</code></p>
+          <p>{{ t('jobUi.imageDigest') }}: <code>{{ selected.image_digest }}</code></p>
+        </div>
         <div><h3 class="mb-2 flex items-center gap-2 font-semibold"><Code2 class="size-4" />{{ t('jobUi.operations') }}</h3>
           <div v-for="operation in selected.operations" :key="operation.name" class="border-t py-2">
             <p class="font-mono text-xs">{{ operation.name }} <span class="text-muted-foreground">· {{ operation.replay }}</span></p>
@@ -258,15 +272,27 @@ onBeforeUnmount(() => controller?.abort())
           <p class="mt-2 text-xs font-medium" :class="selected.permissions_approved ? 'text-success' : 'text-warning'">
             {{ selected.permissions_approved ? t('jobUi.permissionsApproved') : t('jobUi.permissionsPending') }}
           </p>
+          <p v-if="selected.approved_permissions" class="mt-1 text-xs text-muted-foreground">
+            {{ t('jobUi.approvedNetwork') }}: {{ selected.approved_permissions.network_hosts.join(', ') || '—' }}
+          </p>
         </div>
         <div class="flex flex-wrap justify-end gap-2 border-t pt-4">
-          <Button v-if="!selected.permissions_approved" variant="outline" :disabled="busy" @click="action('approve')">{{ t('jobUi.approve') }}</Button>
+          <Button v-if="!selected.permissions_approved" variant="outline" :disabled="busy" @click="confirmAction('approve')">{{ t('jobUi.approve') }}</Button>
           <Button variant="outline" :disabled="busy" @click="action('test')"><FlaskConical class="size-4" />{{ t('jobUi.test') }}</Button>
           <Button v-if="selected.status !== 'disabled'" variant="outline" :disabled="busy" @click="action('disable')">{{ t('jobUi.disable') }}</Button>
           <Button v-if="selected.status !== 'ready'" :disabled="busy || !selected.permissions_approved" @click="action('activate')">{{ selected.status === 'error' ? t('jobUi.reset') : t('jobUi.activate') }}</Button>
-          <Button variant="outline" :disabled="busy" @click="action('uninstall')"><Trash2 class="size-4" />{{ t('jobUi.uninstall') }}</Button>
+          <Button variant="outline" :disabled="busy" @click="confirmAction('uninstall')"><Trash2 class="size-4" />{{ t('jobUi.uninstall') }}</Button>
         </div>
       </div>
     </BaseModal>
+    <ConfirmDialog v-model="confirmOpen"
+      :title="pendingAction === 'uninstall' ? t('jobUi.uninstall') : t('jobUi.approve')"
+      :confirm-label="pendingAction === 'uninstall' ? t('jobUi.uninstall') : t('jobUi.approve')"
+      :tone="pendingAction === 'uninstall' ? 'danger' : 'default'" @confirm="runConfirmedAction">
+      <p>{{ pendingAction === 'uninstall' ? t('jobUi.uninstallConfirm') : t('jobUi.approveConfirm') }}</p>
+      <p v-if="pendingAction === 'approve' && selected" class="mt-2 break-all font-mono text-xs">
+        {{ selected.permissions?.network_hosts.join(', ') || '—' }} · {{ selected.digest }}
+      </p>
+    </ConfirmDialog>
   </section>
 </template>

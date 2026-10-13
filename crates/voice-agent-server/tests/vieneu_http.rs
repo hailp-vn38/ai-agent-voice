@@ -74,6 +74,9 @@ fn a_retained_worker_reconnects_after_the_service_closes_an_idle_connection() {
                     Err(error) => panic!("accept failed: {error}"),
                 }
             };
+            // Accepted sockets inherit nonblocking mode on some hosts. The
+            // request reader below requires blocking reads with a deadline.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(1)))
                 .unwrap();

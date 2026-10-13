@@ -165,6 +165,9 @@ onBeforeUnmount(() => controller?.abort())
               <ShieldCheck class="mt-0.5 size-5 shrink-0 text-studio-cyan" />
               <p class="text-sm leading-relaxed text-muted-foreground">{{ t('jobUi.allAgents') }}</p>
             </div>
+            <p class="mt-3 text-sm" :class="settings.runtime_ready ? 'text-success' : 'text-warning'">
+              {{ settings.runtime_ready ? t('jobUi.runtimeReady') : t('jobUi.runtimeUnavailable') }}
+            </p>
             <div class="mt-4 flex items-start gap-3">
               <CheckCircle2 class="mt-0.5 size-5 shrink-0 text-studio-violet" />
               <p class="text-sm leading-relaxed text-muted-foreground">{{ t('jobUi.noMcp') }}</p>

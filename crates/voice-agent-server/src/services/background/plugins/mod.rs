@@ -466,6 +466,22 @@ impl PluginStore {
         builder::preflight(&self.config).await?;
         builder::verify_image(&self.config, &row.image_digest, &row.package_digest).await
     }
+
+    /// Package-attributable failures stop later dispatches even when the Job
+    /// concurrently becomes terminal. The frozen image identity prevents a
+    /// late worker from poisoning an upgraded installation.
+    pub(crate) async fn fail_package(
+        &self,
+        choice: &FrozenChoice,
+        code: &str,
+    ) -> Result<(), PluginError> {
+        let _publication = self.database.tool_security.publication.write().await;
+        sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'")
+            .bind(code).bind(crate::database::unix_seconds()).bind(&choice.plugin_id)
+            .bind(&choice.version).bind(&choice.package_digest).bind(&choice.image_digest)
+            .execute(self.database.pool()).await?;
+        Ok(())
+    }
 }
 
 /// Called within the same BEGIN IMMEDIATE transaction that commits the Job.

@@ -255,6 +255,14 @@ impl JobEngine {
                     sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE job_id=? AND step_key=? AND attempt_id=?").bind(job_id).bind(step_key).bind(&attempt).execute(self.database.pool()).await?;
                 }
                 let code = error.code();
+                let health_result = if matches!(
+                    error,
+                    PluginError::PluginRuntimeError | PluginError::WorkerProtocolError
+                ) {
+                    self.plugins.fail_package(choice, code).await
+                } else {
+                    Ok(())
+                };
                 self.database
                     .finish_plugin_failure(
                         job_id,
@@ -272,15 +280,7 @@ impl JobEngine {
                         self.foundation_harness,
                     )
                     .await?;
-                if matches!(
-                    error,
-                    PluginError::PluginRuntimeError | PluginError::WorkerProtocolError
-                ) {
-                    let _publication = self.database.tool_security.publication.write().await;
-                    sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND package_digest=? AND status='ready'")
-                        .bind(code).bind(crate::database::unix_seconds()).bind(&choice.plugin_id)
-                        .bind(&choice.package_digest).execute(self.database.pool()).await?;
-                }
+                health_result.map_err(|_| JobError::DatabaseUnavailable)?;
             }
         }
         self.get(job_id).await

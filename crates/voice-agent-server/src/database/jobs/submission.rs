@@ -60,6 +60,7 @@ impl Database {
         );
         let scope = requester.scope();
         let _publication = self.tool_security.publication.read().await;
+        let commit_started = std::time::Instant::now();
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         if let Some(key) = key {
             let old: Option<JobRow> =
@@ -155,6 +156,7 @@ impl Database {
             return Err(JobError::RuntimeUnavailable);
         }
         tx.commit().await?;
+        tracing::info!(event="background_job_committed", job_id=%id, db_commit_ms=commit_started.elapsed().as_millis() as u64);
         Ok(JobReceipt {
             job,
             replayed: false,

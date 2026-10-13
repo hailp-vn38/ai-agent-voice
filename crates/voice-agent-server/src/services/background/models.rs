@@ -89,6 +89,7 @@ impl ManagedModels {
         };
         drop(connection);
         let deadline = tokio::time::Instant::now() + remaining(deadline_at)?;
+        let provider_wait_started = std::time::Instant::now();
         let lease = tokio::select! {
             _ = cancellation.cancelled() => return Err(JobError::Cancelled),
             result = async {
@@ -98,6 +99,7 @@ impl ManagedModels {
                 }
             } => result.map_err(|_| JobError::ProviderUnavailable)?,
         };
+        tracing::info!(event="background_provider_acquired", provider=%previous.reference, provider_wait_ms=provider_wait_started.elapsed().as_millis() as u64);
         let catalog = lease.runtimes().ok_or(JobError::ProviderUnavailable)?;
         let runtime = catalog
             .llm
@@ -142,6 +144,7 @@ impl JobModels for ManagedModels {
             .acquire(previous, deadline_at, cancellation.clone())
             .await?;
         let deadline = tokio::time::Instant::now() + remaining(deadline_at)?;
+        let capacity_wait_started = std::time::Instant::now();
         let permit = loop {
             match runtime.admit_background() {
                 Ok(permit) => break permit,
@@ -152,6 +155,7 @@ impl JobModels for ManagedModels {
                 },
             }
         };
+        tracing::info!(event="background_provider_permit", job_id, provider=%previous.reference, capacity_wait_ms=capacity_wait_started.elapsed().as_millis() as u64);
         let publication = self.database.tool_security.publication.read().await;
         let row = self.database.job_row(job_id).await?;
         if !matches!(row.status.as_str(), "planning" | "running") {

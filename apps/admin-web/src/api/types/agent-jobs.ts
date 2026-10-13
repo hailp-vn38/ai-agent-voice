@@ -6,6 +6,7 @@ export interface BackgroundProviderOption {
 }
 export interface BackgroundSettings {
   llm_providers?: BackgroundProviderOption[]
+  runtime_ready: boolean
   enabled: boolean
   orchestrator_llm_provider: string | null
   worker_llm_provider: string | null
@@ -34,8 +35,10 @@ export interface InstalledPlugin {
   runtime: { kind: 'isolated_worker'; language: 'python' }
   operations: PluginOperation[]
   permissions?: { network_hosts: string[]; scratch_storage: boolean }
+  approved_permissions?: { network_hosts: string[]; scratch_storage: boolean } | null
   permissions_approved?: boolean
   last_error_code?: string | null
+  image_digest?: string
 }
 export interface PluginTestResult {
   ok: boolean

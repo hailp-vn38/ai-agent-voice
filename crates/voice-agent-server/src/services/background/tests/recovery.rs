@@ -1,6 +1,100 @@
 use super::*;
 
 #[tokio::test]
+async fn expired_terminal_job_releases_artifacts_but_keeps_recent_history() {
+    let (db, _, runtime) = harness().await;
+    let old = runtime
+        .engine
+        .submit(request("old result"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    let recent = runtime
+        .engine
+        .submit(request("recent"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    runtime.shutdown().await;
+    let now = crate::database::unix_seconds().unwrap();
+    let old_time = now - 31 * 24 * 60 * 60;
+    sqlx::query("UPDATE jobs SET status='failed',updated_at=? WHERE id=?")
+        .bind(old_time)
+        .bind(&old.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let artifact_id = uuid::Uuid::new_v4().to_string();
+    let dir = crate::services::background::artifacts::root(&db)
+        .unwrap()
+        .join(&old.id);
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(dir.join(&artifact_id), b"result")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO job_artifacts(id,job_id,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,?,'text/plain',6,'ignored',?)")
+        .bind(&artifact_id).bind(&old.id).bind(format!("{}/{artifact_id}",old.id)).bind(old_time)
+        .execute(db.pool()).await.unwrap();
+    sqlx::query("UPDATE jobs SET status='failed',updated_at=? WHERE id=?")
+        .bind(now)
+        .bind(&recent.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::services::background::artifacts::expire_terminal(&db, now)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(runtime.engine.get(&old.id).await.is_err());
+    assert!(runtime.engine.get(&recent.id).await.is_ok());
+    assert!(!dir.join(&artifact_id).exists());
+}
+
+#[tokio::test]
+async fn terminal_retention_drains_multiple_bounded_batches() {
+    let (db, _, runtime) = harness().await;
+    let seed = runtime
+        .engine
+        .submit(request("retention seed"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    runtime.shutdown().await;
+    let now = crate::database::unix_seconds().unwrap();
+    let expired = now - 31 * 24 * 60 * 60;
+    sqlx::query("UPDATE jobs SET status='failed',updated_at=? WHERE id=?")
+        .bind(expired)
+        .bind(&seed.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        sqlx::query("INSERT INTO jobs(id,requester_scope,request_json,request_fingerprint,snapshot_json,plugin_choices_json,settings_revision,budget_limit_json,status,deadline_at,created_at,updated_at) SELECT ?,requester_scope,request_json,request_fingerprint,snapshot_json,plugin_choices_json,settings_revision,budget_limit_json,status,deadline_at,created_at,updated_at FROM jobs WHERE id=?")
+            .bind(uuid::Uuid::new_v4().to_string()).bind(&seed.id).execute(db.pool()).await.unwrap();
+    }
+    assert_eq!(
+        crate::services::background::artifacts::expire_terminal(&db, now)
+            .await
+            .unwrap(),
+        100
+    );
+    assert_eq!(
+        crate::services::background::artifacts::expire_terminal(&db, now)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        crate::services::background::artifacts::expire_terminal(&db, now)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn periodic_scan_observes_lost_wake_and_terminalizes_expired_or_revoked_work() {
     let (db, _, runtime) = harness().await;
     // Suppress submit's Notify by going through the same database admission seam.
