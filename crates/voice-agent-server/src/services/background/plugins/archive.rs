@@ -17,7 +17,6 @@ pub struct Manifest {
     pub manifest_version: u32,
     pub plugin: PluginIdentity,
     pub runtime: Runtime,
-    pub permissions: Permissions,
     pub agent: Agent,
     pub operations: BTreeMap<String, Operation>,
 }
@@ -37,12 +36,6 @@ pub struct Runtime {
     pub python: Option<String>,
     pub entrypoint: String,
     pub protocol: String,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Permissions {
-    #[serde(default)]
-    pub network_hosts: Vec<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -182,12 +175,6 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
         || manifest.runtime.protocol != "jsonl-v1"
         || manifest.operations.is_empty()
         || manifest.operations.len() > 16
-        || manifest.permissions.network_hosts.len() > 16
-        || manifest
-            .permissions
-            .network_hosts
-            .iter()
-            .any(|h| !token(h, 128) || !h.contains('.'))
     {
         return Err(PluginError::InvalidPackage);
     }
@@ -590,8 +577,6 @@ description = "A native worker"
 kind = "rust_container"
 entrypoint = "bin/plugin"
 protocol = "jsonl-v1"
-[permissions]
-network_hosts = []
 [agent]
 instructions = "instructions.md"
 [operations.test]
