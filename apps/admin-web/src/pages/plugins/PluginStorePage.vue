@@ -31,7 +31,7 @@ let controller: AbortController | undefined
 const readyCount = computed(() => items.value.filter((item) => item.status === 'ready').length)
 const failedCount = computed(() => items.value.filter((item) => item.status === 'error').length)
 
-function statusVariant(status: PluginStatus) {
+function statusVariant(status: PluginStatus): 'success' | 'danger' | 'secondary' {
   return status === 'ready' ? 'success' : status === 'error' ? 'danger' : 'secondary'
 }
 function statusText(status: PluginStatus) {
