@@ -253,7 +253,8 @@ async fn main()->Result<()> {
     if Path::new(&path).exists() {std::fs::remove_file(&path)?;}
     let listener=UnixListener::bind(&path)?;
     std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0o660))?;
-    let state=State{mode,attempts:Arc::new(Mutex::new(HashMap::new())),slots:Arc::new(Semaphore::new(if mode=="installer"{1}else{4}))};
+    let slot_count=if mode=="installer" {1} else {4};
+    let state=State{mode,attempts:Arc::new(Mutex::new(HashMap::new())),slots:Arc::new(Semaphore::new(slot_count))};
     loop {
         let (stream,_)=listener.accept().await?;
         let shared=state.clone();
