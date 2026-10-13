@@ -282,3 +282,72 @@ async fn admin_http_tracer_commits_queued_receipt_and_scheduler_observes_it() {
     let _ = server.await;
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn job_stream_is_authenticated_and_observes_committed_admin_jobs() {
+    use tokio::time::{timeout, Duration};
+    let (db, config, runtime) = harness().await;
+    let mut state = AppState::from_provider_set_with_database(
+        (*config).clone(),
+        Arc::new(ProviderSet::unavailable()),
+        Some((*db).clone()),
+    );
+    state.background = Some(runtime.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/api/admin/jobs/stream", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state)).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 401);
+    let mut response = client
+        .get(&url)
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(response.headers()["content-type"].to_str().unwrap().starts_with("text/event-stream"));
+    let ready = timeout(Duration::from_secs(3), async {
+        let mut text = String::new();
+        loop {
+            text.push_str(&String::from_utf8_lossy(&response.chunk().await.unwrap().unwrap()));
+            if text.contains("event: ready") { return text; }
+        }
+    }).await.unwrap();
+    assert!(ready.contains("event: ready"));
+    let job = runtime
+        .engine
+        .submit(request("Receive live Job notification"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    let observed = timeout(Duration::from_secs(3), async {
+        let mut text = String::new();
+        loop {
+            text.push_str(&String::from_utf8_lossy(&response.chunk().await.unwrap().unwrap()));
+            if text.contains("event: job_changed") && text.contains(&job.id) { return text; }
+        }
+    }).await.unwrap();
+    assert!(observed.contains(&job.id));
+    server.abort();
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn terminal_job_retention_deletes_durable_events_before_parent() {
+    let (db, _config, runtime) = harness().await;
+    let job = runtime.engine.submit(
+        request("Retain and purge job timeline"), &JobRequester::Admin, None,
+    ).await.unwrap().job;
+    sqlx::query("UPDATE jobs SET status='cancelled',updated_at=0 WHERE id=? AND status='queued'")
+        .bind(&job.id).execute(db.pool()).await.unwrap();
+    sqlx::query("INSERT INTO job_events(job_id,sequence,event_type,created_at,step_key,payload_json) VALUES(?,1,'job_finished',0,NULL,'{}')")
+        .bind(&job.id).execute(db.pool()).await.unwrap();
+    let expired = super::super::artifacts::expire_terminal(
+        &db, crate::database::unix_seconds().unwrap()
+    ).await.unwrap();
+    assert_eq!(expired, 1);
+    assert!(matches!(db.job_view(&job.id).await, Err(JobError::NotFound)));
+    runtime.shutdown().await;
+}
