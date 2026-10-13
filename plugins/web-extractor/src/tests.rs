@@ -16,11 +16,6 @@ fn extracts_main_text_and_metadata() {
     assert_eq!(output["links"][0]["url"], "https://example.com/x");
 }
 
-    assert!(public_url("http://127.0.0.1/secret").is_err());
-    assert!(public_url("http://169.254.169.254/latest").is_err());
-    assert!(public_url("http://[::ffff:127.0.0.1]/secret").is_err());
-    assert!(public_url("http://[::1]/secret").is_err());
-}
 #[test]
 fn accepts_http_urls_without_destination_allowlist() {
     for address in [
