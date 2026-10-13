@@ -68,15 +68,15 @@ _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát
 ## Background Jobs and Executable Plugins
 
 **Plugin Runtime**:
-Môi trường thực thi Plugin Operation trong worker riêng, độc lập với Voice Session, Agent và quyền sử dụng công cụ.
+Môi trường mà Plugin Operation được thực hiện, độc lập với Voice Session, Agent và quyền sử dụng công cụ.
 _Avoid_: MCP Binding, LLM Provider, Inference Worker Runtime
 
 **Plugin Activation**:
-Quyết định của Admin đưa một Plugin Installation vào trạng thái có thể được Job sử dụng sau kiểm tra package và image; không phải phê duyệt quyền mạng.
+Quyết định quản trị đưa một Plugin Installation vào trạng thái có thể được Job lựa chọn; không phải phê duyệt quyền truy cập mạng.
 _Avoid_: Plugin Permission Grant, Network Hosts Approval, Agent grant
 
 **Plugin Network Reachability**:
-Các đích mạng mà một Plugin Worker có thể kết nối theo hạ tầng Docker/host; không phải quyền do manifest hoặc server cấp và không đảm bảo yêu cầu mạng sẽ thành công.
+Tập đích mạng mà môi trường thực thi plugin có thể tiếp cận; không phải quyền do manifest hoặc server cấp và không đảm bảo kết nối thành công.
 _Avoid_: Network Hosts, Egress Allowlist, Plugin Network Grant
 
 Thuật ngữ Job, Plugin Package, Plugin Installation và Worker Attempt được định nghĩa tại [CONTEXT.md](CONTEXT.md#background-jobs-and-executable-plugins); ranh giới mạng được quyết định tại [ADR 0101](docs/adr/0101-direct-plugin-worker-network.md). Job độc lập với Reminder và Conversational Turn.
