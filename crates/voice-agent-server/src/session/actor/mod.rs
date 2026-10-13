@@ -1,9 +1,8 @@
 use crate::session::{
     ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ObserveDiagnostic, ProfileSource,
     SessionPhase, SpeakerObserve, SpeechOrigin, TemplateSwitchCatalog, TurnId,
-    event::SessionEvent,
+    interaction::{ActiveTurnPermit, DialogueHistory, SessionEvent},
     speech_output::{SpeechOutput, SpeechOutputEvent},
-    turn::{ActiveTurnPermit, DialogueHistory},
 };
 use crate::{
     audio::{

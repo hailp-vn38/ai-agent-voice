@@ -1,0 +1,514 @@
+//! Database read side of Voice Protocol Client admission.
+//!
+//! This module owns only the SQL that snapshots the Device → Agent → Template → Provider graph
+//! before a WebSocket is upgraded.  Turning that snapshot into an Effective Session Profile is a
+//! service responsibility and never re-queries SQLite.
+
+use std::{collections::HashMap, sync::Arc};
+
+use crate::config::DatabaseDevicesConfig;
+use sqlx::{Sqlite, Transaction};
+use thiserror::Error;
+use tracing::{info, warn};
+
+use crate::database::{Database, DatabaseError, map_sqlx_error};
+
+/// How many assignments the diagnostic line renders before it summarizes the rest.  Admission
+/// itself admits up to 64, and telemetry has to stay bounded regardless of what an operator
+/// accumulated through the Admin API.
+const LOGGED_ASSIGNMENTS: usize = 8;
+
+/// Renders the Template graph for one connection's admission decision.
+///
+/// Every field here is something the resolver branches on, so the line answers "which row made
+/// this fail" without a second query. It deliberately carries **no** prompt text, no provider
+/// `config_json`, no `secret_ref` and no raw Device/Client ID: ADR 0024 keeps telemetry to
+/// operational metadata, so a prompt is reported by length and an identity by its database id.
+fn summarize_assignments(assignments: &[AdmittedAssignment]) -> String {
+    let mut rendered = String::new();
+    for assignment in assignments.iter().take(LOGGED_ASSIGNMENTS) {
+        if !rendered.is_empty() {
+            rendered.push_str("; ");
+        }
+        let bindings = assignment
+            .bindings
+            .iter()
+            .map(|binding| {
+                format!(
+                    "{}={}(enabled={},resolved={})",
+                    binding.provider_type,
+                    binding.provider_key,
+                    binding.provider_enabled,
+                    binding.snapshot.is_some()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = std::fmt::Write::write_fmt(
+            &mut rendered,
+            format_args!(
+                "{}(id={},rev={},default={},assignment_enabled={},template_enabled={},prompt_bytes={},bindings=[{}])",
+                assignment.template_key,
+                assignment.template_id,
+                assignment.template_revision,
+                assignment.is_default,
+                assignment.assignment_enabled,
+                assignment.template_enabled,
+                assignment.prompt.len(),
+                bindings
+            ),
+        );
+    }
+    if assignments.len() > LOGGED_ASSIGNMENTS {
+        let _ = std::fmt::Write::write_fmt(
+            &mut rendered,
+            format_args!("; +{} more", assignments.len() - LOGGED_ASSIGNMENTS),
+        );
+    }
+    rendered
+}
+
+/// Immutable database facts captured before a WebSocket is upgraded.
+///
+/// The realtime actor keeps only what the Effective Session Profile carries; it never owns this
+/// snapshot's repository and never re-reads a row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceAdmissionGraph {
+    pub device_db_id: i64,
+    pub template_override_id: Option<i64>,
+    pub agent: AdmittedAgent,
+    /// Enabled assignment rows only. Soft-unlinked rows remain in SQLite for audit/history but
+    /// are outside the Voice admission graph.
+    pub assignments: Vec<AdmittedAssignment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdmittedAgent {
+    pub id: i64,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdmittedAssignment {
+    pub template_id: i64,
+    pub template_key: String,
+    pub template_name: String,
+    pub language: String,
+    pub prompt: String,
+    pub template_enabled: bool,
+    pub template_revision: i64,
+    pub is_default: bool,
+    pub assignment_enabled: bool,
+    pub bindings: Vec<AdmittedProviderBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdmittedProviderBinding {
+    pub provider_type: String,
+    pub provider_key: String,
+    pub provider_enabled: bool,
+    /// Canonical credential-free config. None means invalid persisted config or a manually
+    /// constructed legacy test graph; manager-backed admission refuses to acquire such a binding.
+    pub snapshot: Option<Arc<crate::database::DesiredProvider>>,
+}
+
+#[derive(Debug, Error)]
+pub enum DeviceAdmissionError {
+    #[error("device_not_admitted")]
+    Denied,
+    #[error("device_admission_unavailable")]
+    Unavailable,
+}
+
+impl From<DatabaseError> for DeviceAdmissionError {
+    fn from(_: DatabaseError) -> Self {
+        Self::Unavailable
+    }
+}
+
+impl Database {
+    /// Resolves the Device and its enabled Agent in one pre-upgrade database operation.
+    /// Unknown identities can be provisioned only through the explicit dev/migration switch.
+    pub async fn admit_device(
+        &self,
+        device_id: &str,
+        devices: &DatabaseDevicesConfig,
+    ) -> Result<DeviceAdmissionGraph, DeviceAdmissionError> {
+        match self.find_admission(device_id).await? {
+            Some(admission) => Ok(admission),
+            None if devices.auto_register => self.auto_register_and_admit(device_id, devices).await,
+            None => {
+                warn!(
+                    auto_register = devices.auto_register,
+                    "device admission denied: no device row matches this identity"
+                );
+                Err(DeviceAdmissionError::Denied)
+            }
+        }
+    }
+
+    async fn find_admission(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<DeviceAdmissionGraph>, DeviceAdmissionError> {
+        let mut transaction = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let row = sqlx::query_as::<_, (i64, Option<i64>, i64, i64, i64, String)>(
+            "SELECT d.id, d.template_id, a.id, d.enabled, a.enabled, a.key \
+             FROM devices d JOIN agents a ON a.id = d.agent_id WHERE d.device_id = ?",
+        )
+        .bind(device_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(map_sqlx_error)?;
+        let Some((
+            device_db_id,
+            template_override_id,
+            agent_id,
+            device_enabled,
+            agent_enabled,
+            key,
+        )) = row
+        else {
+            return Ok(None);
+        };
+
+        if device_enabled == 0 || agent_enabled == 0 {
+            warn!(
+                device_db_id,
+                agent_id,
+                agent_key = %key,
+                device_enabled = device_enabled == 1,
+                agent_enabled = agent_enabled == 1,
+                "device admission denied: the device row or its agent is disabled"
+            );
+            return Err(DeviceAdmissionError::Denied);
+        }
+        let assignments = self.assignment_graph(agent_id, &mut transaction).await?;
+        transaction.commit().await.map_err(map_sqlx_error)?;
+        info!(
+            device_db_id,
+            agent_id,
+            agent_key = %key,
+            template_override_id = ?template_override_id,
+            assignment_count = assignments.len(),
+            assignments = %summarize_assignments(&assignments),
+            "device admission graph resolved from the database"
+        );
+        Ok(Some(DeviceAdmissionGraph {
+            device_db_id,
+            template_override_id,
+            agent: AdmittedAgent { id: agent_id, key },
+            assignments,
+        }))
+    }
+
+    /// Bounded metadata/size checks and two graph reads cover active Template assignments.
+    /// Bindings are read in one statement so admission never scales with the number of assignments.
+    async fn assignment_graph(
+        &self,
+        agent_id: i64,
+        transaction: &mut Transaction<'_, Sqlite>,
+    ) -> Result<Vec<AdmittedAssignment>, DeviceAdmissionError> {
+        let assignment_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1 LIMIT 65)",
+        ).bind(agent_id).fetch_one(&mut **transaction).await.map_err(map_sqlx_error)?;
+        if assignment_count > 64 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
+        // Check byte cost inside the same read transaction before copying potentially large
+        // TEXT values. Counting duplicate bindings is conservative and keeps query allocation bounded.
+        let bytes: i64 = sqlx::query_scalar(
+            "SELECT COALESCE((SELECT SUM(length(CAST(t.key AS BLOB)) + length(CAST(t.name AS BLOB)) + \
+                    length(CAST(t.language AS BLOB)) + length(CAST(t.prompt AS BLOB))) \
+                FROM agent_template_assignments ata JOIN agent_templates t ON t.id=ata.template_id \
+                WHERE ata.agent_id=? AND ata.enabled=1),0) + COALESCE((SELECT SUM(length(CAST(coalesce(b.config_provider_key,p.key) AS BLOB)) + \
+                    length(CAST(b.provider_type AS BLOB)) + coalesce(length(CAST(p.adapter AS BLOB)),0) + \
+                    coalesce(length(CAST(p.config_json AS BLOB)),0)) \
+                FROM template_provider_bindings b LEFT JOIN providers p ON b.provider_source='database' AND p.id=b.provider_id \
+                WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments WHERE agent_id=? AND enabled=1)),0)",
+        )
+        .bind(agent_id)
+        .bind(agent_id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(map_sqlx_error)?;
+        if bytes > 2 * 1024 * 1024 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
+        let rows = sqlx::query_as::<_, (i64, String, String, String, String, i64, i64, i64, i64)>(
+            "SELECT t.id, t.key, t.name, t.language, t.prompt, t.enabled, t.revision, \
+                    ata.is_default, ata.enabled \
+             FROM agent_template_assignments ata \
+             JOIN agent_templates t ON t.id = ata.template_id \
+             WHERE ata.agent_id = ? AND ata.enabled=1 ORDER BY t.id LIMIT 65",
+        )
+        .bind(agent_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map_err(map_sqlx_error)?;
+        if rows.len() > 64 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
+        let bindings = sqlx::query_as::<_, (i64, String, i64, String, i64, String, String, String, i64, Option<String>)>(
+            "SELECT b.template_id, b.provider_type, coalesce(p.id,0), CASE WHEN b.provider_source='config' THEN 'config:'||b.provider_type||':'||b.config_provider_key ELSE p.key END, CASE WHEN b.provider_source='config' THEN 1 ELSE p.enabled END, coalesce(p.type,b.provider_type), coalesce(p.adapter,''), coalesce(p.config_json,''), coalesce(p.revision,1), p.credential_json \
+             FROM template_provider_bindings b \
+             LEFT JOIN providers p ON b.provider_source='database' AND p.id = b.provider_id \
+             WHERE b.template_id IN (SELECT template_id FROM agent_template_assignments \
+                                     WHERE agent_id = ? AND enabled=1) \
+             ORDER BY b.template_id, b.provider_type LIMIT 257",
+        )
+        .bind(agent_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if bindings.len() > 256 {
+            return Err(DeviceAdmissionError::Unavailable);
+        }
+        let mut snapshot_bytes = rows
+            .iter()
+            .map(|row| row.1.len() + row.2.len() + row.3.len() + row.4.len())
+            .sum::<usize>();
+        let mut snapshots: HashMap<i64, Option<Arc<crate::database::DesiredProvider>>> =
+            HashMap::new();
+        let mut assignments: Vec<AdmittedAssignment> = rows
+            .into_iter()
+            .map(
+                |(
+                    template_id,
+                    template_key,
+                    template_name,
+                    language,
+                    prompt,
+                    template_enabled,
+                    template_revision,
+                    is_default,
+                    assignment_enabled,
+                )| AdmittedAssignment {
+                    template_id,
+                    template_key,
+                    template_name,
+                    language,
+                    prompt,
+                    template_enabled: template_enabled == 1,
+                    template_revision,
+                    is_default: is_default == 1,
+                    assignment_enabled: assignment_enabled == 1,
+                    bindings: Vec::new(),
+                },
+            )
+            .collect();
+        for (
+            template_id,
+            provider_type,
+            id,
+            provider_key,
+            provider_enabled,
+            kind,
+            adapter,
+            config_json,
+            revision,
+            credential,
+        ) in bindings
+        {
+            if provider_key.starts_with("config:") {
+                snapshot_bytes =
+                    snapshot_bytes.saturating_add(provider_key.len() + provider_type.len());
+                if snapshot_bytes > 2 * 1024 * 1024 {
+                    return Err(DeviceAdmissionError::Unavailable);
+                }
+                if let Some(assignment) = assignments
+                    .iter_mut()
+                    .find(|a| a.template_id == template_id)
+                {
+                    assignment.bindings.push(AdmittedProviderBinding {
+                        provider_type,
+                        provider_key,
+                        provider_enabled: true,
+                        snapshot: None,
+                    });
+                }
+                continue;
+            }
+            let secret_ref = crate::database::credentials::reference(
+                &format!("provider:{provider_key}"),
+                credential.as_deref(),
+                crate::database::secrets::provider_secret_env(&provider_key, &adapter),
+            );
+            let snapshot = match snapshots.entry(id) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    snapshot_bytes = snapshot_bytes.saturating_add(
+                        provider_key.len()
+                            + kind.len()
+                            + adapter.len()
+                            + config_json.len()
+                            + secret_ref.as_ref().map_or(0, String::len),
+                    );
+                    if snapshot_bytes > 2 * 1024 * 1024 {
+                        return Err(DeviceAdmissionError::Unavailable);
+                    }
+                    let validated =
+                        crate::database::provider_config::validate_raw(&adapter, &config_json).ok();
+                    let valid_secret = secret_ref.as_ref().is_none_or(|reference| {
+                        crate::database::secrets::SecretRef::parse(reference.clone()).is_ok()
+                    });
+                    entry
+                        .insert(validated.filter(|_| valid_secret).map(|config_json| {
+                            Arc::new(crate::database::DesiredProvider {
+                                id,
+                                key: provider_key.clone(),
+                                kind,
+                                adapter,
+                                config_json,
+                                secret_ref,
+                                revision,
+                            })
+                        }))
+                        .clone()
+                }
+            };
+            let Some(assignment) = assignments
+                .iter_mut()
+                .find(|assignment| assignment.template_id == template_id)
+            else {
+                continue;
+            };
+            assignment.bindings.push(AdmittedProviderBinding {
+                provider_type,
+                provider_key,
+                provider_enabled: provider_enabled == 1,
+                snapshot,
+            });
+        }
+        Ok(assignments)
+    }
+
+    async fn auto_register_and_admit(
+        &self,
+        device_id: &str,
+        devices: &DatabaseDevicesConfig,
+    ) -> Result<DeviceAdmissionGraph, DeviceAdmissionError> {
+        let registered_at =
+            crate::database::unix_seconds().ok_or(DeviceAdmissionError::Unavailable)?;
+        let metadata = serde_json::json!({
+            "source": "auto_register",
+            "registered_at": registered_at,
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT OR IGNORE INTO devices \
+             (device_id, agent_id, enabled, metadata_json, created_at, updated_at) \
+             SELECT ?, id, 1, ?, ?, ? FROM agents WHERE key = ? AND enabled = 1",
+        )
+        .bind(device_id)
+        .bind(metadata)
+        .bind(registered_at)
+        .bind(registered_at)
+        .bind(&devices.auto_register_agent_key)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        // A racing connection may have inserted first. Re-read and enforce the same policy
+        // rather than assuming the winner's binding is safe for this connection.
+        self.find_admission(device_id)
+            .await?
+            .ok_or(DeviceAdmissionError::Denied)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::DesiredProvider;
+
+    fn assignment() -> AdmittedAssignment {
+        AdmittedAssignment {
+            template_id: 7,
+            template_key: "kitchen".into(),
+            template_name: "Kitchen".into(),
+            language: "vi-VN".into(),
+            prompt: "PROMPT-MUST-NOT-BE-LOGGED".into(),
+            template_enabled: true,
+            template_revision: 3,
+            is_default: false,
+            assignment_enabled: true,
+            bindings: vec![AdmittedProviderBinding {
+                provider_type: "llm".into(),
+                provider_key: "llm_main".into(),
+                provider_enabled: true,
+                snapshot: Some(Arc::new(DesiredProvider {
+                    id: 9,
+                    key: "llm_main".into(),
+                    kind: "llm".into(),
+                    adapter: "openai".into(),
+                    config_json: "CONFIG-MUST-NOT-BE-LOGGED".into(),
+                    secret_ref: Some("SECRET-REF-MUST-NOT-BE-LOGGED".into()),
+                    revision: 1,
+                })),
+            }],
+        }
+    }
+
+    /// The admission line exists to make the graph legible, and ADR 0024 keeps telemetry free of
+    /// prompt text, provider config and credentials. Both halves are asserted here because a
+    /// formatter is exactly where that constraint decays without any test noticing.
+    #[test]
+    fn admission_summary_reports_decision_facts_without_sensitive_values() {
+        let rendered = summarize_assignments(std::slice::from_ref(&assignment()));
+
+        for expected in [
+            "kitchen",
+            "id=7",
+            "rev=3",
+            "default=false",
+            "assignment_enabled=true",
+            "template_enabled=true",
+            "prompt_bytes=25",
+            "llm=llm_main(enabled=true,resolved=true)",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "{expected} missing from {rendered}"
+            );
+        }
+        for forbidden in [
+            "PROMPT-MUST-NOT-BE-LOGGED",
+            "CONFIG-MUST-NOT-BE-LOGGED",
+            "SECRET-REF-MUST-NOT-BE-LOGGED",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "{forbidden} leaked into {rendered}"
+            );
+        }
+    }
+
+    /// A `None` snapshot is an opaque refusal upstream, so the line has to show it per binding
+    /// rather than leave the operator to guess which slot failed to resolve.
+    #[test]
+    fn admission_summary_marks_an_unresolved_binding() {
+        let mut unresolved = assignment();
+        unresolved.bindings[0].snapshot = None;
+        let rendered = summarize_assignments(std::slice::from_ref(&unresolved));
+        assert!(
+            rendered.contains("llm_main(enabled=true,resolved=false)"),
+            "{rendered}"
+        );
+    }
+
+    /// Telemetry has to stay bounded no matter what an operator accumulated through the Admin API.
+    #[test]
+    fn admission_summary_truncates_beyond_the_bounded_prefix() {
+        let many: Vec<AdmittedAssignment> = (0..LOGGED_ASSIGNMENTS + 5)
+            .map(|index| AdmittedAssignment {
+                template_key: format!("t{index}"),
+                ..assignment()
+            })
+            .collect();
+        let rendered = summarize_assignments(&many);
+        assert!(rendered.contains("t7"), "{rendered}");
+        assert!(!rendered.contains("t8"), "{rendered}");
+        assert!(rendered.contains("+5 more"), "{rendered}");
+    }
+}

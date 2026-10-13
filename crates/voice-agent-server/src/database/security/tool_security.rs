@@ -1,0 +1,184 @@
+//! Shared admission/dispatch authority. Reviewed rights never expand an existing catalog.
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+use tokio_util::sync::CancellationToken;
+
+/// One admitted session's cancellation token, held weakly so a gone session is dropped on the next
+/// registration or invalidation instead of leaking.
+type WeakCancellation = std::sync::Weak<CancellationToken>;
+
+/// The exact Speaker dependencies one admitted Voice Session pinned at admission. Invalidation
+/// matches on any one of them, so a session whose snapshot did not include the changed speaker is
+/// left running (a valid addition never closes an old qualified snapshot).
+#[derive(Clone, Debug)]
+pub struct SpeakerDeps {
+    pub agent: i64,
+    pub template: i64,
+    pub speakers: Vec<i64>,
+    pub candidate_set_digest: Option<String>,
+}
+
+#[derive(Default, Debug)]
+pub struct ToolSecurity {
+    sessions: Mutex<Vec<(i64, Vec<i64>, WeakCancellation)>>,
+    system_mcp: Mutex<Vec<WeakCancellation>>,
+    speakers: Mutex<Vec<(SpeakerDeps, WeakCancellation)>>,
+    // ponytail: one deployment lock; split by resource if review traffic needs throughput.
+    pub publication: Arc<tokio::sync::RwLock<()>>,
+}
+impl ToolSecurity {
+    pub fn register(&self, agent: i64, servers: Vec<i64>) -> Arc<CancellationToken> {
+        let token = Arc::new(CancellationToken::new());
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        sessions.retain(|(_, _, token)| token.strong_count() != 0);
+        sessions.push((agent, servers, Arc::downgrade(&token)));
+        token
+    }
+    pub(crate) fn register_system_mcp(&self, agent: i64) -> Arc<CancellationToken> {
+        let token = self.register(agent, Vec::new());
+        let mut sessions = self.system_mcp.lock().unwrap_or_else(|e| e.into_inner());
+        sessions.retain(|token| token.strong_count() != 0);
+        sessions.push(Arc::downgrade(&token));
+        token
+    }
+    pub(crate) fn invalidate_system_mcp(&self) {
+        for token in self
+            .system_mcp
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter_map(|token| token.upgrade())
+        {
+            token.cancel();
+        }
+    }
+    pub fn invalidate_agent(&self, agent: i64) {
+        for (_, _, token) in self
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(id, _, _)| *id == agent)
+        {
+            if let Some(token) = token.upgrade() {
+                token.cancel();
+            }
+        }
+    }
+    pub fn invalidate_server(&self, server: i64) {
+        for (_, _, token) in self
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, servers, _)| servers.contains(&server))
+        {
+            if let Some(token) = token.upgrade() {
+                token.cancel();
+            }
+        }
+    }
+    /// Registers a Voice Session's pinned Speaker snapshot.  The returned token is cancelled by any
+    /// later mutation that revokes one of these dependencies; the WebSocket then closes instead of
+    /// keeping authority it no longer has.
+    pub fn register_speaker(&self, deps: SpeakerDeps) -> Arc<CancellationToken> {
+        let token = Arc::new(CancellationToken::new());
+        let mut speakers = self.speakers.lock().unwrap_or_else(|e| e.into_inner());
+        speakers.retain(|(_, token)| token.strong_count() != 0);
+        speakers.push((deps, Arc::downgrade(&token)));
+        token
+    }
+    /// Re-enrol, replace, disable or purge of a speaker: cancels every session that pinned it.
+    pub fn invalidate_speaker(&self, speaker: i64) {
+        self.cancel_speakers(|deps| deps.speakers.contains(&speaker));
+    }
+    /// Policy or grant changes for one Agent (unlink, grant reduction, policy mode change).
+    pub fn invalidate_agent_speakers(&self, agent: i64) {
+        self.cancel_speakers(|deps| deps.agent == agent);
+    }
+    /// Template update/disable: cancels every session admitted under that Template.
+    pub fn invalidate_template_speakers(&self, template: i64) {
+        self.cancel_speakers(|deps| deps.template == template);
+    }
+    /// Calibration reload that revoked one exact candidate set.
+    pub fn invalidate_candidate_set(&self, digest: &str) {
+        self.cancel_speakers(|deps| deps.candidate_set_digest.as_deref() == Some(digest));
+    }
+    fn cancel_speakers(&self, matches: impl Fn(&SpeakerDeps) -> bool) {
+        for (_, token) in self
+            .speakers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(deps, _)| matches(deps))
+        {
+            if let Some(token) = token.upgrade() {
+                token.cancel();
+            }
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct ExternalToolGuard {
+    pub database: crate::database::Database,
+    pub agent_id: i64,
+    pub close: Arc<CancellationToken>,
+    pub contracts: Arc<HashMap<(String, String), (i64, String)>>,
+}
+impl ExternalToolGuard {
+    pub async fn allows(&self, server: &str, name: &str) -> bool {
+        if self.close.is_cancelled() {
+            return false;
+        }
+        let Some((id, fingerprint)) = self.contracts.get(&(server.into(), name.into())) else {
+            return false;
+        };
+        let allowed = self
+            .database
+            .external_tool_allowed(self.agent_id, *id, name, fingerprint)
+            .await
+            .unwrap_or(false);
+        allowed && !self.close.is_cancelled()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deps(agent: i64, template: i64, speakers: &[i64]) -> SpeakerDeps {
+        SpeakerDeps {
+            agent,
+            template,
+            speakers: speakers.to_vec(),
+            candidate_set_digest: None,
+        }
+    }
+
+    #[test]
+    fn speaker_invalidation_matches_every_pinned_dependency() {
+        let security = ToolSecurity::default();
+        let by_agent = security.register_speaker(deps(1, 10, &[100]));
+        let by_template = security.register_speaker(deps(2, 10, &[100]));
+        let unrelated = security.register_speaker(deps(3, 11, &[101]));
+        // Both pin speaker 100, so a speaker mutation closes both; the unrelated session survives.
+        security.invalidate_speaker(100);
+        assert!(by_agent.is_cancelled() && by_template.is_cancelled());
+        assert!(!unrelated.is_cancelled());
+        // A policy/grant change scopes to the Agent only.
+        let agent_only = security.register_speaker(deps(1, 12, &[102]));
+        assert!(!agent_only.is_cancelled());
+        security.invalidate_agent_speakers(1);
+        assert!(agent_only.is_cancelled());
+        // A digest-scoped reload matches that exact set and nothing else.
+        let mut pinned = deps(4, 13, &[103]);
+        pinned.candidate_set_digest = Some("abc".into());
+        let digest_pinned = security.register_speaker(pinned);
+        let other = security.register_speaker(deps(4, 13, &[103]));
+        security.invalidate_candidate_set("abc");
+        assert!(digest_pinned.is_cancelled());
+        assert!(!other.is_cancelled());
+    }
+}

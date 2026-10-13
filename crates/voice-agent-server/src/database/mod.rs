@@ -7,28 +7,24 @@ use sqlx::{
 use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
-pub mod admission;
-pub(crate) mod agents;
-pub(crate) mod assistant_device;
-mod audit;
-pub mod credentials;
-pub(crate) mod deletion;
-pub mod device_enrollments;
-pub(crate) mod devices;
-pub mod external_mcp;
-pub mod external_mcp_policy;
 pub mod history;
-pub mod load_plan;
-pub(crate) mod mcp_servers;
+mod identity;
+mod mcp;
+mod mutations;
 pub mod notifications;
-pub mod provider_config;
 pub(crate) mod providers;
-pub mod secrets;
+mod security;
 pub(crate) mod speakers;
 pub(crate) mod templates;
-pub mod tool_allowlist;
-pub mod tool_security;
-pub(crate) mod writes;
+
+pub use identity::{admission, device_enrollments};
+pub(crate) use identity::{agents, devices};
+pub(crate) use mcp::mcp_servers;
+pub use mcp::{external_mcp, external_mcp_policy, tool_allowlist};
+use mutations::audit;
+pub(crate) use mutations::{deletion, writes};
+pub use providers::{config as provider_config, load_plan};
+pub use security::{credentials, secrets, tool_security};
 
 pub use history::{
     HistoryArchive, HistoryDrop, HistoryRole, HistoryWrite, HistoryWriter, HistoryWriterCounters,
@@ -224,7 +220,3 @@ async fn ensure_schema_is_current(pool: &SqlitePool) -> Result<(), DatabaseError
 pub(crate) fn is_busy(error: &sqlx::Error) -> bool {
     matches!(error, sqlx::Error::Database(error) if matches!(error.code().as_deref(), Some("5" | "6" | "SQLITE_BUSY" | "SQLITE_LOCKED")))
 }
-
-pub(crate) mod system_mcp;
-
-mod system_mcp_grants;

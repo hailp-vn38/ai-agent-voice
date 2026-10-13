@@ -81,7 +81,7 @@ Các đường dẫn dưới đây đã được kiểm tra qua GitHub trên `ma
 | `session/prompt.rs` | `render_system` cho phép các placeholder hữu hạn; `compose_turn_system` gắn speaker data từng turn | Append bounded `<reminders_info>` và quy tắc prompt; không cho phép placeholder tùy ý |
 | `app/state.rs` | AppState application-owned | Thêm handle `Arc<DeviceNotifications>` và registry; gắn lifecycle/shutdown |
 | `app/admin/mod.rs`, `app/admin/devices.rs` | Admin HTTP API và CRUD Device có revision | Thêm Admin routes riêng và tái dùng auth/middleware hiện hành |
-| `database/mod.rs`, `database/devices.rs` | sqlx SQLite, migration, FK Device có `kind`, `agent_key` | Thêm repository riêng cho reminder và migration |
+| `database/mod.rs`, `database/identity/devices.rs` | sqlx SQLite, migration, FK Device có `kind`, `agent_key` | Thêm repository riêng cho reminder và migration |
 | `apps/admin-web/src/pages/agents/AgentDetailPage.vue` | Tabs `studio`, `tools`, `speakers`, `devices` | Thêm tab `reminders` |
 | `apps/admin-web/src/components/studio/StudioTabs.vue` | Danh sách tab và keyboard navigation | Bổ sung tab và i18n key |
 | `apps/admin-web/src/pages/devices/DeviceDetailPage.vue` | Identity, AI configuration, Device access | Thêm Reminder Schedule và danh sách quản lý |
