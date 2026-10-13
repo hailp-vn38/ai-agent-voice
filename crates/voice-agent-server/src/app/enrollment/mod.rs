@@ -1,7 +1,8 @@
 //! Enrollment Session is control-plane transport, separate from the Voice Session actor.
+pub(super) mod ota;
 mod socket;
 
-use super::{AppState, ota};
+use super::AppState;
 use crate::{
     config::EnrollmentTransport,
     database::{DeviceRegistration, EnrollmentClaim, EnrollmentPending, EnrollmentRequest},

@@ -1,3 +1,4 @@
+//! Tests for assistant ticket authorization.
 use super::*;
 
 fn fixture_device() -> Device {

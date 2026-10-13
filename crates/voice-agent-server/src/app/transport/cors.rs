@@ -1,9 +1,10 @@
+//! Shared browser CORS policy for HTTP transports.
 use axum::http::{HeaderValue, Method, header};
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use url::{Host, Url};
 
 /// Browser clients in the supported trusted-LAN deployment use bearer headers, not cookies.
-pub(super) fn layer() -> CorsLayer {
+pub(crate) fn layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _| is_local_origin(origin)))
         .allow_methods([
@@ -23,7 +24,7 @@ pub(super) fn layer() -> CorsLayer {
         ])
 }
 
-pub(super) fn is_local_origin(origin: &HeaderValue) -> bool {
+pub(crate) fn is_local_origin(origin: &HeaderValue) -> bool {
     let Ok(text) = origin.to_str() else {
         return false;
     };

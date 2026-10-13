@@ -1,8 +1,8 @@
-use super::*;
+use super::super::*;
 use crate::services::provider_runtime::{RuntimeMetrics, RuntimePhase};
 use std::time::Instant;
 
-pub(super) async fn handler(
+pub(crate) async fn handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<WebsocketQuery>,
@@ -129,7 +129,7 @@ pub(super) async fn handler(
         let Some(ticket) = query.ticket.as_deref() else {
             return (StatusCode::UNAUTHORIZED, "ticket required").into_response();
         };
-        let Some(origin) = super::web_assistant_auth::trusted_origin(&state, &headers) else {
+        let Some(origin) = super::super::assistant::trusted_origin(&state, &headers) else {
             return (StatusCode::FORBIDDEN, "untrusted origin").into_response();
         };
         match assistant_auth.consume(
@@ -172,9 +172,9 @@ pub(super) async fn handler(
     let routing_timer = metrics
         .as_ref()
         .map(|metrics| metrics.timer(RuntimePhase::WsRouting));
-    match super::enrollment::route(&state, device_id, client_id).await {
-        Ok(super::enrollment::Route::Voice) => {}
-        Ok(super::enrollment::Route::Pending(connection)) => {
+    match super::super::enrollment::route(&state, device_id, client_id).await {
+        Ok(super::super::enrollment::Route::Voice) => {}
+        Ok(super::super::enrollment::Route::Pending(connection)) => {
             log_ws_auth(
                 bearer_auth_enabled,
                 bearer_auth_result(bearer_auth_enabled),
@@ -184,7 +184,9 @@ pub(super) async fn handler(
             );
             return upgrade
                 .max_frame_size(config.websocket.max_frame_bytes.saturating_add(1024))
-                .on_upgrade(move |socket| super::enrollment::run(socket, state, connection, drain))
+                .on_upgrade(move |socket| {
+                    super::super::enrollment::run(socket, state, connection, drain)
+                })
                 .into_response();
         }
         Err(response) => {
@@ -426,7 +428,7 @@ fn log_ws_auth(
 }
 
 #[derive(Deserialize)]
-pub(super) struct WebsocketQuery {
+pub(crate) struct WebsocketQuery {
     #[serde(rename = "protocol-version")]
     protocol_version: Option<String>,
     #[serde(rename = "device-id")]
@@ -534,7 +536,7 @@ struct SocketRuntimes {
     active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     database: Option<Arc<crate::database::Database>>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
-    assistant_connection: Option<super::web_assistant_auth::Connection>,
+    assistant_connection: Option<super::super::assistant::Connection>,
     connect_started: Instant,
     metrics: Option<Arc<RuntimeMetrics>>,
     asr: Arc<AsrWorkerRuntime>,

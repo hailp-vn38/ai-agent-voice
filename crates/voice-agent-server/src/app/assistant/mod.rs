@@ -155,7 +155,7 @@ pub(crate) fn trusted_origin(
     }
     let origin = headers.get("origin")?;
     let text = origin.to_str().ok()?;
-    if super::cors::is_local_origin(origin) {
+    if super::transport::cors::is_local_origin(origin) {
         return Some(text.to_owned());
     }
     let mut public = state.config.server.public_ws_url.clone();
@@ -169,5 +169,5 @@ pub(crate) fn trusted_origin(
 }
 
 #[cfg(test)]
-#[path = "web_assistant_auth_tests.rs"]
+#[path = "tests.rs"]
 mod tests;

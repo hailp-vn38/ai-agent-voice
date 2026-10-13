@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::web_assistant_auth::trusted_origin;
+use crate::app::assistant::trusted_origin;
 
 pub(super) async fn grants(State(state): State<AppState>, request: Request) -> Response {
     let db = match database(&state) {
