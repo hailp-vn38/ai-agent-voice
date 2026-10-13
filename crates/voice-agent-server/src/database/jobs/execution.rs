@@ -94,7 +94,6 @@ impl Database {
                 && value["package_digest"] == choice.package_digest
                 && value["image_digest"] == choice.image_digest
                 && value["operation"] == choice.operation
-                && value["permission_digest"] == choice.permission_digest
         });
         let step: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job_steps WHERE job_id=? AND step_key=? AND plugin_id=? AND plugin_version=? AND package_digest=? AND image_digest=? AND operation=? AND attempt_id=? AND attempt_state='reserved'")
             .bind(job_id).bind(step_key).bind(&choice.plugin_id).bind(&choice.version)
@@ -111,12 +110,13 @@ impl Database {
         if enabled != 1 {
             return Err(JobError::Disabled);
         }
-        let live: Option<String> = sqlx::query_scalar("SELECT approved_permissions_json FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'")
-            .bind(&choice.plugin_id).bind(&choice.version).bind(&choice.package_digest)
-            .bind(&choice.image_digest).fetch_optional(&mut *tx).await?;
-        if live.as_ref().is_none_or(|approval| {
-            crate::services::background::model::digest(approval) != choice.permission_digest
-        }) {
+        let live: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'",
+        )
+        .bind(&choice.plugin_id).bind(&choice.version)
+        .bind(&choice.package_digest).bind(&choice.image_digest)
+        .fetch_optional(&mut *tx).await?;
+        if live.is_none() {
             return Err(JobError::CapabilityUnavailable);
         }
         let updated = sqlx::query("UPDATE job_steps SET attempt_state='start_requested',worker_instance_id=?,updated_at=? WHERE job_id=? AND step_key=? AND status='running' AND attempt=1 AND attempt_id=? AND attempt_state='reserved'")
