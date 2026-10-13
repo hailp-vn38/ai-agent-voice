@@ -25,6 +25,14 @@ pub(crate) trait JobModels: Send + Sync {
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<String, JobError>;
+
+    /// Native output schema is used by Responses providers. Chat-only test adapters
+    /// and providers retain the existing Rust validation semantics.
+    async fn complete_structured(&self, job_id: &str, pin: &ProviderPin, request: LlmRequest,
+        _schema: serde_json::Value, deadline_at: i64, cancellation: CancellationToken
+    ) -> Result<String, JobError> {
+        self.complete(job_id,pin,request,deadline_at,cancellation).await
+    }
 }
 
 pub(crate) struct ManagedModels {
@@ -108,21 +116,12 @@ impl ManagedModels {
             .ok_or(JobError::ProviderUnavailable)?;
         Ok((lease, runtime))
     }
-}
-
-#[async_trait::async_trait]
-impl JobModels for ManagedModels {
-    async fn ready(&self, pin: &ProviderPin, deadline_at: i64) -> Result<(), JobError> {
-        self.acquire(pin, deadline_at, CancellationToken::new())
-            .await
-            .map(|_| ())
-    }
-
-    async fn complete(
+    async fn complete_inner(
         &self,
         job_id: &str,
         previous: &ProviderPin,
         request: LlmRequest,
+        schema: Option<serde_json::Value>,
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<String, JobError> {
@@ -174,42 +173,37 @@ impl JobModels for ManagedModels {
             return Err(JobError::ConfigurationChanged);
         }
         drop(connection);
-        let mut unknown = true;
-        let opened = tokio::select! {
+        // The permit/lease remains owned by this call until completion.
+        // An ambiguous remote failure retains the exact permit in quarantine.
+        let outcome = tokio::select! {
             _=cancellation.cancelled()=>Err(JobError::Cancelled),
             _=tokio::time::sleep_until(deadline)=>Err(JobError::DeadlineExceeded),
-            result=tokio::time::timeout(Duration::from_secs(10),runtime.background_stream(request))=>match result {Ok(result)=>{if result.is_err(){unknown=false;}result.map_err(|_| JobError::ModelFailed)},Err(_)=>Err(JobError::ModelFailed)},
+            result=runtime.background_complete(request,schema)=>result.map_err(|_|JobError::ModelFailed),
         };
         drop(publication);
-        let outcome = match opened {
-            Ok(mut stream) => {
-                use futures_util::StreamExt;
-                let consume = async {
-                    let mut text = String::new();
-                    while let Some(event) = stream.next().await {
-                        match event {
-                            Ok(crate::providers::LlmEvent::TextDelta(delta)) => {
-                                if text.len().saturating_add(delta.len()) > 65536 {
-                                    return Err(JobError::ModelFailed);
-                                }
-                                text.push_str(&delta);
-                            }
-                            Ok(crate::providers::LlmEvent::Finished) => return Ok(text),
-                            _ => return Err(JobError::ModelFailed),
-                        }
-                    }
-                    Ok(text)
-                };
-                tokio::select! {_=cancellation.cancelled()=>Err(JobError::Cancelled),_=tokio::time::sleep_until(deadline)=>Err(JobError::DeadlineExceeded),result=consume=>result}
-            }
-            Err(error) => Err(error),
-        };
-        if outcome.is_err() && unknown {
+        if outcome.is_err() {
             self.quarantine
                 .lock()
                 .expect("Background LLM quarantine")
                 .push((lease, permit));
         }
         outcome
+    }
+}
+
+#[async_trait::async_trait]
+impl JobModels for ManagedModels {
+    async fn ready(&self, pin: &ProviderPin, deadline_at: i64) -> Result<(), JobError> {
+        self.acquire(pin, deadline_at, CancellationToken::new())
+            .await
+            .map(|_| ())
+    }
+
+    async fn complete(&self,job_id:&str,pin:&ProviderPin,request:LlmRequest,deadline_at:i64,cancellation:CancellationToken)->Result<String,JobError>{
+        self.complete_inner(job_id,pin,request,None,deadline_at,cancellation).await
+    }
+    async fn complete_structured(&self,job_id:&str,pin:&ProviderPin,request:LlmRequest,
+        schema:serde_json::Value,deadline_at:i64,cancellation:CancellationToken)->Result<String,JobError>{
+        self.complete_inner(job_id,pin,request,Some(schema),deadline_at,cancellation).await
     }
 }
