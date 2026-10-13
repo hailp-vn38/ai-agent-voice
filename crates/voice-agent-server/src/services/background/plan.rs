@@ -181,7 +181,9 @@ impl PlanCompiler {
         previous: Option<&JobPlan>,
     ) -> Result<JobPlan, PlanValidationError> {
         use super::proposal::ProposedStep;
-        let violation = |category, code, path, message| PlanValidationError::new(category, code, path, message);
+        fn violation(category: PlanErrorCategory, code: &'static str, path: impl Into<String>, message: &'static str) -> PlanValidationError {
+            PlanValidationError::new(category,code,path,message)
+        }
         let proposed_json = serde_json::to_value(&proposal).map_err(|_| violation(
             PlanErrorCategory::Syntax,"proposal_not_json","$","Proposal cannot be encoded"))?;
         if forbidden(&proposed_json) {
