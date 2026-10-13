@@ -17,7 +17,6 @@ function consumeSse(
   if (state.lastCr && text.startsWith('\n')) text = text.slice(1)
   state.lastCr = text.endsWith('\r')
   state.buffer += text.replace(/\r\n?/g, '\n')
-  if (state.buffer.length > 8192) throw new Error('job_sse_frame_too_large')
   let newline: number
   while ((newline = state.buffer.indexOf('\n')) !== -1) {
     const line = state.buffer.slice(0, newline)
@@ -50,6 +49,7 @@ function consumeSse(
       }
     }
   }
+  if (state.buffer.length > 8192) throw new Error('job_sse_frame_too_large')
 }
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
