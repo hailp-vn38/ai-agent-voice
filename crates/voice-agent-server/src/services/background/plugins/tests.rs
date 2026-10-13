@@ -23,9 +23,8 @@ async fn package_failure_persists_error_and_cannot_poison_new_image() {
         package_digest: "a".repeat(64),
         image_digest: format!("sha256:{}", "b".repeat(64)),
         operation: "collect".into(),
-        permission_digest: "c".repeat(64),
     };
-    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES(?,?,?,?,'ready',1,'{}',?,0,0)")
+    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'ready',1,?,0,0)")
         .bind(&choice.plugin_id).bind(&choice.version).bind(&choice.package_digest)
         .bind(&choice.image_digest).bind(manifest).execute(db.pool()).await.unwrap();
     runtime
