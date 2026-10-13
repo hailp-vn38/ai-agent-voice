@@ -1,45 +1,40 @@
 <script setup lang="ts">
-import { Archive, ArrowRight, Boxes, Code2, FlaskConical, PackagePlus, Power, RefreshCw, Search, ShieldAlert, Trash2, UploadCloud } from '@lucide/vue'
+import { Archive, ArrowRight, Boxes, PackagePlus, Power, RefreshCw, Search, ShieldAlert, UploadCloud } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { agentPluginsApi } from '@/api/agent-plugins'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { InstalledPlugin, PluginStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
-import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useI18n } from '@/composables/useI18n'
 
+const router = useRouter()
 const { t } = useI18n()
 const items = ref<InstalledPlugin[]>([])
 const search = ref('')
 const filter = ref<'all' | PluginStatus>('all')
 const page = ref(1)
+const total = ref(0)
 const hasMore = ref(false)
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
 const backendPending = ref(false)
-const selected = ref<InstalledPlugin | null>(null)
-const detailsOpen = ref(false)
 const installOpen = ref(false)
 const selectedFile = ref<File | null>(null)
-const pendingAction = ref<'approve' | 'uninstall' | null>(null)
-const confirmOpen = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 let controller: AbortController | undefined
 
-const readyCount = computed(() => items.value.filter((item) => item.status === 'ready').length)
-const failedCount = computed(() => items.value.filter((item) => item.status === 'error').length)
+const readyCount = computed(() => items.value.filter(item => item.status === 'ready').length)
+const failedCount = computed(() => items.value.filter(item => item.status === 'error').length)
+const statusVariant = (status: PluginStatus): 'success' | 'danger' | 'secondary' =>
+  status === 'ready' ? 'success' : status === 'error' ? 'danger' : 'secondary'
+const statusText = (status: PluginStatus) => t(('jobUi.pluginStatus.' + status) as 'jobUi.pluginStatus.ready')
 
-function statusVariant(status: PluginStatus): 'success' | 'danger' | 'secondary' {
-  return status === 'ready' ? 'success' : status === 'error' ? 'danger' : 'secondary'
-}
-function statusText(status: PluginStatus) {
-  return t(('jobUi.pluginStatus.' + status) as 'jobUi.pluginStatus.ready')
-}
 async function load(nextPage = 1) {
   controller?.abort()
   const pending = new AbortController()
@@ -52,9 +47,12 @@ async function load(nextPage = 1) {
       status: filter.value === 'all' ? undefined : filter.value,
     }, pending.signal)
     if (pending.signal.aborted) return
-    page.value = result.page
     items.value = result.items
-    hasMore.value = result.items.length === result.page_size
+    total.value = result.total ?? result.items.length
+    page.value = result.page
+    hasMore.value = result.total != null
+      ? result.page * result.page_size < result.total
+      : result.items.length === result.page_size
     backendPending.value = false
   } catch (cause) {
     if (pending.signal.aborted) return
@@ -64,14 +62,21 @@ async function load(nextPage = 1) {
     if (controller === pending) loading.value = false
   }
 }
-async function openDetail(item: InstalledPlugin) {
-  selected.value = item
-  detailsOpen.value = true
-  try {
-    selected.value = await agentPluginsApi.get(item.id)
-  } catch (cause) {
-    error.value = formatApiError(cause)
+function openDetail(id: string) {
+  void router.push({ name: 'plugin-detail', params: { id } })
+}
+function chooseFile(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0] ?? null
+  if (!file) { selectedFile.value = null; return }
+  if (!file.name.toLowerCase().endsWith('.zip') || file.size > 20 * 1024 * 1024) {
+    target.value = ''
+    selectedFile.value = null
+    error.value = t('jobUi.invalidZip')
+    return
   }
+  error.value = ''
+  selectedFile.value = file
 }
 async function install() {
   if (!selectedFile.value || busy.value) return
@@ -79,78 +84,16 @@ async function install() {
   error.value = ''
   notice.value = ''
   try {
-    await agentPluginsApi.install(selectedFile.value)
+    const installed = await agentPluginsApi.install(selectedFile.value)
     installOpen.value = false
     selectedFile.value = null
     if (fileInput.value) fileInput.value.value = ''
-    notice.value = t('jobUi.pluginInstalled')
-    await load()
+    await router.push({ name: 'plugin-detail', params: { id: installed.id } })
   } catch (cause) {
     error.value = formatApiError(cause)
   } finally {
     busy.value = false
   }
-}
-function chooseFile(event: Event) {
-  const target = event.target as HTMLInputElement
-  const file = target.files?.[0] ?? null
-  if (!file) { selectedFile.value = null; return }
-  if (!file.name.toLowerCase().endsWith('.zip') || file.size > 20 * 1024 * 1024) {
-    selectedFile.value = null
-    target.value = ''
-    error.value = t('jobUi.invalidZip')
-    return
-  }
-  error.value = ''
-  selectedFile.value = file
-}
-async function action(type: 'test' | 'approve' | 'activate' | 'disable' | 'uninstall') {
-  const item = selected.value
-  if (!item || busy.value) return
-  busy.value = true
-  error.value = ''
-  notice.value = ''
-  try {
-    if (type === 'test') {
-      const result = await agentPluginsApi.test(item.id, item.revision)
-      notice.value = result.message || (result.ok ? t('jobUi.testPassed') : t('jobUi.testFailed'))
-    } else if (type === 'approve') {
-      selected.value = await agentPluginsApi.approvePermissions(item.id, item.revision, {
-        network_hosts: item.permissions?.network_hosts ?? [],
-        scratch_storage: item.permissions?.scratch_storage ?? false,
-      })
-      notice.value = t('jobUi.saved')
-      await load(page.value)
-    } else if (type === 'uninstall') {
-      await agentPluginsApi.uninstall(item.id, item.revision)
-      detailsOpen.value = false
-      selected.value = null
-      notice.value = t('jobUi.uninstalled')
-      await load()
-    } else {
-      selected.value = type === 'activate'
-        ? await agentPluginsApi.activate(item.id, item.revision)
-        : await agentPluginsApi.disable(item.id, item.revision)
-      notice.value = t('jobUi.saved')
-      await load(page.value)
-    }
-  } catch (cause) {
-    error.value = formatApiError(cause)
-    if (isApiError(cause) && cause.status === 409) {
-      try { selected.value = await agentPluginsApi.get(item.id) } catch { /* Keep error visible. */ }
-    }
-  } finally {
-    busy.value = false
-  }
-}
-function confirmAction(type: 'approve' | 'uninstall') {
-  pendingAction.value = type
-  confirmOpen.value = true
-}
-function runConfirmedAction() {
-  const type = pendingAction.value
-  pendingAction.value = null
-  if (type) void action(type)
 }
 onMounted(() => { void load() })
 onBeforeUnmount(() => controller?.abort())
@@ -160,34 +103,20 @@ onBeforeUnmount(() => controller?.abort())
   <section class="space-y-6">
     <PageHeader :title="t('jobUi.plugins')" :description="t('jobUi.pluginsDescription')">
       <template #actions>
-        <Button variant="outline" :disabled="loading" @click="load()">
-          <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}
-        </Button>
+        <Button variant="outline" :disabled="loading" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}</Button>
         <Button @click="installOpen = true"><PackagePlus class="size-4" />{{ t('jobUi.installZip') }}</Button>
       </template>
     </PageHeader>
-
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
-      <p class="font-semibold">{{ backendPending ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p>
-      <p class="mt-1 break-words">{{ error }}</p>
+      <p class="font-semibold">{{ backendPending ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p><p class="mt-1 break-words">{{ error }}</p>
     </div>
     <p v-if="notice" role="status" class="rounded-lg border border-success/30 bg-success/5 p-3 text-sm text-success-foreground">{{ notice }}</p>
 
     <div class="grid gap-3 sm:grid-cols-3">
-      <div class="studio-panel flex items-center gap-3 p-4">
-        <Boxes class="size-6 text-studio-violet" />
-        <div><p class="text-xl font-semibold tabular-nums">{{ items.length }}</p><p class="text-xs text-muted-foreground">{{ t('jobUi.pluginCount') }}</p></div>
-      </div>
-      <div class="studio-panel flex items-center gap-3 p-4">
-        <Power class="size-6 text-success" />
-        <div><p class="text-xl font-semibold tabular-nums">{{ readyCount }}</p><p class="text-xs text-muted-foreground">{{ t('jobUi.readyCount') }}</p></div>
-      </div>
-      <div class="studio-panel flex items-center gap-3 p-4">
-        <ShieldAlert class="size-6 text-danger" />
-        <div><p class="text-xl font-semibold tabular-nums">{{ failedCount }}</p><p class="text-xs text-muted-foreground">{{ t('jobUi.errorCount') }}</p></div>
-      </div>
+      <div class="studio-panel flex items-center gap-3 p-4"><Boxes class="size-6 text-studio-violet" /><div><p class="text-xl font-semibold tabular-nums">{{ total }}</p><p class="text-xs text-muted-foreground">{{ t('jobUi.totalFiltered') }}</p></div></div>
+      <div class="studio-panel flex items-center gap-3 p-4"><Power class="size-6 text-success" /><div><p class="text-xl font-semibold tabular-nums">{{ readyCount }}</p><p class="text-xs text-muted-foreground">{{ t('jobUi.readyCount') }}</p></div></div>
+      <div class="studio-panel flex items-center gap-3 p-4"><ShieldAlert class="size-6 text-danger" /><div><p class="text-xl font-semibold tabular-nums">{{ failedCount }}</p><p class="text-xs text-muted-foreground">{{ t('jobUi.errorCount') }}</p></div></div>
     </div>
-
     <div class="flex flex-col gap-2 sm:flex-row">
       <form class="relative min-w-0 flex-1 sm:max-w-sm" @submit.prevent="load()">
         <Search class="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
@@ -205,16 +134,16 @@ onBeforeUnmount(() => controller?.abort())
     <div v-if="loading" class="studio-panel p-8 text-center text-sm text-muted-foreground" role="status">{{ t('common.loading') }}</div>
     <div v-else-if="items.length" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <button v-for="item in items" :key="item.id" type="button"
-        class="studio-panel min-w-0 p-4 text-left transition-colors hover:border-studio-violet/40 hover:bg-accent/20 focus-visible:outline-2 focus-visible:outline-ring"
-        @click="openDetail(item)">
+        class="studio-panel flex min-h-48 min-w-0 flex-col p-4 text-left transition-colors hover:border-studio-violet/40 hover:bg-accent/20 focus-visible:outline-2 focus-visible:outline-ring"
+        @click="openDetail(item.id)">
         <div class="flex items-start justify-between gap-2">
           <div class="flex size-10 items-center justify-center rounded-xl bg-studio-violet/10 text-studio-violet"><Archive class="size-5" /></div>
           <Badge :variant="statusVariant(item.status)">{{ statusText(item.status) }}</Badge>
         </div>
         <h2 class="mt-4 truncate font-semibold">{{ item.name }}</h2>
         <p class="mt-1 line-clamp-2 min-h-10 text-sm text-muted-foreground">{{ item.description }}</p>
-        <div class="mt-4 flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
-          <span>{{ item.version }} · {{ item.runtime.language }}</span>
+        <div class="mt-auto flex items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
+          <span>{{ item.version }} · {{ item.runtime.language }} · {{ item.operations.length }} ops</span>
           <span class="inline-flex items-center gap-1 text-studio-violet">{{ t('jobUi.details') }}<ArrowRight class="size-3.5" /></span>
         </div>
       </button>
@@ -244,55 +173,5 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </div>
     </BaseModal>
-
-    <BaseModal v-model="detailsOpen" :title="selected?.name || t('jobUi.details')" :description="selected?.description || ''">
-      <div v-if="selected" class="space-y-5 text-sm">
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge :variant="statusVariant(selected.status)">{{ statusText(selected.status) }}</Badge>
-          <span class="text-muted-foreground">{{ selected.version }} · {{ selected.runtime.language }} / {{ selected.runtime.kind }}</span>
-        </div>
-        <div v-if="selected.last_error_code" class="rounded-lg border border-danger/30 bg-danger/5 p-3 text-danger">
-          {{ t('jobUi.lastError') }}: {{ selected.last_error_code }}
-        </div>
-        <div class="space-y-1 break-all text-xs text-muted-foreground">
-          <p>{{ t('jobUi.packageDigest') }}: <code>{{ selected.digest }}</code></p>
-          <p>{{ t('jobUi.imageDigest') }}: <code>{{ selected.image_digest }}</code></p>
-        </div>
-        <div><h3 class="mb-2 flex items-center gap-2 font-semibold"><Code2 class="size-4" />{{ t('jobUi.operations') }}</h3>
-          <div v-for="operation in selected.operations" :key="operation.name" class="border-t py-2">
-            <p class="font-mono text-xs">{{ operation.name }} <span class="text-muted-foreground">· {{ operation.replay }}</span></p>
-            <p class="mt-1 text-muted-foreground">{{ operation.description }}</p>
-          </div>
-        </div>
-        <div>
-          <h3 class="mb-2 flex items-center gap-2 font-semibold"><ShieldAlert class="size-4" />{{ t('jobUi.declaredPermissions') }}</h3>
-          <p class="text-muted-foreground">{{ t('jobUi.network') }}: {{ selected.permissions?.network_hosts.join(', ') || '—' }}</p>
-          <p class="mt-1 text-muted-foreground">{{ t('jobUi.scratch') }}: {{ selected.permissions?.scratch_storage ? t('jobUi.yes') : t('jobUi.no') }}</p>
-          <p class="mt-2 text-xs text-warning">{{ t('jobUi.permissionsHint') }}</p>
-          <p class="mt-2 text-xs font-medium" :class="selected.permissions_approved ? 'text-success' : 'text-warning'">
-            {{ selected.permissions_approved ? t('jobUi.permissionsApproved') : t('jobUi.permissionsPending') }}
-          </p>
-          <p v-if="selected.approved_permissions" class="mt-1 text-xs text-muted-foreground">
-            {{ t('jobUi.approvedNetwork') }}: {{ selected.approved_permissions.network_hosts.join(', ') || '—' }}
-          </p>
-        </div>
-        <div class="flex flex-wrap justify-end gap-2 border-t pt-4">
-          <Button v-if="!selected.permissions_approved" variant="outline" :disabled="busy" @click="confirmAction('approve')">{{ t('jobUi.approve') }}</Button>
-          <Button variant="outline" :disabled="busy" @click="action('test')"><FlaskConical class="size-4" />{{ t('jobUi.test') }}</Button>
-          <Button v-if="selected.status !== 'disabled'" variant="outline" :disabled="busy" @click="action('disable')">{{ t('jobUi.disable') }}</Button>
-          <Button v-if="selected.status !== 'ready'" :disabled="busy || !selected.permissions_approved" @click="action('activate')">{{ selected.status === 'error' ? t('jobUi.reset') : t('jobUi.activate') }}</Button>
-          <Button variant="outline" :disabled="busy" @click="confirmAction('uninstall')"><Trash2 class="size-4" />{{ t('jobUi.uninstall') }}</Button>
-        </div>
-      </div>
-    </BaseModal>
-    <ConfirmDialog v-model="confirmOpen"
-      :title="pendingAction === 'uninstall' ? t('jobUi.uninstall') : t('jobUi.approve')"
-      :confirm-label="pendingAction === 'uninstall' ? t('jobUi.uninstall') : t('jobUi.approve')"
-      :tone="pendingAction === 'uninstall' ? 'danger' : 'default'" @confirm="runConfirmedAction">
-      <p>{{ pendingAction === 'uninstall' ? t('jobUi.uninstallConfirm') : t('jobUi.approveConfirm') }}</p>
-      <p v-if="pendingAction === 'approve' && selected" class="mt-2 break-all font-mono text-xs">
-        {{ selected.permissions?.network_hosts.join(', ') || '—' }} · {{ selected.digest }}
-      </p>
-    </ConfirmDialog>
   </section>
 </template>
