@@ -379,11 +379,12 @@ impl LlmFactory for OpenAiFactory {
             ));
         }
         Ok(Arc::new(
-            ConfiguredOpenAiLlm::build(
+            ConfiguredOpenAiLlm::build_with_responses(
                 options.api_key.expose(),
                 options.base_url.as_str(),
                 &options.model,
                 options.timeout_ms.div_ceil(1_000),
+                options.supports_responses,
             )
             .map_err(|_| {
                 ProviderLoadError::Provider("OpenAI provider initialization failed".into())
