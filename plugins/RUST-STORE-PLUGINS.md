@@ -15,7 +15,9 @@ endian matching the host's x86_64/aarch64 architecture.
 | document-analysis | analyze_document | Offline only |
 
 Use GitHub Actions workflow **Rust Agent Job Plugins** on this branch to build
-and test on Ubuntu 22.04 x86_64, then download the two ZIP artifacts.
+and test on Ubuntu 22.04 x86_64. GitHub downloads each Actions artifact as
+an *outer* ZIP archive; extract it first, then upload the *inner*
+`web-extractor-1.0.0.zip` or `document-analysis-1.0.0.zip` into Plugin Store.
 Alternatively, on a compatible x86_64 GNU/Linux Rust host:
 
 ```sh
