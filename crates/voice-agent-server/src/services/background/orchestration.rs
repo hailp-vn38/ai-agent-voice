@@ -165,8 +165,7 @@ async fn run(
                     .database
                     .reserve_model_call(id, Some(&step.step_key))
                     .await?;
-                sqlx::query("UPDATE job_steps SET attempt_state='started',started_at=? WHERE job_id=? AND step_key=? AND attempt_id=? AND status='running' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='running')")
-                .bind(super::engine::now()?).bind(id).bind(&step.step_key).bind(&attempt).bind(id).execute(engine.database.pool()).await?;
+                engine.database.mark_llm_started(id, &step.step_key, &attempt).await?;
                 let inputs: HashMap<_, _> = step
                     .input_refs
                     .iter()

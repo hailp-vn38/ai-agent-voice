@@ -203,6 +203,10 @@ pub(crate) async fn expire_terminal(database: &Database, now: i64) -> Result<u64
     .fetch_all(&mut *tx)
     .await?;
     for id in &ids {
+        sqlx::query("DELETE FROM job_events WHERE job_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM job_artifacts WHERE job_id=?")
             .bind(id)
             .execute(&mut *tx)
@@ -217,6 +221,9 @@ pub(crate) async fn expire_terminal(database: &Database, now: i64) -> Result<u64
             .await?;
     }
     tx.commit().await?;
+    for id in &ids {
+        database.job_changes.publish_committed(id);
+    }
     if !ids.is_empty() {
         reconcile(database).await?;
     }

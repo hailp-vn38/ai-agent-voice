@@ -156,6 +156,7 @@ impl Database {
             return Err(JobError::RuntimeUnavailable);
         }
         tx.commit().await?;
+        self.job_changes.publish_committed(&id);
         tracing::info!(event="background_job_committed", job_id=%id, db_commit_ms=commit_started.elapsed().as_millis() as u64);
         Ok(JobReceipt {
             job,

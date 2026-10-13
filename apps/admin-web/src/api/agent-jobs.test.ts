@@ -82,7 +82,7 @@ describe('Agent Job admin clients', () => {
     expect(new Headers(init.headers).get('Idempotency-Key')).toBe('retry-once')
     expect(JSON.parse(String(init.body))).toEqual({ confirm_safe_read_only: true })
   })
-  it('reads incremental Job events without inventing a second streaming connection', async () => {
+  it('reads incremental durable Job events with a per-Job cursor', async () => {
     const fetch = vi.fn().mockResolvedValue(json({ items: [{ sequence: 3, event_type: 'plan_rejected', payload: { code: 'proposal_not_json' } }] }))
     vi.stubGlobal('fetch', fetch)
     const result = await agentJobsApi.events('job 1', 2)

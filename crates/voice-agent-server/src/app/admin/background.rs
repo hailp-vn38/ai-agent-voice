@@ -269,3 +269,56 @@ pub(super) async fn events(
         Err(err) => failure(&request,err),
     }
 }
+
+/// In-memory invalidations only: consumers reconcile using authoritative REST reads.
+pub(super) async fn stream(State(state): State<AppState>, request: Request) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use std::{convert::Infallible, time::Duration};
+    use tokio::sync::broadcast::error::RecvError;
+
+    let engine = match runtime(&state) {
+        Ok(engine) => engine,
+        Err(cause) => return failure(&request, cause),
+    };
+    // Subscribe before emitting ready so the initial REST read cannot race admission.
+    let receiver = engine.database.job_changes.subscribe();
+    let messages = futures_util::stream::unfold(
+        (receiver, true),
+        |(mut receiver, first)| async move {
+            if first {
+                return Some((
+                    Ok::<Event, Infallible>(Event::default().event("ready").data("{}")),
+                    (receiver, false),
+                ));
+            }
+            loop {
+                match receiver.recv().await {
+                    Ok(job_id) => {
+                        return Some((
+                            Ok(Event::default().event("job_changed").data(
+                                serde_json::json!({ "job_id": job_id }).to_string(),
+                            )),
+                            (receiver, false),
+                        ));
+                    }
+                    Err(RecvError::Lagged(_)) => {
+                        return Some((
+                            Ok(Event::default().event("resync_required").data("{}")),
+                            (receiver, false),
+                        ));
+                    }
+                    Err(RecvError::Closed) => return None,
+                }
+            }
+        },
+    );
+    let mut response = Sse::new(messages)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keepalive"))
+        .into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-transform"),
+    );
+    response.headers_mut().insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
+}

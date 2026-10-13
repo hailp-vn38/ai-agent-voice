@@ -94,3 +94,12 @@ _Avoid_: plan repair, replay
 **Job Event**:
 Dấu mốc trạng thái được ghi bền vững, dành cho việc quan sát Job; không phải lệnh thực thi hoặc quyết định cấp quyền.
 _Avoid_: Tool Execution Status, authority
+
+
+**Job Change Signal**:
+Tín hiệu tạm thời báo một Job đã thay đổi và người quan sát cần đọc lại dữ liệu chính thức; không mang kết quả hay quyết định trạng thái.
+_Avoid_: Job Event, Job Result, delivery acknowledgement
+
+**Job Read View**:
+Biểu diễn hiện thời và nhất quán của Job, các Step và metadata Artifact để Admin quan sát, khác cấu hình thực thi được đóng băng khi nhận Job.
+_Avoid_: JobSnapshot, Job Event, execution authority

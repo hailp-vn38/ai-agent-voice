@@ -51,6 +51,7 @@ pub struct Database {
     pool: SqlitePool,
     durable_path: Option<std::path::PathBuf>,
     pub tool_security: std::sync::Arc<tool_security::ToolSecurity>,
+    pub(crate) job_changes: jobs::JobChangeFeed,
 }
 
 pub use providers::DesiredProvider;
@@ -139,6 +140,7 @@ impl Database {
             pool,
             durable_path,
             tool_security: Default::default(),
+            job_changes: Default::default(),
         })
     }
 

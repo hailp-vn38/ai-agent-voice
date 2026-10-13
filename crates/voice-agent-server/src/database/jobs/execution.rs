@@ -36,6 +36,7 @@ impl Database {
             .bind(serde_json::to_string(arguments).map_err(|_| JobError::InvalidArguments)?)
             .bind(now).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
+        self.job_changes.publish_committed(job_id);
         Ok(())
     }
 
@@ -64,6 +65,7 @@ impl Database {
         }
         events::append(&mut tx,job_id,"step_started",Some(step_key),&serde_json::json!({"attempt_state":"reserved"})).await?;
         tx.commit().await?;
+        self.job_changes.publish_committed(job_id);
         Ok(())
     }
 
@@ -124,6 +126,7 @@ impl Database {
             return Err(JobError::Terminal);
         }
         tx.commit().await?;
+        self.job_changes.publish_committed(job_id);
         Ok(())
     }
 
@@ -140,6 +143,7 @@ impl Database {
         if updated.rows_affected() != 1 {
             return Err(JobError::Terminal);
         }
+        self.job_changes.publish_committed(job_id);
         Ok(())
     }
 
@@ -176,6 +180,7 @@ impl Database {
             events::append(&mut tx,job_id,"job_finished",None,&serde_json::json!({"status":"failed","error_code":code})).await?;
         }
         tx.commit().await?;
+        self.job_changes.publish_committed(job_id);
         Ok(())
     }
 
@@ -241,6 +246,7 @@ impl Database {
             events::append(&mut tx,job_id,"job_finished",None,&serde_json::json!({"status":"succeeded"})).await?;
         }
         tx.commit().await?;
+        self.job_changes.publish_committed(job_id);
         Ok(())
     }
 }

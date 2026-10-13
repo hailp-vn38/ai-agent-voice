@@ -3,6 +3,23 @@ use crate::services::background::{model::encode, plan::JobPlan};
 use serde_json::{Value, json};
 
 impl Database {
+    pub(crate) async fn mark_llm_started(
+        &self,
+        id: &str,
+        step: &str,
+        attempt: &str,
+    ) -> Result<(), JobError> {
+        let now = crate::services::background::engine::now()?;
+        let updated = sqlx::query("UPDATE job_steps SET attempt_state='started',started_at=?,updated_at=? WHERE job_id=? AND step_key=? AND attempt_id=? AND status='running' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='running')")
+            .bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id)
+            .execute(self.pool()).await?;
+        if updated.rows_affected() != 1 {
+            return Err(JobError::Terminal);
+        }
+        self.job_changes.publish_committed(id);
+        Ok(())
+    }
+
     pub(crate) async fn claim_job(&self, id: &str, maximum: u32) -> Result<bool, JobError> {
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let now = crate::services::background::engine::now()?;
@@ -17,6 +34,9 @@ impl Database {
         let updated = sqlx::query("UPDATE jobs SET status='planning',scheduler_seen_at=COALESCE(scheduler_seen_at,?),updated_at=? WHERE id=? AND status='queued' AND deadline_at>?")
             .bind(now).bind(now).bind(id).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
+        if updated.rows_affected() == 1 {
+            self.job_changes.publish_committed(id);
+        }
         Ok(updated.rows_affected() == 1)
     }
 
@@ -76,6 +96,7 @@ impl Database {
             })).await?;
         }
         tx.commit().await?;
+        self.job_changes.publish_committed(id);
         Ok(())
     }
 
@@ -160,6 +181,7 @@ impl Database {
         }
         events::append(&mut tx,id,"plan_accepted",None,&json!({"plan_revision":revision,"step_count":step_count})).await?;
         tx.commit().await?;
+        self.job_changes.publish_committed(id);
         Ok(())
     }
 
@@ -171,6 +193,7 @@ impl Database {
         if updated.rows_affected()!=1 {return Err(JobError::Terminal);}
         events::append(&mut tx,id,"step_finished",Some(step),&json!({"status":"skipped","error_code":"dependency_failed"})).await?;
         tx.commit().await?;
+        self.job_changes.publish_committed(id);
         Ok(())
     }
     pub(crate) async fn checkpoint_llm_step(
@@ -205,6 +228,7 @@ impl Database {
         }
         events::append(&mut tx,id,"step_finished",Some(step),&json!({"status":status,"error_code":error})).await?;
         tx.commit().await?;
+        self.job_changes.publish_committed(id);
         Ok(())
     }
 
@@ -296,6 +320,7 @@ impl Database {
             .bind(status).bind(error).bind(result.map(encode).transpose()?).bind(now).bind(id).execute(&mut *tx).await?;
         events::append(&mut tx,id,"job_finished",None,&json!({"status":status,"error_code":error})).await?;
         tx.commit().await?;
+        self.job_changes.publish_committed(id);
         Ok(())
     }
 }
