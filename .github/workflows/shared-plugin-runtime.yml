@@ -20,14 +20,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
-      - name: Shared runtime binary
-        run: cargo check --locked -p voice-agent-server --bin plugin-runtime
-      - name: Plugin contract tests
-        if: ${{ always() && !cancelled() }}
-        run: cargo test --locked -p voice-agent-server --lib services::background::plugins
-      - name: Workspace formatting
-        if: ${{ always() && !cancelled() }}
-        run: cargo fmt --all --check
       - name: Formatted Rust source handoff
         if: ${{ always() && !cancelled() }}
         run: |
@@ -38,6 +30,14 @@ jobs:
             echo
             echo "__RUSTFMT_END__${file}"
           done
+      - name: Shared runtime binary
+        run: cargo check --locked -p voice-agent-server --bin plugin-runtime
+      - name: Plugin contract tests
+        if: ${{ always() && !cancelled() }}
+        run: cargo test --locked -p voice-agent-server --lib services::background::plugins
+      - name: Workspace formatting
+        if: ${{ always() && !cancelled() }}
+        run: cargo fmt --all --check
       - name: Python ZIP packaging contracts
         if: ${{ always() && !cancelled() }}
         run: python3 -m unittest discover -s scripts/tests -p test_rust_plugins.py
