@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { AlertTriangle, Clock3, Download, FileText, RefreshCw, RotateCcw, Square, Workflow } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
-import { formatApiError } from '@/api/errors'
+import { listenJobChanges } from '@/api/job-updates'
+import { useAuthStore } from '@/stores/auth'
+import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobEvent, JobStatus, StepStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
@@ -14,6 +16,7 @@ import { useI18n } from '@/composables/useI18n'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const auth = useAuthStore()
 const jobId = computed(() => String(route.params.jobId ?? ''))
 const job = ref<AdminJob | null>(null)
 const events = ref<JobEvent[]>([])
@@ -25,7 +28,12 @@ const eventsError = ref('')
 const notice = ref('')
 const retryOpen = ref(false)
 let controller: AbortController | undefined
-let timer: ReturnType<typeof setInterval> | undefined
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let fallbackTimer: ReturnType<typeof setInterval> | undefined
+let streamController: AbortController | undefined
+let reconciling = false
+let dirty = false
+let mounted = false
 let eventCursor = 0
 let retryRequest = { id: '', key: '' }
 
@@ -73,17 +81,22 @@ async function load(resetEvents = false) {
     job.value = loaded
     eventsError.value = ''
     // Fetch the actual durable event log, including planning retries.
-    for (let page = 0; page < 8; page += 1) {
+    for (let page = 0; page < 32; page += 1) {
       const response = await agentJobsApi.events(id, eventCursor, pending.signal)
       if (pending.signal.aborted || id !== jobId.value) return
       const received = response.items.filter(entry => entry.sequence > eventCursor)
       events.value.push(...received)
       if (response.items.length) eventCursor = response.items[response.items.length - 1]!.sequence
       if (response.items.length < 100) break
+      if (page === 31) reconcile()
     }
   } catch (cause) {
     if (!pending.signal.aborted) {
-      if (!job.value) error.value = formatApiError(cause)
+      if (isApiError(cause) && cause.status === 404) {
+        job.value = null
+        events.value = []
+        error.value = formatApiError(cause)
+      } else if (!job.value) error.value = formatApiError(cause)
       else eventsError.value = formatApiError(cause)
     }
   } finally {
@@ -135,15 +148,56 @@ async function retry() {
     busy.value = false
   }
 }
+function reconcile() {
+  dirty = true
+  if (refreshTimer || reconciling) return
+  refreshTimer = setTimeout(() => {
+    refreshTimer = undefined
+    if (reconciling) return
+    void (async () => {
+      reconciling = true
+      try {
+        while (dirty && mounted) {
+          dirty = false
+          await load()
+        }
+      } finally {
+        reconciling = false
+        if (dirty && mounted) reconcile()
+      }
+    })()
+  }, 200)
+}
+function startStream() {
+  streamController?.abort()
+  if (!mounted) return
+  streamController = new AbortController()
+  void listenJobChanges({
+    onReady: reconcile,
+    onChanged: id => { if (id === jobId.value) reconcile() },
+    onResync: reconcile,
+  }, streamController.signal)
+}
+function onVisible() {
+  if (!document.hidden) reconcile()
+}
 watch(jobId, () => { void load(true) }, { immediate: true })
-timer = setInterval(() => {
-  if (!document.hidden && !loading.value && !refreshing.value && !busy.value && job.value && !isTerminal(job.value.status)) {
-    void load()
-  }
-}, 5000)
+watch(() => auth.adminToken, startStream)
+onMounted(() => {
+  mounted = true
+  startStream()
+  document.addEventListener('visibilitychange', onVisible)
+  fallbackTimer = setInterval(() => {
+    if (!document.hidden && job.value && !isTerminal(job.value.status)) reconcile()
+  }, 60_000)
+})
 onBeforeUnmount(() => {
+  mounted = false
   controller?.abort()
-  if (timer) clearInterval(timer)
+  streamController?.abort()
+  document.removeEventListener('visibilitychange', onVisible)
+  if (refreshTimer) clearTimeout(refreshTimer)
+  if (fallbackTimer) clearInterval(fallbackTimer)
 })
 </script>
 
