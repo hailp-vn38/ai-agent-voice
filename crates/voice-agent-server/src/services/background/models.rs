@@ -173,6 +173,9 @@ impl ManagedModels {
             return Err(JobError::ConfigurationChanged);
         }
         drop(connection);
+        // Do not hold the publication lock through a potentially long Responses call:
+        // policy updates must be able to revoke the Job and signal cancellation.
+        drop(publication);
         // The permit/lease remains owned by this call until completion.
         // An ambiguous remote failure retains the exact permit in quarantine.
         let (outcome, unknown) = tokio::select! {
@@ -184,7 +187,6 @@ impl ManagedModels {
                 Err(_)=>(Err(JobError::ModelFailed),true),
             },
         };
-        drop(publication);
         if outcome.is_err() && unknown {
             self.quarantine
                 .lock()
