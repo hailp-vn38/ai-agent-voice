@@ -238,6 +238,9 @@ async fn propose(
             ))
         };
         let outcome = proposal.and_then(|proposal| PlanCompiler::compile(proposal, job, contracts, previous));
+        if let Err(error) = &outcome {
+            engine.database.reject_plan(id,attempt+1,error).await?;
+        }
         match outcome {
             Ok(plan) => return Ok(plan),
             Err(error) if error.repairable() && attempt < job.snapshot.limits.max_plan_repairs => {
