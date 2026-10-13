@@ -83,7 +83,7 @@ Call REST after `ready`, after `job_changed`, after lag, after reconnect, when t
 6. Web test: Bearer header, parser split UTF-8/CRLF, 401 stop, route change abort, resync and visibility fallback, no 5-second polling.
 7. Regression: Admin create/cancel/retry/artifact, Voice submit receipt, Python/Rust plugin sandbox, existing Reminder/Voice routing.
 
-Run `cargo fmt --check`, `cargo test -p voice-agent-server --lib`, relevant server integration tests, `cargo clippy`; in `apps/admin-web` run `npm test`, `npm run typecheck`, `npm run build`. Exercise SSE through the real deployment proxy. No test pass is asserted by this document.
+Follow `AGENTS.md`: run tests only through `scripts/agent-test.sh`: `targeted job_stream`, `targeted terminal_job_retention`, `package`, then `full`; use `check`, `web test`, `web typecheck`, `web build`, and `run -- cargo fmt --check` / `run -- cargo clippy --workspace --all-targets -- -D warnings` for other checks. Preserve the script's nonzero results and inspect only bounded diagnostics. Exercise SSE through the real deployment proxy. No test pass is asserted by this document.
 
 ## PONYTAIL decisions
 
