@@ -90,16 +90,6 @@ fn required<'a>(files: &'a [(String, Vec<u8>)], name: &str) -> Result<&'a [u8], 
         .ok_or(PluginError::InvalidPackage)
 }
 
-fn forbidden_cargo_source(value: &toml::Value) -> bool {
-    match value {
-        toml::Value::Table(entries) => entries.iter().any(|(key, value)| {
-            matches!(key.as_str(), "git" | "path" | "registry") || forbidden_cargo_source(value)
-        }),
-        toml::Value::Array(items) => items.iter().any(forbidden_cargo_source),
-        _ => false,
-    }
-}
-
 pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
     if bytes.is_empty() || bytes.len() > MAX_ZIP {
         return Err(PluginError::InvalidPackage);
@@ -162,7 +152,7 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
             .map_err(|_| PluginError::InvalidPackage)?,
     )
     .map_err(|_| PluginError::InvalidPackage)?;
-    if manifest.manifest_version != 1
+    if manifest.manifest_version != 2
         || !token(&manifest.plugin.id, 64)
         || !token(&manifest.plugin.version, 64)
         || manifest.plugin.name.is_empty()
@@ -170,7 +160,7 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
         || manifest.plugin.description.len() > 1024
         || !matches!(
             manifest.runtime.kind.as_str(),
-            "python_container" | "rust_container"
+            "python" | "rust"
         )
         || manifest.runtime.protocol != "jsonl-v1"
         || manifest.operations.is_empty()
@@ -182,7 +172,7 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
     if !relative(&manifest.agent.instructions) || instructions.len() > 16 * 1024 {
         return Err(PluginError::InvalidPackage);
     }
-    if manifest.runtime.kind == "python_container" {
+    if manifest.runtime.kind == "python" {
         if manifest.runtime.python.as_deref() != Some("3.12")
             || manifest.runtime.entrypoint != "src/main.py"
         {
@@ -248,7 +238,7 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
         {
             return Err(PluginError::InvalidPackage);
         }
-    } else if manifest.runtime.entrypoint == "bin/plugin" {
+    } else if manifest.runtime.kind == "rust" && manifest.runtime.entrypoint == "bin/plugin" {
         if manifest.runtime.python.is_some() {
             return Err(PluginError::InvalidPackage);
         }
@@ -271,81 +261,8 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
             return Err(PluginError::InvalidPackage);
         }
     } else {
-        if manifest.runtime.python.is_some()
-            || manifest.runtime.entrypoint != manifest.plugin.id
-            || !manifest
-                .runtime
-                .entrypoint
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-            || !manifest
-                .runtime
-                .entrypoint
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphabetic)
-        {
-            return Err(PluginError::InvalidPackage);
-        }
-        required(&files, "src/main.rs")?;
-        if files
-            .iter()
-            .any(|(path, _)| path.eq_ignore_ascii_case("Dockerfile"))
-        {
-            return Err(PluginError::InvalidPackage);
-        }
-        let cargo: toml::Value = toml::from_str(
-            std::str::from_utf8(required(&files, "Cargo.toml")?)
-                .map_err(|_| PluginError::InvalidPackage)?,
-        )
-        .map_err(|_| PluginError::InvalidPackage)?;
-        if cargo.get("workspace").is_some()
-            || cargo.get("bin").is_some()
-            || cargo.get("lib").is_some()
-            || cargo.get("patch").is_some()
-            || cargo.get("replace").is_some()
-            || forbidden_cargo_source(&cargo)
-            || cargo
-                .get("package")
-                .and_then(|p| p.get("name"))
-                .and_then(toml::Value::as_str)
-                != Some(manifest.plugin.id.as_str())
-            || cargo
-                .get("package")
-                .and_then(|p| p.get("version"))
-                .and_then(toml::Value::as_str)
-                != Some(manifest.plugin.version.as_str())
-        {
-            return Err(PluginError::InvalidPackage);
-        }
-        let lock: toml::Value = toml::from_str(
-            std::str::from_utf8(required(&files, "Cargo.lock")?)
-                .map_err(|_| PluginError::InvalidPackage)?,
-        )
-        .map_err(|_| PluginError::InvalidPackage)?;
-        let packages = lock
-            .get("package")
-            .and_then(toml::Value::as_array)
-            .ok_or(PluginError::InvalidPackage)?;
-        if !packages.iter().any(|p| {
-            p.get("name").and_then(toml::Value::as_str) == Some(manifest.plugin.id.as_str())
-                && p.get("version").and_then(toml::Value::as_str)
-                    == Some(manifest.plugin.version.as_str())
-                && p.get("source").is_none()
-        }) || packages.iter().any(|p| {
-            let is_root = p.get("name").and_then(toml::Value::as_str)
-                == Some(manifest.plugin.id.as_str())
-                && p.get("version").and_then(toml::Value::as_str)
-                    == Some(manifest.plugin.version.as_str());
-            if is_root {
-                p.get("source").is_some()
-            } else {
-                p.get("source").and_then(toml::Value::as_str)
-                    != Some("registry+https://github.com/rust-lang/crates.io-index")
-            }
-        }) {
-            return Err(PluginError::InvalidPackage);
-        }
+        // Production runs prebuilt native Rust executables only.
+        return Err(PluginError::InvalidPackage);
     }
     for (name, operation) in &manifest.operations {
         if !token(name, 64)
