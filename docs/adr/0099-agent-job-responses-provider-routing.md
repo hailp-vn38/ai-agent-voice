@@ -6,7 +6,7 @@ Accepted for implementation, 2026-10-13.
 ## Decision
 The existing OpenAI-compatible LLM Provider remains the single configured Provider for both workloads, retaining exact source-qualified pin/revision/digest and Voice-capacity admission. **Voice Session always uses the existing `stream()` transport over `/chat/completions`.** Agent Job uses the separate `background_complete()` interface and chooses `/responses` when its pinned OpenAI Provider configuration explicitly declares `supports_responses = true`. Otherwise Agent Job uses the previous Chat Completions transport.
 
-This is an explicit capability assertion by the Admin, **not automatic inference from a model name** and not speculative probing of arbitrary provider endpoints. A Responses transport error fails the model attempt under the existing Job cancellation/deadline/recovery rules; it does **not** silently retry against Chat Completions. Providers of other adapter kinds keep their existing Chat behavior.
+This is an explicit capability assertion by the Admin, **not automatic inference from a model name** and not speculative probing of arbitrary provider endpoints. A Responses transport error fails the model attempt under the existing Job cancellation/deadline/recovery rules; it does **not** silently retry against Chat Completions. The `opencode_free` adapter also supports explicit per-model opt-in for the Agent Job transport, while preserving Chat Completions for Voice and for configurations without opt-in.
 
 ## Interface and ownership
 - `LlmProvider::stream(LlmRequest)`: Voice/diagnostics; no behavior or endpoint change.
@@ -29,6 +29,22 @@ timeout_ms = 120000
 ```
 
 For database-configured Provider, set `supports_responses: true` in the OpenAI adapter's JSON configuration. The Admin Provider Catalog exposes the Boolean `Supports Responses (Agent Job only)` field. Default is `false`; existing Providers and Voice stay compatible.
+
+## OpenCode Free opt-in
+
+The existing `opencode_free` Provider now accepts `supports_responses = true` in TOML or `"supports_responses": true` in its Admin JSON config, alongside `model` and `timeout_ms`. The default is `false`, omitted in serialized defaults to preserve existing Provider identities/revisions.
+
+```toml
+[providers.llm.instances.zen_free_responses]
+adapter = "opencode_free"
+model = "muse-spark-1.3-contributor-free"
+supports_responses = true
+timeout_ms = 60000
+```
+
+**Model routing is not universal:** official OpenCode Zen endpoint documentation lists `muse-spark-1.3-contributor-free` under `/zen/v1/responses`, but `nemotron-3-ultra-free` under `/zen/v1/chat/completions`. Do not enable Responses for Chat-only models. For future models, verify the upstream endpoint explicitly before configuring the flag. The free preset still uses its existing fixed `https://opencode.ai/zen/v1` host and `public` credential; successful authenticated access to the Responses endpoint **is not guaranteed** by the presence of that endpoint in the official docs. OpenCode Zen's documented public API typically requires a user's valid Zen API key. Do not assume the no-key Free preset has the same entitlement. Do not add fake OpenCode client headers, placeholder tools or a silent Chat fallback to the Responses request.
+
+The Responses parser, strict schema behavior, response-size limits and error mapping are shared with the OpenAI-compatible Provider implementation. Native Responses never replaces the Voice `stream()` path.
 
 ## Operational safety
 - Responses `status=completed` with assistant `output_text` is the only accepted result. Refusal/incomplete/tool calls/empty output or oversized response are never passed to the Planner/Worker as successful content.
