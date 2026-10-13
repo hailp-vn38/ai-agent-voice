@@ -16,6 +16,9 @@ pub struct OpenAiConfig {
     pub model: String,
     #[serde(default = "default_llm_timeout_ms")]
     pub timeout_ms: u64,
+    /// Explicit provider capability; Chat Completions stays the Voice default.
+    #[serde(default)]
+    pub supports_responses: bool,
 }
 impl Default for OpenAiConfig {
     fn default() -> Self {
@@ -24,6 +27,7 @@ impl Default for OpenAiConfig {
             base_url: default_openai_base_url(),
             model: default_openai_model(),
             timeout_ms: default_llm_timeout_ms(),
+            supports_responses: false,
         }
     }
 }
