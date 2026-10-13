@@ -10,9 +10,6 @@ kind = "rust_container"
 entrypoint = "bin/plugin"
 protocol = "jsonl-v1"
 
-[permissions]
-network_hosts = []
-
 [agent]
 instructions = "instructions.md"
 
