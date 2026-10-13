@@ -1,7 +1,7 @@
 # ADR 0093 — Executable Python packages, not MCP-bound plugins
 
 ## Status
-Partially superseded for plugin networking, manifest permissions and Admin permission approval by [ADR 0101](0101-direct-plugin-worker-network.md), accepted 2026-10-13. The decision text below is retained as historical context, **not the current network or approval contract**. The independent executable Python plugin, offline build and worker-isolation decisions remain applicable. External MCP policy is unaffected.
+Partially superseded for plugin networking, manifest permissions and Admin permission approval by [ADR 0101](0101-direct-plugin-worker-network.md), accepted 2026-10-13. The decision text below is retained as historical context, **not the current network or approval contract**. The independent executable Python plugin and JSONL contract remain applicable. Per-plugin image building and per-attempt container execution are superseded by [ADR 0102](0102-shared-plugin-runtime.md); the decisions below are historical. External MCP policy is unaffected.
 
 ## Decision
 V1 Plugin Store installs Admin-trusted, versioned **Python 3.12 executable ZIP packages**, either manually uploaded or curated deployment packages. Required files: `plugin.toml`, `pyproject.toml`, `uv.lock`, source, input/output schemas. Installer validates archive and lock, builds an isolated environment/image with pinned Python and uv, verifies image digest and commits one disabled installation per plugin ID. Admin reviews permissions and activates. The installed package and image are immutable by digest; upgrade/uninstall blocks while nonterminal Jobs pin the old one.
