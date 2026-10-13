@@ -1,0 +1,70 @@
+{
+  "type": "object",
+  "properties": {
+    "format": {
+      "enum": [
+        "pdf",
+        "docx",
+        "markdown"
+      ]
+    },
+    "content_base64": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 60000
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50000
+    },
+    "filename": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "max_chars": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12000
+    }
+  },
+  "required": [
+    "format"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "format": {
+          "const": "markdown"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "not": {
+        "required": [
+          "content_base64"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "format": {
+          "enum": [
+            "pdf",
+            "docx"
+          ]
+        }
+      },
+      "required": [
+        "content_base64"
+      ],
+      "not": {
+        "required": [
+          "text"
+        ]
+      }
+    }
+  ]
+}
