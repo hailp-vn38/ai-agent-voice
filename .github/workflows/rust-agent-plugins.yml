@@ -10,6 +10,16 @@ on:
       - 'plugins/rust-plugin-sdk/**'
       - '.github/workflows/rust-agent-plugins.yml'
 jobs:
+  server-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Server formatting
+        run: scripts/agent-test.sh run -- cargo fmt --check
+      - name: Server compile
+        if: always() && !cancelled()
+        run: scripts/agent-test.sh check voice-agent-server
   package:
     runs-on: ubuntu-22.04
     strategy:
@@ -20,9 +30,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Test
-        run: cargo test --manifest-path plugins/${{ matrix.plugin }}/Cargo.toml
+        run: scripts/agent-test.sh run -- cargo test --manifest-path plugins/${{ matrix.plugin }}/Cargo.toml
       - name: Build
-        run: cargo build --release --manifest-path plugins/${{ matrix.plugin }}/Cargo.toml
+        run: scripts/agent-test.sh run -- cargo build --release --manifest-path plugins/${{ matrix.plugin }}/Cargo.toml
       - name: Prepare Store ZIP
         shell: bash
         env:
