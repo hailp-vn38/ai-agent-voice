@@ -245,3 +245,27 @@ pub(super) async fn retry(
         Err(error) => failure(&request, error),
     }
 }
+
+#[derive(Deserialize)]
+pub(super) struct EventQuery {
+    after: Option<i64>,
+    limit: Option<u32>,
+}
+pub(super) async fn events(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<EventQuery>,
+    request: Request,
+) -> Response {
+    let Some(after) = query.after.or(Some(0)).filter(|n|*n>=0) else {
+        return failure(&request,JobError::InvalidArguments);
+    };
+    let limit=query.limit.unwrap_or(100).clamp(1,100);
+    match runtime(&state) {
+        Ok(engine) => match engine.database.job_events(&id,after,limit).await {
+            Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
+            Err(err) => failure(&request,err),
+        },
+        Err(err) => failure(&request,err),
+    }
+}
