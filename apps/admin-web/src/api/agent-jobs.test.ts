@@ -59,7 +59,7 @@ describe('Agent Job admin clients', () => {
   })
 
   it('submits Admin-owned Jobs and retries through the new-Job endpoint', async () => {
-    const fetch = vi.fn().mockResolvedValue(json({ id: 'job-new', status: 'queued' }))
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(json({ id: 'job-new', status: 'queued' })))
     vi.stubGlobal('fetch', fetch)
     await agentJobsApi.createJob('Collect public posts')
     const create = fetch.mock.calls[0]?.[1] as RequestInit
