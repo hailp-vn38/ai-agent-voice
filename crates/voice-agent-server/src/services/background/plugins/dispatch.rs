@@ -1,4 +1,5 @@
 use super::*;
+use serde::Deserialize;
 
 pub(super) async fn acquire_worker_until(
     slots: &Semaphore,
