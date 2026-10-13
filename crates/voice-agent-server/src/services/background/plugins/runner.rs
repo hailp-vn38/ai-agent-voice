@@ -17,7 +17,6 @@ impl Prepared {
         workspace: &Path,
         job: &str,
         attempt: &str,
-        network: Option<&str>,
     ) -> Result<Self, PluginError> {
         let name = format!("agent-job-{attempt}");
         let mount = format!(
@@ -31,8 +30,6 @@ impl Prepared {
             "--name",
             &name,
             "--pull=never",
-            "--network",
-            network.unwrap_or("none"),
             "--read-only",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
@@ -51,18 +48,6 @@ impl Prepared {
             "--label",
             &format!("agent.job.attempt={attempt}"),
         ]);
-        if network.is_some() {
-            command.args([
-                "--env",
-                "HTTPS_PROXY=http://egress:8080",
-                "--env",
-                "https_proxy=http://egress:8080",
-                "--env",
-                "HTTP_PROXY=http://egress:8080",
-                "--env",
-                "http_proxy=http://egress:8080",
-            ]);
-        }
         command.arg(image);
         let result = tokio::time::timeout(Duration::from_secs(15), command.output())
             .await
