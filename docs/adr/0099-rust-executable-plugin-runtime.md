@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-10-13.
+Proposed — 2026-10-13. The earlier claim about reading persisted Python manifests without changes is superseded by [ADR 0101](0101-direct-plugin-worker-network.md): legacy manifests containing plugin network permissions are not supported. Rust and Python share the direct runtime networking boundary in ADR 0101; offline builds remain unchanged.
 
 ## Context
 
