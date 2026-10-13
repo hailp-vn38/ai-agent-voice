@@ -55,8 +55,8 @@ fn public_url(s: &str) -> Result<Url, Failure> {
 }
 fn fetch(url: &str) -> Result<String, Failure> {
     let url = public_url(url)?;
-    // The server's isolated egress proxy is the authority for approved domains.
-    // No redirect following, automatic HTTP auth or direct private-IP access.
+    // Use the Docker worker's network directly; this plugin does not follow redirects.
+    // URL validation is plugin-local and independent of server network permissions.
     let client = Client::builder()
         .redirect(Policy::none())
         .timeout(Duration::from_secs(20))
@@ -66,7 +66,7 @@ fn fetch(url: &str) -> Result<String, Failure> {
     let response = client
         .get(url)
         .send()
-        .map_err(|_| Failure::new("fetch_failed", "Request failed or denied by egress policy"))?;
+        .map_err(|_| Failure::new("fetch_failed", "Request failed"))?;
     if !response.status().is_success() {
         return Err(Failure::new(
             "http_error",
