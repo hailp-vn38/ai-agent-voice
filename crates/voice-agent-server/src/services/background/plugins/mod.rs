@@ -313,18 +313,27 @@ impl PluginStore {
             // Staging is mounted from the Installer volume; it may be on a
             // different filesystem from packages. Publish through a sibling
             // directory so the final rename is atomic on the package volume.
-            let pending = self.root.join("publishing").join(uuid::Uuid::new_v4().to_string());
+            let pending = self
+                .root
+                .join("publishing")
+                .join(uuid::Uuid::new_v4().to_string());
             for (name, content) in &package.files {
                 let path = pending.join(name);
                 if let Some(parent) = path.parent() {
-                    tokio::fs::create_dir_all(parent).await.map_err(|_| PluginError::StorageUnavailable)?;
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .map_err(|_| PluginError::StorageUnavailable)?;
                 }
-                tokio::fs::write(path, content).await.map_err(|_| PluginError::StorageUnavailable)?;
+                tokio::fs::write(path, content)
+                    .await
+                    .map_err(|_| PluginError::StorageUnavailable)?;
             }
             tokio::fs::write(pending.join("package.zip"), &package.source_zip)
-                .await.map_err(|_| PluginError::StorageUnavailable)?;
+                .await
+                .map_err(|_| PluginError::StorageUnavailable)?;
             tokio::fs::rename(&pending, &target)
-                .await.map_err(|_| PluginError::StorageUnavailable)?;
+                .await
+                .map_err(|_| PluginError::StorageUnavailable)?;
         }
         let now = crate::database::unix_seconds().ok_or(PluginError::DatabaseUnavailable)?;
         sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,installation_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'disabled',1,?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET version=excluded.version,package_digest=excluded.package_digest,installation_digest=excluded.installation_digest,status='disabled',revision=plugin_installations.revision+1,operations_json=excluded.operations_json,last_error_code=NULL,updated_at=excluded.updated_at")

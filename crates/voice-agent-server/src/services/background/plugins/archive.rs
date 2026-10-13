@@ -158,10 +158,7 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
         || manifest.plugin.name.is_empty()
         || manifest.plugin.name.len() > 128
         || manifest.plugin.description.len() > 1024
-        || !matches!(
-            manifest.runtime.kind.as_str(),
-            "python" | "rust"
-        )
+        || !matches!(manifest.runtime.kind.as_str(), "python" | "rust")
         || manifest.runtime.protocol != "jsonl-v1"
         || manifest.operations.is_empty()
         || manifest.operations.len() > 16
@@ -368,12 +365,22 @@ mod tests {
     }
     fn rust_fixture_zip() -> Vec<u8> {
         let root = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"), "/../../plugins/fixture-rust-1.0.0/"
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../plugins/fixture-rust-1.0.0/"
         ));
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-        for name in ["plugin.toml","instructions.md","schemas/collect.input.json","schemas/collect.output.json"] {
-            writer.start_file(name, SimpleFileOptions::default()).unwrap();
-            writer.write_all(&std::fs::read(root.join(name)).unwrap()).unwrap();
+        for name in [
+            "plugin.toml",
+            "instructions.md",
+            "schemas/collect.input.json",
+            "schemas/collect.output.json",
+        ] {
+            writer
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            writer
+                .write_all(&std::fs::read(root.join(name)).unwrap())
+                .unwrap();
         }
         let mut elf = vec![0u8; 64];
         elf[..4].copy_from_slice(b"\x7fELF");
@@ -385,7 +392,9 @@ mod tests {
             "aarch64" => 183,
             _ => return Vec::new(),
         };
-        writer.start_file("bin/plugin", SimpleFileOptions::default()).unwrap();
+        writer
+            .start_file("bin/plugin", SimpleFileOptions::default())
+            .unwrap();
         writer.write_all(&elf).unwrap();
         writer.finish().unwrap().into_inner()
     }
@@ -393,7 +402,9 @@ mod tests {
     #[test]
     fn rust_fixture_accepts_prebuilt_native_elf() {
         let package = rust_fixture_zip();
-        if package.is_empty() { return; }
+        if package.is_empty() {
+            return;
+        }
         let package = validate(&package).unwrap();
         assert_eq!(package.manifest.runtime.kind, "rust");
         assert_eq!(package.manifest.runtime.entrypoint, "bin/plugin");
@@ -404,43 +415,73 @@ mod tests {
     #[test]
     fn rust_manifest_rejects_mismatched_entrypoint_and_legacy_runtime() {
         let source = rust_fixture_zip();
-        if source.is_empty() { return; }
-        for (needle,replacement) in [
+        if source.is_empty() {
+            return;
+        }
+        for (needle, replacement) in [
             ("entrypoint = \"bin/plugin\"", "entrypoint = \"other\""),
             ("kind = \"rust\"", "kind = \"rust_container\""),
             ("protocol = \"jsonl-v1\"", "protocol = \"jsonl-v2\""),
-            ("protocol = \"jsonl-v1\"", "python = \"3.12\"\nprotocol = \"jsonl-v1\""),
+            (
+                "protocol = \"jsonl-v1\"",
+                "python = \"3.12\"\nprotocol = \"jsonl-v1\"",
+            ),
         ] {
-            let mut archive=ZipArchive::new(Cursor::new(&source)).unwrap();
-            let mut writer=ZipWriter::new(Cursor::new(Vec::new()));
+            let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
             for index in 0..archive.len() {
-                let mut entry=archive.by_index(index).unwrap();
-                let name=entry.name().to_owned();
-                writer.start_file(&name,SimpleFileOptions::default()).unwrap();
-                let mut content=Vec::new();entry.read_to_end(&mut content).unwrap();
-                if name=="plugin.toml" {
-                    writer.write_all(std::str::from_utf8(&content).unwrap().replace(needle,replacement).as_bytes()).unwrap();
-                } else { writer.write_all(&content).unwrap(); }
+                let mut entry = archive.by_index(index).unwrap();
+                let name = entry.name().to_owned();
+                writer
+                    .start_file(&name, SimpleFileOptions::default())
+                    .unwrap();
+                let mut content = Vec::new();
+                entry.read_to_end(&mut content).unwrap();
+                if name == "plugin.toml" {
+                    writer
+                        .write_all(
+                            std::str::from_utf8(&content)
+                                .unwrap()
+                                .replace(needle, replacement)
+                                .as_bytes(),
+                        )
+                        .unwrap();
+                } else {
+                    writer.write_all(&content).unwrap();
+                }
             }
-            assert!(matches!(validate(&writer.finish().unwrap().into_inner()),Err(PluginError::InvalidPackage)));
+            assert!(matches!(
+                validate(&writer.finish().unwrap().into_inner()),
+                Err(PluginError::InvalidPackage)
+            ));
         }
     }
 
     #[test]
     fn source_only_rust_package_is_not_a_runtime_installation() {
         let source = rust_fixture_zip();
-        if source.is_empty() {return;}
-        let mut archive=ZipArchive::new(Cursor::new(&source)).unwrap();
-        let mut writer=ZipWriter::new(Cursor::new(Vec::new()));
+        if source.is_empty() {
+            return;
+        }
+        let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         for index in 0..archive.len() {
-            let mut entry=archive.by_index(index).unwrap();
-            if entry.name()=="bin/plugin" {continue;}
-            let name=entry.name().to_owned();
-            writer.start_file(&name,SimpleFileOptions::default()).unwrap();
-            let mut bytes=Vec::new();entry.read_to_end(&mut bytes).unwrap();
+            let mut entry = archive.by_index(index).unwrap();
+            if entry.name() == "bin/plugin" {
+                continue;
+            }
+            let name = entry.name().to_owned();
+            writer
+                .start_file(&name, SimpleFileOptions::default())
+                .unwrap();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
             writer.write_all(&bytes).unwrap();
         }
-        assert!(matches!(validate(&writer.finish().unwrap().into_inner()),Err(PluginError::InvalidPackage)));
+        assert!(matches!(
+            validate(&writer.finish().unwrap().into_inner()),
+            Err(PluginError::InvalidPackage)
+        ));
     }
 
     #[test]
