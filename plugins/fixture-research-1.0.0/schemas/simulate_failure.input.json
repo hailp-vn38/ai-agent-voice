@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "mode": {"type": "string", "enum": ["application_error", "crash", "malformed_output", "sleep"]},
+    "seconds": {"type": "integer", "minimum": 1, "maximum": 30}
+  },
+  "required": ["mode"],
+  "additionalProperties": false
+}

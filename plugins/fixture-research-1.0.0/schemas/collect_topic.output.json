@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "collect_topic result",
+  "type": "object",
+  "properties": {
+    "source_id": {"const": "fixture"},
+    "topic": {"type": "string", "minLength": 1},
+    "record_count": {"type": "integer", "minimum": 0},
+    "summary": {"type": "string"},
+    "records": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["id", "source_id", "title", "text", "published_at", "synthetic"],
+        "properties": {
+          "id": {"type": "string"},
+          "source_id": {"const": "fixture"},
+          "title": {"type": "string"},
+          "text": {"type": "string"},
+          "published_at": {"type": "string"},
+          "synthetic": {"const": true}
+        },
+        "additionalProperties": false
+      }
+    },
+    "next_cursor": {"type": "null"},
+    "done": {"const": true},
+    "synthetic": {"const": true}
+  },
+  "required": ["source_id", "topic", "record_count", "summary", "records", "next_cursor", "done", "synthetic"],
+  "additionalProperties": false
+}

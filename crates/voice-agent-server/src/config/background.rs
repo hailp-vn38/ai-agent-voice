@@ -6,6 +6,13 @@ use serde::{Deserialize, Serialize};
 pub struct BackgroundConfig {
     #[serde(default)]
     pub limits: BackgroundLimits,
+    /// OCI digests supplied by deployment; mutable tags are rejected by preflight.
+    pub plugin_python_image: Option<String>,
+    pub plugin_uv_image: Option<String>,
+    /// Dedicated rootless Engine socket, e.g. unix:///run/user/1001/docker.sock.
+    pub plugin_docker_host: Option<String>,
+    /// Directory of operator-provided ZIPs named <curated-id>.zip.
+    pub plugin_curated_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

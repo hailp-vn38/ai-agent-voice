@@ -344,3 +344,12 @@ allowed_hosts = []
 
 [system_mcp]
 enabled = false # Read-only tools for authenticated Studio Assistant sessions.
+
+# P1 executable Plugin Store is fail-closed unless the deployment uses a dedicated
+# rootless Linux Docker Engine. The pinned images below were resolved on 2026-10-13;
+# pull these exact digests into that Engine before enabling installs.
+# [background]
+# plugin_python_image = "python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
+# plugin_uv_image = "ghcr.io/astral-sh/uv@sha256:4de5495181a281bc744845b9579acf7b221d6791f99bcc211b9ec13f417c2853"
+# plugin_docker_host = "unix:///run/user/1001/docker.sock"
+# plugin_curated_dir = "data/curated-plugins"

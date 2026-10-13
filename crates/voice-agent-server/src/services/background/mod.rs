@@ -2,6 +2,7 @@
 //! the planner and executable worker; no placeholder executor accepts stuck work.
 mod engine;
 pub(crate) mod model;
+pub mod plugins;
 pub(crate) mod providers;
 mod runtime;
 mod scheduler;

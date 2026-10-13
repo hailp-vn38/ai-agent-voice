@@ -71,11 +71,8 @@ impl Database {
             worker.as_deref().ok_or(JobError::ProviderUnavailable)?,
         )
         .await?;
-        // P0 accepts only the explicitly controlled LLM-only foundation harness. P1
-        // will populate checked installed choices; requirements cannot invent a plugin.
-        if !request.required_sources.is_empty() || !request.required_capabilities.is_empty() {
-            return Err(JobError::CapabilityUnavailable);
-        }
+        let plugin_choices =
+            crate::services::background::plugins::frozen_choices(&mut tx, &request).await?;
         let used: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'")
             .fetch_one(&mut *tx)
             .await?;
@@ -96,8 +93,9 @@ impl Database {
             limits: config.background.limits.clone(),
         };
         let (device, agent) = requester.incarnations();
-        sqlx::query("INSERT INTO jobs(id,requester_scope,device_incarnation,agent_incarnation,request_json,request_fingerprint,snapshot_json,plugin_choices_json,settings_revision,budget_limit_json,status,deadline_at,idempotency_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'[]',?,?,'queued',?,?,?,?)")
+        sqlx::query("INSERT INTO jobs(id,requester_scope,device_incarnation,agent_incarnation,request_json,request_fingerprint,snapshot_json,plugin_choices_json,settings_revision,budget_limit_json,status,deadline_at,idempotency_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?,?,?)")
             .bind(&id).bind(scope).bind(device).bind(agent).bind(request_json).bind(fingerprint).bind(encode(&snapshot)?)
+            .bind(plugin_choices)
             .bind(revision).bind(encode(&snapshot.limits)?).bind(deadline).bind(key).bind(now).bind(now).execute(&mut *tx).await?;
         let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
             .bind(&id)

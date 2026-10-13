@@ -39,6 +39,7 @@ impl BackgroundRuntime {
             sqlx::query("UPDATE background_settings SET enabled=0,revision=revision+1 WHERE singleton=1 AND enabled=1").execute(database.pool()).await?;
         }
         let engine = Arc::new(JobEngine {
+            plugins: super::plugins::PluginStore::new(database.clone(), config.background.clone()),
             submission_gate: Default::default(),
             active_submissions: Default::default(),
             database,

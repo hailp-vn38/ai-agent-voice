@@ -7,6 +7,7 @@ use std::sync::{
 use tokio::sync::Notify;
 
 pub struct JobEngine {
+    pub plugins: super::plugins::PluginStore,
     pub(crate) submission_gate: tokio::sync::RwLock<()>,
     pub(crate) active_submissions: AtomicUsize,
     pub(crate) database: Arc<Database>,

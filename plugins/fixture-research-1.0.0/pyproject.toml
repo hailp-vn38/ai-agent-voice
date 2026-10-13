@@ -1,0 +1,9 @@
+[project]
+name = "fixture-research"
+version = "1.0.0"
+description = "Offline test plugin for Agent Job JSONL worker"
+requires-python = ">=3.12,<3.14"
+dependencies = []
+
+# Deliberately no third-party dependencies: this ZIP can install and run offline.
+# For a real crawler, add locked dependencies with `uv add httpx` then regenerate uv.lock.

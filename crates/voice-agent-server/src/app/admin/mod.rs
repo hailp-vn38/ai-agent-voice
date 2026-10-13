@@ -2,6 +2,7 @@
 //! Agent and Device desired configuration in this rollout.
 mod background;
 mod notifications;
+mod plugins;
 mod system_mcp;
 use super::AppState;
 use crate::database::{external_mcp_policy, provider_config};
@@ -31,6 +32,30 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route("/plugins", get(plugins::list))
+        .route(
+            "/plugins/install",
+            axum::routing::post(plugins::install)
+                .layer(axum::extract::DefaultBodyLimit::max(21 * 1024 * 1024)),
+        )
+        .route(
+            "/plugins/curated/{id}/install",
+            axum::routing::post(plugins::install_curated),
+        )
+        .route(
+            "/plugins/{id}",
+            get(plugins::get).delete(plugins::uninstall),
+        )
+        .route("/plugins/{id}/permissions", put(plugins::permissions))
+        .route("/plugins/{id}/test", axum::routing::post(plugins::test))
+        .route(
+            "/plugins/{id}/activate",
+            axum::routing::post(plugins::activate),
+        )
+        .route(
+            "/plugins/{id}/disable",
+            axum::routing::post(plugins::disable),
+        )
         .route(
             "/background/settings",
             get(background::settings).put(background::save_settings),

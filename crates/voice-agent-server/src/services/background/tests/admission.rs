@@ -1,4 +1,87 @@
 use super::*;
+use crate::services::background::plugins::{PermissionApproval, PluginError};
+
+#[tokio::test]
+async fn reviewed_plugin_choices_freeze_at_submit_and_pin_nonterminal_installation() {
+    let (db, _, runtime) = harness().await;
+    let manifest: toml::Value = toml::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../plugins/fixture-research-1.0.0/plugin.toml"
+    )))
+    .unwrap();
+    let operations = serde_json::to_string(&manifest).unwrap();
+    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES('fixture-research','1.0.0',? ,?,'disabled',1,'{}',?,0,0)")
+        .bind("a".repeat(64)).bind(format!("sha256:{}", "b".repeat(64))).bind(operations)
+        .execute(db.pool()).await.unwrap();
+    let reviewed = runtime
+        .engine
+        .plugins
+        .approve(
+            "fixture-research",
+            1,
+            PermissionApproval {
+                network_hosts: vec![],
+                scratch_storage: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(reviewed.status, "disabled");
+    assert!(reviewed.permissions_approved);
+    assert_eq!(reviewed.revision, 2);
+    // This row represents a previously verified activation. The test exercises
+    // Job admission only; it does not assert a real container preflight.
+    sqlx::query(
+        "UPDATE plugin_installations SET status='ready' WHERE plugin_id='fixture-research'",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let mut input = request("Collect fixture posts");
+    input.required_capabilities = vec!["fixture.collect".into()];
+    input.required_sources = vec!["fixture".into()];
+    let created = runtime
+        .engine
+        .submit(input.clone(), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    assert_eq!(created.plugin_choices.as_array().unwrap().len(), 2);
+    assert_eq!(created.plugin_choices[0]["plugin_id"], "fixture-research");
+    assert_eq!(
+        runtime
+            .engine
+            .plugins
+            .uninstall("fixture-research", 2)
+            .await
+            .unwrap_err(),
+        PluginError::InUse
+    );
+    runtime
+        .engine
+        .plugins
+        .disable("fixture-research", 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        runtime
+            .engine
+            .submit(input, &JobRequester::Admin, None)
+            .await
+            .unwrap_err(),
+        JobError::CapabilityUnavailable
+    );
+    assert_eq!(
+        runtime
+            .engine
+            .get(&created.id)
+            .await
+            .unwrap()
+            .plugin_choices,
+        created.plugin_choices
+    );
+    runtime.shutdown().await;
+}
 
 #[tokio::test]
 async fn committed_jobs_replay_before_capacity_and_global_enable_checks() {
