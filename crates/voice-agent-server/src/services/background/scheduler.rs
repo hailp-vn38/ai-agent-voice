@@ -80,7 +80,7 @@ async fn eligible(engine: &JobEngine, job: &JobRow, timestamp: i64) -> Result<()
             return Err(JobError::ConfigurationChanged);
         }
     }
-    if job.plugin_choices_json != "[]" {
+    if job.plugin_choices_json != "[]" && !engine.foundation_harness {
         return Err(JobError::CapabilityUnavailable);
     }
     if !engine.runtime_ready() {

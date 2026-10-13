@@ -1,9 +1,14 @@
 use crate::{
     database::Database,
-    services::background::{JobError, JobRequest, JobRequester, JobSnapshot, JobStepView, JobView},
+    services::background::{
+        JobArtifactView, JobError, JobRequest, JobRequester, JobSnapshot, JobStepView, JobView,
+    },
 };
 use sqlx::{FromRow, SqliteConnection};
 mod recovery;
+// P3 scheduler will consume these durable dispatch transitions.
+#[allow(dead_code)]
+mod execution;
 mod submission;
 
 #[derive(FromRow)]
@@ -34,7 +39,11 @@ impl JobRow {
             _ => Err(JobError::AuthorityRevoked),
         }
     }
-    pub(crate) fn view(self, steps: Vec<JobStepView>) -> Result<JobView, JobError> {
+    pub(crate) fn view(
+        self,
+        steps: Vec<JobStepView>,
+        artifacts: Vec<JobArtifactView>,
+    ) -> Result<JobView, JobError> {
         Ok(JobView {
             id: self.id,
             request: serde_json::from_str::<JobRequest>(&self.request_json)
@@ -53,6 +62,7 @@ impl JobRow {
             error_code: self.error_code,
             scheduler_seen_at: self.scheduler_seen_at,
             steps,
+            artifacts,
         })
     }
 }
@@ -85,7 +95,13 @@ impl Database {
         let row = self.job_row(id).await?;
         let steps=sqlx::query_as("SELECT step_key,status,plugin_id,operation,error_code,attempt_state FROM job_steps WHERE job_id=? ORDER BY step_key")
             .bind(id).fetch_all(self.pool()).await?;
-        row.view(steps)
+        let artifacts = sqlx::query_as(
+            "SELECT id,media_type,size_bytes,sha256 FROM job_artifacts WHERE job_id=? ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(self.pool())
+        .await?;
+        row.view(steps, artifacts)
     }
     pub(crate) async fn queued_jobs(&self) -> Result<Vec<JobRow>, JobError> {
         Ok(sqlx::query_as(
@@ -117,7 +133,7 @@ impl Database {
         tx.commit().await?;
         Ok((
             rows.into_iter()
-                .map(|row| row.view(Vec::new()))
+                .map(|row| row.view(Vec::new(), Vec::new()))
                 .collect::<Result<_, _>>()?,
             total,
         ))

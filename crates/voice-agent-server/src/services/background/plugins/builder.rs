@@ -28,7 +28,7 @@ fn docker_host(config: &BackgroundConfig) -> Result<&str, PluginError> {
     }
     Ok(host)
 }
-fn command(config: &BackgroundConfig) -> Result<Command, PluginError> {
+pub(super) fn command(config: &BackgroundConfig) -> Result<Command, PluginError> {
     let mut cmd = Command::new("docker");
     cmd.env_clear()
         .env("DOCKER_HOST", docker_host(config)?)
@@ -126,7 +126,7 @@ pub async fn build(
         "ghcr.io/astral-sh/uv@sha256:",
     )?;
     let dockerfile = format!(
-        "FROM {python}\nCOPY --from={uv} /uv /usr/local/bin/uv\nWORKDIR /plugin\nCOPY . /plugin\nRUN --network=none uv sync --locked --offline --no-dev --no-install-project\nENV PYTHONDONTWRITEBYTECODE=1\nUSER 65532:65532\nENTRYPOINT [\"/plugin/.venv/bin/python\",\"/plugin/src/main.py\"]\n"
+        "FROM {python}\nCOPY --from={uv} /uv /usr/local/bin/uv\nWORKDIR /plugin\nCOPY . /plugin\nRUN --network=none uv sync --locked --offline --no-dev --no-install-project\nRUN mkdir -p /work/out\nENV PYTHONDONTWRITEBYTECODE=1\nUSER 65532:65532\nENTRYPOINT [\"/plugin/.venv/bin/python\",\"/plugin/src/main.py\"]\n"
     );
     let recipe = stage.join(".agent-plugin.Dockerfile");
     tokio::fs::write(&recipe, dockerfile)

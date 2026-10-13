@@ -37,7 +37,7 @@ impl Database {
                 if old.request_fingerprint != fingerprint {
                     return Err(JobError::IdempotencyConflict);
                 }
-                let job = old.view(Vec::new())?;
+                let job = old.view(Vec::new(), Vec::new())?;
                 tx.commit().await?;
                 return Ok(JobReceipt {
                     job,
@@ -101,7 +101,7 @@ impl Database {
             .bind(&id)
             .fetch_one(&mut *tx)
             .await?;
-        let job = row.view(Vec::new())?;
+        let job = row.view(Vec::new(), Vec::new())?;
         if !runtime_ready() {
             return Err(JobError::RuntimeUnavailable);
         }

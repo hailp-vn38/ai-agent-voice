@@ -4,6 +4,8 @@
 
 **Status:** P0 durable foundation is implemented; Admin Web pages/API clients also exist. Production Background remains disabled and submission returns `runtime_unavailable` until P3 planner/worker readiness. P0 tests use a crate-local `cfg(test)` foundation harness to commit and observe queued LLM-only Jobs. Python/Voice Job E2E and Linux sandbox qualification remain NOT_RUN. See [P0 implementation evidence](P0-IMPLEMENTATION.md).
 
+P1 installation and P2 execution groundwork have interim implementation commits/evidence; their rootless Linux acceptance gates remain open. See [P1 evidence](P1-IMPLEMENTATION.md) and [P2 evidence](P2-IMPLEMENTATION.md).
+
 ## Contents
 
 - `docs/agent-job-plugin-platform-codebase-design.md`: canonical v1.5 design and normative acceptance matrix.

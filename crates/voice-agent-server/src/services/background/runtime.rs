@@ -48,6 +48,12 @@ impl BackgroundRuntime {
             running: AtomicBool::new(true),
             foundation_harness,
         });
+        engine
+            .plugins
+            .reap_owned()
+            .await
+            .map_err(|_| JobError::RuntimeUnavailable)?;
+        super::artifacts::reconcile(&engine.database).await?;
         scheduler::scan(&engine).await?;
         let stop = CancellationToken::new();
         let task = tokio::spawn(scheduler::run(engine.clone(), stop.clone(), stopping, lock));

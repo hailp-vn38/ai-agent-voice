@@ -129,6 +129,14 @@ pub struct JobView {
     pub error_code: Option<String>,
     pub scheduler_seen_at: Option<i64>,
     pub steps: Vec<JobStepView>,
+    pub artifacts: Vec<JobArtifactView>,
+}
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, sqlx::FromRow)]
+pub struct JobArtifactView {
+    pub id: String,
+    pub media_type: String,
+    pub size_bytes: i64,
+    pub sha256: String,
 }
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, sqlx::FromRow)]
 pub struct JobStepView {

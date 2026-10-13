@@ -1,5 +1,14 @@
 mod archive;
 mod builder;
+mod dispatch;
+#[allow(dead_code)]
+mod protocol;
+mod reaper;
+#[allow(dead_code)]
+mod runner;
+#[cfg(test)]
+mod tests;
+pub(crate) use dispatch::{FrozenChoice, Invocation};
 
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
@@ -22,6 +31,13 @@ pub enum PluginError {
     NotFound,
     DatabaseUnavailable,
     StorageUnavailable,
+    WorkerProtocolError,
+    PluginRuntimeError,
+    ApplicationError,
+    WorkerTimeout,
+    WorkerDeadlineExceeded,
+    WorkerCapacityUnavailable,
+    JobRejected(crate::services::background::JobError),
 }
 impl PluginError {
     pub fn code(self) -> &'static str {
@@ -37,6 +53,13 @@ impl PluginError {
             Self::NotFound => "not_found",
             Self::DatabaseUnavailable => "database_unavailable",
             Self::StorageUnavailable => "plugin_storage_unavailable",
+            Self::WorkerProtocolError => "worker_protocol_error",
+            Self::PluginRuntimeError => "plugin_runtime_error",
+            Self::ApplicationError => "plugin_application_error",
+            Self::WorkerTimeout => "worker_timeout",
+            Self::WorkerDeadlineExceeded => "deadline_exceeded",
+            Self::WorkerCapacityUnavailable => "background_capacity_unavailable",
+            Self::JobRejected(error) => error.code(),
         }
     }
 }
@@ -145,9 +168,13 @@ pub struct PluginStore {
     config: BackgroundConfig,
     root: PathBuf,
     build_slot: Semaphore,
+    #[allow(dead_code)]
+    worker_slots: Semaphore,
 }
+
 impl PluginStore {
     pub fn new(database: Arc<Database>, config: BackgroundConfig) -> Self {
+        let worker_limit = config.limits.max_container_workers as usize;
         let root = database
             .durable_path()
             .and_then(std::path::Path::parent)
@@ -158,6 +185,7 @@ impl PluginStore {
             config,
             root,
             build_slot: Semaphore::new(1),
+            worker_slots: Semaphore::new(worker_limit),
         }
     }
     async fn row(&self, id: &str) -> Result<Installation, PluginError> {

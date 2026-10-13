@@ -3,6 +3,7 @@ use crate::{config::AppConfig, database::Database};
 use serde_json::{Value, json};
 use std::sync::Arc;
 mod admission;
+mod execution;
 mod http;
 mod locking;
 mod providers;

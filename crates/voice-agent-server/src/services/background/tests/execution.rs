@@ -1,0 +1,237 @@
+use super::*;
+use crate::services::background::plugins::{FrozenChoice, PermissionApproval};
+use std::io::Read;
+
+#[tokio::test]
+async fn expired_attempt_cannot_publish_success_or_artifacts() {
+    let mut config = config();
+    config.background.limits.job_deadline_seconds = 1;
+    config.background.limits.step_timeout_seconds = 1;
+    let config = Arc::new(config);
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::foundation_harness(db.clone(), config)
+        .await
+        .unwrap();
+    enable(&runtime.engine).await;
+    let job = runtime
+        .engine
+        .submit(request("Expires during worker"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    sqlx::query("UPDATE jobs SET status='running',plan_revision=1 WHERE id=?")
+        .bind(&job.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,status,attempt,attempt_id,attempt_state,created_at,updated_at) VALUES(?,'one',1,'running',1,'attempt-1','started',0,0)")
+        .bind(&job.id).execute(db.pool()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert_eq!(
+        db.finish_plugin_success(&job.id, "one", "attempt-1", &json!({"ok":true}), &[], 1024)
+            .await
+            .unwrap_err(),
+        JobError::DeadlineExceeded
+    );
+    db.finish_plugin_failure(&job.id, "one", "attempt-1", "deadline_exceeded", false)
+        .await
+        .unwrap();
+    let final_job = runtime.engine.get(&job.id).await.unwrap();
+    assert_eq!(final_job.status, "failed");
+    assert!(final_job.artifacts.is_empty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() {
+    let (db, _, runtime) = harness().await;
+    let zip = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../plugins/fixture-research-1.0.0.zip"
+    ));
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip)).unwrap();
+    let mut manifest = String::new();
+    archive
+        .by_name("plugin.toml")
+        .unwrap()
+        .read_to_string(&mut manifest)
+        .unwrap();
+    let json = serde_json::to_string(&toml::from_str::<toml::Value>(&manifest).unwrap()).unwrap();
+    let approved = serde_json::to_string(&PermissionApproval {
+        network_hosts: vec![],
+        scratch_storage: false,
+    })
+    .unwrap();
+    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES('fixture-research','1.0.0',?,?,'ready',1,?,?,0,0)")
+        .bind("a".repeat(64)).bind(format!("sha256:{}", "b".repeat(64)))
+        .bind(approved).bind(json).execute(db.pool()).await.unwrap();
+    let job = runtime
+        .engine
+        .submit(request("Fixture attempt"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    let choice: FrozenChoice = serde_json::from_value(job.plugin_choices[0].clone()).unwrap();
+    db.test_plan_one_step(&job.id, "collect", &choice, &json!({"topic":"AI"}))
+        .await
+        .unwrap();
+    db.reserve_plugin_attempt(&job.id, "collect", "attempt-1")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.reserve_plugin_attempt(&job.id, "collect", "attempt-2")
+            .await
+            .unwrap_err(),
+        JobError::Terminal
+    );
+    db.request_plugin_start(&job.id, "collect", "attempt-1", &choice)
+        .await
+        .unwrap();
+    db.mark_plugin_started(&job.id, "collect", "attempt-1")
+        .await
+        .unwrap();
+    db.finish_plugin_success(
+        &job.id,
+        "collect",
+        "attempt-1",
+        &json!({"summary":"done"}),
+        &[],
+        1024,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        runtime.engine.get(&job.id).await.unwrap().status,
+        "succeeded"
+    );
+    assert_eq!(
+        db.finish_plugin_failure(&job.id, "collect", "attempt-1", "late", true)
+            .await
+            .unwrap_err(),
+        JobError::Terminal
+    );
+    runtime.shutdown().await;
+}
+
+/// Run explicitly on a dedicated rootless Linux Docker host with pinned local images.
+/// This is the P2 acceptance gate, not a macOS/Docker Desktop simulation.
+#[tokio::test]
+#[ignore = "requires dedicated rootless Linux Docker Engine and locally pinned images"]
+async fn fixture_python_runs_through_job_step_and_checked_artifact() {
+    let mut config = config();
+    config.background.plugin_docker_host = Some(std::env::var("AGENT_P2_DOCKER_HOST").unwrap());
+    config.background.plugin_python_image = Some(std::env::var("AGENT_P2_PYTHON_IMAGE").unwrap());
+    config.background.plugin_uv_image = Some(std::env::var("AGENT_P2_UV_IMAGE").unwrap());
+    config.background.limits.step_timeout_seconds = 10;
+    let config = Arc::new(config);
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::foundation_harness(db.clone(), config)
+        .await
+        .unwrap();
+    let zip = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../plugins/fixture-research-1.0.0.zip"
+    ));
+    let installed = runtime.engine.plugins.install(zip).await.unwrap();
+    let reviewed = runtime
+        .engine
+        .plugins
+        .approve(
+            &installed.id,
+            installed.revision,
+            PermissionApproval {
+                network_hosts: vec![],
+                scratch_storage: false,
+            },
+        )
+        .await
+        .unwrap();
+    runtime
+        .engine
+        .plugins
+        .activate(&reviewed.id, reviewed.revision)
+        .await
+        .unwrap();
+    enable(&runtime.engine).await;
+    let mut input = request("Research fixture AI posts");
+    input.required_capabilities = vec!["fixture.collect".into()];
+    input.required_sources = vec!["fixture".into()];
+    let job = runtime
+        .engine
+        .submit(input, &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    let choice: FrozenChoice = serde_json::from_value(job.plugin_choices[0].clone()).unwrap();
+    let args = json!({"topic":"AI", "limit":2});
+    db.test_plan_one_step(&job.id, "collect", &choice, &args)
+        .await
+        .unwrap();
+    let result = runtime
+        .engine
+        .execute_plugin_step(&job.id, "collect", &choice, args)
+        .await
+        .unwrap();
+    assert_eq!(result.status, "succeeded");
+    assert_eq!(result.steps[0].attempt_state.as_deref(), Some("finished"));
+    assert_eq!(result.artifacts.len(), 2);
+    for artifact in result.artifacts {
+        let bytes = runtime
+            .engine
+            .read_artifact(&job.id, &artifact.id)
+            .await
+            .unwrap();
+        assert_eq!(bytes.len(), artifact.size_bytes as usize);
+        assert!(!bytes.is_empty());
+    }
+    let timed = runtime
+        .engine
+        .submit(
+            request("Force worker termination"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap()
+        .job;
+    let choice: FrozenChoice = serde_json::from_value(
+        timed
+            .plugin_choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|value| value["operation"] == "simulate_failure")
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    let args = json!({"mode":"sleep","seconds":30});
+    db.test_plan_one_step(&timed.id, "sleep", &choice, &args)
+        .await
+        .unwrap();
+    let failed = runtime
+        .engine
+        .execute_plugin_step(&timed.id, "sleep", &choice, args)
+        .await
+        .unwrap();
+    assert_eq!(failed.status, "failed");
+    assert_eq!(
+        failed.steps[0].attempt_state.as_deref(),
+        Some("unknown_outcome")
+    );
+    assert_eq!(
+        failed.steps[0].error_code.as_deref(),
+        Some("worker_timeout")
+    );
+    assert_eq!(
+        runtime
+            .engine
+            .plugins
+            .get("fixture-research")
+            .await
+            .unwrap()
+            .status,
+        "ready"
+    );
+    runtime.shutdown().await;
+}
