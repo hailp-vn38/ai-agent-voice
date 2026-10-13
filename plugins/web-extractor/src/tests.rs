@@ -15,10 +15,24 @@ fn extracts_main_text_and_metadata() {
     assert_eq!(output["word_count"], 3);
     assert_eq!(output["links"][0]["url"], "https://example.com/x");
 }
-#[test]
-fn disallows_ip_urls() {
+
     assert!(public_url("http://127.0.0.1/secret").is_err());
     assert!(public_url("http://169.254.169.254/latest").is_err());
     assert!(public_url("http://[::ffff:127.0.0.1]/secret").is_err());
     assert!(public_url("http://[::1]/secret").is_err());
+}
+#[test]
+fn accepts_http_urls_without_destination_allowlist() {
+    for address in [
+        "http://127.0.0.1/secret",
+        "http://169.254.169.254/latest",
+        "http://[::ffff:127.0.0.1]/secret",
+        "http://[::1]/secret",
+        "http://localhost:8080/",
+        "https://example.com:8443/path",
+    ] {
+        assert!(http_url(address).is_ok(), "{address}");
+    }
+    assert!(http_url("file:///etc/passwd").is_err());
+    assert!(http_url("https://user:pass@example.com/").is_err());
 }
