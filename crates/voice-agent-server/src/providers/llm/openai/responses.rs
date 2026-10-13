@@ -61,7 +61,7 @@ fn output_text(body: &Value) -> Result<String,LlmError> {
     Ok(answer)
 }
 
-pub(super) async fn complete(
+pub(crate) async fn complete(
     provider: &ConfiguredOpenAiLlm, request: LlmRequest, schema: Option<Value>,
 ) -> Result<String,LlmError> {
     let base=provider.base_url.trim_end_matches('/');
@@ -97,10 +97,10 @@ pub(super) async fn complete(
     if let Some(usage)=document.get("usage"){
         tracing::info!(
             event="background_responses_usage",
-            input_tokens=usage.get("input_tokens").and_then(Value::as_u64).unwrap_or(0),
-            output_tokens=usage.get("output_tokens").and_then(Value::as_u64).unwrap_or(0),
-            reasoning_tokens=usage.pointer("/output_tokens_details/reasoning_tokens").and_then(Value::as_u64).unwrap_or(0),
-            cached_input_tokens=usage.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64).unwrap_or(0),
+            input_tokens=usage.get("input_tokens").and_then(|value|value.as_u64()).unwrap_or(0),
+            output_tokens=usage.get("output_tokens").and_then(|value|value.as_u64()).unwrap_or(0),
+            reasoning_tokens=usage.pointer("/output_tokens_details/reasoning_tokens").and_then(|value|value.as_u64()).unwrap_or(0),
+            cached_input_tokens=usage.pointer("/input_tokens_details/cached_tokens").and_then(|value|value.as_u64()).unwrap_or(0),
         );
     }
     Ok(text)
