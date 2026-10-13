@@ -98,8 +98,6 @@ pub async fn check(
         "package_digest": package.digest,
         "package": "PASS",
         "runtime": "NOT_RUN",
-        "network": "NOT_RUN",
-        "declared_network_hosts": package.manifest.permissions.network_hosts,
         "cases": []
     });
     let Some(config) = deployment else {
@@ -132,11 +130,6 @@ pub async fn check(
                 "result": "PASS", "artifact_count": artifacts}));
         }
         report["runtime"] = json!("PASS");
-        report["network"] = json!(if package.manifest.permissions.network_hosts.is_empty() {
-            "NOT_REQUIRED"
-        } else {
-            "NOT_RUN"
-        });
         report["cases"] = json!(results);
         Ok(report)
     }
