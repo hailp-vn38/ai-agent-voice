@@ -299,12 +299,16 @@ impl Database {
                 let choices: Vec<Value> = serde_json::from_str(&row.plugin_choices_json)
                     .map_err(|_| JobError::DatabaseUnavailable)?;
                 for choice in choices {
-                    let approval:Option<String>=sqlx::query_scalar("SELECT approved_permissions_json FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'")
-                        .bind(choice["plugin_id"].as_str()).bind(choice["version"].as_str()).bind(choice["package_digest"].as_str()).bind(choice["image_digest"].as_str()).fetch_optional(&mut *tx).await?;
-                    if approval.as_ref().is_none_or(|approval| {
-                        crate::services::background::model::digest(approval)
-                            != choice["permission_digest"].as_str().unwrap_or("")
-                    }) {
+                    let installed: Option<i64> = sqlx::query_scalar(
+                        "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'",
+                    )
+                    .bind(choice["plugin_id"].as_str())
+                    .bind(choice["version"].as_str())
+                    .bind(choice["package_digest"].as_str())
+                    .bind(choice["image_digest"].as_str())
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    if installed.is_none() {
                         status = "failed";
                         error = Some("capability_unavailable");
                     }
