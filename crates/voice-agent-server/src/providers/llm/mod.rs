@@ -91,6 +91,16 @@ pub trait LlmProvider: Send + Sync {
         Err(LlmError::Failed)
     }
 
+    /// Background-only completion. Voice always uses `stream()` (Chat Completions).
+    /// Structured schema is advisory for chat-only providers; Rust validates the result.
+    async fn background_complete(
+        &self,
+        request: LlmRequest,
+        _schema: Option<Value>,
+    ) -> Result<String, LlmError> {
+        complete_background_chat(self.stream(request).await?).await
+    }
+
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
         let response = self.complete(&request)?;
         Ok(Box::pin(futures_util::stream::iter([
@@ -104,6 +114,34 @@ pub trait LlmProvider: Send + Sync {
 pub enum LlmError {
     #[error("LLM completion failed")]
     Failed,
+    /// A terminal provider response definitively rejected or failed to produce usable output.
+    #[error("LLM returned a terminal invalid response")]
+    Rejected,
+}
+
+/// Chat-only fallback for Background; no MCP, provider tools or streaming to the Device.
+pub(crate) async fn complete_background_chat(mut stream: LlmEventStream) -> Result<String, LlmError> {
+    use futures_util::StreamExt;
+    let mut output = String::new();
+    while let Some(event) = stream.next().await {
+        match event? {
+            LlmEvent::TextDelta(delta) => {
+                if output.len().saturating_add(delta.len()) > 65536 {
+                    return Err(LlmError::Failed);
+                }
+                output.push_str(&delta);
+            }
+            LlmEvent::Finished => {
+                return if output.is_empty() {
+                    Err(LlmError::Failed)
+                } else {
+                    Ok(output)
+                };
+            }
+            LlmEvent::ToolCall(_) => return Err(LlmError::Failed),
+        }
+    }
+    Err(LlmError::Failed)
 }
 
 pub struct UnavailableLlm;
@@ -119,6 +157,7 @@ pub(crate) struct ConfiguredOpenAiLlm {
     base_url: String,
     model: String,
     timeout_seconds: u64,
+    supports_responses: bool,
 }
 
 impl ConfiguredOpenAiLlm {
@@ -128,11 +167,24 @@ impl ConfiguredOpenAiLlm {
         model: &str,
         timeout_seconds: u64,
     ) -> Result<Self, LlmError> {
+        Self::build_with_responses(api_key, base_url, model, timeout_seconds, false)
+    }
+    pub(crate) fn build_with_responses(
+        api_key: &str,
+        base_url: &str,
+        model: &str,
+        timeout_seconds: u64,
+        supports_responses: bool,
+    ) -> Result<Self, LlmError> {
+        if model.trim().is_empty() || timeout_seconds == 0 {
+            return Err(LlmError::Failed);
+        }
         Ok(Self {
             api_key: api_key.into(),
             base_url: base_url.into(),
             model: model.into(),
             timeout_seconds,
+            supports_responses,
         })
     }
 }
@@ -144,6 +196,18 @@ impl LlmProvider for ConfiguredOpenAiLlm {
     }
     fn adapter(&self) -> &'static str {
         "openai"
+    }
+
+    async fn background_complete(
+        &self,
+        request: LlmRequest,
+        schema: Option<Value>,
+    ) -> Result<String, LlmError> {
+        if self.supports_responses {
+            openai::responses::complete(self, request, schema).await
+        } else {
+            complete_background_chat(self.stream(request).await?).await
+        }
     }
 
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {

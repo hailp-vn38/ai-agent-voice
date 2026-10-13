@@ -89,16 +89,16 @@ async fn background_stream_requires_finished_even_after_valid_json() {
     let stream = Box::pin(futures_util::stream::iter([Ok(LlmEvent::TextDelta(
         json.into(),
     ))]));
-    assert_eq!(
-        super::super::models::consume_stream(stream).await,
-        Err(JobError::ModelFailed)
-    );
+    assert!(matches!(
+        crate::providers::llm::complete_background_chat(stream).await,
+        Err(crate::providers::LlmError::Failed)
+    ));
     let stream = Box::pin(futures_util::stream::iter([
         Ok(LlmEvent::TextDelta(json.into())),
         Ok(LlmEvent::Finished),
     ]));
     assert_eq!(
-        super::super::models::consume_stream(stream).await.unwrap(),
+        crate::providers::llm::complete_background_chat(stream).await.unwrap(),
         json
     );
 }
