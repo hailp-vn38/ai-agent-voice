@@ -3,8 +3,6 @@ import { Activity, Bot, CheckCircle2, Cpu, RefreshCw, Save, Settings2, ShieldChe
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import type { BackgroundSettings, BackgroundSettingsUpdate } from '@/api/types/agent-jobs'
-import type { AdminProvider } from '@/api/types/providers'
-import { providersApi } from '@/api/providers'
 import { formatApiError, isApiError } from '@/api/errors'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import { Badge } from '@/components/ui/badge'
@@ -16,7 +14,6 @@ const settings = ref<BackgroundSettings | null>(null)
 const draft = ref<BackgroundSettingsUpdate>({
   enabled: false, orchestrator_llm_provider: null, worker_llm_provider: null,
 })
-const providers = ref<AdminProvider[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -24,12 +21,7 @@ const notice = ref('')
 const unavailable = ref(false)
 let controller: AbortController | undefined
 
-const llms = computed(() => providers.value.filter((item) => item.type === 'llm' && item.enabled === 1))
-const providerOptions = computed(() => llms.value.map((item) => ({
-  ref: (item.source ?? 'database') + ':' + item.key,
-  name: item.name,
-  source: item.source ?? 'database',
-})))
+const providerOptions = computed(() => settings.value?.llm_providers ?? [])
 const dirty = computed(() => settings.value !== null && (
   settings.value.enabled !== draft.value.enabled ||
   settings.value.orchestrator_llm_provider !== draft.value.orchestrator_llm_provider ||
@@ -54,14 +46,10 @@ async function load() {
   error.value = ''
   notice.value = ''
   try {
-    const [config, catalog] = await Promise.all([
-      agentJobsApi.settings(pending.signal),
-      providersApi.listAll(pending.signal),
-    ])
+    const config = await agentJobsApi.settings(pending.signal)
     if (pending.signal.aborted) return
     settings.value = config
     restore(config)
-    providers.value = catalog.items
     unavailable.value = false
   } catch (cause) {
     if (pending.signal.aborted) return
@@ -78,7 +66,7 @@ async function save() {
   error.value = ''
   try {
     const result = await agentJobsApi.updateSettings(draft.value, settings.value.revision)
-    settings.value = result
+    settings.value = { ...result, llm_providers: result.llm_providers ?? settings.value.llm_providers }
     restore(result)
     notice.value = t('jobUi.saved')
   } catch (cause) {
