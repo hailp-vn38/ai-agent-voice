@@ -1,4 +1,4 @@
-manifest_version = 1
+manifest_version = 2
 
 [plugin]
 id = "fixture-research"
@@ -7,7 +7,7 @@ version = "1.0.0"
 description = "Offline deterministic research fixture for testing the Agent Job Python worker"
 
 [runtime]
-kind = "python_container"
+kind = "python"
 python = "3.12"
 entrypoint = "src/main.py"
 protocol = "jsonl-v1"
