@@ -16,6 +16,7 @@ const search = ref('')
 const filter = ref('all')
 const page = ref(1)
 const hasMore = ref(false)
+const statusOptions: JobStatus[] = ['queued', 'planning', 'running', 'cancelling', 'succeeded', 'partial', 'failed', 'cancelled']
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -163,7 +164,7 @@ onBeforeUnmount(() => controller?.abort())
       </form>
       <select v-model="filter" class="admin-input sm:w-44" :aria-label="t('jobUi.filterStatus')" @change="load()">
         <option value="all">{{ t('jobUi.allStatus') }}</option>
-        <option v-for="status in (['queued', 'planning', 'running', 'cancelling', 'succeeded', 'partial', 'failed', 'cancelled'] as const)"
+        <option v-for="status in statusOptions"
           :key="status" :value="status">{{ label(status) }}</option>
       </select>
       <Button variant="outline" @click="load()">{{ t('jobUi.search') }}</Button>
