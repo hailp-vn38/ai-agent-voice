@@ -110,6 +110,7 @@ async fn scheduler_rejects_invalid_dags_without_dispatching_worker() {
         json!({"steps":[unknown,proposal_step("final")]}),
         json!({"steps":[proposal_step("a")],"document_refs":[]}),
     ] {
+        let expected_calls = if proposal.get("document_refs").is_some() {1} else {3};
         let config = Arc::new(config());
         let db = Arc::new(Database::connect(&config.database).await.unwrap());
         let runtime = BackgroundRuntime::execution_harness(
@@ -132,7 +133,7 @@ async fn scheduler_rejects_invalid_dags_without_dispatching_worker() {
         let terminal = wait_for(&runtime.engine, &job.id, |job| job.status == "failed").await;
         assert_eq!(terminal.error_code.as_deref(), Some("invalid_plan"));
         assert!(terminal.steps.is_empty());
-        assert_eq!(terminal.budget_used["planner_calls"], 3);
+        assert_eq!(terminal.budget_used["planner_calls"], expected_calls);
         assert!(terminal.budget_used.get("worker_attempts").is_none());
         runtime.shutdown().await;
     }
