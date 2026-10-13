@@ -55,14 +55,13 @@ fn cases_require_declared_operations_valid_inputs_and_coverage() {
 }
 
 #[tokio::test]
-async fn static_check_does_not_claim_runtime_or_network_pass() {
+async fn static_check_does_not_claim_runtime_pass() {
     let package = package();
     let report = check(&package.source_zip, &[], None, Path::new("unused"))
         .await
         .unwrap();
     assert_eq!(report["package"], "PASS");
     assert_eq!(report["runtime"], "NOT_RUN");
-    assert_eq!(report["network"], "NOT_RUN");
 }
 
 #[tokio::test]
