@@ -1,4 +1,4 @@
-//! OpenCode Free LLM preset, using the upstream OpenAI-compatible Zen chat API.
+//! OpenCode Free LLM preset: Voice Chat Completions and opt-in Agent Job Responses.
 //!
 //! Model IDs are entered directly; upstream availability can change at any time.
 use llm::providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig};
@@ -42,7 +42,7 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-pub(crate) fn valid_free_chat_model_id(model: &str) -> bool {
+pub(crate) fn valid_free_model_id(model: &str) -> bool {
     model.len() <= 256
         && model.ends_with("-free")
         && model.bytes().all(|byte| {
@@ -52,7 +52,7 @@ pub(crate) fn valid_free_chat_model_id(model: &str) -> bool {
 
 impl OpenCodeFreeConfig {
     pub fn valid(&self) -> bool {
-        valid_free_chat_model_id(&self.model) && (1_000..=120_000).contains(&self.timeout_ms)
+        valid_free_model_id(&self.model) && (1_000..=120_000).contains(&self.timeout_ms)
     }
 }
 
