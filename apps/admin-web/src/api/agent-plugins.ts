@@ -17,7 +17,7 @@ export const agentPluginsApi = {
   get(id: string, signal?: AbortSignal) {
     return requestJson<InstalledPlugin>(pluginPath(id), {}, { signal })
   },
-  /** The server validates the plugin package and its image before activation. */
+  /** The server validates the plugin package and immutable installation before activation. */
   install(zip: File) {
     const data = new FormData()
     data.append('package', zip, zip.name)
