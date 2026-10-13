@@ -231,6 +231,8 @@ async fn propose(
             model_deadline(job)?, cancellation.clone()).await?;
         let proposal = if raw.len() > 65536 {
             Err(PlanValidationError::new(PlanErrorCategory::Limit,"payload_too_large","$","Proposal exceeds allowed size"))
+        } else if serde_json::from_str::<Value>(&raw).is_ok_and(|value| super::plan::forbidden(&value)) {
+            Err(PlanValidationError::new(PlanErrorCategory::Forbidden,"forbidden_field","$","Proposal contains a forbidden reference"))
         } else {
             PlanProposal::parse(&raw).map_err(|_| PlanValidationError::new(
                 PlanErrorCategory::Syntax,"proposal_not_json","$","Proposal must be a JSON object matching the proposal contract"
