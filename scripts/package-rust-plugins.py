@@ -15,7 +15,7 @@ PLUGINS = ("web-extractor", "document-analysis", "fixture-rust-1.0.0")
 
 def package(folder, binary, destination):
     manifest = tomllib.loads((folder / "plugin.toml").read_text())
-    if manifest["runtime"]["kind"] != "rust_container":
+    if manifest["runtime"]["kind"] != "rust":
         raise ValueError("not a Rust plugin")
     entrypoint = manifest["runtime"]["entrypoint"]
     text = (folder / "plugin.toml").read_text().replace(
