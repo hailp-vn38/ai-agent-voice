@@ -32,10 +32,10 @@ export interface InstalledPlugin {
   digest?: string
   status: PluginStatus
   revision: number
-  runtime: { kind: 'isolated_worker'; language: 'python' }
+  runtime: { kind: 'shared_process'; language: 'python' | 'rust' }
   operations: PluginOperation[]
   last_error_code?: string | null
-  image_digest?: string
+  installation_digest?: string
 }
 export interface PluginTestResult {
   ok: boolean
