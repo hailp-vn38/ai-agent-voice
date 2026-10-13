@@ -702,6 +702,8 @@ Thuật ngữ được định nghĩa trong [GLOSSARY.md](GLOSSARY.md#reminders-
 
 ## Background Jobs and Executable Plugins
 
+Plugin Activation và Plugin Network Reachability có định nghĩa tại [GLOSSARY.md](GLOSSARY.md#background-jobs-and-executable-plugins); quyết định về ranh giới mạng ở [ADR 0101](docs/adr/0101-direct-plugin-worker-network.md). Các thuật ngữ này không phải quyền mạng của plugin.
+
 **Background Settings**:
 Deployment-wide configuration for whether Background execution is enabled and which two LLM Providers serve the Orchestrator and Sub-Agent roles.
 _Avoid_: Agent Template, Voice Profile, plugin-specific model
@@ -731,11 +733,11 @@ An identity of a normalized request used to distinguish a repeated submission fr
 _Avoid_: Job ID, prompt token
 
 **Plugin Package**:
-An immutable, versioned set of executable Python code, dependency definitions, instructions and operation schemas.
+An immutable, versioned distribution of executable Python or Rust code, its declared runtime, instructions and operation schemas.
 _Avoid_: MCP binding, installed status, Agent
 
 **Plugin Installation**:
-The deployment's active pinned package and executable environment for one Plugin, with its operator-controlled availability state.
+A deployment-owned, version-pinned package and executable image for one Plugin, with an Admin-controlled availability state. Installation alone does not make its operations eligible for Jobs.
 _Avoid_: Plugin Package, Job Step
 
 **Plugin Operation**:
@@ -759,7 +761,7 @@ A durably identified part of a Job Plan with dependencies and a bounded result.
 _Avoid_: Plugin Operation, Conversational Turn
 
 **Agent Run**:
-A bounded execution of a Job Step using the global Sub-Agent role, optionally involving an approved executable Plugin Operation.
+A bounded execution of a Job Step using the global Sub-Agent role, optionally involving an eligible, pinned executable Plugin Operation.
 _Avoid_: new Agent account, Voice Session
 
 **Worker Attempt**:
