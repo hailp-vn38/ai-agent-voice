@@ -44,7 +44,7 @@ pub(crate) struct FrozenChoice {
     pub plugin_id: String,
     pub version: String,
     pub package_digest: String,
-    pub image_digest: String,
+    pub installation_digest: String,
     pub operation: String,
 }
 
