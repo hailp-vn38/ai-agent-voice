@@ -104,7 +104,7 @@ impl PluginStore {
         if row.status != "ready"
             || row.version != choice.version
             || row.package_digest != choice.package_digest
-            || row.image_digest != choice.image_digest
+            || row.installation_digest != choice.installation_digest
         {
             return Err(PluginError::PermissionRequired);
         }
@@ -147,10 +147,10 @@ impl PluginStore {
         if !validator.is_valid(&arguments) {
             return Err(PluginError::InvalidPackage);
         }
-        builder::preflight(&self.config, &manifest.runtime).await?;
+        builder::runner_preflight(&self.config).await?;
         builder::verify_image(
             &self.config,
-            &choice.image_digest,
+            &choice.installation_digest,
             &choice.package_digest,
             &manifest.runtime,
         )
@@ -169,7 +169,7 @@ impl PluginStore {
         }
         let prepared = runner::Prepared::create(
             &self.config,
-            &choice.image_digest,
+            &choice.installation_digest,
             &workspace,
             job_id,
             attempt_id,
@@ -189,10 +189,6 @@ impl PluginStore {
             if cancellation.is_cancelled() { return Err(PluginError::JobRejected(crate::services::background::JobError::Cancelled)); }
             before_start().await?;
             let start_time = std::time::Instant::now();
-            prepared.start_container(&self.config).await?;
-            tracing::info!(event="background_container_started", job_id, attempt_id, container_start_ms=start_time.elapsed().as_millis() as u64, memory_mib=512, cpu_count=1, pids_limit=64);
-            after_start().await?;
-            drop(_publication);
             let mut envelope=json!({
                 "schema_version":1,"request_id":attempt_id,"operation":choice.operation,
                 "arguments":arguments,"artifact_dir":"/work/out"
@@ -210,7 +206,12 @@ impl PluginStore {
             );
             let bytes = tokio::select! {
                 _ = cancellation.cancelled() => Err(PluginError::JobRejected(crate::services::background::JobError::Cancelled)),
-                result = prepared.attach(&self.config, &request, execution_limit) => result,
+                result = prepared.execute(&self.config, &request, execution_limit, || async {
+                    tracing::info!(event="background_plugin_process_started", job_id, attempt_id, start_ms=start_time.elapsed().as_millis() as u64);
+                    let outcome = after_start().await;
+                    drop(_publication);
+                    outcome
+                }) => result,
             }
                 .map_err(|error| {
                     if error == PluginError::WorkerTimeout {
