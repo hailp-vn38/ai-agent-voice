@@ -1,0 +1,33 @@
+name: shared-plugin-runtime
+on:
+  push:
+    branches:
+      - feature/shared-plugin-runtime
+  pull_request:
+    paths:
+      - 'docker/plugin-runtime.Dockerfile'
+      - 'crates/voice-agent-server/src/bin/plugin-runtime.rs'
+      - 'crates/voice-agent-server/src/services/background/**'
+      - 'crates/voice-agent-server/src/database/jobs/**'
+      - 'crates/voice-agent-server/migrations/0110_shared_plugin_installations.sql'
+      - 'plugins/**'
+      - '.github/workflows/shared-plugin-runtime.yml'
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+      - name: Shared runtime binary
+        run: cargo check --locked -p voice-agent-server --bin plugin-runtime
+      - name: Plugin contract tests
+        if: ${{ always() && !cancelled() }}
+        run: cargo test --locked -p voice-agent-server --lib services::background::plugins
+      - name: Workspace formatting
+        if: ${{ always() && !cancelled() }}
+        run: cargo fmt --all --check
+      - name: Python ZIP packaging contracts
+        if: ${{ always() && !cancelled() }}
+        run: python3 -m unittest discover -s scripts/tests -p test_rust_plugins.py
