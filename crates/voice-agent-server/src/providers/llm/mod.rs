@@ -110,6 +110,9 @@ pub trait LlmProvider: Send + Sync {
 pub enum LlmError {
     #[error("LLM completion failed")]
     Failed,
+    /// A terminal provider response definitively rejected or failed to produce usable output.
+    #[error("LLM returned a terminal invalid response")]
+    Rejected,
 }
 
 /// Chat-only fallback for Background; no MCP, provider tools or streaming to the Device.
