@@ -181,9 +181,9 @@ scripts/check-rust-plugin.sh data/curated-plugins/fixture-rust-1.0.0.zip plugins
 scripts/check-rust-plugin.sh data/curated-plugins/document-analysis-1.0.0.zip plugins/document-analysis/check-cases.json docker/config.prod.toml
 ```
 
-Output mặc định là `data/curated-plugins/`: `<id>-<version>.zip` để upload và `<id>.zip` cho curated install. ZIP chứa binary `bin/plugin`, nên installation không cần Cargo cache trên server. Upload ZIP trong Plugin Store, duyệt quyền rồi Activate.
+Output mặc định là `data/curated-plugins/`: `<id>-<version>.zip` để upload và `<id>.zip` cho curated install. ZIP chứa binary `bin/plugin`, nên installation không cần Cargo cache trên server. Upload ZIP trong Plugin Store, sau đó Test và Activate. Không còn bước duyệt quyền mạng riêng.
 
-Checker tự dùng `scripts/agent-test.sh`, lưu báo cáo JSON trong log và trả exit code khác 0 khi lỗi. Chế độ static giữ `runtime: NOT_RUN`; kiểm tra container luôn offline, nên Web Extractor vẫn báo `network: NOT_RUN` và cần egress được qualification trước khi activate. Xem [hướng dẫn plugin Rust](plugins/RUST-STORE-PLUGINS.md) để viết check cases và chuẩn bị deployment.
+Checker tự dùng `scripts/agent-test.sh`, lưu báo cáo JSON trong log và trả exit code khác 0 khi lỗi. Chế độ static giữ `runtime: NOT_RUN`; checker chạy các test trong container offline. Khi thực thi Job thật, Worker sử dụng mạng Docker mặc định, không dùng proxy hay allowlist host của server. Hãy kiểm tra riêng operation `fetch_url` trên deployment trước khi đưa vào sử dụng. Xem [hướng dẫn plugin Rust](plugins/RUST-STORE-PLUGINS.md) để viết check cases và chuẩn bị deployment.
 
 ## Kiểm thử
 
