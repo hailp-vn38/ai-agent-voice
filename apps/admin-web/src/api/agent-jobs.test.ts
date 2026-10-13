@@ -47,6 +47,17 @@ describe('Agent Job admin clients', () => {
     expect(new Headers((fetch.mock.calls[0]?.[1] as RequestInit).headers).get('if-match')).toBe('"3"')
   })
 
+  it('approves declared worker permissions explicitly with a revision check', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ id: 'weibo', permissions_approved: true, revision: 6 }))
+    vi.stubGlobal('fetch', fetch)
+    await agentPluginsApi.approvePermissions('weibo', 5, { network_hosts: ['weibo.com'], scratch_storage: true })
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/plugins/weibo/permissions')
+    const init = fetch.mock.calls[0]?.[1] as RequestInit
+    expect(init.method).toBe('PUT')
+    expect(new Headers(init.headers).get('if-match')).toBe('"5"')
+    expect(JSON.parse(String(init.body))).toEqual({ network_hosts: ['weibo.com'], scratch_storage: true })
+  })
+
   it('submits Admin-owned Jobs and retries through the new-Job endpoint', async () => {
     const fetch = vi.fn().mockResolvedValue(json({ id: 'job-new', status: 'queued' }))
     vi.stubGlobal('fetch', fetch)
