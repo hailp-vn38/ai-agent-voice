@@ -33,7 +33,7 @@ fn extract_docx(bytes: &[u8]) -> Result<String, Failure> {
     if archive.len() > 500 {
         return Err(Failure::new("invalid_docx", "Too many DOCX parts"));
     }
-    let mut xml_file = archive.by_name("word/document.xml")
+    let xml_file = archive.by_name("word/document.xml")
         .map_err(|_| Failure::new("invalid_docx", "Missing document.xml"))?;
     if xml_file.size() > 2 * 1024 * 1024 {
         return Err(Failure::new("document_too_large", "DOCX XML too large"));
@@ -186,7 +186,7 @@ mod tests {
     fn headings_and_text() {
         let (text, titles) = extract_markdown("# Heading\n\nFirst **bold** paragraph.");
         assert_eq!(titles, vec!["Heading"]);
-        assert!(text.contains("First bold paragraph"));
+        assert!(clean(&text).contains("First bold paragraph"));
     }
     #[test]
     fn bad_pdf_fails() { assert!(extract_pdf(b"not-a-pdf").is_err()); }

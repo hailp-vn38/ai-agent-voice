@@ -79,8 +79,10 @@ fn parse(html: &str, page_url: Option<&str>, max_chars: usize, max_links: usize)
     let doc = Html::parse_document(html);
     let title = first_text(&doc, "title");
     let description = attr(&doc, r#"meta[name="description"]"#, "content");
-    let content_selector = Selector::parse("article, main, body").expect("static selector");
-    let root = doc.select(&content_selector).next();
+    let root = ["article", "main", "body"].iter().find_map(|query| {
+        let selector = Selector::parse(query).expect("static selector");
+        doc.select(&selector).next()
+    });
     let paragraphs = Selector::parse("h1, h2, h3, h4, h5, h6, p, li, blockquote")
         .expect("static selector");
     let mut chunks: Vec<String> = Vec::new();
