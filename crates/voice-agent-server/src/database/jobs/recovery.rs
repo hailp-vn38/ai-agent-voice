@@ -16,6 +16,9 @@ impl Database {
             events::append(&mut tx,&id,"job_finished",None,&serde_json::json!({"status":if cancelled {"cancelled"}else{"failed"},"error_code":if cancelled {"cancelled_after_restart"}else{"interrupted"}})).await?;
         }
         tx.commit().await?;
+        for (id, _) in &recovering {
+            self.job_changes.publish_committed(id);
+        }
         Ok(())
     }
     pub(crate) async fn fail_queued_job(&self,id:&str,reason:JobError,now:i64)->Result<(),JobError>{
@@ -25,11 +28,17 @@ impl Database {
             events::append(&mut tx,id,"job_finished",None,&serde_json::json!({"status":"failed","error_code":reason.code()})).await?;
         }
         tx.commit().await?;
+        if update.rows_affected() == 1 {
+            self.job_changes.publish_committed(id);
+        }
         Ok(())
     }
     pub(crate) async fn observe_queued_job(&self, id: &str, now: i64) -> Result<(), JobError> {
-        sqlx::query("UPDATE jobs SET scheduler_seen_at=? WHERE id=? AND status='queued' AND scheduler_seen_at IS NULL")
+        let updated = sqlx::query("UPDATE jobs SET scheduler_seen_at=? WHERE id=? AND status='queued' AND scheduler_seen_at IS NULL")
             .bind(now).bind(id).execute(self.pool()).await?;
+        if updated.rows_affected() == 1 {
+            self.job_changes.publish_committed(id);
+        }
         Ok(())
     }
     pub(crate) async fn cancel_job(&self, id: &str, now: i64) -> Result<JobView, JobError> {
@@ -39,6 +48,7 @@ impl Database {
             .bind(id)
             .fetch_optional(&mut *tx)
             .await?;
+        let mut changed = false;
         match status.as_deref() {
             None => return Err(JobError::NotFound),
             Some("queued") => {
@@ -46,14 +56,19 @@ impl Database {
                 sqlx::query("UPDATE jobs SET status='cancelling',updated_at=? WHERE id=? AND status='queued'").bind(now).bind(id).execute(&mut *tx).await?;
                 sqlx::query("UPDATE jobs SET status='cancelled',updated_at=? WHERE id=? AND status='cancelling'").bind(now).bind(id).execute(&mut *tx).await?;
                 events::append(&mut tx,id,"job_finished",None,&serde_json::json!({"status":"cancelled","error_code":"cancelled"})).await?;
+                changed = true;
             }
             Some("cancelling") => {}
             Some("planning" | "running") => {
                 sqlx::query("UPDATE jobs SET status='cancelling',updated_at=? WHERE id=? AND status IN ('planning','running')").bind(now).bind(id).execute(&mut *tx).await?;
+                changed = true;
             }
             _ => return Err(JobError::Terminal),
         }
         tx.commit().await?;
+        if changed {
+            self.job_changes.publish_committed(id);
+        }
         self.job_view(id).await
     }
 }
