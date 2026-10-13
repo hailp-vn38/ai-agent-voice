@@ -110,14 +110,20 @@ impl Database {
             .ok_or(JobError::NotFound)
     }
     pub(crate) async fn job_view(&self, id: &str) -> Result<JobView, JobError> {
-        let row = self.job_row(id).await?;
-        let steps = steps::read(self, id).await?;
+        let mut tx = self.pool().begin().await?;
+        let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(JobError::NotFound)?;
+        let steps = steps::read(&mut tx, id).await?;
         let artifacts = sqlx::query_as(
             "SELECT id,media_type,size_bytes,sha256 FROM job_artifacts WHERE job_id=? ORDER BY id",
         )
         .bind(id)
-        .fetch_all(self.pool())
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
         row.view(steps, artifacts)
     }
     pub(crate) async fn queued_jobs(&self) -> Result<Vec<JobRow>, JobError> {
