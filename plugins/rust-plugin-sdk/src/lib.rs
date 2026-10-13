@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{fs::{self, OpenOptions}, io::{self, Read, Write}, path::Path};
+use std::{fs::{self, OpenOptions}, io::{self, BufRead, Read, Write}, path::Path};
 
 const MAX_REQUEST: u64 = 65_535;
 const MAX_RESPONSE: usize = 65_536;
@@ -96,7 +96,7 @@ struct Response<'a> {
 
 fn parse_request() -> Result<Request, Failure> {
     let mut bytes = Vec::new();
-    io::stdin().lock().take(MAX_REQUEST + 1).read_to_end(&mut bytes)
+    io::stdin().lock().take(MAX_REQUEST + 1).read_until(b'\n', &mut bytes)
         .map_err(|_| Failure::new("invalid_request", "Could not read stdin"))?;
     if bytes.len() as u64 > MAX_REQUEST || !bytes.ends_with(b"\n")
         || bytes[..bytes.len()-1].contains(&b'\n')
