@@ -393,6 +393,7 @@ impl PluginStore {
         if row.revision != expected {
             return Err(PluginError::RevisionConflict);
         }
+        let manifest = row.manifest()?;
         builder::preflight(&self.config, &manifest.runtime).await?;
         builder::verify_image(
             &self.config,
