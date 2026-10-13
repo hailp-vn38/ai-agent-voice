@@ -23,16 +23,16 @@ impl Database {
             v["plugin_id"] == choice.plugin_id
                 && v["operation"] == choice.operation
                 && v["package_digest"] == choice.package_digest
-                && v["image_digest"] == choice.image_digest
+                && v["installation_digest"] == choice.installation_digest
         }) {
             return Err(JobError::CapabilityUnavailable);
         }
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
         sqlx::query("UPDATE jobs SET status='running',plan_revision=1,updated_at=? WHERE id=? AND status='queued'")
             .bind(now).bind(job_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,image_digest,operation,arguments_json,status,created_at,updated_at) VALUES(?, ?,1,?,?,?,?,?,?,'pending',?,?)")
+        sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,installation_digest,operation,arguments_json,status,created_at,updated_at) VALUES(?, ?,1,?,?,?,?,?,?,'pending',?,?)")
             .bind(job_id).bind(step_key).bind(&choice.plugin_id).bind(&choice.version)
-            .bind(&choice.package_digest).bind(&choice.image_digest).bind(&choice.operation)
+            .bind(&choice.package_digest).bind(&choice.installation_digest).bind(&choice.operation)
             .bind(serde_json::to_string(arguments).map_err(|_| JobError::InvalidArguments)?)
             .bind(now).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -92,12 +92,12 @@ impl Database {
             value["plugin_id"] == choice.plugin_id
                 && value["version"] == choice.version
                 && value["package_digest"] == choice.package_digest
-                && value["image_digest"] == choice.image_digest
+                && value["installation_digest"] == choice.installation_digest
                 && value["operation"] == choice.operation
         });
-        let step: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job_steps WHERE job_id=? AND step_key=? AND plugin_id=? AND plugin_version=? AND package_digest=? AND image_digest=? AND operation=? AND attempt_id=? AND attempt_state='reserved'")
+        let step: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job_steps WHERE job_id=? AND step_key=? AND plugin_id=? AND plugin_version=? AND package_digest=? AND installation_digest=? AND operation=? AND attempt_id=? AND attempt_state='reserved'")
             .bind(job_id).bind(step_key).bind(&choice.plugin_id).bind(&choice.version)
-            .bind(&choice.package_digest).bind(&choice.image_digest).bind(&choice.operation)
+            .bind(&choice.package_digest).bind(&choice.installation_digest).bind(&choice.operation)
             .bind(attempt_id).fetch_one(&mut *tx).await?;
         if !selected || step != 1 {
             return Err(JobError::CapabilityUnavailable);
@@ -111,10 +111,10 @@ impl Database {
             return Err(JobError::Disabled);
         }
         let live: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'",
+            "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",
         )
         .bind(&choice.plugin_id).bind(&choice.version)
-        .bind(&choice.package_digest).bind(&choice.image_digest)
+        .bind(&choice.package_digest).bind(&choice.installation_digest)
         .fetch_optional(&mut *tx).await?;
         if live.is_none() {
             return Err(JobError::CapabilityUnavailable);
