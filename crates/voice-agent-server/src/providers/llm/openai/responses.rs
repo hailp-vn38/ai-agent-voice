@@ -114,6 +114,25 @@ mod tests {
     fn provider() -> ConfiguredOpenAiLlm {
         ConfiguredOpenAiLlm::build_with_responses("","https://api.openai.com/v1","gpt-test",10,true).unwrap()
     }
+    #[tokio::test]
+    async fn enabled_provider_calls_responses_not_chat_completions() {
+        use axum::{routing::post, Json, Router};
+        use crate::providers::llm::LlmProvider;
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base=format!("http://{}/v1",listener.local_addr().unwrap());
+        let app=Router::new().route("/v1/responses",post(|Json(body):Json<Value>|async move {
+            assert_eq!(body["model"],"gpt-test");
+            assert_eq!(body["text"]["format"]["type"],"json_object");
+            assert_eq!(body["store"],false);
+            Json(json!({"status":"completed","output":[{"type":"message","role":"assistant",
+                "content":[{"type":"output_text","text":"{\\\"steps\\\":[]}"}]}]}))
+        }));
+        let task=tokio::spawn(async move {axum::serve(listener,app).await.unwrap();});
+        let p=ConfiguredOpenAiLlm::build_with_responses("test",&base,"gpt-test",5,true).unwrap();
+        let answer=p.background_complete(LlmRequest::text_turn("JSON plan".into()),None).await.unwrap();
+        assert_eq!(answer,r#"{"steps":[]}"#);
+        task.abort();
+    }
     #[test]
     fn response_request_is_job_only_stateless_and_tool_free(){
         let request=LlmRequest{messages:vec![
