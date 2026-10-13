@@ -171,7 +171,9 @@ async fn execute(request: &Value, state: &State) -> Result<Value> {
             if out.len() as u64>STDOUT_LIMIT || err.len() as u64>STDERR_LIMIT { bail!("output limit exceeded"); }
             Ok::<Value,anyhow::Error>(json!({"state":"terminal","ok":exit.success(),"stdout":String::from_utf8(out)?,"stderr":String::from_utf8_lossy(&err),"exit_code":exit.code()}))
         }.await;
-        if output.is_err(){signal_group(pgid);}
+        // Even a successful plugin can leave descendants behind; an Attempt
+        // owns its whole process group, not just its original parent.
+        signal_group(pgid);
         let result=output.unwrap_or_else(|e| json!({"state":"terminal","ok":false,"error":e.to_string()}));
         if let Some(entry)=state.attempts.lock().await.get_mut(&attempt){
             entry.pgid=None;entry.result=Some(result);
