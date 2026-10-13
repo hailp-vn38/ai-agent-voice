@@ -153,8 +153,8 @@ onBeforeUnmount(() => controller?.abort())
                 <code class="mt-2 block break-all text-xs">{{ plugin.digest || '—' }}</code>
               </div>
               <div class="rounded-xl border p-4">
-                <p class="text-xs font-medium text-muted-foreground">{{ t('jobUi.imageDigest') }}</p>
-                <code class="mt-2 block break-all text-xs">{{ plugin.image_digest || '—' }}</code>
+                <p class="text-xs font-medium text-muted-foreground">{{ 'Installation digest' }}</p>
+                <code class="mt-2 block break-all text-xs">{{ plugin.installation_digest || '—' }}</code>
               </div>
             </div>
             <p class="text-sm leading-relaxed text-muted-foreground">{{ t('jobUi.sourceUnavailable') }}</p>
