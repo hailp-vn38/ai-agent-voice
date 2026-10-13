@@ -92,8 +92,7 @@ async fn run(
                 .iter()
                 .any(|key| failures.contains_key(key))
             {
-                sqlx::query("UPDATE job_steps SET status='skipped',error_code='dependency_failed',updated_at=? WHERE job_id=? AND step_key=? AND status='pending'")
-                .bind(super::engine::now()?).bind(id).bind(&step.step_key).execute(engine.database.pool()).await?;
+                engine.database.skip_dependency_step(id,&step.step_key).await?;
                 failures.insert(step.step_key.clone(), "dependency_failed".to_owned());
                 continue;
             }
