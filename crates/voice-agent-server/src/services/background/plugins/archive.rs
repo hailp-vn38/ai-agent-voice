@@ -339,4 +339,56 @@ mod tests {
         let bytes = writer.finish().unwrap().into_inner();
         assert!(matches!(validate(&bytes), Err(PluginError::InvalidPackage)));
     }
+    #[test]
+    fn rust_packages_require_native_elf_and_no_python_lock() {
+        fn package(binary: &[u8]) -> Vec<u8> {
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            let files: Vec<(&str, Vec<u8>)> = vec![
+                ("plugin.toml", br#"manifest_version = 1
+[plugin]
+id = "rust-test"
+name = "Rust Test"
+version = "1.0.0"
+description = "A native worker"
+[runtime]
+kind = "rust_container"
+entrypoint = "bin/plugin"
+protocol = "jsonl-v1"
+[permissions]
+network_hosts = []
+[agent]
+instructions = "instructions.md"
+[operations.test]
+description = "Test"
+provides = ["test.run"]
+sources = ["fixture"]
+input_schema = "schemas/input.json"
+output_schema = "schemas/output.json"
+replay = "safe_read"
+"#.to_vec()),
+                ("instructions.md", b"Do a test".to_vec()),
+                ("schemas/input.json", br#"{"type":"object"}"#.to_vec()),
+                ("schemas/output.json", br#"{"type":"object"}"#.to_vec()),
+                ("bin/plugin", binary.to_vec()),
+            ];
+            for (name, content) in files {
+                zip.start_file(name, SimpleFileOptions::default()).unwrap();
+                zip.write_all(&content).unwrap();
+            }
+            zip.finish().unwrap().into_inner()
+        }
+        let mut elf = vec![0u8; 64];
+        elf[..4].copy_from_slice(b"\x7fELF");
+        elf[4] = 2;
+        elf[5] = 1;
+        elf[16] = 3;
+        elf[18] = match std::env::consts::ARCH {
+            "x86_64" => 62, "aarch64" => 183, _ => return,
+        };
+        assert!(validate(&package(&elf)).is_ok());
+        assert!(matches!(validate(&package(b"#!/bin/sh")), Err(PluginError::InvalidPackage)));
+        elf[18] = 0;
+        assert!(matches!(validate(&package(&elf)), Err(PluginError::InvalidPackage)));
+    }
+
 }
