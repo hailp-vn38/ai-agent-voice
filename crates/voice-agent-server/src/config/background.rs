@@ -9,6 +9,10 @@ pub struct BackgroundConfig {
     /// OCI digests supplied by deployment; mutable tags are rejected by preflight.
     pub plugin_python_image: Option<String>,
     pub plugin_uv_image: Option<String>,
+    /// Offline Cargo build image pinned by OCI repository digest.
+    pub plugin_rust_builder_image: Option<String>,
+    /// Minimal Rust runtime image pinned by OCI repository digest.
+    pub plugin_rust_runtime_image: Option<String>,
     /// Locally built, digest-pinned image from deploy/agent-egress-proxy/.
     pub plugin_egress_image: Option<String>,
     /// Exact hosts qualified by adversarial egress tests on this deployment.

@@ -67,6 +67,10 @@ _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát
 
 ## Background Jobs and Executable Plugins
 
+**Plugin Runtime**:
+Môi trường thực thi của một Plugin Package; độc lập với Plugin Operation và không phải một Agent hay quyền gọi công cụ.
+_Avoid_: MCP Binding, LLM Provider, Job
+
 Thuật ngữ của miền Job được định nghĩa tại [CONTEXT.md](CONTEXT.md#background-jobs-and-executable-plugins). Job độc lập với Reminder và Conversational Turn.
 
 ## Agent Job Planning
