@@ -78,6 +78,8 @@ async fn prepare(request: &Value) -> Result<Value> {
                 let output = tokio::time::timeout(Duration::from_secs(180), Command::new("uv")
                     .args(["sync", "--frozen", "--no-dev", "--no-install-project"])
                     .env("UV_PROJECT_ENVIRONMENT", tmp.join(".venv"))
+                    .env("UV_CACHE_DIR", "/tmp/uv-cache")
+                    .env("UV_PYTHON_DOWNLOADS", "never")
                     .current_dir(&tmp).output()).await??;
                 if !output.status.success() { bail!("locked Python dependency preparation failed"); }
             }
