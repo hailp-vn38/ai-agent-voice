@@ -11,11 +11,6 @@ kind = "rust_container"
 entrypoint = "bin/plugin"
 protocol = "jsonl-v1"
 
-[permissions]
-# These are examples only: edit to exact domains approved by your deployment.
-# Admin must approve all listed hosts; rootless egress must qualify each.
-network_hosts = ["example.com", "en.wikipedia.org"]
-
 [agent]
 instructions = "instructions.md"
 
