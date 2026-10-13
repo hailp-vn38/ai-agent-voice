@@ -15,7 +15,7 @@ describe('Job SSE listener', () => {
       'event: job_changed\r\ndata: {"job_id":"job-ä"}\r\n\r\n',
     )
     const split = chunks.indexOf(0xc3) + 1
-    const fetch = vi.fn().mockResolvedValue(new Response(new ReadableStream({
+    const fetch = vi.fn().mockResolvedValue(new Response(new ReadableStream<Uint8Array>({
       start(stream) {
         stream.enqueue(chunks.slice(0, split))
         stream.enqueue(chunks.slice(split))
