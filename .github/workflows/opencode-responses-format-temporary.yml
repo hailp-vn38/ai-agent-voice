@@ -1,0 +1,33 @@
+name: opencode-responses-format-temporary
+on:
+  push:
+    branches: [feat/provider-responses-agent-job]
+    paths:
+      - '.github/workflows/opencode-responses-format-temporary.yml'
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/provider-responses-agent-job
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Format Responses-related code
+        run: |
+          rustfmt --edition 2024 --config skip_children=true \
+            crates/voice-agent-server/src/providers/llm/opencode_free.rs \
+            crates/voice-agent-server/src/providers/llm/opencode_free/tests.rs \
+            crates/voice-agent-server/src/providers/llm/openai/responses.rs
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add crates/voice-agent-server/src/providers/llm/opencode_free.rs \
+              crates/voice-agent-server/src/providers/llm/opencode_free/tests.rs \
+              crates/voice-agent-server/src/providers/llm/openai/responses.rs
+            git commit -m 'style(llm): format OpenCode Free Responses changes'
+            git push origin HEAD:refs/heads/feat/provider-responses-agent-job
+          fi
