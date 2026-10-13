@@ -46,7 +46,6 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/plugins/{id}",
             get(plugins::get).delete(plugins::uninstall),
         )
-        .route("/plugins/{id}/permissions", put(plugins::permissions))
         .route("/plugins/{id}/test", axum::routing::post(plugins::test))
         .route(
             "/plugins/{id}/activate",
