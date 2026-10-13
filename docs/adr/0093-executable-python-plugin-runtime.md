@@ -1,7 +1,7 @@
 # ADR 0093 — Executable Python packages, not MCP-bound plugins
 
 ## Status
-Proposed, 2026-10-13. Replaces the **proposed** v1.4.2 wording of ADR 0093; does not supersede Voice External MCP ADR 0069.
+Superseded for plugin networking and approval by ADR 0101 (direct Docker worker networking), 2026-10-13. Originally proposed, 2026-10-13. Replaces the **proposed** v1.4.2 wording of ADR 0093; does not supersede Voice External MCP ADR 0069.
 
 ## Decision
 V1 Plugin Store installs Admin-trusted, versioned **Python 3.12 executable ZIP packages**, either manually uploaded or curated deployment packages. Required files: `plugin.toml`, `pyproject.toml`, `uv.lock`, source, input/output schemas. Installer validates archive and lock, builds an isolated environment/image with pinned Python and uv, verifies image digest and commits one disabled installation per plugin ID. Admin reviews permissions and activates. The installed package and image are immutable by digest; upgrade/uninstall blocks while nonterminal Jobs pin the old one.
