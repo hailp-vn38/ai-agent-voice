@@ -17,9 +17,11 @@ pub struct OpenAiConfig {
     #[serde(default = "default_llm_timeout_ms")]
     pub timeout_ms: u64,
     /// Explicit provider capability; Chat Completions stays the Voice default.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub supports_responses: bool,
 }
+fn is_false(value: &bool) -> bool { !*value }
+
 impl Default for OpenAiConfig {
     fn default() -> Self {
         Self {
@@ -39,6 +41,7 @@ mod tests {
     fn responses_is_explicit_opt_in_and_does_not_change_default_voice_transport() {
         let default:OpenAiConfig=toml::from_str("").unwrap();
         assert!(!default.supports_responses);
+        assert!(serde_json::to_value(&default).unwrap().get("supports_responses").is_none());
         let enabled:OpenAiConfig=toml::from_str("supports_responses = true").unwrap();
         assert!(enabled.supports_responses);
         assert_eq!(enabled.base_url.as_str(),"https://api.openai.com/v1");
