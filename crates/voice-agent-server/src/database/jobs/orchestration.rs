@@ -187,7 +187,7 @@ impl Database {
         };
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let updated = sqlx::query("UPDATE job_steps SET status=?,result_json=?,error_code=?,attempt_state='finished',finished_at=?,updated_at=? WHERE job_id=? AND step_key=? AND attempt_id=? AND status='running' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='running' AND deadline_at>?)")
-            .bind(status).bind(result).bind(error).bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id).bind(now).execute(self.pool()).await?;
+            .bind(status).bind(result).bind(error).bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id).bind(now).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
             let row = self.job_row(id).await?;
             if row.deadline_at <= now {
