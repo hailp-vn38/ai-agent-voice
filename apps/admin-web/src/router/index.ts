@@ -49,6 +49,24 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'templates.title' },
   },
   {
+    path: '/background',
+    name: 'background',
+    component: () => import('@/pages/background/BackgroundPage.vue'),
+    meta: { titleKey: 'nav.background' },
+  },
+  {
+    path: '/jobs',
+    name: 'jobs',
+    component: () => import('@/pages/jobs/JobsPage.vue'),
+    meta: { titleKey: 'nav.jobs' },
+  },
+  {
+    path: '/plugins',
+    name: 'plugins',
+    component: () => import('@/pages/plugins/PluginStorePage.vue'),
+    meta: { titleKey: 'nav.plugins' },
+  },
+  {
     path: '/mcp',
     name: 'mcp',
     component: () => import('@/views/McpServersView.vue'),
