@@ -189,11 +189,16 @@ impl Database {
         let updated = sqlx::query("UPDATE job_steps SET status=?,result_json=?,error_code=?,attempt_state='finished',finished_at=?,updated_at=? WHERE job_id=? AND step_key=? AND attempt_id=? AND status='running' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='running' AND deadline_at>?)")
             .bind(status).bind(result).bind(error).bind(now).bind(now).bind(id).bind(step).bind(attempt).bind(id).bind(now).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
-            let row = self.job_row(id).await?;
-            if row.deadline_at <= now {
+            // Stay on the same connection while BEGIN IMMEDIATE is held.
+            let (deadline_at, current_status): (i64, String) =
+                sqlx::query_as("SELECT deadline_at,status FROM jobs WHERE id=?")
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if deadline_at <= now {
                 return Err(JobError::DeadlineExceeded);
             }
-            if row.status == "cancelling" {
+            if current_status == "cancelling" {
                 return Err(JobError::Cancelled);
             }
             return Err(JobError::Terminal);
