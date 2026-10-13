@@ -63,40 +63,52 @@ async fn prepare(request: &Value) -> Result<Value> {
     let target_id = installation_id(digest);
     let target = Path::new("/installations").join(&target_id);
     if target.exists() {
-        let receipt: Value = serde_json::from_slice(&std::fs::read(target.join(".installation.json"))?)?;
-        if receipt["installation_digest"] != target_id || receipt["package_digest"] != digest {
-            bail!("existing installation mismatch");
+        let receipt = std::fs::read(target.join(".installation.json"));
+        if let Ok(bytes) = receipt {
+            let saved: Value=serde_json::from_slice(&bytes)?;
+            if saved["installation_digest"] != target_id || saved["package_digest"] != digest {
+                bail!("existing installation mismatch");
+            }
+            return Ok(json!({"installation_digest":target_id}));
         }
-        return Ok(json!({"installation_digest":target_id}));
+        // An interrupted Prepare never publishes an installation receipt.
+        std::fs::remove_dir_all(&target)?;
     }
     let tmp = Path::new("/installations").join(format!(".prepare-{}",uuid::Uuid::new_v4()));
     copy_tree(&src, &tmp)?;
     let result = async {
         let manifest = read_manifest(&tmp)?;
-        match plugin_kind(&manifest)? {
-            "python" => {
-                let output = tokio::time::timeout(Duration::from_secs(180), Command::new("uv")
-                    .args(["sync", "--frozen", "--no-dev", "--no-install-project"])
-                    .env("UV_PROJECT_ENVIRONMENT", tmp.join(".venv"))
-                    .env("UV_CACHE_DIR", "/tmp/uv-cache")
-                    .env("UV_PYTHON_DOWNLOADS", "never")
-                    .current_dir(&tmp).output()).await??;
-                if !output.status.success() { bail!("locked Python dependency preparation failed"); }
-            }
-            "rust" => {
-                let binary = tmp.join("bin/plugin");
-                let bytes = std::fs::read(&binary)?;
-                if bytes.len()<64 || !bytes.starts_with(b"\x7fELF") { bail!("invalid Rust executable"); }
-                std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o500))?;
-            }
-            _ => bail!("unsupported runtime"),
+        let kind = plugin_kind(&manifest)?;
+        if kind == "rust" {
+            let binary = tmp.join("bin/plugin");
+            let bytes = std::fs::read(&binary)?;
+            if bytes.len()<64 || !bytes.starts_with(b"\x7fELF") { bail!("invalid Rust executable"); }
+            std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o500))?;
+        } else if kind != "python" {
+            bail!("unsupported runtime");
+        }
+        // The venv must be installed at its final absolute path: moving a
+        // prepared venv breaks entry-point shebangs and editable paths.
+        std::fs::rename(&tmp,&target)?;
+        if kind == "python" {
+            let output = tokio::time::timeout(Duration::from_secs(180), Command::new("uv")
+                .args(["sync", "--frozen", "--no-dev", "--no-install-project"])
+                .env("UV_PROJECT_ENVIRONMENT", target.join(".venv"))
+                .env("UV_CACHE_DIR", "/tmp/uv-cache")
+                .env("UV_PYTHON_DOWNLOADS", "never")
+                .current_dir(&target).output()).await??;
+            if !output.status.success() { bail!("locked Python dependency preparation failed"); }
         }
         let receipt = json!({"installation_digest":target_id,"package_digest":digest,"runtime":RUNTIME_VERSION});
-        std::fs::write(tmp.join(".installation.json"),serde_json::to_vec(&receipt)?)?;
-        std::fs::rename(&tmp,&target)?;
+        let pending=target.join(".installation.pending");
+        std::fs::write(&pending,serde_json::to_vec(&receipt)?)?;
+        std::fs::rename(pending,target.join(".installation.json"))?;
         Ok::<(),anyhow::Error>(())
     }.await;
-    if result.is_err() { let _=std::fs::remove_dir_all(&tmp); }
+    if result.is_err() {
+        let _=std::fs::remove_dir_all(&tmp);
+        let _=std::fs::remove_dir_all(&target);
+    }
     result?;
     Ok(json!({"installation_digest":target_id}))
 }
@@ -183,7 +195,10 @@ async fn execute(request: &Value, state: &State) -> Result<Value> {
 }
 async fn dispatch(value:Value,state:State)->Result<Value>{
     match (state.mode.as_str(),required(&value,"action")?) {
-        ("installer","Prepare")=>prepare(&value).await,
+        ("installer","Prepare")=>{
+            let _permit=state.slots.acquire().await.context("installer unavailable")?;
+            prepare(&value).await
+        },
         ("runner","Execute")=>execute(&value,&state).await,
         ("runner","Cancel")=>{
             let id=required(&value,"attempt_id")?;
@@ -238,7 +253,7 @@ async fn main()->Result<()> {
     if Path::new(&path).exists() {std::fs::remove_file(&path)?;}
     let listener=UnixListener::bind(&path)?;
     std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0o660))?;
-    let state=State{mode,attempts:Arc::new(Mutex::new(HashMap::new())),slots:Arc::new(Semaphore::new(4))};
+    let state=State{mode,attempts:Arc::new(Mutex::new(HashMap::new())),slots:Arc::new(Semaphore::new(if mode=="installer"{1}else{4}))};
     loop {
         let (stream,_)=listener.accept().await?;
         let shared=state.clone();
