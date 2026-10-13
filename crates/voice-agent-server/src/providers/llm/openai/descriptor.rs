@@ -8,6 +8,10 @@ use crate::providers::{
 };
 const FIELDS: &[ProviderConfigField] = &[
     field(
+        "supports_responses", "Supports Responses (Agent Job only)",
+        ConfigFieldType::Boolean, false, None, None, None, None,
+    ),
+    field(
         "base_url",
         "Base URL",
         ConfigFieldType::String,
