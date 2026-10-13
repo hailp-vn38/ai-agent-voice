@@ -4,6 +4,7 @@ fn config(model: &str) -> OpenCodeFreeConfig {
     OpenCodeFreeConfig {
         model: model.into(),
         timeout_ms: 60_000,
+        supports_responses: false,
     }
 }
 
@@ -146,4 +147,49 @@ async fn live_space_bunny_streams_through_provider() {
     assert!(!text.trim().is_empty(), "provider returned no text");
     assert!(finished, "provider did not finish its stream");
     println!("space-bunny-free response: {text}");
+}
+
+#[test]
+fn responses_is_opt_in_and_round_trips_through_admin_config() {
+    let default = config("nemotron-3-ultra-free");
+    assert!(!default.supports_responses);
+    assert!(
+        serde_json::to_value(&default)
+            .unwrap()
+            .get("supports_responses")
+            .is_none()
+    );
+    let configured: OpenCodeFreeConfig =
+        toml::from_str("model = 'muse-spark-1.3-contributor-free'\nsupports_responses = true")
+            .unwrap();
+    assert!(configured.valid());
+    assert!(configured.supports_responses);
+    let provider = OpenCodeFreeProvider::build(&configured).unwrap();
+    assert!(provider.supports_responses);
+    assert!(
+        !OpenCodeFreeProvider::build(&default)
+            .unwrap()
+            .supports_responses
+    );
+
+    let admin = crate::database::provider_config::validate(
+        "opencode_free",
+        &serde_json::json!({
+            "model": "muse-spark-1.3-contributor-free",
+            "timeout_ms": 60000,
+            "supports_responses": true
+        }),
+    )
+    .unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&admin).unwrap();
+    value.as_object_mut().unwrap().remove("max_tokens");
+    value["adapter"] = serde_json::json!("opencode_free");
+    let instance: crate::config::LlmInstanceConfig = serde_json::from_value(value).unwrap();
+    assert!(matches!(
+        instance,
+        crate::config::LlmInstanceConfig::OpenCodeFree(OpenCodeFreeConfig {
+            supports_responses: true,
+            ..
+        })
+    ));
 }

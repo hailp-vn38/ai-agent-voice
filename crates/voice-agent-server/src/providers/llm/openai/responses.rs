@@ -7,7 +7,7 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
 fn request_body(
-    provider: &ConfiguredOpenAiLlm,
+    model: &str,
     request: &LlmRequest,
     schema: Option<Value>,
 ) -> Result<Value, LlmError> {
@@ -36,7 +36,7 @@ fn request_body(
         None => json!({"type":"json_object"}),
     };
     Ok(json!({
-        "model":provider.model,"input":input,"text":{"format":format},
+        "model":model,"input":input,"text":{"format":format},
         "store":false,"background":false,"stream":false
     }))
 }
@@ -91,7 +91,28 @@ pub(crate) async fn complete(
     request: LlmRequest,
     schema: Option<Value>,
 ) -> Result<String, LlmError> {
-    let base = provider.base_url.trim_end_matches('/');
+    complete_with(
+        &provider.base_url,
+        &provider.model,
+        &provider.api_key,
+        provider.timeout_seconds,
+        request,
+        schema,
+    )
+    .await
+}
+
+/// Shared Responses transport for explicitly opted-in providers.
+/// Never injects vendor SDK fingerprints or tool declarations.
+pub(crate) async fn complete_with(
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    timeout_seconds: u64,
+    request: LlmRequest,
+    schema: Option<Value>,
+) -> Result<String, LlmError> {
+    let base = base_url.trim_end_matches('/');
     let url = format!("{base}/responses");
     let parsed = url::Url::parse(&url).map_err(|_| LlmError::Failed)?;
     if !matches!(parsed.scheme(), "https" | "http")
@@ -100,15 +121,15 @@ pub(crate) async fn complete(
     {
         return Err(LlmError::Failed);
     }
-    let body = request_body(provider, &request, schema)?;
+    let body = request_body(model, &request, schema)?;
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(provider.timeout_seconds))
+        .timeout(Duration::from_secs(timeout_seconds))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| LlmError::Failed)?;
     let mut send = client.post(parsed).json(&body);
-    if !provider.api_key.is_empty() {
-        send = send.bearer_auth(&provider.api_key);
+    if !api_key.is_empty() {
+        send = send.bearer_auth(api_key);
     }
     let mut response = send.send().await.map_err(|_| LlmError::Failed)?;
     if !response.status().is_success() {
@@ -199,6 +220,50 @@ mod tests {
         assert_eq!(answer, r#"{"steps":[]}"#);
         task.abort();
     }
+    #[tokio::test]
+    async fn shared_responses_transport_keeps_opencode_free_model_and_auth() {
+        use axum::{Json, Router, http::HeaderMap, routing::post};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/zen/v1", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/zen/v1/responses",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer public");
+                assert_eq!(body["model"], "muse-spark-1.3-contributor-free");
+                assert_eq!(body["text"]["format"]["type"], "json_schema");
+                assert_eq!(body["text"]["format"]["strict"], true);
+                assert_eq!(body["store"], false);
+                assert_eq!(body["background"], false);
+                assert!(body.get("tools").is_none());
+                Json(json!({
+                    "status":"completed",
+                    "output":[{"type":"message","role":"assistant",
+                        "content":[{"type":"output_text","text":r#"{"summary":"ok"}"#}]}]
+                }))
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let result = complete_with(
+            &base,
+            "muse-spark-1.3-contributor-free",
+            "public",
+            5,
+            LlmRequest::text_turn("Summarize in JSON".into()),
+            Some(json!({
+                "type":"object",
+                "properties":{"summary":{"type":"string"}},
+                "required":["summary"],
+                "additionalProperties":false,
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, r#"{"summary":"ok"}"#);
+        server.abort();
+    }
+
     #[test]
     fn response_request_is_job_only_stateless_and_tool_free() {
         let request = LlmRequest {
@@ -213,7 +278,7 @@ mod tests {
             tools: Vec::new(),
         };
         let body = request_body(
-            &provider(),
+            &provider().model,
             &request,
             Some(json!({
                 "type":"object","properties":{"summary":{"type":"string"}},
@@ -232,7 +297,7 @@ mod tests {
     fn plan_request_uses_json_mode_and_rejects_tools() {
         let mut request = LlmRequest::text_turn("Plan JSON".into());
         assert_eq!(
-            request_body(&provider(), &request, None).unwrap()["text"]["format"]["type"],
+            request_body(&provider().model, &request, None).unwrap()["text"]["format"]["type"],
             "json_object"
         );
         request.tools.push(ToolDefinition {
@@ -240,7 +305,7 @@ mod tests {
             description: "No".into(),
             parameters: json!({}),
         });
-        assert!(request_body(&provider(), &request, None).is_err());
+        assert!(request_body(&provider().model, &request, None).is_err());
     }
     #[test]
     fn accepts_completed_text_and_rejects_refusal_and_incomplete() {
