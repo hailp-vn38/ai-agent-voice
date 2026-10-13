@@ -17,11 +17,11 @@ struct StepRow {
     output_schema_json: String,
     result_json: Option<String>,
 }
-pub(super) async fn read(database: &Database, id: &str) -> Result<Vec<JobStepView>, JobError> {
+pub(super) async fn read(connection: &mut SqliteConnection, id: &str) -> Result<Vec<JobStepView>, JobError> {
     let rows: Vec<StepRow> =
         sqlx::query_as("SELECT * FROM job_steps WHERE job_id=? ORDER BY step_key")
             .bind(id)
-            .fetch_all(database.pool())
+            .fetch_all(&mut *connection)
             .await?;
     rows.into_iter()
         .map(|row| {
