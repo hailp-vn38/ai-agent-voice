@@ -8,7 +8,7 @@ impl PluginStore {
         if row.status != "ready"
             || row.version != choice.version
             || row.package_digest != choice.package_digest
-            || row.image_digest != choice.image_digest
+            || row.installation_digest != choice.installation_digest
         {
             return Err(PluginError::PermissionRequired);
         }
