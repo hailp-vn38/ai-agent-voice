@@ -78,7 +78,7 @@ pub struct PluginView {
     pub description: String,
     pub version: String,
     pub digest: String,
-    pub image_digest: String,
+    pub installation_digest: String,
     pub status: String,
     pub revision: i64,
     pub runtime: RuntimeView,
@@ -101,7 +101,7 @@ struct Installation {
     plugin_id: String,
     version: String,
     package_digest: String,
-    image_digest: String,
+    installation_digest: String,
     status: String,
     revision: i64,
     operations_json: String,
@@ -119,12 +119,12 @@ impl Installation {
             description: manifest.plugin.description,
             version: self.version,
             digest: self.package_digest,
-            image_digest: self.image_digest,
+            installation_digest: self.installation_digest,
             status: self.status,
             revision: self.revision,
             runtime: RuntimeView {
-                kind: "isolated_worker",
-                language: if manifest.runtime.kind == "rust_container" {
+                kind: "shared_process",
+                language: if manifest.runtime.kind == "rust" {
                     "rust"
                 } else {
                     "python"
@@ -272,7 +272,7 @@ impl PluginStore {
                 .await
                 .map_err(|_| PluginError::StorageUnavailable)?;
         }
-        let image = builder::build(&self.config, stage, &package).await?;
+        let installation = builder::build(&self.config, stage, &package).await?;
         tokio::fs::write(stage.join("package.zip"), &package.source_zip)
             .await
             .map_err(|_| PluginError::StorageUnavailable)?;
@@ -315,8 +315,8 @@ impl PluginStore {
                 .map_err(|_| PluginError::StorageUnavailable)?;
         }
         let now = crate::database::unix_seconds().ok_or(PluginError::DatabaseUnavailable)?;
-        sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'disabled',1,?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET version=excluded.version,package_digest=excluded.package_digest,image_digest=excluded.image_digest,status='disabled',revision=plugin_installations.revision+1,operations_json=excluded.operations_json,last_error_code=NULL,updated_at=excluded.updated_at")
-            .bind(id).bind(&package.manifest.plugin.version).bind(&package.digest).bind(&image).bind(manifest).bind(now).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,installation_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'disabled',1,?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET version=excluded.version,package_digest=excluded.package_digest,installation_digest=excluded.installation_digest,status='disabled',revision=plugin_installations.revision+1,operations_json=excluded.operations_json,last_error_code=NULL,updated_at=excluded.updated_at")
+            .bind(id).bind(&package.manifest.plugin.version).bind(&package.digest).bind(&installation).bind(manifest).bind(now).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
         self.get(id).await
     }
@@ -326,10 +326,9 @@ impl PluginStore {
             return Err(PluginError::RevisionConflict);
         }
         let manifest = row.manifest()?;
-        builder::preflight(&self.config, &manifest.runtime).await?;
         builder::verify_image(
             &self.config,
-            &row.image_digest,
+            &row.installation_digest,
             &row.package_digest,
             &manifest.runtime,
         )
@@ -394,10 +393,9 @@ impl PluginStore {
             return Err(PluginError::RevisionConflict);
         }
         let manifest = row.manifest()?;
-        builder::preflight(&self.config, &manifest.runtime).await?;
         builder::verify_image(
             &self.config,
-            &row.image_digest,
+            &row.installation_digest,
             &row.package_digest,
             &manifest.runtime,
         )
@@ -405,7 +403,7 @@ impl PluginStore {
     }
 
     /// Package-attributable failures stop later dispatches even when the Job
-    /// concurrently becomes terminal. The frozen image identity prevents a
+    /// concurrently becomes terminal. The frozen installation identity prevents a
     /// late worker from poisoning an upgraded installation.
     pub(crate) async fn fail_package(
         &self,
@@ -413,9 +411,9 @@ impl PluginStore {
         code: &str,
     ) -> Result<(), PluginError> {
         let _publication = self.database.tool_security.publication.write().await;
-        sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'")
+        sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'")
             .bind(code).bind(crate::database::unix_seconds()).bind(&choice.plugin_id)
-            .bind(&choice.version).bind(&choice.package_digest).bind(&choice.image_digest)
+            .bind(&choice.version).bind(&choice.package_digest).bind(&choice.installation_digest)
             .execute(self.database.pool()).await?;
         Ok(())
     }
@@ -445,7 +443,7 @@ pub(crate) async fn frozen_choices(
             }
             choices.push(json!({
                 "plugin_id": row.plugin_id, "version": row.version,
-                "package_digest": row.package_digest, "image_digest": row.image_digest,
+                "package_digest": row.package_digest, "installation_digest": row.installation_digest,
                 "operation": name,
                 "provides": operation.provides, "sources": operation.sources,
             }));
