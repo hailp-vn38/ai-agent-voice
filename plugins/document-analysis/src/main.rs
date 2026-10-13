@@ -189,6 +189,15 @@ mod tests {
         assert!(clean(&text).contains("First bold paragraph"));
     }
     #[test]
+    fn extracts_docx_text() {
+        use std::io::Write;
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        archive.start_file("word/document.xml", zip::write::SimpleFileOptions::default()).unwrap();
+        archive.write_all(br#"<w:document><w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p><w:p><w:r><w:t>World</w:t></w:r></w:p></w:body></w:document>"#).unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        assert_eq!(clean(&extract_docx(&bytes).unwrap()), "Hello World");
+    }
+    #[test]
     fn bad_pdf_fails() { assert!(extract_pdf(b"not-a-pdf").is_err()); }
     #[test]
     fn keyword_order_is_stable() {
