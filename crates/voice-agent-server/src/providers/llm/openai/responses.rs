@@ -98,7 +98,8 @@ pub(crate) async fn complete(
         provider.timeout_seconds,
         request,
         schema,
-    ).await
+    )
+    .await
 }
 
 /// Shared Responses transport for explicitly opted-in providers.
@@ -221,11 +222,12 @@ mod tests {
     }
     #[tokio::test]
     async fn shared_responses_transport_keeps_opencode_free_model_and_auth() {
-        use axum::{http::HeaderMap, routing::post, Json, Router};
+        use axum::{Json, Router, http::HeaderMap, routing::post};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/zen/v1", listener.local_addr().unwrap());
-        let app = Router::new().route("/zen/v1/responses", post(
-            |headers: HeaderMap, Json(body): Json<Value>| async move {
+        let app = Router::new().route(
+            "/zen/v1/responses",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
                 assert_eq!(headers.get("authorization").unwrap(), "Bearer public");
                 assert_eq!(body["model"], "muse-spark-1.3-contributor-free");
                 assert_eq!(body["text"]["format"]["type"], "json_schema");
@@ -238,8 +240,8 @@ mod tests {
                     "output":[{"type":"message","role":"assistant",
                         "content":[{"type":"output_text","text":r#"{"summary":"ok"}"#}]}]
                 }))
-            }
-        ));
+            }),
+        );
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -255,7 +257,9 @@ mod tests {
                 "required":["summary"],
                 "additionalProperties":false,
             })),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(result, r#"{"summary":"ok"}"#);
         server.abort();
     }

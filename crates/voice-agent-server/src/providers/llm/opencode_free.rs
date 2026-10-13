@@ -38,7 +38,9 @@ pub struct OpenCodeFreeConfig {
     #[serde(default, skip_serializing_if = "is_false")]
     pub supports_responses: bool,
 }
-fn is_false(value: &bool) -> bool { !*value }
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 pub(crate) fn valid_free_chat_model_id(model: &str) -> bool {
     model.len() <= 256
@@ -91,8 +93,14 @@ impl LlmProvider for OpenCodeFreeProvider {
             // Only opted-in free models use Zen Responses. The public credential
             // may be rejected upstream; never silently fall back to Chat.
             super::openai::responses::complete_with(
-                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds, request, schema,
-            ).await
+                BASE_URL,
+                &self.model,
+                PUBLIC_KEY,
+                self.timeout_seconds,
+                request,
+                schema,
+            )
+            .await
         } else {
             super::complete_background_chat(self.stream(request).await?).await
         }
@@ -194,7 +202,12 @@ const FIELDS: &[ProviderConfigField] = &[
     field(
         "supports_responses",
         "Supports Responses (Agent Job only)",
-        ConfigFieldType::Boolean, false, None, None, None, None,
+        ConfigFieldType::Boolean,
+        false,
+        None,
+        None,
+        None,
+        None,
     ),
     field(
         "model",
