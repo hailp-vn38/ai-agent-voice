@@ -9,6 +9,8 @@ mod recovery;
 // P3 scheduler will consume these durable dispatch transitions.
 #[allow(dead_code)]
 mod execution;
+mod events;
+pub(crate) use events::JobEvent;
 mod orchestration;
 mod steps;
 mod submission;
