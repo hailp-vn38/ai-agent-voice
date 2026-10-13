@@ -163,6 +163,16 @@ impl Database {
         Ok(())
     }
 
+    pub(crate) async fn skip_dependency_step(&self,id:&str,step:&str)->Result<(),JobError>{
+        let mut tx=self.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let now=crate::services::background::engine::now()?;
+        let updated=sqlx::query("UPDATE job_steps SET status='skipped',error_code='dependency_failed',updated_at=? WHERE job_id=? AND step_key=? AND status='pending'")
+            .bind(now).bind(id).bind(step).execute(&mut *tx).await?;
+        if updated.rows_affected()!=1 {return Err(JobError::Terminal);}
+        events::append(&mut tx,id,"step_finished",Some(step),&json!({"status":"skipped","error_code":"dependency_failed"})).await?;
+        tx.commit().await?;
+        Ok(())
+    }
     pub(crate) async fn checkpoint_llm_step(
         &self,
         id: &str,
