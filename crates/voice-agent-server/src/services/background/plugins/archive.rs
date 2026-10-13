@@ -367,114 +367,80 @@ mod tests {
         assert!(matches!(validate(&bytes), Err(PluginError::InvalidPackage)));
     }
     fn rust_fixture_zip() -> Vec<u8> {
-        const ROOT: &str = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../plugins/fixture-rust-1.0.0/"
-        );
-        let base = std::path::Path::new(ROOT);
+        let root = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"), "/../../plugins/fixture-rust-1.0.0/"
+        ));
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-        for name in [
-            "plugin.toml",
-            "Cargo.toml",
-            "Cargo.lock",
-            "instructions.md",
-            "src/main.rs",
-            "schemas/collect.input.json",
-            "schemas/collect.output.json",
-        ] {
-            writer
-                .start_file(name, SimpleFileOptions::default())
-                .unwrap();
-            writer
-                .write_all(&std::fs::read(base.join(name)).unwrap())
-                .unwrap();
+        for name in ["plugin.toml","instructions.md","schemas/collect.input.json","schemas/collect.output.json"] {
+            writer.start_file(name, SimpleFileOptions::default()).unwrap();
+            writer.write_all(&std::fs::read(root.join(name)).unwrap()).unwrap();
         }
+        let mut elf = vec![0u8; 64];
+        elf[..4].copy_from_slice(b"\\x7fELF");
+        elf[4] = 2;
+        elf[5] = 1;
+        elf[16] = 2;
+        elf[18] = match std::env::consts::ARCH {
+            "x86_64" => 62,
+            "aarch64" => 183,
+            _ => return Vec::new(),
+        };
+        writer.start_file("bin/plugin", SimpleFileOptions::default()).unwrap();
+        writer.write_all(&elf).unwrap();
         writer.finish().unwrap().into_inner()
     }
 
     #[test]
-    fn rust_fixture_validates_with_cargo_lock_and_no_python() {
-        let package = validate(&rust_fixture_zip()).unwrap();
-        assert_eq!(package.manifest.runtime.kind, "rust_container");
-        assert_eq!(package.manifest.runtime.entrypoint, "fixture-rust");
+    fn rust_fixture_accepts_prebuilt_native_elf() {
+        let package = rust_fixture_zip();
+        if package.is_empty() { return; }
+        let package = validate(&package).unwrap();
+        assert_eq!(package.manifest.runtime.kind, "rust");
+        assert_eq!(package.manifest.runtime.entrypoint, "bin/plugin");
         assert_eq!(package.manifest.runtime.python, None);
         assert_eq!(package.manifest.operations.len(), 1);
-        // The existing v1 Python archive is still accepted by the same installer.
-        assert_eq!(
-            validate(FIXTURE).unwrap().manifest.runtime.kind,
-            "python_container"
-        );
     }
 
     #[test]
-    fn rust_manifest_refuses_mismatched_binary_and_legacy_python_field() {
+    fn rust_manifest_rejects_mismatched_entrypoint_and_legacy_runtime() {
         let source = rust_fixture_zip();
-        for (needle, replacement) in [
-            ("entrypoint = \"fixture-rust\"", "entrypoint = \"other\""),
-            ("kind = \"rust_container\"", "kind = \"unknown_runtime\""),
-            ("protocol = \"jsonl-v1\"", "protocol = \"jsonl-v2\""),
-            (
-                "protocol = \"jsonl-v1\"",
-                "python = \"3.12\"\nprotocol = \"jsonl-v1\"",
-            ),
+        if source.is_empty() { return; }
+        for (needle,replacement) in [
+            ("entrypoint = \\"bin/plugin\\"", "entrypoint = \\"other\\""),
+            ("kind = \\"rust\\"", "kind = \\"rust_container\\""),
+            ("protocol = \\"jsonl-v1\\"", "protocol = \\"jsonl-v2\\""),
+            ("protocol = \\"jsonl-v1\\"", "python = \\"3.12\\"\\nprotocol = \\"jsonl-v1\\""),
         ] {
-            let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
-            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let mut archive=ZipArchive::new(Cursor::new(&source)).unwrap();
+            let mut writer=ZipWriter::new(Cursor::new(Vec::new()));
             for index in 0..archive.len() {
-                let mut entry = archive.by_index(index).unwrap();
-                let name = entry.name().to_owned();
-                writer
-                    .start_file(&name, SimpleFileOptions::default())
-                    .unwrap();
-                let mut content = Vec::new();
-                entry.read_to_end(&mut content).unwrap();
-                if name == "plugin.toml" {
-                    let text = std::str::from_utf8(&content)
-                        .unwrap()
-                        .replace(needle, replacement);
-                    writer.write_all(text.as_bytes()).unwrap();
-                } else {
-                    writer.write_all(&content).unwrap();
-                }
+                let mut entry=archive.by_index(index).unwrap();
+                let name=entry.name().to_owned();
+                writer.start_file(&name,SimpleFileOptions::default()).unwrap();
+                let mut content=Vec::new();entry.read_to_end(&mut content).unwrap();
+                if name=="plugin.toml" {
+                    writer.write_all(std::str::from_utf8(&content).unwrap().replace(needle,replacement).as_bytes()).unwrap();
+                } else { writer.write_all(&content).unwrap(); }
             }
-            assert!(matches!(
-                validate(&writer.finish().unwrap().into_inner()),
-                Err(PluginError::InvalidPackage)
-            ));
+            assert!(matches!(validate(&writer.finish().unwrap().into_inner()),Err(PluginError::InvalidPackage)));
         }
     }
 
     #[test]
-    fn rust_zip_rejects_mismatched_cargo_package_and_missing_lock() {
+    fn source_only_rust_package_is_not_a_runtime_installation() {
         let source = rust_fixture_zip();
-        for mutation in ["wrong_package", "missing_lock"] {
-            let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
-            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-            for index in 0..archive.len() {
-                let mut entry = archive.by_index(index).unwrap();
-                let name = entry.name().to_owned();
-                if mutation == "missing_lock" && name == "Cargo.lock" {
-                    continue;
-                }
-                writer
-                    .start_file(&name, SimpleFileOptions::default())
-                    .unwrap();
-                let mut bytes = Vec::new();
-                entry.read_to_end(&mut bytes).unwrap();
-                if mutation == "wrong_package" && name == "Cargo.toml" {
-                    let text = std::str::from_utf8(&bytes)
-                        .unwrap()
-                        .replace("name = \"fixture-rust\"", "name = \"wrong-name\"");
-                    writer.write_all(text.as_bytes()).unwrap();
-                } else {
-                    writer.write_all(&bytes).unwrap();
-                }
-            }
-            assert!(matches!(
-                validate(&writer.finish().unwrap().into_inner()),
-                Err(PluginError::InvalidPackage)
-            ));
+        if source.is_empty() {return;}
+        let mut archive=ZipArchive::new(Cursor::new(&source)).unwrap();
+        let mut writer=ZipWriter::new(Cursor::new(Vec::new()));
+        for index in 0..archive.len() {
+            let mut entry=archive.by_index(index).unwrap();
+            if entry.name()=="bin/plugin" {continue;}
+            let name=entry.name().to_owned();
+            writer.start_file(&name,SimpleFileOptions::default()).unwrap();
+            let mut bytes=Vec::new();entry.read_to_end(&mut bytes).unwrap();
+            writer.write_all(&bytes).unwrap();
         }
+        assert!(matches!(validate(&writer.finish().unwrap().into_inner()),Err(PluginError::InvalidPackage)));
     }
 
     #[test]
@@ -484,14 +450,14 @@ mod tests {
             let files: Vec<(&str, Vec<u8>)> = vec![
                 (
                     "plugin.toml",
-                    br#"manifest_version = 1
+                    br#"manifest_version = 2
 [plugin]
 id = "rust-test"
 name = "Rust Test"
 version = "1.0.0"
 description = "A native worker"
 [runtime]
-kind = "rust_container"
+kind = "rust"
 entrypoint = "bin/plugin"
 protocol = "jsonl-v1"
 [agent]
