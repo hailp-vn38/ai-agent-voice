@@ -9,8 +9,6 @@ impl PluginStore {
             || row.version != choice.version
             || row.package_digest != choice.package_digest
             || row.image_digest != choice.image_digest
-            || crate::services::background::model::digest(&row.approved_permissions_json)
-                != choice.permission_digest
         {
             return Err(PluginError::PermissionRequired);
         }
