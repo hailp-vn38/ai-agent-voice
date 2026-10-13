@@ -1,5 +1,5 @@
 use super::*;
-use crate::services::background::plugins::{FrozenChoice, PermissionApproval};
+use crate::services::background::plugins::FrozenChoice;
 use std::io::Read;
 
 #[tokio::test]
@@ -71,14 +71,9 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
         .read_to_string(&mut manifest)
         .unwrap();
     let json = serde_json::to_string(&toml::from_str::<toml::Value>(&manifest).unwrap()).unwrap();
-    let approved = serde_json::to_string(&PermissionApproval {
-        network_hosts: vec![],
-        scratch_storage: false,
-    })
-    .unwrap();
-    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES('fixture-research','1.0.0',?,?,'ready',1,?,?,0,0)")
+    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,operations_json,created_at,updated_at) VALUES('fixture-research','1.0.0',?,?,'ready',1,?,0,0)")
         .bind("a".repeat(64)).bind(format!("sha256:{}", "b".repeat(64)))
-        .bind(approved).bind(json).execute(db.pool()).await.unwrap();
+        .bind(json).execute(db.pool()).await.unwrap();
     let job = runtime
         .engine
         .submit(request("Fixture attempt"), &JobRequester::Admin, None)
@@ -147,23 +142,10 @@ async fn fixture_python_runs_through_job_step_and_checked_artifact() {
         "/../../plugins/fixture-research-1.0.0.zip"
     ));
     let installed = runtime.engine.plugins.install(zip).await.unwrap();
-    let reviewed = runtime
-        .engine
-        .plugins
-        .approve(
-            &installed.id,
-            installed.revision,
-            PermissionApproval {
-                network_hosts: vec![],
-                scratch_storage: false,
-            },
-        )
-        .await
-        .unwrap();
     runtime
         .engine
         .plugins
-        .activate(&reviewed.id, reviewed.revision)
+        .activate(&installed.id, installed.revision)
         .await
         .unwrap();
     enable(&runtime.engine).await;
