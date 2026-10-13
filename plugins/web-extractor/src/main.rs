@@ -42,7 +42,7 @@ fn fetch(url: &str) -> Result<String, Failure> {
         .timeout(Duration::from_secs(20))
         .user_agent("AgentJob-WebExtractor/1.0")
         .build().map_err(|_| Failure::new("network_unavailable", "HTTP client unavailable"))?;
-    let mut response = client.get(url).send()
+    let response = client.get(url).send()
         .map_err(|_| Failure::new("fetch_failed", "Request failed or denied by egress policy"))?;
     if !response.status().is_success() {
         return Err(Failure::new("http_error", format!("HTTP {}", response.status().as_u16())));

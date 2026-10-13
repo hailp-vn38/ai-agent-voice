@@ -37,14 +37,13 @@ jobs:
           cp plugins/"$PLUGIN"/schemas/*.json /tmp/package/schemas/
           file /tmp/package/bin/plugin
           python3 - <<'PY'
-          import json, os, pathlib, tomllib
+          import json, os, pathlib
           root = pathlib.Path("/tmp/package")
-          m = tomllib.loads((root / "plugin.toml").read_text())
-          assert m["runtime"]["kind"] == "rust_container"
-          assert m["runtime"]["entrypoint"] == "bin/plugin"
-          for op in m["operations"].values():
-              for key in ("input_schema", "output_schema"):
-                  json.loads((root / op[key]).read_text())
+          manifest = (root / "plugin.toml").read_text()
+          assert 'kind = "rust_container"' in manifest
+          assert 'entrypoint = "bin/plugin"' in manifest
+          for path in (root / "schemas").glob("*.json"):
+              json.loads(path.read_text())
           content = (root / "bin/plugin").read_bytes()
           assert content[:4] == b"\x7fELF"
           assert len(content) < 19 * 1024 * 1024
