@@ -7,7 +7,7 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
 fn request_body(
-    provider: &ConfiguredOpenAiLlm,
+    model: &str,
     request: &LlmRequest,
     schema: Option<Value>,
 ) -> Result<Value, LlmError> {
@@ -36,7 +36,7 @@ fn request_body(
         None => json!({"type":"json_object"}),
     };
     Ok(json!({
-        "model":provider.model,"input":input,"text":{"format":format},
+        "model":model,"input":input,"text":{"format":format},
         "store":false,"background":false,"stream":false
     }))
 }
@@ -91,7 +91,27 @@ pub(crate) async fn complete(
     request: LlmRequest,
     schema: Option<Value>,
 ) -> Result<String, LlmError> {
-    let base = provider.base_url.trim_end_matches('/');
+    complete_with(
+        &provider.base_url,
+        &provider.model,
+        &provider.api_key,
+        provider.timeout_seconds,
+        request,
+        schema,
+    ).await
+}
+
+/// Shared Responses transport for explicitly opted-in providers.
+/// Never injects vendor SDK fingerprints or tool declarations.
+pub(crate) async fn complete_with(
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    timeout_seconds: u64,
+    request: LlmRequest,
+    schema: Option<Value>,
+) -> Result<String, LlmError> {
+    let base = base_url.trim_end_matches('/');
     let url = format!("{base}/responses");
     let parsed = url::Url::parse(&url).map_err(|_| LlmError::Failed)?;
     if !matches!(parsed.scheme(), "https" | "http")
@@ -100,15 +120,15 @@ pub(crate) async fn complete(
     {
         return Err(LlmError::Failed);
     }
-    let body = request_body(provider, &request, schema)?;
+    let body = request_body(model, &request, schema)?;
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(provider.timeout_seconds))
+        .timeout(Duration::from_secs(timeout_seconds))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| LlmError::Failed)?;
     let mut send = client.post(parsed).json(&body);
-    if !provider.api_key.is_empty() {
-        send = send.bearer_auth(&provider.api_key);
+    if !api_key.is_empty() {
+        send = send.bearer_auth(api_key);
     }
     let mut response = send.send().await.map_err(|_| LlmError::Failed)?;
     if !response.status().is_success() {
@@ -213,7 +233,7 @@ mod tests {
             tools: Vec::new(),
         };
         let body = request_body(
-            &provider(),
+            &provider().model,
             &request,
             Some(json!({
                 "type":"object","properties":{"summary":{"type":"string"}},
@@ -232,7 +252,7 @@ mod tests {
     fn plan_request_uses_json_mode_and_rejects_tools() {
         let mut request = LlmRequest::text_turn("Plan JSON".into());
         assert_eq!(
-            request_body(&provider(), &request, None).unwrap()["text"]["format"]["type"],
+            request_body(&provider().model, &request, None).unwrap()["text"]["format"]["type"],
             "json_object"
         );
         request.tools.push(ToolDefinition {
@@ -240,7 +260,7 @@ mod tests {
             description: "No".into(),
             parameters: json!({}),
         });
-        assert!(request_body(&provider(), &request, None).is_err());
+        assert!(request_body(&provider().model, &request, None).is_err());
     }
     #[test]
     fn accepts_completed_text_and_rejects_refusal_and_incomplete() {
