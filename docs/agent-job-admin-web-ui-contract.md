@@ -34,7 +34,7 @@ Plugin Detail and Job Detail are modal views inside their pages, NOT new routes.
 - Recover cancelling Jobs to cancelled after crash, recording unknown_outcome if external execution may have started.
 - Allowed plugin operations are snapshot at submit. Replan must not expand choices.
 - Artifact download and logs require separate secure backend routes and are not faked in frontend.
-- Provider picker presently builds source-qualified IDs as <source>:<key>. Validate with the eventual Rust settings contract.
+- GET /api/admin/background/settings supplies llm_providers [{ ref, name, source }] with canonical source-qualified refs. The frontend never synthesizes refs from catalog keys. PUT settings echoes the list or the client retains the last read options.
 
 ## Validation
 
