@@ -1,5 +1,11 @@
 /** Frontend contract for proposed Admin Agent Job endpoints. Not the existing Reminder API. */
+export interface BackgroundProviderOption {
+  ref: string
+  name: string
+  source: 'config' | 'database'
+}
 export interface BackgroundSettings {
+  llm_providers?: BackgroundProviderOption[]
   enabled: boolean
   orchestrator_llm_provider: string | null
   worker_llm_provider: string | null
