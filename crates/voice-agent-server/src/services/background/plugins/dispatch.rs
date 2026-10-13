@@ -46,7 +46,6 @@ pub(crate) struct FrozenChoice {
     pub package_digest: String,
     pub image_digest: String,
     pub operation: String,
-    pub permission_digest: String,
 }
 
 #[allow(dead_code)]
@@ -109,13 +108,6 @@ impl PluginStore {
         {
             return Err(PluginError::PermissionRequired);
         }
-        let approval = row.approval()?.ok_or(PluginError::PermissionRequired)?;
-        if crate::services::background::model::digest(
-            &serde_json::to_string(&approval).map_err(|_| PluginError::DatabaseUnavailable)?,
-        ) != choice.permission_digest
-        {
-            return Err(PluginError::PermissionRequired);
-        }
         let manifest = row.manifest()?;
         let operation = manifest
             .operations
@@ -175,54 +167,20 @@ impl PluginStore {
                 .await
                 .map_err(|_| PluginError::StorageUnavailable)?;
         }
-        let mut egress = if manifest.permissions.network_hosts.is_empty() {
-            None
-        } else {
-            if manifest
-                .permissions
-                .network_hosts
-                .iter()
-                .any(|host| !approval.network_hosts.contains(host))
-            {
-                let _ = tokio::fs::remove_dir_all(&workspace).await;
-                return Err(PluginError::PermissionRequired);
-            }
-            match egress::EgressGuard::create(
-                &self.config,
-                attempt_id,
-                job_id,
-                &approval.network_hosts,
-            )
-            .await
-            {
-                Ok(guard) => Some(guard),
-                Err(error) => {
-                    let _ = tokio::fs::remove_dir_all(&workspace).await;
-                    return Err(error);
-                }
-            }
-        };
         let prepared = runner::Prepared::create(
             &self.config,
             &choice.image_digest,
             &workspace,
             job_id,
             attempt_id,
-            egress.as_ref().map(|guard| guard.internal.as_str()),
         )
         .await;
         let prepared = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
-                let cleanup = if let Some(ref mut guard) = egress {
-                    guard.remove().await
-                } else {
-                    Ok(())
-                };
                 if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
                     tracing::warn!(job_id, attempt_id, %cleanup, "Plugin workspace cleanup failed");
                 }
-                cleanup?;
                 return Err(error);
             }
         };
@@ -270,15 +228,6 @@ impl PluginStore {
         .await;
         let reap_started = std::time::Instant::now();
         let reaped = prepared.remove(&self.config).await;
-        let proxy_reaped = if reaped.is_ok() {
-            if let Some(ref mut guard) = egress {
-                guard.remove().await
-            } else {
-                Ok(())
-            }
-        } else {
-            Ok(())
-        };
         if cancellation.is_cancelled() {
             tracing::info!(
                 event = "background_container_cancel_reaped",
@@ -288,7 +237,7 @@ impl PluginStore {
                 reaped = reaped.is_ok()
             );
         }
-        if reaped.is_err() || proxy_reaped.is_err() {
+        if reaped.is_err() {
             return Err(PluginError::WorkerUnreaped);
         }
         let result = async {
