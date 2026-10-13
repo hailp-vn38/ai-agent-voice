@@ -139,8 +139,14 @@ async fn execute(request: &Value, state: &State) -> Result<Value> {
     if receipt["installation_digest"]!=digest { bail!("installation mismatch"); }
     let manifest=read_manifest(&root)?;
     let kind=plugin_kind(&manifest)?;
-    let workspace=Path::new("/attempts").join(job).join(&attempt).join("out");
-    std::fs::create_dir_all(&workspace)?;
+    // Attempt directories are durable single-use tombstones. After a Runner
+    // restart, a lost Execute acknowledgment must not spawn the same attempt.
+    let job_root=Path::new("/attempts").join(job);
+    std::fs::create_dir_all(&job_root)?;
+    let attempt_root=job_root.join(&attempt);
+    std::fs::create_dir(&attempt_root).context("attempt already started")?;
+    let workspace=attempt_root.join("out");
+    std::fs::create_dir(&workspace)?;
     let (program,args): (PathBuf,Vec<String>)=match kind {
         "rust" => (root.join("bin/plugin"),vec![]),
         "python" => (root.join(".venv/bin/python"),vec![root.join("src/main.py").to_string_lossy().into_owned()]),
