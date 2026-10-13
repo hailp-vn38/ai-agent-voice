@@ -131,6 +131,7 @@ pub struct JobView {
     pub plan_revision: i64,
     pub retry_of_job_id: Option<String>,
     pub result: Option<Value>,
+    pub budget_used: Value,
     pub steps: Vec<JobStepView>,
     pub artifacts: Vec<JobArtifactView>,
 }
@@ -141,7 +142,7 @@ pub struct JobArtifactView {
     pub size_bytes: i64,
     pub sha256: String,
 }
-#[derive(Clone, Debug, Serialize, PartialEq, Eq, sqlx::FromRow)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct JobStepView {
     pub step_key: String,
     pub status: String,
@@ -149,6 +150,13 @@ pub struct JobStepView {
     pub operation: Option<String>,
     pub error_code: Option<String>,
     pub attempt_state: Option<String>,
+    pub instruction: String,
+    pub required: bool,
+    pub dependencies: Vec<String>,
+    pub input_refs: Vec<String>,
+    pub arguments: Value,
+    pub output_schema: Value,
+    pub result: Option<Value>,
 }
 #[derive(Debug)]
 pub struct JobReceipt {
@@ -175,8 +183,19 @@ pub enum JobError {
     DatabaseUnavailable,
     DeploymentLock,
     ClockUnavailable,
+    InvalidPlan,
+    ModelFailed,
+    Cancelled,
 }
 impl JobError {
+    pub(crate) fn from_plugin(error: super::plugins::PluginError) -> Self {
+        match error {
+            super::plugins::PluginError::JobRejected(error) => error,
+            super::plugins::PluginError::DatabaseUnavailable => Self::DatabaseUnavailable,
+            super::plugins::PluginError::SandboxUnavailable => Self::RuntimeUnavailable,
+            _ => Self::CapabilityUnavailable,
+        }
+    }
     pub fn code(self) -> &'static str {
         match self {
             Self::InvalidArguments => "invalid_arguments",
@@ -196,6 +215,9 @@ impl JobError {
             Self::DatabaseUnavailable => "database_unavailable",
             Self::DeploymentLock => "deployment_lock_unavailable",
             Self::ClockUnavailable => "clock_unavailable",
+            Self::InvalidPlan => "invalid_plan",
+            Self::ModelFailed => "llm_execution_failed",
+            Self::Cancelled => "cancelled",
         }
     }
 }

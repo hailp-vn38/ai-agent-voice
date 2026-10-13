@@ -141,27 +141,45 @@ pub(super) async fn artifact(
     {
         return failure(&request, JobError::NotFound);
     }
-    match engine.read_artifact(&id, &artifact_id).await {
-        Ok(bytes) => (
-            [
-                (
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static("application/octet-stream"),
-                ),
-                (
-                    header::X_CONTENT_TYPE_OPTIONS,
-                    HeaderValue::from_static("nosniff"),
-                ),
-                (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
-                (
-                    header::CONTENT_DISPOSITION,
-                    HeaderValue::from_str(&format!("attachment; filename=\"{artifact_id}\""))
-                        .expect("UUID header"),
-                ),
-            ],
-            Body::from(bytes),
-        )
-            .into_response(),
+    match engine.open_artifact(&id, &artifact_id).await {
+        Ok((file, size)) => {
+            let stream = futures_util::stream::try_unfold(
+                (file, size),
+                |(mut file, remaining)| async move {
+                    use tokio::io::AsyncReadExt;
+                    if remaining == 0 {
+                        return Ok::<_, std::io::Error>(None);
+                    }
+                    let mut bytes = vec![0u8; remaining.min(65536) as usize];
+                    let read = file.read(&mut bytes).await?;
+                    if read == 0 {
+                        return Err(std::io::Error::other("artifact_truncated"));
+                    }
+                    bytes.truncate(read);
+                    Ok(Some((bytes, (file, remaining - read as u64))))
+                },
+            );
+            (
+                [
+                    (
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/octet-stream"),
+                    ),
+                    (
+                        header::X_CONTENT_TYPE_OPTIONS,
+                        HeaderValue::from_static("nosniff"),
+                    ),
+                    (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        HeaderValue::from_str(&format!("attachment; filename=\"{artifact_id}\""))
+                            .expect("UUID header"),
+                    ),
+                ],
+                Body::from_stream(stream),
+            )
+                .into_response()
+        }
         Err(cause) => failure(&request, cause),
     }
 }
@@ -184,5 +202,46 @@ pub(super) async fn cancel(
             Err(e) => failure(&request, e),
         },
         Err(e) => failure(&request, e),
+    }
+}
+pub(super) async fn retry(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Retry {
+        confirm_safe_read_only: bool,
+    }
+    let key = match request.headers().get("Idempotency-Key") {
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value.to_owned()),
+            Err(_) => return failure(&request, JobError::InvalidArguments),
+        },
+        None => None,
+    };
+    let (request, input): (_, Retry) = match json(request).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let engine = match runtime(&state) {
+        Ok(engine) => engine,
+        Err(error) => return failure(&request, error),
+    };
+    match engine
+        .retry(&id, input.confirm_safe_read_only, key.as_deref())
+        .await
+    {
+        Ok(receipt) => (
+            if receipt.replayed {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            },
+            Json(receipt.job),
+        )
+            .into_response(),
+        Err(error) => failure(&request, error),
     }
 }

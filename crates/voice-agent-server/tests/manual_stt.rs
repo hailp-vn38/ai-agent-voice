@@ -487,6 +487,7 @@ fn auto_actor_with_counting_vad(vad: Arc<VadWorkerRuntime>) -> SessionActor {
         4,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: Arc::new(AsrWorkerRuntime::new(
                 Arc::new(FakeAsr {
                     final_text: "unused".into(),
@@ -528,6 +529,7 @@ fn auto_actor_for_duplicate_start(
         4,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: Arc::new(AsrWorkerRuntime::new(asr, config.clone())),
             vad: Arc::new(VadWorkerRuntime::new(vad, config)),
             llm: Arc::new(LlmRuntime::new(
@@ -760,6 +762,7 @@ fn auto_cycle_opens_asr_after_speech_start_and_rearms_only_after_reset_done() {
         4,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr,
             vad,
             llm: Arc::new(LlmRuntime::new(
@@ -834,6 +837,7 @@ fn auto_retains_pre_roll_and_all_pcm_arrived_while_vad_events_lag() {
         4,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: Arc::new(AsrWorkerRuntime::new(
                 Arc::new(RecordingAsr {
                     pushed_samples: Arc::clone(&pushed_samples),
@@ -900,6 +904,7 @@ fn stale_vad_probability_before_reset_does_not_open_asr_for_the_new_cycle() {
         4,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: Arc::new(AsrWorkerRuntime::new(
                 Arc::new(RecordingAsr {
                     pushed_samples: Arc::clone(&pushed_samples),
@@ -971,6 +976,7 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
         2,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: Arc::clone(&runtime),
             vad: Arc::clone(&vad),
             llm: Arc::new(LlmRuntime::new(
@@ -992,6 +998,7 @@ fn active_turn_capacity_denial_finishes_without_stt_or_history() {
         2,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: runtime,
             vad,
             llm: Arc::new(LlmRuntime::new(

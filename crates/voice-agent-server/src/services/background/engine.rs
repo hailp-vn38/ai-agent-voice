@@ -14,16 +14,19 @@ pub struct JobEngine {
     pub(crate) config: Arc<AppConfig>,
     pub(crate) wake: Notify,
     pub(crate) running: AtomicBool,
-    // Only crate-local cfg(test) harness construction can set this. P3 must replace
-    // it with actual planner/worker/runner readiness before enabling production.
+    // Only the P0/P2 cfg(test) persistence harness bypasses model execution.
     pub(crate) foundation_harness: bool,
+    pub(crate) models: Option<Arc<dyn super::models::JobModels>>,
+    pub(crate) cancellations:
+        std::sync::Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>,
+    pub(crate) voice_submissions: Arc<tokio::sync::Semaphore>,
 }
 impl JobEngine {
     pub fn active_submissions(&self) -> usize {
         self.active_submissions.load(Ordering::Acquire)
     }
     pub fn runtime_ready(&self) -> bool {
-        self.foundation_harness && self.running.load(Ordering::Acquire)
+        (self.foundation_harness || self.models.is_some()) && self.running.load(Ordering::Acquire)
     }
     pub async fn settings(&self) -> Result<BackgroundSettings, JobError> {
         let (settings, revision) = self.database.background_settings().await?;
@@ -48,11 +51,12 @@ impl JobEngine {
             return Err(JobError::RuntimeUnavailable);
         }
         let mut connection = self.database.pool().acquire().await?;
+        let mut pins = Vec::new();
         for reference in [&input.orchestrator_llm_provider, &input.worker_llm_provider]
             .into_iter()
             .flatten()
         {
-            providers::pin(&mut connection, &self.config, reference).await?;
+            pins.push(providers::pin(&mut connection, &self.config, reference).await?);
         }
         if input.enabled
             && (input.orchestrator_llm_provider.is_none() || input.worker_llm_provider.is_none())
@@ -63,6 +67,13 @@ impl JobEngine {
             return Err(JobError::CapacityUnavailable);
         }
         drop(connection);
+        if input.enabled
+            && let Some(models) = &self.models
+        {
+            for pin in pins {
+                models.ready(&pin, now()?.saturating_add(5)).await?;
+            }
+        }
         self.database
             .save_background_settings(&input, expected)
             .await?;
@@ -84,17 +95,123 @@ impl JobEngine {
         let _submission = self.submission_gate.read().await;
         self.active_submissions.fetch_add(1, Ordering::AcqRel);
         let _activity = SubmissionActivity(&self.active_submissions);
+        // Replay is checked before live preflight so a lost committed ACK remains readable.
+        if let Some(key) = key
+            && let Some(old) = self.database.receipt_by_key(requester, key).await?
+        {
+            if old.job.request != input || old.job.retry_of_job_id.is_some() {
+                return Err(JobError::IdempotencyConflict);
+            }
+            return Ok(old);
+        }
+        let pair = self.validate_pair().await?;
         let receipt = self
             .database
-            .submit_job(&self.config, input, requester, key, now()?, || {
-                self.runtime_ready()
-            })
+            .submit_job(
+                &self.config,
+                input,
+                requester,
+                crate::database::jobs::SubmissionIdentity {
+                    key,
+                    retry_of: None,
+                    validated_pair: pair.as_ref(),
+                },
+                now()?,
+                || self.runtime_ready(),
+            )
             .await?;
         self.wake.notify_one();
         Ok(receipt)
     }
     pub async fn get(&self, id: &str) -> Result<JobView, JobError> {
         self.database.job_view(id).await
+    }
+    pub async fn retry(
+        &self,
+        id: &str,
+        confirm_safe_read_only: bool,
+        key: Option<&str>,
+    ) -> Result<JobReceipt, JobError> {
+        if !confirm_safe_read_only
+            || key.is_some_and(|key| {
+                key.is_empty()
+                    || key.len() > 128
+                    || !key.bytes().all(|byte| byte.is_ascii_graphic())
+            })
+        {
+            return Err(JobError::InvalidArguments);
+        }
+        let old = self.get(id).await?;
+        if !matches!(old.status.as_str(), "failed" | "cancelled") {
+            return Err(JobError::Terminal);
+        }
+        let generated = uuid::Uuid::new_v4().to_string();
+        let _submission = self.submission_gate.read().await;
+        self.active_submissions.fetch_add(1, Ordering::AcqRel);
+        let _activity = SubmissionActivity(&self.active_submissions);
+        if let Some(key) = key
+            && let Some(old) = self
+                .database
+                .receipt_by_key(&JobRequester::Admin, key)
+                .await?
+        {
+            if old.job.retry_of_job_id.as_deref() != Some(id) {
+                return Err(JobError::IdempotencyConflict);
+            }
+            return Ok(old);
+        }
+        let pair = self.validate_pair().await?;
+        let receipt = self
+            .database
+            .submit_job(
+                &self.config,
+                old.request,
+                &JobRequester::Admin,
+                crate::database::jobs::SubmissionIdentity {
+                    key: Some(key.unwrap_or(&generated)),
+                    retry_of: Some(id),
+                    validated_pair: pair.as_ref(),
+                },
+                now()?,
+                || self.runtime_ready(),
+            )
+            .await?;
+        self.wake.notify_one();
+        Ok(receipt)
+    }
+    async fn validate_pair(&self) -> Result<Option<[ProviderPin; 2]>, JobError> {
+        let Some(models) = &self.models else {
+            return Ok(None);
+        };
+        let (settings, _) = self.database.background_settings().await?;
+        if !settings.enabled {
+            return Err(JobError::Disabled);
+        }
+        let mut connection = self.database.pool().acquire().await?;
+        let orchestrator = providers::pin(
+            &mut connection,
+            &self.config,
+            settings
+                .orchestrator_llm_provider
+                .as_deref()
+                .ok_or(JobError::ProviderUnavailable)?,
+        )
+        .await?;
+        let worker = providers::pin(
+            &mut connection,
+            &self.config,
+            settings
+                .worker_llm_provider
+                .as_deref()
+                .ok_or(JobError::ProviderUnavailable)?,
+        )
+        .await?;
+        drop(connection);
+        let pair = [orchestrator, worker];
+        for pin in &pair {
+            models.ready(pin, now()?.saturating_add(5)).await?;
+        }
+        Ok(Some(pair))
     }
     pub async fn list(
         &self,
@@ -125,7 +242,17 @@ impl JobEngine {
         self.database.list_jobs(page, size, status, q).await
     }
     pub async fn cancel(&self, id: &str) -> Result<JobView, JobError> {
-        self.database.cancel_job(id, now()?).await
+        let job = self.database.cancel_job(id, now()?).await?;
+        if let Some(token) = self
+            .cancellations
+            .lock()
+            .expect("Job cancellations")
+            .get(id)
+        {
+            token.cancel();
+        }
+        self.wake.notify_one();
+        Ok(job)
     }
 }
 struct SubmissionActivity<'a>(&'a AtomicUsize);

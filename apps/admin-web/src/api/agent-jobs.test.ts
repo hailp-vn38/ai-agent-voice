@@ -73,4 +73,13 @@ describe('Agent Job admin clients', () => {
     expect(await artifact.text()).toBe('fixture result')
     expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs/job%201/artifacts/artifact%2F1')
   })
+  it('retries as a linked new Job with an explicit safe-read review and replay key', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ id: 'new', retry_of_job_id: 'old', status: 'queued' }))
+    vi.stubGlobal('fetch', fetch)
+    await agentJobsApi.retryJob('old', 'retry-once')
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs/old/retry')
+    const init = fetch.mock.calls[0]?.[1] as RequestInit
+    expect(new Headers(init.headers).get('Idempotency-Key')).toBe('retry-once')
+    expect(JSON.parse(String(init.body))).toEqual({ confirm_safe_read_only: true })
+  })
 })

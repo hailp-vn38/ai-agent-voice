@@ -7,8 +7,8 @@ use crate::{
     providers::llm::ToolDefinition,
     tools::{
         builtin::{
-            BuiltinTool, EXIT_TOOL_NAME, SWITCH_TEMPLATE_TOOL_NAME, exit_tool_definition,
-            switch_template_tool_definition,
+            BuiltinTool, CREATE_JOB_TOOL_NAME, EXIT_TOOL_NAME, SWITCH_TEMPLATE_TOOL_NAME,
+            create_job_tool_definition, exit_tool_definition, switch_template_tool_definition,
         },
         device_mcp::LlmVisibleTool,
         external_mcp::{ResolvedExternalMcp, ResolvedExternalTool},
@@ -18,7 +18,7 @@ use crate::{
 /// A builtin tool must not be shadowed by, or shadow, a Device MCP tool. Sanitized MCP names can
 /// never contain a dot, so the dotted server action is unambiguous while the exit tool is filtered.
 pub(super) fn is_builtin_tool_name(name: &str) -> bool {
-    name == EXIT_TOOL_NAME || name == SWITCH_TEMPLATE_TOOL_NAME
+    name == EXIT_TOOL_NAME || name == SWITCH_TEMPLATE_TOOL_NAME || name == CREATE_JOB_TOOL_NAME
 }
 
 /// Where one ToolCall goes, decided from the name the model used and nothing else.
@@ -40,6 +40,9 @@ impl SessionActor {
     /// returns is a property of the session rather than a snapshot of anything that can change.
     pub(in super::super) fn available_llm_tools(&self) -> Vec<ToolDefinition> {
         let mut tools = vec![exit_tool_definition()];
+        if self.job_submit.is_some() {
+            tools.push(create_job_tool_definition());
+        }
         if !self.switch_catalog.is_empty() {
             tools.push(switch_template_tool_definition(
                 &self.switch_catalog.template_keys(),
@@ -57,21 +60,32 @@ impl SessionActor {
                 }),
         );
         tools.extend(self.external_mcp.servers().iter().flat_map(|server| {
-            server.tools.iter().map(|tool| ToolDefinition {
-                name: tool.llm_name.clone(),
-                description: tool.description.clone(),
-                parameters: tool.input_schema.clone(),
-            })
+            server
+                .tools
+                .iter()
+                .filter(|tool| !is_builtin_tool_name(&tool.llm_name))
+                .map(|tool| ToolDefinition {
+                    name: tool.llm_name.clone(),
+                    description: tool.description.clone(),
+                    parameters: tool.input_schema.clone(),
+                })
         }));
         if let Some(system) = &self.system_mcp {
-            tools.extend(system.tools.clone());
+            tools.extend(
+                system
+                    .tools
+                    .iter()
+                    .filter(|tool| !is_builtin_tool_name(&tool.name))
+                    .cloned(),
+            );
         }
         tools
     }
 
     /// Whether this session holds a tool that can change the final answer.
     pub(in super::super) fn offers_answer_changing_tools(&self) -> bool {
-        !self.mcp.visible.is_empty()
+        (self.job_submit.is_some() && self.llm_runtime.supports_tools())
+            || !self.mcp.visible.is_empty()
             || !self.external_mcp.is_empty()
             || self
                 .system_mcp
@@ -80,6 +94,12 @@ impl SessionActor {
     }
 
     pub(in super::super) fn resolve_tool(&self, name: &str) -> Option<ToolTarget> {
+        if name == CREATE_JOB_TOOL_NAME {
+            return self
+                .job_submit
+                .as_ref()
+                .map(|_| ToolTarget::Builtin(BuiltinTool::CreateJob));
+        }
         if name == EXIT_TOOL_NAME {
             return Some(ToolTarget::Builtin(BuiltinTool::EndConversation));
         }
@@ -110,6 +130,9 @@ impl SessionActor {
         calls
             .iter()
             .fold(McpResultDelivery::Silent, |selected, call| {
+                if call.name == CREATE_JOB_TOOL_NAME {
+                    return McpResultDelivery::LlmThenTts;
+                }
                 let delivery = self
                     .mcp
                     .visible

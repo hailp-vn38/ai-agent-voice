@@ -1,5 +1,6 @@
 mod archive;
 mod builder;
+mod contracts;
 mod dispatch;
 #[allow(dead_code)]
 mod protocol;
@@ -37,6 +38,7 @@ pub enum PluginError {
     WorkerTimeout,
     WorkerDeadlineExceeded,
     WorkerCapacityUnavailable,
+    WorkerUnreaped,
     JobRejected(crate::services::background::JobError),
 }
 impl PluginError {
@@ -59,6 +61,7 @@ impl PluginError {
             Self::WorkerTimeout => "worker_timeout",
             Self::WorkerDeadlineExceeded => "deadline_exceeded",
             Self::WorkerCapacityUnavailable => "background_capacity_unavailable",
+            Self::WorkerUnreaped => "worker_unreaped",
             Self::JobRejected(error) => error.code(),
         }
     }

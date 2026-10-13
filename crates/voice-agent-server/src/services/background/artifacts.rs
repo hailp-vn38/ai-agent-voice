@@ -17,6 +17,69 @@ pub(crate) fn root(database: &Database) -> Result<PathBuf, JobError> {
 #[cfg(test)]
 mod tests;
 
+/// Verify the immutable artifact through one descriptor, then stream that same inode.
+pub(crate) async fn open_checked(
+    path: PathBuf,
+    max_bytes: u64,
+    expected_size: u64,
+    expected_sha: String,
+) -> io::Result<std::fs::File> {
+    tokio::task::spawn_blocking(move || {
+        use sha2::{Digest, Sha256};
+        use std::io::{Seek, SeekFrom};
+        #[cfg(unix)]
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NOFOLLOW);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        #[cfg(unix)]
+        let single_link = metadata.nlink() == 1;
+        #[cfg(not(unix))]
+        let single_link = true;
+        if !metadata.is_file()
+            || !single_link
+            || metadata.len() != expected_size
+            || expected_size > max_bytes
+        {
+            return Err(io::Error::other("artifact_file_invalid"));
+        }
+        let mut hash = Sha256::new();
+        let mut buffer = [0u8; 65536];
+        let mut size = 0u64;
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            size = size
+                .checked_add(count as u64)
+                .ok_or_else(|| io::Error::other("artifact_size_invalid"))?;
+            if size > max_bytes {
+                return Err(io::Error::other("artifact_size_invalid"));
+            }
+            hash.update(&buffer[..count]);
+        }
+        let actual: String = hash
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if size != expected_size
+            || actual != expected_sha
+            || file.metadata()?.len() != expected_size
+        {
+            return Err(io::Error::other("artifact_hash_invalid"));
+        }
+        file.seek(SeekFrom::Start(0))?;
+        Ok(file)
+    })
+    .await
+    .map_err(|_| io::Error::other("artifact_open_task_failed"))?
+}
+
 /// Open the final component without following a link, then validate the same
 /// open inode before reading. Callers also require a server-owned parent path.
 pub(crate) async fn read_regular(path: PathBuf, max_bytes: u64) -> io::Result<Vec<u8>> {

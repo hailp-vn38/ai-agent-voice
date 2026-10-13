@@ -361,6 +361,14 @@ pub(crate) async fn handler(
                 socket,
                 config,
                 SocketRuntimes {
+                    job_submit: crate::services::background::VoiceJobSubmit::admitted(
+                        state
+                            .background
+                            .as_ref()
+                            .map(|runtime| runtime.engine.clone()),
+                        profile.device_db_id,
+                        profile.agent_id,
+                    ),
                     asr: resolved_runtimes.asr,
                     vad: resolved_runtimes.vad,
                     llm: resolved_runtimes.llm,
@@ -533,6 +541,7 @@ fn valid_device_identity(value: &str) -> bool {
 }
 
 struct SocketRuntimes {
+    job_submit: Option<crate::services::background::VoiceJobSubmit>,
     active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     database: Option<Arc<crate::database::Database>>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
@@ -668,6 +677,7 @@ async fn handle_socket(
     let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
     let (writer_event_tx, writer_event_rx) = mpsc::channel(config.limits.session_event_queue);
     let generation_gate = Arc::new(crate::session::GenerationGate::new());
+    let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     // The writer reads this to learn the application stopped it. It must outlive SessionActor's own
     // sender — an actor that ends for an ordinary reason would otherwise stop the writer mid-drain —
@@ -683,6 +693,7 @@ async fn handle_socket(
         config.max_capture_frames(),
         config.llm.max_history_messages,
         SessionRuntimes {
+            job_submit: runtimes.job_submit,
             asr: runtimes.asr,
             vad: runtimes.vad,
             llm: runtimes.llm,
@@ -699,6 +710,13 @@ async fn handle_socket(
             return;
         }
     };
+    if actor.job_submit_available_without_tool_support() {
+        tracing::warn!(
+            event = "voice_job_prerequisite_unavailable",
+            code = "llm_tool_calls_unavailable",
+            "Admitted Agent has no tool-capable Voice LLM"
+        );
+    }
     let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
     let actor = actor
         .with_direct_session_close(replacement_close.clone())
@@ -769,7 +787,8 @@ async fn handle_socket(
         .with_tool_round_limits(crate::tools::round::ToolRoundLimits::from_config(
             &config.llm.tools,
         ))
-        .with_writer_events(writer_event_rx);
+        .with_writer_events(writer_event_rx)
+        .with_job_mailbox(ingress_tx.clone());
     let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
         .expect("ServerHello is serializable");
     if actor.send_control(server_hello).is_err() {
@@ -911,7 +930,6 @@ async fn handle_socket(
         let _ = pipeline_writer_done.send(true);
     });
 
-    let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
     if physical_connection {
         active_device_sessions.register(
             device_db_id,

@@ -2,7 +2,7 @@
 
 **Codebase baseline:** `hailp-vn38/ai-agent-voice`, branch `integration/voice-reminders-direct-tts` (as reviewed 2026-10-13).
 
-**Status:** P0 durable foundation is implemented; Admin Web pages/API clients also exist. Production Background remains disabled and submission returns `runtime_unavailable` until P3 planner/worker readiness. P0 tests use a crate-local `cfg(test)` foundation harness to commit and observe queued LLM-only Jobs. Python/Voice Job E2E and Linux sandbox qualification remain NOT_RUN. See [P0 implementation evidence](P0-IMPLEMENTATION.md).
+**Status:** P0 foundation and P3 source integration are implemented: managed LLM A/B, validated DAG execution, fenced Voice submission, Admin result/retry and checked artifact streaming. Production execution requires the managed ProviderRuntimeManager and an admissible provider pair; a deployment missing the backend still returns `runtime_unavailable`. Real Python/Voice/LLM/browser E2E and Linux sandbox qualification remain `NOT_RUN` here and are assigned to another host by the operator. See [P3 evidence and live commands](P3-IMPLEMENTATION.md) and [P0 evidence](P0-IMPLEMENTATION.md).
 
 P1 installation and P2 execution groundwork have interim implementation commits/evidence; their rootless Linux acceptance gates remain open. See [P1 evidence](P1-IMPLEMENTATION.md) and [P2 evidence](P2-IMPLEMENTATION.md).
 

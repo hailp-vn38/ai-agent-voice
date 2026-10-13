@@ -439,10 +439,11 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
         && database.durable_path().is_some()
     {
         state.background = Some(
-            crate::services::background::BackgroundRuntime::open(
+            crate::services::background::BackgroundRuntime::open_with_manager(
                 database,
                 state.config.clone(),
                 state.lifecycle.stopping().clone(),
+                state.provider_runtime_manager.clone(),
             )
             .await?,
         );

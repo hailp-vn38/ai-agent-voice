@@ -579,6 +579,7 @@ async fn explicit_abort_admits_urgent_stop_and_invalidates_queued_turn_payload_u
         Arc::clone(&tts),
     ));
     let runtimes = voice_agent_server::session::SessionRuntimes {
+        job_submit: None,
         asr: Arc::new(voice_agent_server::workers::AsrWorkerRuntime::new(
             asr,
             voice_agent_server::workers::WorkerRuntimeConfig::default(),

@@ -49,6 +49,7 @@ impl PluginStore {
                 return Err(PluginError::SandboxUnavailable);
             }
         }
+        sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE worker_instance_id IS NOT NULL AND job_id IN (SELECT id FROM jobs WHERE status IN ('failed','cancelled','succeeded','partial_success'))").execute(self.database.pool()).await?;
         Ok(())
     }
 }

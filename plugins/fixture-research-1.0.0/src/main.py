@@ -70,7 +70,7 @@ def handle(request: dict) -> dict:
         raise PluginInputError("invalid_request", "request_id must be 1-128 characters")
     if request.get("schema_version") != 1:
         raise PluginInputError("invalid_request", "Unsupported schema_version")
-    if set(request) != {"schema_version", "request_id", "operation", "arguments", "artifact_dir"}:
+    if set(request) - {"schema_version", "request_id", "operation", "arguments", "artifact_dir", "inputs"} or not {"schema_version", "request_id", "operation", "arguments", "artifact_dir"}.issubset(request):
         raise PluginInputError("invalid_request", "Unexpected or missing request fields")
     operation = request["operation"]
     arguments = request["arguments"]

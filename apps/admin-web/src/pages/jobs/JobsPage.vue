@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { Activity, ArrowRight, ClipboardList, Clock3, FileText, Plus, RefreshCw, Search, Square, Workflow } from '@lucide/vue'
+import { Activity, ArrowRight, ClipboardList, Clock3, FileText, Plus, RefreshCw, RotateCcw, Search, Square, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BaseModal from '@/components/admin/BaseModal.vue'
+import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -25,9 +26,14 @@ const backendPending = ref(false)
 const detail = ref<AdminJob | null>(null)
 const detailOpen = ref(false)
 const createOpen = ref(false)
+const retryOpen = ref(false)
 const goal = ref('')
 let controller: AbortController | undefined
 let pollTimer: ReturnType<typeof setInterval> | undefined
+let polling = false
+let detailController: AbortController | undefined
+let creation = { goal: '', key: '' }
+let retryRequest = { id: '', key: '' }
 
 const activeCount = computed(() => jobs.value.filter((job) => ['queued', 'planning', 'running', 'cancelling'].includes(job.status)).length)
 const completedCount = computed(() => jobs.value.filter((job) => ['succeeded', 'partial_success'].includes(job.status)).length)
@@ -97,7 +103,11 @@ async function openDetail(item: AdminJob) {
   detail.value = item
   detailOpen.value = true
   try {
-    detail.value = await agentJobsApi.job(item.id)
+    detailController?.abort()
+    const pending = new AbortController()
+    detailController = pending
+    const loaded = await agentJobsApi.job(item.id, pending.signal)
+    if (!pending.signal.aborted && detail.value?.id === item.id) detail.value = loaded
   } catch (cause) {
     error.value = formatApiError(cause)
   }
@@ -108,7 +118,9 @@ async function create() {
   error.value = ''
   notice.value = ''
   try {
-    const job = await agentJobsApi.createJob(goal.value.trim())
+    if (creation.goal !== goal.value.trim()) creation = { goal: goal.value.trim(), key: crypto.randomUUID() }
+    const job = await agentJobsApi.createJob(goal.value.trim(), creation.key)
+    creation = { goal: '', key: '' }
     createOpen.value = false
     goal.value = ''
     notice.value = t('jobUi.jobCreated')
@@ -136,19 +148,35 @@ async function cancel() {
     busy.value = false
   }
 }
+async function retry() {
+  const item = detail.value
+  if (!item || busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    if (retryRequest.id !== item.id) retryRequest = { id: item.id, key: crypto.randomUUID() }
+    const job = await agentJobsApi.retryJob(item.id, retryRequest.key)
+    retryRequest = { id: '', key: '' }
+    notice.value = t('jobUi.jobCreated')
+    await load()
+    await openDetail(job)
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally { busy.value = false }
+}
 onMounted(() => {
   void load()
   pollTimer = setInterval(async () => {
-    if (loading.value || busy.value) return
-    await load(page.value)
-    if (detailOpen.value && detail.value && !terminal(detail.value.status)) {
-      try { detail.value = await agentJobsApi.job(detail.value.id) }
-      catch (cause) { error.value = formatApiError(cause) }
-    }
+    if (loading.value || busy.value || polling) return
+    polling = true
+    try {
+      await load(page.value)
+      if (detailOpen.value && detail.value && !terminal(detail.value.status)) await openDetail(detail.value)
+    } finally { polling = false }
   }, 5000)
 })
 onBeforeUnmount(() => {
   controller?.abort()
+  detailController?.abort()
   if (pollTimer) clearInterval(pollTimer)
 })
 </script>
@@ -266,6 +294,8 @@ onBeforeUnmount(() => {
             <div class="mt-1 size-2 shrink-0 rounded-full bg-studio-violet" />
             <div class="min-w-0 flex-1">
               <p class="font-medium">{{ step.step_key }}<span v-if="step.plugin_id"> · {{ step.plugin_id }} / {{ step.operation }}</span></p>
+              <p class="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{{ step.instruction }}</p>
+              <p v-if="step.dependencies.length" class="mt-1 text-xs text-muted-foreground">{{ step.dependencies.join(' → ') }}</p>
               <p class="mt-1 text-xs text-muted-foreground">{{ step.status }}<span v-if="step.attempt_state"> · {{ step.attempt_state }}</span><span v-if="step.error_code"> · {{ step.error_code }}</span></p>
             </div>
           </div>
@@ -281,8 +311,13 @@ onBeforeUnmount(() => {
           <Button v-if="!terminal(detail.status) && detail.status !== 'cancelling'" variant="outline" :disabled="busy" @click="cancel()">
             <Square class="size-4" />{{ t('jobUi.cancelJob') }}
           </Button>
+          <Button v-if="['failed', 'cancelled'].includes(detail.status)" :disabled="busy" @click="retryOpen = true"><RotateCcw class="size-4" />{{ t('jobUi.retryJob') }}</Button>
         </div>
       </div>
     </BaseModal>
+    <ConfirmDialog v-model="retryOpen" :title="t('jobUi.retryJob')" :confirm-label="t('jobUi.retryJob')" @confirm="retry">
+      <p>{{ t('jobUi.retryConfirm') }}</p>
+      <p v-if="detail?.steps.some(step => step.attempt_state === 'unknown_outcome')" class="text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
+    </ConfirmDialog>
   </section>
 </template>

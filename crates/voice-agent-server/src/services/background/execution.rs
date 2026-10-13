@@ -7,6 +7,35 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 impl JobEngine {
+    pub(crate) async fn open_artifact(
+        &self,
+        job_id: &str,
+        artifact_id: &str,
+    ) -> Result<(tokio::fs::File, u64), JobError> {
+        if uuid::Uuid::parse_str(job_id).is_err() || uuid::Uuid::parse_str(artifact_id).is_err() {
+            return Err(JobError::InvalidArguments);
+        }
+        let row: Option<(String, i64, String)> = sqlx::query_as(
+            "SELECT relative_path,size_bytes,sha256 FROM job_artifacts WHERE job_id=? AND id=?",
+        )
+        .bind(job_id)
+        .bind(artifact_id)
+        .fetch_optional(self.database.pool())
+        .await?;
+        let (relative, size, sha) = row.ok_or(JobError::NotFound)?;
+        if relative != format!("{job_id}/{artifact_id}") || size < 0 {
+            return Err(JobError::DatabaseUnavailable);
+        }
+        let file = super::artifacts::open_checked(
+            super::artifacts::root(&self.database)?.join(relative),
+            self.config.background.limits.artifact_bytes_per_job,
+            size as u64,
+            sha,
+        )
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        Ok((tokio::fs::File::from_std(file), size as u64))
+    }
     pub(crate) async fn read_artifact(
         &self,
         job_id: &str,
@@ -55,6 +84,51 @@ impl JobEngine {
         choice: &FrozenChoice,
         arguments: Value,
     ) -> Result<JobView, JobError> {
+        self.execute_plugin_step_cancel(
+            job_id,
+            step_key,
+            choice,
+            arguments,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+    }
+    pub(crate) async fn execute_plugin_step_cancel(
+        &self,
+        job_id: &str,
+        step_key: &str,
+        choice: &FrozenChoice,
+        arguments: Value,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<JobView, JobError> {
+        let stored: String = sqlx::query_scalar("SELECT arguments_json FROM job_steps WHERE job_id=? AND step_key=? AND status='pending'").bind(job_id).bind(step_key).fetch_optional(self.database.pool()).await?.ok_or(JobError::Terminal)?;
+        if serde_json::from_str::<Value>(&stored).map_err(|_| JobError::DatabaseUnavailable)?
+            != arguments
+        {
+            return Err(JobError::InvalidPlan);
+        }
+        let refs: String = sqlx::query_scalar(
+            "SELECT input_refs_json FROM job_steps WHERE job_id=? AND step_key=?",
+        )
+        .bind(job_id)
+        .bind(step_key)
+        .fetch_one(self.database.pool())
+        .await?;
+        let refs: Vec<String> =
+            serde_json::from_str(&refs).map_err(|_| JobError::DatabaseUnavailable)?;
+        let mut inputs = serde_json::Map::new();
+        for key in refs {
+            let raw:Option<String>=sqlx::query_scalar("SELECT result_json FROM job_steps WHERE job_id=? AND step_key=? AND status='succeeded'").bind(job_id).bind(&key).fetch_optional(self.database.pool()).await?.flatten();
+            inputs.insert(
+                key,
+                serde_json::from_str(&raw.ok_or(JobError::InvalidPlan)?)
+                    .map_err(|_| JobError::DatabaseUnavailable)?,
+            );
+        }
+        let inputs = Value::Object(inputs);
+        if inputs.to_string().len() > 32768 {
+            return Err(JobError::CapacityUnavailable);
+        }
         let attempt = uuid::Uuid::new_v4().to_string();
         let deadline_at = self.get(job_id).await?.deadline_at;
         self.database
@@ -64,6 +138,7 @@ impl JobEngine {
             .plugins
             .invoke(
                 Invocation {
+                    inputs,
                     choice,
                     arguments,
                     job_id,
@@ -72,6 +147,7 @@ impl JobEngine {
                         self.config.background.limits.step_timeout_seconds.into(),
                     ),
                     deadline_at,
+                    cancellation,
                 },
                 || async {
                     self.database
@@ -89,6 +165,7 @@ impl JobEngine {
             .await;
         match result {
             Ok(output) => {
+                sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE job_id=? AND step_key=? AND attempt_id=?").bind(job_id).bind(step_key).bind(&attempt).execute(self.database.pool()).await?;
                 let root = super::artifacts::root(&self.database)?.join(job_id);
                 tokio::fs::create_dir_all(&root)
                     .await
@@ -142,7 +219,10 @@ impl JobEngine {
                             &attempt,
                             &output.result,
                             &records,
-                            self.config.background.limits.artifact_bytes_per_job,
+                            (
+                                self.config.background.limits.artifact_bytes_per_job,
+                                self.foundation_harness,
+                            ),
                         )
                         .await
                 }
@@ -155,11 +235,25 @@ impl JobEngine {
                         let _ = tokio::fs::remove_file(path).await;
                     }
                     self.database
-                        .finish_plugin_failure(job_id, step_key, &attempt, error.code(), false)
+                        .finish_plugin_failure(
+                            job_id,
+                            step_key,
+                            &attempt,
+                            error.code(),
+                            false,
+                            self.foundation_harness,
+                        )
                         .await?;
                 }
             }
             Err(error) => {
+                if error == PluginError::WorkerUnreaped {
+                    self.running
+                        .store(false, std::sync::atomic::Ordering::Release);
+                }
+                if error != PluginError::WorkerUnreaped {
+                    sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE job_id=? AND step_key=? AND attempt_id=?").bind(job_id).bind(step_key).bind(&attempt).execute(self.database.pool()).await?;
+                }
                 let code = error.code();
                 self.database
                     .finish_plugin_failure(
@@ -172,13 +266,17 @@ impl JobEngine {
                             PluginError::WorkerTimeout
                                 | PluginError::WorkerDeadlineExceeded
                                 | PluginError::SandboxUnavailable
+                                | PluginError::WorkerUnreaped
+                                | PluginError::JobRejected(JobError::Cancelled)
                         ),
+                        self.foundation_harness,
                     )
                     .await?;
                 if matches!(
                     error,
                     PluginError::PluginRuntimeError | PluginError::WorkerProtocolError
                 ) {
+                    let _publication = self.database.tool_security.publication.write().await;
                     sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND package_digest=? AND status='ready'")
                         .bind(code).bind(crate::database::unix_seconds()).bind(&choice.plugin_id)
                         .bind(&choice.package_digest).execute(self.database.pool()).await?;

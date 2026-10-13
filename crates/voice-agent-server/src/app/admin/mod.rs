@@ -67,6 +67,7 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             get(background::artifact),
         )
         .route("/jobs/{id}/cancel", axum::routing::post(background::cancel))
+        .route("/jobs/{id}/retry", axum::routing::post(background::retry))
         .route("/agents/{key}/reminders", get(notifications::agent_list))
         .route(
             "/agents/{key}/devices/{device_id}/reminders",

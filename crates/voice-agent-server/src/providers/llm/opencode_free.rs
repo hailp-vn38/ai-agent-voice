@@ -69,6 +69,9 @@ impl OpenCodeFreeProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for OpenCodeFreeProvider {
+    fn supports_tools(&self) -> bool {
+        true
+    }
     fn adapter(&self) -> &'static str {
         "opencode_free"
     }

@@ -31,3 +31,7 @@ Canonical design: [`docs/agent-job-plugin-platform-codebase-design.md`](docs/age
 ## Current P0 scope
 
 [P0-IMPLEMENTATION.md](P0-IMPLEMENTATION.md) records the foundation tracer and commands. The P0 harness is LLM-only with an immutable empty Plugin choice set. It observes `queued` through the scheduler but never claims planning or Python execution. Actual container-start races, orphan killing, Plugin eligibility and frozen permission tests require P1/P2/P4. Production has no switch to enable the harness.
+
+## Current P3 source scope
+
+[P3-IMPLEMENTATION.md](P3-IMPLEMENTATION.md) records the managed planner/Worker, durable DAG/replan, Voice builtin, Admin retry and streaming implementation, deterministic source gates, and executable live-host tracer. The operator explicitly deferred real rootless/LLM/browser E2E to another host. P3 source work is recorded separately from its hard live exit gate, which stays `NOT_RUN`; deployment acceptance and P4 qualification are not claimed.

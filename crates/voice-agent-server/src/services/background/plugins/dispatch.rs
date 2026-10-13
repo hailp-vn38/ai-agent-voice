@@ -63,12 +63,14 @@ pub(crate) struct InvokeResult {
 
 #[allow(dead_code)]
 pub(crate) struct Invocation<'a> {
+    pub inputs: serde_json::Value,
     pub choice: &'a FrozenChoice,
     pub arguments: serde_json::Value,
     pub job_id: &'a str,
     pub attempt_id: &'a str,
     pub timeout: std::time::Duration,
     pub deadline_at: i64,
+    pub cancellation: tokio_util::sync::CancellationToken,
 }
 
 impl PluginStore {
@@ -86,14 +88,19 @@ impl PluginStore {
         Started: std::future::Future<Output = Result<(), PluginError>>,
     {
         let Invocation {
+            inputs,
             choice,
             arguments,
             job_id,
             attempt_id,
             timeout,
             deadline_at,
+            cancellation,
         } = invocation;
-        let _worker = acquire_worker_until(&self.worker_slots, deadline_at).await?;
+        let _worker = tokio::select! {
+            _ = cancellation.cancelled() => return Err(PluginError::JobRejected(crate::services::background::JobError::Cancelled)),
+            result = acquire_worker_until(&self.worker_slots, deadline_at) => result?,
+        };
         let row = self.row(&choice.plugin_id).await?;
         if row.status != "ready"
             || row.version != choice.version
@@ -172,14 +179,17 @@ impl PluginStore {
         .await?;
         let outcome = async {
             let _publication = self.database.tool_security.publication.read().await;
+            if cancellation.is_cancelled() { return Err(PluginError::JobRejected(crate::services::background::JobError::Cancelled)); }
             before_start().await?;
             prepared.start_container(&self.config).await?;
             after_start().await?;
             drop(_publication);
-            let request = serde_json::to_vec(&json!({
+            let mut envelope=json!({
                 "schema_version":1,"request_id":attempt_id,"operation":choice.operation,
                 "arguments":arguments,"artifact_dir":"/work/out"
-            }))
+            });
+            if inputs.as_object().is_some_and(|inputs| !inputs.is_empty()) {envelope["inputs"]=inputs;}
+            let request = serde_json::to_vec(&envelope)
             .map_err(|_| PluginError::InvalidPackage)?;
             if request.len() > 65535 {
                 return Err(PluginError::InvalidPackage);
@@ -189,9 +199,10 @@ impl PluginStore {
             let execution_limit = timeout.min(
                 remaining_until(deadline_at).map_err(|_| PluginError::WorkerDeadlineExceeded)?,
             );
-            let bytes = prepared
-                .attach(&self.config, &request, execution_limit)
-                .await
+            let bytes = tokio::select! {
+                _ = cancellation.cancelled() => Err(PluginError::JobRejected(crate::services::background::JobError::Cancelled)),
+                result = prepared.attach(&self.config, &request, execution_limit) => result,
+            }
                 .map_err(|error| {
                     if error == PluginError::WorkerTimeout {
                         classify_worker_timeout(deadline_at)
@@ -208,7 +219,7 @@ impl PluginStore {
         .await;
         let reaped = prepared.remove(&self.config).await;
         if reaped.is_err() {
-            return Err(PluginError::SandboxUnavailable);
+            return Err(PluginError::WorkerUnreaped);
         }
         let result = async {
             let response = outcome?;

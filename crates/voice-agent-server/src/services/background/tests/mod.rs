@@ -6,8 +6,10 @@ mod admission;
 mod execution;
 mod http;
 mod locking;
+mod orchestration;
 mod providers;
 mod recovery;
+mod voice_ws;
 
 fn config() -> AppConfig {
     toml::from_str(&format!(
@@ -40,7 +42,7 @@ scheduler_scan_ms=20
     ))
     .unwrap()
 }
-async fn harness() -> (Arc<Database>, Arc<AppConfig>, Arc<BackgroundRuntime>) {
+pub(crate) async fn harness() -> (Arc<Database>, Arc<AppConfig>, Arc<BackgroundRuntime>) {
     let config = Arc::new(config());
     let database = Arc::new(Database::connect(&config.database).await.unwrap());
     let runtime = BackgroundRuntime::foundation_harness(database.clone(), config.clone())
@@ -66,7 +68,7 @@ async fn enable(engine: &JobEngine) {
 fn request(goal: &str) -> JobRequest {
     serde_json::from_value(json!({"goal":goal})).unwrap()
 }
-async fn voice(database: &Database) -> JobRequester {
+pub(crate) async fn voice(database: &Database) -> JobRequester {
     let agent = sqlx::query(
         "INSERT INTO agents(key,name,created_at,updated_at) VALUES('voice-agent','Voice',0,0)",
     )

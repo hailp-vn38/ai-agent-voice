@@ -43,7 +43,9 @@ impl Database {
                 sqlx::query("UPDATE jobs SET status='cancelled',updated_at=? WHERE id=? AND status='cancelling'").bind(now).bind(id).execute(&mut *tx).await?;
             }
             Some("cancelling") => {}
-            Some("planning" | "running") => return Err(JobError::RuntimeUnavailable),
+            Some("planning" | "running") => {
+                sqlx::query("UPDATE jobs SET status='cancelling',updated_at=? WHERE id=? AND status IN ('planning','running')").bind(now).bind(id).execute(&mut *tx).await?;
+            }
             _ => return Err(JobError::Terminal),
         }
         tx.commit().await?;

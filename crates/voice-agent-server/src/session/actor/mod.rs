@@ -130,6 +130,9 @@ pub struct SessionActor {
     trust_client_aec_feature: bool,
     mcp: DeviceMcpState,
     tool_batch: Option<ToolBatchState>,
+    job_submit: Option<crate::services::background::VoiceJobSubmit>,
+    job_mailbox: Option<mpsc::WeakSender<SessionEvent>>,
+    job_pending: Option<tools::job::PendingJobSubmit>,
     llm_messages: Vec<ChatMessage>,
     llm_round: Option<LlmRoundBuffer>,
     /// The shared Tool-round Executor's per-turn state: the caps this deployment validated, how
@@ -486,6 +489,7 @@ pub enum WriterEvent {
 
 /// Application-owned runtimes shared by every voice session.
 pub struct SessionRuntimes {
+    pub job_submit: Option<crate::services::background::VoiceJobSubmit>,
     pub asr: std::sync::Arc<AsrWorkerRuntime>,
     pub vad: std::sync::Arc<VadWorkerRuntime>,
     pub llm: std::sync::Arc<LlmRuntime>,

@@ -83,6 +83,9 @@ impl From<&str> for LlmRequest {
 
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
+    fn supports_tools(&self) -> bool {
+        false
+    }
     fn adapter(&self) -> &'static str;
     fn complete(&self, _: &LlmRequest) -> Result<String, LlmError> {
         Err(LlmError::Failed)
@@ -136,6 +139,9 @@ impl ConfiguredOpenAiLlm {
 
 #[async_trait::async_trait]
 impl LlmProvider for ConfiguredOpenAiLlm {
+    fn supports_tools(&self) -> bool {
+        true
+    }
     fn adapter(&self) -> &'static str {
         "openai"
     }

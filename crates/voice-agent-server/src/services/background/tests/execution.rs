@@ -28,14 +28,28 @@ async fn expired_attempt_cannot_publish_success_or_artifacts() {
         .bind(&job.id).execute(db.pool()).await.unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     assert_eq!(
-        db.finish_plugin_success(&job.id, "one", "attempt-1", &json!({"ok":true}), &[], 1024)
-            .await
-            .unwrap_err(),
+        db.finish_plugin_success(
+            &job.id,
+            "one",
+            "attempt-1",
+            &json!({"ok":true}),
+            &[],
+            (1024, true)
+        )
+        .await
+        .unwrap_err(),
         JobError::DeadlineExceeded
     );
-    db.finish_plugin_failure(&job.id, "one", "attempt-1", "deadline_exceeded", false)
-        .await
-        .unwrap();
+    db.finish_plugin_failure(
+        &job.id,
+        "one",
+        "attempt-1",
+        "deadline_exceeded",
+        false,
+        true,
+    )
+    .await
+    .unwrap();
     let final_job = runtime.engine.get(&job.id).await.unwrap();
     assert_eq!(final_job.status, "failed");
     assert!(final_job.artifacts.is_empty());
@@ -96,7 +110,7 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
         "attempt-1",
         &json!({"summary":"done"}),
         &[],
-        1024,
+        (1024, true),
     )
     .await
     .unwrap();
@@ -105,7 +119,7 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
         "succeeded"
     );
     assert_eq!(
-        db.finish_plugin_failure(&job.id, "collect", "attempt-1", "late", true)
+        db.finish_plugin_failure(&job.id, "collect", "attempt-1", "late", true, true)
             .await
             .unwrap_err(),
         JobError::Terminal

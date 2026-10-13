@@ -29,12 +29,15 @@ export const agentJobsApi = {
   artifact(jobId: string, artifactId: string) {
     return requestBlob(jobPath(jobId) + '/artifacts/' + encodeURIComponent(artifactId))
   },
-  createJob(goal: string) {
+  createJob(goal: string, idempotencyKey?: string) {
     return requestJson<AdminJob>(jobsPath, jsonRequest('POST', {
       goal, output_format: 'text', allow_partial: false,
-    }))
+    }), { headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
   },
   cancelJob(id: string) {
     return requestJson<AdminJob>(jobPath(id) + '/cancel', jsonRequest('POST', {}))
+  },
+  retryJob(id: string, idempotencyKey: string) {
+    return requestJson<AdminJob>(jobPath(id) + '/retry', jsonRequest('POST', { confirm_safe_read_only: true }), { headers: { 'Idempotency-Key': idempotencyKey } })
   },
 }

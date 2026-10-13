@@ -144,6 +144,7 @@ impl SessionActor {
     }
 
     pub(in super::super) fn terminalize_tool_round(&mut self, failure: ToolRoundFailure) {
+        self.job_pending = None;
         warn!(code = failure.code(), "tool round terminalized the turn");
         if let Some(batch) = self.tool_batch.take() {
             self.commit_tool_exchange(&batch);
@@ -160,6 +161,12 @@ impl SessionActor {
         let succeeded = result.as_ref().is_ok_and(|value| {
             value.get("isError").and_then(serde_json::Value::as_bool) != Some(true)
         });
+        if call.name == crate::tools::builtin::CREATE_JOB_TOOL_NAME {
+            let value = result.unwrap_or_else(crate::services::background::voice::rejection);
+            self.record_tool_call(call, value.to_string(), succeeded);
+            self.dispatch_next_tool();
+            return;
+        }
         let content = match result {
             Ok(value) => {
                 crate::session::actor::mcp::log_action_envelope_shape(&value, &call.name);
@@ -239,11 +246,15 @@ impl SessionActor {
     }
 
     fn finish_tool_batch(&mut self) {
-        let Some(batch) = self.tool_batch.take() else {
+        let Some(mut batch) = self.tool_batch.take() else {
             return;
         };
         self.commit_tool_exchange(&batch);
-        if let Some(goodbye) = batch.direct_response {
+        let requires_job_receipt = batch
+            .calls
+            .iter()
+            .any(|call| call.name == crate::tools::builtin::CREATE_JOB_TOOL_NAME);
+        if !requires_job_receipt && let Some(goodbye) = batch.direct_response.take() {
             self.begin_direct_tool_speech(goodbye);
             return;
         }
@@ -306,6 +317,7 @@ impl SessionActor {
     }
 
     pub(in super::super) fn cancel_tool_turn(&mut self) {
+        self.job_pending = None;
         self.template_prepare = None;
         // A Normal writer outcome has sealed a managed boundary; later abort cancels
         // only new interaction/preparation, not that accepted boundary.

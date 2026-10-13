@@ -9,7 +9,7 @@ async fn periodic_scan_observes_lost_wake_and_terminalizes_expired_or_revoked_wo
             &runtime.engine.config,
             request("Lost wake"),
             &JobRequester::Admin,
-            None,
+            Default::default(),
             crate::database::unix_seconds().unwrap(),
             || true,
         )
@@ -46,7 +46,7 @@ async fn periodic_scan_observes_lost_wake_and_terminalizes_expired_or_revoked_wo
             &config,
             request("Expired"),
             &JobRequester::Admin,
-            None,
+            Default::default(),
             crate::database::unix_seconds().unwrap() - 1801,
             || true,
         )

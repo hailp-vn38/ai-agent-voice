@@ -46,6 +46,13 @@ pub(super) fn parse_response(
     }
     let response: Response = serde_json::from_slice(&bytes[..bytes.len() - 1])
         .map_err(|_| PluginError::WorkerProtocolError)?;
+    if response
+        .result
+        .as_ref()
+        .is_some_and(crate::services::background::plan::forbidden)
+    {
+        return Err(PluginError::WorkerProtocolError);
+    }
     if response.schema_version != 1
         || response.request_id != request_id
         || response.artifacts.len() > 16

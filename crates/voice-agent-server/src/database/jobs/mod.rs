@@ -9,7 +9,10 @@ mod recovery;
 // P3 scheduler will consume these durable dispatch transitions.
 #[allow(dead_code)]
 mod execution;
+mod orchestration;
+mod steps;
 mod submission;
+pub(crate) use submission::SubmissionIdentity;
 
 #[derive(FromRow)]
 pub(crate) struct JobRow {
@@ -30,6 +33,7 @@ pub(crate) struct JobRow {
     pub plan_revision: i64,
     pub retry_of_job_id: Option<String>,
     pub result_json: Option<String>,
+    pub budget_used_json: String,
 }
 impl JobRow {
     pub(crate) fn requester(&self) -> Result<JobRequester, JobError> {
@@ -70,6 +74,8 @@ impl JobRow {
                 .result_json
                 .map(|raw| serde_json::from_str(&raw).map_err(|_| JobError::DatabaseUnavailable))
                 .transpose()?,
+            budget_used: serde_json::from_str(&self.budget_used_json)
+                .map_err(|_| JobError::DatabaseUnavailable)?,
             steps,
             artifacts,
         })
@@ -102,8 +108,7 @@ impl Database {
     }
     pub(crate) async fn job_view(&self, id: &str) -> Result<JobView, JobError> {
         let row = self.job_row(id).await?;
-        let steps=sqlx::query_as("SELECT step_key,status,plugin_id,operation,error_code,attempt_state FROM job_steps WHERE job_id=? ORDER BY step_key")
-            .bind(id).fetch_all(self.pool()).await?;
+        let steps = steps::read(self, id).await?;
         let artifacts = sqlx::query_as(
             "SELECT id,media_type,size_bytes,sha256 FROM job_artifacts WHERE job_id=? ORDER BY id",
         )

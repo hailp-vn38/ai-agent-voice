@@ -1,6 +1,7 @@
 mod builtin_actions;
 mod catalog;
 mod external;
+pub(super) mod job;
 mod round;
 
 use super::*;
@@ -22,5 +23,7 @@ mod tests;
 
 mod system;
 
+#[cfg(test)]
+mod job_tests;
 #[cfg(test)]
 mod system_tests;

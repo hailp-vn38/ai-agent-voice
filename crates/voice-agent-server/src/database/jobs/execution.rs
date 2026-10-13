@@ -46,12 +46,23 @@ impl Database {
         attempt_id: &str,
     ) -> Result<(), JobError> {
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
+        let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let updated = sqlx::query("UPDATE job_steps SET status='running',attempt=1,attempt_id=?,attempt_state='reserved',updated_at=? WHERE job_id=? AND step_key=? AND status='pending' AND attempt=0 AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='running' AND deadline_at>?)")
             .bind(attempt_id).bind(now).bind(job_id).bind(step_key).bind(job_id).bind(now)
-            .execute(self.pool()).await?;
+            .execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
             return Err(JobError::Terminal);
         }
+        let step_path = format!(
+            "$.steps.{}.attempts",
+            serde_json::to_string(step_key).map_err(|_| JobError::InvalidArguments)?
+        );
+        let ledger=sqlx::query("UPDATE jobs SET budget_used_json=json_set(budget_used_json,'$.worker_attempts',COALESCE(json_extract(budget_used_json,'$.worker_attempts'),0)+1,?,1) WHERE id=? AND status='running' AND COALESCE(json_extract(budget_used_json,'$.worker_attempts'),0)<json_extract(budget_limit_json,'$.max_steps')")
+            .bind(step_path).bind(job_id).execute(&mut *tx).await?;
+        if ledger.rows_affected() != 1 {
+            return Err(JobError::CapacityUnavailable);
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -138,6 +149,7 @@ impl Database {
         attempt_id: &str,
         code: &str,
         unknown: bool,
+        finish_job: bool,
     ) -> Result<(), JobError> {
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
@@ -148,9 +160,14 @@ impl Database {
         if updated.rows_affected() != 1 {
             return Err(JobError::Terminal);
         }
-        let job = sqlx::query("UPDATE jobs SET status='failed',error_code=?,updated_at=? WHERE id=? AND status='running'")
-            .bind(code).bind(now).bind(job_id).execute(&mut *tx).await?;
-        if job.rows_affected() != 1 {
+        let job = if finish_job {
+            Some(sqlx::query("UPDATE jobs SET status='failed',error_code=?,updated_at=? WHERE id=? AND status='running'")
+            .bind(code).bind(now).bind(job_id).execute(&mut *tx).await?
+        )
+        } else {
+            None
+        };
+        if job.is_some_and(|job| job.rows_affected() != 1) {
             return Err(JobError::Terminal);
         }
         tx.commit().await?;
@@ -164,9 +181,10 @@ impl Database {
         attempt_id: &str,
         result: &Value,
         artifacts: &[(String, String, i64, String)],
-        max_artifact_bytes: u64,
+        policy: (u64, bool),
     ) -> Result<(), JobError> {
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
+        let (max_artifact_bytes, finish_job) = policy;
         let encoded = serde_json::to_string(result).map_err(|_| JobError::InvalidArguments)?;
         if encoded.len() > 65536 {
             return Err(JobError::InvalidArguments);
@@ -206,10 +224,12 @@ impl Database {
                 .bind(id).bind(job_id).bind(step_key).bind(format!("{job_id}/{id}"))
                 .bind(media_type).bind(size).bind(sha).bind(now).execute(&mut *tx).await?;
         }
-        let final_job = sqlx::query("UPDATE jobs SET status='succeeded',result_json=?,updated_at=? WHERE id=? AND status='running' AND deadline_at>?")
-            .bind(&encoded).bind(now).bind(job_id).bind(now).execute(&mut *tx).await?;
-        if final_job.rows_affected() != 1 {
-            return Err(JobError::Terminal);
+        if finish_job {
+            let final_job = sqlx::query("UPDATE jobs SET status='succeeded',result_json=?,updated_at=? WHERE id=? AND status='running' AND deadline_at>?")
+                .bind(&encoded).bind(now).bind(job_id).bind(now).execute(&mut *tx).await?;
+            if final_job.rows_affected() != 1 {
+                return Err(JobError::Terminal);
+            }
         }
         tx.commit().await?;
         Ok(())

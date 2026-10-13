@@ -30,6 +30,11 @@ def collect_topic(topic: str, limit: int) -> dict:
         "next_cursor": None,
         "done": True,
         "synthetic": True,
+        "provenance": [{
+            "source": "fixture",
+            "capabilities": ["fixture.collect", "research.collect"],
+            "records": [json.dumps(post, ensure_ascii=False) for post in matches[:16]],
+        }],
     }
 
 

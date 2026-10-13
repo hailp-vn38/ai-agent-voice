@@ -20,20 +20,37 @@ impl BackgroundRuntime {
         config: Arc<AppConfig>,
         stopping: CancellationToken,
     ) -> Result<Arc<Self>, JobError> {
-        Self::start(database, config, stopping, false).await
+        Self::start(database, config, stopping, false, None).await
+    }
+    pub async fn open_with_manager(
+        database: Arc<Database>,
+        config: Arc<AppConfig>,
+        stopping: CancellationToken,
+        manager: Option<Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
+    ) -> Result<Arc<Self>, JobError> {
+        let models = manager.map(|manager| {
+            Arc::new(super::models::ManagedModels {
+                database: database.clone(),
+                config: config.clone(),
+                manager,
+                quarantine: Default::default(),
+            }) as Arc<dyn super::models::JobModels>
+        });
+        Self::start(database, config, stopping, false, models).await
     }
     async fn start(
         database: Arc<Database>,
         config: Arc<AppConfig>,
         stopping: CancellationToken,
         foundation_harness: bool,
+        models: Option<Arc<dyn super::models::JobModels>>,
     ) -> Result<Arc<Self>, JobError> {
         if !config.background.limits.valid() {
             return Err(JobError::InvalidArguments);
         }
         let lock = deployment_lock(database.durable_path().ok_or(JobError::DeploymentLock)?)?;
         database.recover_jobs(now()?).await?;
-        if !foundation_harness {
+        if !foundation_harness && models.is_none() {
             // An old enable bit must never activate an incomplete P0 deployment.
             let _publication = database.tool_security.publication.write().await;
             sqlx::query("UPDATE background_settings SET enabled=0,revision=revision+1 WHERE singleton=1 AND enabled=1").execute(database.pool()).await?;
@@ -47,6 +64,9 @@ impl BackgroundRuntime {
             wake: Default::default(),
             running: AtomicBool::new(true),
             foundation_harness,
+            models,
+            cancellations: Default::default(),
+            voice_submissions: Arc::new(tokio::sync::Semaphore::new(16)),
         });
         engine
             .plugins
@@ -78,7 +98,22 @@ impl BackgroundRuntime {
         database: Arc<Database>,
         config: Arc<AppConfig>,
     ) -> Result<Arc<Self>, JobError> {
-        Self::start(database, config, CancellationToken::new(), true).await
+        Self::start(database, config, CancellationToken::new(), true, None).await
+    }
+    #[cfg(test)]
+    pub(super) async fn execution_harness(
+        database: Arc<Database>,
+        config: Arc<AppConfig>,
+        models: Arc<dyn super::models::JobModels>,
+    ) -> Result<Arc<Self>, JobError> {
+        Self::start(
+            database,
+            config,
+            CancellationToken::new(),
+            false,
+            Some(models),
+        )
+        .await
     }
 }
 impl Drop for BackgroundRuntime {

@@ -30,6 +30,7 @@ impl SessionActor {
         // else: applying one can start the next call of the round, or the next round's LLM request,
         // and both belong in this same drain rather than in the next tick.
         self.drain_async_call_completions();
+        self.expire_job_submit();
         self.drain_template_preparation();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
@@ -162,6 +163,10 @@ impl SessionActor {
                     self.drain_speech_output();
                 }
                 event = ingress.recv() => match event {
+                    Some(SessionEvent::JobSubmitCompleted {session_id,turn_id,generation,tool_call_id,outcome}) => {
+                        self.apply_reported_turn_outcomes();
+                        self.complete_job_submit(session_id,turn_id,generation,tool_call_id,outcome);
+                    }
                     Some(SessionEvent::DirectSpeech { request, reply }) => {
                         self.apply_reported_turn_outcomes();
                         if !reply.is_closed() {

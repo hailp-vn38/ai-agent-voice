@@ -3,6 +3,13 @@ use crate::protocol::ClientMessage;
 /// Reader tasks enqueue events; only SessionActor mutates Voice Session state.
 #[derive(Debug)]
 pub enum SessionEvent {
+    JobSubmitCompleted {
+        session_id: String,
+        turn_id: super::TurnId,
+        generation: u64,
+        tool_call_id: String,
+        outcome: serde_json::Value,
+    },
     ClientMessage(ClientMessage),
     DirectSpeech {
         request: super::DirectSpeechRequest,

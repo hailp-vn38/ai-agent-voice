@@ -58,6 +58,13 @@ export interface JobStep {
   status: StepStatus
   error_code?: string | null
   attempt_state?: string | null
+  instruction: string
+  required: boolean
+  dependencies: string[]
+  input_refs: string[]
+  arguments: Record<string, unknown>
+  output_schema: Record<string, unknown>
+  result: unknown
 }
 export interface JobArtifact {
   id: string
@@ -74,6 +81,7 @@ export interface AdminJob {
   plan_revision: number
   retry_of_job_id: string | null
   result: Record<string, unknown> | null
+  budget_used: Record<string, unknown>
   steps: JobStep[]
   artifacts: JobArtifact[]
   error_code?: string | null
