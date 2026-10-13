@@ -742,12 +742,8 @@ _Avoid_: Plugin Package, Job Step
 A named input/output-typed action provided by executable Plugin code and admitted by the platform.
 _Avoid_: MCP Tool, arbitrary system command
 
-**Plugin Permission Grant**:
-An administrator-approved set of capabilities allowed to a particular installed package, independent of which Agent submits a Job.
-_Avoid_: manifest request, per-Agent Background grant
-
 **Frozen Plugin Choices**:
-The immutable set of eligible Plugin Operations established at Job acceptance; later new grants do not enlarge it.
+The immutable set of eligible Plugin Operations and pinned package/image identities established at Job acceptance; later installation changes do not enlarge it.
 _Avoid_: currently available catalog, Step retry
 
 **Plugin Health Status**:
