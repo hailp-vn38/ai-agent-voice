@@ -36,6 +36,7 @@ fn database_url() -> String {
 
 fn config(url: String) -> AppConfig {
     AppConfig {
+        background: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),

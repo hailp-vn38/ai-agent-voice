@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 pub enum ProviderWorkloadClass {
     Voice,
     Diagnostic,
+    Background,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -81,6 +82,7 @@ impl ProviderRuntimeAdmission {
                 // A single worker must remain testable while idle; both workloads share its slot.
                 ProviderWorkloadClass::Diagnostic if state.total == 1 => used >= state.total,
                 ProviderWorkloadClass::Diagnostic => used >= state.total - state.reserved_voice,
+                ProviderWorkloadClass::Background => used >= state.total - state.reserved_voice,
             }
         }) {
             return Err(ProviderAdmissionError::Capacity);
@@ -89,6 +91,7 @@ impl ProviderRuntimeAdmission {
             match workload {
                 ProviderWorkloadClass::Voice => state.voice += 1,
                 ProviderWorkloadClass::Diagnostic => state.diagnostic += 1,
+                ProviderWorkloadClass::Background => state.diagnostic += 1,
             }
         }
         Ok(ProviderCapacityPermit {
@@ -104,6 +107,7 @@ impl Drop for ProviderCapacityPermit {
             match self.workload {
                 ProviderWorkloadClass::Voice => state.voice -= 1,
                 ProviderWorkloadClass::Diagnostic => state.diagnostic -= 1,
+                ProviderWorkloadClass::Background => state.diagnostic -= 1,
             }
         }
     }

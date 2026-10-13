@@ -1,5 +1,6 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
+mod background;
 mod notifications;
 mod system_mcp;
 use super::AppState;
@@ -30,6 +31,13 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route(
+            "/background/settings",
+            get(background::settings).put(background::save_settings),
+        )
+        .route("/jobs", get(background::list).post(background::create))
+        .route("/jobs/{id}", get(background::get))
+        .route("/jobs/{id}/cancel", axum::routing::post(background::cancel))
         .route("/agents/{key}/reminders", get(notifications::agent_list))
         .route(
             "/agents/{key}/devices/{device_id}/reminders",

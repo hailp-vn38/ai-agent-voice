@@ -362,6 +362,7 @@ impl Database {
         input: AdminEnrollmentClaim<'_>,
         request_id: &str,
     ) -> Result<crate::database::devices::Device, WriteError> {
+        let _publication = self.tool_security.publication.write().await;
         let pool = &self.pool;
         let mut tx = match pool.begin_with("BEGIN IMMEDIATE").await {
             Ok(tx) => tx,

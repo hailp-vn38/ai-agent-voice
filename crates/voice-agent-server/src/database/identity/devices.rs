@@ -125,6 +125,7 @@ impl Database {
         input: DeviceChanges<'_>,
         request_id: &str,
     ) -> Result<(), WriteError> {
+        let _publication = self.tool_security.publication.write().await;
         let pool = &self.pool;
         let mut tx = match pool.begin().await {
             Ok(v) => v,

@@ -459,6 +459,7 @@ fn config(url: String) -> AppConfig {
         }),
     );
     AppConfig {
+        background: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

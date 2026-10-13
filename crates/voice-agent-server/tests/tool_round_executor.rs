@@ -517,6 +517,7 @@ fn config_with_external(
         }),
     );
     AppConfig {
+        background: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

@@ -709,3 +709,85 @@ _Avoid_: spoken approval, tool execution permission, automatic mutation
 ## Reminders and Direct Speech (proposed)
 
 Thuật ngữ được định nghĩa trong [GLOSSARY.md](GLOSSARY.md#reminders-and-direct-speech). Thiết kế chưa triển khai được ghi tại [ADR-0087](docs/adr/0087-device-owned-durable-reminders.md), [ADR-0088](docs/adr/0088-shared-session-direct-speech.md), [ADR-0089](docs/adr/0089-reminder-snapshot-sync-and-device-wake.md), [ADR-0090](docs/adr/0090-reminder-playback-ack-and-bounded-attempts.md) và [ADR-0091](docs/adr/0091-reminder-authorization-and-turn-context.md).
+
+## Background Jobs and Executable Plugins
+
+**Background Settings**:
+Deployment-wide configuration for whether Background execution is enabled and which two LLM Providers serve the Orchestrator and Sub-Agent roles.
+_Avoid_: Agent Template, Voice Profile, plugin-specific model
+
+**Voice Job Creation Tool**:
+A server-owned builtin offered to an admitted Agent during Voice Session admission; its invocation can create a durable Job and returns whether creation succeeded.
+_Avoid_: automatic Job at WS connect, MCP Tool, Job progress notification
+
+**Job**:
+A durable unit of background work independent of the Voice Session or Admin request that initiated it.
+_Avoid_: Conversational Turn, Reminder
+
+**Job Requester**:
+The server-authenticated source that initiated a Job: deployment Admin or an admitted Device with its assigned Agent.
+_Avoid_: Speaker Match, model-provided identity
+
+**Job Requester Scope**:
+The immutable server-established authority context in which a Job was submitted. This identifies the original request, not a permanent grant for future execution.
+_Avoid_: Job Owner Scope, delivery recipient, prompted identity
+
+**Request Contract**:
+The immutable set of required sources, capabilities, output and partial-result policy accepted when a Job is created.
+_Avoid_: mutable plan requirements
+
+**Job Request Fingerprint**:
+An identity of a normalized request used to distinguish a repeated submission from a different intention with the same idempotency key.
+_Avoid_: Job ID, prompt token
+
+**Plugin Package**:
+An immutable, versioned set of executable Python code, dependency definitions, instructions and operation schemas.
+_Avoid_: MCP binding, installed status, Agent
+
+**Plugin Installation**:
+The deployment's active pinned package and executable environment for one Plugin, with its operator-controlled availability state.
+_Avoid_: Plugin Package, Job Step
+
+**Plugin Operation**:
+A named input/output-typed action provided by executable Plugin code and admitted by the platform.
+_Avoid_: MCP Tool, arbitrary system command
+
+**Plugin Permission Grant**:
+An administrator-approved set of capabilities allowed to a particular installed package, independent of which Agent submits a Job.
+_Avoid_: manifest request, per-Agent Background grant
+
+**Frozen Plugin Choices**:
+The immutable set of eligible Plugin Operations established at Job acceptance; later new grants do not enlarge it.
+_Avoid_: currently available catalog, Step retry
+
+**Plugin Health Status**:
+A durable administrative state indicating whether an installed Plugin is disabled, ready or in a blocking error state.
+_Avoid_: upstream website HTTP status, Job status
+
+**Job Plan**:
+A validated directed acyclic arrangement of Steps accepted by the Rust executor for one Job.
+_Avoid_: an LLM's unvalidated proposal
+
+**Job Step**:
+A durably identified part of a Job Plan with dependencies and a bounded result.
+_Avoid_: Plugin Operation, Conversational Turn
+
+**Agent Run**:
+A bounded execution of a Job Step using the global Sub-Agent role, optionally involving an approved executable Plugin Operation.
+_Avoid_: new Agent account, Voice Session
+
+**Worker Attempt**:
+A single started or possibly started isolated execution of a Plugin Operation, which may have an uncertain outcome after interruption.
+_Avoid_: Reminder Delivery Attempt, automatic retry
+
+**Job Artifact**:
+A durable, access-controlled intermediate or final output belonging to a Job.
+_Avoid_: Plugin stdout, Device Cache ACK
+
+**Unknown Outcome**:
+Evidence that work might have started but its actual external effects cannot be verified as success or failure.
+_Avoid_: definite failure, safe retry proof
+
+**Manual Job Retry**:
+An explicit Admin request creating a new Job linked to an earlier terminal one, without altering the earlier result.
+_Avoid_: auto restart, Step replay

@@ -26,6 +26,7 @@ impl Database {
         expected: Option<i64>,
         request_id: &str,
     ) -> Result<Device, WriteError> {
+        let _publication = self.tool_security.publication.write().await;
         let mut tx = self
             .pool
             .begin()

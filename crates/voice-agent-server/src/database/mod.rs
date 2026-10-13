@@ -7,8 +7,10 @@ use sqlx::{
 use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
+pub(crate) mod background;
 pub mod history;
 mod identity;
+pub(crate) mod jobs;
 mod mcp;
 mod mutations;
 pub mod notifications;
@@ -47,6 +49,7 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 #[derive(Clone, Debug)]
 pub struct Database {
     pool: SqlitePool,
+    durable_path: Option<std::path::PathBuf>,
     pub tool_security: std::sync::Arc<tool_security::ToolSecurity>,
 }
 
@@ -116,14 +119,35 @@ impl Database {
         } else {
             ensure_schema_is_current(&pool).await?;
         }
+        // Ask the opened database, not a reconstructed URL: in-memory/URI forms
+        // have no backing file, and SQLx's generated memory filename is not a URL.
+        let filename: String =
+            sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name='main'")
+                .fetch_one(&pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        let durable_path = if filename.is_empty() {
+            None
+        } else {
+            Some(
+                tokio::fs::canonicalize(filename)
+                    .await
+                    .map_err(|_| DatabaseError::Unavailable)?,
+            )
+        };
         Ok(Self {
             pool,
+            durable_path,
             tool_security: Default::default(),
         })
     }
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    pub(crate) fn durable_path(&self) -> Option<&std::path::Path> {
+        self.durable_path.as_deref()
     }
 
     /// Whether the database still answers at all.

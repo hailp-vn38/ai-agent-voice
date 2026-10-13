@@ -5,12 +5,16 @@ use std::{
 };
 use url::Url;
 
+mod background;
 mod validation;
+pub use background::{BackgroundConfig, BackgroundLimits};
 
 pub use validation::{BenchmarkTarget, ConfigError};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AppConfig {
+    #[serde(default)]
+    pub background: BackgroundConfig,
     pub server: ServerConfig,
     #[serde(default)]
     pub auth: AuthConfig,

@@ -241,6 +241,15 @@ impl LlmRuntime {
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 
+    /// Background has no single-slot diagnostic exception and cannot borrow Voice reservation.
+    pub fn admit_background(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        let _state = self.cancellations.lock().expect("LLM cancellations lock");
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ProviderAdmissionError::Capacity);
+        }
+        self.admission.try_admit(ProviderWorkloadClass::Background)
+    }
+
     /// Builds an operation for the already-materialized provider. Capacity is admitted by
     /// `ProviderDiagnosticService`, so constructing this value neither starts a request nor
     /// changes the runtime.

@@ -106,6 +106,7 @@ impl Database {
         changes: AgentChanges<'_>,
         request_id: &str,
     ) -> Result<(), WriteError> {
+        let _publication = self.tool_security.publication.write().await;
         let mut tx = self
             .pool
             .begin()

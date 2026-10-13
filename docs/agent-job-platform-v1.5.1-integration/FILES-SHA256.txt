@@ -1,0 +1,15 @@
+a89c28a6d313251fc230b32a901416331a8c14d6766c11b0c42982b88c28a3cc  ../adr/0092-durable-job-ownership-outside-voice-session.md
+99c9dfe70f11f1bbdebbb0e5c33697877dac4d2bc725b3eb057a77edd9e439fa  ../adr/0093-executable-python-plugin-runtime.md
+d85e53b25ee0b4c8691c2d22e7ca936a156170f695427d2a88d72866b30c914e  ../adr/0094-rust-owned-job-dag-orchestration.md
+605431c5fdfb0e961cccb2db43a5e7360b4b501c44dcd94cdc471a0e638ee0de  ../adr/0095-single-process-durable-job-recovery.md
+b14b446a95598f3207a60740d07ab3783544e9513d48a79e2cd3cb443192c306  ../adr/0096-background-llm-with-voice-reservation.md
+4957ef70c7dcd135a05ffe50e87771492a73b1cfe22043dba70733385507d6a3  ../adr/0097-persisted-plugin-health-manual-recovery.md
+602c503dede6006c413d292cdd9824ca4c1fd2ce16136b1272ab198ab0ea04ae  BRANCH-CONTINUITY-REVIEW.md
+f5ce642cc70aeea2fcf754dac9af824b35095f015d14de4aeef4383973170f58  CHANGELOG-v1.5.md
+85b8e654e69c9e30c0415bbe6ba30df9a8b6d82c0a27716df87e82ac8e9b3a70  END-TO-END-WIRING-AUDIT.md
+0b6e50a1bdf82827382ab5fb389e9fe8c32154d15af31c5489be014504f43b9f  GLOSSARY-JOB-ADDITIONS.md
+af90614496a76679a9585abfd507e0000859328c6bf872ad063d7e282645146e  IMPLEMENTATION-PHASES.md
+d6787814d0b3a15582f230c62ddeb42ab49544380c256aa93f071e34258d6970  P0-IMPLEMENTATION.md
+b10d15754ad8746882efdbc432dbbcd5222402aeeb98c2e28352a5a9c2670c67  PONYTAIL-REVIEW.md
+18dcc1431ad24a5681f0b17ff1247674e134609d785ebe290f5dfffe75d16c11  README.md
+c3693238219a873abc74c526fa6266e0448a7ed94eb7253f84c3589b993bf839  docs/agent-job-plugin-platform-codebase-design.md

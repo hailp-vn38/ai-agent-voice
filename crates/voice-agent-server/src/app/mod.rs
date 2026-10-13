@@ -89,6 +89,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
         secret_resolver,
         lifecycle,
     );
+    prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
 }
@@ -272,6 +273,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
         lifecycle,
     );
     prepare_builtin_speaker(&mut state).await;
+    prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     state
         .system_metrics
@@ -422,12 +424,30 @@ async fn managed_startup(
         }
     }
     prepare_builtin_speaker(&mut state).await;
+    prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     state
         .system_metrics
         .clone()
         .start(state.lifecycle.listening().clone());
     Ok(router_with_state(state))
+}
+
+async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> {
+    if state.background.is_none()
+        && let Some(database) = state.database.clone()
+        && database.durable_path().is_some()
+    {
+        state.background = Some(
+            crate::services::background::BackgroundRuntime::open(
+                database,
+                state.config.clone(),
+                state.lifecycle.stopping().clone(),
+            )
+            .await?,
+        );
+    }
+    Ok(())
 }
 
 async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> {
@@ -553,6 +573,8 @@ async fn ready(State(state): State<AppState>) -> Response {
 
 #[derive(Debug, Error)]
 pub enum BootstrapError {
+    #[error(transparent)]
+    Background(#[from] crate::services::background::JobError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
     #[error("provider_startup_failed")]

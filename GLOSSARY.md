@@ -64,3 +64,7 @@ _Avoid_: end of network stream, WebSocket delivery, Device Cache ACK
 **Direct Speech**:
 Lần phát nội dung đã có bằng giọng tổng hợp, không nhận dạng lời nói hoặc sinh nội dung bằng mô hình ngôn ngữ.
 _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát dùng chung)
+
+## Background Jobs and Executable Plugins
+
+Thuật ngữ của miền Job được định nghĩa tại [CONTEXT.md](CONTEXT.md#background-jobs-and-executable-plugins). Job độc lập với Reminder và Conversational Turn.

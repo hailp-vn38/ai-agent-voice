@@ -60,7 +60,6 @@ pub(super) async fn put(State(state): State<AppState>, request: Request) -> Resp
         }
     };
     let _publication = state.web_assistant.publication.write().await;
-    let _tool_publication = db.tool_security.publication.write().await;
     match db
         .save_assistant_device(
             &input.agent_key,

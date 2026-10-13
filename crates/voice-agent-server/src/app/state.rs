@@ -31,6 +31,7 @@ use std::{
 /// Application-owned state. Production sessions resolve a fixed runtime snapshot from catalogs.
 #[derive(Clone)]
 pub struct AppState {
+    pub background: Option<Arc<crate::services::background::BackgroundRuntime>>,
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
     pub active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
@@ -662,6 +663,7 @@ impl AppState {
             .with_pilot_admission(pilot_admission.clone()),
         );
         let state = Self {
+            background: None,
             started_at: Instant::now(),
             active_device_sessions: Arc::new(Default::default()),
             reminder_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
