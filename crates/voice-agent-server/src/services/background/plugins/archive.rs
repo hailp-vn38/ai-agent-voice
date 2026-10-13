@@ -33,7 +33,8 @@ pub struct PluginIdentity {
 #[serde(deny_unknown_fields)]
 pub struct Runtime {
     pub kind: String,
-    pub python: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub python: Option<String>,
     pub entrypoint: String,
     pub protocol: String,
 }
@@ -94,6 +95,17 @@ fn required<'a>(files: &'a [(String, Vec<u8>)], name: &str) -> Result<&'a [u8], 
         .find(|(path, _)| path == name)
         .map(|(_, data)| data.as_slice())
         .ok_or(PluginError::InvalidPackage)
+}
+
+fn forbidden_cargo_source(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::Table(entries) => entries.iter().any(|(key, value)| {
+            matches!(key.as_str(), "git" | "path" | "registry")
+                || forbidden_cargo_source(value)
+        }),
+        toml::Value::Array(items) => items.iter().any(forbidden_cargo_source),
+        _ => false,
+    }
 }
 
 pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
@@ -164,10 +176,8 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
         || manifest.plugin.name.is_empty()
         || manifest.plugin.name.len() > 128
         || manifest.plugin.description.len() > 1024
-        || manifest.runtime.kind != "python_container"
-        || manifest.runtime.python != "3.12"
+        || !matches!(manifest.runtime.kind.as_str(), "python_container" | "rust_container")
         || manifest.runtime.protocol != "jsonl-v1"
-        || manifest.runtime.entrypoint != "src/main.py"
         || manifest.operations.is_empty()
         || manifest.operations.len() > 16
         || manifest.permissions.network_hosts.len() > 16
@@ -183,49 +193,105 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
     if !relative(&manifest.agent.instructions) || instructions.len() > 16 * 1024 {
         return Err(PluginError::InvalidPackage);
     }
-    required(&files, &manifest.runtime.entrypoint)?;
-    let project: toml::Value = toml::from_str(
-        std::str::from_utf8(required(&files, "pyproject.toml")?)
-            .map_err(|_| PluginError::InvalidPackage)?,
-    )
-    .map_err(|_| PluginError::InvalidPackage)?;
-    let lock: toml::Value = toml::from_str(
-        std::str::from_utf8(required(&files, "uv.lock")?)
-            .map_err(|_| PluginError::InvalidPackage)?,
-    )
-    .map_err(|_| PluginError::InvalidPackage)?;
-    if project
-        .get("project")
-        .and_then(|p| p.get("requires-python"))
-        .and_then(toml::Value::as_str)
-        .is_none_or(|v| !v.contains("3.12"))
-        || lock
-            .get("requires-python")
+    if manifest.runtime.kind == "python_container" {
+        if manifest.runtime.python.as_deref() != Some("3.12")
+            || manifest.runtime.entrypoint != "src/main.py"
+        {
+            return Err(PluginError::InvalidPackage);
+        }
+        required(&files, &manifest.runtime.entrypoint)?;
+        let project: toml::Value = toml::from_str(
+            std::str::from_utf8(required(&files, "pyproject.toml")?)
+                .map_err(|_| PluginError::InvalidPackage)?,
+        )
+        .map_err(|_| PluginError::InvalidPackage)?;
+        let lock: toml::Value = toml::from_str(
+            std::str::from_utf8(required(&files, "uv.lock")?)
+                .map_err(|_| PluginError::InvalidPackage)?,
+        )
+        .map_err(|_| PluginError::InvalidPackage)?;
+        if project
+            .get("project")
+            .and_then(|p| p.get("requires-python"))
             .and_then(toml::Value::as_str)
             .is_none_or(|v| !v.contains("3.12"))
-        || project
-            .get("project")
-            .and_then(|p| p.get("name"))
-            .and_then(toml::Value::as_str)
-            != Some(manifest.plugin.id.as_str())
-        || project
-            .get("project")
-            .and_then(|p| p.get("version"))
-            .and_then(toml::Value::as_str)
-            != Some(manifest.plugin.version.as_str())
-        || !lock
-            .get("package")
-            .and_then(toml::Value::as_array)
-            .is_some_and(|packages| {
-                packages.iter().any(|package| {
-                    package.get("name").and_then(toml::Value::as_str)
-                        == Some(manifest.plugin.id.as_str())
-                        && package.get("version").and_then(toml::Value::as_str)
-                            == Some(manifest.plugin.version.as_str())
+            || lock
+                .get("requires-python")
+                .and_then(toml::Value::as_str)
+                .is_none_or(|v| !v.contains("3.12"))
+            || project
+                .get("project")
+                .and_then(|p| p.get("name"))
+                .and_then(toml::Value::as_str)
+                != Some(manifest.plugin.id.as_str())
+            || project
+                .get("project")
+                .and_then(|p| p.get("version"))
+                .and_then(toml::Value::as_str)
+                != Some(manifest.plugin.version.as_str())
+            || !lock
+                .get("package")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|packages| {
+                    packages.iter().any(|package| {
+                        package.get("name").and_then(toml::Value::as_str)
+                            == Some(manifest.plugin.id.as_str())
+                            && package.get("version").and_then(toml::Value::as_str)
+                                == Some(manifest.plugin.version.as_str())
+                    })
                 })
-            })
-    {
-        return Err(PluginError::InvalidPackage);
+        {
+            return Err(PluginError::InvalidPackage);
+        }
+    } else {
+        if manifest.runtime.python.is_some()
+            || manifest.runtime.entrypoint != manifest.plugin.id
+            || !manifest.runtime.entrypoint.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            || !manifest.runtime.entrypoint.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        {
+            return Err(PluginError::InvalidPackage);
+        }
+        required(&files, "src/main.rs")?;
+        if files.iter().any(|(path, _)| path.eq_ignore_ascii_case("Dockerfile")) {
+            return Err(PluginError::InvalidPackage);
+        }
+        let cargo: toml::Value = toml::from_str(
+            std::str::from_utf8(required(&files, "Cargo.toml")?)
+                .map_err(|_| PluginError::InvalidPackage)?,
+        ).map_err(|_| PluginError::InvalidPackage)?;
+        if cargo.get("workspace").is_some()
+            || cargo.get("bin").is_some()
+            || cargo.get("lib").is_some()
+            || cargo.get("patch").is_some()
+            || cargo.get("replace").is_some()
+            || forbidden_cargo_source(&cargo)
+            || cargo.get("package").and_then(|p| p.get("name")).and_then(toml::Value::as_str) != Some(manifest.plugin.id.as_str())
+            || cargo.get("package").and_then(|p| p.get("version")).and_then(toml::Value::as_str) != Some(manifest.plugin.version.as_str())
+        {
+            return Err(PluginError::InvalidPackage);
+        }
+        let lock: toml::Value = toml::from_str(
+            std::str::from_utf8(required(&files, "Cargo.lock")?)
+                .map_err(|_| PluginError::InvalidPackage)?,
+        ).map_err(|_| PluginError::InvalidPackage)?;
+        let packages = lock.get("package").and_then(toml::Value::as_array)
+            .ok_or(PluginError::InvalidPackage)?;
+        if !packages.iter().any(|p| {
+            p.get("name").and_then(toml::Value::as_str) == Some(manifest.plugin.id.as_str())
+                && p.get("version").and_then(toml::Value::as_str) == Some(manifest.plugin.version.as_str())
+                && p.get("source").is_none()
+        }) || packages.iter().any(|p| {
+            let is_root = p.get("name").and_then(toml::Value::as_str) == Some(manifest.plugin.id.as_str())
+                && p.get("version").and_then(toml::Value::as_str) == Some(manifest.plugin.version.as_str());
+            if is_root {
+                p.get("source").is_some()
+            } else {
+                p.get("source").and_then(toml::Value::as_str)
+                    != Some("registry+https://github.com/rust-lang/crates.io-index")
+            }
+        }) {
+            return Err(PluginError::InvalidPackage);
+        }
     }
     for (name, operation) in &manifest.operations {
         if !token(name, 64)
@@ -293,7 +359,7 @@ mod tests {
     fn fixture_package_has_checked_manifest_and_lock() {
         let package = validate(FIXTURE).unwrap();
         assert_eq!(package.manifest.plugin.id, "fixture-research");
-        assert_eq!(package.manifest.runtime.python, "3.12");
+        assert_eq!(package.manifest.runtime.python.as_deref(), Some("3.12"));
         assert_eq!(package.manifest.operations.len(), 2);
     }
 
@@ -345,4 +411,90 @@ mod tests {
         let bytes = writer.finish().unwrap().into_inner();
         assert!(matches!(validate(&bytes), Err(PluginError::InvalidPackage)));
     }
+    fn rust_fixture_zip() -> Vec<u8> {
+        const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../plugins/fixture-rust-1.0.0/");
+        let base = std::path::Path::new(ROOT);
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        for name in [
+            "plugin.toml", "Cargo.toml", "Cargo.lock", "instructions.md",
+            "src/main.rs", "schemas/collect.input.json", "schemas/collect.output.json",
+        ] {
+            writer.start_file(name, SimpleFileOptions::default()).unwrap();
+            writer.write_all(&std::fs::read(base.join(name)).unwrap()).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn rust_fixture_validates_with_cargo_lock_and_no_python() {
+        let package = validate(&rust_fixture_zip()).unwrap();
+        assert_eq!(package.manifest.runtime.kind, "rust_container");
+        assert_eq!(package.manifest.runtime.entrypoint, "fixture-rust");
+        assert_eq!(package.manifest.runtime.python, None);
+        assert_eq!(package.manifest.operations.len(), 1);
+        // The existing v1 Python archive is still accepted by the same installer.
+        assert_eq!(validate(FIXTURE).unwrap().manifest.runtime.kind, "python_container");
+    }
+
+    #[test]
+    fn rust_manifest_refuses_mismatched_binary_and_legacy_python_field() {
+        let source = rust_fixture_zip();
+        for (needle, replacement) in [
+            ("entrypoint = \"fixture-rust\"", "entrypoint = \"other\""),
+            ("kind = \"rust_container\"", "kind = \"unknown_runtime\""),
+            ("protocol = \"jsonl-v1\"", "protocol = \"jsonl-v2\""),
+            ("protocol = \"jsonl-v1\"", "python = \"3.12\"\nprotocol = \"jsonl-v1\""),
+        ] {
+            let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).unwrap();
+                let name = entry.name().to_owned();
+                writer.start_file(&name, SimpleFileOptions::default()).unwrap();
+                let mut content = Vec::new();
+                entry.read_to_end(&mut content).unwrap();
+                if name == "plugin.toml" {
+                    let text = std::str::from_utf8(&content).unwrap().replace(needle, replacement);
+                    writer.write_all(text.as_bytes()).unwrap();
+                } else {
+                    writer.write_all(&content).unwrap();
+                }
+            }
+            assert!(matches!(
+                validate(&writer.finish().unwrap().into_inner()),
+                Err(PluginError::InvalidPackage)
+            ));
+        }
+    }
+
+    #[test]
+    fn rust_zip_rejects_mismatched_cargo_package_and_missing_lock() {
+        let source = rust_fixture_zip();
+        for mutation in ["wrong_package", "missing_lock"] {
+            let mut archive = ZipArchive::new(Cursor::new(&source)).unwrap();
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).unwrap();
+                let name = entry.name().to_owned();
+                if mutation == "missing_lock" && name == "Cargo.lock" {
+                    continue;
+                }
+                writer.start_file(&name, SimpleFileOptions::default()).unwrap();
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes).unwrap();
+                if mutation == "wrong_package" && name == "Cargo.toml" {
+                    let text = std::str::from_utf8(&bytes).unwrap()
+                        .replace("name = \"fixture-rust\"", "name = \"wrong-name\"");
+                    writer.write_all(text.as_bytes()).unwrap();
+                } else {
+                    writer.write_all(&bytes).unwrap();
+                }
+            }
+            assert!(matches!(
+                validate(&writer.finish().unwrap().into_inner()),
+                Err(PluginError::InvalidPackage)
+            ));
+        }
+    }
+
 }

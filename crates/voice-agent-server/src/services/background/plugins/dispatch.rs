@@ -155,8 +155,8 @@ impl PluginStore {
         if !validator.is_valid(&arguments) {
             return Err(PluginError::InvalidPackage);
         }
-        builder::preflight(&self.config).await?;
-        builder::verify_image(&self.config, &choice.image_digest, &choice.package_digest).await?;
+        builder::preflight(&self.config, &manifest.runtime).await?;
+        builder::verify_image(&self.config, &choice.image_digest, &choice.package_digest, &manifest.runtime).await?;
         let workspace = self.root.join("workspaces").join(job_id).join(attempt_id);
         let out = workspace.join("out");
         tokio::fs::create_dir_all(&out)

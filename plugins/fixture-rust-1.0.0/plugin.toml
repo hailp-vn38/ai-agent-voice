@@ -1,0 +1,26 @@
+manifest_version = 1
+
+[plugin]
+id = "fixture-rust"
+name = "Rust Research Fixture"
+version = "1.0.0"
+description = "Offline deterministic Rust plugin for verifying Agent Job execution"
+
+[runtime]
+kind = "rust_container"
+entrypoint = "fixture-rust"
+protocol = "jsonl-v1"
+
+[permissions]
+network_hosts = []
+
+[agent]
+instructions = "instructions.md"
+
+[operations.collect]
+description = "Collect deterministic records and write an artifact"
+provides = ["fixture.collect"]
+sources = ["fixture"]
+input_schema = "schemas/collect.input.json"
+output_schema = "schemas/collect.output.json"
+replay = "safe_read"

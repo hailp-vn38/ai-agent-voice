@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "required": [
+    "topic",
+    "count"
+  ],
+  "properties": {
+    "topic": {
+      "type": "string"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}
