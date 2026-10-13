@@ -134,8 +134,12 @@ onBeforeUnmount(() => controller?.abort())
           </div>
           <label class="flex cursor-pointer items-center gap-3 text-sm font-medium">
             <span>{{ draft.enabled ? t('jobUi.on') : t('jobUi.off') }}</span>
-            <input v-model="draft.enabled" type="checkbox" role="switch" :aria-label="t('jobUi.globalRuntime')"
-              class="size-5 accent-primary" :disabled="saving" />
+            <span class="relative inline-flex shrink-0 items-center">
+              <input v-model="draft.enabled" type="checkbox" role="switch" :aria-label="t('jobUi.globalRuntime')"
+                class="peer sr-only" :disabled="saving" />
+              <span aria-hidden="true" class="h-6 w-11 rounded-full bg-muted-foreground/40 transition-colors peer-checked:bg-primary peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring peer-disabled:opacity-40"></span>
+              <span aria-hidden="true" class="pointer-events-none absolute left-[3px] size-[18px] rounded-full bg-white shadow transition-transform peer-checked:translate-x-[18px]"></span>
+            </span>
           </label>
         </div>
       </section>
