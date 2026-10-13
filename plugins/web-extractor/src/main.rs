@@ -23,40 +23,24 @@ fn optional_limits(req: &Request) -> Result<(usize, usize), Failure> {
         positive_limit(req.arguments.get("max_links"), 30, 100)?,
     ))
 }
-fn public_url(s: &str) -> Result<Url, Failure> {
+fn http_url(s: &str) -> Result<Url, Failure> {
     let url = Url::parse(s).map_err(|_| Failure::new("invalid_url", "Malformed URL"))?;
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()
         || url.password().is_some()
-        || url.port().is_some()
+        || url.host().is_none()
     {
         return Err(Failure::new(
             "invalid_url",
-            "Only public HTTP(S) URLs on standard ports are supported",
-        ));
-    }
-    let Some(url::Host::Domain(host)) = url.host() else {
-        return Err(Failure::new(
-            "invalid_url",
-            "IP and local network hosts are not allowed",
-        ));
-    };
-    if host.is_empty()
-        || !host.contains('.')
-        || host.ends_with(".local")
-        || host.ends_with(".localhost")
-    {
-        return Err(Failure::new(
-            "invalid_url",
-            "IP and local network hosts are not allowed",
+            "Only HTTP(S) URLs without embedded credentials are supported",
         ));
     }
     Ok(url)
 }
 fn fetch(url: &str) -> Result<String, Failure> {
-    let url = public_url(url)?;
+    let url = http_url(url)?;
     // Use the Docker worker's network directly; this plugin does not follow redirects.
-    // URL validation is plugin-local and independent of server network permissions.
+    // URL scheme validation is plugin-local; there is no host or port allowlist.
     let client = Client::builder()
         .redirect(Policy::none())
         .timeout(Duration::from_secs(20))
@@ -221,7 +205,7 @@ fn execute(req: &Request) -> Result<Outcome, Failure> {
             }
             let url = req.arguments.get("url").and_then(Value::as_str);
             if let Some(url) = url {
-                public_url(url)?;
+                http_url(url)?;
             }
             (html.to_owned(), url.map(str::to_owned))
         }
