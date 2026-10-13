@@ -34,6 +34,7 @@ export interface InstalledPlugin {
   runtime: { kind: 'isolated_worker'; language: 'python' }
   operations: PluginOperation[]
   permissions?: { network_hosts: string[]; scratch_storage: boolean }
+  permissions_approved?: boolean
   last_error_code?: string | null
 }
 export interface PluginTestResult {
