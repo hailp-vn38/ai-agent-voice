@@ -11,6 +11,9 @@ pub struct BackgroundConfig {
     pub plugin_runner_socket: Option<std::path::PathBuf>,
     /// Read-only view of immutable installations, for activation verification.
     pub plugin_installations_dir: Option<std::path::PathBuf>,
+    /// Server-visible shared staging/output mounts, used by operator qualification.
+    pub plugin_staging_dir: Option<std::path::PathBuf>,
+    pub plugin_attempts_dir: Option<std::path::PathBuf>,
     /// Directory of operator-provided ZIPs named <curated-id>.zip.
     pub plugin_curated_dir: Option<std::path::PathBuf>,
 }
