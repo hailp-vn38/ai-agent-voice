@@ -177,6 +177,7 @@ impl EgressGuard {
             }
             let mut command = builder::command(&self.config)?;
             command.args(args);
+            command.stdout(std::process::Stdio::null());
             let result = tokio::time::timeout(Duration::from_secs(15), command.status()).await;
             if !matches!(result, Ok(Ok(status)) if status.success()) {
                 // A failed remove is retried by the next startup owner-label reaper.
@@ -206,6 +207,7 @@ impl Drop for EgressGuard {
                 ] {
                     if let Ok(mut command) = builder::command(&config) {
                         command.args(args);
+                        command.stdout(std::process::Stdio::null());
                         let _ =
                             tokio::time::timeout(Duration::from_secs(15), command.status()).await;
                     }

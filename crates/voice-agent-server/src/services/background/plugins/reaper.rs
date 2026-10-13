@@ -41,6 +41,7 @@ impl PluginStore {
             }
             let mut remove = builder::command(&self.config)?;
             remove.args(["rm", "--force", id]);
+            remove.stdout(std::process::Stdio::null());
             let status = tokio::time::timeout(std::time::Duration::from_secs(15), remove.status())
                 .await
                 .map_err(|_| PluginError::SandboxUnavailable)?
@@ -92,6 +93,7 @@ impl PluginStore {
             }
             let mut remove = builder::command(&self.config)?;
             remove.args(["network", "rm", id]);
+            remove.stdout(std::process::Stdio::null());
             let status = tokio::time::timeout(std::time::Duration::from_secs(15), remove.status())
                 .await
                 .map_err(|_| PluginError::SandboxUnavailable)?

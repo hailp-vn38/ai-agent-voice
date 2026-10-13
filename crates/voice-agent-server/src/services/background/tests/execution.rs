@@ -176,6 +176,29 @@ async fn fixture_python_runs_through_job_step_and_checked_artifact() {
         .await
         .unwrap()
         .job;
+    // A valid ZIP with trailing bytes has a new digest but must not publish while pinned.
+    let replacement = [zip.as_slice(), b"reinstall-pin-regression"].concat();
+    let replacement_digest = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&replacement)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let replacement_path = std::env::temp_dir()
+        .join("plugins/packages/fixture-research/1.0.0")
+        .join(replacement_digest);
+    assert!(!replacement_path.exists());
+    assert_eq!(
+        runtime
+            .engine
+            .plugins
+            .install(&replacement)
+            .await
+            .unwrap_err(),
+        crate::services::background::plugins::PluginError::InUse
+    );
+    assert!(!replacement_path.exists());
     let choice: FrozenChoice = serde_json::from_value(job.plugin_choices[0].clone()).unwrap();
     let args = json!({"topic":"AI", "limit":2});
     db.test_plan_one_step(&job.id, "collect", &choice, &args)

@@ -306,22 +306,14 @@ impl PluginStore {
             .join(id)
             .join(&package.manifest.plugin.version)
             .join(&package.digest);
-        if let Some(parent) = target.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|_| PluginError::StorageUnavailable)?;
-        }
-        if target.exists() {
+        let publish_package = !target.exists();
+        if !publish_package {
             let old = tokio::fs::read(target.join("package.zip"))
                 .await
                 .map_err(|_| PluginError::StorageUnavailable)?;
             if archive::validate(&old)?.digest != package.digest {
                 return Err(PluginError::InvalidPackage);
             }
-        } else {
-            tokio::fs::rename(stage, &target)
-                .await
-                .map_err(|_| PluginError::StorageUnavailable)?;
         }
         let manifest =
             serde_json::to_string(&package.manifest).map_err(|_| PluginError::InvalidPackage)?;
@@ -334,6 +326,16 @@ impl PluginStore {
             .bind(id).fetch_one(&mut *tx).await?;
         if pinned != 0 {
             return Err(PluginError::InUse);
+        }
+        if publish_package {
+            if let Some(parent) = target.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|_| PluginError::StorageUnavailable)?;
+            }
+            tokio::fs::rename(stage, &target)
+                .await
+                .map_err(|_| PluginError::StorageUnavailable)?;
         }
         let now = crate::database::unix_seconds().ok_or(PluginError::DatabaseUnavailable)?;
         sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES(?,?,?,?,'disabled',1,'{}',?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET version=excluded.version,package_digest=excluded.package_digest,image_digest=excluded.image_digest,status='disabled',revision=plugin_installations.revision+1,approved_permissions_json='{}',operations_json=excluded.operations_json,last_error_code=NULL,updated_at=excluded.updated_at")

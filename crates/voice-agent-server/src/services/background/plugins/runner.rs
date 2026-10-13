@@ -162,6 +162,7 @@ impl Prepared {
     pub(super) async fn remove(&self, config: &BackgroundConfig) -> Result<(), PluginError> {
         let mut command = builder::command(config)?;
         command.args(["rm", "--force", &self.name]);
+        command.stdout(Stdio::null());
         let status = tokio::time::timeout(Duration::from_secs(15), command.status())
             .await
             .map_err(|_| PluginError::SandboxUnavailable)?
@@ -186,6 +187,7 @@ impl Drop for Prepared {
             runtime.spawn(async move {
                 if let Ok(mut command) = builder::command(&config) {
                     command.args(["rm", "--force", &name]);
+                    command.stdout(Stdio::null());
                     let _ = tokio::time::timeout(Duration::from_secs(15), command.status()).await;
                 }
             });
