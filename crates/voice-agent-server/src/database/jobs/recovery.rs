@@ -11,7 +11,7 @@ impl Database {
             .bind(now).bind(now).execute(&mut *tx).await?;
         sqlx::query("UPDATE jobs SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'failed' END,error_code=CASE WHEN status='cancelling' THEN 'cancelled_after_restart' ELSE 'interrupted' END,updated_at=? WHERE status IN ('planning','running','cancelling')")
             .bind(now).execute(&mut *tx).await?;
-        for (id,prior) in recovering {
+        for (id,prior) in &recovering {
             let cancelled=prior=="cancelling";
             events::append(&mut tx,&id,"job_finished",None,&serde_json::json!({"status":if cancelled {"cancelled"}else{"failed"},"error_code":if cancelled {"cancelled_after_restart"}else{"interrupted"}})).await?;
         }
