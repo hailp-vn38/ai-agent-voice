@@ -2,16 +2,6 @@
 
 A personal voice-agent server. This context coordinates a Voice Session between a Voice Protocol Client and AI providers.
 
-## Commit validation
-
-Before every commit, run both commands from the repository root against the final changes:
-
-```bash
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --workspace
-```
-
-Commit only after both commands exit successfully. Resolve any failures and rerun the checks before committing so CI receives validated changes.
 
 ## Language
 
