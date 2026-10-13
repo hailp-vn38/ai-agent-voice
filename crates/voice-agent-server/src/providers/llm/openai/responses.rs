@@ -219,6 +219,47 @@ mod tests {
         assert_eq!(answer, r#"{"steps":[]}"#);
         task.abort();
     }
+    #[tokio::test]
+    async fn shared_responses_transport_keeps_opencode_free_model_and_auth() {
+        use axum::{http::HeaderMap, routing::post, Json, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/zen/v1", listener.local_addr().unwrap());
+        let app = Router::new().route("/zen/v1/responses", post(
+            |headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer public");
+                assert_eq!(body["model"], "muse-spark-1.3-contributor-free");
+                assert_eq!(body["text"]["format"]["type"], "json_schema");
+                assert_eq!(body["text"]["format"]["strict"], true);
+                assert_eq!(body["store"], false);
+                assert_eq!(body["background"], false);
+                assert!(body.get("tools").is_none());
+                Json(json!({
+                    "status":"completed",
+                    "output":[{"type":"message","role":"assistant",
+                        "content":[{"type":"output_text","text":r#"{"summary":"ok"}"#}]}]
+                }))
+            }
+        ));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let result = complete_with(
+            &base,
+            "muse-spark-1.3-contributor-free",
+            "public",
+            5,
+            LlmRequest::text_turn("Summarize in JSON".into()),
+            Some(json!({
+                "type":"object",
+                "properties":{"summary":{"type":"string"}},
+                "required":["summary"],
+                "additionalProperties":false,
+            })),
+        ).await.unwrap();
+        assert_eq!(result, r#"{"summary":"ok"}"#);
+        server.abort();
+    }
+
     #[test]
     fn response_request_is_job_only_stateless_and_tool_free() {
         let request = LlmRequest {
