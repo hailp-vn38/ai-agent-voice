@@ -62,6 +62,7 @@ impl Database {
         if ledger.rows_affected() != 1 {
             return Err(JobError::CapacityUnavailable);
         }
+        events::append(&mut tx,job_id,"step_started",Some(step_key),&serde_json::json!({"attempt_state":"reserved"})).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -170,6 +171,10 @@ impl Database {
         if job.is_some_and(|job| job.rows_affected() != 1) {
             return Err(JobError::Terminal);
         }
+        events::append(&mut tx,job_id,"step_finished",Some(step_key),&serde_json::json!({"status":"failed","error_code":code})).await?;
+        if finish_job {
+            events::append(&mut tx,job_id,"job_finished",None,&serde_json::json!({"status":"failed","error_code":code})).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -230,6 +235,10 @@ impl Database {
             if final_job.rows_affected() != 1 {
                 return Err(JobError::Terminal);
             }
+        }
+        events::append(&mut tx,job_id,"step_finished",Some(step_key),&serde_json::json!({"status":"succeeded"})).await?;
+        if finish_job {
+            events::append(&mut tx,job_id,"job_finished",None,&serde_json::json!({"status":"succeeded"})).await?;
         }
         tx.commit().await?;
         Ok(())
