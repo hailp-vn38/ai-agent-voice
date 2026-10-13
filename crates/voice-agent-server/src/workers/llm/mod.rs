@@ -93,12 +93,6 @@ impl LlmRuntime {
     ) -> Result<String, crate::providers::LlmError> {
         self.provider.background_complete(request, schema).await
     }
-    pub(crate) async fn background_stream(
-        &self,
-        request: LlmRequest,
-    ) -> Result<crate::providers::llm::LlmEventStream, crate::providers::LlmError> {
-        self.provider.stream(request).await
-    }
     pub fn supports_tools(&self) -> bool {
         self.provider.supports_tools()
     }
