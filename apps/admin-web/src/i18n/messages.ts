@@ -10,6 +10,10 @@ export interface PluralMessage {
 export type MessageValue = string | PluralMessage
 
 export const en = {
+  'jobUi.approve': "Approve permissions",
+  'jobUi.approveConfirm': "Approve all displayed plugin network and storage permissions? The worker will receive these permissions.",
+  'jobUi.permissionsApproved': "Permissions reviewed and approved",
+  'jobUi.permissionsPending': "Permissions not approved",
   'nav.background': "Background",
   'nav.jobs': "Jobs",
   'nav.plugins': "Plugins",
@@ -1058,6 +1062,10 @@ export const en = {
 export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
+  'jobUi.approve': "Phê duyệt quyền",
+  'jobUi.approveConfirm': "Phê duyệt toàn bộ quyền mạng và lưu trữ đang hiển thị? Worker sẽ được cấp các quyền này.",
+  'jobUi.permissionsApproved': "Quyền đã được xem xét và phê duyệt",
+  'jobUi.permissionsPending': "Quyền chưa được phê duyệt",
   'nav.background': "Background",
   'nav.jobs': "Tác vụ",
   'nav.plugins': "Plugin",
