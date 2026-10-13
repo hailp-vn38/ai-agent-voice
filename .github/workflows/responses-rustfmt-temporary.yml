@@ -1,0 +1,43 @@
+name: responses-rustfmt-temporary
+on:
+  push:
+    branches: [feat/provider-responses-agent-job]
+    paths:
+      - '.github/workflows/responses-rustfmt-temporary.yml'
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/provider-responses-agent-job
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Format only touched Rust files
+        run: |
+          rustfmt --edition 2024 --config skip_children=true \
+            crates/voice-agent-server/src/providers/llm/mod.rs \
+            crates/voice-agent-server/src/providers/llm/openai/config.rs \
+            crates/voice-agent-server/src/providers/llm/openai/descriptor.rs \
+            crates/voice-agent-server/src/providers/llm/openai/responses.rs \
+            crates/voice-agent-server/src/providers/factory_registry.rs \
+            crates/voice-agent-server/src/workers/llm/mod.rs \
+            crates/voice-agent-server/src/services/background/models.rs \
+            crates/voice-agent-server/src/services/background/orchestration.rs
+          git diff --check
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add crates/voice-agent-server/src/providers/llm/mod.rs \
+              crates/voice-agent-server/src/providers/llm/openai/config.rs \
+              crates/voice-agent-server/src/providers/llm/openai/descriptor.rs \
+              crates/voice-agent-server/src/providers/llm/openai/responses.rs \
+              crates/voice-agent-server/src/providers/factory_registry.rs \
+              crates/voice-agent-server/src/workers/llm/mod.rs \
+              crates/voice-agent-server/src/services/background/models.rs \
+              crates/voice-agent-server/src/services/background/orchestration.rs
+            git commit -m 'style(llm): rustfmt Responses implementation'
+            git push origin HEAD:refs/heads/feat/provider-responses-agent-job
+          fi
