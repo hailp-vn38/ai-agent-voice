@@ -7,18 +7,18 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 
 fn request_body(provider: &ConfiguredOpenAiLlm, request: &LlmRequest, schema: Option<Value>) -> Result<Value,LlmError> {
-    if !request.tools.is_empty() {return Err(LlmError::Failed);}
+    if !request.tools.is_empty() {return Err(LlmError::Rejected);}
     let mut input=Vec::with_capacity(request.messages.len());
     for message in &request.messages {
         let (role,content) = match message {
             ChatMessage::System {content}=>("system",content),
             ChatMessage::User {content}=>("user",content),
             ChatMessage::AssistantText {content}=>("assistant",content),
-            ChatMessage::AssistantToolCalls {..}|ChatMessage::ToolResult {..}=>return Err(LlmError::Failed),
+            ChatMessage::AssistantToolCalls {..}|ChatMessage::ToolResult {..}=>return Err(LlmError::Rejected),
         };
         input.push(json!({"role":role,"content":content}));
     }
-    if input.is_empty(){return Err(LlmError::Failed);}
+    if input.is_empty(){return Err(LlmError::Rejected);}
     let format=match schema {
         Some(schema)=>json!({"type":"json_schema","name":"agent_job_output","strict":true,"schema":schema}),
         None=>json!({"type":"json_object"}),
@@ -31,33 +31,33 @@ fn request_body(provider: &ConfiguredOpenAiLlm, request: &LlmRequest, schema: Op
 
 fn output_text(body: &Value) -> Result<String,LlmError> {
     if body.get("status").and_then(Value::as_str) != Some("completed") {
-        return Err(LlmError::Failed);
+        return Err(LlmError::Rejected);
     }
-    let messages=body.get("output").and_then(Value::as_array).ok_or(LlmError::Failed)?;
+    let messages=body.get("output").and_then(Value::as_array).ok_or(LlmError::Rejected)?;
     let mut answer=String::new();
     let mut found=false;
     for item in messages {
         match item.get("type").and_then(Value::as_str) {
             Some("reasoning")=>continue,
             Some("message") if item.get("role").and_then(Value::as_str)==Some("assistant")=>{
-                let parts=item.get("content").and_then(Value::as_array).ok_or(LlmError::Failed)?;
+                let parts=item.get("content").and_then(Value::as_array).ok_or(LlmError::Rejected)?;
                 for part in parts {
                     match part.get("type").and_then(Value::as_str) {
                         Some("output_text")=>{
-                            let delta=part.get("text").and_then(Value::as_str).ok_or(LlmError::Failed)?;
-                            if answer.len().saturating_add(delta.len())>65536 {return Err(LlmError::Failed);}
+                            let delta=part.get("text").and_then(Value::as_str).ok_or(LlmError::Rejected)?;
+                            if answer.len().saturating_add(delta.len())>65536 {return Err(LlmError::Rejected);}
                             answer.push_str(delta);
                             found=true;
                         }
-                        Some("refusal")=>return Err(LlmError::Failed),
-                        _=>return Err(LlmError::Failed),
+                        Some("refusal")=>return Err(LlmError::Rejected),
+                        _=>return Err(LlmError::Rejected),
                     }
                 }
             }
-            _=>return Err(LlmError::Failed), // No tool calls or unexpected actions.
+            _=>return Err(LlmError::Rejected), // No tool calls or unexpected actions.
         }
     }
-    if !found||answer.is_empty(){return Err(LlmError::Failed);}
+    if !found||answer.is_empty(){return Err(LlmError::Rejected);}
     Ok(answer)
 }
 
@@ -80,7 +80,7 @@ pub(crate) async fn complete(
     let mut response=send.send().await.map_err(|_|LlmError::Failed)?;
     if !response.status().is_success(){
         tracing::warn!(event="background_responses_http_failure",status=%response.status(),"Responses request failed");
-        return Err(LlmError::Failed);
+        return Err(LlmError::Rejected);
     }
     if response.content_length().is_some_and(|size|size>MAX_RESPONSE_BYTES as u64) {
         return Err(LlmError::Failed);
@@ -92,7 +92,7 @@ pub(crate) async fn complete(
         }
         bytes.extend_from_slice(&chunk);
     }
-    let document:Value=serde_json::from_slice(&bytes).map_err(|_|LlmError::Failed)?;
+    let document:Value=serde_json::from_slice(&bytes).map_err(|_|LlmError::Rejected)?;
     let text=output_text(&document)?;
     if let Some(usage)=document.get("usage"){
         tracing::info!(
