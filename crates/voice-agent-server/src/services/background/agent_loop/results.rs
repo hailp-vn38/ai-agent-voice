@@ -118,7 +118,7 @@ pub(super) fn plugin_tool_result(
         && value["status"].is_number()
     {
         let full_text = value["text"].as_str().unwrap_or("");
-        let observed: String = full_text.chars().take(6000).collect();
+        let observed: String = full_text.chars().take(super::super::coverage::MAX_VISIBLE_WEB_CHARS).collect();
         return json!({
             "status":status,"error_code":error,"step_key":step_key,
             "evidence_refs":evidence_refs,
@@ -128,7 +128,7 @@ pub(super) fn plugin_tool_result(
             "truncated":value["truncated"],
             "next_offset":value["next_offset"],
             "body_limit_reached":value["body_limit_reached"],
-            "observation_truncated":full_text.chars().count()>6000,
+            "observation_truncated":full_text.chars().count()>super::super::coverage::MAX_VISIBLE_WEB_CHARS,
             "guidance":"For an article summary, prefer mode=article and chunks <=6000 characters. If truncated, use next_offset; if observation_truncated, re-read with smaller max_chars."
         });
     }
