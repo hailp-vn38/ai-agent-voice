@@ -151,7 +151,8 @@ pub(super) fn completed_web_sources(job: &JobView, session_run_ids: Option<&[Str
             urls.insert(url);
         }
     }
-    urls.into_iter().take(16).collect()
+    // Bound source URLs so a matched Root Tool Result fits the Session message limit.
+    urls.into_iter().take(8).collect()
 }
 
 fn extraction_is_complete(
