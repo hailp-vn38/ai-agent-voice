@@ -3,7 +3,7 @@
 > **Status:** Design v1.1 — revised after PONYTAIL Review, 2026-10-14.  
 > **Baseline:** `main`; implementation branch: `feature/job-llm-activity-view-a`.  
 > **Approved visual source:** `job-llm-activity-3-views.html`, **View A / Timeline First**, from the approved UI prototype shared in the conversation.  
-> **Scope:** Specification only; this document does **not** implement production code.
+> **Scope:** Approved specification and implementation record for the feature branch.
 
 ## 1. Binding decisions
 
@@ -392,4 +392,18 @@ Both the rejected Planner Run and successful Repair stay visible. Right Inspecto
 | **User requirement: strict SQL locality** | **Mandatory** | Provider/Settings SQL currently exists in logic; relocate into `database/`. |
 | **User requirement: exact approved UI** | **Mandatory** | View A HTML is stronger than generic simplification suggestions. |
 
-**Implementation status:** Document updated only. No production Rust, database migrations or Vue code was changed or tested in this documentation update.
+**Implementation status:** Code was added to the feature branch. The implementation record below distinguishes committed work from verified tests.
+
+## 11. Implementation record (2026-10-14)
+
+The branch now includes implementation commits for:
+- New forward migration `0108_job_llm_activity.sql` and five additional bounded `job_events` types.
+- Atomic model budget reservation + `llm_run_started`, durable Run finish/error and provider/capacity/request/response metadata.
+- Optional typed Responses usage for OpenAI/OpenCode, without changing Voice streaming or background fallback policy.
+- All SQL in the **touched** Agent Job admission/runtime/scheduler/step-result paths moved under `database/jobs/*`; removed the old `services/background/providers.rs`. Existing unrelated Plugin/Artifact SQL refactors are out of scope for this change.
+- Exact View A structure in Admin Web: four KPIs, Run cards + stages, permanent right Inspector/Execution Progress, existing Job sections below, and authenticated SSE reconciliation.
+- EN/VI labels, pure Run projection, unit tests, a Rust provider credential reload regression from the concurrent `main` fix, GLOSSARY and ADR 0102.
+
+**Verification:** Per-file GitHub commit/content reads and a static 14-file contract scan passed, including SQL locality in the four touched Background logic files, parity of 44 EN/VI LLM labels, presence of all five event types and View A UI/SSE wiring. This does **not** replace Rust compilation, SQLx migration qualification, `vue-tsc` or real integration tests. The current execution environment has no Rust toolchain or complete local checkout, so `scripts/agent-test.sh` was not executed. Run the checks in Section 9 before merging.
+
+**Concurrent `main` change:** `3e76bd3` adds canonical Provider credential references after idle eviction. That behavior and its regression test were explicitly incorporated into the feature branch's new Database Provider Interface. The branch may remain behind `main` by that commit in Git history until rebased or merged.
