@@ -176,13 +176,14 @@ impl ManagedModels {
         tracing::info!(event="background_provider_permit", job_id, provider=%previous.reference, capacity_wait_ms);
         let publication = self.database.tool_security.publication.read().await;
         self.database.background_authorize_provider_call(&self.config, job_id, previous).await?;
-        // Do not retain the publication guard through the remote provider call.
-        drop(publication);
         self.observe(run, "llm_request_started", json!({
             "capacity_wait_ms":capacity_wait_ms,
             "message_count":request.messages.len(),
             "input_bytes":bytes
         })).await;
+        // Release immediately before dispatch. No asynchronous DB work between
+        // the last authorization check and the awaited provider invocation.
+        drop(publication);
         let request_started = std::time::Instant::now();
         let (outcome, unknown) = tokio::select! {
             _=cancellation.cancelled()=>(Err(JobError::Cancelled),true),
