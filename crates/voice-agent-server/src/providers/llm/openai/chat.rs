@@ -59,14 +59,14 @@ fn parse_response(body: &Value, mode: &BackgroundMode) -> Result<BackgroundTurnR
             BackgroundTurn::Text(content.to_owned())
         }
         BackgroundMode::Tools => {
-            let calls = message["tool_calls"].as_array().filter(|xs| !xs.is_empty()).ok_or(LlmError::Rejected)?;
+            let calls = message["tool_calls"].as_array().cloned().unwrap_or_default();
             let mut parsed = Vec::with_capacity(calls.len());
             for call in calls {
                 if call["type"] != "function" { return Err(LlmError::Rejected); }
                 let id = call["id"].as_str().filter(|s| !s.is_empty()).ok_or(LlmError::Rejected)?;
                 let name = call["function"]["name"].as_str().filter(|s| !s.is_empty()).ok_or(LlmError::Rejected)?;
                 let args = call["function"]["arguments"].as_str().ok_or(LlmError::Rejected)?;
-                let arguments: Value = serde_json::from_str(args).map_err(|_| LlmError::Rejected)?;
+                let arguments: Value = serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.to_owned()));
                 parsed.push(ToolCall {id:id.to_owned(),name:name.to_owned(),arguments});
             }
             BackgroundTurn::ToolCalls(parsed)
