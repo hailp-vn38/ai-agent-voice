@@ -40,7 +40,7 @@ fn request_body(
                 "type":"json_schema","json_schema":{"name":name,"strict":true,"schema":schema}
             });
         }
-        BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
+        BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
             if request.tools.is_empty() {
                 return Err(LlmError::Rejected);
             }
@@ -49,7 +49,7 @@ fn request_body(
                     "parameters":tool.parameters,"strict":true}
             })).collect());
             body["tool_choice"] = json!(if matches!(mode, BackgroundMode::ToolsAuto) {"auto"} else {"required"});
-            body["parallel_tool_calls"] = json!(false);
+            body["parallel_tool_calls"] = json!(matches!(mode, BackgroundMode::ToolsParallel));
         }
     }
     Ok(body)
@@ -75,7 +75,7 @@ fn parse_response(body: &Value, mode: &BackgroundMode) -> Result<BackgroundTurnR
                 .ok_or(LlmError::Rejected)?;
             BackgroundTurn::Text(content.to_owned())
         }
-        BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
+        BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
             let calls = message["tool_calls"]
                 .as_array()
                 .cloned()
