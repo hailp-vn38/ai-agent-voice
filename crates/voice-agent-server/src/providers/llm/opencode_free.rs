@@ -77,6 +77,23 @@ impl OpenCodeFreeProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for OpenCodeFreeProvider {
+    async fn background_complete_with_usage(
+        &self,
+        request: LlmRequest,
+        schema: Option<serde_json::Value>,
+    ) -> Result<super::BackgroundCompletion, LlmError> {
+        if self.supports_responses {
+            super::openai::responses::complete_with_usage(
+                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds, request, schema
+            ).await
+        } else {
+            Ok(super::BackgroundCompletion {
+                text: self.background_complete(request, schema).await?,
+                usage: None,
+            })
+        }
+    }
+
     fn supports_tools(&self) -> bool {
         true
     }
