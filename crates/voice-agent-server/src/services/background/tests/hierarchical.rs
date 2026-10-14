@@ -251,14 +251,160 @@ async fn invalid_root_decision_emits_precise_diagnostic_then_repairs_from_fenced
         .unwrap();
     assert_eq!(accepted.payload["action"], "finish");
     assert_eq!(
-        events.iter().filter(|e| e.event_type == "llm_run_started").count(),
+        events
+            .iter()
+            .filter(|e| e.event_type == "llm_run_started")
+            .count(),
         2
     );
     assert_eq!(
-        events.iter().filter(|e| e.event_type == "llm_run_finished").count(),
+        events
+            .iter()
+            .filter(|e| e.event_type == "llm_run_finished")
+            .count(),
         2
     );
     runtime.shutdown().await;
+}
+
+struct OperationRepairModels {
+    attempts: std::sync::atomic::AtomicUsize,
+    expected_operations: Value,
+}
+#[async_trait::async_trait]
+impl JobModels for OperationRepairModels {
+    async fn complete_structured(
+        &self,
+        id: &str,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        schema: Value,
+        deadline: i64,
+        cancel: CancellationToken,
+    ) -> Result<String, JobError> {
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let mut decision = json!({"decision":{"action":"delegate","tasks":[{
+            "task_key":"research","role":"research","goal":"Read references",
+            "allowed_operations":self.expected_operations
+        }]}});
+        assert!(validator.is_valid(&decision));
+        decision["decision"]["tasks"][0]["allowed_operations"] =
+            json!(["fixture-research.invented"]);
+        assert!(!validator.is_valid(&decision));
+        self.complete(id, pin, request, deadline, cancel).await
+    }
+
+    async fn complete(
+        &self,
+        _: &str,
+        _: &ProviderPin,
+        request: LlmRequest,
+        _: i64,
+        _: CancellationToken,
+    ) -> Result<String, JobError> {
+        let input: Value = request
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                ChatMessage::User { content } => Some(serde_json::from_str(content).unwrap()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(input["operation_allowlist"], self.expected_operations);
+        let attempt = self
+            .attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if attempt == 0 {
+            assert!(input["correction"].is_null());
+            return Ok(json!({"action":"delegate","tasks":[{
+                "task_key":"research","role":"research","goal":"Read references",
+                "allowed_operations":["fixture-research.invented"]
+            }]})
+            .to_string());
+        }
+        assert_eq!(
+            input["correction"]["diagnostic"]["validation_code"],
+            "unknown_operation"
+        );
+        assert_eq!(
+            input["correction"]["diagnostic"]["validation_path"],
+            "$.tasks[0].allowed_operations[0]"
+        );
+        assert_eq!(
+            input["correction"]["operation_allowlist"],
+            self.expected_operations
+        );
+        Ok(json!({"action":"finish","result":{
+            "summary":"Corrected operation selection","findings":[],"evidence_refs":[],"unresolved":[]
+        }}).to_string())
+    }
+}
+
+#[tokio::test]
+async fn root_operation_allowlist_repairs_unknown_operation_with_and_without_plugins() {
+    for installed in [false, true] {
+        let config = Arc::new(config());
+        let db = Arc::new(Database::connect(&config.database).await.unwrap());
+        if installed {
+            let manifest: toml::Value = toml::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../plugins/fixture-research-1.0.0/plugin.toml"
+            )))
+            .unwrap();
+            sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,installation_digest,status,revision,operations_json,created_at,updated_at) VALUES('fixture-research','1.0.0',?,?,'ready',1,?,0,0)")
+                .bind("a".repeat(64)).bind("b".repeat(64))
+                .bind(serde_json::to_string(&manifest).unwrap())
+                .execute(db.pool()).await.unwrap();
+        }
+        let models = Arc::new(OperationRepairModels {
+            attempts: std::sync::atomic::AtomicUsize::new(0),
+            expected_operations: if installed {
+                json!([
+                    "fixture-research.collect_topic",
+                    "fixture-research.simulate_failure"
+                ])
+            } else {
+                json!([])
+            },
+        });
+        let runtime = BackgroundRuntime::execution_harness(db.clone(), config, models.clone())
+            .await
+            .unwrap();
+        enable(&runtime.engine).await;
+        let receipt = db
+            .submit_job(
+                &runtime.engine.config,
+                request("Check operation selection"),
+                &JobRequester::Admin,
+                crate::database::jobs::SubmissionIdentity {
+                    test_execution_mode: Some("hierarchical_v2"),
+                    ..Default::default()
+                },
+                crate::database::unix_seconds().unwrap(),
+                || runtime.engine.runtime_ready(),
+            )
+            .await
+            .unwrap();
+        let job = wait_for(&runtime.engine, &receipt.job.id, |job| {
+            job.status == "succeeded"
+        })
+        .await;
+        assert_eq!(models.attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(job.agent_runs.len(), 1);
+        assert!(job.steps.is_empty());
+        let events = db.job_events(&job.id, 0, 100).await.unwrap();
+        let rejection = events
+            .iter()
+            .find(|event| event.event_type == "agent_decision_rejected")
+            .unwrap();
+        assert_eq!(rejection.payload["validation_code"], "unknown_operation");
+        assert_eq!(
+            rejection.payload["validation_path"],
+            "$.tasks[0].allowed_operations[0]"
+        );
+        assert!(rejection.payload.get("operation_allowlist").is_none());
+        runtime.shutdown().await;
+    }
 }
 
 struct AlwaysInvalidModels;
