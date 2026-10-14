@@ -77,3 +77,29 @@ Root and Child can use different *pinned* providers. Do not forward Child raw pr
 
 ## Rollback
 Stop new V3 submissions, keep immutable mode of existing jobs, preserve interrupted statuses according to restart policy, back up SQLite before migration. Do not execute V3 rows with V2 JSON decision logic.
+
+
+## Current implementation checkpoint — 2026-10-14
+
+The branch `feat/agent-job-v3-opencode-session-runtime` includes the V3 SQLite migration, Root native `subagent` / `finish_job` loop, durable Root and Child transcripts, same-session follow-up with a new Child Run, source-validated plugin execution, Root full-batch matching, Chat/Responses `ToolsAuto` final text, and `ToolsParallel` for two Root delegations. V2 and DAG execution retain explicit separate dispatcher paths.
+
+**Not yet verified:** no Rust compiler or Cargo is available in the execution environment, so the code has **not** passed `cargo fmt --check`, `cargo check`, `cargo test`, or a live migration smoke test. These are release blockers rather than completed acceptance items. The new tests are committed as fixtures, not claimed passing.
+
+Run in the repository root before enabling V3 in production:
+
+```sh
+cargo fmt --all --check
+cargo check --workspace --all-targets
+cargo test -p voice-agent-server v3_ -- --nocapture
+cargo test --workspace
+```
+
+Then run a SQLite migration on a backed-up DB containing representative V2 and DAG rows; verify `PRAGMA foreign_key_check` returns no rows and that previous Job IDs, mode values, events and artifacts remain readable. Exercise real native Chat/Responses provider qualification with Root and Child pinned to distinct routes. Do not enable Anthropic/Gemini native Agent Jobs until actual adapters/fixtures have been added. Native reasoning/replay metadata compatibility for models requiring opaque continuation state is not yet independently qualified. Structured-only and background inbox modes remain deferred.
+
+### Known scope limitations
+
+- At most two concurrent Child calls and four total Child Runs by default (configuration-owned budget).
+- Every Child uses the immutable worker route; `subagent.model` cannot freely select a third provider.
+- Each Child initially receives at most sixteen frozen plugin operations; a larger frozen catalog currently fails closed, pending a specific capability-selection policy.
+- The Session transcript is persisted without automatic summarization. Provider-context exhaustion is a bounded error, not automatic tool-pair truncation.
+- This checkpoint is **implementation in progress**, not a release-readiness declaration.
