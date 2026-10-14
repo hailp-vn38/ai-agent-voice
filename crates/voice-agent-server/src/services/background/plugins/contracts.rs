@@ -4,6 +4,9 @@ impl PluginStore {
         &self,
         choice: &FrozenChoice,
     ) -> Result<serde_json::Value, PluginError> {
+        if crate::tools::core::is_core(choice) {
+            return crate::tools::core::contract(choice);
+        }
         let row = self.row(&choice.plugin_id).await?;
         if row.status != "ready"
             || row.version != choice.version
@@ -77,7 +80,7 @@ pub(crate) fn compile_child_tools(
         let name = format!(
             "p_{}_{}",
             choice.plugin_id.replace('-', "_"),
-            choice.operation.replace('-', "_")
+            choice.operation.replace(['-', '.'], "_")
         );
         if name.len() > 64
             || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
