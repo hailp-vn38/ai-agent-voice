@@ -276,6 +276,29 @@ impl Database {
         Ok(children)
     }
 
+    /// All Runs sharing an owned Child Session may contribute previously
+    /// verified source evidence to a follow-up. Never use sibling Sessions.
+    pub(crate) async fn session_run_ids(
+        &self,
+        job_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<String>, JobError> {
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT r.agent_run_id FROM job_agent_runs r
+             JOIN job_agent_sessions s ON s.session_id=r.session_id AND s.job_id=r.job_id
+             WHERE r.job_id=? AND r.session_id=? AND s.parent_session_id IS NOT NULL
+             ORDER BY r.created_at, r.agent_run_id",
+        )
+        .bind(job_id)
+        .bind(session_id)
+        .fetch_all(self.pool())
+        .await?;
+        if ids.is_empty() {
+            return Err(JobError::InvalidArguments);
+        }
+        Ok(ids)
+    }
+
     pub(crate) async fn session_for_run(
         &self,
         job_id: &str,
