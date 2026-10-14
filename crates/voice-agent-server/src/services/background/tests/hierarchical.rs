@@ -19,7 +19,7 @@ impl JobModels for HierarchicalScriptedModels {
             BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall,
         };
         match mode {
-            BackgroundMode::Tools => {
+            BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
                 assert!(
                     request
                         .tools
@@ -636,7 +636,7 @@ impl JobModels for AdversarialChildModels {
                         )
                     }
                 }
-                BackgroundMode::Tools => {
+                BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
                     assert_eq!(
                         request.tools.len(),
                         1,
