@@ -21,3 +21,8 @@ The Job read view gains execution-mode and Agent Run metadata. Existing durable 
 ## Decision validation diagnostics (2026-10-14)
 
 A transport-successful LLM response is **not** an accepted Agent Decision. Rust validates and journals each Root/Child decision as `agent_decision_accepted` or `agent_decision_rejected`, correlated by `agent_run_id`, `run_id`/`turn_id`, and `attempt_no`. Rejections carry only stable `validation_code` and `validation_path` (no model output, tool arguments, prompts, or secrets). Repair receives the typed diagnostic and a bounded previous-response excerpt only in the next transient LLM input. Chat-only providers keep Rust JSON validation; qualified Responses providers receive a strict Root decision schema. The normal Job/Agent failure code remains `invalid_plan` after the bounded repair budget is exhausted.
+
+
+## V3 successor (ADR 0114)
+
+The above design governs persisted `hierarchical_v2` Jobs. New `hierarchical_v3` Jobs use session-based native Root `subagent`/`finish_job` calls, with durable canonical messages and independent Child Sessions per ADR 0114. The JSON `delegate|finish` proposal and `joined_children` user payload remain V2-only. Rust-owned plugin execution, bounded budgets, immutable pins, Child depth and one-shot attempt safety remain in force. Historical Job rows are not upgraded in place.
