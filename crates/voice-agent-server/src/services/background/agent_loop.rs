@@ -1640,7 +1640,7 @@ pub(super) async fn run_root_v3(
         for ((call,child),session) in calls.iter().zip(completed.iter()).zip(attached.iter()) {
             feedback.push(ChatMessage::ToolResult{
                 tool_call_id:call.id.clone(),
-                content:json!({"sessionID":session,"status":child.status,
+                content:json!({"sessionID":session,"status":if child.status=="succeeded" {"completed"} else {child.status.as_str()},
                     "output":child.result.as_ref().map(|value|value["summary"].as_str().unwrap_or("")).unwrap_or(""),
                     "artifact_refs":child.result.as_ref().map(|v|v["evidence_refs"].clone()).unwrap_or_else(||json!([])),
                     "error_code":child.error_code
