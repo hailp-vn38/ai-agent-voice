@@ -11,14 +11,8 @@ pub(super) async fn owned_artifact(
     if uuid::Uuid::parse_str(artifact_id).is_err() {
         return Err(PluginError::ApplicationError);
     }
-    let metadata: Option<(String, String)> = sqlx::query_as(
-        "SELECT media_type,sha256 FROM job_artifacts WHERE job_id=? AND id=?",
-    )
-    .bind(job_id)
-    .bind(artifact_id)
-    .fetch_optional(engine.database.pool())
-    .await
-    .map_err(|_| PluginError::DatabaseUnavailable)?;
+    let metadata = engine.database.job_artifact_metadata(job_id, artifact_id)
+        .await.map_err(|_| PluginError::DatabaseUnavailable)?;
     let (media_type, digest) = metadata.ok_or(PluginError::ApplicationError)?;
     let bytes = engine.read_artifact(job_id, artifact_id).await
         .map_err(|_| PluginError::ApplicationError)?;
