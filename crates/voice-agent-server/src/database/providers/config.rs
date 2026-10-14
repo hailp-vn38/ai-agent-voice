@@ -135,6 +135,10 @@ struct OpenAi {
     max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "is_false")]
     supports_responses: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    supports_structured_outputs: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    supports_function_calling: bool,
 }
 impl OpenAi {
     fn valid(&self) -> bool {
@@ -154,6 +158,10 @@ struct OpenCodeFree {
     max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "is_false")]
     supports_responses: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    supports_structured_outputs: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    supports_function_calling: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value
