@@ -99,6 +99,15 @@ Thuật ngữ Job, Plugin Package, Plugin Installation và Worker Attempt đư�
 
 ## Agent Job Planning
 
+
+**Agent Run**:
+Một phiên thực thi có mục tiêu riêng trong Agent Job; Root Orchestrator Run và các Sub-Agent Run là các loại Agent Run, không phải Agent đăng ký trên hệ thống.
+_Avoid_: LLM Run, Voice Agent, Worker Attempt
+
+**Unified Job Activity**:
+Biểu diễn theo thứ tự thời gian các mốc LLM, Plugin, Fork/Join và kết thúc của một Job, được ghép từ Job Event và trạng thái Job chính thức.
+_Avoid_: raw model transcript, tool output archive, Job Change Signal
+
 **LLM Run**:
 A single bounded invocation of a model during an Agent Job, including provider admission, model response and Rust validation; distinct from the Job, the Step, and a Plan Proposal.
 _Avoid_: Agent account, Voice Session, vendor background task, Job Step

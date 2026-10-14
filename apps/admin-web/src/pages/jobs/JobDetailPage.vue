@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
         <section class="studio-panel p-4">
           <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.timelineAgentRuns') }}</span><Layers class="size-4 text-studio-violet" /></div>
           <p class="mt-2 text-2xl font-bold tracking-tight">{{ job.agent_runs ? agentRuns.length : '—' }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ job.agent_runs ? '1 root · ' + Math.max(0, agentRuns.length - 1) + ' sub-agents' : t('jobUi.legacyNoAgents') }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ job.agent_runs ? (agentRuns.length ? '1 root · ' + Math.max(0, agentRuns.length - 1) + ' sub-agents' : t('jobUi.noAgentRunsYet')) : t('jobUi.legacyNoAgents') }}</p>
         </section>
         <section class="studio-panel p-4">
           <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.llmRuns') }}</span><BrainCircuit class="size-4 text-studio-violet" /></div>

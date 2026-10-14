@@ -42,7 +42,8 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
   const pluginRows = new Map<string, UnifiedActivity>()
   for (const event of ordered) {
     const payload = event.payload ?? {}
-    const agentRunId = text(payload.agent_run_id)
+    const agentRunId = text(payload.agent_run_id) ?? text(payload.root_agent_run_id) ??
+      (event.event_type === 'job_finished' ? (job.agent_runs ?? []).find(run => run.role === 'orchestrator')?.agent_run_id ?? null : null)
     const role = agentRunId ? roles.get(agentRunId) ?? null : null
     if (event.event_type === 'step_started' || event.event_type === 'step_finished') {
       if (!event.step_key) continue
@@ -53,14 +54,15 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       const previous = pluginRows.get(id)
       if (previous) {
         if (event.event_type === 'step_finished') {
-          previous.status = payload.status === 'succeeded' ? 'completed' : 'failed'
+          previous.status = step?.status === 'succeeded' || payload.status === 'succeeded' ? 'completed' : 'failed'
           if (step?.attempt_state === 'unknown_outcome') previous.status = 'unknown'
           previous.note = text(payload.error_code) ?? previous.note
         }
         continue
       }
-      const status: ActivityStatus = event.event_type === 'step_finished'
-        ? payload.status === 'succeeded' ? 'completed' : 'failed' : 'running'
+      const status: ActivityStatus = step?.status === 'succeeded' ? 'completed'
+        : step?.status === 'failed' || step?.status === 'skipped' || step?.status === 'cancelled' ? 'failed'
+        : event.event_type === 'step_finished' ? payload.status === 'succeeded' ? 'completed' : 'failed' : 'running'
       const item: UnifiedActivity = {
         id, sequence: event.sequence, time: event.created_at, kind: 'plugin',
         status: step?.attempt_state === 'unknown_outcome' ? 'unknown' : status,
@@ -82,7 +84,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       make('join', 'join:' + (text(payload.fork_group_id) ?? event.sequence), 'Join completed', 'Children: ' + (payload.member_count ?? '—'))
     } else if (event.event_type === 'agent_run_finished') {
       make('agent', 'agent:' + (agentRunId ?? event.sequence), 'Agent finished', text(payload.error_code) ?? 'Run checkpoint',
-        payload.status === 'succeeded' ? 'completed' : payload.status === 'cancelled' ? 'cancelled' : 'failed')
+        payload.status === 'succeeded' || payload.status === 'completed' ? 'completed' : payload.status === 'cancelled' ? 'cancelled' : 'failed')
     } else if (event.event_type === 'job_finished') {
       make('job', 'job:terminal', 'Job finished', text(payload.error_code) ?? text(payload.status) ?? 'Terminal checkpoint',
         payload.status === 'succeeded' || payload.status === 'partial_success' ? 'completed' : payload.status === 'cancelled' ? 'cancelled' : 'failed')
