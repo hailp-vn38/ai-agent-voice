@@ -47,7 +47,7 @@ Reserved function `submit_result` has required fields `status=completed,summary,
 
 1. Record LLM Turn, call provider with `tool_choice=required` and `parallel_tool_calls=false`.
 2. Reject text, zero/multiple function calls, duplicated IDs, unknown function names, invalid JSON/arguments. Record `agent_decision_rejected` with stable code/path; no Plugin Step. Repair only within existing budget.
-3. For a validated plugin function call: `agent_decision_accepted(action=tool_call)` → `insert_dynamic_step` → `execute_plugin_step_cancel` → matched tool result. Known plugin failures return a tool result; `unknown_outcome` must fail-stop and **never auto-replay**.
+3. For a validated plugin function call: `agent_decision_accepted(action=call_plugin)` → `insert_dynamic_step` → `execute_plugin_step_cancel` → matched tool result. Known plugin failures return a tool result; `unknown_outcome` must fail-stop and **never auto-replay**.
 4. For a valid `submit_result`: `agent_decision_accepted(action=finish)`, finish Child Run; join group; return compact typed result to Root.
 5. Root validates final coverage and uses existing `finish_job` status transitions.
 
