@@ -119,13 +119,13 @@ async function run() {
         <textarea v-model="text" class="admin-textarea min-h-24" :maxlength="type === 'llm' ? 8192 : 4096" :disabled="busy" />
       </label>
       <label v-if="type === 'llm'" class="block space-y-1.5">
-        <span class="text-sm">LLM output mode</span>
+        <span class="text-sm">{{ t('diagnostics.llmMode') }}</span>
         <select v-model="llmMode" class="admin-input" :disabled="busy">
-          <option value="text">Text (existing diagnostic)</option>
-          <option value="structured">Strict Structured Outputs (Root)</option>
-          <option value="tools">Strict Function Calling (Child)</option>
+          <option value="text">{{ t('diagnostics.llmTextMode') }}</option>
+          <option value="structured">{{ t('diagnostics.llmStructuredMode') }}</option>
+          <option value="tools">{{ t('diagnostics.llmToolsMode') }}</option>
         </select>
-        <small class="text-xs text-muted-foreground">Strict modes send a real schema or function definition to the selected provider.</small>
+        <small class="text-xs text-muted-foreground">{{ t('diagnostics.llmStrictHint') }}</small>
       </label>
       <div v-if="type === 'tts'" class="grid gap-3 sm:grid-cols-2">
         <label v-for="field in (['voices', 'languages'] as const)" v-show="options(field).length" :key="field" class="space-y-1.5 text-sm">
