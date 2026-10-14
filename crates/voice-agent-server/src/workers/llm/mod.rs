@@ -96,6 +96,13 @@ impl LlmRuntime {
             .background_complete_with_usage(request, schema)
             .await
     }
+    pub(crate) async fn background_turn(
+        &self,
+        request: LlmRequest,
+        mode: crate::providers::llm::BackgroundMode,
+    ) -> Result<crate::providers::llm::BackgroundTurnResult, crate::providers::LlmError> {
+        self.provider.background_turn(request, mode).await
+    }
     pub fn supports_tools(&self) -> bool {
         self.provider.supports_tools()
     }
