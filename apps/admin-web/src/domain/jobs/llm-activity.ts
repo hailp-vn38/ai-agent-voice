@@ -50,7 +50,7 @@ export function projectLlmRuns(events: JobEvent[], status: AdminJob['status']): 
     }
     const run = runs.get(id)
     if (!run) continue
-    if (event.event_type.startsWith('llm_')) run.events.push(event)
+    if (event.event_type.startsWith('llm_') || event.event_type === 'plan_rejected') run.events.push(event)
     if (event.event_type === 'llm_provider_acquired') {
       run.adapter = text(event.payload.adapter)
       run.model = text(event.payload.model)
