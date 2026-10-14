@@ -5,7 +5,7 @@ use super::{
     plan::{JobPlan, PlanStep},
     plugins::FrozenChoice,
 };
-use crate::providers::llm::{ChatMessage, LlmRequest};
+use crate::providers::llm::{BackgroundMode, BackgroundTurn, ChatMessage, LlmRequest, ToolCall, ToolDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -382,9 +382,9 @@ fn parse_child_decision(
     Ok(decision)
 }
 fn root_response_schema(operation_allowlist: &[String]) -> Value {
-    // Root Responses structured output; Chat Completions retains Rust-side validation.
+    // Strict native schema on both Responses and Chat Background transports.
     let operations = if operation_allowlist.is_empty() {
-        json!({"type":"array","items":{"type":"string"},"maxItems":0})
+        json!({"type":"array","items":{"type":"string","enum":["__no_operations__"]}})
     } else {
         json!({"type":"array","items":{"type":"string","enum":operation_allowlist}})
     };
@@ -452,20 +452,14 @@ async fn model_decision(
         tools: Vec::new(),
     };
     let response = if let Some(schema) = schema {
-        models
-            .complete_structured_traced(
-                context,
-                pin,
-                request,
-                schema,
-                deadline,
-                cancellation.clone(),
-            )
-            .await
+        models.turn_traced(context,pin,request,
+            BackgroundMode::Structured {name:"root_decision".into(),schema},
+            deadline,cancellation.clone()).await.and_then(|result| match result.turn {
+                BackgroundTurn::Text(text) => Ok(text),
+                _ => Err(JobError::InvalidPlan),
+            })
     } else {
-        models
-            .complete_traced(context, pin, request, deadline, cancellation.clone())
-            .await
+        models.complete_traced(context,pin,request,deadline,cancellation.clone()).await
     };
     let metadata = json!({"status":if response.is_ok(){"completed"}else{"failed"},
         "error_code":response.as_ref().err().map(|e|e.code()),
