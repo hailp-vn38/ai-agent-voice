@@ -103,7 +103,7 @@ fn strict_projection(schema: &serde_json::Value) -> Option<serde_json::Value> {
                 let required = input.get("required").and_then(Value::as_array);
                 let mut projected = serde_json::Map::new();
                 for (key, item) in props {
-                    let mandatory = required.is_some_and(|arr| arr.iter().any(|v| v.as_str()==Some(key)));
+                    let mandatory = required.is_some_and(|arr| arr.iter().any(|v| v.as_str()==Some(key.as_str())));
                     projected.insert(key.clone(), walk(item,!mandatory,depth+1)?);
                 }
                 json!({"type":"object","properties":projected,
@@ -137,7 +137,7 @@ pub(crate) fn normalize_tool_arguments(schema: &serde_json::Value, args: &mut se
     let required = schema.get("required").and_then(Value::as_array);
     let Some(values) = args.as_object_mut() else {return};
     for (key, child_schema) in properties {
-        let mandatory = required.is_some_and(|arr| arr.iter().any(|v| v.as_str()==Some(key)));
+        let mandatory = required.is_some_and(|arr| arr.iter().any(|v| v.as_str()==Some(key.as_str())));
         if !mandatory && values.get(key).is_some_and(Value::is_null) {
             values.remove(key);
         } else if let Some(value) = values.get_mut(key) {
