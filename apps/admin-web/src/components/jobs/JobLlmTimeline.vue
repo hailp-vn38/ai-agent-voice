@@ -72,7 +72,7 @@ function eventName(event: JobEvent) {
     case 'llm_provider_acquired': return t('jobUi.llmProviderAcquired')
     case 'llm_request_started': return t('jobUi.llmDispatched')
     case 'llm_response_received': return t('jobUi.llmReceived')
-    case 'llm_run_finished': return t('jobUi.llmFinished')
+    case 'llm_run_finished': return event.payload.validation_code ? t('jobUi.llmValidationFailed') : t('jobUi.llmFinished')
     default: return event.event_type
   }
 }
@@ -88,6 +88,7 @@ function time(input: string) {
   return Number.isFinite(value.getTime()) ? value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
 }
 function duration(run: LlmRun) {
+  if (run.totalDurationMs !== null) return (run.totalDurationMs / 1000).toFixed(2) + ' s'
   if (run.requestDurationMs !== null) return (run.requestDurationMs / 1000).toFixed(2) + ' s'
   if (run.status === 'running') {
     const started = Date.parse(run.startedAt)
