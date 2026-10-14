@@ -27,12 +27,7 @@ impl Database {
             .ok_or(JobError::Terminal)?;
         let choices: Vec<Value> = serde_json::from_str(&row.plugin_choices_json)
             .map_err(|_| JobError::DatabaseUnavailable)?;
-        if !choices.iter().any(|v| {
-            v["plugin_id"] == choice.plugin_id
-                && v["operation"] == choice.operation
-                && v["package_digest"] == choice.package_digest
-                && v["installation_digest"] == choice.installation_digest
-        }) {
+        if !choices.iter().any(|v| crate::tools::core::matches_frozen(v, choice)) {
             return Err(JobError::CapabilityUnavailable);
         }
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
@@ -112,13 +107,7 @@ impl Database {
         }
         let choices: Vec<Value> = serde_json::from_str(&job.plugin_choices_json)
             .map_err(|_| JobError::DatabaseUnavailable)?;
-        let selected = choices.iter().any(|value| {
-            value["plugin_id"] == choice.plugin_id
-                && value["version"] == choice.version
-                && value["package_digest"] == choice.package_digest
-                && value["installation_digest"] == choice.installation_digest
-                && value["operation"] == choice.operation
-        });
+        let selected = choices.iter().any(|value| crate::tools::core::matches_frozen(value, choice));
         let step: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job_steps WHERE job_id=? AND step_key=? AND plugin_id=? AND plugin_version=? AND package_digest=? AND installation_digest=? AND operation=? AND attempt_id=? AND attempt_state='reserved'")
             .bind(job_id).bind(step_key).bind(&choice.plugin_id).bind(&choice.version)
             .bind(&choice.package_digest).bind(&choice.installation_digest).bind(&choice.operation)
@@ -134,14 +123,18 @@ impl Database {
         if enabled != 1 {
             return Err(JobError::Disabled);
         }
-        let live: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",
-        )
-        .bind(&choice.plugin_id).bind(&choice.version)
-        .bind(&choice.package_digest).bind(&choice.installation_digest)
-        .fetch_optional(&mut *tx).await?;
-        if live.is_none() {
-            return Err(JobError::CapabilityUnavailable);
+        if crate::tools::core::is_core(choice) {
+            crate::tools::core::contract(choice).map_err(JobError::from_plugin)?;
+        } else {
+            let live: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",
+            )
+            .bind(&choice.plugin_id).bind(&choice.version)
+            .bind(&choice.package_digest).bind(&choice.installation_digest)
+            .fetch_optional(&mut *tx).await?;
+            if live.is_none() {
+                return Err(JobError::CapabilityUnavailable);
+            }
         }
         let updated = sqlx::query("UPDATE job_steps SET attempt_state='start_requested',worker_instance_id=?,updated_at=? WHERE job_id=? AND step_key=? AND status='running' AND attempt=1 AND attempt_id=? AND attempt_state='reserved'")
             .bind(format!("agent-job-{attempt_id}")).bind(now).bind(job_id).bind(step_key).bind(attempt_id)
