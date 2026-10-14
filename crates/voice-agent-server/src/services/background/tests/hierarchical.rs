@@ -521,9 +521,9 @@ async fn hierarchical_submission_rejects_provider_without_required_native_mode()
     let (db, config, runtime) = harness().await;
     sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,created_at,updated_at) VALUES('unqualified','Unqualified','llm','openai','{}',0,0)")
         .execute(db.pool()).await.unwrap();
-    for (root, worker) in [
-        ("unqualified", "config:llm:planner"),
-        ("config:llm:planner", "unqualified"),
+    for (root, worker, expected_code) in [
+        ("unqualified", "config:llm:planner", "orchestrator_structured_outputs_required"),
+        ("config:llm:planner", "unqualified", "worker_function_calling_required"),
     ] {
         let revision = runtime.engine.settings().await.unwrap().revision;
         runtime
@@ -551,7 +551,8 @@ async fn hierarchical_submission_rejects_provider_without_required_native_mode()
                 || runtime.engine.runtime_ready(),
             )
             .await;
-        assert!(matches!(receipt, Err(JobError::CapabilityUnavailable)));
+        assert!(matches!(receipt, Err(error) if error.code() == expected_code),
+            "Missing capability must identify the selected role and required native mode");
     }
     runtime.shutdown().await;
 }
