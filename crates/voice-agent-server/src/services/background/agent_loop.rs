@@ -437,11 +437,12 @@ async fn decide_root(
     attempt: &mut u32,
     cancel: &CancellationToken,
 ) -> Result<RootDecision, JobError> {
-    let choices: Vec<FrozenChoice> = serde_json::from_value(job.plugin_choices.clone())
-        .map_err(|_| JobError::DatabaseUnavailable)?;
+    let choices = job.plugin_choices.as_array().ok_or(JobError::DatabaseUnavailable)?;
     let operation_allowlist: Vec<String> = choices
         .iter()
-        .map(|choice| format!("{}.{}", choice.plugin_id, choice.operation))
+        .map(|choice| format!("{}.{}",
+            choice["plugin_id"].as_str().unwrap_or(""),
+            choice["operation"].as_str().unwrap_or("")))
         .collect();
     let mut correction = Value::Null;
     for _ in 0..=job.snapshot.limits.max_plan_repairs {
@@ -737,20 +738,23 @@ async fn run_child(
         .database
         .start_child_run(&job.id, &child.agent_run_id)
         .await?;
-    let choices: Vec<FrozenChoice> = serde_json::from_value(job.plugin_choices.clone())
-        .map_err(|_| JobError::DatabaseUnavailable)?;
+    let choices = job.plugin_choices.as_array().ok_or(JobError::DatabaseUnavailable)?;
     let mut pinned = Vec::new();
     for allowed in &child.allowed_operations {
-        let choice = choices
+        let raw = choices
             .iter()
-            .find(|c| format!("{}.{}", c.plugin_id, c.operation) == *allowed)
+            .find(|c| format!("{}.{}",
+                c["plugin_id"].as_str().unwrap_or(""),
+                c["operation"].as_str().unwrap_or("")) == *allowed)
             .ok_or(JobError::CapabilityUnavailable)?;
+        let choice = super::plugins::decode_choice(raw)
+            .map_err(JobError::from_plugin)?;
         let contract = engine
             .plugins
-            .operation_contract(choice)
+            .operation_contract(&choice)
             .await
             .map_err(JobError::from_plugin)?;
-        pinned.push((choice.clone(), contract));
+        pinned.push((choice, contract));
     }
     let (mut tools, bindings) = super::plugins::compile_child_tools(&pinned)?;
     tools.push(child_completion_tool());
