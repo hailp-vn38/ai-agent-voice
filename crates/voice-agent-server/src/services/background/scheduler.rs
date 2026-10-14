@@ -174,5 +174,8 @@ pub(super) async fn eligible(
     job: &JobRow,
     timestamp: i64,
 ) -> Result<(), JobError> {
-    engine.database.job_eligible(&engine.config, job, timestamp, engine.runtime_ready()).await
+    engine
+        .database
+        .job_eligible(&engine.config, job, timestamp, engine.runtime_ready())
+        .await
 }

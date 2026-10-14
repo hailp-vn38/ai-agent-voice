@@ -134,13 +134,13 @@ impl Database {
             payload["turn_id"] = json!(run.run_id);
         }
         events::append(&mut tx, id, "llm_run_started", step, &payload).await?;
-        if let Some(next) = legacy_attempt {
-            if step.is_none() {
-                events::append(&mut tx,id,"plan_attempt",None,&json!({
+        if let Some(next) = legacy_attempt
+            && step.is_none()
+        {
+            events::append(&mut tx,id,"plan_attempt",None,&json!({
                     "attempt":next,"phase":if job.plan_revision==0{"initial_or_repair"}else{"replan_or_repair"},
                     "run_id":run.run_id
                 })).await?;
-            }
         }
         tx.commit().await?;
         self.job_changes.publish_committed(id);

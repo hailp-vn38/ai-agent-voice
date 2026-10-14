@@ -3,14 +3,11 @@ use super::{JobError, ProviderPin, model::LlmRunContext};
 use crate::{
     config::AppConfig,
     database::Database,
-    providers::{
-        config_catalog::ProviderOrigin,
-        llm::LlmRequest,
-    },
+    providers::{config_catalog::ProviderOrigin, llm::LlmRequest},
     services::provider_runtime::ProviderRuntimeManager,
 };
-use std::{sync::Arc, time::Duration};
 use serde_json::json;
+use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 #[async_trait::async_trait]
@@ -49,7 +46,8 @@ pub(crate) trait JobModels: Send + Sync {
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<String, JobError> {
-        self.complete(&run.job_id, pin, request, deadline_at, cancellation).await
+        self.complete(&run.job_id, pin, request, deadline_at, cancellation)
+            .await
     }
     async fn complete_structured_traced(
         &self,
@@ -60,9 +58,9 @@ pub(crate) trait JobModels: Send + Sync {
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<String, JobError> {
-        self.complete_structured(&run.job_id, pin, request, schema, deadline_at, cancellation).await
+        self.complete_structured(&run.job_id, pin, request, schema, deadline_at, cancellation)
+            .await
     }
-
 }
 
 pub(crate) struct ManagedModels {
@@ -77,6 +75,11 @@ pub(crate) struct ManagedModels {
     >,
 }
 
+struct CompletionRequest {
+    request: LlmRequest,
+    schema: Option<serde_json::Value>,
+}
+
 pub(crate) fn remaining(deadline_at: i64) -> Result<Duration, JobError> {
     let deadline = std::time::UNIX_EPOCH
         .checked_add(Duration::from_secs(
@@ -89,11 +92,16 @@ pub(crate) fn remaining(deadline_at: i64) -> Result<Duration, JobError> {
 }
 
 impl ManagedModels {
-    async fn observe(&self, run: Option<&LlmRunContext>, event: &'static str, detail: serde_json::Value) {
-        if let Some(run) = run {
-            if let Err(error) = self.database.record_llm_activity(run, event, detail).await {
-                tracing::warn!(event="background_llm_activity_write_failed", job_id=%run.job_id, code=%error.code());
-            }
+    async fn observe(
+        &self,
+        run: Option<&LlmRunContext>,
+        event: &'static str,
+        detail: serde_json::Value,
+    ) {
+        if let Some(run) = run
+            && let Err(error) = self.database.record_llm_activity(run, event, detail).await
+        {
+            tracing::warn!(event="background_llm_activity_write_failed", job_id=%run.job_id, code=%error.code());
         }
     }
 
@@ -102,14 +110,20 @@ impl ManagedModels {
         previous: &ProviderPin,
         deadline_at: i64,
         cancellation: CancellationToken,
-    ) -> Result<(
-        crate::services::provider_runtime::ResourceLease,
-        Arc<crate::workers::LlmRuntime>,
-        String,
-        Option<String>,
-        &'static str,
-    ), JobError> {
-        let resolved = self.database.background_resolve_provider(&self.config, previous).await?;
+    ) -> Result<
+        (
+            crate::services::provider_runtime::ResourceLease,
+            Arc<crate::workers::LlmRuntime>,
+            String,
+            Option<String>,
+            &'static str,
+        ),
+        JobError,
+    > {
+        let resolved = self
+            .database
+            .background_resolve_provider(&self.config, previous)
+            .await?;
         let deadline = tokio::time::Instant::now() + remaining(deadline_at)?;
         let provider_wait_started = std::time::Instant::now();
         let origin = resolved.origin;
@@ -129,7 +143,11 @@ impl ManagedModels {
         };
         tracing::info!(event="background_provider_acquired", provider=%previous.reference, provider_wait_ms=provider_wait_started.elapsed().as_millis() as u64);
         let catalog = lease.runtimes().ok_or(JobError::ProviderUnavailable)?;
-        let runtime = catalog.llm.get(&key).cloned().ok_or(JobError::ProviderUnavailable)?;
+        let runtime = catalog
+            .llm
+            .get(&key)
+            .cloned()
+            .ok_or(JobError::ProviderUnavailable)?;
         Ok((lease, runtime, adapter, model, transport))
     }
 
@@ -137,29 +155,39 @@ impl ManagedModels {
         &self,
         job_id: &str,
         previous: &ProviderPin,
-        request: LlmRequest,
-        schema: Option<serde_json::Value>,
+        completion: CompletionRequest,
         deadline_at: i64,
         cancellation: CancellationToken,
         run: Option<&LlmRunContext>,
     ) -> Result<String, JobError> {
-        let bytes = request.messages.iter().map(|message| match message {
-            crate::providers::llm::ChatMessage::System { content }
-            | crate::providers::llm::ChatMessage::User { content }
-            | crate::providers::llm::ChatMessage::AssistantText { content }
-            | crate::providers::llm::ChatMessage::ToolResult { content, .. } => content.len(),
-            crate::providers::llm::ChatMessage::AssistantToolCalls { .. } => usize::MAX,
-        }).fold(0usize, usize::saturating_add);
+        let CompletionRequest { request, schema } = completion;
+        let bytes = request
+            .messages
+            .iter()
+            .map(|message| match message {
+                crate::providers::llm::ChatMessage::System { content }
+                | crate::providers::llm::ChatMessage::User { content }
+                | crate::providers::llm::ChatMessage::AssistantText { content }
+                | crate::providers::llm::ChatMessage::ToolResult { content, .. } => content.len(),
+                crate::providers::llm::ChatMessage::AssistantToolCalls { .. } => usize::MAX,
+            })
+            .fold(0usize, usize::saturating_add);
         if bytes > 65536 || !request.tools.is_empty() {
             return Err(JobError::CapacityUnavailable);
         }
         let provider_wait_started = std::time::Instant::now();
-        let (lease, runtime, adapter, model, transport) =
-            self.acquire(previous, deadline_at, cancellation.clone()).await?;
-        self.observe(run, "llm_provider_acquired", json!({
-            "adapter": adapter, "model": model, "transport": transport,
-            "provider_wait_ms": provider_wait_started.elapsed().as_millis() as u64,
-        })).await;
+        let (lease, runtime, adapter, model, transport) = self
+            .acquire(previous, deadline_at, cancellation.clone())
+            .await?;
+        self.observe(
+            run,
+            "llm_provider_acquired",
+            json!({
+                "adapter": adapter, "model": model, "transport": transport,
+                "provider_wait_ms": provider_wait_started.elapsed().as_millis() as u64,
+            }),
+        )
+        .await;
         let deadline = tokio::time::Instant::now() + remaining(deadline_at)?;
         let capacity_wait_started = std::time::Instant::now();
         let permit = loop {
@@ -175,12 +203,19 @@ impl ManagedModels {
         let capacity_wait_ms = capacity_wait_started.elapsed().as_millis() as u64;
         tracing::info!(event="background_provider_permit", job_id, provider=%previous.reference, capacity_wait_ms);
         let publication = self.database.tool_security.publication.read().await;
-        self.database.background_authorize_provider_call(&self.config, job_id, previous).await?;
-        self.observe(run, "llm_request_started", json!({
-            "capacity_wait_ms":capacity_wait_ms,
-            "message_count":request.messages.len(),
-            "input_bytes":bytes
-        })).await;
+        self.database
+            .background_authorize_provider_call(&self.config, job_id, previous)
+            .await?;
+        self.observe(
+            run,
+            "llm_request_started",
+            json!({
+                "capacity_wait_ms":capacity_wait_ms,
+                "message_count":request.messages.len(),
+                "input_bytes":bytes
+            }),
+        )
+        .await;
         // Release immediately before dispatch. No asynchronous DB work between
         // the last authorization check and the awaited provider invocation.
         drop(publication);
@@ -195,7 +230,10 @@ impl ManagedModels {
             },
         };
         if outcome.is_err() && unknown {
-            self.quarantine.lock().expect("Background LLM quarantine").push((lease, permit));
+            self.quarantine
+                .lock()
+                .expect("Background LLM quarantine")
+                .push((lease, permit));
         }
         match outcome {
             Ok(response) => {
@@ -230,8 +268,18 @@ impl JobModels for ManagedModels {
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<String, JobError> {
-        self.complete_inner(job_id, pin, request, None, deadline_at, cancellation, None)
-            .await
+        self.complete_inner(
+            job_id,
+            pin,
+            CompletionRequest {
+                request,
+                schema: None,
+            },
+            deadline_at,
+            cancellation,
+            None,
+        )
+        .await
     }
     async fn complete_structured(
         &self,
@@ -245,8 +293,10 @@ impl JobModels for ManagedModels {
         self.complete_inner(
             job_id,
             pin,
-            request,
-            Some(schema),
+            CompletionRequest {
+                request,
+                schema: Some(schema),
+            },
             deadline_at,
             cancellation,
             None,
@@ -254,16 +304,46 @@ impl JobModels for ManagedModels {
         .await
     }
     async fn complete_traced(
-        &self, run: &LlmRunContext, pin: &ProviderPin, request: LlmRequest,
-        deadline_at: i64, cancellation: CancellationToken,
+        &self,
+        run: &LlmRunContext,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        deadline_at: i64,
+        cancellation: CancellationToken,
     ) -> Result<String, JobError> {
-        self.complete_inner(&run.job_id, pin, request, None, deadline_at, cancellation, Some(run)).await
+        self.complete_inner(
+            &run.job_id,
+            pin,
+            CompletionRequest {
+                request,
+                schema: None,
+            },
+            deadline_at,
+            cancellation,
+            Some(run),
+        )
+        .await
     }
     async fn complete_structured_traced(
-        &self, run: &LlmRunContext, pin: &ProviderPin, request: LlmRequest,
-        schema: serde_json::Value, deadline_at: i64, cancellation: CancellationToken,
+        &self,
+        run: &LlmRunContext,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        schema: serde_json::Value,
+        deadline_at: i64,
+        cancellation: CancellationToken,
     ) -> Result<String, JobError> {
-        self.complete_inner(&run.job_id, pin, request, Some(schema), deadline_at, cancellation, Some(run)).await
+        self.complete_inner(
+            &run.job_id,
+            pin,
+            CompletionRequest {
+                request,
+                schema: Some(schema),
+            },
+            deadline_at,
+            cancellation,
+            Some(run),
+        )
+        .await
     }
-
 }

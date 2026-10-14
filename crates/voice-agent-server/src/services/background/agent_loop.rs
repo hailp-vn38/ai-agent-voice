@@ -65,11 +65,9 @@ fn run_context(job_id: &str, agent_id: &str, role: &'static str, attempt: u32) -
 async fn model_decision(
     engine: &JobEngine,
     job: &JobView,
-    agent: &AgentRunView,
-    role: &'static str,
+    context: &LlmRunContext,
     system: &str,
     payload: &Value,
-    attempt: u32,
     cancellation: &CancellationToken,
 ) -> Result<String, JobError> {
     if cancellation.is_cancelled() {
@@ -79,20 +77,19 @@ async fn model_decision(
         return Err(JobError::CapacityUnavailable);
     }
     let models = engine.models.as_ref().ok_or(JobError::RuntimeUnavailable)?;
-    let context = run_context(&job.id, &agent.agent_run_id, role, attempt);
-    let pin = if role == "planner" {
+    let pin = if context.role == "planner" {
         &job.snapshot.orchestrator
     } else {
         &job.snapshot.worker
     };
-    engine.database.reserve_model_call(&context, pin).await?;
+    engine.database.reserve_model_call(context, pin).await?;
     let now = super::engine::now()?;
     let deadline = job
         .deadline_at
         .min(now.saturating_add(i64::from(job.snapshot.limits.step_timeout_seconds)));
     let response = models
         .complete_traced(
-            &context,
+            context,
             pin,
             LlmRequest {
                 messages: vec![
@@ -114,7 +111,7 @@ async fn model_decision(
         "duration_ms":context.started_at.elapsed().as_millis() as u64});
     if let Err(error) = engine
         .database
-        .record_llm_activity(&context, "llm_run_finished", metadata)
+        .record_llm_activity(context, "llm_run_finished", metadata)
         .await
     {
         tracing::warn!(job_id=%job.id,code=%error.code(),"V2 LLM activity finish metadata unavailable");
@@ -231,11 +228,9 @@ async fn decide_root(
         let raw = model_decision(
             engine,
             job,
-            root,
-            "planner",
+            &run_context(&job.id, &root.agent_run_id, "planner", *attempt),
             ROOT_INSTRUCTION,
             &input,
-            *attempt,
             cancel,
         )
         .await?;
@@ -276,11 +271,9 @@ async fn decide_child(
         let raw = model_decision(
             engine,
             job,
-            child,
-            "worker",
+            &run_context(&job.id, &child.agent_run_id, "worker", *attempt),
             CHILD_INSTRUCTION,
             &input,
-            *attempt,
             cancel,
         )
         .await?;
