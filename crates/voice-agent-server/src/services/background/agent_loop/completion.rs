@@ -1,7 +1,7 @@
 //! Root completion admission, coverage and durable Job finalization.
 use super::{
     super::{JobEngine, JobError, model::LlmRunContext},
-    results::{RootResult, bounded_result, grounded_single_child_summary, verified_coverage},
+    results::{RootResult, bounded_result, grounded_single_child_summary, verified_coverage_with_sources},
 };
 use crate::providers::llm::{ChatMessage, ToolCall};
 use serde_json::json;
@@ -40,7 +40,14 @@ pub(super) async fn finish_root(
     } else {
         None
     };
-    let (mut status, coverage) = verified_coverage(&current)?;
+    let mut verified = std::collections::BTreeSet::new();
+    for runs in engine.database.job_child_session_run_groups(job_id).await? {
+        for url in super::super::coverage::completed_web_sources(&current, Some(&runs)) {
+            verified.insert(url);
+        }
+    }
+    let (mut status, coverage) =
+        verified_coverage_with_sources(&current, verified.into_iter().collect())?;
     // A Job with an explicit single article URL cannot succeed on empty
     // required_sources merely because some partial HTML fragments were fetched.
     if failure.is_none()
