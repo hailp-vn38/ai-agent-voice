@@ -69,3 +69,28 @@ fn evidence_refs_cannot_cross_child_or_invent_artifact_ids() {
         &child_refs,
     ));
 }
+
+
+#[test]
+fn v3_subagent_schema_exposes_full_prompt_and_session_resume() {
+    let tools=v3_root_tools();
+    assert!(tools.iter().any(|tool|tool.name=="subagent"));
+    assert!(tools.iter().any(|tool|tool.name=="finish_job"));
+    let schema=&tools.iter().find(|tool|tool.name=="subagent").unwrap().parameters;
+    assert!(schema["properties"].get("prompt").is_some());
+    assert!(schema["properties"].get("sessionID").is_some());
+}
+
+#[test]
+fn v3_invalid_root_batches_cannot_execute_any_children() {
+    use crate::providers::llm::ToolCall;
+    let sub=ToolCall{id:"call_1".into(),name:"subagent".into(),
+        arguments:json!({"agent":"research","description":"Investigate","prompt":"Full child task",
+            "model":null,"sessionID":null,"background":false})};
+    let finish=ToolCall{id:"call_2".into(),name:"finish_job".into(),
+        arguments:json!({"summary":"Done","findings":[],"evidence_refs":[],"unresolved":[]})};
+    let seen=std::collections::HashSet::new();
+    assert!(v3_root_call_batch_valid(&[sub.clone()],&seen));
+    assert!(!v3_root_call_batch_valid(&[sub.clone(),finish],&seen));
+    assert!(!v3_root_call_batch_valid(&[sub.clone(),sub],&seen));
+}
