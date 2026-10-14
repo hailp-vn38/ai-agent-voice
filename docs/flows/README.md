@@ -7,6 +7,7 @@
 5. [TTS](05-tts.md)
 6. [Interrupt / cancellation](06-interrupt-cancellation.md)
 7. [Device MCP](07-device-mcp.md)
-8. [Agent Job Hybrid](08-agent-job-hybrid.md)
+8. [Agent Job Hybrid — Rust server](08-agent-job-hybrid.md)
+9. [Agent Job Hybrid — Web Timeline B](09-agent-job-web-timeline.md)
 
 Mỗi flow mô tả boundary, sequence, invariants và test contract. Khi hành vi runtime thay đổi, tài liệu flow tương ứng phải được cập nhật cùng PR.
