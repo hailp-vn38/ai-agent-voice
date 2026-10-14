@@ -798,7 +798,7 @@ async fn run_child(
             BackgroundTurn::ToolCalls(calls) if calls.len() == 1 => calls,
             _ => {
                 engine.database.record_agent_decision(&context,false,
-                    json!({"validation_code":"tool_call_count","validation_path":"$.tool_calls"})).await?;
+                    json!({"validation_code":"tool_call_count","validation_path":"$.tool_calls","attempt_no":attempt})).await?;
                 repairs += 1;
                 if repairs > job.snapshot.limits.max_plan_repairs {
                     return Err(JobError::InvalidPlan);
@@ -904,7 +904,7 @@ async fn run_child(
                 &context,
                 true,
                 json!({
-                    "action":"tool_call","attempt_no":attempt
+                    "action":"call_plugin","attempt_no":attempt
                 }),
             )
             .await?;
