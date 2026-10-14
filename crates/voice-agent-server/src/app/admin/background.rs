@@ -14,7 +14,10 @@ fn failure(request: &Request, cause: JobError) -> Response {
         JobError::InvalidArguments => StatusCode::BAD_REQUEST,
         JobError::AuthorityRevoked => StatusCode::FORBIDDEN,
         JobError::NotFound => StatusCode::NOT_FOUND,
-        JobError::RevisionConflict | JobError::IdempotencyConflict | JobError::Terminal => {
+        JobError::RevisionConflict
+        | JobError::IdempotencyConflict
+        | JobError::Terminal
+        | JobError::DeleteConflict => {
             StatusCode::CONFLICT
         }
         JobError::QueueFull => StatusCode::TOO_MANY_REQUESTS,
@@ -121,6 +124,20 @@ pub(super) async fn get(
         Err(e) => failure(&request, e),
     }
 }
+pub(super) async fn delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    match runtime(&state) {
+        Ok(engine) => match engine.delete(&id).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(cause) => failure(&request, cause),
+        },
+        Err(cause) => failure(&request, cause),
+    }
+}
+
 pub(super) async fn artifact(
     State(state): State<AppState>,
     Path((id, artifact_id)): Path<(String, String)>,
