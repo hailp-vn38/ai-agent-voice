@@ -68,9 +68,15 @@ pub(super) async fn test_llm_provider(
     }
     let started = Instant::now();
     let outcome = if let Some(mode) = body.mode {
-        state.provider_diagnostics.execute_llm_strict(&key, body.input, mode).await
+        state
+            .provider_diagnostics
+            .execute_llm_strict(&key, body.input, mode)
+            .await
     } else {
-        state.provider_diagnostics.execute_llm(&key, body.input).await
+        state
+            .provider_diagnostics
+            .execute_llm(&key, body.input)
+            .await
     };
     let diagnostic = match outcome {
         Ok(value) => value,
