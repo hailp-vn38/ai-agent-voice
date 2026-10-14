@@ -197,7 +197,10 @@ fn verified_extract_result(step: &super::model::JobStepView, url: &str) -> bool 
         return false;
     };
     if !result["status"].as_u64().is_some_and(|status| (200..300).contains(&status))
-        || !result["text"].as_str().is_some_and(|text| !text.trim().is_empty())
+        || !result["text"].as_str().is_some_and(|text|
+            !text.trim().is_empty() && text.chars().count() <= 6000)
+        // The model cannot verify bytes hidden behind a bounded Tool Result.
+        // Larger extracts must be re-requested in <=6000-character pages.
         || result["truncated"].as_bool().is_none()
         || result["url"].as_str().and_then(canonical_source_url).as_deref() != Some(url)
     {
