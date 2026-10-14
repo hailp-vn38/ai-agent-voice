@@ -75,6 +75,7 @@ pub(super) fn verified_coverage_with_sources(
     }
     let requested = super::super::coverage::requested_summary_url(&job.request);
     let verified_goal = requested.as_ref().is_some_and(|url| verified.contains(url));
+    let source_complete = requested.is_none() || verified_goal;
     if requested.is_some() && !verified_goal && status == "succeeded" {
         status = "failed";
     }
@@ -91,7 +92,7 @@ pub(super) fn verified_coverage_with_sources(
             "missing_capabilities":coverage["missing_capabilities"],
             "requested_url":requested,
             "verified_source_urls":verified,
-            "source_complete":requested.is_none_or(|_| verified_goal)
+            "source_complete":source_complete
         }),
     ))
 }
