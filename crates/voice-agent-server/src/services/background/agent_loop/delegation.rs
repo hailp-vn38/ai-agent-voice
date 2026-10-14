@@ -170,9 +170,12 @@ pub(super) async fn delegate_children(
     let mut feedback = Vec::with_capacity(calls.len());
     let latest = engine.get(job_id).await?;
     for ((call, child), session) in calls.iter().zip(completed.iter()).zip(attached.iter()) {
+        let run_ids = engine.database.session_run_ids(job_id, session).await?;
+        let verified_sources =
+            super::super::coverage::completed_web_sources(&latest, Some(&run_ids));
         feedback.push(ChatMessage::ToolResult {
             tool_call_id: call.id.clone(),
-            content: serde_json::to_string(&ChildOutcome::from_run(session, child, &latest)?)
+            content: serde_json::to_string(&ChildOutcome::from_run(session, child, verified_sources)?)
                 .map_err(|_| JobError::InvalidPlan)?,
         });
     }
