@@ -6,6 +6,32 @@ use tokio_util::sync::CancellationToken;
 struct HierarchicalScriptedModels;
 #[async_trait::async_trait]
 impl JobModels for HierarchicalScriptedModels {
+    async fn turn_traced(
+        &self,
+        run: &crate::services::background::model::LlmRunContext,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        mode: crate::providers::llm::BackgroundMode,
+        deadline: i64,
+        cancel: CancellationToken,
+    ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
+        use crate::providers::llm::{BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall};
+        match mode {
+            BackgroundMode::Tools => {
+                assert!(request.tools.iter().any(|tool|tool.name=="submit_result"));
+                Ok(BackgroundTurnResult{turn:BackgroundTurn::ToolCalls(vec![
+                    ToolCall {id:"complete_1".into(), name:"submit_result".into(), arguments:json!({
+                        "status":"completed","summary":"Sub-agent task done",
+                        "findings":[],"evidence_refs":[],"unresolved":[]
+                    })}
+                ]),usage:None})
+            }
+            BackgroundMode::Structured {schema,..} => {
+                let raw = self.complete_structured_traced(run,pin,request,schema,deadline,cancel).await?;
+                Ok(BackgroundTurnResult{turn:BackgroundTurn::Text(raw),usage:None})
+            }
+        }
+    }
     async fn complete(
         &self,
         _: &str,
