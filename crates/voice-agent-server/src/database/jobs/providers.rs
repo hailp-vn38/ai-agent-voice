@@ -1,10 +1,10 @@
+use super::*;
 use crate::services::background::{JobError, ProviderOption, ProviderPin, model::digest};
 use crate::{
     config::AppConfig,
     providers::config_catalog::{ProviderOrigin, ProviderRef},
 };
 use sqlx::SqliteConnection;
-use super::*;
 
 /// Uses the existing catalog's canonical refs: config:llm:key or a database Resource Key.
 /// IDs and revisions accompany refs so delete/recreate cannot silently select a new provider.
@@ -75,19 +75,24 @@ pub(crate) struct ResolvedBackgroundProvider {
 }
 impl Database {
     pub(crate) async fn background_provider_pin(
-        &self, config: &AppConfig, reference: &str
+        &self,
+        config: &AppConfig,
+        reference: &str,
     ) -> Result<ProviderPin, JobError> {
         let mut connection = self.pool().acquire().await?;
         pin(&mut connection, config, reference).await
     }
     pub(crate) async fn background_provider_options(
-        &self, config: &AppConfig
+        &self,
+        config: &AppConfig,
     ) -> Result<Vec<ProviderOption>, JobError> {
         let mut connection = self.pool().acquire().await?;
         options(&mut connection, config).await
     }
     pub(crate) async fn background_resolve_provider(
-        &self, config: &AppConfig, expected: &ProviderPin
+        &self,
+        config: &AppConfig,
+        expected: &ProviderPin,
     ) -> Result<ResolvedBackgroundProvider, JobError> {
         let mut connection = self.pool().acquire().await?;
         if &pin(&mut connection, config, &expected.reference).await? != expected {
@@ -96,7 +101,9 @@ impl Database {
         let parsed = ProviderRef::parse(&expected.reference, Some("llm"))
             .map_err(|_| JobError::ProviderUnavailable)?;
         let snapshot = match parsed.origin {
-            ProviderOrigin::Config => parsed.snapshot(config).map_err(|_| JobError::ProviderUnavailable)?,
+            ProviderOrigin::Config => parsed
+                .snapshot(config)
+                .map_err(|_| JobError::ProviderUnavailable)?,
             ProviderOrigin::Database => {
                 let (id,key,kind,adapter,config_json,revision,credential): (i64,String,String,String,String,i64,Option<String>) =
                     sqlx::query_as("SELECT id,key,type,adapter,config_json,revision,credential_json FROM providers WHERE key=? AND type='llm' AND enabled=1")
@@ -104,38 +111,69 @@ impl Database {
                 // Keep the canonical credential reference on background reload, including
                 // ProviderRuntimeManager idle eviction. Same behavior as latest main.
                 let secret_ref = crate::database::credentials::reference(
-                    &format!("provider:{key}"), credential.as_deref(),
+                    &format!("provider:{key}"),
+                    credential.as_deref(),
                     crate::database::secrets::provider_secret_env(&key, &adapter),
                 );
-                crate::database::DesiredProvider { id,key,kind,adapter,config_json,revision,secret_ref }
-            },
+                crate::database::DesiredProvider {
+                    id,
+                    key,
+                    kind,
+                    adapter,
+                    config_json,
+                    revision,
+                    secret_ref,
+                }
+            }
         };
-        let identity: serde_json::Value = serde_json::from_str(&snapshot.config_json).unwrap_or_default();
+        let identity: serde_json::Value =
+            serde_json::from_str(&snapshot.config_json).unwrap_or_default();
         let adapter = snapshot.adapter.clone();
-        let model = identity.get("model").and_then(|v| v.as_str())
+        let model = identity
+            .get("model")
+            .and_then(|v| v.as_str())
             .map(str::to_owned)
             .or_else(|| (adapter == "opencode_free").then(|| "nemotron-3-ultra-free".to_owned()));
-        let transport = if identity.get("supports_responses").and_then(|v| v.as_bool()) == Some(true)
-            && matches!(adapter.as_str(), "openai" | "opencode_free") {
+        let transport = if identity.get("supports_responses").and_then(|v| v.as_bool())
+            == Some(true)
+            && matches!(adapter.as_str(), "openai" | "opencode_free")
+        {
             "responses"
-        } else { "chat_completions" };
+        } else {
+            "chat_completions"
+        };
         Ok(ResolvedBackgroundProvider {
-            origin: parsed.origin, key: parsed.key, snapshot, adapter, model, transport
+            origin: parsed.origin,
+            key: parsed.key,
+            snapshot,
+            adapter,
+            model,
+            transport,
         })
     }
     pub(crate) async fn background_authorize_provider_call(
-        &self, config: &AppConfig, job_id: &str, expected: &ProviderPin
+        &self,
+        config: &AppConfig,
+        job_id: &str,
+        expected: &ProviderPin,
     ) -> Result<(), JobError> {
         let mut connection = self.pool().acquire().await?;
         let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
-            .bind(job_id).fetch_optional(&mut *connection).await?.ok_or(JobError::NotFound)?;
+            .bind(job_id)
+            .fetch_optional(&mut *connection)
+            .await?
+            .ok_or(JobError::NotFound)?;
         if !matches!(row.status.as_str(), "planning" | "running") {
             return Err(JobError::Cancelled);
         }
         authorize(&mut connection, &row.requester()?).await?;
-        let enabled: i64 = sqlx::query_scalar("SELECT enabled FROM background_settings WHERE singleton=1")
-            .fetch_one(&mut *connection).await?;
-        if enabled != 1 { return Err(JobError::Disabled); }
+        let enabled: i64 =
+            sqlx::query_scalar("SELECT enabled FROM background_settings WHERE singleton=1")
+                .fetch_one(&mut *connection)
+                .await?;
+        if enabled != 1 {
+            return Err(JobError::Disabled);
+        }
         if &pin(&mut connection, config, &expected.reference).await? != expected {
             return Err(JobError::ConfigurationChanged);
         }

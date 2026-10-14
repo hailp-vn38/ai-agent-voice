@@ -91,7 +91,9 @@ impl LlmRuntime {
         request: LlmRequest,
         schema: Option<serde_json::Value>,
     ) -> Result<crate::providers::llm::BackgroundCompletion, crate::providers::LlmError> {
-        self.provider.background_complete_with_usage(request, schema).await
+        self.provider
+            .background_complete_with_usage(request, schema)
+            .await
     }
     pub fn supports_tools(&self) -> bool {
         self.provider.supports_tools()

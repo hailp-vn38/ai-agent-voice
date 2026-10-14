@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 mod admission;
 mod execution;
+mod hierarchical;
 mod http;
 mod locking;
 mod orchestration;

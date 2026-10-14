@@ -218,8 +218,14 @@ impl LlmProvider for ConfiguredOpenAiLlm {
     ) -> Result<BackgroundCompletion, LlmError> {
         if self.supports_responses {
             openai::responses::complete_with_usage(
-                &self.base_url, &self.model, &self.api_key, self.timeout_seconds, request, schema
-            ).await
+                &self.base_url,
+                &self.model,
+                &self.api_key,
+                self.timeout_seconds,
+                request,
+                schema,
+            )
+            .await
         } else {
             Ok(BackgroundCompletion {
                 text: self.background_complete(request, schema).await?,

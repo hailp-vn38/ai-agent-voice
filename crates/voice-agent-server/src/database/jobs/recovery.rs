@@ -15,6 +15,15 @@ impl Database {
             .bind(now).bind(now).execute(&mut *tx).await?;
         sqlx::query("UPDATE jobs SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'failed' END,error_code=CASE WHEN status='cancelling' THEN 'cancelled_after_restart' ELSE 'interrupted' END,updated_at=? WHERE status IN ('planning','running','cancelling')")
             .bind(now).execute(&mut *tx).await?;
+        let interrupted:Vec<(String,String)>=sqlx::query_as(
+            "SELECT job_id,agent_run_id FROM job_agent_runs WHERE status IN ('queued','running') AND job_id IN (SELECT id FROM jobs WHERE status IN ('failed','cancelled'))"
+        ).fetch_all(&mut *tx).await?;
+        sqlx::query("UPDATE job_agent_runs SET status='interrupted',error_code='interrupted',finished_at=? WHERE status IN ('queued','running') AND job_id IN (SELECT id FROM jobs WHERE status IN ('failed','cancelled'))")
+            .bind(now).execute(&mut *tx).await?;
+        for (job_id, run_id) in interrupted {
+            events::append(&mut tx,&job_id,"agent_run_finished",None,
+                &serde_json::json!({"agent_run_id":run_id,"status":"interrupted","error_code":"interrupted"})).await?;
+        }
         for (id, prior) in &recovering {
             let cancelled = prior == "cancelling";
             events::append(&mut tx,id,"job_finished",None,&serde_json::json!({"status":if cancelled {"cancelled"}else{"failed"},"error_code":if cancelled {"cancelled_after_restart"}else{"interrupted"}})).await?;

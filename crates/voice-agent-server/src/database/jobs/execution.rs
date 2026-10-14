@@ -2,6 +2,14 @@ use super::*;
 use crate::services::background::plugins::FrozenChoice;
 use serde_json::Value;
 
+#[derive(sqlx::FromRow)]
+struct StepCorrelation {
+    agent_run_id: Option<String>,
+    agent_turn_id: Option<String>,
+    plugin_id: Option<String>,
+    operation: Option<String>,
+}
+
 impl Database {
     #[cfg(test)]
     pub(crate) async fn test_plan_one_step(
@@ -63,14 +71,23 @@ impl Database {
         if ledger.rows_affected() != 1 {
             return Err(JobError::CapacityUnavailable);
         }
-        events::append(
-            &mut tx,
-            job_id,
-            "step_started",
-            Some(step_key),
-            &serde_json::json!({"attempt_state":"reserved"}),
-        )
-        .await?;
+        // Read correlation metadata before borrowing the transaction for event append.
+        let ids: Option<StepCorrelation> =
+            sqlx::query_as("SELECT agent_run_id,agent_turn_id,plugin_id,operation FROM job_steps WHERE job_id=? AND step_key=?")
+                .bind(job_id).bind(step_key).fetch_optional(&mut *tx).await?;
+        let payload = if let Some(StepCorrelation {
+            agent_run_id: Some(agent_id),
+            agent_turn_id: Some(turn_id),
+            plugin_id: plugin,
+            operation,
+        }) = ids
+        {
+            serde_json::json!({"attempt_state":"reserved","agent_run_id":agent_id,"turn_id":turn_id,
+                "plugin_id":plugin,"operation":operation})
+        } else {
+            serde_json::json!({"attempt_state":"reserved"})
+        };
+        events::append(&mut tx, job_id, "step_started", Some(step_key), &payload).await?;
         tx.commit().await?;
         self.job_changes.publish_committed(job_id);
         Ok(())

@@ -28,6 +28,8 @@ pub struct BackgroundLimits {
     pub max_replans: u32,
     pub max_plan_repairs: u32,
     pub max_worker_rounds: u32,
+    pub max_child_runs: u32,
+    pub max_total_llm_calls: u32,
     pub job_deadline_seconds: u32,
     pub step_timeout_seconds: u32,
     pub artifact_bytes_per_job: u64,
@@ -43,6 +45,8 @@ impl Default for BackgroundLimits {
             max_replans: 2,
             max_plan_repairs: 2,
             max_worker_rounds: 8,
+            max_child_runs: 4,
+            max_total_llm_calls: 32,
             job_deadline_seconds: 1800,
             step_timeout_seconds: 300,
             artifact_bytes_per_job: 20 * 1024 * 1024,
@@ -59,6 +63,8 @@ impl BackgroundLimits {
             && self.max_replans <= 2
             && self.max_plan_repairs <= 2
             && (1..=8).contains(&self.max_worker_rounds)
+            && (1..=8).contains(&self.max_child_runs)
+            && (1..=64).contains(&self.max_total_llm_calls)
             && (1..=1800).contains(&self.job_deadline_seconds)
             && (1..=300).contains(&self.step_timeout_seconds)
             && self.step_timeout_seconds <= self.job_deadline_seconds

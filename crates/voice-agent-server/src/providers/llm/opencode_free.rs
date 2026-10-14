@@ -84,8 +84,14 @@ impl LlmProvider for OpenCodeFreeProvider {
     ) -> Result<super::BackgroundCompletion, LlmError> {
         if self.supports_responses {
             super::openai::responses::complete_with_usage(
-                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds, request, schema
-            ).await
+                BASE_URL,
+                &self.model,
+                PUBLIC_KEY,
+                self.timeout_seconds,
+                request,
+                schema,
+            )
+            .await
         } else {
             Ok(super::BackgroundCompletion {
                 text: self.background_complete(request, schema).await?,

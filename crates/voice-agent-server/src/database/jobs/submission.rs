@@ -10,6 +10,8 @@ pub(crate) struct SubmissionIdentity<'a> {
     pub key: Option<&'a str>,
     pub retry_of: Option<&'a str>,
     pub validated_pair: Option<&'a [crate::services::background::ProviderPin; 2]>,
+    #[cfg(test)]
+    pub test_execution_mode: Option<&'a str>,
 }
 
 impl Database {
@@ -47,7 +49,13 @@ impl Database {
             key,
             retry_of,
             validated_pair,
+            #[cfg(test)]
+            test_execution_mode,
         } = identity;
+        #[cfg(test)]
+        let mut execution_mode = test_execution_mode.unwrap_or("dag_v1").to_owned();
+        #[cfg(not(test))]
+        let mut execution_mode = "hierarchical_v2".to_owned();
         let request_json = encode(&request)?;
         if request_json.len() > 16384 {
             return Err(JobError::InvalidArguments);
@@ -84,12 +92,15 @@ impl Database {
             return Err(JobError::RuntimeUnavailable);
         }
         if let Some(id) = retry_of {
-            let previous: Option<String> = sqlx::query_scalar("SELECT status FROM jobs WHERE id=?")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
-            match previous.as_deref() {
-                Some("failed" | "cancelled") => {}
+            let previous: Option<(String, String)> =
+                sqlx::query_as("SELECT status,execution_mode FROM jobs WHERE id=?")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            match previous {
+                Some((status, mode)) if matches!(status.as_str(), "failed" | "cancelled") => {
+                    execution_mode = mode;
+                }
                 None => return Err(JobError::NotFound),
                 _ => return Err(JobError::Terminal),
             }
@@ -142,10 +153,10 @@ impl Database {
             limits: config.background.limits.clone(),
         };
         let (device, agent) = requester.incarnations();
-        sqlx::query("INSERT INTO jobs(id,requester_scope,device_incarnation,agent_incarnation,request_json,request_fingerprint,snapshot_json,plugin_choices_json,settings_revision,budget_limit_json,status,deadline_at,idempotency_key,retry_of_job_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?,?,?,?)")
+        sqlx::query("INSERT INTO jobs(id,requester_scope,device_incarnation,agent_incarnation,request_json,request_fingerprint,snapshot_json,plugin_choices_json,settings_revision,budget_limit_json,execution_mode,status,deadline_at,idempotency_key,retry_of_job_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued',?,?,?,?,?)")
             .bind(&id).bind(scope).bind(device).bind(agent).bind(request_json).bind(fingerprint).bind(encode(&snapshot)?)
             .bind(plugin_choices)
-            .bind(revision).bind(encode(&snapshot.limits)?).bind(deadline).bind(key).bind(retry_of).bind(now).bind(now).execute(&mut *tx).await?;
+            .bind(revision).bind(encode(&snapshot.limits)?).bind(execution_mode).bind(deadline).bind(key).bind(retry_of).bind(now).bind(now).execute(&mut *tx).await?;
         let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
             .bind(&id)
             .fetch_one(&mut *tx)

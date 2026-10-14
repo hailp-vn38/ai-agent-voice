@@ -4,6 +4,8 @@ use serde_json::Value;
 #[derive(FromRow)]
 struct StepRow {
     step_key: String,
+    agent_run_id: Option<String>,
+    agent_turn_id: Option<String>,
     status: String,
     plugin_id: Option<String>,
     operation: Option<String>,
@@ -30,6 +32,8 @@ pub(super) async fn read(
         .map(|row| {
             Ok(JobStepView {
                 step_key: row.step_key,
+                agent_run_id: row.agent_run_id,
+                agent_turn_id: row.agent_turn_id,
                 status: row.status,
                 plugin_id: row.plugin_id,
                 operation: row.operation,
@@ -59,10 +63,17 @@ pub(super) async fn read(
 
 impl Database {
     pub(crate) async fn job_step_outcome(
-        &self, job_id: &str, step_key: &str
+        &self,
+        job_id: &str,
+        step_key: &str,
     ) -> Result<(String, Option<String>, Option<String>), JobError> {
-        sqlx::query_as("SELECT status,result_json,error_code FROM job_steps WHERE job_id=? AND step_key=?")
-            .bind(job_id).bind(step_key)
-            .fetch_one(self.pool()).await.map_err(Into::into)
+        sqlx::query_as(
+            "SELECT status,result_json,error_code FROM job_steps WHERE job_id=? AND step_key=?",
+        )
+        .bind(job_id)
+        .bind(step_key)
+        .fetch_one(self.pool())
+        .await
+        .map_err(Into::into)
     }
 }

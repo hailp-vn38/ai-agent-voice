@@ -9,10 +9,11 @@ mod change_feed;
 pub(crate) use change_feed::JobChangeFeed;
 mod recovery;
 // P3 scheduler will consume these durable dispatch transitions.
-mod events;
 mod eligibility;
+mod events;
 #[allow(dead_code)]
 mod execution;
+mod hierarchical;
 mod orchestration;
 mod providers;
 mod steps;
@@ -31,6 +32,7 @@ pub(crate) struct JobRow {
     pub plugin_choices_json: String,
     pub settings_revision: i64,
     pub status: String,
+    pub execution_mode: String,
     pub deadline_at: i64,
     pub error_code: Option<String>,
     pub created_at: i64,
@@ -61,6 +63,8 @@ impl JobRow {
             request: serde_json::from_str::<JobRequest>(&self.request_json)
                 .map_err(|_| JobError::DatabaseUnavailable)?,
             status: self.status,
+            execution_mode: self.execution_mode,
+            agent_runs: Vec::new(),
             requester_scope: self.requester_scope,
             snapshot: serde_json::from_str::<JobSnapshot>(&self.snapshot_json)
                 .map_err(|_| JobError::DatabaseUnavailable)?,
@@ -125,8 +129,11 @@ impl Database {
         .bind(id)
         .fetch_all(&mut *tx)
         .await?;
+        let runs = hierarchical::read_runs(&mut tx, id).await?;
         tx.commit().await?;
-        row.view(steps, artifacts)
+        let mut view = row.view(steps, artifacts)?;
+        view.agent_runs = runs;
+        Ok(view)
     }
     pub(crate) async fn queued_jobs(&self) -> Result<Vec<JobRow>, JobError> {
         Ok(sqlx::query_as(

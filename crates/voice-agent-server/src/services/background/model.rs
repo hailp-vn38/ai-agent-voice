@@ -120,6 +120,8 @@ pub struct JobView {
     #[serde(flatten)]
     pub request: JobRequest,
     pub status: String,
+    pub execution_mode: String,
+    pub agent_runs: Vec<AgentRunView>,
     pub requester_scope: String,
     pub snapshot: JobSnapshot,
     pub plugin_choices: Value,
@@ -135,6 +137,29 @@ pub struct JobView {
     pub steps: Vec<JobStepView>,
     pub artifacts: Vec<JobArtifactView>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DelegatedTask {
+    pub task_key: String,
+    pub role: String,
+    pub goal: String,
+    pub allowed_operations: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentRunView {
+    pub agent_run_id: String,
+    pub parent_agent_run_id: Option<String>,
+    pub fork_group_id: Option<String>,
+    pub member_ordinal: Option<i64>,
+    pub role: String,
+    pub goal_excerpt: String,
+    pub allowed_operations: Vec<String>,
+    pub status: String,
+    pub result: Option<Value>,
+    pub error_code: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+}
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, sqlx::FromRow)]
 pub struct JobArtifactView {
     pub id: String,
@@ -145,6 +170,8 @@ pub struct JobArtifactView {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct JobStepView {
     pub step_key: String,
+    pub agent_run_id: Option<String>,
+    pub agent_turn_id: Option<String>,
     pub status: String,
     pub plugin_id: Option<String>,
     pub operation: Option<String>,
@@ -249,6 +276,7 @@ pub(crate) struct LlmRunContext {
     pub run_id: String,
     pub job_id: String,
     pub step_key: Option<String>,
+    pub agent_run_id: Option<String>,
     pub role: &'static str,
     pub phase: &'static str,
     pub attempt_no: u32,
@@ -256,10 +284,24 @@ pub(crate) struct LlmRunContext {
     pub started_at: std::time::Instant,
 }
 impl LlmRunContext {
-    pub(crate) fn new(job_id: &str, step_key: Option<&str>, role: &'static str, phase: &'static str, attempt_no: u32, plan_revision: i64) -> Self {
+    pub(crate) fn new(
+        job_id: &str,
+        step_key: Option<&str>,
+        role: &'static str,
+        phase: &'static str,
+        attempt_no: u32,
+        plan_revision: i64,
+    ) -> Self {
         Self {
-            run_id: uuid::Uuid::new_v4().to_string(), job_id: job_id.to_owned(),
-            step_key: step_key.map(str::to_owned), role, phase, attempt_no, plan_revision, started_at: std::time::Instant::now()
+            run_id: uuid::Uuid::new_v4().to_string(),
+            job_id: job_id.to_owned(),
+            step_key: step_key.map(str::to_owned),
+            agent_run_id: None,
+            role,
+            phase,
+            attempt_no,
+            plan_revision,
+            started_at: std::time::Instant::now(),
         }
     }
 }
