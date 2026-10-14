@@ -1,6 +1,6 @@
 # Agent Job Hybrid V2 — Implementation Guide
 
-Status: implementation on `feat/agent-job-hybrid-structured-tools`, 2026-10-14. Based on [ADR 0103](adr/0103-hierarchical-agent-job-v2.md) and [Hybrid decision](adr/0113-hybrid-agent-job-native-tool-calling.md). See [execution flow](flows/08-agent-job-hybrid.md).
+Status: implementation on `feat/agent-job-hybrid-structured-tools`, 2026-10-14. Based on [ADR 0103](adr/0103-hierarchical-agent-job-v2.md) and [Hybrid decision](adr/0113-hybrid-agent-job-native-tool-calling.md). See [Rust execution flow](flows/08-agent-job-hybrid.md) and [Web Timeline B flow](flows/09-agent-job-web-timeline.md).
 
 ## Decision
 
