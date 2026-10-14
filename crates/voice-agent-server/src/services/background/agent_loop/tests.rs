@@ -243,3 +243,39 @@ fn verified_article_preserves_child_qualification_and_reports_source() {
     assert!(outcome["artifact_refs"].as_array().unwrap().is_empty(),
         "URLs must not be masqueraded as artifact IDs");
 }
+
+
+#[test]
+fn web_observation_is_plain_article_text_with_pagination_instead_of_broken_json() {
+    let text="AFC has not made any official decision.";
+    let step_result=json!({
+        "url":"https://news.example/article","title":"Asian Cup",
+        "status":200,"text":text,"truncated":false,
+        "next_offset":null,"body_limit_reached":false,
+        "provenance":[{"source":"web","urls":["https://news.example/article"],
+                       "capabilities":["web_extract"]}]
+    }).to_string();
+    let observation=plugin_tool_result(
+        "step_article","succeeded",None,Some(&step_result),&[]
+    );
+    assert_eq!(observation["result_excerpt"],text);
+    assert_eq!(observation["source_url"],"https://news.example/article");
+    assert_eq!(observation["next_offset"],serde_json::Value::Null);
+    assert_eq!(observation["observation_truncated"],false);
+    assert_eq!(observation["truncated"],false);
+}
+
+#[test]
+fn web_observation_must_report_when_returned_text_is_too_large_for_child_context() {
+    let text="X".repeat(6200);
+    let step_result=json!({
+        "url":"https://news.example/article","title":"Asian Cup",
+        "status":200,"text":text,"truncated":false,
+        "next_offset":null,"body_limit_reached":false
+    }).to_string();
+    let observation=plugin_tool_result(
+        "step_large","succeeded",None,Some(&step_result),&[]
+    );
+    assert_eq!(observation["result_excerpt"].as_str().unwrap().chars().count(),6000);
+    assert_eq!(observation["observation_truncated"],true);
+}
