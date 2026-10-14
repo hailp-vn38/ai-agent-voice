@@ -1,6 +1,6 @@
 # ADR 0114 — Built-in Core Operations share the Agent Job execution seam
 
-- **Status:** Accepted for Core v1 (2026-10-14)
+- **Status:** Accepted; bundled catalog scope amended (2026-10-14)
 - **Reference:** `feat/agent-job-hybrid-structured-tools`
 - **Related:** ADR 0103, ADR 0113, `docs/flows/08-agent-job-hybrid.md`
 
@@ -14,9 +14,10 @@ Agent Job Hybrid V2 freezes installed Plugin Operations in `jobs.plugin_choices_
 2. Use one frozen operation catalog for Job admission/Root/Child. Core frozen JSON has `kind=core`, `plugin_id=core`, `operation`, and `contract_revision`; old External JSON remains byte-compatible. `core` is a reserved namespace.
 3. The existing `FrozenChoice` is the invocation representation. Decoding Core JSON into an ephemeral choice carries its revision in `version` and uses empty digest fields only to represent absence of an installation at the legacy Step seam. No fake Plugin Store rows, package digests or image digests are created. The original Core revision is authoritative.
 4. Keep `compile_child_tools()`, native Function Calling, Root Structured Outputs, schema validation, normalized optional arguments, bounded budgets, cancellation, and Step/Attempt/event persistence. In execution, branch Core directly to a statically linked Rust function; otherwise keep `PluginStore::invoke()`.
-5. Core v1 contains **exactly three safe-read operations**: `core.web.fetch`, `core.data.json_query` (RFC 6901 JSON Pointer), and `core.artifact.read_text` (job-owned artifacts). No generic Rust plugin framework, separate registry, dynamic loading, scripts or new UI.
+5. The initial three safe-read operations are extended to **eight compile-time Core Operations** grouped into four Core Plugins: Web (`web.fetch`, `web.extract`), Document (`document.extract`, `document.inspect`), Data (`data.json_query`, `data.transform`), and Artifact (`artifact.read_text`, `artifact.inspect`). Document parsing remains limited to text/plain, text/markdown and application/json. No PDF/DOCX/OCR, dynamic loading, script execution or general-purpose plugin framework.
 6. Scheduler/Job-finalization revalidate Core contract revisions and External installation identities independently. Changes to a frozen Core revision must fail closed.
 7. Core returns the same `InvokeResult` form. Output schemas, bounded results, error codes and evidence semantics stay Rust-owned.
+8. A read-only authenticated catalog at `GET /api/admin/plugins/builtin` exposes four system-provided Core Plugin groups and their operation contracts. It does not create installation rows or allow install/activate/disable/uninstall. The existing `/api/admin/plugins` remains the External Plugin Store listing.
 
 ## Alternatives rejected
 
@@ -30,8 +31,8 @@ Agent Job Hybrid V2 freezes installed Plugin Operations in `jobs.plugin_choices_
 - Core-only Jobs require no Docker runtime or plugin installation, but still require configured LLM providers and the normal Job engine.
 - Core runs with the server's process authority. A panic, blocking call or heavy workload may affect Voice; operations must stay bounded and cancellation-aware. Tokio timeouts cannot preempt a blocked native task.
 - Legacy Step columns describe an External installation. For Core, `plugin_id=core`, `plugin_version=contract_revision`, and empty digest fields encode the absence of a package. The trusted frozen Job choice and source contract remain the authority. A future migration may rename these fields if the persisted model grows.
-- Job Artifact reads verify ownership/bytes and accept only text media types. Core writes and binary generation are not in v1.
-- **Risk 2 expressly deferred:** no new network target/SSRF/private-IP/DNS/redirect or filesystem allowlist policy for Core is introduced here. Preserve existing restrictions. `core.web.fetch` must not be enabled for untrusted/public tenants until separately reviewed.
+- Job Artifact **content** reads verify ownership/bytes and accept only text media types; `artifact.inspect` verifies metadata for any artifact MIME type. Core writes and binary generation are not in scope.
+- **Risk 2 expressly deferred:** no new network target/SSRF/private-IP/DNS/redirect or filesystem allowlist policy for Core is introduced here. Preserve existing restrictions. Neither `core.web.fetch` nor `core.web.extract` should be exposed to untrusted/public tenants until separately reviewed.
 - Re-run existing External, `dag_v1`, Root/Child, voice and reminder regression tests; Core acceptance tests focus on revised frozen contracts and in-process dispatch.
 
 ## Verification limitation
