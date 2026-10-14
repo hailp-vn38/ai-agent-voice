@@ -261,14 +261,25 @@ impl LlmProvider for ConfiguredOpenAiLlm {
         }
         if self.supports_responses {
             openai::responses::turn_with_usage(
-                &self.base_url, &self.model, &self.api_key,
-                self.timeout_seconds, request, mode
-            ).await
+                &self.base_url,
+                &self.model,
+                &self.api_key,
+                self.timeout_seconds,
+                request,
+                mode,
+            )
+            .await
         } else {
             openai::chat::turn_with_usage(
-                &self.base_url, &self.model, &self.api_key,
-                self.timeout_seconds, request, mode, &[]
-            ).await
+                &self.base_url,
+                &self.model,
+                &self.api_key,
+                self.timeout_seconds,
+                request,
+                mode,
+                &[],
+            )
+            .await
         }
     }
     async fn background_complete_with_usage(
