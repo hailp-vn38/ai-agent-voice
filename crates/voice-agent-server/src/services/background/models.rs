@@ -51,9 +51,19 @@ pub(crate) trait JobModels: Send + Sync {
         // structured completion seam. Production ManagedModels overrides this.
         match mode {
             crate::providers::llm::BackgroundMode::Structured { schema, .. } => {
-                let text = self.complete_structured_traced(run,pin,request,schema,deadline_at,cancellation).await?;
+                let text = self
+                    .complete_structured_traced(
+                        run,
+                        pin,
+                        request,
+                        schema,
+                        deadline_at,
+                        cancellation,
+                    )
+                    .await?;
                 Ok(crate::providers::llm::BackgroundTurnResult {
-                    turn:crate::providers::llm::BackgroundTurn::Text(text),usage:None
+                    turn: crate::providers::llm::BackgroundTurn::Text(text),
+                    usage: None,
                 })
             }
             crate::providers::llm::BackgroundMode::Tools => Err(JobError::CapabilityUnavailable),
@@ -188,7 +198,11 @@ impl ManagedModels {
         cancellation: CancellationToken,
         run: Option<&LlmRunContext>,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        let CompletionRequest { request, schema, mode } = completion;
+        let CompletionRequest {
+            request,
+            schema,
+            mode,
+        } = completion;
         let bytes = request
             .messages
             .iter()
@@ -197,13 +211,25 @@ impl ManagedModels {
                 | crate::providers::llm::ChatMessage::User { content }
                 | crate::providers::llm::ChatMessage::AssistantText { content }
                 | crate::providers::llm::ChatMessage::ToolResult { content, .. } => content.len(),
-                crate::providers::llm::ChatMessage::AssistantToolCalls { calls } =>
-                    serde_json::to_string(&calls.iter().map(|call| (&call.id, &call.name, &call.arguments)).collect::<Vec<_>>())
-                        .map_or(usize::MAX, |s| s.len()),
+                crate::providers::llm::ChatMessage::AssistantToolCalls { calls } => {
+                    serde_json::to_string(
+                        &calls
+                            .iter()
+                            .map(|call| (&call.id, &call.name, &call.arguments))
+                            .collect::<Vec<_>>(),
+                    )
+                    .map_or(usize::MAX, |s| s.len())
+                }
             })
             .fold(0usize, usize::saturating_add);
-        if bytes > 65536 || serde_json::to_string(&request.tools.iter()
-            .map(|tool| (&tool.name,&tool.description,&tool.parameters)).collect::<Vec<_>>())
+        if bytes > 65536
+            || serde_json::to_string(
+                &request
+                    .tools
+                    .iter()
+                    .map(|tool| (&tool.name, &tool.description, &tool.parameters))
+                    .collect::<Vec<_>>(),
+            )
             .map_or(true, |s| s.len() > 16384)
             || (mode.is_none() && !request.tools.is_empty())
         {
@@ -311,10 +337,19 @@ impl JobModels for ManagedModels {
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        self.complete_inner(&run.job_id,pin,
-            CompletionRequest {request, schema:None, mode:Some(mode)},
-            deadline_at,cancellation,Some(run)
-        ).await
+        self.complete_inner(
+            &run.job_id,
+            pin,
+            CompletionRequest {
+                request,
+                schema: None,
+                mode: Some(mode),
+            },
+            deadline_at,
+            cancellation,
+            Some(run),
+        )
+        .await
     }
     async fn ready(&self, pin: &ProviderPin, deadline_at: i64) -> Result<(), JobError> {
         self.acquire(pin, deadline_at, CancellationToken::new())
