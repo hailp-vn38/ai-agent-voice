@@ -939,7 +939,7 @@ async fn v3_two_native_subagents_return_two_paired_results_and_one_join() {
     }).collect();
     assert!(results.contains(&"parallel_a".to_owned()));
     assert!(results.contains(&"parallel_b".to_owned()));
-    let log=db.job_events(&job.id,0,200).await.unwrap();
+    let log=db.job_events(&job.id,0,100).await.unwrap();
     assert_eq!(log.iter().filter(|e|e.event_type=="join_completed").count(),1);
     runtime.shutdown().await;
 }
