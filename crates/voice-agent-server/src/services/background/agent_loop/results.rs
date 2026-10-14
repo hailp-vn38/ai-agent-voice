@@ -155,3 +155,30 @@ impl<'a> ChildOutcome<'a> {
         })
     }
 }
+
+
+/// For a single-URL summary, the one Child's complete source-grounded answer
+/// is the user-facing summary. Avoid a second LLM rewrite that drops crucial
+/// negations (e.g. "no official decision to postpone") or adds new claims.
+/// Root still authorizes finish_job; Rust owns this deterministic presentation.
+pub(super) fn grounded_single_child_summary(job: &JobView, coverage: &Value) -> Option<String> {
+    let url = super::super::coverage::requested_summary_url(&job.request)?;
+    if coverage["source_complete"] != true
+        || !coverage["verified_source_urls"].as_array()?.iter().any(|s| s == &url)
+    {
+        return None;
+    }
+    let children: Vec<_> = job.agent_runs.iter()
+        .filter(|run| run.parent_agent_run_id.is_some())
+        .collect();
+    if children.len() != 1 || children[0].status != "succeeded" {
+        return None;
+    }
+    let result: ChildResult = serde_json::from_value(children[0].result.clone()?).ok()?;
+    let summary = result.summary.trim();
+    if summary.is_empty() || summary.chars().count() > 2000 {
+        None
+    } else {
+        Some(summary.to_owned())
+    }
+}
