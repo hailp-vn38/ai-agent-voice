@@ -141,3 +141,25 @@ _Avoid_: Job Event, Job Result, delivery acknowledgement
 **Job Read View**:
 Biểu diễn hiện thời và nhất quán của Job, các Step và metadata Artifact để Admin quan sát, khác cấu hình thực thi được đóng băng khi nhận Job.
 _Avoid_: JobSnapshot, Job Event, execution authority
+
+## Hierarchical Agent Jobs
+
+**Agent Run**:
+Một lần thực thi của Root Orchestrator hoặc Sub-Agent trong một Agent Job; khác với Job và từng LLM Run.
+_Avoid_: Agent account, Job Step, registered Voice Agent
+
+**Root Orchestrator**:
+Agent Run sở hữu quyết định giao nhiệm vụ và kết thúc Job; chỉ nhận kết quả tổng hợp từ Sub-Agent.
+_Avoid_: Worker, plugin runner
+
+**Sub-Agent**:
+Agent Run cấp con tự ra quyết định gọi công cụ hoặc kết thúc, trong phạm vi quyền được Job đóng băng.
+_Avoid_: registered Agent, Plugin Installation
+
+**Agent Decision Turn**:
+Một LLM Run duy nhất đề xuất một hành động Root hoặc Child; chỉ Rust mới có thể chấp nhận hành động.
+_Avoid_: Conversational Turn, Tool Round
+
+**Fork Group**:
+Tập Sub-Agent có cùng quyết định giao nhiệm vụ, được Join sau khi mọi thành viên kết thúc.
+_Avoid_: Job Queue, durable independent Job

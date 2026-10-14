@@ -5,6 +5,7 @@ use std::sync::Arc;
 mod admission;
 mod execution;
 mod http;
+mod hierarchical;
 mod locking;
 mod orchestration;
 mod providers;

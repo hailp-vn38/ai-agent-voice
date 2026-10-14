@@ -14,7 +14,13 @@ const PLAN_INSTRUCTIONS: &str = "You are the Background Orchestrator. Return onl
 
 pub(super) async fn execute(engine: Arc<JobEngine>, id: String, cancellation: CancellationToken) {
     use futures_util::FutureExt;
-    let outcome = std::panic::AssertUnwindSafe(run(&engine, &id, cancellation.clone()))
+    let outcome = std::panic::AssertUnwindSafe(async {
+        match engine.get(&id).await?.execution_mode.as_str() {
+            "hierarchical_v2" => super::agent_loop::run_root(&engine, &id, cancellation.clone()).await,
+            "dag_v1" => run(&engine, &id, cancellation.clone()).await,
+            _ => Err(JobError::InvalidPlan),
+        }
+    })
         .catch_unwind()
         .await
         .unwrap_or(Err(JobError::RuntimeUnavailable));

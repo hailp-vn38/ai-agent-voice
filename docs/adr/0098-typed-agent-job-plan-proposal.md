@@ -3,6 +3,10 @@
 ## Status
 Accepted for implementation, 2026-10-13. Native provider JSON-Schema qualification remains gated.
 
+## Scope since Agent Job V2
+
+Plan Proposal/PlanCompiler/append-only DAG replanning apply only to legacy `dag_v1` Jobs. New hierarchical Jobs use per-turn Rust-validated decisions and dynamic persisted Tool Steps (ADR 0103); they do not reinterpret existing DAG plans.
+
 ## Context
 ADR 0094 establishes a bounded DAG with frozen plugin authority. The first implementation asked an Orchestrator LLM to reproduce executable JSON Schemas. Model output frequently failed strict JSON/Serde/contract validation and surfaced only `invalid_plan`. Retries lacked field-level feedback.
 

@@ -3,6 +3,10 @@
 ## Status
 Proposed, 2026-10-13.
 
+## Scope since Agent Job V2
+
+The bounded DAG decision remains valid for persisted `dag_v1` Jobs. New `hierarchical_v2` Jobs use the bounded Root/Child loops in ADR 0103, while retaining Rust-owned authority and frozen Plugin Choices.
+
 ## Decision
 At submit, Rust commits an immutable Request Contract, exact global LLM Provider pair and **bounded Frozen Plugin Choices**: current reviewed, ready `(plugin_id, package_digest, image_digest, operation, permission_digest)` tuples. Orchestrator LLM sees only this snapshot, proposes typed DAG and bounded replans; Rust validates permissions, schemas, dependencies, budgets and original required sources before persisting Steps. A Sub-Agent is an ephemeral Worker LLM execution, not a registered Agent or separately configured LLM.
 

@@ -112,6 +112,8 @@ impl JobEngine {
                     key,
                     retry_of: None,
                     validated_pair: pair.as_ref(),
+                    #[cfg(test)]
+                    test_execution_mode: None,
                 },
                 now()?,
                 || self.runtime_ready(),
@@ -168,6 +170,8 @@ impl JobEngine {
                     key: Some(key.unwrap_or(&generated)),
                     retry_of: Some(id),
                     validated_pair: pair.as_ref(),
+                    #[cfg(test)]
+                    test_execution_mode: None,
                 },
                 now()?,
                 || self.runtime_ready(),

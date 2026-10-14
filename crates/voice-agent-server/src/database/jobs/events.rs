@@ -91,6 +91,10 @@ impl Database {
             return Err(JobError::InvalidArguments);
         }
         let mut payload = json!({"run_id":run.run_id});
+        if let Some(agent_id) = &run.agent_run_id {
+            payload["agent_run_id"] = json!(agent_id);
+            payload["turn_id"] = json!(run.run_id);
+        }
         let fields = detail.as_object().ok_or(JobError::InvalidArguments)?;
         for (key,value) in fields {
             if key == "run_id" || (value.is_string() && value.as_str().is_some_and(|s| s.len()>256)) {
