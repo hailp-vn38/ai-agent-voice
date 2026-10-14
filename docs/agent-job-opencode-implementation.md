@@ -158,3 +158,36 @@ The deterministic V3 acceptance suite is in `services/background/tests/v3*.rs`, 
 - Each Child initially receives at most sixteen frozen plugin operations; a larger frozen catalog currently fails closed, pending a specific capability-selection policy.
 - The Session transcript is persisted without automatic summarization. Provider-context exhaustion is a bounded error, not automatic tool-pair truncation.
 - This checkpoint records source implementation and local acceptance; deployment release qualification remains open.
+
+
+### Fixes after analyzing a real 24h article-summary Job (2026-10-15)
+
+The real Job response showed a successful Root -> Child -> Root turn but five
+short web.extract(mode=page) calls, no artifact refs, goal_only_unverified
+coverage, and loss of "no official postponement decision" in Root's
+rewritten summary. Changes in this branch:
+
+- Keep native `subagent` and matched ToolResult, while extending
+  server-wrapped ChildOutcome with `verified_source_urls`; only persisted,
+  successful, session-owned tool observations can contribute source proof.
+- For one explicit URL summary, require complete observed source text:
+  core.web.extract starts at offset zero and follows `next_offset` without
+  gaps, with matching URL/provenance/HTTP status and no body cap. A truncated
+  result is **not** equivalent to a fully read article.
+- `finish_job` responds `source_not_fully_verified` via a matched
+  tool error, so Root can resume the Child. No fake artifact refs or silent
+  succeeded with `goal_only_unverified` in this narrow case.
+- Protect critical statements: when exactly one successful Child summarizes
+  one fully verified URL, use the Child's summary as the final report instead
+  of letting Root rewrite it and potentially remove important negations.
+- Existing article-first `core.web.extract` parser is reused; adjust
+  tool descriptions to prefer `mode=article` and <=6000-character pages.
+  Observations now expose plain text, `next_offset`, `truncated`
+  and `observation_truncated`, not a mid-JSON cut.
+
+Added regression tests for the sampled truncated-page failure, fully read
+source, provenance rejection, the Child's statement preservation and
+cross-Session evidence isolation. Not yet claimed: external provider
+qualification, factual verification, multiple-source aggregation, or a
+real-user DB deployment acceptance. Cargo build/test must be rerun against
+the latest branch HEAD after these changes.
