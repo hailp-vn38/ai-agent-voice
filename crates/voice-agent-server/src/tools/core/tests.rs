@@ -13,9 +13,36 @@ fn frozen_roundtrip_and_revision_fail_closed() {
 }
 #[test]
 fn json_pointer_contract_is_projectable_and_artifact_is_job_scoped() {
+    assert!(contract(&decode(&frozen_choices()[0]).unwrap()).is_ok());
     assert!(contract(&decode(&frozen_choices()[1]).unwrap()).is_ok());
-    assert!(contract(&decode(&frozen_choices()[2]).unwrap()).is_ok());
     assert_eq!(take_chars("aéb", 2), ("aé".into(), true));
+}
+
+#[test]
+fn web_is_hidden_but_persisted_choices_remain_supported() {
+    let choices = frozen_choices();
+    let catalog = bundled_catalog();
+    assert_eq!(catalog["total"], 3);
+    assert_eq!(catalog["operation_total"], choices.len());
+    assert!(
+        catalog["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["id"] != "core.web")
+    );
+    for operation in ["web.fetch", "web.extract"] {
+        assert!(
+            choices
+                .iter()
+                .all(|choice| choice["operation"] != operation)
+        );
+        let persisted = serde_json::json!({
+            "kind":"core", "plugin_id":"core", "operation":operation,
+            "contract_revision":"1"
+        });
+        assert!(decode(&persisted).is_ok());
+    }
 }
 
 #[test]

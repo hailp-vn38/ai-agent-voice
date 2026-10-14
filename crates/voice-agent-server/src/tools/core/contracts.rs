@@ -2,11 +2,9 @@ use crate::services::background::plugins::{FrozenChoice, PluginError};
 use serde_json::{Value, json};
 
 pub(crate) const REVISION: &str = "1";
-pub(super) const OPERATIONS: [&str; 8] = [
-    "web.fetch",
+pub(super) const OPERATIONS: [&str; 6] = [
     "data.json_query",
     "artifact.read_text",
-    "web.extract",
     "document.extract",
     "document.inspect",
     "data.transform",

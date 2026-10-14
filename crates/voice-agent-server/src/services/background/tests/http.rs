@@ -831,10 +831,11 @@ async fn builtin_core_catalog_is_authenticated_and_independent_of_installed_pack
         .json()
         .await
         .unwrap();
-    assert_eq!(catalog["total"], 4);
-    assert_eq!(catalog["operation_total"], 8);
+    assert_eq!(catalog["total"], 3);
+    assert_eq!(catalog["operation_total"], 6);
     let groups = catalog["items"].as_array().unwrap();
     for group in groups {
+        assert_ne!(group["id"], "core.web");
         assert_eq!(group["kind"], "built_in");
         assert_eq!(group["status"], "ready");
         assert_eq!(group["runtime"]["kind"], "in_process");

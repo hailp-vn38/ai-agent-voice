@@ -6,8 +6,7 @@ use serde_json::{Value, json};
 /// Read-only catalog for the preinstalled Core plugins. These are not rows
 /// in plugin_installations and cannot be activated, disabled or uninstalled.
 pub(crate) fn bundled_catalog() -> Value {
-    let groups: [(&str, &str, &[&str]); 4] = [
-        ("core.web", "Core Web", &["web.fetch", "web.extract"]),
+    let groups: [(&str, &str, &[&str]); 3] = [
         (
             "core.document",
             "Core Document",
