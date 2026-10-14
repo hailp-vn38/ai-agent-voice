@@ -61,7 +61,7 @@ function tone(status: UnifiedActivity['status']): string {
             <CheckCircle2 v-else class="size-4" />
           </div>
         </div>
-        <button type="button" class="mb-2 min-w-0 rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="selectedId === activity.id ? 'border-primary/60 ring-1 ring-primary/20' : ''" :aria-current="selectedId === activity.id ? 'true' : undefined" @click="emit('select', activity.id)">
+        <button type="button" class="mb-2 min-w-0 rounded-[10px] border bg-surface px-[13px] py-2.5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="selectedId === activity.id ? 'border-primary shadow-[inset_3px_0_0_var(--primary)]' : ''" :aria-current="selectedId === activity.id ? 'true' : undefined" @click="emit('select', activity.id)">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <span class="flex min-w-0 flex-wrap items-center gap-2">
               <span class="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-studio-violet">{{ roleName(activity.role) }}</span>

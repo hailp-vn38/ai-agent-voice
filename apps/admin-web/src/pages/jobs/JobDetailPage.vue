@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, BrainCircuit, Clock3, Cpu, Download, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, BrainCircuit, CheckCircle2, Cpu, Download, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { listenJobChanges } from '@/api/job-updates'
 import { useAuthStore } from '@/stores/auth'
 import { formatApiError, isApiError } from '@/api/errors'
-import type { AdminJob, JobEvent, JobStatus, StepStatus } from '@/api/types/agent-jobs'
+import type { AdminJob, JobEvent, JobStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import JobUnifiedTimeline from '@/components/jobs/JobUnifiedTimeline.vue'
 import JobActivityInspector from '@/components/jobs/JobActivityInspector.vue'
@@ -44,8 +44,6 @@ let retryRequest = { id: '', key: '' }
 
 const isTerminal = (status: JobStatus) => ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
 const canRetry = computed(() => job.value && ['failed', 'cancelled'].includes(job.value.status))
-const planningEvents = computed(() => events.value.filter(x => x.event_type.startsWith('plan_')))
-const executionEvents = computed(() => events.value.filter(x => !x.event_type.startsWith('plan_') && !x.event_type.startsWith('llm_')))
 const unknownOutcome = computed(() => job.value?.steps.some(step => step.attempt_state === 'unknown_outcome') ?? false)
 
 const activityFilter = ref<ActivityFilter>({ kind: 'all' })
@@ -76,23 +74,7 @@ function roleName(role: string) {
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
     status === 'partial_success' || status === 'cancelled' ? 'outline' : 'secondary'
-const stepTone = (status: StepStatus): 'success' | 'danger' | 'secondary' =>
-  status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' : 'secondary'
 const statusLabel = (status: JobStatus) => t(('jobUi.jobStatus.' + status) as 'jobUi.jobStatus.queued')
-function date(value?: string) {
-  if (!value) return '—'
-  const timestamp = new Date(value)
-  return Number.isFinite(timestamp.getTime()) ? timestamp.toLocaleString() : value
-}
-function summary(result: AdminJob['result']) {
-  if (!result) return ''
-  return typeof result.summary === 'string' ? result.summary : JSON.stringify(result, null, 2)
-}
-function budget() {
-  if (!job.value) return '—'
-  return Object.keys(job.value.budget_used ?? {}).length
-    ? JSON.stringify(job.value.budget_used, null, 2) : '—'
-}
 async function load(resetEvents = false) {
   controller?.abort()
   const pending = new AbortController()
@@ -309,22 +291,24 @@ onBeforeUnmount(() => {
           @filter="activityFilter = $event"
         />
         <aside class="min-w-0 space-y-4">
-          <section class="studio-panel p-4">
-            <div class="mb-3 flex items-center justify-between gap-2">
+          <section class="studio-panel overflow-hidden">
+            <div class="flex items-center justify-between gap-2 border-b p-4">
               <h3 class="flex items-center gap-2 text-sm font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.activeAgents') }}</h3>
               <span class="text-xs text-muted-foreground">{{ agentRuns.length || '—' }}</span>
             </div>
-            <p v-if="!agentRuns.length" class="text-xs text-muted-foreground">{{ job.execution_mode === 'hierarchical_v2' ? t('jobUi.noAgentRunsYet') : t('jobUi.legacyNoAgents') }}</p>
-            <div v-for="run in agentRuns" :key="run.agent_run_id" class="border-t py-1">
-              <button type="button" class="flex w-full items-center gap-2 rounded-md p-2 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id ? 'bg-primary/10' : ''" :aria-pressed="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id" @click="filterAgent(run.agent_run_id)">
-                <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-studio-violet"><Workflow class="size-4" /></span>
-                <span class="min-w-0 flex-1">
-                  <strong class="block text-xs">{{ roleName(run.role) }}</strong>
-                  <span class="block truncate text-[10px] text-muted-foreground">{{ run.llm_rounds }} {{ t('jobUi.timelineRounds') }} · {{ run.tool_calls }} {{ t('jobUi.timelineTools') }}</span>
-                </span>
-                <span class="text-[10px] capitalize" :class="run.status === 'succeeded' ? 'text-success' : run.status === 'failed' ? 'text-danger' : 'text-studio-cyan'">{{ run.status }}</span>
-              </button>
-            </div>
+            <p v-if="!agentRuns.length" class="p-4 text-xs text-muted-foreground">{{ job.execution_mode === 'hierarchical_v2' ? t('jobUi.noAgentRunsYet') : t('jobUi.legacyNoAgents') }}</p>
+            <button v-for="run in agentRuns" :key="run.agent_run_id" type="button" class="flex w-full cursor-pointer items-center gap-[9px] border-b px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" :class="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id ? 'bg-primary/10' : ''" :aria-pressed="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id" @click="filterAgent(run.agent_run_id)">
+              <span class="grid size-[29px] shrink-0 place-items-center rounded-[9px] bg-primary/10 text-[11px] font-extrabold text-studio-violet" aria-hidden="true">{{ run.role.charAt(0).toUpperCase() }}</span>
+              <span class="min-w-0 flex-1">
+                <strong class="block text-[11px]">{{ roleName(run.role) }}</strong>
+                <span class="block truncate text-[11px] text-muted-foreground">{{ run.llm_rounds }} {{ t('jobUi.timelineRounds') }} · {{ run.input_tokens !== null && run.output_tokens !== null ? (run.input_tokens + run.output_tokens).toLocaleString() : '—' }} {{ t('jobUi.llmTokens') }}</span>
+              </span>
+              <Badge :variant="run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'danger' : 'outline'" class="shrink-0 gap-1 whitespace-nowrap text-[10.5px] capitalize" :class="run.status === 'running' ? 'border-transparent bg-studio-cyan/10 text-studio-cyan' : ''">
+                <CheckCircle2 v-if="run.status === 'succeeded'" class="size-3.5" />
+                <span v-else-if="run.status === 'running'" class="size-1.5 rounded-full bg-current" aria-hidden="true" />
+                {{ run.status }}
+              </Badge>
+            </button>
           </section>
           <JobActivityInspector :activity="selectedActivity" />
           <section class="studio-panel p-4">
@@ -342,100 +326,25 @@ onBeforeUnmount(() => {
           </section>
         </aside>
       </div>
-      <details class="studio-panel p-4">
-        <summary class="cursor-pointer text-sm font-semibold text-studio-violet">{{ t('jobUi.technicalDetails') }}</summary>
-        <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,1fr)]">
-        <div class="min-w-0 space-y-4">
-          <section class="studio-panel p-5">
-            <div class="mb-4 flex items-center justify-between gap-2">
-              <h2 class="flex items-center gap-2 font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.steps') }}</h2>
-              <span class="text-xs text-muted-foreground">{{ t('jobUi.planRevision') }} {{ job.plan_revision }} · {{ job.steps.length }} steps</span>
-            </div>
-            <p v-if="!job.steps.length" class="text-sm text-muted-foreground">{{ t('jobUi.noSteps') }}</p>
-            <ol v-else class="space-y-0">
-              <li v-for="(step, index) in job.steps" :key="step.step_key" class="relative flex gap-3 pb-6 last:pb-0">
-                <div v-if="index < job.steps.length - 1" class="absolute bottom-0 left-3 top-8 w-px bg-border" aria-hidden="true" />
-                <span class="relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border bg-muted text-xs font-semibold" :class="step.status === 'failed' ? 'text-danger' : step.status === 'succeeded' ? 'text-success' : 'text-studio-violet'">
-                  {{ index + 1 }}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    <span class="break-all text-sm font-semibold">{{ step.step_key }}</span>
-                    <Badge :variant="stepTone(step.status)">{{ step.status }}</Badge>
-                  </div>
-                  <p class="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{{ step.instruction }}</p>
-                  <div v-if="step.plugin_id" class="mt-2 text-xs">
-                    <button class="break-all text-studio-violet hover:underline" type="button" @click="router.push({ name: 'plugin-detail', params: { id: step.plugin_id } })">{{ step.plugin_id }}</button>
-                    <span class="text-muted-foreground"> · {{ step.operation || '—' }}</span>
-                  </div>
-                  <p v-if="step.dependencies?.length" class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.dependencies') }}: {{ step.dependencies.join(', ') }}</p>
-                  <p v-if="step.attempt_state || step.error_code" class="mt-1 break-all text-xs" :class="step.error_code ? 'text-danger' : 'text-muted-foreground'">
-                    {{ step.attempt_state }} {{ step.error_code ? '· ' + step.error_code : '' }}
-                  </p>
-                </div>
-              </li>
-            </ol>
-          </section>
-          <section class="studio-panel p-5">
-            <h2 class="mb-4 flex items-center gap-2 font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.artifacts') }}</h2>
-            <p v-if="!job.artifacts.length" class="text-sm text-muted-foreground">{{ t('jobUi.noArtifacts') }}</p>
-            <div v-for="artifact in job.artifacts" :key="artifact.id" class="flex items-center justify-between gap-3 border-t py-3">
+      <section class="studio-panel">
+        <div class="flex items-center justify-between gap-2 border-b p-4">
+          <h3 class="flex items-center gap-2 text-sm font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.jobArtifacts') }}</h3>
+          <Badge variant="outline">{{ job.artifacts.length }}</Badge>
+        </div>
+        <div class="px-4 py-2">
+          <p v-if="!job.artifacts.length" class="py-2 text-xs text-muted-foreground">{{ t('jobUi.noArtifacts') }}</p>
+          <div v-for="artifact in job.artifacts" :key="artifact.id" class="flex items-center justify-between gap-3 border-b py-3 last:border-b-0">
+            <div class="flex min-w-0 items-center gap-2.5">
+              <span class="grid size-[29px] shrink-0 place-items-center rounded-lg bg-primary/10 text-studio-violet"><FileText class="size-4" /></span>
               <div class="min-w-0">
-                <p class="truncate font-mono text-xs">{{ artifact.id }}</p>
-                <p class="mt-1 text-xs text-muted-foreground">{{ artifact.media_type }} · {{ artifact.size_bytes }} B</p>
+                <strong class="block break-all text-[11px]">{{ artifact.id }}</strong>
+                <p class="mt-1 break-all text-[11px] text-muted-foreground">{{ artifact.media_type }} · {{ artifact.size_bytes.toLocaleString() }} B</p>
               </div>
-              <Button variant="outline" size="sm" @click="downloadArtifact(artifact.id)"><Download class="size-4" />{{ t('jobUi.download') }}</Button>
             </div>
-          </section>
-          <section v-if="summary(job.result)" class="studio-panel p-5">
-            <h2 class="mb-3 font-semibold">{{ t('jobUi.result') }}</h2>
-            <pre class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3 text-xs leading-relaxed">{{ summary(job.result) }}</pre>
-          </section>
+            <Button variant="outline" size="sm" class="shrink-0" :aria-label="t('jobUi.download') + ' ' + artifact.id" @click="downloadArtifact(artifact.id)"><Download class="size-3.5" />{{ t('jobUi.download') }}</Button>
+          </div>
         </div>
-
-        <aside class="min-w-0 space-y-4">
-          <section class="studio-panel p-5">
-            <h2 class="mb-4 font-semibold">{{ t('jobUi.executionContext') }}</h2>
-            <div class="divide-y text-sm">
-              <div class="flex justify-between gap-3 py-3"><span class="text-muted-foreground">{{ t('jobUi.requester') }}</span><span class="max-w-[65%] break-all text-right">{{ job.requester_scope }}</span></div>
-              <div class="flex justify-between gap-3 py-3"><span class="text-muted-foreground">{{ t('jobUi.createdAt') }}</span><span class="text-right"><Clock3 class="mr-1 inline size-3.5" />{{ date(job.created_at) }}</span></div>
-              <div class="flex justify-between gap-3 py-3"><span class="text-muted-foreground">{{ t('jobUi.status') }}</span><Badge :variant="tone(job.status)">{{ statusLabel(job.status) }}</Badge></div>
-              <div class="flex justify-between gap-3 py-3"><span class="text-muted-foreground">{{ t('jobUi.planRevision') }}</span><span>{{ job.plan_revision }}</span></div>
-              <div v-if="job.retry_of_job_id" class="flex flex-wrap justify-between gap-3 py-3">
-                <span class="text-muted-foreground">{{ t('jobUi.retryOf') }}</span>
-                <button type="button" class="break-all text-studio-violet hover:underline" @click="router.push({ name: 'job-detail', params: { jobId: job.retry_of_job_id } })">{{ job.retry_of_job_id }}</button>
-              </div>
-            </div>
-            <h3 class="mt-5 text-sm font-semibold">{{ t('jobUi.budgetUsed') }}</h3>
-            <pre class="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/40 p-3 font-mono text-xs">{{ budget() }}</pre>
-          </section>
-          <section class="studio-panel p-5">
-            <div class="mb-4 flex items-center justify-between gap-2">
-              <h2 class="font-semibold">{{ t('jobUi.executionTimeline') }}</h2>
-              <span class="text-xs text-muted-foreground">{{ events.length }} events</span>
-            </div>
-            <p v-if="eventsError" role="alert" class="mb-3 text-xs text-danger">{{ eventsError }}</p>
-            <p v-if="!events.length" class="text-sm text-muted-foreground">{{ t('jobUi.noEvents') }}</p>
-            <div v-if="planningEvents.length" class="mb-4">
-              <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('jobUi.planningAttempts') }}</h3>
-              <div v-for="event in planningEvents" :key="event.sequence" class="mb-3 border-l-2 border-studio-violet pl-3 text-xs">
-                <p class="font-medium">{{ event.event_type }} · #{{ event.sequence }}</p>
-                <p class="mt-1 text-muted-foreground">{{ date(event.created_at) }}</p>
-                <p v-if="event.payload.code || event.payload.message" class="mt-1 break-words text-danger">{{ event.payload.code || event.payload.message }}</p>
-              </div>
-            </div>
-            <div v-if="executionEvents.length">
-              <h3 class="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ t('jobUi.execution') }}</h3>
-              <div v-for="event in executionEvents" :key="event.sequence" class="mb-3 border-l-2 border-border pl-3 text-xs">
-                <p class="font-medium">{{ event.event_type }}<span v-if="event.step_key"> · {{ event.step_key }}</span></p>
-                <p class="mt-1 text-muted-foreground">{{ date(event.created_at) }} · {{ event.payload.status || event.payload.attempt_state || '' }}</p>
-                <p v-if="event.payload.error_code" class="mt-1 text-danger">{{ event.payload.error_code }}</p>
-              </div>
-            </div>
-          </section>
-        </aside>
-        </div>
-      </details>
+      </section>
     </template>
 
     <ConfirmDialog v-model="retryOpen" :title="t('jobUi.retryJob')" :confirm-label="t('jobUi.retryJob')" @confirm="retry">

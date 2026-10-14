@@ -19,6 +19,26 @@ function events(count: number): JobEvent[] {
 beforeEach(() => setLocale('en'))
 
 describe('Job activity presentation', () => {
+  it('applies the theme selection accent only to the current timeline item', async () => {
+    const activity = projectUnifiedActivity(view, events(5))[0]!
+    const activities = [activity, { ...activity, id: 'second' }]
+    const timeline = mount(JobUnifiedTimeline, { props: { activities, selectedId: activity.id, filter: { kind: 'all' }, roles: [] } })
+    try {
+      const items = timeline.findAll('ol button')
+      expect(items[0]!.classes()).toContain('shadow-[inset_3px_0_0_var(--primary)]')
+      expect(items[0]!.classes()).toContain('border-primary')
+      expect(items[0]!.classes()).not.toContain('ring-1')
+      expect(items[1]!.classes()).toContain('bg-surface')
+      await items[1]!.trigger('click')
+      expect(timeline.emitted('select')).toEqual([['second']])
+      await timeline.setProps({ selectedId: 'second' })
+      expect(items[0]!.attributes('aria-current')).toBeUndefined()
+      expect(items[0]!.classes()).not.toContain('shadow-[inset_3px_0_0_var(--primary)]')
+      expect(items[1]!.attributes('aria-current')).toBe('true')
+      expect(items[1]!.classes()).toContain('shadow-[inset_3px_0_0_var(--primary)]')
+    } finally { timeline.unmount() }
+  })
+
   it('updates the pending message through provider, capacity, response and validation stages', async () => {
     const keys = [
       'jobUi.llmAcquiringProvider', 'jobUi.llmWaitingCapacity', 'jobUi.llmWaitingResponse', 'jobUi.llmValidating',
