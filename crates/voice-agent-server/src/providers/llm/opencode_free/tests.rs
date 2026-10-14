@@ -5,6 +5,8 @@ fn config(model: &str) -> OpenCodeFreeConfig {
         model: model.into(),
         timeout_ms: 60_000,
         supports_responses: false,
+        supports_structured_outputs: false,
+        supports_function_calling: false,
     }
 }
 
