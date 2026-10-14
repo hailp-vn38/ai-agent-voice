@@ -66,167 +66,325 @@ struct DecisionIssue {
 }
 impl DecisionIssue {
     fn new(code: &'static str, path: impl Into<String>, guidance: &'static str) -> Self {
-        Self { code, path: path.into(), guidance }
+        Self {
+            code,
+            path: path.into(),
+            guidance,
+        }
     }
     fn feedback(&self) -> Value {
         json!({"validation_code":self.code,"validation_path":self.path,"guidance":self.guidance})
     }
 }
 fn required<'a>(value: &'a Value, name: &str, base: &str) -> Result<&'a Value, DecisionIssue> {
-    value.get(name).ok_or_else(|| DecisionIssue::new(
-        "missing_field", format!("{base}.{name}"), "Include the required field with the correct JSON type."
-    ))
+    value.get(name).ok_or_else(|| {
+        DecisionIssue::new(
+            "missing_field",
+            format!("{base}.{name}"),
+            "Include the required field with the correct JSON type.",
+        )
+    })
 }
 fn string_field<'a>(value: &'a Value, name: &str, base: &str) -> Result<&'a str, DecisionIssue> {
-    required(value, name, base)?.as_str().ok_or_else(|| DecisionIssue::new(
-        "invalid_field_type", format!("{base}.{name}"), "This field must be a JSON string."
-    ))
+    required(value, name, base)?.as_str().ok_or_else(|| {
+        DecisionIssue::new(
+            "invalid_field_type",
+            format!("{base}.{name}"),
+            "This field must be a JSON string.",
+        )
+    })
 }
 fn string_list(value: &Value, name: &str, base: &str) -> Result<(), DecisionIssue> {
-    let path=format!("{base}.{name}");
-    if !required(value,name,base)?.as_array().is_some_and(|a| a.iter().all(Value::is_string)) {
-        return Err(DecisionIssue::new("invalid_field_type", path,"This field must be an array of strings."));
+    let path = format!("{base}.{name}");
+    if !required(value, name, base)?
+        .as_array()
+        .is_some_and(|a| a.iter().all(Value::is_string))
+    {
+        return Err(DecisionIssue::new(
+            "invalid_field_type",
+            path,
+            "This field must be an array of strings.",
+        ));
     }
     Ok(())
 }
-fn decode_action(raw: &str) -> Result<Value,DecisionIssue> {
-    if raw.len()>32768 {
-        return Err(DecisionIssue::new("output_too_large","$","Return a shorter JSON response."));
+fn decode_action(raw: &str) -> Result<Value, DecisionIssue> {
+    if raw.len() > 32768 {
+        return Err(DecisionIssue::new(
+            "output_too_large",
+            "$",
+            "Return a shorter JSON response.",
+        ));
     }
-    let trimmed=raw.trim();
-    let value=if trimmed.starts_with("```") {
-        let rest=trimmed.strip_prefix("```json")
-            .or_else(||trimmed.strip_prefix("```JSON"))
-            .or_else(||trimmed.strip_prefix("```"))
-            .ok_or_else(||DecisionIssue::new("invalid_json","$","Return a single JSON object."))?;
-        rest.trim().strip_suffix("```").map(str::trim).ok_or_else(||DecisionIssue::new(
-            "invalid_json","$","Close the single JSON code fence; do not add prose."
-        ))?
-    } else {trimmed};
-    let parsed:Value=serde_json::from_str(value).map_err(|_|DecisionIssue::new(
-        "invalid_json","$","Return one valid JSON object, no explanation or extra text."
-    ))?;
-    let obj=parsed.get("decision").unwrap_or(&parsed);
-    if !obj.is_object(){
-        return Err(DecisionIssue::new("invalid_contract","$","The decision must be a JSON object."));
+    let trimmed = raw.trim();
+    let value = if trimmed.starts_with("```") {
+        let rest = trimmed
+            .strip_prefix("```json")
+            .or_else(|| trimmed.strip_prefix("```JSON"))
+            .or_else(|| trimmed.strip_prefix("```"))
+            .ok_or_else(|| {
+                DecisionIssue::new("invalid_json", "$", "Return a single JSON object.")
+            })?;
+        rest.trim()
+            .strip_suffix("```")
+            .map(str::trim)
+            .ok_or_else(|| {
+                DecisionIssue::new(
+                    "invalid_json",
+                    "$",
+                    "Close the single JSON code fence; do not add prose.",
+                )
+            })?
+    } else {
+        trimmed
+    };
+    let parsed: Value = serde_json::from_str(value).map_err(|_| {
+        DecisionIssue::new(
+            "invalid_json",
+            "$",
+            "Return one valid JSON object, no explanation or extra text.",
+        )
+    })?;
+    let obj = parsed.get("decision").unwrap_or(&parsed);
+    if !obj.is_object() {
+        return Err(DecisionIssue::new(
+            "invalid_contract",
+            "$",
+            "The decision must be a JSON object.",
+        ));
     }
-    if obj.to_string().len()>4096 {
-        return Err(DecisionIssue::new("output_too_large","$","Use compact decisions of at most 4096 bytes."));
+    if obj.to_string().len() > 4096 {
+        return Err(DecisionIssue::new(
+            "output_too_large",
+            "$",
+            "Use compact decisions of at most 4096 bytes.",
+        ));
     }
     if super::plan::forbidden(obj) {
-        return Err(DecisionIssue::new("forbidden_field","$","Remove forbidden document_refs and external JSON schema references."));
+        return Err(DecisionIssue::new(
+            "forbidden_field",
+            "$",
+            "Remove forbidden document_refs and external JSON schema references.",
+        ));
     }
     Ok(obj.clone())
 }
-fn parse_root_decision(job:&JobView,raw:&str) -> Result<RootDecision,DecisionIssue> {
-    let value=decode_action(raw)?;
-    let action=string_field(&value,"action","$")?;
+fn parse_root_decision(job: &JobView, raw: &str) -> Result<RootDecision, DecisionIssue> {
+    let value = decode_action(raw)?;
+    let action = string_field(&value, "action", "$")?;
     match action {
         "delegate" => {
-            let tasks=required(&value,"tasks","$")?.as_array().ok_or_else(||DecisionIssue::new(
-                "invalid_field_type","$.tasks","tasks must be an array."))?;
-            if tasks.is_empty()||tasks.len()>2 {
-                return Err(DecisionIssue::new("invalid_task_count","$.tasks","Delegate one or two tasks."));
+            let tasks = required(&value, "tasks", "$")?.as_array().ok_or_else(|| {
+                DecisionIssue::new("invalid_field_type", "$.tasks", "tasks must be an array.")
+            })?;
+            if tasks.is_empty() || tasks.len() > 2 {
+                return Err(DecisionIssue::new(
+                    "invalid_task_count",
+                    "$.tasks",
+                    "Delegate one or two tasks.",
+                ));
             }
-            let choices=job.plugin_choices.as_array().ok_or_else(||DecisionIssue::new(
-                "invalid_contract","$.tasks","Frozen operations are unavailable."))?;
-            let mut keys=std::collections::HashSet::new();
-            for (i,task) in tasks.iter().enumerate() {
-                let path=format!("$.tasks[{i}]");
-                let key=string_field(task,"task_key",&path)?;
-                if key.is_empty()||key.len()>64||!key.bytes().all(|b|
-                    b.is_ascii_alphanumeric()||b==b'_'||b==b'-')||!keys.insert(key) {
-                    return Err(DecisionIssue::new("invalid_task_key",format!("{path}.task_key"),
-                        "Use a unique 1-64 character ASCII letter/digit/_/- task key."));
+            let choices = job.plugin_choices.as_array().ok_or_else(|| {
+                DecisionIssue::new(
+                    "invalid_contract",
+                    "$.tasks",
+                    "Frozen operations are unavailable.",
+                )
+            })?;
+            let mut keys = std::collections::HashSet::new();
+            for (i, task) in tasks.iter().enumerate() {
+                let path = format!("$.tasks[{i}]");
+                let key = string_field(task, "task_key", &path)?;
+                if key.is_empty()
+                    || key.len() > 64
+                    || !key
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                    || !keys.insert(key)
+                {
+                    return Err(DecisionIssue::new(
+                        "invalid_task_key",
+                        format!("{path}.task_key"),
+                        "Use a unique 1-64 character ASCII letter/digit/_/- task key.",
+                    ));
                 }
-                let role=string_field(task,"role",&path)?;
-                if !matches!(role,"research"|"document"|"general") {
-                    return Err(DecisionIssue::new("invalid_role",format!("{path}.role"),
-                        "Choose exactly research, document or general."));
+                let role = string_field(task, "role", &path)?;
+                if !matches!(role, "research" | "document" | "general") {
+                    return Err(DecisionIssue::new(
+                        "invalid_role",
+                        format!("{path}.role"),
+                        "Choose exactly research, document or general.",
+                    ));
                 }
-                let goal=string_field(task,"goal",&path)?;
-                if goal.trim().is_empty()||goal.chars().count()>256 {
-                    return Err(DecisionIssue::new("invalid_goal",format!("{path}.goal"),
-                        "Use a nonempty goal of at most 256 characters."));
+                let goal = string_field(task, "goal", &path)?;
+                if goal.trim().is_empty() || goal.chars().count() > 256 {
+                    return Err(DecisionIssue::new(
+                        "invalid_goal",
+                        format!("{path}.goal"),
+                        "Use a nonempty goal of at most 256 characters.",
+                    ));
                 }
-                string_list(task,"allowed_operations",&path)?;
-                let ops=task["allowed_operations"].as_array().expect("validated list");
-                if ops.len()>16 { return Err(DecisionIssue::new(
-                    "too_many_operations",format!("{path}.allowed_operations"),
-                    "Allow no more than 16 operations."));}
-                for (idx,op) in ops.iter().enumerate() {
-                    if !choices.iter().any(|choice|format!("{}.{}",
-                        choice["plugin_id"].as_str().unwrap_or(""),
-                        choice["operation"].as_str().unwrap_or(""))==op.as_str().unwrap_or("")) {
-                        return Err(DecisionIssue::new("unknown_operation",
+                string_list(task, "allowed_operations", &path)?;
+                let ops = task["allowed_operations"]
+                    .as_array()
+                    .expect("validated list");
+                if ops.len() > 16 {
+                    return Err(DecisionIssue::new(
+                        "too_many_operations",
+                        format!("{path}.allowed_operations"),
+                        "Allow no more than 16 operations.",
+                    ));
+                }
+                for (idx, op) in ops.iter().enumerate() {
+                    if !choices.iter().any(|choice| {
+                        format!(
+                            "{}.{}",
+                            choice["plugin_id"].as_str().unwrap_or(""),
+                            choice["operation"].as_str().unwrap_or("")
+                        ) == op.as_str().unwrap_or("")
+                    }) {
+                        return Err(DecisionIssue::new(
+                            "unknown_operation",
                             format!("{path}.allowed_operations[{idx}]"),
-                            "Use only names from frozen_operations, or an empty array."));
+                            "Use only names from frozen_operations, or an empty array.",
+                        ));
                     }
                 }
             }
         }
         "finish" => {
-            let result=required(&value,"result","$")?;
-            string_field(result,"summary","$.result")?;
-            for field in ["findings","evidence_refs","unresolved"] {string_list(result,field,"$.result")?;}
+            let result = required(&value, "result", "$")?;
+            string_field(result, "summary", "$.result")?;
+            for field in ["findings", "evidence_refs", "unresolved"] {
+                string_list(result, field, "$.result")?;
+            }
         }
-        _=>return Err(DecisionIssue::new("invalid_action","$.action","Root action must be delegate or finish.")),
+        _ => {
+            return Err(DecisionIssue::new(
+                "invalid_action",
+                "$.action",
+                "Root action must be delegate or finish.",
+            ));
+        }
     }
-    let decision:RootDecision=serde_json::from_value(value).map_err(|_|DecisionIssue::new(
-        "invalid_contract","$","Remove extra fields; match exactly the selected action contract."))?;
-    validate_root_decision(job,&decision).map_err(|_|DecisionIssue::new(
-        "invalid_contract","$","Action must be within the frozen capability and output limits."))?;
+    let decision: RootDecision = serde_json::from_value(value).map_err(|_| {
+        DecisionIssue::new(
+            "invalid_contract",
+            "$",
+            "Remove extra fields; match exactly the selected action contract.",
+        )
+    })?;
+    validate_root_decision(job, &decision).map_err(|_| {
+        DecisionIssue::new(
+            "invalid_contract",
+            "$",
+            "Action must be within the frozen capability and output limits.",
+        )
+    })?;
     Ok(decision)
 }
 fn parse_child_decision(
-    child:&AgentRunView,tool_catalog:&[Value],raw:&str,
-)->Result<ChildDecision,DecisionIssue>{
-    let value=decode_action(raw)?;
-    match string_field(&value,"action","$")? {
-        "call_plugin"=>{
-            let plugin=string_field(&value,"plugin_id","$")?;
-            let operation=string_field(&value,"operation","$")?;
-            let name=format!("{plugin}.{operation}");
-            if !child.allowed_operations.contains(&name){
-                return Err(DecisionIssue::new("unknown_operation","$.operation",
-                    "Choose a plugin and operation listed in allowed_operations."));
+    child: &AgentRunView,
+    tool_catalog: &[Value],
+    raw: &str,
+) -> Result<ChildDecision, DecisionIssue> {
+    let value = decode_action(raw)?;
+    match string_field(&value, "action", "$")? {
+        "call_plugin" => {
+            let plugin = string_field(&value, "plugin_id", "$")?;
+            let operation = string_field(&value, "operation", "$")?;
+            let name = format!("{plugin}.{operation}");
+            if !child.allowed_operations.contains(&name) {
+                return Err(DecisionIssue::new(
+                    "unknown_operation",
+                    "$.operation",
+                    "Choose a plugin and operation listed in allowed_operations.",
+                ));
             }
-            let args=required(&value,"arguments","$")?;
-            if !args.is_object(){return Err(DecisionIssue::new(
-                "invalid_field_type","$.arguments","arguments must be a JSON object."));}
-            if args.to_string().len()>16384 {return Err(DecisionIssue::new(
-                "arguments_too_large","$.arguments","Return shorter arguments."));}
-            let contract=tool_catalog.iter().find(|item|item["name"]==name)
-                .ok_or_else(||DecisionIssue::new("unknown_operation","$.operation",
-                    "Operation contract is not available."))?;
-            if !jsonschema::validator_for(&contract["input_schema"]).map_err(|_|DecisionIssue::new(
-                "invalid_contract","$.arguments","Operation input schema is unavailable."))?.is_valid(args) {
-                return Err(DecisionIssue::new("invalid_arguments_schema","$.arguments",
-                    "Follow the exact input_schema for the chosen operation."));
+            let args = required(&value, "arguments", "$")?;
+            if !args.is_object() {
+                return Err(DecisionIssue::new(
+                    "invalid_field_type",
+                    "$.arguments",
+                    "arguments must be a JSON object.",
+                ));
+            }
+            if args.to_string().len() > 16384 {
+                return Err(DecisionIssue::new(
+                    "arguments_too_large",
+                    "$.arguments",
+                    "Return shorter arguments.",
+                ));
+            }
+            let contract = tool_catalog
+                .iter()
+                .find(|item| item["name"] == name)
+                .ok_or_else(|| {
+                    DecisionIssue::new(
+                        "unknown_operation",
+                        "$.operation",
+                        "Operation contract is not available.",
+                    )
+                })?;
+            if !jsonschema::validator_for(&contract["input_schema"])
+                .map_err(|_| {
+                    DecisionIssue::new(
+                        "invalid_contract",
+                        "$.arguments",
+                        "Operation input schema is unavailable.",
+                    )
+                })?
+                .is_valid(args)
+            {
+                return Err(DecisionIssue::new(
+                    "invalid_arguments_schema",
+                    "$.arguments",
+                    "Follow the exact input_schema for the chosen operation.",
+                ));
             }
         }
-        "finish"=>{
-            let result=required(&value,"result","$")?;
-            if string_field(result,"status","$.result")?!="completed"{
-                return Err(DecisionIssue::new("invalid_status","$.result.status",
-                    "Child finish status must equal completed."));
+        "finish" => {
+            let result = required(&value, "result", "$")?;
+            if string_field(result, "status", "$.result")? != "completed" {
+                return Err(DecisionIssue::new(
+                    "invalid_status",
+                    "$.result.status",
+                    "Child finish status must equal completed.",
+                ));
             }
-            string_field(result,"summary","$.result")?;
-            for field in ["findings","evidence_refs","unresolved"] {string_list(result,field,"$.result")?;}
+            string_field(result, "summary", "$.result")?;
+            for field in ["findings", "evidence_refs", "unresolved"] {
+                string_list(result, field, "$.result")?;
+            }
         }
-        _=>return Err(DecisionIssue::new("invalid_action","$.action",
-            "Child action must be call_plugin or finish.")),
+        _ => {
+            return Err(DecisionIssue::new(
+                "invalid_action",
+                "$.action",
+                "Child action must be call_plugin or finish.",
+            ));
+        }
     }
-    let decision:ChildDecision=serde_json::from_value(value).map_err(|_|DecisionIssue::new(
-        "invalid_contract","$","Remove extra fields; match exactly the action contract."))?;
-    validate_child_decision(child,tool_catalog,&decision).map_err(|_|DecisionIssue::new(
-        "invalid_contract","$","Check allowed operations and the frozen JSON schema."))?;
+    let decision: ChildDecision = serde_json::from_value(value).map_err(|_| {
+        DecisionIssue::new(
+            "invalid_contract",
+            "$",
+            "Remove extra fields; match exactly the action contract.",
+        )
+    })?;
+    validate_child_decision(child, tool_catalog, &decision).map_err(|_| {
+        DecisionIssue::new(
+            "invalid_contract",
+            "$",
+            "Check allowed operations and the frozen JSON schema.",
+        )
+    })?;
     Ok(decision)
 }
 fn root_response_schema() -> Value {
     // Root Responses structured output; Chat Completions retains Rust-side validation.
-    let strings=json!({"type":"array","items":{"type":"string"}});
-    let result=json!({"type":"object","properties":{
+    let strings = json!({"type":"array","items":{"type":"string"}});
+    let result = json!({"type":"object","properties":{
         "summary":{"type":"string"},"findings":strings,
         "evidence_refs":{"type":"array","items":{"type":"string"}},
         "unresolved":{"type":"array","items":{"type":"string"}}
@@ -402,33 +560,60 @@ fn validate_child_decision(
     }
 }
 async fn decide_root(
-    engine: &JobEngine, job: &JobView, root: &AgentRunView,
-    history: &[Value], attempt: &mut u32, cancel: &CancellationToken,
+    engine: &JobEngine,
+    job: &JobView,
+    root: &AgentRunView,
+    history: &[Value],
+    attempt: &mut u32,
+    cancel: &CancellationToken,
 ) -> Result<RootDecision, JobError> {
-    let mut correction=Value::Null;
+    let mut correction = Value::Null;
     for _ in 0..=job.snapshot.limits.max_plan_repairs {
-        *attempt+=1;
-        let context=run_context(&job.id,&root.agent_run_id,"planner",*attempt);
-        let input=json!({"goal":job.request.goal,"required_sources":job.request.required_sources,
+        *attempt += 1;
+        let context = run_context(&job.id, &root.agent_run_id, "planner", *attempt);
+        let input = json!({"goal":job.request.goal,"required_sources":job.request.required_sources,
             "required_capabilities":job.request.required_capabilities,
             "frozen_operations":job.plugin_choices,
             "joined_children":history,"correction":correction});
-        let raw=model_decision(engine,job,&context,ROOT_INSTRUCTION,&input,
-            Some(root_response_schema()),cancel).await?;
-        match parse_root_decision(job,&raw) {
-            Ok(decision)=>{
-                let action=match &decision {RootDecision::Delegate{..}=>"delegate",RootDecision::Finish{..}=>"finish"};
-                engine.database.record_agent_decision(&context,true,
-                    json!({"action":action,"attempt_no":*attempt})).await?;
+        let raw = model_decision(
+            engine,
+            job,
+            &context,
+            ROOT_INSTRUCTION,
+            &input,
+            Some(root_response_schema()),
+            cancel,
+        )
+        .await?;
+        match parse_root_decision(job, &raw) {
+            Ok(decision) => {
+                let action = match &decision {
+                    RootDecision::Delegate { .. } => "delegate",
+                    RootDecision::Finish { .. } => "finish",
+                };
+                engine
+                    .database
+                    .record_agent_decision(
+                        &context,
+                        true,
+                        json!({"action":action,"attempt_no":*attempt}),
+                    )
+                    .await?;
                 return Ok(decision);
             }
-            Err(issue)=>{
-                engine.database.record_agent_decision(&context,false,
-                    json!({"validation_code":issue.code,"validation_path":issue.path,
-                        "attempt_no":*attempt})).await?;
+            Err(issue) => {
+                engine
+                    .database
+                    .record_agent_decision(
+                        &context,
+                        false,
+                        json!({"validation_code":issue.code,"validation_path":issue.path,
+                        "attempt_no":*attempt}),
+                    )
+                    .await?;
                 // The previous response is an untrusted, bounded model-local hint,
                 // never written to Job Events or application logs.
-                correction=json!({"diagnostic":issue.feedback(),
+                correction = json!({"diagnostic":issue.feedback(),
                     "previous_response_excerpt":raw.chars().take(1600).collect::<String>(),
                     "instruction":"Correct this exact field; return only one valid JSON decision."});
             }
@@ -437,30 +622,58 @@ async fn decide_root(
     Err(JobError::InvalidPlan)
 }
 async fn decide_child(
-    engine:&JobEngine, job:&JobView, child:&AgentRunView,
-    observation:&Value, tool_catalog:&[Value],
-    attempt:&mut u32, cancel:&CancellationToken,
-)->Result<ChildDecision,JobError>{
-    let mut correction=Value::Null;
+    engine: &JobEngine,
+    job: &JobView,
+    child: &AgentRunView,
+    observation: &Value,
+    tool_catalog: &[Value],
+    attempt: &mut u32,
+    cancel: &CancellationToken,
+) -> Result<ChildDecision, JobError> {
+    let mut correction = Value::Null;
     for _ in 0..=job.snapshot.limits.max_plan_repairs {
-        *attempt+=1;
-        let context=run_context(&job.id,&child.agent_run_id,"worker",*attempt);
-        let input=json!({"goal":child.goal_excerpt,"role":child.role,
+        *attempt += 1;
+        let context = run_context(&job.id, &child.agent_run_id, "worker", *attempt);
+        let input = json!({"goal":child.goal_excerpt,"role":child.role,
             "allowed_operations":child.allowed_operations,
             "tool_catalog":tool_catalog,"observation":observation,"correction":correction});
-        let raw=model_decision(engine,job,&context,CHILD_INSTRUCTION,&input,None,cancel).await?;
-        match parse_child_decision(child,tool_catalog,&raw){
-            Ok(decision)=>{
-                let action=match &decision {ChildDecision::CallPlugin{..}=>"call_plugin",ChildDecision::Finish{..}=>"finish"};
-                engine.database.record_agent_decision(&context,true,
-                    json!({"action":action,"attempt_no":*attempt})).await?;
+        let raw = model_decision(
+            engine,
+            job,
+            &context,
+            CHILD_INSTRUCTION,
+            &input,
+            None,
+            cancel,
+        )
+        .await?;
+        match parse_child_decision(child, tool_catalog, &raw) {
+            Ok(decision) => {
+                let action = match &decision {
+                    ChildDecision::CallPlugin { .. } => "call_plugin",
+                    ChildDecision::Finish { .. } => "finish",
+                };
+                engine
+                    .database
+                    .record_agent_decision(
+                        &context,
+                        true,
+                        json!({"action":action,"attempt_no":*attempt}),
+                    )
+                    .await?;
                 return Ok(decision);
             }
-            Err(issue)=>{
-                engine.database.record_agent_decision(&context,false,
-                    json!({"validation_code":issue.code,"validation_path":issue.path,
-                        "attempt_no":*attempt})).await?;
-                correction=json!({"diagnostic":issue.feedback(),
+            Err(issue) => {
+                engine
+                    .database
+                    .record_agent_decision(
+                        &context,
+                        false,
+                        json!({"validation_code":issue.code,"validation_path":issue.path,
+                        "attempt_no":*attempt}),
+                    )
+                    .await?;
+                correction = json!({"diagnostic":issue.feedback(),
                     "previous_response_excerpt":raw.chars().take(1600).collect::<String>(),
                     "instruction":"Correct this field using the permitted operations and input_schema."});
             }

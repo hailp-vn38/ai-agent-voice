@@ -170,50 +170,93 @@ struct RepairScriptedModels {
 #[async_trait::async_trait]
 impl JobModels for RepairScriptedModels {
     async fn complete(
-        &self, _id:&str, _pin:&ProviderPin, request:LlmRequest,
-        _deadline:i64, _cancel:CancellationToken,
-    ) -> Result<String,JobError> {
+        &self,
+        _id: &str,
+        _pin: &ProviderPin,
+        request: LlmRequest,
+        _deadline: i64,
+        _cancel: CancellationToken,
+    ) -> Result<String, JobError> {
         use std::sync::atomic::Ordering;
-        let n=self.attempts.fetch_add(1,Ordering::SeqCst);
-        if n==0 {
+        let n = self.attempts.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
             return Ok(r#"{"action":"delegate","tasks":[{"role":"research","goal":"Read one document","allowed_operations":[]}]}"#.into());
         }
-        let user=request.messages.iter().find_map(|m|match m {
-            ChatMessage::User{content} => Some(content.as_str()), _=>None
-        }).unwrap();
-        assert!(user.contains("missing_field"),"repair should receive a precise code");
-        assert!(user.contains("$.tasks[0].task_key"),"repair should name the rejected path");
+        let user = request
+            .messages
+            .iter()
+            .find_map(|m| match m {
+                ChatMessage::User { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            user.contains("missing_field"),
+            "repair should receive a precise code"
+        );
+        assert!(
+            user.contains("$.tasks[0].task_key"),
+            "repair should name the rejected path"
+        );
         Ok("```json\n{\"action\":\"finish\",\"result\":{\"summary\":\"completed after validation repair\",\"findings\":[],\"evidence_refs\":[],\"unresolved\":[]}}\n```".into())
     }
 }
 #[tokio::test]
 async fn invalid_root_decision_emits_precise_diagnostic_then_repairs_from_fenced_json() {
-    let config=Arc::new(config());
-    let db=Arc::new(Database::connect(&config.database).await.unwrap());
-    let models=Arc::new(RepairScriptedModels{attempts:std::sync::atomic::AtomicUsize::new(0)});
-    let runtime=BackgroundRuntime::execution_harness(db.clone(),config,models.clone()).await.unwrap();
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let models = Arc::new(RepairScriptedModels {
+        attempts: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let runtime = BackgroundRuntime::execution_harness(db.clone(), config, models.clone())
+        .await
+        .unwrap();
     enable(&runtime.engine).await;
-    let receipt=db.submit_job(
-        &runtime.engine.config,request("Summarize one document"),&JobRequester::Admin,
-        crate::database::jobs::SubmissionIdentity{
-            key:Some("hierarchy-repair-diagnostics"),test_execution_mode:Some("hierarchical_v2"),
-            ..Default::default()
-        },
-        crate::database::unix_seconds().unwrap(),
-        ||runtime.engine.runtime_ready(),
-    ).await.unwrap();
-    let job=wait_for(&runtime.engine,&receipt.job.id,|j|j.status=="succeeded").await;
-    assert_eq!(job.result.as_ref().unwrap()["summary"],"completed after validation repair");
-    assert_eq!(models.attempts.load(std::sync::atomic::Ordering::SeqCst),2);
-    let events=db.job_events(&job.id,0,100).await.unwrap();
-    let rejected=events.iter().find(|e|e.event_type=="agent_decision_rejected").unwrap();
-    assert_eq!(rejected.payload["validation_code"],"missing_field");
-    assert_eq!(rejected.payload["validation_path"],"$.tasks[0].task_key");
-    assert_eq!(rejected.payload["attempt_no"],1);
+    let receipt = db
+        .submit_job(
+            &runtime.engine.config,
+            request("Summarize one document"),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                key: Some("hierarchy-repair-diagnostics"),
+                test_execution_mode: Some("hierarchical_v2"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || runtime.engine.runtime_ready(),
+        )
+        .await
+        .unwrap();
+    let job = wait_for(&runtime.engine, &receipt.job.id, |j| {
+        j.status == "succeeded"
+    })
+    .await;
+    assert_eq!(
+        job.result.as_ref().unwrap()["summary"],
+        "completed after validation repair"
+    );
+    assert_eq!(models.attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
+    let rejected = events
+        .iter()
+        .find(|e| e.event_type == "agent_decision_rejected")
+        .unwrap();
+    assert_eq!(rejected.payload["validation_code"], "missing_field");
+    assert_eq!(rejected.payload["validation_path"], "$.tasks[0].task_key");
+    assert_eq!(rejected.payload["attempt_no"], 1);
     assert!(rejected.payload.get("raw_response").is_none());
-    let accepted=events.iter().find(|e|e.event_type=="agent_decision_accepted").unwrap();
-    assert_eq!(accepted.payload["action"],"finish");
-    assert_eq!(events.iter().filter(|e|e.event_type=="llm_response_received").count(),2);
+    let accepted = events
+        .iter()
+        .find(|e| e.event_type == "agent_decision_accepted")
+        .unwrap();
+    assert_eq!(accepted.payload["action"], "finish");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.event_type == "llm_response_received")
+            .count(),
+        2
+    );
     runtime.shutdown().await;
 }
 
@@ -221,34 +264,64 @@ struct AlwaysInvalidModels;
 #[async_trait::async_trait]
 impl JobModels for AlwaysInvalidModels {
     async fn complete(
-        &self,_id:&str,_pin:&ProviderPin,_request:LlmRequest,
-        _deadline:i64,_cancel:CancellationToken
-    )->Result<String,JobError>{
+        &self,
+        _id: &str,
+        _pin: &ProviderPin,
+        _request: LlmRequest,
+        _deadline: i64,
+        _cancel: CancellationToken,
+    ) -> Result<String, JobError> {
         Ok(r#"{"action":"delegate","tasks":[{"task_key":"sample","role":"search","goal":"x","allowed_operations":[]}]}"#.into())
     }
 }
 #[tokio::test]
 async fn three_invalid_root_responses_report_exact_rejection_before_invalid_plan() {
-    let config=Arc::new(config());
-    let db=Arc::new(Database::connect(&config.database).await.unwrap());
-    let runtime=BackgroundRuntime::execution_harness(db.clone(),config,Arc::new(AlwaysInvalidModels)).await.unwrap();
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime =
+        BackgroundRuntime::execution_harness(db.clone(), config, Arc::new(AlwaysInvalidModels))
+            .await
+            .unwrap();
     enable(&runtime.engine).await;
-    let receipt=db.submit_job(
-        &runtime.engine.config,request("Read one document"),&JobRequester::Admin,
-        crate::database::jobs::SubmissionIdentity{
-            key:Some("hierarchy-invalid-three"),test_execution_mode:Some("hierarchical_v2"),
-            ..Default::default()
-        },
-        crate::database::unix_seconds().unwrap(),
-        ||runtime.engine.runtime_ready(),
-    ).await.unwrap();
-    let job=wait_for(&runtime.engine,&receipt.job.id,|j|j.status=="failed").await;
-    assert_eq!(job.error_code.as_deref(),Some("invalid_plan"));
-    let events=db.job_events(&job.id,0,100).await.unwrap();
-    let rejects:Vec<_>=events.iter().filter(|e|e.event_type=="agent_decision_rejected").collect();
-    assert_eq!(rejects.len(),3);
-    assert!(rejects.iter().all(|e|e.payload["validation_code"]=="invalid_role"));
-    assert!(rejects.iter().all(|e|e.payload["validation_path"]=="$.tasks[0].role"));
-    assert_eq!(events.iter().filter(|e|e.event_type=="agent_decision_accepted").count(),0);
+    let receipt = db
+        .submit_job(
+            &runtime.engine.config,
+            request("Read one document"),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                key: Some("hierarchy-invalid-three"),
+                test_execution_mode: Some("hierarchical_v2"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || runtime.engine.runtime_ready(),
+        )
+        .await
+        .unwrap();
+    let job = wait_for(&runtime.engine, &receipt.job.id, |j| j.status == "failed").await;
+    assert_eq!(job.error_code.as_deref(), Some("invalid_plan"));
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
+    let rejects: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == "agent_decision_rejected")
+        .collect();
+    assert_eq!(rejects.len(), 3);
+    assert!(
+        rejects
+            .iter()
+            .all(|e| e.payload["validation_code"] == "invalid_role")
+    );
+    assert!(
+        rejects
+            .iter()
+            .all(|e| e.payload["validation_path"] == "$.tasks[0].role")
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.event_type == "agent_decision_accepted")
+            .count(),
+        0
+    );
     runtime.shutdown().await;
 }
