@@ -2,7 +2,16 @@ use crate::services::background::plugins::{FrozenChoice, PluginError};
 use serde_json::{Value, json};
 
 pub(crate) const REVISION: &str = "1";
-const OPERATIONS: [&str; 3] = ["web.fetch", "data.json_query", "artifact.read_text"];
+pub(super) const OPERATIONS: [&str; 8] = [
+    "web.fetch",
+    "data.json_query",
+    "artifact.read_text",
+    "web.extract",
+    "document.extract",
+    "document.inspect",
+    "data.transform",
+    "artifact.inspect",
+];
 
 pub(crate) fn is_core(choice: &FrozenChoice) -> bool {
     choice.plugin_id == "core"
@@ -99,7 +108,7 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
                 "size_bytes":{"type":"integer"}
             },"required":["text","truncated","size_bytes"],"additionalProperties":false}),
         ),
-        _ => return Err(PluginError::PermissionRequired),
+        _ => return super::expanded::contract(&choice.operation),
     };
     let (provides, sources) = metadata(&choice.operation);
     Ok(json!({
@@ -113,6 +122,7 @@ fn metadata(operation: &str) -> (Vec<&'static str>, Vec<&'static str>) {
     match operation {
         "web.fetch" => (vec!["web_fetch"], vec!["web"]),
         "data.json_query" => (vec!["json_query"], vec![]),
-        _ => (vec!["artifact_read"], vec![]),
+        "artifact.read_text" => (vec!["artifact_read"], vec![]),
+        other => super::expanded::coverage(other),
     }
 }

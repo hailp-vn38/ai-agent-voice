@@ -792,3 +792,68 @@ async fn admin_delete_blocks_retry_parent_until_descendant_removed() {
     let _ = server.await;
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn builtin_core_catalog_is_authenticated_and_independent_of_installed_packages() {
+    let (db, config, runtime) = harness().await;
+    let mut state = AppState::from_provider_set_with_database(
+        (*config).clone(),
+        Arc::new(ProviderSet::unavailable()),
+        Some((*db).clone()),
+    );
+    state.background = Some(runtime.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!(
+        "http://{}/api/admin/plugins",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state))
+            .await
+            .unwrap()
+    });
+    let client = reqwest::Client::new();
+    assert_eq!(
+        client
+            .get(format!("{base}/builtin"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let catalog: Value = client
+        .get(format!("{base}/builtin"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(catalog["total"], 4);
+    assert_eq!(catalog["operation_total"], 8);
+    let groups = catalog["items"].as_array().unwrap();
+    for group in groups {
+        assert_eq!(group["kind"], "built_in");
+        assert_eq!(group["status"], "ready");
+        assert_eq!(group["runtime"]["kind"], "in_process");
+        assert_eq!(group["operations"].as_array().unwrap().len(), 2);
+    }
+    assert_eq!(
+        client
+            .get(&base)
+            .bearer_auth("background-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()["total"],
+        0,
+        "Core operations must not create Plugin Store installation rows"
+    );
+    server.abort();
+    let _ = server.await;
+    runtime.shutdown().await;
+}

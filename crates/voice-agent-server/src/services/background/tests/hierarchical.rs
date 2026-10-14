@@ -399,23 +399,19 @@ async fn root_operation_allowlist_repairs_unknown_operation_with_and_without_plu
                 .bind(serde_json::to_string(&manifest).unwrap())
                 .execute(db.pool()).await.unwrap();
         }
+        let mut expected_operations: Vec<String> = crate::tools::core::frozen_choices()
+            .iter()
+            .map(|choice| format!("core.{}", choice["operation"].as_str().unwrap()))
+            .collect();
+        if installed {
+            expected_operations.extend([
+                "fixture-research.collect_topic".to_owned(),
+                "fixture-research.simulate_failure".to_owned(),
+            ]);
+        }
         let models = Arc::new(OperationRepairModels {
             attempts: std::sync::atomic::AtomicUsize::new(0),
-            expected_operations: if installed {
-                json!([
-                    "core.web.fetch",
-                    "core.data.json_query",
-                    "core.artifact.read_text",
-                    "fixture-research.collect_topic",
-                    "fixture-research.simulate_failure"
-                ])
-            } else {
-                json!([
-                    "core.web.fetch",
-                    "core.data.json_query",
-                    "core.artifact.read_text"
-                ])
-            },
+            expected_operations: json!(expected_operations),
         });
         let runtime = BackgroundRuntime::execution_harness(db.clone(), config, models.clone())
             .await

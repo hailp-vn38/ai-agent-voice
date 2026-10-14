@@ -49,70 +49,14 @@ pub(crate) async fn invoke(
             let artifact = arguments["artifact_id"]
                 .as_str()
                 .ok_or(PluginError::ApplicationError)?;
-            let media_type: Option<String> =
-                sqlx::query_scalar("SELECT media_type FROM job_artifacts WHERE job_id=? AND id=?")
-                    .bind(job_id)
-                    .bind(artifact)
-                    .fetch_optional(engine.database.pool())
-                    .await
-                    .map_err(|_| PluginError::DatabaseUnavailable)?;
-            if !matches!(
-                media_type.as_deref(),
-                Some("text/plain" | "text/markdown" | "application/json")
-            ) {
-                return Err(PluginError::ApplicationError);
-            }
-            let bytes = engine
-                .read_artifact(job_id, artifact)
-                .await
-                .map_err(|_| PluginError::ApplicationError)?;
-            let size = bytes.len();
-            let content = std::str::from_utf8(&bytes).map_err(|_| PluginError::ApplicationError)?;
-            let (text, truncated) = take_chars(content, maximum);
+            let (_, content, size) = super::expanded::owned_text(engine, job_id, artifact).await?;
+            let (text, truncated) = take_chars(&content, maximum);
             json!({"text":text,"truncated":truncated,"size_bytes":size})
         }
-        "web.fetch" => {
-            let url = arguments["url"]
-                .as_str()
-                .ok_or(PluginError::ApplicationError)?;
-            if !(url.starts_with("https://") || url.starts_with("http://")) {
-                return Err(PluginError::ApplicationError);
-            }
-            // Target restrictions are deferred by design; response size is still bounded.
-            let response = reqwest::Client::new()
-                .get(url)
-                .send()
-                .await
-                .map_err(|_| PluginError::ApplicationError)?;
-            let status = response.status().as_u16();
-            let content_type = response
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .chars()
-                .take(128)
-                .collect::<String>();
-            let mut response = response;
-            let mut bytes = Vec::new();
-            let mut body_limit_reached = false;
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| PluginError::ApplicationError)?
-            {
-                let budget = 65536usize.saturating_sub(bytes.len());
-                bytes.extend_from_slice(&chunk[..chunk.len().min(budget)]);
-                if bytes.len() >= 65536 {
-                    body_limit_reached = true;
-                    break;
-                }
-            }
-            let text = String::from_utf8_lossy(&bytes);
-            let (text, truncated) = take_chars(&text, maximum);
-            json!({"text":text,"status":status,"content_type":content_type,
-                "truncated":truncated || body_limit_reached,
-                "provenance":[{"source":"web","urls":[url],"capabilities":["web_fetch"]}]})
+        "web.fetch" => super::expanded::fetch(&arguments).await?,
+        "web.extract" | "document.extract" | "document.inspect" | "data.transform"
+        | "artifact.inspect" => {
+            super::expanded::invoke(engine, &choice.operation, &arguments, job_id).await?
         }
         _ => return Err(PluginError::PermissionRequired),
     };

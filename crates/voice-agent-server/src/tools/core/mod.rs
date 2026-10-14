@@ -1,12 +1,16 @@
 //! Statically linked, safe-read Agent Job operations. Not Plugin Store installations.
 //! Risk 2 (network target/SSRF policy) is explicitly deferred; do not expose web.fetch
-//! to untrusted tenants until a separate policy is implemented.
+//! or web.extract to untrusted tenants until a separate policy is implemented.
 
+mod catalog;
 mod contracts;
 mod execution;
+mod expanded;
 
+pub(crate) use catalog::bundled_catalog;
 pub(crate) use contracts::{contract, decode, frozen_choices, is_core, matches_frozen};
 pub(crate) use execution::invoke;
+use execution::take_chars;
 
 #[cfg(test)]
 mod tests;

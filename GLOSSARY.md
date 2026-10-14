@@ -87,6 +87,10 @@ _Avoid_: Docker Image Digest, mutable latest
 Một lần thực thi Operation có danh tính riêng và checkpoint bền vững; kết quả chỉ được Job Engine chấp nhận sau khi kiểm tra.
 _Avoid_: Plugin Installation, Agent Job
 
+**Core Plugin**:
+Nhóm các Core Operation cùng chức năng do Rust Server cung cấp sẵn từ bản build, không có vòng đời cài đặt, kích hoạt hay gỡ bỏ riêng.
+_Avoid_: Plugin Installation, Plugin Package, External Plugin
+
 **Core Operation**:
 Operation được sở hữu và cung cấp sẵn bởi hệ thống, không phụ thuộc Plugin Package hoặc Plugin Installation.
 _Avoid_: Plugin Installation, Built-in Voice Tool, External Plugin
