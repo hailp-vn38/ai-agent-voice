@@ -75,11 +75,13 @@ function eventName(event: JobEvent) {
     case 'llm_provider_acquired': return t('jobUi.llmProviderAcquired')
     case 'llm_request_started': return t('jobUi.llmDispatched')
     case 'llm_response_received': return t('jobUi.llmReceived')
-    case 'llm_run_finished': return event.payload.validation_path ? t('jobUi.llmValidationFailed') : t('jobUi.llmFinished')
+    case 'llm_run_finished': return t('jobUi.llmFinished')
+    case 'plan_rejected': return t('jobUi.llmValidationFailed')
     default: return event.event_type
   }
 }
 function eventNote(event: JobEvent) {
+  if (event.event_type === 'plan_rejected') return String(event.payload.code ?? '')
   if (event.event_type === 'llm_run_finished') return String(event.payload.validation_code ?? event.payload.error_code ?? '')
   if (event.event_type === 'llm_provider_acquired') return (event.payload.provider_wait_ms ?? '—') + ' ms'
   if (event.event_type === 'llm_request_started') return (event.payload.capacity_wait_ms ?? '—') + ' ms'
@@ -167,9 +169,9 @@ function progressLabel(done: boolean, activeStage: boolean) {
               </div>
               <div v-if="expanded.has(run.id)" class="mt-3 space-y-2 border-t pt-3">
                 <div v-for="stage in run.events" :key="stage.sequence" class="flex items-start gap-2 text-xs">
-                  <CheckCircle2 v-if="stage.event_type !== 'llm_run_finished' || run.status === 'completed'" class="mt-0.5 size-3.5 shrink-0 text-success" />
+                  <CheckCircle2 v-if="stage.event_type !== 'plan_rejected' && (stage.event_type !== 'llm_run_finished' || run.status === 'completed')" class="mt-0.5 size-3.5 shrink-0 text-success" />
                   <AlertCircle v-else class="mt-0.5 size-3.5 shrink-0 text-danger" />
-                  <span class="min-w-0 flex-1">{{ eventName(stage) }}<span v-if="stage.payload.validation_path" class="ml-2 break-all font-mono text-danger">{{ stage.payload.validation_path }}</span></span>
+                  <span class="min-w-0 flex-1">{{ eventName(stage) }}<span v-if="stage.payload.validation_path || stage.payload.path" class="ml-2 break-all font-mono text-danger">{{ stage.payload.validation_path || stage.payload.path }}</span></span>
                   <span class="shrink-0 text-muted-foreground">{{ eventNote(stage) }}</span>
                 </div>
                 <p v-if="run.errorCode" class="break-all font-mono text-xs text-danger">{{ run.errorCode }}</p>
