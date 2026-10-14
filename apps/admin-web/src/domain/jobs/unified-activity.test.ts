@@ -69,4 +69,23 @@ describe('unified Job activity', () => {
     expect(rows[0]).toMatchObject({ id: 'step:fetch-a', status: 'unknown', role: 'research' })
   })
 
+  it('shows legacy worker Steps when old six-event jobs have no LLM trace', () => {
+    const legacy = { ...job, agent_runs: undefined, steps: [{
+      ...job.steps[0]!, plugin_id: null, operation: null, status: 'succeeded',
+    }] } as AdminJob
+    const rows = projectUnifiedActivity(legacy, [
+      event(1, 'step_started', { attempt_state: 'reserved' }, 'fetch-a'),
+      event(2, 'step_finished', { status: 'succeeded' }, 'fetch-a'),
+      event(3, 'job_finished', { status: 'succeeded' }),
+    ])
+    expect(rows.map(row => row.id)).toEqual(['step:fetch-a', 'job:terminal'])
+    expect(rows[0]).toMatchObject({ kind: 'llm', status: 'completed', agentRunId: null })
+    const traced = projectUnifiedActivity(legacy, [
+      event(1, 'llm_run_started', { run_id: 'worker', role: 'worker' }, 'fetch-a'),
+      event(2, 'step_started', {}, 'fetch-a'),
+      event(3, 'step_finished', { status: 'succeeded' }, 'fetch-a'),
+    ])
+    expect(traced.map(row => row.id)).toEqual(['llm:worker'])
+  })
+
 })

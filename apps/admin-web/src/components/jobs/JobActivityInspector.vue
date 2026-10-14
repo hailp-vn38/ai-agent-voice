@@ -75,8 +75,8 @@ function stageNote(event: JobEvent): string {
       </template>
       <template v-else-if="step">
         <dl class="grid grid-cols-2 gap-3 text-xs">
-          <div><dt class="text-muted-foreground">{{ t('jobUi.plugin') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.plugin_id ?? '—' }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.operation') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.operation ?? '—' }}</dd></div>
+          <div v-if="step.plugin_id"><dt class="text-muted-foreground">{{ t('jobUi.plugin') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.plugin_id ?? '—' }}</dd></div>
+          <div v-if="step.plugin_id"><dt class="text-muted-foreground">{{ t('jobUi.operation') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.operation ?? '—' }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('jobUi.status') }}</dt><dd class="mt-1 font-semibold">{{ step.status }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('jobUi.attemptState') }}</dt><dd class="mt-1 font-semibold">{{ step.attempt_state ?? '—' }}</dd></div>
           <div class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.stepKey') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ step.step_key }}</dd></div>

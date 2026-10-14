@@ -39,6 +39,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
     }
   })
   const steps = new Map(job.steps.map(step => [step.step_key, step]))
+  const llmStepKeys = new Set(runs.map(run => run.stepKey).filter((key): key is string => key !== null))
   const pluginRows = new Map<string, UnifiedActivity>()
   for (const event of ordered) {
     const payload = event.payload ?? {}
@@ -48,8 +49,8 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
     if (event.event_type === 'step_started' || event.event_type === 'step_finished') {
       if (!event.step_key) continue
       const step = steps.get(event.step_key)
-      // A legacy LLM Worker Step is already represented by its LLM invocation.
-      if (step && !step.plugin_id) continue
+      // Render an old Worker Step only when no traced LLM invocation represents it.
+      if (step && !step.plugin_id && llmStepKeys.has(event.step_key)) continue
       const id = 'step:' + event.step_key
       const previous = pluginRows.get(id)
       if (previous) {
@@ -64,12 +65,12 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         : step?.status === 'failed' || step?.status === 'skipped' || step?.status === 'cancelled' ? 'failed'
         : event.event_type === 'step_finished' ? payload.status === 'succeeded' ? 'completed' : 'failed' : 'running'
       const item: UnifiedActivity = {
-        id, sequence: event.sequence, time: event.created_at, kind: 'plugin',
+        id, sequence: event.sequence, time: event.created_at, kind: step && !step.plugin_id ? 'llm' : 'plugin',
         status: step?.attempt_state === 'unknown_outcome' ? 'unknown' : status,
         agentRunId: agentRunId ?? step?.agent_run_id ?? null,
         role: role ?? (step?.agent_run_id ? roles.get(step.agent_run_id) ?? null : null),
-        title: step?.plugin_id ? step.plugin_id + '.' + (step.operation ?? 'unknown') : event.step_key,
-        note: text(payload.error_code) ?? 'Plugin operation',
+        title: step?.plugin_id ? step.plugin_id + '.' + (step.operation ?? 'unknown') : step ? 'Worker Step · ' + event.step_key : event.step_key,
+        note: text(payload.error_code) ?? (step && !step.plugin_id ? 'Legacy worker execution' : 'Plugin operation'),
         step, event,
       }
       pluginRows.set(id, item)
