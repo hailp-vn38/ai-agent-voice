@@ -7,6 +7,8 @@ use crate::providers::{
     registry::ProviderAdapterRegistration,
 };
 const FIELDS: &[ProviderConfigField] = &[
+    field("supports_structured_outputs", "Supports Structured Outputs (Agent Job)", ConfigFieldType::Boolean, false, None, None, None, None),
+    field("supports_function_calling", "Supports Function Calling (Agent Job)", ConfigFieldType::Boolean, false, None, None, None, None),
     field(
         "supports_responses",
         "Supports Responses (Agent Job only)",
