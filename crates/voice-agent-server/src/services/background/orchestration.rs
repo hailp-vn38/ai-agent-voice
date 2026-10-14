@@ -192,13 +192,7 @@ async fn run(
                     )
                     .await?;
             }
-            let (status, result, error): (String, Option<String>, Option<String>) = sqlx::query_as(
-                "SELECT status,result_json,error_code FROM job_steps WHERE job_id=? AND step_key=?",
-            )
-            .bind(id)
-            .bind(&step.step_key)
-            .fetch_one(engine.database.pool())
-            .await?;
+            let (status, result, error) = engine.database.job_step_outcome(id, &step.step_key).await?;
             if status == "succeeded" {
                 results.insert(
                     step.step_key.clone(),
