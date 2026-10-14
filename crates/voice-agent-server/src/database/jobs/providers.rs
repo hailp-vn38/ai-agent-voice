@@ -98,9 +98,15 @@ impl Database {
         let snapshot = match parsed.origin {
             ProviderOrigin::Config => parsed.snapshot(config).map_err(|_| JobError::ProviderUnavailable)?,
             ProviderOrigin::Database => {
-                let (id,key,kind,adapter,config_json,revision,secret_ref): (i64,String,String,String,String,i64,Option<String>) =
+                let (id,key,kind,adapter,config_json,revision,credential): (i64,String,String,String,String,i64,Option<String>) =
                     sqlx::query_as("SELECT id,key,type,adapter,config_json,revision,credential_json FROM providers WHERE key=? AND type='llm' AND enabled=1")
                         .bind(&parsed.key).fetch_optional(&mut *connection).await?.ok_or(JobError::ProviderUnavailable)?;
+                // Keep the canonical credential reference on background reload, including
+                // ProviderRuntimeManager idle eviction. Same behavior as latest main.
+                let secret_ref = crate::database::credentials::reference(
+                    &format!("provider:{key}"), credential.as_deref(),
+                    crate::database::secrets::provider_secret_env(&key, &adapter),
+                );
                 crate::database::DesiredProvider { id,key,kind,adapter,config_json,revision,secret_ref }
             },
         };
