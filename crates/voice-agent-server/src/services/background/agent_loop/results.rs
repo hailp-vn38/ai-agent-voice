@@ -101,6 +101,29 @@ pub(super) fn plugin_tool_result(
     result: Option<&str>,
     evidence_refs: &[String],
 ) -> Value {
+    // Return useful ARTICLE text instead of truncating a JSON object in the
+    // middle of its first 3500 characters. Keep the observed text below the
+    // durable Session message limit; explicitly tell the Child if text was cut.
+    if let Some(value) = result.and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        && value["url"].is_string()
+        && value["text"].is_string()
+        && value["status"].is_number()
+    {
+        let full_text = value["text"].as_str().unwrap_or("");
+        let observed: String = full_text.chars().take(6000).collect();
+        return json!({
+            "status":status,"error_code":error,"step_key":step_key,
+            "evidence_refs":evidence_refs,
+            "source_url":value["url"],"title":value["title"],
+            "http_status":value["status"],
+            "result_excerpt":observed,
+            "truncated":value["truncated"],
+            "next_offset":value["next_offset"],
+            "body_limit_reached":value["body_limit_reached"],
+            "observation_truncated":full_text.chars().count()>6000,
+            "guidance":"For an article summary, prefer mode=article and chunks <=6000 characters. If truncated, use next_offset; if observation_truncated, re-read with smaller max_chars."
+        });
+    }
     json!({
         "status":status,
         "error_code":error,
@@ -164,7 +187,7 @@ impl<'a> ChildOutcome<'a> {
 pub(super) fn grounded_single_child_summary(job: &JobView, coverage: &Value) -> Option<String> {
     let url = super::super::coverage::requested_summary_url(&job.request)?;
     if coverage["source_complete"] != true
-        || !coverage["verified_source_urls"].as_array()?.iter().any(|s| s == &url)
+        || !coverage["verified_source_urls"].as_array()?.iter().any(|s| s.as_str() == Some(url.as_str()))
     {
         return None;
     }
