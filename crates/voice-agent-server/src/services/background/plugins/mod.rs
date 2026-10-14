@@ -168,6 +168,14 @@ pub struct PluginStore {
 }
 
 impl PluginStore {
+    /// Shared bounded capacity for Core and External work, without any runner preflight.
+    pub(crate) async fn acquire_core_slot(
+        &self,
+        deadline_at: i64,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, PluginError> {
+        dispatch::acquire_worker_until(&self.worker_slots, deadline_at).await
+    }
+
     pub fn new(database: Arc<Database>, config: BackgroundConfig) -> Self {
         let worker_limit = config.limits.max_container_workers as usize;
         let root = database
