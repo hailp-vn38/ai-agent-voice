@@ -275,6 +275,33 @@ mod source_tests {
     }
 
     #[test]
+    fn source_chain_can_cross_runs_in_same_session_but_not_sibling_sessions() {
+        let first = step(0, "INTRO", true, Some(5));
+        let mut second = step(5, "FINISH", false, None);
+        second.agent_run_id = Some("child_followup".into());
+        let steps = vec![first, second];
+        let only_first = vec!["child_1".to_owned()];
+        let same_session = vec!["child_1".to_owned(), "child_followup".to_owned()];
+        assert!(!extraction_is_complete(
+            &steps, &steps[0], "https://news.example/article", Some(&only_first)));
+        assert!(extraction_is_complete(
+            &steps, &steps[0], "https://news.example/article", Some(&same_session)));
+    }
+
+    #[test]
+    fn unseen_overlong_or_capped_or_wrong_http_text_is_not_source_proof() {
+        let huge = step(0, &"x".repeat(6001), false, None);
+        assert!(!verified_extract_result(&huge, "https://news.example/article"));
+        let mut capped = step(0, "article", false, None);
+        capped.result.as_mut().unwrap()["body_limit_reached"] = json!(true);
+        assert!(!extraction_is_complete(
+            std::slice::from_ref(&capped), &capped, "https://news.example/article", None));
+        let mut wrong_status = step(0, "article", false, None);
+        wrong_status.result.as_mut().unwrap()["status"] = json!(403);
+        assert!(!verified_extract_result(&wrong_status, "https://news.example/article"));
+    }
+
+    #[test]
     fn complete_contiguous_article_pages_have_source_proof() {
         let steps = vec![
             step(0, "INTRO", true, Some(5)),
