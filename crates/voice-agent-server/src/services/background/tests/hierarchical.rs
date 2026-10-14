@@ -15,20 +15,37 @@ impl JobModels for HierarchicalScriptedModels {
         deadline: i64,
         cancel: CancellationToken,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        use crate::providers::llm::{BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall};
+        use crate::providers::llm::{
+            BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall,
+        };
         match mode {
             BackgroundMode::Tools => {
-                assert!(request.tools.iter().any(|tool|tool.name=="submit_result"));
-                Ok(BackgroundTurnResult{turn:BackgroundTurn::ToolCalls(vec![
-                    ToolCall {id:"complete_1".into(), name:"submit_result".into(), arguments:json!({
-                        "status":"completed","summary":"Sub-agent task done",
-                        "findings":[],"evidence_refs":[],"unresolved":[]
-                    })}
-                ]),usage:None})
+                assert!(
+                    request
+                        .tools
+                        .iter()
+                        .any(|tool| tool.name == "submit_result")
+                );
+                Ok(BackgroundTurnResult {
+                    turn: BackgroundTurn::ToolCalls(vec![ToolCall {
+                        id: "complete_1".into(),
+                        name: "submit_result".into(),
+                        arguments: json!({
+                            "status":"completed","summary":"Sub-agent task done",
+                            "findings":[],"evidence_refs":[],"unresolved":[]
+                        }),
+                    }]),
+                    usage: None,
+                })
             }
-            BackgroundMode::Structured {schema,..} => {
-                let raw = self.complete_structured_traced(run,pin,request,schema,deadline,cancel).await?;
-                Ok(BackgroundTurnResult{turn:BackgroundTurn::Text(raw),usage:None})
+            BackgroundMode::Structured { schema, .. } => {
+                let raw = self
+                    .complete_structured_traced(run, pin, request, schema, deadline, cancel)
+                    .await?;
+                Ok(BackgroundTurnResult {
+                    turn: BackgroundTurn::Text(raw),
+                    usage: None,
+                })
             }
         }
     }
@@ -504,26 +521,37 @@ async fn hierarchical_submission_rejects_provider_without_required_native_mode()
     let (db, config, runtime) = harness().await;
     sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,created_at,updated_at) VALUES('unqualified','Unqualified','llm','openai','{}',0,0)")
         .execute(db.pool()).await.unwrap();
-    for (root,worker) in [
-        ("unqualified","config:llm:planner"),
-        ("config:llm:planner","unqualified"),
+    for (root, worker) in [
+        ("unqualified", "config:llm:planner"),
+        ("config:llm:planner", "unqualified"),
     ] {
         let revision = runtime.engine.settings().await.unwrap().revision;
-        runtime.engine.update_settings(BackgroundSettingsUpdate {
-            enabled:true,
-            orchestrator_llm_provider:Some(root.into()),
-            worker_llm_provider:Some(worker.into()),
-        },revision).await.unwrap();
-        let receipt = db.submit_job(
-            &config, request("Requires strict provider"), &JobRequester::Admin,
-            crate::database::jobs::SubmissionIdentity {
-                test_execution_mode: Some("hierarchical_v2"),
-                ..Default::default()
-            },
-            crate::database::unix_seconds().unwrap(),
-            ||runtime.engine.runtime_ready(),
-        ).await;
-        assert!(matches!(receipt,Err(JobError::CapabilityUnavailable)));
+        runtime
+            .engine
+            .update_settings(
+                BackgroundSettingsUpdate {
+                    enabled: true,
+                    orchestrator_llm_provider: Some(root.into()),
+                    worker_llm_provider: Some(worker.into()),
+                },
+                revision,
+            )
+            .await
+            .unwrap();
+        let receipt = db
+            .submit_job(
+                &config,
+                request("Requires strict provider"),
+                &JobRequester::Admin,
+                crate::database::jobs::SubmissionIdentity {
+                    test_execution_mode: Some("hierarchical_v2"),
+                    ..Default::default()
+                },
+                crate::database::unix_seconds().unwrap(),
+                || runtime.engine.runtime_ready(),
+            )
+            .await;
+        assert!(matches!(receipt, Err(JobError::CapabilityUnavailable)));
     }
     runtime.shutdown().await;
 }
@@ -559,88 +587,133 @@ impl JobModels for AdversarialChildModels {
         _: i64,
         _: CancellationToken,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        use crate::providers::llm::{BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall};
-        let turn = match mode {
-            BackgroundMode::Structured { .. } => {
-                let input = request.messages.iter().find_map(|m|
-                    if let ChatMessage::User{content}=m {
-                        serde_json::from_str::<Value>(content).ok()
-                    } else {None}
-                ).ok_or(JobError::InvalidPlan)?;
-                if input["joined_children"].as_array().is_some_and(Vec::is_empty) {
-                    BackgroundTurn::Text(json!({"decision":{"action":"delegate","tasks":[{
+        use crate::providers::llm::{
+            BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall,
+        };
+        let turn =
+            match mode {
+                BackgroundMode::Structured { .. } => {
+                    let input = request
+                        .messages
+                        .iter()
+                        .find_map(|m| {
+                            if let ChatMessage::User { content } = m {
+                                serde_json::from_str::<Value>(content).ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or(JobError::InvalidPlan)?;
+                    if input["joined_children"]
+                        .as_array()
+                        .is_some_and(Vec::is_empty)
+                    {
+                        BackgroundTurn::Text(json!({"decision":{"action":"delegate","tasks":[{
                         "task_key":"research","role":"research","goal":"Inspect a reference",
                         "allowed_operations":[]
                     }]}}).to_string())
-                } else {
-                    BackgroundTurn::Text(json!({"decision":{"action":"finish","result":{
-                        "summary":"Child did not provide usable evidence",
-                        "findings":[],"evidence_refs":[],"unresolved":["Child failed"]
-                    }}}).to_string())
+                    } else {
+                        BackgroundTurn::Text(
+                            json!({"decision":{"action":"finish","result":{
+                                "summary":"Child did not provide usable evidence",
+                                "findings":[],"evidence_refs":[],"unresolved":["Child failed"]
+                            }}})
+                            .to_string(),
+                        )
+                    }
                 }
-            }
-            BackgroundMode::Tools => {
-                assert_eq!(request.tools.len(), 1, "only internal completion tool should be exposed");
-                assert_eq!(request.tools[0].name, "submit_result");
-                let n = self.attempts.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
-                let call = ToolCall {
-                    id:format!("call_{n}"),name:"submit_result".into(),
-                    arguments:json!({"status":"completed","summary":"claimed",
+                BackgroundMode::Tools => {
+                    assert_eq!(
+                        request.tools.len(),
+                        1,
+                        "only internal completion tool should be exposed"
+                    );
+                    assert_eq!(request.tools[0].name, "submit_result");
+                    let n = self
+                        .attempts
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let call = ToolCall {
+                        id: format!("call_{n}"),
+                        name: "submit_result".into(),
+                        arguments: json!({"status":"completed","summary":"claimed",
                         "findings":[],"evidence_refs":[],"unresolved":[]}),
-                };
-                let calls = match self.kind {
-                    RejectedChildKind::MultipleCalls => vec![call.clone(),ToolCall {
-                        id:format!("extra_{n}"),..call
-                    }],
-                    RejectedChildKind::UnknownFunction => vec![ToolCall {
-                        name:"unfrozen_plugin".into(),..call
-                    }],
-                    RejectedChildKind::FakeEvidence => vec![ToolCall {
-                        arguments:json!({"status":"completed","summary":"claimed",
+                    };
+                    let calls = match self.kind {
+                        RejectedChildKind::MultipleCalls => vec![
+                            call.clone(),
+                            ToolCall {
+                                id: format!("extra_{n}"),
+                                ..call
+                            },
+                        ],
+                        RejectedChildKind::UnknownFunction => vec![ToolCall {
+                            name: "unfrozen_plugin".into(),
+                            ..call
+                        }],
+                        RejectedChildKind::FakeEvidence => vec![ToolCall {
+                            arguments: json!({"status":"completed","summary":"claimed",
                             "findings":[],"evidence_refs":["forged_artifact"],"unresolved":[]}),
-                        ..call
-                    }],
-                };
-                BackgroundTurn::ToolCalls(calls)
-            }
-        };
-        Ok(BackgroundTurnResult{turn,usage:None})
+                            ..call
+                        }],
+                    };
+                    BackgroundTurn::ToolCalls(calls)
+                }
+            };
+        Ok(BackgroundTurnResult { turn, usage: None })
     }
 }
 
 #[tokio::test]
 async fn invalid_native_child_calls_never_create_plugin_steps() {
-    for (kind,code) in [
-        (RejectedChildKind::MultipleCalls,"tool_call_count"),
-        (RejectedChildKind::UnknownFunction,"unknown_operation"),
-        (RejectedChildKind::FakeEvidence,"invalid_child_result"),
+    for (kind, code) in [
+        (RejectedChildKind::MultipleCalls, "tool_call_count"),
+        (RejectedChildKind::UnknownFunction, "unknown_operation"),
+        (RejectedChildKind::FakeEvidence, "invalid_child_result"),
     ] {
         let config = Arc::new(config());
         let db = Arc::new(Database::connect(&config.database).await.unwrap());
         let runtime = BackgroundRuntime::execution_harness(
-            db.clone(),config,Arc::new(AdversarialChildModels {
-                kind,attempts:std::sync::atomic::AtomicUsize::new(0),
-            })
-        ).await.unwrap();
+            db.clone(),
+            config,
+            Arc::new(AdversarialChildModels {
+                kind,
+                attempts: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        )
+        .await
+        .unwrap();
         enable(&runtime.engine).await;
-        let receipt = db.submit_job(
-            &runtime.engine.config,request("Reject unsafe Child function call"),
-            &JobRequester::Admin,
-            crate::database::jobs::SubmissionIdentity {
-                test_execution_mode:Some("hierarchical_v2"),
-                ..Default::default()
-            },
-            crate::database::unix_seconds().unwrap(),
-            || runtime.engine.runtime_ready(),
-        ).await.unwrap();
-        let job = wait_for(&runtime.engine,&receipt.job.id,|job|job.status=="failed").await;
-        assert!(job.steps.is_empty(),"Rejected native calls must not persist steps: {kind:?}");
-        let events = db.job_events(&job.id,0,100).await.unwrap();
-        assert!(events.iter().any(|e|
-            e.event_type=="agent_decision_rejected"
-                && e.payload["validation_code"]==code
-        ),"Expected bounded rejection for {kind:?}: {code}");
-        assert!(!events.iter().any(|e|e.event_type=="plugin_step_created"));
+        let receipt = db
+            .submit_job(
+                &runtime.engine.config,
+                request("Reject unsafe Child function call"),
+                &JobRequester::Admin,
+                crate::database::jobs::SubmissionIdentity {
+                    test_execution_mode: Some("hierarchical_v2"),
+                    ..Default::default()
+                },
+                crate::database::unix_seconds().unwrap(),
+                || runtime.engine.runtime_ready(),
+            )
+            .await
+            .unwrap();
+        let job = wait_for(&runtime.engine, &receipt.job.id, |job| {
+            job.status == "failed"
+        })
+        .await;
+        assert!(
+            job.steps.is_empty(),
+            "Rejected native calls must not persist steps: {kind:?}"
+        );
+        let events = db.job_events(&job.id, 0, 100).await.unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event_type == "agent_decision_rejected"
+                    && e.payload["validation_code"] == code),
+            "Expected bounded rejection for {kind:?}: {code}"
+        );
+        assert!(!events.iter().any(|e| e.event_type == "plugin_step_created"));
         runtime.shutdown().await;
     }
 }
