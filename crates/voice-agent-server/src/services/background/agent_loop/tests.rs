@@ -237,7 +237,8 @@ fn verified_article_preserves_child_qualification_and_reports_source() {
     assert_eq!(coverage["source_complete"],true);
     let summary=super::results::grounded_single_child_summary(&job,&coverage).unwrap();
     assert!(summary.contains("NOT made an official decision"));
-    let child=super::results::ChildOutcome::from_run("child-session",&job.agent_runs[0],&job).unwrap();
+    let child=super::results::ChildOutcome::from_run("child-session",&job.agent_runs[0],
+        vec!["https://news.example/asian-cup.html".into()]).unwrap();
     let outcome=serde_json::to_value(child).unwrap();
     assert_eq!(outcome["verified_source_urls"][0],"https://news.example/asian-cup.html");
     assert!(outcome["artifact_refs"].as_array().unwrap().is_empty(),
