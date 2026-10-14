@@ -64,12 +64,26 @@ pub(super) fn verified_coverage(job: &JobView) -> Result<(&'static str, Value), 
             "failed"
         };
     }
+    let requested = super::super::coverage::requested_summary_url(&job.request);
+    let verified = super::super::coverage::completed_web_sources(job, None);
+    let verified_goal = requested.as_ref().is_some_and(|url| verified.contains(url));
+    if requested.is_some() && !verified_goal && status == "succeeded" {
+        status = "failed";
+    }
+    let coverage_basis = if requested.is_some() {
+        if verified_goal { "goal_url_verified" } else { "goal_url_unverified" }
+    } else {
+        coverage["coverage_basis"].as_str().unwrap_or("goal_only_unverified")
+    };
     Ok((
         status,
         json!({
-            "coverage_basis":coverage["coverage_basis"],
+            "coverage_basis":coverage_basis,
             "missing_sources":coverage["missing_sources"],
-            "missing_capabilities":coverage["missing_capabilities"]
+            "missing_capabilities":coverage["missing_capabilities"],
+            "requested_url":requested,
+            "verified_source_urls":verified,
+            "source_complete":requested.is_none_or(|_| verified_goal)
         }),
     ))
 }
@@ -103,11 +117,13 @@ pub(super) struct ChildOutcome<'a> {
     pub(super) output: String,
     pub(super) findings: Vec<String>,
     pub(super) artifact_refs: Vec<String>,
+    /// URLs verified from full persisted web.extract results, never LLM claims.
+    pub(super) verified_source_urls: Vec<String>,
     pub(super) unresolved: Vec<String>,
     pub(super) error_code: Option<&'a str>,
 }
 impl<'a> ChildOutcome<'a> {
-    pub(super) fn from_run(session_id: &'a str, child: &'a AgentRunView) -> Result<Self, JobError> {
+    pub(super) fn from_run(session_id: &'a str, child: &'a AgentRunView, job: &JobView) -> Result<Self, JobError> {
         let result: Option<ChildResult> = child
             .result
             .clone()
@@ -131,6 +147,9 @@ impl<'a> ChildOutcome<'a> {
             output: result.summary,
             findings: result.findings,
             artifact_refs: result.evidence_refs,
+            verified_source_urls: super::super::coverage::completed_web_sources(
+                job, Some(&child.agent_run_id)
+            ),
             unresolved: result.unresolved,
             error_code: child.error_code.as_deref(),
         })
