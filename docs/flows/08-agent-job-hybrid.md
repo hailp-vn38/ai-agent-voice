@@ -101,7 +101,7 @@ flowchart TD
 | Chat Completions | `response_format.json_schema` for Root; `tools[].function.strict=true` for Child | `assistant.tool_calls[].id` + `role=tool,tool_call_id` |
 | Responses | `text.format.json_schema` for Root; `tools[].strict=true` for Child | `output.function_call.call_id` + `input.function_call_output.call_id` |
 
-Child mode sets `tool_choice=required` and `parallel_tool_calls=false`; if upstream rejects these, fail rather than downgrading. `submit_result` closes only Child and creates no plugin Step. A validated plugin call creates one durable Step using `insert_dynamic_step` and executes through the existing Plugin Runtime.
+Child mode sets `tool_choice=required` and `parallel_tool_calls=false`; if upstream rejects these, fail rather than downgrading. Each accepted plugin Step yields a matched Tool Result with its persisted `step_key` and the server-owned artifact UUIDs in `evidence_refs`. Child may cite only evidence from its own succeeded Steps. Invalid `submit_result.evidence_refs` get a precise validation code and allowed IDs for bounded correction, rather than silently re-fetching the same URL. `submit_result` closes only Child and creates no plugin Step. A validated plugin call creates one durable Step using `insert_dynamic_step` and executes through the existing Plugin Runtime.
 
 ## Failure / recovery / observation
 
