@@ -261,3 +261,39 @@ async fn fixture_python_runs_through_job_step_and_checked_artifact() {
     );
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn persisted_evidence_refs_are_step_and_child_scoped() {
+    // Mirrors a real fetch_url: plugin artifacts exist in SQLite but the
+    // Child only receives references to its own succeeded Steps.
+    let (db, _config, runtime) = harness().await;
+    let job = runtime.engine.submit(
+        request("Summarize fetched article"), &JobRequester::Admin, None
+    ).await.unwrap().job;
+    sqlx::query("UPDATE jobs SET status='running' WHERE id=?")
+        .bind(&job.id).execute(db.pool()).await.unwrap();
+    for (step,run,status) in [
+        ("a-fetch", "child-a", "succeeded"),
+        ("b-fetch", "child-b", "succeeded"),
+        ("a-failed", "child-a", "failed"),
+    ] {
+        sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,status,agent_run_id,created_at,updated_at) VALUES(?,?,0,?,?,0,0)")
+            .bind(&job.id).bind(step).bind(status).bind(run)
+            .execute(db.pool()).await.unwrap();
+    }
+    for (id,step) in [
+        ("artifact-own", "a-fetch"),
+        ("artifact-other", "b-fetch"),
+        ("artifact-failed", "a-failed"),
+    ] {
+        sqlx::query("INSERT INTO job_artifacts(id,job_id,step_key,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,'text/plain',0,'hash',0)")
+            .bind(id).bind(&job.id).bind(step)
+            .bind(format!("{}/{id}",job.id))
+            .execute(db.pool()).await.unwrap();
+    }
+    assert_eq!(db.job_step_artifact_refs(&job.id,"a-fetch").await.unwrap(),vec!["artifact-own"]);
+    assert!(db.job_step_artifact_refs(&job.id,"a-failed").await.unwrap().is_empty());
+    assert_eq!(db.job_child_artifact_refs(&job.id,"child-a").await.unwrap(),vec!["artifact-own"]);
+    assert_eq!(db.job_child_artifact_refs(&job.id,"child-b").await.unwrap(),vec!["artifact-other"]);
+    runtime.shutdown().await;
+}
