@@ -112,6 +112,17 @@ pub(crate) async fn complete_with(
     request: LlmRequest,
     schema: Option<Value>,
 ) -> Result<String, LlmError> {
+    Ok(complete_with_usage(base_url, model, api_key, timeout_seconds, request, schema).await?.text)
+}
+
+pub(crate) async fn complete_with_usage(
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    timeout_seconds: u64,
+    request: LlmRequest,
+    schema: Option<Value>,
+) -> Result<crate::providers::llm::BackgroundCompletion, LlmError> {
     let base = base_url.trim_end_matches('/');
     let url = format!("{base}/responses");
     let parsed = url::Url::parse(&url).map_err(|_| LlmError::Failed)?;
@@ -172,7 +183,13 @@ pub(crate) async fn complete_with(
                 .unwrap_or(0),
         );
     }
-    Ok(text)
+    let usage = document.get("usage").map(|usage| crate::providers::llm::BackgroundTokenUsage {
+        input_tokens: usage.get("input_tokens").and_then(Value::as_u64),
+        output_tokens: usage.get("output_tokens").and_then(Value::as_u64),
+        reasoning_tokens: usage.pointer("/output_tokens_details/reasoning_tokens").and_then(Value::as_u64),
+        cached_input_tokens: usage.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64),
+    });
+    Ok(crate::providers::llm::BackgroundCompletion { text, usage })
 }
 
 #[cfg(test)]
