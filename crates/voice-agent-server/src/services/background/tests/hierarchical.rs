@@ -19,7 +19,7 @@ impl JobModels for HierarchicalScriptedModels {
             BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall,
         };
         match mode {
-            BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
+            BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
                 assert!(
                     request
                         .tools
@@ -636,7 +636,7 @@ impl JobModels for AdversarialChildModels {
                         )
                     }
                 }
-                BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
+                BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
                     assert_eq!(
                         request.tools.len(),
                         1,
@@ -762,7 +762,7 @@ impl JobModels for V3SessionModels {
         use crate::providers::llm::{BackgroundMode,BackgroundTurn,BackgroundTurnResult,ToolCall};
         let root = request.tools.iter().any(|tool|tool.name == "subagent");
         let output = if root {
-            assert!(matches!(mode,BackgroundMode::Tools));
+            assert!(matches!(mode,BackgroundMode::ToolsParallel));
             if request.messages.iter().any(|m|matches!(m,ChatMessage::ToolResult{..})) {
                 BackgroundTurn::ToolCalls(vec![ToolCall{
                     id:"root_finish".into(),name:"finish_job".into(),
