@@ -43,14 +43,20 @@ pub(super) async fn require_hybrid_capability(
     reference: &str,
     required_flag: &str,
 ) -> Result<(), JobError> {
-    if !matches!(required_flag, "supports_structured_outputs" | "supports_function_calling") {
+    if !matches!(
+        required_flag,
+        "supports_structured_outputs" | "supports_function_calling"
+    ) {
         return Err(JobError::InvalidArguments);
     }
-    let parsed = ProviderRef::parse(reference,Some("llm")).map_err(|_|JobError::ProviderUnavailable)?;
+    let parsed =
+        ProviderRef::parse(reference, Some("llm")).map_err(|_| JobError::ProviderUnavailable)?;
     let (adapter, config_json) = match parsed.origin {
         ProviderOrigin::Config => {
-            let row = parsed.snapshot(config).map_err(|_|JobError::ProviderUnavailable)?;
-            (row.adapter,row.config_json)
+            let row = parsed
+                .snapshot(config)
+                .map_err(|_| JobError::ProviderUnavailable)?;
+            (row.adapter, row.config_json)
         }
         ProviderOrigin::Database => {
             let row: Option<(String,String)> = sqlx::query_as(
@@ -59,9 +65,14 @@ pub(super) async fn require_hybrid_capability(
             row.ok_or(JobError::ProviderUnavailable)?
         }
     };
-    if !matches!(adapter.as_str(),"openai"|"opencode_free") {return Err(JobError::CapabilityUnavailable);}
-    let values: serde_json::Value = serde_json::from_str(&config_json).map_err(|_|JobError::ProviderUnavailable)?;
-    if values[required_flag].as_bool()!=Some(true) {return Err(JobError::CapabilityUnavailable);}
+    if !matches!(adapter.as_str(), "openai" | "opencode_free") {
+        return Err(JobError::CapabilityUnavailable);
+    }
+    let values: serde_json::Value =
+        serde_json::from_str(&config_json).map_err(|_| JobError::ProviderUnavailable)?;
+    if values[required_flag].as_bool() != Some(true) {
+        return Err(JobError::CapabilityUnavailable);
+    }
     Ok(())
 }
 
