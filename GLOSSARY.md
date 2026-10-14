@@ -100,10 +100,6 @@ Thuật ngữ Job, Plugin Package, Plugin Installation và Worker Attempt đư�
 ## Agent Job Planning
 
 
-**Agent Run**:
-Một phiên thực thi có mục tiêu riêng trong Agent Job; Root Orchestrator Run và các Sub-Agent Run là các loại Agent Run, không phải Agent đăng ký trên hệ thống.
-_Avoid_: LLM Run, Voice Agent, Worker Attempt
-
 **Unified Job Activity**:
 Biểu diễn theo thứ tự thời gian các mốc LLM, Plugin, Fork/Join và kết thúc của một Job, được ghép từ Job Event và trạng thái Job chính thức.
 _Avoid_: raw model transcript, tool output archive, Job Change Signal
@@ -154,8 +150,20 @@ _Avoid_: JobSnapshot, Job Event, execution authority
 ## Hierarchical Agent Jobs
 
 **Agent Run**:
-Một lần thực thi của Root Orchestrator hoặc Sub-Agent trong một Agent Job; khác với Job và từng LLM Run.
-_Avoid_: Agent account, Job Step, registered Voice Agent
+Một phiên thực thi của Root Orchestrator hoặc Sub-Agent trong Agent Job, khác với Job, LLM Run và Worker Attempt.
+_Avoid_: registered Voice Agent, Job Step, LLM Run
+
+**Root Decision**:
+Đề xuất `delegate` hoặc `finish` của Root Orchestrator, chỉ có hiệu lực sau khi được Rust kiểm tra và chấp nhận.
+_Avoid_: Executable Plan, plugin call
+
+**Plugin Tool Binding**:
+Ánh xạ trong phạm vi một Sub-Agent từ tên function mà LLM thấy tới một Plugin Operation đã đóng băng và được cho phép.
+_Avoid_: permission grant, MCP Binding, Plugin Activation
+
+**Child Completion Tool**:
+Function nội bộ `submit_result` để Child đề xuất hoàn tất Agent Run, không phải Plugin Operation hoặc quyết định hoàn tất Job.
+_Avoid_: Plugin Step, Job Result
 
 **Root Orchestrator**:
 Agent Run sở hữu quyết định giao nhiệm vụ và kết thúc Job; chỉ nhận kết quả tổng hợp từ Sub-Agent.
