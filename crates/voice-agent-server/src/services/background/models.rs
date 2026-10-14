@@ -198,7 +198,7 @@ impl ManagedModels {
                 | crate::providers::llm::ChatMessage::AssistantText { content }
                 | crate::providers::llm::ChatMessage::ToolResult { content, .. } => content.len(),
                 crate::providers::llm::ChatMessage::AssistantToolCalls { calls } =>
-                    serde_json::to_string(calls.iter().map(|call| (&call.id, &call.name, &call.arguments)).collect::<Vec<_>>())
+                    serde_json::to_string(&calls.iter().map(|call| (&call.id, &call.name, &call.arguments)).collect::<Vec<_>>())
                         .map_or(usize::MAX, |s| s.len()),
             })
             .fold(0usize, usize::saturating_add);
