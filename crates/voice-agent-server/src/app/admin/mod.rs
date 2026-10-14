@@ -33,6 +33,7 @@ const PAGE_MAX: u32 = 200;
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/plugins", get(plugins::list))
+        .route("/plugins/builtin", get(plugins::builtin_catalog))
         .route(
             "/plugins/install",
             axum::routing::post(plugins::install).layer(axum::extract::DefaultBodyLimit::max(
