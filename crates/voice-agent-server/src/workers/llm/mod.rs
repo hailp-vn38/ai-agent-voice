@@ -296,8 +296,12 @@ impl LlmRuntime {
     ) -> LlmDiagnosticOperation {
         assert!(max_text_bytes > 0);
         LlmDiagnosticOperation {
-            provider: Arc::clone(&self.provider), request, max_text_bytes,
-            mode: Some(mode), cancellation: None, terminal_acknowledged: false,
+            provider: Arc::clone(&self.provider),
+            request,
+            max_text_bytes,
+            mode: Some(mode),
+            cancellation: None,
+            terminal_acknowledged: false,
         }
     }
 }
@@ -322,27 +326,38 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
             })?;
             self.terminal_acknowledged = true;
             let text = match (mode, result.turn) {
-                (crate::providers::llm::BackgroundMode::Structured { .. },
-                    crate::providers::llm::BackgroundTurn::Text(text)) => {
+                (
+                    crate::providers::llm::BackgroundMode::Structured { .. },
+                    crate::providers::llm::BackgroundTurn::Text(text),
+                ) => {
                     let object: serde_json::Value = serde_json::from_str(&text)
                         .map_err(|_| ProviderDiagnosticOperationError::InvalidResponse)?;
                     let Some(fields) = object.as_object() else {
                         return Err(ProviderDiagnosticOperationError::InvalidResponse);
                     };
-                    if fields.len()!=1 || !fields.get("summary").is_some_and(serde_json::Value::is_string) {
+                    if fields.len() != 1
+                        || !fields
+                            .get("summary")
+                            .is_some_and(serde_json::Value::is_string)
+                    {
                         return Err(ProviderDiagnosticOperationError::InvalidResponse);
                     }
                     text
-                },
-                (crate::providers::llm::BackgroundMode::Tools,
-                    crate::providers::llm::BackgroundTurn::ToolCalls(calls)) if calls.len()==1
-                        && calls[0].name=="submit_result"
-                        && calls[0].arguments["summary"].is_string() => {
+                }
+                (
+                    crate::providers::llm::BackgroundMode::Tools,
+                    crate::providers::llm::BackgroundTurn::ToolCalls(calls),
+                ) if calls.len() == 1
+                    && calls[0].name == "submit_result"
+                    && calls[0].arguments["summary"].is_string() =>
+                {
                     "Native function submit_result accepted".into()
-                },
+                }
                 _ => return Err(ProviderDiagnosticOperationError::InvalidResponse),
             };
-            if text.len() > self.max_text_bytes {return Err(ProviderDiagnosticOperationError::InvalidResponse);}
+            if text.len() > self.max_text_bytes {
+                return Err(ProviderDiagnosticOperationError::InvalidResponse);
+            }
             return Ok(text);
         }
         let mut stream = self
