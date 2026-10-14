@@ -7,5 +7,6 @@
 5. [TTS](05-tts.md)
 6. [Interrupt / cancellation](06-interrupt-cancellation.md)
 7. [Device MCP](07-device-mcp.md)
+8. [Agent Job Hybrid](08-agent-job-hybrid.md)
 
 Mỗi flow mô tả boundary, sequence, invariants và test contract. Khi hành vi runtime thay đổi, tài liệu flow tương ứng phải được cập nhật cùng PR.
