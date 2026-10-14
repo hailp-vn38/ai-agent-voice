@@ -237,7 +237,9 @@ impl JobError {
             Self::CapacityUnavailable => "background_capacity_unavailable",
             Self::QueueFull => "queue_full",
             Self::CapabilityUnavailable => "capability_unavailable",
-            Self::OrchestratorStructuredOutputsRequired => "orchestrator_structured_outputs_required",
+            Self::OrchestratorStructuredOutputsRequired => {
+                "orchestrator_structured_outputs_required"
+            }
             Self::WorkerFunctionCallingRequired => "worker_function_calling_required",
             Self::IdempotencyConflict => "idempotency_conflict",
             Self::RevisionConflict => "revision_conflict",

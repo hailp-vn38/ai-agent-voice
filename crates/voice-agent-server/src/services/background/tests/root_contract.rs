@@ -40,8 +40,11 @@ fn plugin_tool_result_exposes_only_persisted_artifact_ids() {
     // A Child must not invent evidence_refs when invoking submit_result.
     let refs = vec!["23876c4f-9bc2-4fcb-8d88-a5c4756552ba".to_owned()];
     let payload = plugin_tool_result(
-        "t_fixture", "succeeded", None,
-        Some(r#"{"title":"VFF","text":"Article content"}"#), &refs,
+        "t_fixture",
+        "succeeded",
+        None,
+        Some(r#"{"title":"VFF","text":"Article content"}"#),
+        &refs,
     );
     assert_eq!(payload["step_key"], "t_fixture");
     assert_eq!(payload["evidence_refs"], json!(refs));

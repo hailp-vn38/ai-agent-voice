@@ -2,7 +2,6 @@ use super::{
     JobEngine, JobError, JobView,
     model::LlmRunContext,
     plan::{JobPlan, PlanCompiler, PlanErrorCategory, PlanValidationError},
-    plugins::FrozenChoice,
     proposal::PlanProposal,
 };
 use crate::providers::llm::{ChatMessage, LlmRequest};
@@ -84,8 +83,7 @@ async fn run(
         .as_array()
         .ok_or(JobError::DatabaseUnavailable)?
     {
-        let choice: FrozenChoice =
-            serde_json::from_value(raw.clone()).map_err(|_| JobError::DatabaseUnavailable)?;
+        let choice = super::plugins::decode_choice(raw).map_err(JobError::from_plugin)?;
         let contract = engine
             .plugins
             .operation_contract(&choice)
@@ -142,7 +140,7 @@ async fn run(
             }
             ensure_live(engine, id, &cancellation).await?;
             if let (Some(plugin), Some(operation)) = (&step.plugin_id, &step.operation) {
-                let choice: FrozenChoice = serde_json::from_value(
+                let choice = super::plugins::decode_choice(
                     job.plugin_choices
                         .as_array()
                         .ok_or(JobError::DatabaseUnavailable)?
@@ -150,10 +148,9 @@ async fn run(
                         .find(|choice| {
                             choice["plugin_id"] == *plugin && choice["operation"] == *operation
                         })
-                        .ok_or(JobError::CapabilityUnavailable)?
-                        .clone(),
+                        .ok_or(JobError::CapabilityUnavailable)?,
                 )
-                .map_err(|_| JobError::DatabaseUnavailable)?;
+                .map_err(JobError::from_plugin)?;
                 engine
                     .execute_plugin_step_cancel(
                         id,

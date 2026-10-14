@@ -11,7 +11,19 @@ mod runner;
 #[cfg(test)]
 mod tests;
 pub(crate) use contracts::{compile_child_tools, normalize_tool_arguments};
-pub(crate) use dispatch::{FrozenChoice, Invocation};
+pub(crate) use dispatch::{FrozenChoice, Invocation, InvokeResult};
+
+/// Decode either a previously persisted External choice or a frozen Core choice.
+/// External JSON is unchanged; Core never receives a Plugin Store installation.
+pub(crate) fn decode_choice(raw: &serde_json::Value) -> Result<FrozenChoice, PluginError> {
+    if raw["kind"] == "core" {
+        crate::tools::core::decode(raw)
+    } else if raw.get("kind").is_none() {
+        serde_json::from_value(raw.clone()).map_err(|_| PluginError::PermissionRequired)
+    } else {
+        Err(PluginError::PermissionRequired)
+    }
+}
 
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
@@ -155,6 +167,14 @@ pub struct PluginStore {
 }
 
 impl PluginStore {
+    /// Shared bounded capacity for Core and External work, without any runner preflight.
+    pub(crate) async fn acquire_core_slot(
+        &self,
+        deadline_at: i64,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, PluginError> {
+        dispatch::acquire_worker_until(&self.worker_slots, deadline_at).await
+    }
+
     pub fn new(database: Arc<Database>, config: BackgroundConfig) -> Self {
         let worker_limit = config.limits.max_container_workers as usize;
         let root = database
@@ -215,6 +235,9 @@ impl PluginStore {
     }
     pub async fn install(&self, bytes: &[u8]) -> Result<PluginView, PluginError> {
         let package = archive::validate(bytes)?;
+        if package.manifest.plugin.id == "core" {
+            return Err(PluginError::InvalidPackage);
+        }
         let _permit = self
             .build_slot
             .try_acquire()
@@ -456,8 +479,12 @@ pub(crate) async fn frozen_choices(
     if rows.len() > 32 {
         return Err(JobError::CapacityUnavailable);
     }
-    let mut choices = Vec::new();
+    let mut choices = crate::tools::core::frozen_choices();
     for row in rows {
+        // Core is a reserved namespace, never an External Store installation.
+        if row.plugin_id == "core" {
+            return Err(JobError::CapabilityUnavailable);
+        }
         let manifest = row.manifest().map_err(|_| JobError::DatabaseUnavailable)?;
         for (name, operation) in manifest.operations {
             if operation.replay != "safe_read" {
