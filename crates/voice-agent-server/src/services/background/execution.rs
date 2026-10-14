@@ -137,6 +137,12 @@ impl JobEngine {
         let result = if crate::tools::core::is_core(choice) {
             // Same durable Attempt as External, but no container, package or image preflight.
             async {
+                let _core_slot = tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        return Err(PluginError::JobRejected(JobError::Cancelled));
+                    }
+                    permit = self.plugins.acquire_core_slot(deadline_at) => permit?,
+                };
                 if cancellation.is_cancelled() {
                     return Err(PluginError::JobRejected(JobError::Cancelled));
                 }
