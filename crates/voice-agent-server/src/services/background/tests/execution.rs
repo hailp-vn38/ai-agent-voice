@@ -368,3 +368,59 @@ async fn core_artifact_read_rejects_foreign_job_and_binary_media_type() {
     }
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn bundled_document_and_artifact_operations_use_verified_owned_files() {
+    use sha2::{Digest, Sha256};
+
+    let (db, _, runtime) = harness().await;
+    let job = runtime.engine.submit(
+        request("Inspect Markdown artifact"), &JobRequester::Admin, None
+    ).await.unwrap().job;
+    let artifact_id = uuid::Uuid::new_v4().to_string();
+    let bytes = b"# Heading\n[Read](https://example.org) *bold*";
+    let directory = super::super::artifacts::root(&db).unwrap().join(&job.id);
+    tokio::fs::create_dir_all(&directory).await.unwrap();
+    tokio::fs::write(directory.join(&artifact_id), bytes).await.unwrap();
+    let sha = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect::<String>();
+    sqlx::query(
+        "INSERT INTO job_artifacts(id,job_id,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,0)"
+    )
+    .bind(&artifact_id).bind(&job.id).bind(format!("{}/{artifact_id}", job.id))
+    .bind("text/markdown").bind(bytes.len() as i64).bind(&sha)
+    .execute(db.pool()).await.unwrap();
+
+    let run = |operation: &str| {
+        let raw = job.plugin_choices.as_array().unwrap().iter()
+            .find(|value| value["operation"] == operation).unwrap();
+        crate::services::background::plugins::decode_choice(raw).unwrap()
+    };
+    let arguments = json!({"artifact_id":artifact_id});
+    let document = crate::tools::core::invoke(
+        &runtime.engine, &run("document.extract"), arguments.clone(), &job.id
+    ).await.unwrap();
+    assert_eq!(document.result["text"], "Heading\nRead bold");
+    assert_eq!(document.result["format"], "text/markdown");
+    assert_eq!(document.result["provenance"][0]["records"][0], artifact_id);
+
+    let document_info = crate::tools::core::invoke(
+        &runtime.engine, &run("document.inspect"), arguments.clone(), &job.id
+    ).await.unwrap();
+    assert_eq!(document_info.result["lines"], 2);
+    assert!(document_info.result["words"].as_u64().unwrap() >= 3);
+
+    let artifact_info = crate::tools::core::invoke(
+        &runtime.engine, &run("artifact.inspect"), arguments, &job.id
+    ).await.unwrap();
+    assert_eq!(artifact_info.result["sha256"], sha);
+    assert_eq!(artifact_info.result["size_bytes"], bytes.len());
+    assert_eq!(artifact_info.result["media_type"], "text/markdown");
+
+    let transformed = crate::tools::core::invoke(
+        &runtime.engine, &run("data.transform"),
+        json!({"json_text":r#"{"name":"Ada","role":"research"}"#,
+            "mode":"pick","fields":["name"]}), &job.id
+    ).await.unwrap();
+    assert_eq!(transformed.result["value"], json!({"name":"Ada"}));
+    runtime.shutdown().await;
+}
