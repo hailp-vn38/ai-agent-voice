@@ -1,15 +1,16 @@
 //! Exact-version Background LLM admission, sharing the provider's Voice reservation.
-use super::{JobError, ProviderPin, providers};
+use super::{JobError, ProviderPin, model::LlmRunContext};
 use crate::{
     config::AppConfig,
     database::Database,
     providers::{
-        config_catalog::{ProviderOrigin, ProviderRef},
+        config_catalog::ProviderOrigin,
         llm::LlmRequest,
     },
     services::provider_runtime::ProviderRuntimeManager,
 };
 use std::{sync::Arc, time::Duration};
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 #[async_trait::async_trait]
@@ -40,6 +41,28 @@ pub(crate) trait JobModels: Send + Sync {
         self.complete(job_id, pin, request, deadline_at, cancellation)
             .await
     }
+    async fn complete_traced(
+        &self,
+        run: &LlmRunContext,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        deadline_at: i64,
+        cancellation: CancellationToken,
+    ) -> Result<String, JobError> {
+        self.complete(&run.job_id, pin, request, deadline_at, cancellation).await
+    }
+    async fn complete_structured_traced(
+        &self,
+        run: &LlmRunContext,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        schema: serde_json::Value,
+        deadline_at: i64,
+        cancellation: CancellationToken,
+    ) -> Result<String, JobError> {
+        self.complete_structured(&run.job_id, pin, request, schema, deadline_at, cancellation).await
+    }
+
 }
 
 pub(crate) struct ManagedModels {
@@ -66,49 +89,39 @@ pub(crate) fn remaining(deadline_at: i64) -> Result<Duration, JobError> {
 }
 
 impl ManagedModels {
+    async fn observe(&self, run: Option<&LlmRunContext>, event: &'static str, detail: serde_json::Value) {
+        if let Some(run) = run {
+            if let Err(error) = self.database.record_llm_activity(run, event, detail).await {
+                tracing::warn!(event="background_llm_activity_write_failed", job_id=%run.job_id, code=%error.code());
+            }
+        }
+    }
+
     async fn acquire(
         &self,
         previous: &ProviderPin,
         deadline_at: i64,
         cancellation: CancellationToken,
-    ) -> Result<
-        (
-            crate::services::provider_runtime::ResourceLease,
-            Arc<crate::workers::LlmRuntime>,
-        ),
-        JobError,
-    > {
-        let mut connection = self.database.pool().acquire().await?;
-        if &providers::pin(&mut connection, &self.config, &previous.reference).await? != previous {
-            return Err(JobError::ConfigurationChanged);
-        }
-        let parsed = ProviderRef::parse(&previous.reference, Some("llm"))
-            .map_err(|_| JobError::ProviderUnavailable)?;
-        let snapshot = match parsed.origin {
-            ProviderOrigin::Config => parsed
-                .snapshot(&self.config)
-                .map_err(|_| JobError::ProviderUnavailable)?,
-            ProviderOrigin::Database => {
-                let (id,key,kind,adapter,config_json,revision,secret_ref): (i64,String,String,String,String,i64,Option<String>) = sqlx::query_as("SELECT id,key,type,adapter,config_json,revision,credential_json FROM providers WHERE key=? AND type='llm' AND enabled=1")
-                    .bind(&parsed.key).fetch_optional(&mut *connection).await?.ok_or(JobError::ProviderUnavailable)?;
-                crate::database::DesiredProvider {
-                    id,
-                    key,
-                    kind,
-                    adapter,
-                    config_json,
-                    revision,
-                    secret_ref,
-                }
-            }
-        };
-        drop(connection);
+    ) -> Result<(
+        crate::services::provider_runtime::ResourceLease,
+        Arc<crate::workers::LlmRuntime>,
+        String,
+        Option<String>,
+        &'static str,
+    ), JobError> {
+        let resolved = self.database.background_resolve_provider(&self.config, previous).await?;
         let deadline = tokio::time::Instant::now() + remaining(deadline_at)?;
         let provider_wait_started = std::time::Instant::now();
+        let origin = resolved.origin;
+        let key = resolved.key;
+        let adapter = resolved.adapter;
+        let model = resolved.model;
+        let transport = resolved.transport;
+        let snapshot = resolved.snapshot;
         let lease = tokio::select! {
             _ = cancellation.cancelled() => return Err(JobError::Cancelled),
             result = async {
-                match parsed.origin {
+                match origin {
                     ProviderOrigin::Config => self.manager.acquire_deployment_until(snapshot, deadline).await,
                     ProviderOrigin::Database => self.manager.acquire_until(snapshot, deadline).await,
                 }
@@ -116,13 +129,10 @@ impl ManagedModels {
         };
         tracing::info!(event="background_provider_acquired", provider=%previous.reference, provider_wait_ms=provider_wait_started.elapsed().as_millis() as u64);
         let catalog = lease.runtimes().ok_or(JobError::ProviderUnavailable)?;
-        let runtime = catalog
-            .llm
-            .get(&parsed.key)
-            .cloned()
-            .ok_or(JobError::ProviderUnavailable)?;
-        Ok((lease, runtime))
+        let runtime = catalog.llm.get(&key).cloned().ok_or(JobError::ProviderUnavailable)?;
+        Ok((lease, runtime, adapter, model, transport))
     }
+
     async fn complete_inner(
         &self,
         job_id: &str,
@@ -131,24 +141,25 @@ impl ManagedModels {
         schema: Option<serde_json::Value>,
         deadline_at: i64,
         cancellation: CancellationToken,
+        run: Option<&LlmRunContext>,
     ) -> Result<String, JobError> {
-        let bytes = request
-            .messages
-            .iter()
-            .map(|message| match message {
-                crate::providers::llm::ChatMessage::System { content }
-                | crate::providers::llm::ChatMessage::User { content }
-                | crate::providers::llm::ChatMessage::AssistantText { content }
-                | crate::providers::llm::ChatMessage::ToolResult { content, .. } => content.len(),
-                crate::providers::llm::ChatMessage::AssistantToolCalls { .. } => usize::MAX,
-            })
-            .fold(0usize, usize::saturating_add);
+        let bytes = request.messages.iter().map(|message| match message {
+            crate::providers::llm::ChatMessage::System { content }
+            | crate::providers::llm::ChatMessage::User { content }
+            | crate::providers::llm::ChatMessage::AssistantText { content }
+            | crate::providers::llm::ChatMessage::ToolResult { content, .. } => content.len(),
+            crate::providers::llm::ChatMessage::AssistantToolCalls { .. } => usize::MAX,
+        }).fold(0usize, usize::saturating_add);
         if bytes > 65536 || !request.tools.is_empty() {
             return Err(JobError::CapacityUnavailable);
         }
-        let (lease, runtime) = self
-            .acquire(previous, deadline_at, cancellation.clone())
-            .await?;
+        let provider_wait_started = std::time::Instant::now();
+        let (lease, runtime, adapter, model, transport) =
+            self.acquire(previous, deadline_at, cancellation.clone()).await?;
+        self.observe(run, "llm_provider_acquired", json!({
+            "adapter": adapter, "model": model, "transport": transport,
+            "provider_wait_ms": provider_wait_started.elapsed().as_millis() as u64,
+        })).await;
         let deadline = tokio::time::Instant::now() + remaining(deadline_at)?;
         let capacity_wait_started = std::time::Instant::now();
         let permit = loop {
@@ -161,46 +172,44 @@ impl ManagedModels {
                 },
             }
         };
-        tracing::info!(event="background_provider_permit", job_id, provider=%previous.reference, capacity_wait_ms=capacity_wait_started.elapsed().as_millis() as u64);
+        let capacity_wait_ms = capacity_wait_started.elapsed().as_millis() as u64;
+        tracing::info!(event="background_provider_permit", job_id, provider=%previous.reference, capacity_wait_ms);
         let publication = self.database.tool_security.publication.read().await;
-        let row = self.database.job_row(job_id).await?;
-        if !matches!(row.status.as_str(), "planning" | "running") {
-            return Err(JobError::Cancelled);
-        }
-        let mut connection = self.database.pool().acquire().await?;
-        crate::database::jobs::authorize(&mut connection, &row.requester()?).await?;
-        let enabled: i64 =
-            sqlx::query_scalar("SELECT enabled FROM background_settings WHERE singleton=1")
-                .fetch_one(&mut *connection)
-                .await?;
-        if enabled != 1 {
-            return Err(JobError::Disabled);
-        }
-        if &providers::pin(&mut connection, &self.config, &previous.reference).await? != previous {
-            return Err(JobError::ConfigurationChanged);
-        }
-        drop(connection);
-        // Do not hold the publication lock through a potentially long Responses call:
-        // policy updates must be able to revoke the Job and signal cancellation.
+        self.database.background_authorize_provider_call(&self.config, job_id, previous).await?;
+        // Do not retain the publication guard through the remote provider call.
         drop(publication);
-        // The permit/lease remains owned by this call until completion.
-        // An ambiguous remote failure retains the exact permit in quarantine.
+        self.observe(run, "llm_request_started", json!({
+            "capacity_wait_ms":capacity_wait_ms,
+            "message_count":request.messages.len(),
+            "input_bytes":bytes
+        })).await;
+        let request_started = std::time::Instant::now();
         let (outcome, unknown) = tokio::select! {
             _=cancellation.cancelled()=>(Err(JobError::Cancelled),true),
             _=tokio::time::sleep_until(deadline)=>(Err(JobError::DeadlineExceeded),true),
-            result=runtime.background_complete(request,schema)=>match result {
-                Ok(text)=>(Ok(text),false),
+            result=runtime.background_complete_with_usage(request,schema)=>match result {
+                Ok(value)=>(Ok(value),false),
                 Err(crate::providers::LlmError::Rejected)=>(Err(JobError::ModelFailed),false),
                 Err(_)=>(Err(JobError::ModelFailed),true),
             },
         };
         if outcome.is_err() && unknown {
-            self.quarantine
-                .lock()
-                .expect("Background LLM quarantine")
-                .push((lease, permit));
+            self.quarantine.lock().expect("Background LLM quarantine").push((lease, permit));
         }
-        outcome
+        match outcome {
+            Ok(response) => {
+                self.observe(run,"llm_response_received",json!({
+                    "request_duration_ms":request_started.elapsed().as_millis() as u64,
+                    "output_bytes":response.text.len(),
+                    "input_tokens":response.usage.as_ref().and_then(|u| u.input_tokens),
+                    "output_tokens":response.usage.as_ref().and_then(|u| u.output_tokens),
+                    "reasoning_tokens":response.usage.as_ref().and_then(|u| u.reasoning_tokens),
+                    "cached_input_tokens":response.usage.as_ref().and_then(|u| u.cached_input_tokens),
+                })).await;
+                Ok(response.text)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -220,7 +229,7 @@ impl JobModels for ManagedModels {
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<String, JobError> {
-        self.complete_inner(job_id, pin, request, None, deadline_at, cancellation)
+        self.complete_inner(job_id, pin, request, None, deadline_at, cancellation, None)
             .await
     }
     async fn complete_structured(
@@ -239,7 +248,21 @@ impl JobModels for ManagedModels {
             Some(schema),
             deadline_at,
             cancellation,
+            None,
         )
         .await
     }
+    async fn complete_traced(
+        &self, run: &LlmRunContext, pin: &ProviderPin, request: LlmRequest,
+        deadline_at: i64, cancellation: CancellationToken,
+    ) -> Result<String, JobError> {
+        self.complete_inner(&run.job_id, pin, request, None, deadline_at, cancellation, Some(run)).await
+    }
+    async fn complete_structured_traced(
+        &self, run: &LlmRunContext, pin: &ProviderPin, request: LlmRequest,
+        schema: serde_json::Value, deadline_at: i64, cancellation: CancellationToken,
+    ) -> Result<String, JobError> {
+        self.complete_inner(&run.job_id, pin, request, Some(schema), deadline_at, cancellation, Some(run)).await
+    }
+
 }
