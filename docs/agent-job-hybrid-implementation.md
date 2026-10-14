@@ -35,6 +35,8 @@ supports_function_calling = true
 
 Each value is an **operator assertion**, not automatically discovered support. Select Root/Worker Provider whose **pinned** model + endpoint accepts the relevant strict mode; `supports_tools()` for Voice is not sufficient. Unqualified adapters fail closed; no automatic Chat-vs-Responses downgrade.
 
+At submission, a missing Root capability returns HTTP **409** `orchestrator_structured_outputs_required`; a missing Worker capability returns HTTP **409** `worker_function_calling_required`. The Job is not created in either case. Provider Text Test alone does not automatically enable these flags.
+
 For `opencode_free`, Chat Voice placeholder tools are not exposed to Background Children. Check endpoint/model-specific entitlement before enabling capabilities.
 
 ## Tool contract projection
