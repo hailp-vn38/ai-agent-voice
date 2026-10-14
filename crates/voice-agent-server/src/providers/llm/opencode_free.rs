@@ -66,7 +66,7 @@ pub(crate) struct OpenCodeFreeProvider {
     supports_responses: bool,
     supports_structured_outputs: bool,
     supports_function_calling: bool,
-
+}
 
 impl OpenCodeFreeProvider {
     pub(crate) fn build(config: &OpenCodeFreeConfig) -> Result<Self, LlmError> {
