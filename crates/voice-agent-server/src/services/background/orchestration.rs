@@ -363,7 +363,7 @@ async fn finish_llm_run(
 ) {
     if let Err(error) = engine.database.record_llm_activity(
         run, "llm_run_finished",
-        json!({"status":status,"error_code":error_code,"validation_code":error_code,
+        json!({"status":status,"error_code":error_code,"validation_code":if path.is_some() {error_code} else {None},
                "validation_path":path,"duration_ms":run.started_at.elapsed().as_millis() as u64}),
     ).await {
         tracing::warn!(event="background_llm_run_finish_log_failed",job_id=%run.job_id,code=%error.code());
