@@ -2,7 +2,7 @@ import type { AdminJob, JobEvent, JobStep } from '@/api/types/agent-jobs'
 import { projectLlmRuns, type LlmRun } from './llm-activity'
 
 export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan'
-export type ActivityStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'unknown'
+export type ActivityStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'skipped' | 'unknown'
 export type ActivityFilter = { kind: 'all' } | { kind: 'role'; role: string } | { kind: 'agent'; id: string }
 
 export interface UnifiedActivity {
@@ -23,9 +23,19 @@ export interface UnifiedActivity {
 const text = (value: unknown): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null
 
+function stepActivityStatus(step: JobStep | undefined, event: JobEvent): ActivityStatus {
+  if (step?.attempt_state === 'unknown_outcome') return 'unknown'
+  // The read view owns Step state; event payload is a fallback for absent Steps.
+  const status = step?.status ?? text(event.payload.status)
+  if (status === 'succeeded') return 'completed'
+  if (status === 'failed' || status === 'cancelled' || status === 'skipped') return status
+  return event.event_type === 'step_finished' && !status ? 'unknown' : 'running'
+}
+
 export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): UnifiedActivity[] {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence)
   const runs = projectLlmRuns(ordered, job.status)
+  const steps = new Map(job.steps.map(step => [step.step_key, step]))
   const roles = new Map((job.agent_runs ?? []).map(run => [run.agent_run_id, run.role]))
   const items: UnifiedActivity[] = runs.map(run => {
     const first = run.events[0]
@@ -36,9 +46,9 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       role: agentRunId ? roles.get(agentRunId) ?? null : null,
       title: 'LLM Run ' + String(run.number).padStart(2, '0'),
       note: run.phase, llm: run,
+      step: run.stepKey ? steps.get(run.stepKey) : undefined,
     }
   })
-  const steps = new Map(job.steps.map(step => [step.step_key, step]))
   const llmStepKeys = new Set(runs.map(run => run.stepKey).filter((key): key is string => key !== null))
   const pluginRows = new Map<string, UnifiedActivity>()
   for (const event of ordered) {
@@ -55,18 +65,14 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       const previous = pluginRows.get(id)
       if (previous) {
         if (event.event_type === 'step_finished') {
-          previous.status = step?.status === 'succeeded' || payload.status === 'succeeded' ? 'completed' : 'failed'
-          if (step?.attempt_state === 'unknown_outcome') previous.status = 'unknown'
+          previous.status = stepActivityStatus(step, event)
           previous.note = text(payload.error_code) ?? previous.note
         }
         continue
       }
-      const status: ActivityStatus = step?.status === 'succeeded' ? 'completed'
-        : step?.status === 'failed' || step?.status === 'skipped' || step?.status === 'cancelled' ? 'failed'
-        : event.event_type === 'step_finished' ? payload.status === 'succeeded' ? 'completed' : 'failed' : 'running'
       const item: UnifiedActivity = {
         id, sequence: event.sequence, time: event.created_at, kind: step && !step.plugin_id ? 'llm' : 'plugin',
-        status: step?.attempt_state === 'unknown_outcome' ? 'unknown' : status,
+        status: stepActivityStatus(step, event),
         agentRunId: agentRunId ?? step?.agent_run_id ?? null,
         role: role ?? (step?.agent_run_id ? roles.get(step.agent_run_id) ?? null : null),
         title: step?.plugin_id ? step.plugin_id + '.' + (step.operation ?? 'unknown') : step ? 'Worker Step · ' + event.step_key : event.step_key,

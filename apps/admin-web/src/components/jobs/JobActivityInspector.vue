@@ -10,6 +10,16 @@ const props = defineProps<{ activity: UnifiedActivity | null }>()
 const { t } = useI18n()
 const run = computed(() => props.activity?.llm ?? null)
 const step = computed(() => props.activity?.step ?? null)
+const pendingStage = computed(() => {
+  if (run.value?.status !== 'running') return null
+  switch (run.value.events.at(-1)?.event_type) {
+    case 'llm_run_started': return t('jobUi.llmAcquiringProvider')
+    case 'llm_provider_acquired': return t('jobUi.llmWaitingCapacity')
+    case 'llm_request_started': return t('jobUi.llmWaitingResponse')
+    case 'llm_response_received': return t('jobUi.llmValidating')
+    default: return null
+  }
+})
 function duration(ms: number | null): string {
   return ms === null ? '—' : (ms / 1000).toFixed(2) + ' s'
 }
@@ -69,11 +79,12 @@ function stageNote(event: JobEvent): string {
             <span class="min-w-0 break-words">{{ stageLabel(stage) }}<span v-if="stage.payload.validation_path" class="ml-1 break-all font-mono text-danger">{{ stage.payload.validation_path }}</span></span>
             <span class="shrink-0 text-muted-foreground">{{ stageNote(stage) }}</span>
           </div>
-          <p v-if="run.status === 'running'" class="mt-2 text-xs text-studio-cyan">{{ t('jobUi.llmWaitingResponse') }}</p>
+          <p v-if="pendingStage" class="mt-2 text-xs text-studio-cyan">{{ pendingStage }}</p>
           <p v-if="run.errorCode" class="mt-2 break-all rounded-lg bg-danger/5 p-2 font-mono text-xs text-danger">{{ run.errorCode }}</p>
         </div>
       </template>
-      <template v-else-if="step">
+      <section v-if="step" class="mt-4 border-t pt-3">
+        <h4 v-if="run" class="mb-2 text-xs font-semibold">{{ t('jobUi.llmCheckpointProgress') }}</h4>
         <dl class="grid grid-cols-2 gap-3 text-xs">
           <div v-if="step.plugin_id"><dt class="text-muted-foreground">{{ t('jobUi.plugin') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.plugin_id ?? '—' }}</dd></div>
           <div v-if="step.plugin_id"><dt class="text-muted-foreground">{{ t('jobUi.operation') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.operation ?? '—' }}</dd></div>
@@ -83,8 +94,8 @@ function stageNote(event: JobEvent): string {
           <div v-if="step.error_code" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.executionWarning') }}</dt><dd class="mt-1 break-all font-mono text-danger">{{ step.error_code }}</dd></div>
         </dl>
         <p v-if="step.attempt_state === 'unknown_outcome'" role="alert" class="mt-3 text-xs text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
-      </template>
-      <template v-else>
+      </section>
+      <template v-if="!run && !step">
         <dl class="space-y-2 text-xs">
           <div v-if="activity.agentRunId"><dt class="text-muted-foreground">{{ t('jobUi.agentRunId') }}</dt><dd class="break-all font-mono">{{ activity.agentRunId }}</dd></div>
           <div v-if="activity.event?.payload.fork_group_id"><dt class="text-muted-foreground">{{ t('jobUi.forkGroup') }}</dt><dd class="break-all font-mono">{{ safeDetail(activity.event.payload.fork_group_id) }}</dd></div>

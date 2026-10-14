@@ -71,6 +71,9 @@ function tone(status: UnifiedActivity['status']): string {
           </div>
           <p class="mt-1 break-words text-xs text-muted-foreground">{{ activity.note }}</p>
           <p v-if="activity.llm" class="mt-2 break-all text-[11px] text-muted-foreground">{{ activity.llm.provider }} · {{ activity.llm.model ?? '—' }} · {{ activity.llm.transport ?? '—' }}</p>
+          <p v-if="activity.llm && activity.step" class="mt-2 text-[11px]" :class="activity.step.attempt_state === 'unknown_outcome' || activity.step.status === 'failed' ? 'text-danger' : 'text-muted-foreground'">
+            {{ t('jobUi.llmCheckpointProgress') }} · {{ activity.step.step_key }} · {{ activity.step.status }}<span v-if="activity.step.attempt_state === 'unknown_outcome'"> · unknown_outcome</span>
+          </p>
         </button>
       </li>
     </ol>

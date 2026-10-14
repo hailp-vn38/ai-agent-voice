@@ -88,4 +88,39 @@ describe('unified Job activity', () => {
     expect(traced.map(row => row.id)).toEqual(['llm:worker'])
   })
 
+  it.each(['running', 'failed', 'cancelled'] as const)('keeps %s Worker checkpoint separate from a completed invocation on partial pages', status => {
+    const step = { ...job.steps[0]!, plugin_id: null, status,
+      attempt_state: status === 'failed' ? 'unknown_outcome' : null }
+    const worker = { ...job, steps: [step] } as AdminJob
+    const trace = [
+      event(1, 'llm_run_started', { run_id: 'worker', role: 'worker' }, 'fetch-a'),
+      event(2, 'llm_run_finished', { run_id: 'worker', status: 'completed' }, 'fetch-a'),
+    ]
+    for (const events of [trace, [...trace, event(3, 'step_finished', { status }, 'fetch-a')]]) {
+      const rows = projectUnifiedActivity(worker, events)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({ status: 'completed', llm: { status: 'completed' }, step })
+    }
+  })
+
+  it.each(['cancelled', 'skipped'] as const)('preserves %s Steps with and without a read-view entry', status => {
+    const step = { ...job.steps[0]!, status }
+    for (const steps of [[step], []]) {
+      const view = { ...job, steps } as AdminJob
+      const started = event(1, 'step_started', {}, 'fetch-a')
+      const finished = event(2, 'step_finished', { status }, 'fetch-a')
+      for (const events of [[finished], [started, finished]]) {
+        expect(projectUnifiedActivity(view, events)[0]?.status).toBe(status)
+      }
+    }
+  })
+
+  it('uses authoritative cancellation even when an earlier finish event reports success', () => {
+    const view = { ...job, steps: [{ ...job.steps[0]!, status: 'cancelled' }] } as AdminJob
+    expect(projectUnifiedActivity(view, [
+      event(1, 'step_started', {}, 'fetch-a'),
+      event(2, 'step_finished', { status: 'succeeded' }, 'fetch-a'),
+    ])[0]?.status).toBe('cancelled')
+  })
+
 })
