@@ -84,8 +84,20 @@ _Avoid_: Plugin Package, runtime image
 _Avoid_: Docker Image Digest, mutable latest
 
 **Worker Attempt**:
-Một lần thực thi Plugin Operation có danh tính riêng; kết quả process chỉ là bằng chứng cho Job Engine.
+Một lần thực thi Operation có danh tính riêng và checkpoint bền vững; kết quả chỉ được Job Engine chấp nhận sau khi kiểm tra.
 _Avoid_: Plugin Installation, Agent Job
+
+**Core Operation**:
+Operation được sở hữu và cung cấp sẵn bởi hệ thống, không phụ thuộc Plugin Package hoặc Plugin Installation.
+_Avoid_: Plugin Installation, Built-in Voice Tool, External Plugin
+
+**External Plugin Operation**:
+Operation đến từ một Plugin Installation có thể được quản trị và cập nhật riêng với phiên bản server.
+_Avoid_: Core Operation, MCP Tool
+
+**Frozen Operation Choice**:
+Quyền lựa chọn một Operation được cố định cho một Job; tham chiếu tới bản hợp đồng Core hoặc tới đúng Plugin Installation.
+_Avoid_: live catalog entry, mutable latest, Tool Call
 
 **Plugin Activation**:
 Quyết định quản trị đưa một Plugin Installation vào trạng thái có thể được Job lựa chọn; không phải phê duyệt quyền truy cập mạng.
@@ -158,7 +170,7 @@ _Avoid_: registered Voice Agent, Job Step, LLM Run
 _Avoid_: Executable Plan, plugin call
 
 **Plugin Tool Binding**:
-Ánh xạ trong phạm vi một Sub-Agent từ tên function mà LLM thấy tới một Plugin Operation đã đóng băng và được cho phép.
+Ánh xạ trong phạm vi một Sub-Agent từ tên function mà LLM thấy tới Frozen Operation Choice đã được phép, bất kể Core hay External.
 _Avoid_: permission grant, MCP Binding, Plugin Activation
 
 **Child Completion Tool**:
