@@ -95,10 +95,37 @@ pub struct BackgroundCompletion {
     pub usage: Option<BackgroundTokenUsage>,
 }
 
+/// Strict Agent Job output; never an advisory schema.
+#[derive(Clone, Debug)]
+pub enum BackgroundMode {
+    Structured { name: String, schema: Value },
+    Tools,
+}
+
+#[derive(Clone, Debug)]
+pub enum BackgroundTurn {
+    Text(String),
+    ToolCalls(Vec<ToolCall>),
+}
+
+#[derive(Clone, Debug)]
+pub struct BackgroundTurnResult {
+    pub turn: BackgroundTurn,
+    pub usage: Option<BackgroundTokenUsage>,
+}
+
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
     fn supports_tools(&self) -> bool {
         false
+    }
+    /// Background-only strict one-shot. Unqualified adapters fail closed.
+    async fn background_turn(
+        &self,
+        _request: LlmRequest,
+        _mode: BackgroundMode,
+    ) -> Result<BackgroundTurnResult, LlmError> {
+        Err(LlmError::Rejected)
     }
     fn adapter(&self) -> &'static str;
     fn complete(&self, _: &LlmRequest) -> Result<String, LlmError> {
@@ -186,6 +213,8 @@ pub(crate) struct ConfiguredOpenAiLlm {
     model: String,
     timeout_seconds: u64,
     supports_responses: bool,
+    supports_structured_outputs: bool,
+    supports_function_calling: bool,
 }
 
 impl ConfiguredOpenAiLlm {
@@ -205,12 +234,43 @@ impl ConfiguredOpenAiLlm {
             model: model.into(),
             timeout_seconds,
             supports_responses,
+            supports_structured_outputs: false,
+            supports_function_calling: false,
         })
+    }
+    pub(crate) fn with_background_capabilities(mut self, structured: bool, tools: bool) -> Self {
+        self.supports_structured_outputs = structured;
+        self.supports_function_calling = tools;
+        self
     }
 }
 
 #[async_trait::async_trait]
 impl LlmProvider for ConfiguredOpenAiLlm {
+    async fn background_turn(
+        &self,
+        request: LlmRequest,
+        mode: BackgroundMode,
+    ) -> Result<BackgroundTurnResult, LlmError> {
+        let allowed = match &mode {
+            BackgroundMode::Structured { .. } => self.supports_structured_outputs,
+            BackgroundMode::Tools => self.supports_function_calling,
+        };
+        if !allowed {
+            return Err(LlmError::Rejected);
+        }
+        if self.supports_responses {
+            openai::responses::turn_with_usage(
+                &self.base_url, &self.model, &self.api_key,
+                self.timeout_seconds, request, mode
+            ).await
+        } else {
+            openai::chat::turn_with_usage(
+                &self.base_url, &self.model, &self.api_key,
+                self.timeout_seconds, request, mode, &[]
+            ).await
+        }
+    }
     async fn background_complete_with_usage(
         &self,
         request: LlmRequest,
