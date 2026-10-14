@@ -91,13 +91,13 @@ pub(super) async fn llm(State(state): State<AppState>, request: Request) -> Resp
     }
     let started = Instant::now();
     let input = match body.input.mode {
-        Some(mode) => ProviderTestInput::LlmStrict {text:body.input.text, mode},
+        Some(mode) => ProviderTestInput::LlmStrict {
+            text: body.input.text,
+            mode,
+        },
         None => ProviderTestInput::Llm(body.input.text),
     };
-    match runner(&state)
-        .run(body.provider, input)
-        .await
-    {
+    match runner(&state).run(body.provider, input).await {
         Ok(v) => response(v, "llm", started, None),
         Err(e) => failure(&request, e),
     }
