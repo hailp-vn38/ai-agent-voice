@@ -11,7 +11,7 @@ mod runner;
 #[cfg(test)]
 mod tests;
 pub(crate) use contracts::{compile_child_tools, normalize_tool_arguments};
-pub(crate) use dispatch::{FrozenChoice, Invocation};
+pub(crate) use dispatch::{FrozenChoice, Invocation, InvokeResult};
 
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
@@ -456,8 +456,10 @@ pub(crate) async fn frozen_choices(
     if rows.len() > 32 {
         return Err(JobError::CapacityUnavailable);
     }
-    let mut choices = Vec::new();
+    let mut choices = crate::tools::core::frozen_choices();
     for row in rows {
+        // Core is a reserved namespace, never an External Store installation.
+        if row.plugin_id == "core" { return Err(JobError::CapabilityUnavailable); }
         let manifest = row.manifest().map_err(|_| JobError::DatabaseUnavailable)?;
         for (name, operation) in manifest.operations {
             if operation.replay != "safe_read" {
