@@ -284,10 +284,24 @@ pub(crate) struct LlmRunContext {
     pub started_at: std::time::Instant,
 }
 impl LlmRunContext {
-    pub(crate) fn new(job_id: &str, step_key: Option<&str>, role: &'static str, phase: &'static str, attempt_no: u32, plan_revision: i64) -> Self {
+    pub(crate) fn new(
+        job_id: &str,
+        step_key: Option<&str>,
+        role: &'static str,
+        phase: &'static str,
+        attempt_no: u32,
+        plan_revision: i64,
+    ) -> Self {
         Self {
-            run_id: uuid::Uuid::new_v4().to_string(), job_id: job_id.to_owned(),
-            step_key: step_key.map(str::to_owned), agent_run_id: None, role, phase, attempt_no, plan_revision, started_at: std::time::Instant::now()
+            run_id: uuid::Uuid::new_v4().to_string(),
+            job_id: job_id.to_owned(),
+            step_key: step_key.map(str::to_owned),
+            agent_run_id: None,
+            role,
+            phase,
+            attempt_no,
+            plan_revision,
+            started_at: std::time::Instant::now(),
         }
     }
 }

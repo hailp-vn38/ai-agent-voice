@@ -71,19 +71,27 @@ impl Database {
             let active:i64=sqlx::query_scalar(
                 "SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND agent_run_id=? AND status='running'"
             ).bind(id).bind(agent_id).fetch_one(&mut *tx).await?;
-            if active!=1 {return Err(JobError::Terminal);}
-            let global=used["llm_calls"].as_u64().unwrap_or(0).checked_add(1)
+            if active != 1 {
+                return Err(JobError::Terminal);
+            }
+            let global = used["llm_calls"]
+                .as_u64()
+                .unwrap_or(0)
+                .checked_add(1)
                 .ok_or(JobError::CapacityUnavailable)?;
-            if global>u64::from(snapshot.limits.max_total_llm_calls) {
+            if global > u64::from(snapshot.limits.max_total_llm_calls) {
                 return Err(JobError::CapacityUnavailable);
             }
-            let agent_calls=used["agent_runs"][agent_id]["llm_calls"].as_u64()
-                .unwrap_or(0).checked_add(1).ok_or(JobError::CapacityUnavailable)?;
-            if run.role=="worker" && agent_calls>u64::from(snapshot.limits.max_worker_rounds){
+            let agent_calls = used["agent_runs"][agent_id]["llm_calls"]
+                .as_u64()
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or(JobError::CapacityUnavailable)?;
+            if run.role == "worker" && agent_calls > u64::from(snapshot.limits.max_worker_rounds) {
                 return Err(JobError::CapacityUnavailable);
             }
-            used["llm_calls"]=json!(global);
-            used["agent_runs"][agent_id]["llm_calls"]=json!(agent_calls);
+            used["llm_calls"] = json!(global);
+            used["agent_runs"][agent_id]["llm_calls"] = json!(agent_calls);
             None
         } else {
             let count = if let Some(step) = step {
@@ -91,32 +99,42 @@ impl Database {
             } else {
                 &mut used["planner_calls"]
             };
-            let next = count.as_u64().unwrap_or(0).checked_add(1)
+            let next = count
+                .as_u64()
+                .unwrap_or(0)
+                .checked_add(1)
                 .ok_or(JobError::CapacityUnavailable)?;
             let limit = if step.is_some() {
                 snapshot.limits.max_worker_rounds
             } else {
                 (1 + snapshot.limits.max_replans) * (1 + snapshot.limits.max_plan_repairs)
             };
-            if next>u64::from(limit){return Err(JobError::CapacityUnavailable);}
-            *count=json!(next);
+            if next > u64::from(limit) {
+                return Err(JobError::CapacityUnavailable);
+            }
+            *count = json!(next);
             Some(next)
         };
-        sqlx::query("UPDATE jobs SET budget_used_json=? WHERE id=? AND status IN ('planning','running')")
-            .bind(encode(&used)?).bind(id).execute(&mut *tx).await?;
-        let mut payload=json!({
+        sqlx::query(
+            "UPDATE jobs SET budget_used_json=? WHERE id=? AND status IN ('planning','running')",
+        )
+        .bind(encode(&used)?)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        let mut payload = json!({
             "run_id":run.run_id,"role":run.role,"phase":run.phase,
             "attempt_no":run.attempt_no,"plan_revision":run.plan_revision,
             "provider_ref":pin.reference,
             "provider_source":if pin.reference.starts_with("config:") {"config"} else {"database"},
             "pin_revision":pin.revision,"pin_incarnation":pin.incarnation
         });
-        if let Some(agent_id)=&run.agent_run_id {
-            payload["agent_run_id"]=json!(agent_id);
-            payload["turn_id"]=json!(run.run_id);
+        if let Some(agent_id) = &run.agent_run_id {
+            payload["agent_run_id"] = json!(agent_id);
+            payload["turn_id"] = json!(run.run_id);
         }
-        events::append(&mut tx,id,"llm_run_started",step,&payload).await?;
-        if let Some(next)=legacy_attempt {
+        events::append(&mut tx, id, "llm_run_started", step, &payload).await?;
+        if let Some(next) = legacy_attempt {
             if step.is_none() {
                 events::append(&mut tx,id,"plan_attempt",None,&json!({
                     "attempt":next,"phase":if job.plan_revision==0{"initial_or_repair"}else{"replan_or_repair"},
@@ -330,13 +348,7 @@ impl Database {
                 let pins: JobSnapshot = serde_json::from_str(&row.snapshot_json)
                     .map_err(|_| JobError::DatabaseUnavailable)?;
                 for old in [&pins.orchestrator, &pins.worker] {
-                    match providers::pin(
-                        &mut tx,
-                        config,
-                        &old.reference,
-                    )
-                    .await
-                    {
+                    match providers::pin(&mut tx, config, &old.reference).await {
                         Ok(pin) if &pin == old => {}
                         Ok(_) => {
                             status = "failed";
@@ -372,21 +384,35 @@ impl Database {
         }
         sqlx::query("UPDATE job_steps SET status=CASE WHEN status='running' THEN 'failed' ELSE 'skipped' END,attempt_state=CASE WHEN attempt_state IN ('start_requested','started') THEN 'unknown_outcome' ELSE attempt_state END,error_code=COALESCE(error_code,?),finished_at=?,updated_at=? WHERE job_id=? AND status IN ('pending','running')")
             .bind(error.unwrap_or("dependency_failed")).bind(now).bind(now).bind(id).execute(&mut *tx).await?;
-        let mode:String=sqlx::query_scalar("SELECT execution_mode FROM jobs WHERE id=?")
-            .bind(id).fetch_one(&mut *tx).await?;
-        if mode=="hierarchical_v2" {
+        let mode: String = sqlx::query_scalar("SELECT execution_mode FROM jobs WHERE id=?")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if mode == "hierarchical_v2" {
             let root:Option<String>=sqlx::query_scalar(
                 "SELECT agent_run_id FROM job_agent_runs WHERE job_id=? AND parent_agent_run_id IS NULL AND status='running'"
             ).bind(id).fetch_optional(&mut *tx).await?;
             sqlx::query("UPDATE job_agent_runs SET status=CASE WHEN status IN ('queued','running') THEN 'interrupted' ELSE status END, error_code=COALESCE(error_code,?),finished_at=COALESCE(finished_at,?) WHERE job_id=? AND status IN ('queued','running') AND parent_agent_run_id IS NOT NULL")
                 .bind(error.unwrap_or("interrupted")).bind(now).bind(id).execute(&mut *tx).await?;
-            if let Some(root)=root {
-                let run_state=if status=="succeeded"{"succeeded"}else if status=="cancelled"{"cancelled"}else{"failed"};
+            if let Some(root) = root {
+                let run_state = if status == "succeeded" {
+                    "succeeded"
+                } else if status == "cancelled" {
+                    "cancelled"
+                } else {
+                    "failed"
+                };
                 sqlx::query("UPDATE job_agent_runs SET status=?,error_code=?,finished_at=? WHERE job_id=? AND agent_run_id=? AND status='running'")
                     .bind(run_state).bind(error).bind(now).bind(id).bind(&root)
                     .execute(&mut *tx).await?;
-                events::append(&mut tx,id,"agent_run_finished",None,
-                    &json!({"agent_run_id":root,"status":run_state,"error_code":error})).await?;
+                events::append(
+                    &mut tx,
+                    id,
+                    "agent_run_finished",
+                    None,
+                    &json!({"agent_run_id":root,"status":run_state,"error_code":error}),
+                )
+                .await?;
             }
         }
         sqlx::query("UPDATE jobs SET status=?,error_code=?,result_json=?,updated_at=? WHERE id=? AND status IN ('planning','running','cancelling')")

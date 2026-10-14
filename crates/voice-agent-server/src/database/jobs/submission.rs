@@ -92,13 +92,14 @@ impl Database {
             return Err(JobError::RuntimeUnavailable);
         }
         if let Some(id) = retry_of {
-            let previous: Option<(String,String)> = sqlx::query_as("SELECT status,execution_mode FROM jobs WHERE id=?")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
+            let previous: Option<(String, String)> =
+                sqlx::query_as("SELECT status,execution_mode FROM jobs WHERE id=?")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
             match previous {
-                Some((status,mode)) if matches!(status.as_str(),"failed"|"cancelled") => {
-                    execution_mode=mode;
+                Some((status, mode)) if matches!(status.as_str(), "failed" | "cancelled") => {
+                    execution_mode = mode;
                 }
                 None => return Err(JobError::NotFound),
                 _ => return Err(JobError::Terminal),

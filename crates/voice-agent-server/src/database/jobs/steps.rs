@@ -63,10 +63,17 @@ pub(super) async fn read(
 
 impl Database {
     pub(crate) async fn job_step_outcome(
-        &self, job_id: &str, step_key: &str
+        &self,
+        job_id: &str,
+        step_key: &str,
     ) -> Result<(String, Option<String>, Option<String>), JobError> {
-        sqlx::query_as("SELECT status,result_json,error_code FROM job_steps WHERE job_id=? AND step_key=?")
-            .bind(job_id).bind(step_key)
-            .fetch_one(self.pool()).await.map_err(Into::into)
+        sqlx::query_as(
+            "SELECT status,result_json,error_code FROM job_steps WHERE job_id=? AND step_key=?",
+        )
+        .bind(job_id)
+        .bind(step_key)
+        .fetch_one(self.pool())
+        .await
+        .map_err(Into::into)
     }
 }

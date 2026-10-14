@@ -67,13 +67,13 @@ impl Database {
         let ids: Option<(Option<String>,Option<String>,Option<String>,Option<String>)> =
             sqlx::query_as("SELECT agent_run_id,agent_turn_id,plugin_id,operation FROM job_steps WHERE job_id=? AND step_key=?")
                 .bind(job_id).bind(step_key).fetch_optional(&mut *tx).await?;
-        let payload = if let Some((Some(agent_id),Some(turn_id),plugin,operation)) = ids {
+        let payload = if let Some((Some(agent_id), Some(turn_id), plugin, operation)) = ids {
             serde_json::json!({"attempt_state":"reserved","agent_run_id":agent_id,"turn_id":turn_id,
                 "plugin_id":plugin,"operation":operation})
         } else {
             serde_json::json!({"attempt_state":"reserved"})
         };
-        events::append(&mut tx,job_id,"step_started",Some(step_key),&payload).await?;
+        events::append(&mut tx, job_id, "step_started", Some(step_key), &payload).await?;
         tx.commit().await?;
         self.job_changes.publish_committed(job_id);
         Ok(())

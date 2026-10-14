@@ -30,7 +30,10 @@ impl JobEngine {
     }
     pub async fn settings(&self) -> Result<BackgroundSettings, JobError> {
         let (settings, revision) = self.database.background_settings().await?;
-        let llm_providers = self.database.background_provider_options(&self.config).await?;
+        let llm_providers = self
+            .database
+            .background_provider_options(&self.config)
+            .await?;
         Ok(BackgroundSettings {
             settings,
             revision,
@@ -54,7 +57,11 @@ impl JobEngine {
             .into_iter()
             .flatten()
         {
-            pins.push(self.database.background_provider_pin(&self.config, reference).await?);
+            pins.push(
+                self.database
+                    .background_provider_pin(&self.config, reference)
+                    .await?,
+            );
         }
         if input.enabled
             && (input.orchestrator_llm_provider.is_none() || input.worker_llm_provider.is_none())
@@ -188,22 +195,26 @@ impl JobEngine {
         if !settings.enabled {
             return Err(JobError::Disabled);
         }
-        let orchestrator = self.database.background_provider_pin(
-            &self.config,
-            settings
-                .orchestrator_llm_provider
-                .as_deref()
-                .ok_or(JobError::ProviderUnavailable)?,
-        )
-        .await?;
-        let worker = self.database.background_provider_pin(
-            &self.config,
-            settings
-                .worker_llm_provider
-                .as_deref()
-                .ok_or(JobError::ProviderUnavailable)?,
-        )
-        .await?;
+        let orchestrator = self
+            .database
+            .background_provider_pin(
+                &self.config,
+                settings
+                    .orchestrator_llm_provider
+                    .as_deref()
+                    .ok_or(JobError::ProviderUnavailable)?,
+            )
+            .await?;
+        let worker = self
+            .database
+            .background_provider_pin(
+                &self.config,
+                settings
+                    .worker_llm_provider
+                    .as_deref()
+                    .ok_or(JobError::ProviderUnavailable)?,
+            )
+            .await?;
         let pair = [orchestrator, worker];
         for pin in &pair {
             models.ready(pin, now()?.saturating_add(5)).await?;

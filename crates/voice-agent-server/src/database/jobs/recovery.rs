@@ -20,7 +20,7 @@ impl Database {
         ).fetch_all(&mut *tx).await?;
         sqlx::query("UPDATE job_agent_runs SET status='interrupted',error_code='interrupted',finished_at=? WHERE status IN ('queued','running') AND job_id IN (SELECT id FROM jobs WHERE status IN ('failed','cancelled'))")
             .bind(now).execute(&mut *tx).await?;
-        for (job_id,run_id) in interrupted {
+        for (job_id, run_id) in interrupted {
             events::append(&mut tx,&job_id,"agent_run_finished",None,
                 &serde_json::json!({"agent_run_id":run_id,"status":"interrupted","error_code":"interrupted"})).await?;
         }

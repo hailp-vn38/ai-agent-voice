@@ -16,14 +16,16 @@ pub(super) async fn execute(engine: Arc<JobEngine>, id: String, cancellation: Ca
     use futures_util::FutureExt;
     let outcome = std::panic::AssertUnwindSafe(async {
         match engine.get(&id).await?.execution_mode.as_str() {
-            "hierarchical_v2" => super::agent_loop::run_root(&engine, &id, cancellation.clone()).await,
+            "hierarchical_v2" => {
+                super::agent_loop::run_root(&engine, &id, cancellation.clone()).await
+            }
             "dag_v1" => run(&engine, &id, cancellation.clone()).await,
             _ => Err(JobError::InvalidPlan),
         }
     })
-        .catch_unwind()
-        .await
-        .unwrap_or(Err(JobError::RuntimeUnavailable));
+    .catch_unwind()
+    .await
+    .unwrap_or(Err(JobError::RuntimeUnavailable));
     if let Err(error) = outcome {
         let code = if cancellation.is_cancelled() && error == JobError::Cancelled {
             if let Ok(row) = engine.database.job_row(&id).await {
@@ -168,10 +170,17 @@ async fn run(
                     .reserve_plugin_attempt(id, &step.step_key, &attempt)
                     .await?;
                 let run = LlmRunContext::new(
-                    id, Some(&step.step_key), "worker", "step", 1,
+                    id,
+                    Some(&step.step_key),
+                    "worker",
+                    "step",
+                    1,
                     engine.get(id).await?.plan_revision,
                 );
-                engine.database.reserve_model_call(&run, &job.snapshot.worker).await?;
+                engine
+                    .database
+                    .reserve_model_call(&run, &job.snapshot.worker)
+                    .await?;
                 engine
                     .database
                     .mark_llm_started(id, &step.step_key, &attempt)
@@ -191,10 +200,17 @@ async fn run(
                 Ok(value)
             });
                 finish_llm_run(
-                    engine, &run,
-                    if outcome.is_ok() { "completed" } else { "failed" },
-                    outcome.as_ref().err().map(|e| e.code()), None,
-                ).await;
+                    engine,
+                    &run,
+                    if outcome.is_ok() {
+                        "completed"
+                    } else {
+                        "failed"
+                    },
+                    outcome.as_ref().err().map(|e| e.code()),
+                    None,
+                )
+                .await;
                 engine
                     .database
                     .checkpoint_llm_step(
@@ -205,7 +221,8 @@ async fn run(
                     )
                     .await?;
             }
-            let (status, result, error) = engine.database.job_step_outcome(id, &step.step_key).await?;
+            let (status, result, error) =
+                engine.database.job_step_outcome(id, &step.step_key).await?;
             if status == "succeeded" {
                 results.insert(
                     step.step_key.clone(),
@@ -282,11 +299,16 @@ async fn propose(
     for attempt in 0..=job.snapshot.limits.max_plan_repairs {
         ensure_live(engine, id, cancellation).await?;
         let phase = match (previous.is_some(), attempt) {
-            (false, 0) => "initial", (false, _) => "repair",
-            (true, 0) => "replan", (true, _) => "repair",
+            (false, 0) => "initial",
+            (false, _) => "repair",
+            (true, 0) => "replan",
+            (true, _) => "repair",
         };
         let run = LlmRunContext::new(id, None, "planner", phase, attempt + 1, job.plan_revision);
-        engine.database.reserve_model_call(&run, &job.snapshot.orchestrator).await?;
+        engine
+            .database
+            .reserve_model_call(&run, &job.snapshot.orchestrator)
+            .await?;
         let raw = models
             .complete_traced(
                 &run,
@@ -335,13 +357,23 @@ async fn propose(
         let outcome =
             proposal.and_then(|proposal| PlanCompiler::compile(proposal, job, contracts, previous));
         if let Err(error) = &outcome {
-            engine.database.reject_plan(id, attempt + 1, error, &run.run_id).await?;
+            engine
+                .database
+                .reject_plan(id, attempt + 1, error, &run.run_id)
+                .await?;
         }
-        finish_llm_run(engine, &run,
-            if outcome.is_ok() { "completed" } else { "failed" },
+        finish_llm_run(
+            engine,
+            &run,
+            if outcome.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
             outcome.as_ref().err().map(|error| error.code),
             outcome.as_ref().err().map(|error| error.path.as_str()),
-        ).await;
+        )
+        .await;
         match outcome {
             Ok(plan) => return Ok(plan),
             Err(error) if error.repairable() && attempt < job.snapshot.limits.max_plan_repairs => {
