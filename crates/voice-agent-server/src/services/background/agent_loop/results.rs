@@ -29,6 +29,7 @@ pub(super) fn bounded_result(value: &Value) -> Result<(), JobError> {
         Ok(())
     }
 }
+#[cfg(test)]
 pub(super) fn verified_coverage(job: &JobView) -> Result<(&'static str, Value), JobError> {
     let verified = super::super::coverage::completed_web_sources(job, None);
     verified_coverage_with_sources(job, verified)
