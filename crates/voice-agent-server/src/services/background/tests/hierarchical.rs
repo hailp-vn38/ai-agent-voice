@@ -711,7 +711,16 @@ async fn invalid_native_child_calls_never_create_plugin_steps() {
                 .iter()
                 .any(|e| e.event_type == "agent_decision_rejected"
                     && e.payload["validation_code"] == code),
-            "Expected bounded rejection for {kind:?}: {code}"
+            "Expected bounded rejection for {kind:?}: {code}; job_error={:?}; runs={:?}; events={:?}",
+            job.error_code,
+            job.agent_runs
+                .iter()
+                .map(|r| (&r.role, &r.status, &r.error_code))
+                .collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|e| (&e.event_type, &e.payload))
+                .collect::<Vec<_>>()
         );
         assert!(!events.iter().any(|e| e.event_type == "plugin_step_created"));
         runtime.shutdown().await;
