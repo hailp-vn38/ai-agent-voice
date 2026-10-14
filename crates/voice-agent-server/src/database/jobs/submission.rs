@@ -55,7 +55,7 @@ impl Database {
         #[cfg(test)]
         let mut execution_mode = test_execution_mode.unwrap_or("dag_v1").to_owned();
         #[cfg(not(test))]
-        let mut execution_mode = "hierarchical_v2".to_owned();
+        let mut execution_mode = "hierarchical_v3".to_owned();
         let request_json = encode(&request)?;
         if request_json.len() > 16384 {
             return Err(JobError::InvalidArguments);
@@ -130,6 +130,14 @@ impl Database {
         .await?;
         if validated_pair.is_some_and(|pair| pair[0] != orchestrator || pair[1] != worker) {
             return Err(JobError::ConfigurationChanged);
+        }
+        if execution_mode == "hierarchical_v3" {
+            providers::require_hybrid_capability(
+                &mut tx,config,&orchestrator.reference,"supports_function_calling"
+            ).await?;
+            providers::require_hybrid_capability(
+                &mut tx,config,&worker.reference,"supports_function_calling"
+            ).await?;
         }
         if execution_mode == "hierarchical_v2" {
             providers::require_hybrid_capability(
