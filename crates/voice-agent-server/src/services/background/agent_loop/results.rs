@@ -146,7 +146,7 @@ pub(super) struct ChildOutcome<'a> {
     pub(super) error_code: Option<&'a str>,
 }
 impl<'a> ChildOutcome<'a> {
-    pub(super) fn from_run(session_id: &'a str, child: &'a AgentRunView, job: &JobView) -> Result<Self, JobError> {
+    pub(super) fn from_run(session_id: &'a str, child: &'a AgentRunView, verified_source_urls: Vec<String>) -> Result<Self, JobError> {
         let result: Option<ChildResult> = child
             .result
             .clone()
@@ -170,9 +170,7 @@ impl<'a> ChildOutcome<'a> {
             output: result.summary,
             findings: result.findings,
             artifact_refs: result.evidence_refs,
-            verified_source_urls: super::super::coverage::completed_web_sources(
-                job, Some(&child.agent_run_id)
-            ),
+            verified_source_urls,
             unresolved: result.unresolved,
             error_code: child.error_code.as_deref(),
         })
