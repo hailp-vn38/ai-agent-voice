@@ -116,6 +116,28 @@ impl OpenCodeFreeProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for OpenCodeFreeProvider {
+    async fn background_turn(
+        &self,
+        request: LlmRequest,
+        mode: super::BackgroundMode,
+    ) -> Result<super::BackgroundTurnResult, LlmError> {
+        let qualified = match &mode {
+            super::BackgroundMode::Structured { .. } => self.supports_structured_outputs,
+            super::BackgroundMode::Tools => self.supports_function_calling,
+        };
+        if !qualified { return Err(LlmError::Rejected); }
+        if self.supports_responses {
+            super::openai::responses::turn_with_usage(
+                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds, request, mode
+            ).await
+        } else {
+            let headers = <ZenChat as OpenAIProviderConfig>::custom_headers().unwrap_or_default();
+            super::openai::chat::turn_with_usage(
+                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds,
+                request, mode, &headers
+            ).await
+        }
+    }
     async fn background_complete_with_usage(
         &self,
         request: LlmRequest,
