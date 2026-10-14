@@ -5,7 +5,9 @@ use super::{
     plan::{JobPlan, PlanStep},
     plugins::FrozenChoice,
 };
-use crate::providers::llm::{BackgroundMode, BackgroundTurn, ChatMessage, LlmRequest, ToolDefinition};
+use crate::providers::llm::{
+    BackgroundMode, BackgroundTurn, ChatMessage, LlmRequest, ToolDefinition,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -342,14 +344,27 @@ async fn model_decision(
         tools: Vec::new(),
     };
     let response = if let Some(schema) = schema {
-        models.turn_traced(context,pin,request,
-            BackgroundMode::Structured {name:"root_decision".into(),schema},
-            deadline,cancellation.clone()).await.and_then(|result| match result.turn {
+        models
+            .turn_traced(
+                context,
+                pin,
+                request,
+                BackgroundMode::Structured {
+                    name: "root_decision".into(),
+                    schema,
+                },
+                deadline,
+                cancellation.clone(),
+            )
+            .await
+            .and_then(|result| match result.turn {
                 BackgroundTurn::Text(text) => Ok(text),
                 _ => Err(JobError::InvalidPlan),
             })
     } else {
-        models.complete_traced(context,pin,request,deadline,cancellation.clone()).await
+        models
+            .complete_traced(context, pin, request, deadline, cancellation.clone())
+            .await
     };
     let metadata = json!({"status":if response.is_ok(){"completed"}else{"failed"},
         "error_code":response.as_ref().err().map(|e|e.code()),
@@ -676,7 +691,8 @@ async fn finish_child(
 fn child_completion_tool() -> ToolDefinition {
     ToolDefinition {
         name: "submit_result".into(),
-        description: "Finish this Sub-Agent with a structured summary and evidence references.".into(),
+        description: "Finish this Sub-Agent with a structured summary and evidence references."
+            .into(),
         parameters: json!({"type":"object","properties":{
             "status":{"type":"string","enum":["completed"]},
             "summary":{"type":"string"},
@@ -694,94 +710,164 @@ async fn run_child(
     child: &AgentRunView,
     cancellation: CancellationToken,
 ) -> Result<ChildResult, JobError> {
-    engine.database.start_child_run(&job.id,&child.agent_run_id).await?;
+    engine
+        .database
+        .start_child_run(&job.id, &child.agent_run_id)
+        .await?;
     let choices: Vec<FrozenChoice> = serde_json::from_value(job.plugin_choices.clone())
         .map_err(|_| JobError::DatabaseUnavailable)?;
     let mut pinned = Vec::new();
     for allowed in &child.allowed_operations {
-        let choice = choices.iter().find(|c| format!("{}.{}",c.plugin_id,c.operation)==*allowed)
+        let choice = choices
+            .iter()
+            .find(|c| format!("{}.{}", c.plugin_id, c.operation) == *allowed)
             .ok_or(JobError::CapabilityUnavailable)?;
-        let contract = engine.plugins.operation_contract(choice).await.map_err(JobError::from_plugin)?;
-        pinned.push((choice.clone(),contract));
+        let contract = engine
+            .plugins
+            .operation_contract(choice)
+            .await
+            .map_err(JobError::from_plugin)?;
+        pinned.push((choice.clone(), contract));
     }
-    let (mut tools,bindings) = super::plugins::compile_child_tools(&pinned)?;
+    let (mut tools, bindings) = super::plugins::compile_child_tools(&pinned)?;
     tools.push(child_completion_tool());
-    if serde_json::to_string(&tools.iter().map(|t| (&t.name,&t.description,&t.parameters)).collect::<Vec<_>>())
-        .map_or(true,|s|s.len()>16384) {
+    if serde_json::to_string(
+        &tools
+            .iter()
+            .map(|t| (&t.name, &t.description, &t.parameters))
+            .collect::<Vec<_>>(),
+    )
+    .map_or(true, |s| s.len() > 16384)
+    {
         return Err(JobError::CapacityUnavailable);
     }
     let mut messages = vec![
-        ChatMessage::System {content:CHILD_INSTRUCTION.into()},
-        ChatMessage::User {content:json!({"goal":child.goal_excerpt,"role":child.role,
-            "allowed_operations":child.allowed_operations}).to_string()},
+        ChatMessage::System {
+            content: CHILD_INSTRUCTION.into(),
+        },
+        ChatMessage::User {
+            content: json!({"goal":child.goal_excerpt,"role":child.role,
+            "allowed_operations":child.allowed_operations})
+            .to_string(),
+        },
     ];
     let mut attempt = 0u32;
     let mut repairs = 0u32;
     let mut used_call_ids = std::collections::HashSet::new();
     for _ in 0..job.snapshot.limits.max_worker_rounds {
-        if cancellation.is_cancelled() { return Err(JobError::Cancelled); }
+        if cancellation.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
         attempt += 1;
-        let context = run_context(&job.id,&child.agent_run_id,"worker",attempt);
+        let context = run_context(&job.id, &child.agent_run_id, "worker", attempt);
         let models = engine.models.as_ref().ok_or(JobError::RuntimeUnavailable)?;
-        engine.database.reserve_model_call(&context,&job.snapshot.worker).await?;
-        let deadline = job.deadline_at.min(super::engine::now()?
-            .saturating_add(i64::from(job.snapshot.limits.step_timeout_seconds)));
-        let answer = models.turn_traced(&context,&job.snapshot.worker,LlmRequest {
-            messages:messages.clone(),tools:tools.clone()
-        },BackgroundMode::Tools,deadline,cancellation.clone()).await;
-        engine.database.record_llm_activity(&context,"llm_run_finished",json!({
-            "status":if answer.is_ok(){"completed"}else{"failed"},
-            "error_code":answer.as_ref().err().map(|e|e.code()),
-            "duration_ms":context.started_at.elapsed().as_millis() as u64,
-        })).await?;
+        engine
+            .database
+            .reserve_model_call(&context, &job.snapshot.worker)
+            .await?;
+        let deadline = job.deadline_at.min(
+            super::engine::now()?
+                .saturating_add(i64::from(job.snapshot.limits.step_timeout_seconds)),
+        );
+        let answer = models
+            .turn_traced(
+                &context,
+                &job.snapshot.worker,
+                LlmRequest {
+                    messages: messages.clone(),
+                    tools: tools.clone(),
+                },
+                BackgroundMode::Tools,
+                deadline,
+                cancellation.clone(),
+            )
+            .await;
+        engine
+            .database
+            .record_llm_activity(
+                &context,
+                "llm_run_finished",
+                json!({
+                    "status":if answer.is_ok(){"completed"}else{"failed"},
+                    "error_code":answer.as_ref().err().map(|e|e.code()),
+                    "duration_ms":context.started_at.elapsed().as_millis() as u64,
+                }),
+            )
+            .await?;
         let calls = match answer?.turn {
-            BackgroundTurn::ToolCalls(calls) if calls.len()==1 => calls,
+            BackgroundTurn::ToolCalls(calls) if calls.len() == 1 => calls,
             _ => {
                 engine.database.record_agent_decision(&context,false,
                     json!({"validation_code":"tool_call_count","validation_path":"$.tool_calls"})).await?;
                 repairs += 1;
-                if repairs > job.snapshot.limits.max_plan_repairs {return Err(JobError::InvalidPlan);}
-                messages.push(ChatMessage::User{content:"Return exactly one function call from the allowed tools.".into()});
+                if repairs > job.snapshot.limits.max_plan_repairs {
+                    return Err(JobError::InvalidPlan);
+                }
+                messages.push(ChatMessage::User {
+                    content: "Return exactly one function call from the allowed tools.".into(),
+                });
                 continue;
             }
         };
         let call = calls.into_iter().next().expect("checked count");
         let mut problem: Option<&str> = None;
-        if call.id.is_empty() || call.id.len()>128 || !used_call_ids.insert(call.id.clone()) {
-            problem=Some("invalid_tool_call_id");
+        if call.id.is_empty() || call.id.len() > 128 || !used_call_ids.insert(call.id.clone()) {
+            problem = Some("invalid_tool_call_id");
         }
-        if call.arguments.to_string().len()>16384 || !call.arguments.is_object()
-            || super::plan::forbidden(&call.arguments) {
-            problem=Some("invalid_arguments_schema");
+        if call.arguments.to_string().len() > 16384
+            || !call.arguments.is_object()
+            || super::plan::forbidden(&call.arguments)
+        {
+            problem = Some("invalid_arguments_schema");
         }
-        if call.name=="submit_result" {
-            let result: Result<ChildResult,_> = serde_json::from_value(call.arguments.clone());
+        if call.name == "submit_result" {
+            let result: Result<ChildResult, _> = serde_json::from_value(call.arguments.clone());
             if let Ok(result) = result {
-                if problem.is_none() && result.status=="completed" &&
-                    bounded_result(&serde_json::to_value(&result).map_err(|_|JobError::InvalidPlan)?).is_ok() {
+                if problem.is_none()
+                    && result.status == "completed"
+                    && bounded_result(
+                        &serde_json::to_value(&result).map_err(|_| JobError::InvalidPlan)?,
+                    )
+                    .is_ok()
+                {
                     let current = engine.get(&job.id).await?;
-                    if result.evidence_refs.iter().all(|id|
-                        current.artifacts.iter().any(|artifact| &artifact.id==id)) {
-                        engine.database.record_agent_decision(&context,true,json!({
-                            "action":"finish","attempt_no":attempt
-                        })).await?;
+                    if result
+                        .evidence_refs
+                        .iter()
+                        .all(|id| current.artifacts.iter().any(|artifact| &artifact.id == id))
+                    {
+                        engine
+                            .database
+                            .record_agent_decision(
+                                &context,
+                                true,
+                                json!({
+                                    "action":"finish","attempt_no":attempt
+                                }),
+                            )
+                            .await?;
                         return Ok(result);
                     }
                 }
             }
-            problem=Some("invalid_child_result");
+            problem = Some("invalid_child_result");
         } else if !bindings.contains_key(&call.name) {
-            problem=Some("unknown_operation");
+            problem = Some("unknown_operation");
         }
         let mut arguments = call.arguments.clone();
         if problem.is_none() {
-            let (_choice,contract) = bindings.get(&call.name).ok_or(JobError::CapabilityUnavailable)?;
-            super::plugins::normalize_tool_arguments(&contract["input_schema"],&mut arguments);
-            if !arguments.is_object() || arguments.to_string().len()>16384
+            let (_choice, contract) = bindings
+                .get(&call.name)
+                .ok_or(JobError::CapabilityUnavailable)?;
+            super::plugins::normalize_tool_arguments(&contract["input_schema"], &mut arguments);
+            if !arguments.is_object()
+                || arguments.to_string().len() > 16384
                 || super::plan::forbidden(&arguments)
                 || !jsonschema::validator_for(&contract["input_schema"])
-                    .map_err(|_|JobError::InvalidPlan)?.is_valid(&arguments) {
-                problem=Some("invalid_arguments_schema");
+                    .map_err(|_| JobError::InvalidPlan)?
+                    .is_valid(&arguments)
+            {
+                problem = Some("invalid_arguments_schema");
             }
         }
         if let Some(code) = problem {
@@ -789,43 +875,80 @@ async fn run_child(
                 "validation_code":code,"validation_path":"$.tool_calls[0]","attempt_no":attempt,
             })).await?;
             repairs += 1;
-            if repairs>job.snapshot.limits.max_plan_repairs {return Err(JobError::InvalidPlan);}
+            if repairs > job.snapshot.limits.max_plan_repairs {
+                return Err(JobError::InvalidPlan);
+            }
             // A rejected function with a valid ID is answered by a matching error result.
-            if code!="invalid_tool_call_id" && !call.id.is_empty() && call.id.len()<=128 {
-                messages.push(ChatMessage::AssistantToolCalls{calls:vec![call.clone()]});
-                messages.push(ChatMessage::ToolResult {tool_call_id:call.id,
-                    content:json!({"ok":false,"error_code":code}).to_string()});
+            if code != "invalid_tool_call_id" && !call.id.is_empty() && call.id.len() <= 128 {
+                messages.push(ChatMessage::AssistantToolCalls {
+                    calls: vec![call.clone()],
+                });
+                messages.push(ChatMessage::ToolResult {
+                    tool_call_id: call.id,
+                    content: json!({"ok":false,"error_code":code}).to_string(),
+                });
             } else {
-                messages.push(ChatMessage::User{content:format!("Invalid function call: {code}")});
+                messages.push(ChatMessage::User {
+                    content: format!("Invalid function call: {code}"),
+                });
             }
             continue;
         }
-        repairs=0;
-        let (choice,contract) = bindings.get(&call.name).ok_or(JobError::CapabilityUnavailable)?;
-        engine.database.record_agent_decision(&context,true,json!({
-            "action":"tool_call","attempt_no":attempt
-        })).await?;
-        let turn_id = last_turn_id(engine,&job.id,&child.agent_run_id).await?;
-        let key = engine.database.insert_dynamic_step(
-            &job.id,&child.agent_run_id,&turn_id,choice,&arguments,&contract["output_schema"]
-        ).await?;
-        let after = engine.execute_plugin_step_cancel(
-            &job.id,&key,choice,arguments,cancellation.clone()
-        ).await?;
-        if after.steps.iter().find(|step|step.step_key==key)
-            .is_some_and(|step|step.attempt_state.as_deref()==Some("unknown_outcome")) {
+        repairs = 0;
+        let (choice, contract) = bindings
+            .get(&call.name)
+            .ok_or(JobError::CapabilityUnavailable)?;
+        engine
+            .database
+            .record_agent_decision(
+                &context,
+                true,
+                json!({
+                    "action":"tool_call","attempt_no":attempt
+                }),
+            )
+            .await?;
+        let turn_id = last_turn_id(engine, &job.id, &child.agent_run_id).await?;
+        let key = engine
+            .database
+            .insert_dynamic_step(
+                &job.id,
+                &child.agent_run_id,
+                &turn_id,
+                choice,
+                &arguments,
+                &contract["output_schema"],
+            )
+            .await?;
+        let after = engine
+            .execute_plugin_step_cancel(&job.id, &key, choice, arguments, cancellation.clone())
+            .await?;
+        if after
+            .steps
+            .iter()
+            .find(|step| step.step_key == key)
+            .is_some_and(|step| step.attempt_state.as_deref() == Some("unknown_outcome"))
+        {
             return Err(JobError::RuntimeUnavailable);
         }
-        let (status,result,error) = engine.database.job_step_outcome(&job.id,&key).await?;
-        let excerpt = result.as_ref().map(|s|s.chars().take(3500).collect::<String>());
-        messages.push(ChatMessage::AssistantToolCalls {calls:vec![call.clone()]});
-        messages.push(ChatMessage::ToolResult {tool_call_id:call.id,content:json!({
-            "status":status,"error_code":error,"result_excerpt":excerpt,
-        }).to_string()});
+        let (status, result, error) = engine.database.job_step_outcome(&job.id, &key).await?;
+        let excerpt = result
+            .as_ref()
+            .map(|s| s.chars().take(3500).collect::<String>());
+        messages.push(ChatMessage::AssistantToolCalls {
+            calls: vec![call.clone()],
+        });
+        messages.push(ChatMessage::ToolResult {
+            tool_call_id: call.id,
+            content: json!({
+                "status":status,"error_code":error,"result_excerpt":excerpt,
+            })
+            .to_string(),
+        });
         // Keep initial instruction/goal and at most three complete call/result pairs.
-        if messages.len()>8 {
-            let excess = messages.len()-8;
-            messages.drain(2..2+excess);
+        if messages.len() > 8 {
+            let excess = messages.len() - 8;
+            messages.drain(2..2 + excess);
         }
     }
     Err(JobError::CapacityUnavailable)
