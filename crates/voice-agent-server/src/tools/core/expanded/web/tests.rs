@@ -40,6 +40,7 @@ fn strips_active_html_and_extracts_title() {
     let (title, text) = html_plain_text(
         "<html><head><title>A &amp; B</title><script>alert(1)</script></head>\
          <body><h1>Hi &lt;there&gt;</h1><p>World</p></body></html>",
+        true,
     )
     .unwrap();
     assert_eq!(title, "A & B");
@@ -54,6 +55,7 @@ fn article_selection_ignores_script_markup_and_handles_nesting() {
          <!-- <article>COMMENT</article> -->\
          <article><p>INTRO</p><article><p>NESTED</p></article><p>END</p></article>\
          <article><script>padding padding padding padding</script>Teaser</article>",
+        true,
     )
     .unwrap();
     assert_eq!(text, "INTRO NESTED END");
@@ -67,10 +69,10 @@ fn falls_back_to_page_for_empty_or_incomplete_articles() {
         "<p>KEEP</p><article>",
         "<article/><p>KEEP</p>",
     ] {
-        let (_, text) = html_plain_text(body).unwrap();
+        let (_, text) = html_plain_text(body, true).unwrap();
         assert_eq!(text, "KEEP");
     }
-    let (_, text) = html_plain_text("<p>BEFORE</p><article><p>PARTIAL</p>").unwrap();
+    let (_, text) = html_plain_text("<p>BEFORE</p><article><p>PARTIAL</p>", true).unwrap();
     assert_eq!(text, "BEFORE PARTIAL");
 }
 
@@ -79,11 +81,12 @@ fn decodes_full_named_and_numeric_entities() {
     let (_, text) = html_plain_text(
         "<p>B&oacute;ng đ&aacute; &amp; &#38; &#x27; &Ocirc; &ocirc; \
          &mdash; &hellip; &euro;</p>",
+        true,
     )
     .unwrap();
     assert_eq!(text, "Bóng đá & & ' Ô ô — … €");
     // Không decode kép: &amp;lt; -> &lt;, không phải <.
-    let (_, text) = html_plain_text("<p>&amp;lt;tag&gt;</p>").unwrap();
+    let (_, text) = html_plain_text("<p>&amp;lt;tag&gt;</p>", true).unwrap();
     assert_eq!(text, "&lt;tag>");
 }
 
@@ -96,12 +99,12 @@ fn does_not_leak_truncated_style_block() {
          <body><p>ARTICLE_SENTINEL</p></body></html>"
     );
     // Full phải lấy được bài.
-    let (_, text) = html_plain_text(&full).unwrap();
+    let (_, text) = html_plain_text(&full, true).unwrap();
     assert!(text.contains("ARTICLE_SENTINEL"));
     assert!(!text.contains('x'));
     // Lát cắt 64 KB (giữa <style>) không được rò CSS ra text.
     let truncated = String::from_utf8_lossy(&full.as_bytes()[..65_536]).into_owned();
-    let (_, text) = html_plain_text(&truncated).unwrap();
+    let (_, text) = html_plain_text(&truncated, true).unwrap();
     assert!(
         !text.contains('x'),
         "CSS bị rò ra text: {}",
@@ -117,6 +120,7 @@ fn does_not_cross_mismatched_close_tags() {
     let (_, text) = html_plain_text(
         "<script>var a = 1;</style>LEAK</scriptfoo></script><style>.a{color:red}</style>\
          <p>KEEP</p>",
+        true,
     )
     .unwrap();
     assert_eq!(text, "KEEP");
@@ -127,6 +131,7 @@ fn strips_tag_with_gt_inside_quoted_attribute() {
     // Case thật trên 24h: <path id="<Compound Path>" fill-rule=...>
     let (_, text) = html_plain_text(
         r#"<svg><path id="<Compound Path>" fill-rule="evenodd" d="m1 2"></path></svg><p>KEEP</p>"#,
+        true,
     )
     .unwrap();
     assert_eq!(text, "KEEP");
@@ -135,13 +140,14 @@ fn strips_tag_with_gt_inside_quoted_attribute() {
 
 #[test]
 fn strips_unclosed_script_to_eof() {
-    let (_, text) = html_plain_text("<p>BEFORE</p><script>var x = 1; // không đóng").unwrap();
+    let (_, text) = html_plain_text("<p>BEFORE</p><script>var x = 1; // không đóng", true).unwrap();
     assert_eq!(text, "BEFORE");
 }
 
 #[test]
 fn strips_comments_and_keeps_separate_words() {
-    let (_, text) = html_plain_text("<p>foo</p><!-- comment --><p>bar</p><div>baz</div>").unwrap();
+    let (_, text) =
+        html_plain_text("<p>foo</p><!-- comment --><p>bar</p><div>baz</div>", true).unwrap();
     assert_eq!(text, "foo bar baz");
 }
 
@@ -198,4 +204,92 @@ async fn reports_body_limit_without_leaking_cut_style() {
     let result = result.unwrap();
     assert_eq!(result["text"], "KEEP");
     assert_eq!(result["truncated"], true);
+    assert_eq!(result["body_limit_reached"], true);
+    assert_eq!(result["next_offset"], Value::Null);
+}
+
+#[tokio::test]
+async fn paginates_unicode_to_end_for_fetch_and_both_extract_modes() {
+    let body =
+        "<title>T</title><nav>Menu</nav><article>Chào 😀 thế giới!</article><footer>End</footer>";
+    let (url, server) = serve_html(body.into()).await;
+    for (extract, mode, expected) in [
+        (false, "article", body),
+        (true, "article", "Chào 😀 thế giới!"),
+        (true, "page", "Menu Chào 😀 thế giới! End"),
+    ] {
+        let operation = if extract { "web.extract" } else { "web.fetch" };
+        let choice = crate::tools::core::decode(&json!({
+            "kind":"core","plugin_id":"core","operation":operation,"contract_revision":"1"
+        }))
+        .unwrap();
+        let schema = crate::tools::core::contract(&choice).unwrap();
+        let validator = jsonschema::validator_for(&schema["output_schema"]).unwrap();
+        let mut offset = 0;
+        let mut joined = String::new();
+        loop {
+            let mut args = json!({"url":url,"offset":offset,"max_chars":3});
+            if extract {
+                args["mode"] = json!(mode);
+            }
+            let page = execute(&args, extract).await.unwrap();
+            assert!(validator.is_valid(&page));
+            assert_eq!(page["offset"], offset);
+            assert_eq!(page["body_limit_reached"], false);
+            let text = page["text"].as_str().unwrap();
+            assert!(text.chars().count() <= 3);
+            joined.push_str(text);
+            match page["next_offset"].as_u64() {
+                Some(next) => {
+                    assert_eq!(next, offset + text.chars().count() as u64);
+                    assert!(next > offset);
+                    assert_eq!(page["truncated"], true);
+                    offset = next;
+                }
+                None => {
+                    assert_eq!(page["truncated"], false);
+                    break;
+                }
+            }
+        }
+        assert_eq!(joined, expected);
+        for offset in [expected.chars().count(), expected.chars().count() + 10] {
+            let mut args = json!({"url":url,"offset":offset});
+            if extract {
+                args["mode"] = json!(mode);
+            }
+            let page = execute(&args, extract).await.unwrap();
+            assert_eq!(page["text"], "");
+            assert_eq!(page["next_offset"], Value::Null);
+            assert_eq!(page["truncated"], false);
+        }
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn default_page_limit_can_be_resumed_and_empty_page_is_exhausted() {
+    let body = "é".repeat(TEXT_LIMIT + 1);
+    let (url, server) = serve_html(body.clone()).await;
+    for extract in [false, true] {
+        let page = execute(&json!({"url":url}), extract).await.unwrap();
+        assert_eq!(page["text"].as_str().unwrap().chars().count(), TEXT_LIMIT);
+        assert_eq!(page["offset"], 0);
+        assert_eq!(page["next_offset"], TEXT_LIMIT);
+        let last = execute(&json!({"url":url,"offset":page["next_offset"]}), extract)
+            .await
+            .unwrap();
+        assert_eq!(last["text"], "é");
+        assert_eq!(last["next_offset"], Value::Null);
+        assert_eq!(last["truncated"], false);
+    }
+    server.abort();
+    let (url, server) = serve_html(String::new()).await;
+    for extract in [false, true] {
+        let page = execute(&json!({"url":url}), extract).await.unwrap();
+        assert_eq!(page["text"], "");
+        assert_eq!(page["next_offset"], Value::Null);
+        assert_eq!(page["truncated"], false);
+    }
+    server.abort();
 }

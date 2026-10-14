@@ -22,15 +22,20 @@ pub(super) fn coverage(operation: &str) -> (Vec<&'static str>, Vec<&'static str>
 pub(super) fn contract(operation: &str) -> Result<Value, PluginError> {
     let (description, input_schema, output_schema) = match operation {
         "web.extract" => (
-            "Fetch an HTTP(S) page and extract bounded plain-text title and body.",
+            "Extract HTTP(S) plain text in pages; select article or page mode and continue with next_offset until null.",
             json!({"type":"object","properties":{
                 "url":{"type":"string","minLength":8,"maxLength":2048},
+                "mode":{"type":"string","enum":["article","page"],"description":"Default article: prefer the largest article, falling back to page text. Page: extract all page text."},
+                "offset":{"type":"integer","minimum":0,"maximum":2097152,"description":"Unicode character offset; default 0. Use next_offset to continue with the same URL and mode."},
                 "max_chars":{"type":"integer","minimum":1,"maximum":16000}
             },"required":["url"],"additionalProperties":false}),
             json!({"type":"object","properties":{
                 "url":{"type":"string"},"title":{"type":"string"},
                 "text":{"type":"string"},"status":{"type":"integer"},
                 "content_type":{"type":"string"},"truncated":{"type":"boolean"},
+                "offset":{"type":"integer","minimum":0},
+                "next_offset":{"type":["integer","null"],"minimum":0,"description":"Next Unicode character offset, or null when downloaded text is exhausted."},
+                "body_limit_reached":{"type":"boolean","description":"The 2 MiB HTTP body cap was reached; text beyond this cap is unavailable."},
                 "provenance":{"type":"array","items":{"type":"object"}}
             },"required":["url","title","text","status","content_type","truncated","provenance"],
             "additionalProperties":false}),

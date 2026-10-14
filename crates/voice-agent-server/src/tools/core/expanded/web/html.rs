@@ -98,13 +98,13 @@ fn extract_title(html: &str) -> String {
     String::new()
 }
 
-/// Strip markup thành text, ưu tiên article có nhiều text nhất nếu có.
+/// Strip markup thành text, ưu tiên article có nhiều text nhất khi được yêu cầu.
 /// Các block script/style/noscript/template/
 /// title bị bỏ theo đúng tag đóng của chính nó; block không có tag đóng
 /// (fetch bị cắt giữa chừng) thì bỏ tới EOF thay vì rò nội dung ra text.
 /// Tag thường được bỏ tôn trọng quote nên `id="<Compound Path>"` không làm
 /// lệch. Mỗi tag được thay bằng một khoảng trắng để không dính chữ.
-fn strip_to_plain_text(html: &str) -> String {
+fn strip_to_plain_text(html: &str, prefer_article: bool) -> String {
     let bytes = html.as_bytes();
     let mut out = String::with_capacity(html.len().min(1 << 20));
     let mut i = 0;
@@ -218,20 +218,23 @@ fn strip_to_plain_text(html: &str) -> String {
         }
     }
     match best_article {
-        Some(range) if article_depth == 0 => out[range].to_owned(),
+        Some(range) if prefer_article && article_depth == 0 => out[range].to_owned(),
         _ => out,
     }
 }
 
 /// Best-effort plain-text extraction, không phải browser renderer.
-pub(super) fn html_plain_text(html: &str) -> Result<(String, String), PluginError> {
+pub(super) fn html_plain_text(
+    html: &str,
+    prefer_article: bool,
+) -> Result<(String, String), PluginError> {
     let title_raw = extract_title(html);
     let title: String = decode_html_entities(&title_raw)
         .trim()
         .chars()
         .take(256)
         .collect();
-    let stripped = strip_to_plain_text(html);
+    let stripped = strip_to_plain_text(html, prefer_article);
     let decoded = decode_html_entities(&stripped);
     let plain = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
     Ok((title, plain))

@@ -2,13 +2,15 @@ use crate::services::background::plugins::{FrozenChoice, PluginError};
 use serde_json::{Value, json};
 
 pub(crate) const REVISION: &str = "1";
-pub(super) const OPERATIONS: [&str; 6] = [
+pub(super) const OPERATIONS: [&str; 8] = [
     "data.json_query",
     "artifact.read_text",
     "document.extract",
     "document.inspect",
     "data.transform",
     "artifact.inspect",
+    "web.fetch",
+    "web.extract",
 ];
 
 pub(crate) fn is_core(choice: &FrozenChoice) -> bool {
@@ -76,14 +78,18 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
     }
     let (description, input_schema, output_schema) = match choice.operation.as_str() {
         "web.fetch" => (
-            "Fetch bounded UTF-8 text from an HTTP(S) URL.",
+            "Fetch HTTP(S) text in pages of at most max_chars characters; continue with next_offset until null.",
             json!({"type":"object","properties":{
                 "url":{"type":"string","minLength":8,"maxLength":2048},
+                "offset":{"type":"integer","minimum":0,"maximum":2097152,"description":"Unicode character offset; default 0. Use next_offset to continue with the same URL and mode."},
                 "max_chars":{"type":"integer","minimum":1,"maximum":16000}
             },"required":["url"],"additionalProperties":false}),
             json!({"type":"object","properties":{
                 "text":{"type":"string"},"status":{"type":"integer"},
                 "content_type":{"type":"string"},"truncated":{"type":"boolean"},
+                "offset":{"type":"integer","minimum":0},
+                "next_offset":{"type":["integer","null"],"minimum":0,"description":"Next Unicode character offset, or null when downloaded text is exhausted."},
+                "body_limit_reached":{"type":"boolean","description":"The 2 MiB HTTP body cap was reached; text beyond this cap is unavailable."},
                 "provenance":{"type":"array","items":{"type":"object"}}
             },"required":["text","status","content_type","truncated","provenance"],"additionalProperties":false}),
         ),

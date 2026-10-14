@@ -102,6 +102,9 @@ pub(super) fn bound_text_result(result: &mut Value) -> Result<(), PluginError> {
     while low < high {
         let mid = low + (high - low).div_ceil(2);
         result["text"] = json!(text.chars().take(mid).collect::<String>());
+        if let Some(offset) = result["offset"].as_u64() {
+            result["next_offset"] = json!(offset + mid as u64);
+        }
         if result.to_string().len() <= MAX_BYTES {
             low = mid;
         } else {
@@ -109,6 +112,9 @@ pub(super) fn bound_text_result(result: &mut Value) -> Result<(), PluginError> {
         }
     }
     result["text"] = json!(text.chars().take(low).collect::<String>());
+    if let Some(offset) = result["offset"].as_u64() {
+        result["next_offset"] = json!(offset + low as u64);
+    }
     if result.to_string().len() > MAX_BYTES {
         return Err(PluginError::ApplicationError);
     }

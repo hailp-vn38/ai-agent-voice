@@ -30,6 +30,7 @@ pub(super) async fn execute(arguments: &Value, extract: bool) -> Result<Value, P
         )
         .build()
         .map_err(|_| PluginError::ApplicationError)?;
+    // shortcut: each page refetches the URL; use snapshots if changing content needs stable offsets.
     let response = client
         .get(url)
         .send()
@@ -62,7 +63,10 @@ pub(super) async fn execute(arguments: &Value, extract: bool) -> Result<Value, P
     // Apply the text limit after parsing, separately from the raw body cap.
     let body = String::from_utf8_lossy(&bytes);
     let (title, body) = if extract && content_type.to_ascii_lowercase().contains("html") {
-        html_plain_text(&body)?
+        html_plain_text(
+            &body,
+            arguments["mode"].as_str().unwrap_or("article") == "article",
+        )?
     } else {
         (String::new(), body.into_owned())
     };
@@ -70,17 +74,25 @@ pub(super) async fn execute(arguments: &Value, extract: bool) -> Result<Value, P
         .as_u64()
         .unwrap_or(TEXT_LIMIT as u64)
         .min(TEXT_LIMIT as u64) as usize;
-    let (text, truncated) = crate::tools::core::take_chars(&body, maximum);
+    let offset = arguments["offset"].as_u64().unwrap_or(0);
+    let offset_index = usize::try_from(offset).map_err(|_| PluginError::ApplicationError)?;
+    let mut remaining = body.chars().skip(offset_index);
+    let text: String = remaining.by_ref().take(maximum).collect();
+    let truncated = remaining.next().is_some();
+    let next_offset = truncated.then(|| offset + text.chars().count() as u64);
     let capability = if extract { "web_extract" } else { "web_fetch" };
     let provenance = json!([{"source":"web","urls":[url],"capabilities":[capability]}]);
     if extract {
         Ok(json!({"url":url,"title":title,"text":text,"status":status,
             "content_type":content_type,"truncated":truncated || body_limit_reached,
+            "offset":offset,"next_offset":next_offset,"body_limit_reached":body_limit_reached,
             "provenance":provenance}))
     } else {
         Ok(
             json!({"text":text,"status":status,"content_type":content_type,
-            "truncated":truncated || body_limit_reached,"provenance":provenance}),
+            "truncated":truncated || body_limit_reached,
+            "offset":offset,"next_offset":next_offset,"body_limit_reached":body_limit_reached,
+            "provenance":provenance}),
         )
     }
 }

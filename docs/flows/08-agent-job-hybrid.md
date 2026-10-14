@@ -137,13 +137,19 @@ Frozen Core JSON records `kind=core`, `plugin_id=core`, `operation` and `contrac
 Scheduler, Step start and Job finalization check Core contract revisions rather than querying
 `plugin_installations`. Older persisted External choices continue to work.
 
-Built-in Core Plugins (6 operations): Document (`document.extract`, `document.inspect`),
+Built-in Core Plugins (8 operations): Web (`web.fetch`, `web.extract`), Document (`document.extract`, `document.inspect`),
 Data (`data.json_query`, `data.transform`),
 Artifact (`artifact.read_text`, `artifact.inspect`).
 All operation names are qualified by `core.` in Root/Child allowlists.
 The read-only Admin endpoint `GET /api/admin/plugins/builtin` exposes them even without an External Store installation.
-Web (`web.fetch`, `web.extract`) is hidden from this catalog and new Job choices;
-its contracts and execution remain available for already frozen Jobs.
+Web is included in the catalog and new Job choices. Both operations accept a Unicode
+character `offset` (default 0) and `max_chars` (default/max 16000), and return
+`offset` and `next_offset`. Repeat with the same URL and extraction mode until
+`next_offset` is null. `web.extract` accepts `mode=article` (default, prefer the
+largest article with page fallback) or `mode=page` (all page text).
+`truncated` reports remaining text or a reached HTTP body cap; `body_limit_reached`
+reports the 2 MiB download cap separately. Pagination covers the downloaded text.
+Each call fetches the URL again, so offsets assume the source content stays stable.
 No new tool registry, agent framework, migration or Store lifecycle.
 `dag_v1` remains supported; when a frozen Core choice appears in an older DAG
 execution path, its revision is recorded in the existing Step version field.
