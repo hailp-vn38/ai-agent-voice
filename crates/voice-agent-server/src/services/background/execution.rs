@@ -134,9 +134,34 @@ impl JobEngine {
         self.database
             .reserve_plugin_attempt(job_id, step_key, &attempt)
             .await?;
-        let result = self
-            .plugins
-            .invoke(
+        let result = if crate::tools::core::is_core(choice) {
+            // Same durable Attempt as External, but no container, package or image preflight.
+            async {
+                if cancellation.is_cancelled() {
+                    return Err(PluginError::JobRejected(JobError::Cancelled));
+                }
+                self.database.request_plugin_start(job_id, step_key, &attempt, choice)
+                    .await.map_err(PluginError::JobRejected)?;
+                self.database.mark_plugin_started(job_id, step_key, &attempt)
+                    .await.map_err(PluginError::JobRejected)?;
+                let remaining = deadline_at - crate::database::unix_seconds()
+                    .ok_or(PluginError::JobRejected(JobError::ClockUnavailable))?;
+                if remaining <= 0 {
+                    return Err(PluginError::WorkerDeadlineExceeded);
+                }
+                let limit = std::time::Duration::from_secs(
+                    self.config.background.limits.step_timeout_seconds.into()
+                ).min(std::time::Duration::from_secs(remaining as u64));
+                tokio::select! {
+                    _ = cancellation.cancelled() => Err(PluginError::JobRejected(JobError::Cancelled)),
+                    outcome = tokio::time::timeout(
+                        limit,
+                        crate::tools::core::invoke(self, choice, arguments, job_id)
+                    ) => outcome.map_err(|_| PluginError::WorkerTimeout)?,
+                }
+            }.await
+        } else {
+            self.plugins.invoke(
                 Invocation {
                     inputs,
                     choice,
@@ -161,8 +186,8 @@ impl JobEngine {
                         .await
                         .map_err(PluginError::JobRejected)
                 },
-            )
-            .await;
+            ).await
+        };
         match result {
             Ok(output) => {
                 sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE job_id=? AND step_key=? AND attempt_id=?").bind(job_id).bind(step_key).bind(&attempt).execute(self.database.pool()).await?;
@@ -259,7 +284,11 @@ impl JobEngine {
                     error,
                     PluginError::PluginRuntimeError | PluginError::WorkerProtocolError
                 ) {
-                    self.plugins.fail_package(choice, code).await
+                    if crate::tools::core::is_core(choice) {
+                        Ok(())
+                    } else {
+                        self.plugins.fail_package(choice, code).await
+                    }
                 } else {
                     Ok(())
                 };
@@ -269,7 +298,7 @@ impl JobEngine {
                         step_key,
                         &attempt,
                         code,
-                        matches!(
+                        !crate::tools::core::is_core(choice) && matches!(
                             error,
                             PluginError::WorkerTimeout
                                 | PluginError::WorkerDeadlineExceeded
