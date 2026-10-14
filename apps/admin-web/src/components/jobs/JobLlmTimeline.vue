@@ -72,7 +72,7 @@ function eventName(event: JobEvent) {
     case 'llm_provider_acquired': return t('jobUi.llmProviderAcquired')
     case 'llm_request_started': return t('jobUi.llmDispatched')
     case 'llm_response_received': return t('jobUi.llmReceived')
-    case 'llm_run_finished': return event.payload.validation_code ? t('jobUi.llmValidationFailed') : t('jobUi.llmFinished')
+    case 'llm_run_finished': return event.payload.validation_path ? t('jobUi.llmValidationFailed') : t('jobUi.llmFinished')
     default: return event.event_type
   }
 }
