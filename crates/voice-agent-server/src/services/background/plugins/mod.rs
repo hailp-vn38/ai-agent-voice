@@ -236,6 +236,9 @@ impl PluginStore {
     }
     pub async fn install(&self, bytes: &[u8]) -> Result<PluginView, PluginError> {
         let package = archive::validate(bytes)?;
+        if package.manifest.plugin.id == "core" {
+            return Err(PluginError::InvalidPackage);
+        }
         let _permit = self
             .build_slot
             .try_acquire()
