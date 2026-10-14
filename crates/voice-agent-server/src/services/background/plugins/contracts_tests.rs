@@ -71,3 +71,32 @@ fn frozen_document_analysis_tool_keeps_source_oneof_not_authoritative() {
         "Rust must reject PDF without base64 and with text"
     );
 }
+
+
+#[test]
+fn legacy_external_and_core_frozen_choices_share_one_tool_compiler() {
+    let external = serde_json::json!({
+        "plugin_id":"fixture-research","version":"1.0.0",
+        "package_digest":"package","installation_digest":"installation",
+        "operation":"collect_topic"
+    });
+    let parsed = super::super::decode_choice(&external).unwrap();
+    assert_eq!(parsed.plugin_id, "fixture-research");
+    assert!(!crate::tools::core::is_core(&parsed));
+    assert!(crate::tools::core::matches_frozen(&external, &parsed));
+
+    let core_raw = crate::tools::core::frozen_choices();
+    let choice = super::super::decode_choice(&core_raw[0]).unwrap();
+    let contract = crate::tools::core::contract(&choice).unwrap();
+    let (defs, bindings) = compile_child_tools(&[(choice, contract)]).unwrap();
+    assert_eq!(defs[0].name, "p_core_web_fetch");
+    assert!(bindings.contains_key("p_core_web_fetch"));
+    assert_eq!(
+        defs[0].parameters["properties"]["max_chars"]["type"],
+        serde_json::json!(["integer", "null"])
+    );
+
+    let mut invalid = core_raw[0].clone();
+    invalid["contract_revision"] = serde_json::json!("changed");
+    assert!(super::super::decode_choice(&invalid).is_err());
+}
