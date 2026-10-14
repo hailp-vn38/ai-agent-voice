@@ -20,7 +20,7 @@ pub enum LlmEvent {
     Finished,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ChatMessage {
     System {
         content: String,
@@ -47,7 +47,7 @@ pub struct ToolDefinition {
     pub parameters: Value,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
