@@ -76,4 +76,4 @@ Only bounded metadata goes into Job Events: `job_id`, `agent_run_id`, `run_id`, 
 
 ### Scope and known operational limits
 
-No additional SQLite migration, MCP bridge, network proxy, provider qualification database or new Agent Framework. Native strict JSON/Function Calling depends on provider/model compatibility; **flags do not prove upstream support**. Run Provider Test against the actual configured model + transport before production use. Automated tests use deterministic transport fixtures and do not assume internet availability.
+No additional SQLite migration, MCP bridge, network proxy, provider qualification database or new Agent Framework. Native strict JSON/Function Calling depends on provider/model compatibility; **flags do not prove upstream support**. Run the existing Provider Test in **Strict Structured Outputs (Root)** and **Strict Function Calling (Child)** modes against the configured model + transport before production use. Saved and draft Provider Test routes accept optional `mode: structured|tools`; text mode remains backward compatible. Automated tests use deterministic transport fixtures and do not assume internet availability.
