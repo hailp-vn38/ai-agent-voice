@@ -1415,7 +1415,7 @@ async fn v3_root_turn(
     let response = models.turn_traced(
         &context, &job.snapshot.orchestrator,
         LlmRequest { messages, tools: v3_root_tools() },
-        BackgroundMode::Tools,
+        BackgroundMode::ToolsParallel,
         deadline,
         cancellation.clone()
     ).await;
