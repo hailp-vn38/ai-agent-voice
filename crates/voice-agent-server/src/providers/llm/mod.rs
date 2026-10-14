@@ -102,6 +102,8 @@ pub enum BackgroundMode {
     Tools,
     /// Child may choose an authorized function or finish with assistant text.
     ToolsAuto,
+    /// Root may issue up to two independent subagent calls in one turn.
+    ToolsParallel,
 }
 
 #[derive(Clone, Debug)]
@@ -256,7 +258,7 @@ impl LlmProvider for ConfiguredOpenAiLlm {
     ) -> Result<BackgroundTurnResult, LlmError> {
         let allowed = match &mode {
             BackgroundMode::Structured { .. } => self.supports_structured_outputs,
-            BackgroundMode::Tools | BackgroundMode::ToolsAuto => self.supports_function_calling,
+            BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => self.supports_function_calling,
         };
         if !allowed {
             return Err(LlmError::Rejected);
