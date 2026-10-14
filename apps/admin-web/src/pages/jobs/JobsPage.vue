@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { Activity, ArrowRight, ClipboardList, Plus, RefreshCw, Search, Workflow } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
-import { listenJobChanges } from '@/api/job-updates'
-import { useAuthStore } from '@/stores/auth'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
@@ -15,7 +13,6 @@ import { useI18n } from '@/composables/useI18n'
 
 const router = useRouter()
 const { t } = useI18n()
-const auth = useAuthStore()
 const jobs = ref<AdminJob[]>([])
 const search = ref('')
 const filter = ref('all')
@@ -31,12 +28,6 @@ const createOpen = ref(false)
 const goal = ref('')
 const statusOptions: JobStatus[] = ['queued', 'planning', 'running', 'cancelling', 'succeeded', 'partial_success', 'failed', 'cancelled']
 let controller: AbortController | undefined
-let refreshTimer: ReturnType<typeof setTimeout> | undefined
-let fallbackTimer: ReturnType<typeof setInterval> | undefined
-let streamController: AbortController | undefined
-let mounted = false
-let reconciling = false
-let dirty = false
 let creation = { goal: '', key: '' }
 
 const activeCount = computed(() => jobs.value.filter(job => ['queued', 'planning', 'running', 'cancelling'].includes(job.status)).length)
@@ -97,54 +88,8 @@ async function create() {
 function openDetail(id: string) {
   void router.push({ name: 'job-detail', params: { jobId: id } })
 }
-function reconcile() {
-  dirty = true
-  if (refreshTimer || reconciling) return
-  refreshTimer = setTimeout(() => {
-    refreshTimer = undefined
-    if (reconciling) return
-    void (async () => {
-      reconciling = true
-      try {
-        while (dirty && mounted) {
-          dirty = false
-          await load(page.value)
-        }
-      } finally {
-        reconciling = false
-        if (dirty && mounted) reconcile()
-      }
-    })()
-  }, 200)
-}
-function startStream() {
-  streamController?.abort()
-  if (!mounted) return
-  streamController = new AbortController()
-  void listenJobChanges({
-    onReady: reconcile,
-    onChanged: () => reconcile(),
-    onResync: reconcile,
-  }, streamController.signal)
-}
-function onVisible() {
-  if (!document.hidden) reconcile()
-}
-watch(() => auth.adminToken, startStream)
-onMounted(() => {
-  mounted = true
-  startStream()
-  document.addEventListener('visibilitychange', onVisible)
-  fallbackTimer = setInterval(() => { if (!document.hidden) reconcile() }, 60_000)
-})
-onBeforeUnmount(() => {
-  mounted = false
-  controller?.abort()
-  streamController?.abort()
-  document.removeEventListener('visibilitychange', onVisible)
-  if (refreshTimer) clearTimeout(refreshTimer)
-  if (fallbackTimer) clearInterval(fallbackTimer)
-})
+onMounted(() => { void load() })
+onBeforeUnmount(() => { controller?.abort() })
 </script>
 
 <template>
@@ -195,13 +140,13 @@ onBeforeUnmount(() => {
           <tbody class="divide-y">
             <tr v-for="job in jobs" :key="job.id" class="hover:bg-muted/25">
               <td class="max-w-sm px-4 py-4">
-                <button class="block w-full truncate text-left font-medium hover:text-studio-violet" type="button" @click="openDetail(job.id)">{{ job.goal }}</button>
+                <button class="block w-full cursor-pointer truncate text-left font-medium hover:text-studio-violet" type="button" @click="openDetail(job.id)">{{ job.goal }}</button>
                 <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ job.id }}</p>
               </td>
               <td class="max-w-48 break-all px-4 py-4 text-muted-foreground">{{ job.requester_scope }}</td>
               <td class="px-4 py-4"><Badge :variant="tone(job.status)">{{ label(job.status) }}</Badge></td>
               <td class="whitespace-nowrap px-4 py-4 text-xs text-muted-foreground">{{ date(job.created_at) }}</td>
-              <td class="px-4 py-4 text-right"><Button variant="ghost" size="icon" :aria-label="t('jobUi.details')" @click="openDetail(job.id)"><ArrowRight class="size-4" /></Button></td>
+              <td class="px-4 py-4 text-right"><Button class="cursor-pointer" variant="ghost" size="icon" :aria-label="t('jobUi.details')" @click="openDetail(job.id)"><ArrowRight class="size-4" /></Button></td>
             </tr>
           </tbody>
         </table>
