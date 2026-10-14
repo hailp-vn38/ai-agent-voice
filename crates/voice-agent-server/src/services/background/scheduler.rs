@@ -1,5 +1,5 @@
-use super::{JobEngine, JobError, JobSnapshot, engine::now, providers};
-use crate::database::jobs::{JobRow, authorize};
+use super::{JobEngine, JobError, engine::now};
+use crate::database::jobs::JobRow;
 use std::{
     fs::File,
     sync::{Arc, atomic::Ordering},
@@ -174,49 +174,5 @@ pub(super) async fn eligible(
     job: &JobRow,
     timestamp: i64,
 ) -> Result<(), JobError> {
-    if timestamp >= job.deadline_at {
-        return Err(JobError::DeadlineExceeded);
-    }
-    let _publication = engine.database.tool_security.publication.read().await;
-    let mut tx = engine.database.pool().begin().await?;
-    authorize(&mut tx, &job.requester()?).await?;
-    let enabled: i64 =
-        sqlx::query_scalar("SELECT enabled FROM background_settings WHERE singleton=1")
-            .fetch_one(&mut *tx)
-            .await?;
-    if enabled != 1 {
-        return Err(JobError::Disabled);
-    }
-    let unreaped:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_steps WHERE worker_instance_id IS NOT NULL AND attempt_state='unknown_outcome'").fetch_one(&mut *tx).await?;
-    if unreaped != 0 {
-        return Err(JobError::RuntimeUnavailable);
-    }
-    let snapshot: JobSnapshot =
-        serde_json::from_str(&job.snapshot_json).map_err(|_| JobError::ConfigurationChanged)?;
-    for previous in [&snapshot.orchestrator, &snapshot.worker] {
-        if &providers::pin(&mut tx, &engine.config, &previous.reference).await? != previous {
-            return Err(JobError::ConfigurationChanged);
-        }
-    }
-    let choices: Vec<serde_json::Value> = serde_json::from_str(&job.plugin_choices_json)
-        .map_err(|_| JobError::DatabaseUnavailable)?;
-    for choice in choices {
-        let installed: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",
-        )
-        .bind(choice["plugin_id"].as_str())
-        .bind(choice["version"].as_str())
-        .bind(choice["package_digest"].as_str())
-        .bind(choice["installation_digest"].as_str())
-        .fetch_optional(&mut *tx)
-        .await?;
-        if installed.is_none() {
-            return Err(JobError::CapabilityUnavailable);
-        }
-    }
-    if !engine.runtime_ready() {
-        return Err(JobError::RuntimeUnavailable);
-    }
-    tx.commit().await?;
-    Ok(())
+    engine.database.job_eligible(&engine.config, job, timestamp, engine.runtime_ready()).await
 }
