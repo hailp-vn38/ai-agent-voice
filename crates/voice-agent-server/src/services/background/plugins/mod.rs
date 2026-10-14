@@ -11,6 +11,7 @@ mod runner;
 #[cfg(test)]
 mod tests;
 pub(crate) use dispatch::{FrozenChoice, Invocation};
+pub(crate) use contracts::{compile_child_tools, normalize_tool_arguments};
 
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
