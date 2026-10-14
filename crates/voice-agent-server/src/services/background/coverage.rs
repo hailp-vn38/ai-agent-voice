@@ -133,16 +133,16 @@ fn canonical_source_url(raw: &str) -> Option<String> {
 /// Prove the entire extracted text was read from persisted successful core
 /// Steps: offsets must cover 0..end without gaps, the server-issued
 /// provenance must match the requested URL, and no body cap may be reached.
-pub(super) fn completed_web_sources(job: &JobView, agent_run_id: Option<&str>) -> Vec<String> {
+pub(super) fn completed_web_sources(job: &JobView, session_run_ids: Option<&[String]>) -> Vec<String> {
     let mut urls = std::collections::BTreeSet::new();
     for step in job.steps.iter().filter(|step| {
         step.status == "succeeded"
             && step.plugin_id.as_deref() == Some("core")
             && step.operation.as_deref() == Some("web.extract")
-            && agent_run_id.is_none_or(|id| step.agent_run_id.as_deref() == Some(id))
+            && session_run_ids.is_none_or(|ids| step.agent_run_id.as_deref().is_some_and(|id| ids.iter().any(|run| run == id)))
     }) {
         if let Some(url) = step.arguments["url"].as_str().and_then(canonical_source_url)
-            && extraction_is_complete(&job.steps, step, &url, agent_run_id)
+            && extraction_is_complete(&job.steps, step, &url, session_run_ids)
         {
             urls.insert(url);
         }
@@ -154,7 +154,7 @@ fn extraction_is_complete(
     steps: &[super::model::JobStepView],
     candidate: &super::model::JobStepView,
     canonical_url: &str,
-    agent_run_id: Option<&str>,
+    session_run_ids: Option<&[String]>,
 ) -> bool {
     let mode = candidate.arguments["mode"].as_str().unwrap_or("article");
     let mut offset = 0u64;
@@ -163,7 +163,7 @@ fn extraction_is_complete(
             step.status == "succeeded"
                 && step.plugin_id.as_deref() == Some("core")
                 && step.operation.as_deref() == Some("web.extract")
-                && agent_run_id.is_none_or(|id| step.agent_run_id.as_deref() == Some(id))
+                && session_run_ids.is_none_or(|ids| step.agent_run_id.as_deref().is_some_and(|id| ids.iter().any(|run| run == id)))
                 && step.arguments["mode"].as_str().unwrap_or("article") == mode
                 && step.arguments["offset"].as_u64().unwrap_or(0) == offset
                 && step.arguments["url"].as_str()
