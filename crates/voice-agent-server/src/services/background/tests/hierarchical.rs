@@ -403,11 +403,18 @@ async fn root_operation_allowlist_repairs_unknown_operation_with_and_without_plu
             attempts: std::sync::atomic::AtomicUsize::new(0),
             expected_operations: if installed {
                 json!([
+                    "core.web.fetch",
+                    "core.data.json_query",
+                    "core.artifact.read_text",
                     "fixture-research.collect_topic",
                     "fixture-research.simulate_failure"
                 ])
             } else {
-                json!([])
+                json!([
+                    "core.web.fetch",
+                    "core.data.json_query",
+                    "core.artifact.read_text"
+                ])
             },
         });
         let runtime = BackgroundRuntime::execution_harness(db.clone(), config, models.clone())
