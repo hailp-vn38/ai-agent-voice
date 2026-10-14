@@ -397,7 +397,7 @@ Both the rejected Planner Run and successful Repair stay visible. Right Inspecto
 ## 11. Implementation record (2026-10-14)
 
 The branch now includes implementation commits for:
-- New forward migration `0108_job_llm_activity.sql` and five additional bounded `job_events` types.
+- New forward migration `0111_job_llm_activity.sql` and five additional bounded `job_events` types.
 - Atomic model budget reservation + `llm_run_started`, durable Run finish/error and provider/capacity/request/response metadata.
 - Optional typed Responses usage for OpenAI/OpenCode, without changing Voice streaming or background fallback policy.
 - All SQL in the **touched** Agent Job admission/runtime/scheduler/step-result paths moved under `database/jobs/*`; removed the old `services/background/providers.rs`. Existing unrelated Plugin/Artifact SQL refactors are out of scope for this change.

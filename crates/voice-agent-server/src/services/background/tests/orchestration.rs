@@ -620,16 +620,23 @@ async fn invalid_model_json_is_repaired_before_worker_and_visible_in_timeline() 
     assert_eq!(
         kinds,
         vec![
+            "llm_run_started",
             "plan_attempt",
             "plan_rejected",
+            "llm_run_finished",
+            "llm_run_started",
             "plan_attempt",
+            "llm_run_finished",
             "plan_accepted",
             "step_started",
+            "llm_run_started",
+            "llm_run_finished",
             "step_finished",
             "job_finished"
         ]
     );
-    assert_eq!(events[1].payload["code"], "proposal_not_json");
+    let rejected = events.iter().find(|event| event.event_type == "plan_rejected").unwrap();
+    assert_eq!(rejected.payload["code"], "proposal_not_json");
     runtime.shutdown().await;
 }
 
