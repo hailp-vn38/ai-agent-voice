@@ -13,6 +13,19 @@ mod tests;
 pub(crate) use contracts::{compile_child_tools, normalize_tool_arguments};
 pub(crate) use dispatch::{FrozenChoice, Invocation, InvokeResult};
 
+/// Decode either a previously persisted External choice or a frozen Core choice.
+/// External JSON is unchanged; Core never receives a Plugin Store installation.
+pub(crate) fn decode_choice(raw: &serde_json::Value) -> Result<FrozenChoice, PluginError> {
+    if raw["kind"] == "core" {
+        crate::tools::core::decode(raw)
+    } else if raw.get("kind").is_none() {
+        serde_json::from_value(raw.clone()).map_err(|_| PluginError::PermissionRequired)
+    } else {
+        Err(PluginError::PermissionRequired)
+    }
+}
+
+
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
 use serde::Serialize;
