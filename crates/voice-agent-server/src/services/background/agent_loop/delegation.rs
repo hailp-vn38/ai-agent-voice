@@ -168,10 +168,11 @@ pub(super) async fn delegate_children(
         .join_children(job_id, root_id, &turn_id)
         .await?;
     let mut feedback = Vec::with_capacity(calls.len());
+    let latest = engine.get(job_id).await?;
     for ((call, child), session) in calls.iter().zip(completed.iter()).zip(attached.iter()) {
         feedback.push(ChatMessage::ToolResult {
             tool_call_id: call.id.clone(),
-            content: serde_json::to_string(&ChildOutcome::from_run(session, child)?)
+            content: serde_json::to_string(&ChildOutcome::from_run(session, child, &latest)?)
                 .map_err(|_| JobError::InvalidPlan)?,
         });
     }
