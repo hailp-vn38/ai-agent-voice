@@ -221,8 +221,9 @@ impl RuntimeCatalog {
         mode: crate::providers::llm::BackgroundMode,
         max_text_bytes: usize,
     ) -> Result<LlmDiagnosticOperation, DiagnosticRuntimeError> {
-        self.llm.get(key)
-            .map(|runtime| runtime.diagnostic_strict(request,mode,max_text_bytes))
+        self.llm
+            .get(key)
+            .map(|runtime| runtime.diagnostic_strict(request, mode, max_text_bytes))
             .ok_or(DiagnosticRuntimeError::NotLoaded)
     }
     pub fn asr_diagnostic(
