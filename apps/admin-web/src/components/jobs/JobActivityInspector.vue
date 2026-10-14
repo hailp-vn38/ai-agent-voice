@@ -53,11 +53,14 @@ function stageNote(event: JobEvent): string {
         <dl class="grid grid-cols-2 gap-3 text-xs">
           <div><dt class="text-muted-foreground">{{ t('jobUi.llmProvider') }}</dt><dd class="mt-1 break-all font-semibold">{{ run.provider }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('jobUi.llmModel') }}</dt><dd class="mt-1 break-all font-semibold">{{ run.model ?? '—' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('jobUi.llmAdapter') }}</dt><dd class="mt-1 font-semibold">{{ run.adapter ?? '—' }}</dd></div>
+          <div><dt class="text-muted-foreground">{{ t('jobUi.llmRole') }}</dt><dd class="mt-1 font-semibold">{{ run.role }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('jobUi.llmTransport') }}</dt><dd class="mt-1 font-semibold">{{ run.transport ?? '—' }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('jobUi.llmSource') }}</dt><dd class="mt-1 font-semibold">{{ run.providerSource }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('jobUi.llmDuration') }}</dt><dd class="mt-1 font-semibold">{{ duration(run.totalDurationMs ?? run.requestDurationMs) }}</dd></div>
           <div><dt class="text-muted-foreground">{{ t('jobUi.llmTokens') }}</dt><dd class="mt-1 font-semibold">{{ run.inputTokens ?? '—' }} / {{ run.outputTokens ?? '—' }}</dd></div>
           <div class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.llmRunId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ run.id }}</dd></div>
+          <div v-if="run.events[0]?.payload.turn_id" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.agentTurnId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ run.events[0]?.payload.turn_id }}</dd></div>
           <div v-if="activity.agentRunId" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.agentRunId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ activity.agentRunId }}</dd></div>
         </dl>
         <div class="mt-4 border-t pt-3">

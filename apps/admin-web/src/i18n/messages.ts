@@ -10,6 +10,8 @@ export interface PluralMessage {
 export type MessageValue = string | PluralMessage
 
 export const en = {
+  'jobUi.llmAdapter': 'Adapter',
+  'jobUi.agentTurnId': 'Agent Turn ID',
   'jobUi.noAgentRunsYet': 'Not started yet',
   'jobUi.timelineAgentRuns': "Agent runs",
   'jobUi.legacyNoAgents': "Legacy DAG — no Agent Runs recorded",
@@ -1193,6 +1195,8 @@ export const en = {
 export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
+  'jobUi.llmAdapter': 'Adapter',
+  'jobUi.agentTurnId': 'Mã Agent Turn',
   'jobUi.noAgentRunsYet': 'Chưa bắt đầu',
   'jobUi.timelineAgentRuns': "Lượt chạy Agent",
   'jobUi.legacyNoAgents': "DAG cũ — chưa có dữ liệu Agent Run",
