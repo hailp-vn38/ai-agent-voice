@@ -1,44 +1,16 @@
 use crate::services::background::plugins::PluginError;
 use serde_json::{Value, json};
+use std::time::Duration;
 
-const BODY_LIMIT: usize = 65_536;
+mod entities;
+mod html;
+
+use html::html_plain_text;
+
+// Read enough raw HTML to reach article content beyond large head/style blocks.
+// The returned text is bounded separately after extraction.
+const BODY_LIMIT: usize = 2_097_152;
 const TEXT_LIMIT: usize = 16_000;
-
-fn html_entities(value: &str) -> String {
-    value
-        .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&#x27;", "'")
-}
-
-/// Best-effort plain-text extraction, not a browser renderer. Discard active
-/// script/style/noscript blocks and title markup instead of returning raw HTML.
-fn html_plain_text(html: &str) -> Result<(String, String), PluginError> {
-    let title_pattern = regex::Regex::new(r"(?is)<title\b[^>]*>(.*?)</title\s*>")
-        .map_err(|_| PluginError::WorkerProtocolError)?;
-    let ignored = regex::Regex::new(
-        r"(?is)<(?:script|style|noscript)\b[^>]*>.*?</(?:script|style|noscript)\s*>",
-    )
-    .map_err(|_| PluginError::WorkerProtocolError)?;
-    let tags = regex::Regex::new(r"(?s)<[^>]*>").map_err(|_| PluginError::WorkerProtocolError)?;
-    let title = title_pattern
-        .captures(html)
-        .and_then(|capture| capture.get(1))
-        .map(|part| html_entities(part.as_str()))
-        .unwrap_or_default();
-    let clean = ignored.replace_all(html, " ");
-    let clean = title_pattern.replace_all(&clean, " ");
-    let clean = tags.replace_all(&clean, " ");
-    let plain = html_entities(&clean);
-    Ok((
-        title.trim().chars().take(256).collect(),
-        plain.split_whitespace().collect::<Vec<_>>().join(" "),
-    ))
-}
 
 /// Shared HTTP implementation for web.fetch and web.extract. Core-specific
 /// network destination policy (Risk 2) remains explicitly deferred.
@@ -49,7 +21,16 @@ pub(super) async fn execute(arguments: &Value, extract: bool) -> Result<Value, P
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(PluginError::ApplicationError);
     }
-    let response = reqwest::Client::new()
+    // Bound the request duration and use a browser UA for compatibility.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        )
+        .build()
+        .map_err(|_| PluginError::ApplicationError)?;
+    let response = client
         .get(url)
         .send()
         .await
@@ -78,6 +59,7 @@ pub(super) async fn execute(arguments: &Value, extract: bool) -> Result<Value, P
             break;
         }
     }
+    // Apply the text limit after parsing, separately from the raw body cap.
     let body = String::from_utf8_lossy(&bytes);
     let (title, body) = if extract && content_type.to_ascii_lowercase().contains("html") {
         html_plain_text(&body)?
@@ -104,18 +86,4 @@ pub(super) async fn execute(arguments: &Value, extract: bool) -> Result<Value, P
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strips_active_html_and_extracts_title() {
-        let (title, text) = html_plain_text(
-            "<html><head><title>A &amp; B</title><script>alert(1)</script></head>\
-             <body><h1>Hi &lt;there&gt;</h1><p>World</p></body></html>",
-        )
-        .unwrap();
-        assert_eq!(title, "A & B");
-        assert_eq!(text, "Hi <there> World");
-        assert!(!text.contains("alert"));
-    }
-}
+mod tests;
