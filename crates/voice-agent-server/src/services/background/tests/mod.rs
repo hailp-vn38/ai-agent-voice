@@ -28,6 +28,8 @@ adapter="openai"
 base_url="https://example.test/v1"
 model="fixture"
 api_key="BACKGROUND_SECRET_SENTINEL"
+supports_structured_outputs=true
+supports_function_calling=true
 [database]
 url="sqlite://{}"
 [api]
