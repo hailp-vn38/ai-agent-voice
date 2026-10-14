@@ -203,6 +203,7 @@ pub enum JobError {
     QueueFull,
     CapabilityUnavailable,
     OrchestratorStructuredOutputsRequired,
+    OrchestratorFunctionCallingRequired,
     WorkerFunctionCallingRequired,
     IdempotencyConflict,
     RevisionConflict,
@@ -240,6 +241,7 @@ impl JobError {
             Self::OrchestratorStructuredOutputsRequired => {
                 "orchestrator_structured_outputs_required"
             }
+            Self::OrchestratorFunctionCallingRequired => "orchestrator_function_calling_required",
             Self::WorkerFunctionCallingRequired => "worker_function_calling_required",
             Self::IdempotencyConflict => "idempotency_conflict",
             Self::RevisionConflict => "revision_conflict",
