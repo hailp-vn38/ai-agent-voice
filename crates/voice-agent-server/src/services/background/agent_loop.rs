@@ -1487,10 +1487,27 @@ pub(super) async fn run_root_v3(
             }
         };
         if !v3_root_call_batch_valid(&calls,&seen) {
-            // Malformed/duplicate IDs cannot be safely serialized as native tool pairs.
-            engine.database.v3_append_messages(job_id,&root_session,&[
-                ChatMessage::User{content:"Invalid tool call batch; return one finish_job or up to two valid subagent tool calls with unique IDs.".into()}
-            ]).await?;
+            let mut ids=std::collections::HashSet::new();
+            let matchable=!calls.is_empty() && calls.iter().all(|call|
+                !call.id.is_empty() && call.id.len()<=128
+                && !seen.contains(&call.id) && ids.insert(call.id.clone())
+            );
+            if matchable {
+                let mut messages=vec![ChatMessage::AssistantToolCalls{calls:calls.clone()}];
+                for call in &calls {
+                    messages.push(ChatMessage::ToolResult{
+                        tool_call_id:call.id.clone(),
+                        content:json!({"status":"failed","error_code":"agent_tool_protocol_error"}).to_string()
+                    });
+                    seen.insert(call.id.clone());
+                }
+                engine.database.v3_append_messages(job_id,&root_session,&messages).await?;
+            } else {
+                // Unusable IDs cannot form valid provider-native call/result pairs.
+                engine.database.v3_append_messages(job_id,&root_session,&[
+                    ChatMessage::User{content:"Invalid tool call batch; use valid, unique native tool IDs.".into()}
+                ]).await?;
+            }
             repairs+=1;
             if repairs>u32::from(job.snapshot.limits.max_plan_repairs) {return Err(JobError::InvalidPlan);}
             continue;
@@ -1517,7 +1534,9 @@ pub(super) async fn run_root_v3(
             let value=json!({"summary":result.summary,"findings":result.findings,
                 "evidence_refs":result.evidence_refs,"unresolved":result.unresolved,"coverage":coverage});
             engine.database.v3_append_messages(job_id,&root_session,&[
-                ChatMessage::AssistantToolCalls{calls:calls.clone()}
+                ChatMessage::AssistantToolCalls{calls:calls.clone()},
+                ChatMessage::ToolResult{tool_call_id:calls[0].id.clone(),
+                    content:json!({"status":"accepted_for_validation"}).to_string()}
             ]).await?;
             return engine.database.finish_job(&engine.config,job_id,status,
                 (status!="succeeded").then_some("requirements_unsatisfied"),Some(&value)).await;
@@ -1541,6 +1560,27 @@ pub(super) async fn run_root_v3(
                 role:input.agent.clone(),goal,allowed_operations:allowed.clone()
             });
             inputs.push(input);
+        }
+        if invalid.is_none() {
+            let mut sessions=std::collections::HashSet::new();
+            for input in &inputs {
+                if let Some(session) = input.session_id.as_deref() {
+                    if !sessions.insert(session) {
+                        invalid=Some("session_busy");
+                        break;
+                    }
+                    if let Err(error) = engine.database.v3_preflight_child_resume(
+                        job_id,&root.agent_run_id,session,&input.agent,&job.snapshot.worker
+                    ).await {
+                        invalid=Some(match error {
+                            JobError::CapacityUnavailable=>"session_busy",
+                            JobError::InvalidArguments=>"session_access_denied",
+                            _=>return Err(error)
+                        });
+                        break;
+                    }
+                }
+            }
         }
         if let Some(code)=invalid {
             let mut messages=vec![ChatMessage::AssistantToolCalls{calls:calls.clone()}];
