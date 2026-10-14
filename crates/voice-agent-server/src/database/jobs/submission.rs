@@ -134,7 +134,10 @@ impl Database {
         if execution_mode == "hierarchical_v3" {
             providers::require_hybrid_capability(
                 &mut tx,config,&orchestrator.reference,"supports_function_calling"
-            ).await?;
+            ).await.map_err(|error| match error {
+                JobError::WorkerFunctionCallingRequired => JobError::OrchestratorFunctionCallingRequired,
+                other => other
+            })?;
             providers::require_hybrid_capability(
                 &mut tx,config,&worker.reference,"supports_function_calling"
             ).await?;
