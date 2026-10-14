@@ -50,8 +50,14 @@ export function projectLlmRuns(events: JobEvent[], status: AdminJob['status']): 
     }
     const run = runs.get(id)
     if (!run) continue
-    if (event.event_type.startsWith('llm_') || event.event_type === 'plan_rejected') run.events.push(event)
-    if (event.event_type === 'llm_provider_acquired') {
+    if (event.event_type.startsWith('llm_') || event.event_type === 'plan_rejected' || event.event_type === 'agent_decision_accepted' || event.event_type === 'agent_decision_rejected') run.events.push(event)
+    if (event.event_type === 'agent_decision_rejected') {
+      run.status = 'failed'
+      run.errorCode = text(event.payload.validation_code) ?? 'invalid_plan'
+      run.validationPath = text(event.payload.validation_path)
+    } else if (event.event_type === 'agent_decision_accepted') {
+      run.status = 'completed'
+    } else if (event.event_type === 'llm_provider_acquired') {
       run.adapter = text(event.payload.adapter)
       run.model = text(event.payload.model)
       run.transport = text(event.payload.transport)

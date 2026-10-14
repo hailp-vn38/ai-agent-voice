@@ -31,6 +31,8 @@ function stageLabel(event: JobEvent): string {
     case 'llm_response_received': return t('jobUi.llmReceived')
     case 'llm_run_finished': return t('jobUi.llmFinished')
     case 'plan_rejected': return t('jobUi.llmValidationFailed')
+    case 'agent_decision_rejected': return t('jobUi.llmValidationFailed')
+    case 'agent_decision_accepted': return 'Decision accepted'
     default: return event.event_type
   }
 }
@@ -42,6 +44,7 @@ function stageNote(event: JobEvent): string {
   if (event.event_type === 'llm_request_started') return safeDetail(event.payload.capacity_wait_ms) + ' ms'
   if (event.event_type === 'llm_response_received') return safeDetail(event.payload.request_duration_ms) + ' ms'
   if (event.event_type === 'plan_rejected') return safeDetail(event.payload.code)
+  if (event.event_type === 'agent_decision_rejected') return safeDetail(event.payload.validation_code)
   if (event.event_type === 'llm_run_finished') return safeDetail(event.payload.error_code ?? event.payload.validation_code)
   return ''
 }

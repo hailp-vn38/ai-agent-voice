@@ -28,6 +28,20 @@ describe('unified Job activity', () => {
     expect(visibleActivities(rows, { kind: 'role', role: 'research' })).toHaveLength(3)
     expect(visibleActivities(rows, { kind: 'agent', id: 'root' })).toEqual([])
   })
+  it('displays a rejected Root decision in its existing LLM timeline row', () => {
+    const activities = projectUnifiedActivity({ ...job, status: 'failed' }, [
+      event(1, 'llm_run_started', { run_id: 'r-1', role: 'planner', agent_run_id: 'root' }),
+      event(2, 'llm_run_finished', { run_id: 'r-1', status: 'completed' }),
+      event(3, 'agent_decision_rejected', {
+        run_id: 'r-1', agent_run_id: 'root', validation_code: 'invalid_role', validation_path: '$.tasks[0].role',
+      }),
+    ])
+    expect(activities).toHaveLength(1)
+    expect(activities[0]).toMatchObject({
+      id: 'llm:r-1', role: 'orchestrator', status: 'failed', note: 'invalid_role · $.tasks[0].role',
+    })
+  })
+
   it('preserves legacy events without inventing an Agent Run', () => {
     const legacy = { ...job, agent_runs: undefined, steps: [] } as AdminJob
     const rows = projectUnifiedActivity(legacy, [

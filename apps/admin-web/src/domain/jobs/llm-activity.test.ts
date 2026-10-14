@@ -26,6 +26,20 @@ describe('projectLlmRuns', () => {
     expect(llmTokenSummary(runs)).toEqual({ tokens: 130, known: 1, total: 2 })
   })
 
+  it('shows field-level V2 decision rejection after a completed LLM HTTP response', () => {
+    const events = [
+      event(1, 'llm_run_started', 'root-1', { role: 'planner', agent_run_id: 'root', phase: 'agent_decision' }),
+      event(2, 'llm_run_finished', 'root-1', { status: 'completed' }),
+      event(3, 'agent_decision_rejected', 'root-1', {
+        agent_run_id: 'root', validation_code: 'missing_field', validation_path: '$.tasks[0].task_key', attempt_no: 1,
+      }),
+    ]
+    const runs = projectLlmRuns(events, 'failed')
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({ status: 'failed', errorCode: 'missing_field', validationPath: '$.tasks[0].task_key' })
+    expect(runs[0]?.events.map(e => e.event_type)).toEqual(['llm_run_started','llm_run_finished','agent_decision_rejected'])
+  })
+
   it('marks a started but unconfirmed run interrupted only for a terminal job', () => {
     const start = event(1, 'llm_run_started', 'x', { role: 'planner', provider_ref: 'p' })
     expect(projectLlmRuns([start], 'planning')[0]?.status).toBe('running')

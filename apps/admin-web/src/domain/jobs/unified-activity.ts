@@ -45,7 +45,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       kind: 'llm', status: run.status, agentRunId,
       role: agentRunId ? roles.get(agentRunId) ?? null : null,
       title: 'LLM Run ' + String(run.number).padStart(2, '0'),
-      note: run.phase, llm: run,
+      note: run.errorCode ? run.errorCode + (run.validationPath ? ' · ' + run.validationPath : '') : run.phase, llm: run,
       step: run.stepKey ? steps.get(run.stepKey) : undefined,
     }
   })
