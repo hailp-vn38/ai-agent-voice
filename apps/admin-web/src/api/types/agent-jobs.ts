@@ -49,10 +49,34 @@ export interface PluginPage {
   total?: number
 }
 
+export type AgentRole = 'orchestrator' | 'research' | 'document' | 'general'
+export interface AgentRunView {
+  agent_run_id: string
+  parent_agent_run_id: string | null
+  role: AgentRole
+  goal_excerpt: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+  run_index: number
+  llm_rounds: number
+  tool_calls: number
+  input_tokens: number | null
+  output_tokens: number | null
+  started_at: string | null
+  finished_at: string | null
+}
+export interface CoverageView {
+  basis: 'structured_provenance' | 'goal_only_unverified'
+  required_sources_count: number
+  verified_sources_count: number
+  required_capabilities_count: number
+  verified_capabilities_count: number
+  missing_sources_count: number
+}
 export type JobStatus = 'queued' | 'planning' | 'running' | 'cancelling' | 'succeeded' | 'partial_success' | 'failed' | 'cancelled'
 export type StepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled'
 export interface JobStep {
   step_key: string
+  agent_run_id?: string | null
   plugin_id: string | null
   operation: string | null
   status: StepStatus
@@ -73,6 +97,9 @@ export interface JobArtifact {
   sha256: string
 }
 export interface AdminJob {
+  execution_mode?: 'dag_v1' | 'hierarchical_v2'
+  agent_runs?: AgentRunView[]
+  coverage?: CoverageView | null
   id: string
   goal: string
   status: JobStatus
@@ -93,7 +120,7 @@ export interface JobPage {
   total?: number
 }
 
-export type JobEventType = 'plan_attempt' | 'plan_rejected' | 'plan_accepted' | 'step_started' | 'step_finished' | 'job_finished' | 'llm_run_started' | 'llm_provider_acquired' | 'llm_request_started' | 'llm_response_received' | 'llm_run_finished'
+export type JobEventType = 'plan_attempt' | 'plan_rejected' | 'plan_accepted' | 'step_started' | 'step_finished' | 'job_finished' | 'llm_run_started' | 'llm_provider_acquired' | 'llm_request_started' | 'llm_response_received' | 'llm_run_finished' | 'agent_run_created' | 'agent_run_started' | 'agent_decision_accepted' | 'agent_run_finished' | 'join_completed'
 export interface JobEvent {
   sequence: number
   event_type: JobEventType
