@@ -62,6 +62,21 @@ describe('Agent Job admin clients', () => {
     expect(await artifact.text()).toBe('fixture result')
     expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs/job%201/artifacts/artifact%2F1')
   })
+  it('deletes a Job through its encoded URL and accepts an empty 204 response', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetch)
+    await expect(agentJobsApi.deleteJob('job/1')).resolves.toBeUndefined()
+    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/jobs/job%2F1')
+    expect(fetch.mock.calls[0]?.[1].method).toBe('DELETE')
+  })
+
+  it('preserves the deletion conflict returned by the backend', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: { code: 'job_delete_conflict' } }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } },
+    )))
+    await expect(agentJobsApi.deleteJob('job-1')).rejects.toMatchObject({ status: 409, code: 'job_delete_conflict' })
+  })
   it('retries as a linked new Job with an explicit safe-read review and replay key', async () => {
     const fetch = vi.fn().mockResolvedValue(json({ id: 'new', retry_of_job_id: 'old', status: 'queued' }))
     vi.stubGlobal('fetch', fetch)

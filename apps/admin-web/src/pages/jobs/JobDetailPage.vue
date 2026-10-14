@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, BrainCircuit, Clock3, Cpu, Download, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, BrainCircuit, Clock3, Cpu, Download, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -31,6 +31,7 @@ const error = ref('')
 const eventsError = ref('')
 const notice = ref('')
 const retryOpen = ref(false)
+const deleteOpen = ref(false)
 let controller: AbortController | undefined
 let streamController: AbortController | undefined
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
@@ -177,6 +178,20 @@ async function retry() {
     busy.value = false
   }
 }
+async function deleteJob() {
+  if (!job.value || !isTerminal(job.value.status) || busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    await agentJobsApi.deleteJob(job.value.id)
+    await router.push({ name: 'jobs' })
+  } catch (cause) {
+    error.value = isApiError(cause) && cause.code === 'job_delete_conflict'
+      ? t('jobUi.deleteConflict') : formatApiError(cause)
+  } finally {
+    busy.value = false
+  }
+}
 function reconcile() {
   dirty = true
   if (refreshTimer || reconciling) return
@@ -240,6 +255,7 @@ onBeforeUnmount(() => {
         <Button variant="outline" :disabled="refreshing || loading || busy" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': refreshing }" />{{ t('jobUi.refresh') }}</Button>
         <Button v-if="job && !isTerminal(job.status) && job.status !== 'cancelling'" variant="outline" :disabled="busy" @click="cancel"><Square class="size-4" />{{ t('jobUi.cancelJob') }}</Button>
         <Button v-if="canRetry" :disabled="busy" @click="retryOpen = true"><RotateCcw class="size-4" />{{ t('jobUi.retryJob') }}</Button>
+        <Button v-if="job && isTerminal(job.status)" variant="outline" class="text-danger" :disabled="busy || loading || refreshing" @click="deleteOpen = true"><Trash2 class="size-4" />{{ t('jobUi.deleteJob') }}</Button>
       </template>
     </DetailHeader>
 
@@ -425,6 +441,9 @@ onBeforeUnmount(() => {
     <ConfirmDialog v-model="retryOpen" :title="t('jobUi.retryJob')" :confirm-label="t('jobUi.retryJob')" @confirm="retry">
       <p>{{ t('jobUi.retryConfirm') }}</p>
       <p v-if="unknownOutcome" class="mt-2 text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
+    </ConfirmDialog>
+    <ConfirmDialog v-model="deleteOpen" :title="t('jobUi.deleteJob')" :confirm-label="t('jobUi.deleteJob')" tone="danger" @confirm="deleteJob">
+      <p>{{ t('jobUi.deleteConfirm') }}</p>
     </ConfirmDialog>
   </section>
 </template>

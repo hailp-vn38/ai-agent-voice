@@ -40,6 +40,9 @@ export const agentJobsApi = {
   cancelJob(id: string) {
     return requestJson<AdminJob>(jobPath(id) + '/cancel', jsonRequest('POST', {}))
   },
+  deleteJob(id: string) {
+    return requestJson<void>(jobPath(id), { method: 'DELETE' })
+  },
   retryJob(id: string, idempotencyKey: string) {
     return requestJson<AdminJob>(jobPath(id) + '/retry', jsonRequest('POST', { confirm_safe_read_only: true }), { headers: { 'Idempotency-Key': idempotencyKey } })
   },

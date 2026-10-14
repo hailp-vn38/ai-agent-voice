@@ -3,11 +3,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { setLocale, translate } from '@/composables/useI18n'
 import type { JobChangeCallbacks } from '@/api/job-updates'
+import { ApiError } from '@/api/errors'
 import JobsPage from './JobsPage.vue'
 import JobDetailPage from './JobDetailPage.vue'
 
 const { api, listenJobChanges, push } = vi.hoisted(() => ({
-  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn() },
+  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn() },
   listenJobChanges: vi.fn(),
   push: vi.fn(),
 }))
@@ -32,9 +33,64 @@ beforeEach(() => {
   api.listJobs.mockResolvedValue({ items: [job], total: 1, page: 1, page_size: 30 })
   api.job.mockResolvedValue(job)
   api.events.mockResolvedValue({ items: [] })
+  api.deleteJob.mockResolvedValue(undefined)
 })
 afterEach(() => { vi.useRealTimers() })
 
+it.each(['queued', 'planning', 'running', 'cancelling'])('hides deletion for a %s Job', async status => {
+  const job = await api.job()
+  api.job.mockClear().mockResolvedValue({ ...job, status })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.findAll('button').some(button => button.text() === translate('jobUi.deleteJob'))).toBe(false)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it.each(['succeeded', 'partial_success', 'failed', 'cancelled'])('confirms deletion of a %s Job before returning to the list', async status => {
+  const job = await api.job()
+  api.job.mockClear().mockResolvedValue({ ...job, status })
+  let finishDelete!: () => void
+  api.deleteJob.mockReturnValue(new Promise<void>(resolve => { finishDelete = resolve }))
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    const deleteButton = wrapper.findAll('button').find(button => button.text() === translate('jobUi.deleteJob'))!
+    await deleteButton.trigger('click')
+    expect(api.deleteJob).not.toHaveBeenCalled()
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.text()).toContain(translate('jobUi.deleteConfirm'))
+    await dialog.findAll('button').find(button => button.text() === translate('jobUi.deleteJob'))!.trigger('click')
+    expect(api.deleteJob).toHaveBeenCalledExactlyOnceWith('job-1')
+    expect(deleteButton.attributes('disabled')).toBeDefined()
+    expect(push).not.toHaveBeenCalled()
+    finishDelete()
+    await flushPromises()
+    expect(push).toHaveBeenCalledWith({ name: 'jobs' })
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('shows deletion conflicts and keeps the Job detail available', async () => {
+  const job = await api.job()
+  api.job.mockClear().mockResolvedValue({ ...job, status: 'failed' })
+  api.deleteJob.mockRejectedValue(new ApiError('Conflict', 409, 'job_delete_conflict'))
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === translate('jobUi.deleteJob'))!.trigger('click')
+    await wrapper.get('[role="dialog"]').findAll('button').find(button => button.text() === translate('jobUi.deleteJob'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe(translate('jobUi.deleteConflict'))
+    expect(wrapper.text()).toContain('Run a job')
+    expect(push).not.toHaveBeenCalled()
+  } finally {
+    wrapper.unmount()
+  }
+})
 it('refreshes the Jobs list only on user request after the initial load', async () => {
   const wrapper = mount(JobsPage, { global: { stubs: { teleport: true } } })
   try {
