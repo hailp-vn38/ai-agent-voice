@@ -65,13 +65,18 @@ pub(super) async fn require_hybrid_capability(
             row.ok_or(JobError::ProviderUnavailable)?
         }
     };
+    let missing = match required_flag {
+        "supports_structured_outputs" => JobError::OrchestratorStructuredOutputsRequired,
+        "supports_function_calling" => JobError::WorkerFunctionCallingRequired,
+        _ => return Err(JobError::InvalidArguments),
+    };
     if !matches!(adapter.as_str(), "openai" | "opencode_free") {
-        return Err(JobError::CapabilityUnavailable);
+        return Err(missing);
     }
     let values: serde_json::Value =
         serde_json::from_str(&config_json).map_err(|_| JobError::ProviderUnavailable)?;
     if values[required_flag].as_bool() != Some(true) {
-        return Err(JobError::CapabilityUnavailable);
+        return Err(missing);
     }
     Ok(())
 }
