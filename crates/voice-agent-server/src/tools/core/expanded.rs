@@ -94,6 +94,18 @@ pub(super) fn contract(operation: &str) -> Result<Value, PluginError> {
     }))
 }
 
+pub(super) async fn fetch(arguments: &Value) -> Result<Value, PluginError> {
+    web::execute(arguments, false).await
+}
+
+pub(super) async fn owned_text(
+    engine: &JobEngine,
+    job_id: &str,
+    artifact_id: &str,
+) -> Result<(String, String, usize), PluginError> {
+    artifact::read_owned_text(engine, job_id, artifact_id).await
+}
+
 pub(super) async fn invoke(
     engine: &JobEngine,
     operation: &str,
