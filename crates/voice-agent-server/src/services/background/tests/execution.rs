@@ -80,7 +80,11 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
         .await
         .unwrap()
         .job;
-    let choice: FrozenChoice = serde_json::from_value(job.plugin_choices[0].clone()).unwrap();
+    let choice: FrozenChoice = serde_json::from_value(
+        job.plugin_choices.as_array().unwrap().iter()
+            .find(|v| v["plugin_id"] == "fixture-research" && v["operation"] == "collect_topic")
+            .unwrap().clone()
+    ).unwrap();
     db.test_plan_one_step(&job.id, "collect", &choice, &json!({"topic":"AI"}))
         .await
         .unwrap();
@@ -188,7 +192,11 @@ async fn fixture_python_runs_through_job_step_and_checked_artifact() {
         crate::services::background::plugins::PluginError::InUse
     );
     assert!(!replacement_path.exists());
-    let choice: FrozenChoice = serde_json::from_value(job.plugin_choices[0].clone()).unwrap();
+    let choice: FrozenChoice = serde_json::from_value(
+        job.plugin_choices.as_array().unwrap().iter()
+            .find(|v| v["plugin_id"] == "fixture-research" && v["operation"] == "collect_topic")
+            .unwrap().clone()
+    ).unwrap();
     let args = json!({"topic":"AI", "limit":2});
     db.test_plan_one_step(&job.id, "collect", &choice, &args)
         .await
