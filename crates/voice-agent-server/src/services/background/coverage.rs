@@ -141,8 +141,12 @@ pub(super) fn completed_web_sources(job: &JobView, session_run_ids: Option<&[Str
             && step.operation.as_deref() == Some("web.extract")
             && session_run_ids.is_none_or(|ids| step.agent_run_id.as_deref().is_some_and(|id| ids.iter().any(|run| run == id)))
     }) {
+        // When there is no explicit Session scope (e.g. unit tests), do not
+        // stitch adjacent chunks fetched by unrelated Child Runs.
+        let own_run: Vec<String> = step.agent_run_id.iter().cloned().collect();
+        let scope = session_run_ids.unwrap_or(&own_run);
         if let Some(url) = step.arguments["url"].as_str().and_then(canonical_source_url)
-            && extraction_is_complete(&job.steps, step, &url, session_run_ids)
+            && extraction_is_complete(&job.steps, step, &url, Some(scope))
         {
             urls.insert(url);
         }
