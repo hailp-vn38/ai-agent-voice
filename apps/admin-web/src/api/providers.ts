@@ -30,7 +30,7 @@ export const providersApi = {
     }
     return { ...first, items }
   },
-  testDraftLlm(provider: ProviderTestDraft, input: { text: string }, signal?: AbortSignal) {
+  testDraftLlm(provider: ProviderTestDraft, input: { text: string; mode?: 'structured' | 'tools' }, signal?: AbortSignal) {
     return requestJson<ProviderTextTestResult>('/api/admin/provider-tests/llm', jsonRequest('POST', { provider, input }), { signal })
   },
   testDraftTts(provider: ProviderTestDraft, input: TtsDiagnosticInput, signal?: AbortSignal) {
