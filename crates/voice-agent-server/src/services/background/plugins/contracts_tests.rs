@@ -100,3 +100,29 @@ fn legacy_external_and_core_frozen_choices_share_one_tool_compiler() {
     invalid["contract_revision"] = serde_json::json!("changed");
     assert!(crate::services::background::plugins::decode_choice(&invalid).is_err());
 }
+
+#[test]
+fn all_eight_bundled_operations_project_into_distinct_native_functions() {
+    let pinned: Vec<(FrozenChoice, serde_json::Value)> =
+        crate::tools::core::frozen_choices().iter().map(|raw| {
+            let choice = crate::services::background::plugins::decode_choice(raw).unwrap();
+            let contract = crate::tools::core::contract(&choice).unwrap();
+            (choice, contract)
+        }).collect();
+    let (tools, bindings) = compile_child_tools(&pinned).unwrap();
+    assert_eq!(tools.len(), 8);
+    assert_eq!(bindings.len(), 8);
+    let mut names = std::collections::HashSet::new();
+    for tool in &tools {
+        assert!(names.insert(tool.name.as_str()));
+        assert!(jsonschema::validator_for(&tool.parameters).is_ok());
+    }
+    for name in [
+        "p_core_web_fetch", "p_core_web_extract",
+        "p_core_document_extract", "p_core_document_inspect",
+        "p_core_data_json_query", "p_core_data_transform",
+        "p_core_artifact_read_text", "p_core_artifact_inspect",
+    ] {
+        assert!(names.contains(name), "missing: {name}");
+    }
+}
