@@ -10,6 +10,7 @@ mod change_feed;
 mod deletion;
 pub(crate) use change_feed::JobChangeFeed;
 mod recovery;
+mod sessions;
 // P3 scheduler will consume these durable dispatch transitions.
 mod eligibility;
 mod events;
