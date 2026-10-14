@@ -131,6 +131,12 @@ impl Database {
         if validated_pair.is_some_and(|pair| pair[0] != orchestrator || pair[1] != worker) {
             return Err(JobError::ConfigurationChanged);
         }
+        if execution_mode == "hierarchical_v2" {
+            providers::require_hybrid_capability(
+                &mut tx,config,&orchestrator.reference,"supports_structured_outputs").await?;
+            providers::require_hybrid_capability(
+                &mut tx,config,&worker.reference,"supports_function_calling").await?;
+        }
         let plugin_choices =
             crate::services::background::plugins::frozen_choices(&mut tx, &request).await?;
         let used: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'")
