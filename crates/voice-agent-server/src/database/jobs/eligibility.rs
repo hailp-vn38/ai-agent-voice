@@ -39,6 +39,10 @@ impl Database {
         let choices: Vec<serde_json::Value> = serde_json::from_str(&job.plugin_choices_json)
             .map_err(|_| JobError::DatabaseUnavailable)?;
         for choice in choices {
+            if choice["kind"] == "core" {
+                crate::tools::core::decode(&choice).map_err(JobError::from_plugin)?;
+                continue;
+            }
             let installed: Option<i64> = sqlx::query_scalar(
                 "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'"
             ).bind(choice["plugin_id"].as_str())
