@@ -58,3 +58,13 @@ preload = true
 # Keep optional discovery within 500 ms; slow servers contribute no tools to this session.
 per_server_resolution_timeout_ms = 400
 overall_resolution_budget_ms = 500
+
+# Shared plugin runtime; sockets and directories must be mounted by compose.yaml.
+# Background enablement and LLM choices remain Admin settings.
+[background]
+plugin_installer_socket = "/run/plugin-installer/installer.sock"
+plugin_runner_socket = "/run/plugin-runner/runner.sock"
+plugin_installations_dir = "data/plugins/installations"
+plugin_staging_dir = "data/plugins/staging"
+plugin_attempts_dir = "data/plugins/workspaces"
+plugin_curated_dir = "data/curated-plugins"

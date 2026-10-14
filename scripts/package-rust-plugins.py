@@ -76,7 +76,7 @@ def main():
             destination.parent.mkdir(parents=True, exist_ok=True)
             staged = Path(temporary) / "package.zip"
             package(folder, binary, staged)
-            subprocess.run([str(ROOT / "scripts/check-rust-plugin.sh"), "--static-only", str(staged)],
+            subprocess.run([str(ROOT / "scripts/check-plugin.sh"), "--static-only", str(staged)],
                            cwd=ROOT, check=True)
             with tempfile.TemporaryDirectory(dir=destination.parent) as publication:
                 pending = Path(publication) / destination.name

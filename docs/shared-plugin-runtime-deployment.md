@@ -33,6 +33,7 @@ Rollback requires restoring a compatible database snapshot and the old runtime t
 - Python: `manifest_version = 2`, `runtime.kind = "python"`, `python = "3.12"`, pinned `pyproject.toml` and `uv.lock`; Installer creates a private `.venv`.
 - Rust: `manifest_version = 2`, `runtime.kind = "rust"`, `entrypoint = "bin/plugin"` (native Linux ELF). Cargo source builds happen in trusted CI, not production.
 - The `jsonl-v1` stdin/stdout contract and JSON-schema/artifact bounds remain unchanged. Runner replaces the plugin-provided artifact directory with an attempt-owned directory.
+- Use `scripts/check-plugin.sh --static-only PACKAGE.zip` for either Python or Rust. The checker validates the package and reports `runtime = NOT_RUN`. To check execution, use `scripts/check-plugin.sh PACKAGE.zip CASES.json CONFIG.toml` with a running Installer/Runner and the mounted paths configured. The old `check-rust-plugin.sh` name remains a compatibility entry point.
 - Operator qualification needs the three shared paths above. Static package checks alone must continue to report runtime `NOT_RUN`.
 - Confirm cases for correct/failing output, timeout/cancellation, malformed JSONL, restart ambiguity, parallel Python/Rust operations and direct network behavior on the actual Linux deployment. Report PASS/FAIL/NOT_RUN truthfully.
 

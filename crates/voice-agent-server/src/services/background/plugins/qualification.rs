@@ -75,7 +75,6 @@ pub async fn check(
     _stage: &Path,
 ) -> Result<Value> {
     let package = archive::validate(bytes).map_err(error)?;
-    ensure!(package.manifest.runtime.kind == "rust", "not a Rust plugin");
     let instructions = &package
         .files
         .iter()

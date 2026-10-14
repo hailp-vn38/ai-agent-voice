@@ -345,11 +345,12 @@ allowed_hosts = []
 [system_mcp]
 enabled = false # Read-only tools for authenticated Studio Assistant sessions.
 
-# Shared runtime: installer and runner use one image, separate Unix sockets.
-# [background]
-# plugin_installer_socket = "/run/plugin-installer/installer.sock"
-# plugin_runner_socket = "/run/plugin-runner/runner.sock"
-# plugin_installations_dir = "/app/data/plugins/installations"
-# plugin_staging_dir = "/app/data/plugins/staging"
-# plugin_attempts_dir = "/app/data/plugins/workspaces"
-# plugin_curated_dir = "data/curated-plugins"
+# Shared plugin runtime; sockets and directories must be mounted by compose.yaml.
+# Background enablement and LLM choices remain Admin settings.
+[background]
+plugin_installer_socket = "/run/plugin-installer/installer.sock"
+plugin_runner_socket = "/run/plugin-runner/runner.sock"
+plugin_installations_dir = "data/plugins/installations"
+plugin_staging_dir = "data/plugins/staging"
+plugin_attempts_dir = "data/plugins/workspaces"
+plugin_curated_dir = "data/curated-plugins"

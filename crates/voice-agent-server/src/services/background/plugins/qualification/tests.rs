@@ -55,6 +55,19 @@ fn cases_require_declared_operations_valid_inputs_and_coverage() {
 }
 
 #[tokio::test]
+async fn python_static_check_validates_package_without_claiming_runtime_pass() {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../plugins/fixture-research-1.0.0.zip"
+    ));
+    let report = check(bytes, &[], None, Path::new("unused")).await.unwrap();
+    assert_eq!(report["plugin_id"], "fixture-research");
+    assert_eq!(report["package"], "PASS");
+    assert_eq!(report["runtime"], "NOT_RUN");
+    assert_eq!(report["cases"], json!([]));
+}
+
+#[tokio::test]
 async fn static_check_does_not_claim_runtime_pass() {
     let package = package();
     let report = check(&package.source_zip, &[], None, Path::new("unused"))

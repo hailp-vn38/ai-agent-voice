@@ -12,7 +12,7 @@ Python plugins use `[runtime] kind = "python"`, `python = "3.12"` and `src/main.
 
 ```sh
 scripts/agent-test.sh run -- python3 scripts/package-rust-plugins.py
-scripts/check-rust-plugin.sh --static-only data/curated-plugins/document-analysis-1.0.0.zip
+scripts/check-plugin.sh --static-only data/curated-plugins/document-analysis-1.0.0.zip
 ```
 
 `package-rust-plugins.py` tests/builds Rust packages, emits deterministic ZIPs, validates their schemas and produces both versioned download and curated Store names. GitHub Actions also packages `x86_64` Linux binaries. Build separately for `aarch64`, if needed. The downloaded GitHub Actions artifact is an outer ZIP containing the uploadable plugin ZIP.
