@@ -243,3 +243,23 @@ pub(crate) fn digest(value: &str) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+
+#[derive(Clone, Debug)]
+pub(crate) struct LlmRunContext {
+    pub run_id: String,
+    pub job_id: String,
+    pub step_key: Option<String>,
+    pub role: &'static str,
+    pub phase: &'static str,
+    pub attempt_no: u32,
+    pub plan_revision: i64,
+    pub started_at: std::time::Instant,
+}
+impl LlmRunContext {
+    pub(crate) fn new(job_id: &str, step_key: Option<&str>, role: &'static str, phase: &'static str, attempt_no: u32, plan_revision: i64) -> Self {
+        Self {
+            run_id: uuid::Uuid::new_v4().to_string(), job_id: job_id.to_owned(),
+            step_key: step_key.map(str::to_owned), role, phase, attempt_no, plan_revision, started_at: std::time::Instant::now()
+        }
+    }
+}

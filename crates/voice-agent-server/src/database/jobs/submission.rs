@@ -3,7 +3,6 @@ use crate::config::AppConfig;
 use crate::services::background::{
     JobReceipt,
     model::{digest, encode},
-    providers,
 };
 
 #[derive(Default)]

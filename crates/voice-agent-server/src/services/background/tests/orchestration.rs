@@ -620,15 +620,79 @@ async fn invalid_model_json_is_repaired_before_worker_and_visible_in_timeline() 
     assert_eq!(
         kinds,
         vec![
+            "llm_run_started",
             "plan_attempt",
             "plan_rejected",
+            "llm_run_finished",
+            "llm_run_started",
             "plan_attempt",
+            "llm_run_finished",
             "plan_accepted",
             "step_started",
+            "llm_run_started",
+            "llm_run_finished",
             "step_finished",
             "job_finished"
         ]
     );
-    assert_eq!(events[1].payload["code"], "proposal_not_json");
+    let rejected = events.iter().find(|event| event.event_type == "plan_rejected").unwrap();
+    assert_eq!(rejected.payload["code"], "proposal_not_json");
+    runtime.shutdown().await;
+}
+
+
+#[tokio::test]
+async fn llm_run_start_and_finish_are_durable_and_correlated_with_job_events() {
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::execution_harness(
+        db.clone(), config, Arc::new(ScriptedModels)
+    ).await.unwrap();
+    enable(&runtime.engine).await;
+    let receipt = runtime.engine.submit(
+        request("LLM activity correlation"), &JobRequester::Admin, None
+    ).await.unwrap();
+    let terminal = wait_for(&runtime.engine, &receipt.job.id, |job| job.status == "succeeded").await;
+    assert_eq!(terminal.budget_used["planner_calls"], 1);
+    let events = db.job_events(&terminal.id, 0, 100).await.unwrap();
+    let starts: Vec<_> = events.iter().filter(|e| e.event_type == "llm_run_started").collect();
+    let finishes: Vec<_> = events.iter().filter(|e| e.event_type == "llm_run_finished").collect();
+    assert_eq!(starts.len(), 2); // Planner and Worker, no invented plugin LLM.
+    assert_eq!(finishes.len(), starts.len());
+    assert!(starts.iter().all(|e| e.payload["provider_ref"].is_string()));
+    for started in starts {
+        let run_id = started.payload["run_id"].as_str().unwrap();
+        let completed = finishes.iter().find(|event| event.payload["run_id"] == run_id).unwrap();
+        assert!(started.sequence < completed.sequence);
+        assert_eq!(completed.payload["status"], "completed");
+    }
+    let plan_attempt = events.iter().find(|e| e.event_type == "plan_attempt").unwrap();
+    let planner = events.iter().find(|e| e.event_type == "llm_run_started" && e.payload["role"] == "planner").unwrap();
+    assert_eq!(plan_attempt.payload["run_id"], planner.payload["run_id"]);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn llm_run_failure_retains_provider_pin_and_safe_terminal_code() {
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::execution_harness(
+        db.clone(), config, Arc::new(FailingPlanner {
+            calls: Default::default(), started: Default::default()
+        })
+    ).await.unwrap();
+    enable(&runtime.engine).await;
+    let receipt = runtime.engine.submit(
+        request("Provider failure tracing"), &JobRequester::Admin, None
+    ).await.unwrap();
+    let terminal = wait_for(&runtime.engine, &receipt.job.id, |job| job.status == "failed").await;
+    assert_eq!(terminal.error_code.as_deref(), Some("llm_execution_failed"));
+    let events = db.job_events(&terminal.id, 0, 100).await.unwrap();
+    let start = events.iter().find(|e| e.event_type == "llm_run_started").unwrap();
+    let finish = events.iter().find(|e| e.event_type == "llm_run_finished").unwrap();
+    assert_eq!(finish.payload["run_id"], start.payload["run_id"]);
+    assert_eq!(finish.payload["error_code"], "llm_execution_failed");
+    assert!(start.payload["provider_ref"].is_string());
+    assert!(!start.payload.to_string().contains("Authorization"));
     runtime.shutdown().await;
 }

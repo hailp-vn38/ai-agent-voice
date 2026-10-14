@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { AlertTriangle, Clock3, Download, FileText, RefreshCw, RotateCcw, Square, Workflow } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
+import { listenJobChanges } from '@/api/job-updates'
+import { useAuthStore } from '@/stores/auth'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobEvent, JobStatus, StepStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
+import JobLlmTimeline from '@/components/jobs/JobLlmTimeline.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +17,7 @@ import { useI18n } from '@/composables/useI18n'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const auth = useAuthStore()
 const jobId = computed(() => String(route.params.jobId ?? ''))
 const job = ref<AdminJob | null>(null)
 const events = ref<JobEvent[]>([])
@@ -25,13 +29,19 @@ const eventsError = ref('')
 const notice = ref('')
 const retryOpen = ref(false)
 let controller: AbortController | undefined
+let streamController: AbortController | undefined
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let fallbackTimer: ReturnType<typeof setInterval> | undefined
+let reconciling = false
+let dirty = false
+let mounted = false
 let eventCursor = 0
 let retryRequest = { id: '', key: '' }
 
 const isTerminal = (status: JobStatus) => ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
 const canRetry = computed(() => job.value && ['failed', 'cancelled'].includes(job.value.status))
 const planningEvents = computed(() => events.value.filter(x => x.event_type.startsWith('plan_')))
-const executionEvents = computed(() => events.value.filter(x => !x.event_type.startsWith('plan_')))
+const executionEvents = computed(() => events.value.filter(x => !x.event_type.startsWith('plan_') && !x.event_type.startsWith('llm_')))
 const unknownOutcome = computed(() => job.value?.steps.some(step => step.attempt_state === 'unknown_outcome') ?? false)
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
@@ -138,8 +148,57 @@ async function retry() {
     busy.value = false
   }
 }
+function reconcile() {
+  dirty = true
+  if (refreshTimer || reconciling) return
+  refreshTimer = setTimeout(() => {
+    refreshTimer = undefined
+    if (reconciling) return
+    void (async () => {
+      reconciling = true
+      try {
+        while (dirty && mounted) {
+          dirty = false
+          await load()
+        }
+      } finally {
+        reconciling = false
+        if (dirty && mounted) reconcile()
+      }
+    })()
+  }, 200)
+}
+function startStream() {
+  streamController?.abort()
+  if (!mounted) return
+  streamController = new AbortController()
+  void listenJobChanges({
+    onReady: reconcile,
+    onChanged: id => { if (id === jobId.value) reconcile() },
+    onResync: reconcile,
+  }, streamController.signal)
+}
+function onVisible() {
+  if (!document.hidden) reconcile()
+}
 watch(jobId, () => { void load(true) }, { immediate: true })
-onBeforeUnmount(() => { controller?.abort() })
+watch(() => auth.adminToken, startStream)
+onMounted(() => {
+  mounted = true
+  startStream()
+  document.addEventListener('visibilitychange', onVisible)
+  fallbackTimer = setInterval(() => {
+    if (!document.hidden && job.value && !isTerminal(job.value.status)) reconcile()
+  }, 60_000)
+})
+onBeforeUnmount(() => {
+  mounted = false
+  controller?.abort()
+  streamController?.abort()
+  document.removeEventListener('visibilitychange', onVisible)
+  if (refreshTimer) clearTimeout(refreshTimer)
+  if (fallbackTimer) clearInterval(fallbackTimer)
+})
 </script>
 
 <template>
@@ -165,6 +224,7 @@ onBeforeUnmount(() => { controller?.abort() })
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs text-danger">{{ job.error_code }}</p>
         <p v-if="unknownOutcome" class="mt-2 text-sm text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
       </div>
+      <JobLlmTimeline :job="job" :events="events" />
       <div class="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,1fr)]">
         <div class="min-w-0 space-y-4">
           <section class="studio-panel p-5">

@@ -1,4 +1,4 @@
-use super::{model::*, providers};
+use super::model::*;
 use crate::{config::AppConfig, database::Database};
 use std::sync::{
     Arc,
@@ -30,8 +30,7 @@ impl JobEngine {
     }
     pub async fn settings(&self) -> Result<BackgroundSettings, JobError> {
         let (settings, revision) = self.database.background_settings().await?;
-        let mut connection = self.database.pool().acquire().await?;
-        let llm_providers = providers::options(&mut connection, &self.config).await?;
+        let llm_providers = self.database.background_provider_options(&self.config).await?;
         Ok(BackgroundSettings {
             settings,
             revision,
@@ -50,13 +49,12 @@ impl JobEngine {
         if input.enabled && !self.runtime_ready() {
             return Err(JobError::RuntimeUnavailable);
         }
-        let mut connection = self.database.pool().acquire().await?;
         let mut pins = Vec::new();
         for reference in [&input.orchestrator_llm_provider, &input.worker_llm_provider]
             .into_iter()
             .flatten()
         {
-            pins.push(providers::pin(&mut connection, &self.config, reference).await?);
+            pins.push(self.database.background_provider_pin(&self.config, reference).await?);
         }
         if input.enabled
             && (input.orchestrator_llm_provider.is_none() || input.worker_llm_provider.is_none())
@@ -66,7 +64,6 @@ impl JobEngine {
         if input.enabled && self.config.limits.llm_concurrency <= 1 {
             return Err(JobError::CapacityUnavailable);
         }
-        drop(connection);
         if input.enabled
             && let Some(models) = &self.models
         {
@@ -187,9 +184,7 @@ impl JobEngine {
         if !settings.enabled {
             return Err(JobError::Disabled);
         }
-        let mut connection = self.database.pool().acquire().await?;
-        let orchestrator = providers::pin(
-            &mut connection,
+        let orchestrator = self.database.background_provider_pin(
             &self.config,
             settings
                 .orchestrator_llm_provider
@@ -197,8 +192,7 @@ impl JobEngine {
                 .ok_or(JobError::ProviderUnavailable)?,
         )
         .await?;
-        let worker = providers::pin(
-            &mut connection,
+        let worker = self.database.background_provider_pin(
             &self.config,
             settings
                 .worker_llm_provider
@@ -206,7 +200,6 @@ impl JobEngine {
                 .ok_or(JobError::ProviderUnavailable)?,
         )
         .await?;
-        drop(connection);
         let pair = [orchestrator, worker];
         for pin in &pair {
             models.ready(pin, now()?.saturating_add(5)).await?;

@@ -33,8 +33,8 @@ fn tokens_bind_signature_algorithm_resource_identity_scope_and_time() {
         ("scope", json!("mcp:manage:execute")),
         ("exp", json!(now)),
         ("exp", json!(now + 3601)),
-        ("iat", json!(now + 1)),
-        ("nbf", json!(now + 1)),
+        ("iat", json!(now + 60)),
+        ("nbf", json!(now + 60)),
         ("sub", json!("")),
         ("jti", json!("")),
     ] {

@@ -99,6 +99,20 @@ Thuật ngữ Job, Plugin Package, Plugin Installation và Worker Attempt đư�
 
 ## Agent Job Planning
 
+**LLM Run**:
+A single bounded invocation of a model during an Agent Job, including provider admission, model response and Rust validation; distinct from the Job, the Step, and a Plan Proposal.
+_Avoid_: Agent account, Voice Session, vendor background task, Job Step
+
+**LLM Activity Event**:
+A durable metadata-only observation correlated to one LLM Run, ordered within its Job; it does not own Job/Step state or authorize model execution.
+_Avoid_: model content log, prompt archive, token stream, Job checkpoint
+
+**Resolved LLM Provider Identity**:
+The adapter, model and transport verified for an actual LLM Run against its pinned Provider identity; if resolution fails, only the expected pin is known.
+_Avoid_: current Provider Catalog selection, inferred model, remote request acknowledgement
+
+
+
 **Plan Proposal**:
 Ý định gồm các bước công việc mà Orchestrator đề xuất; chưa có quyền thực thi và có thể bị từ chối hoặc yêu cầu sửa.
 _Avoid_: executable plan, worker command

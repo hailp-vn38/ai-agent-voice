@@ -64,11 +64,7 @@ async fn job_provider_preflight_reloads_stored_credentials_after_idle_eviction()
         manager: manager.clone(),
         quarantine: Default::default(),
     };
-    let mut connection = db.pool().acquire().await.unwrap();
-    let pin = super::super::providers::pin(&mut connection, &config, "worker")
-        .await
-        .unwrap();
-    drop(connection);
+    let pin = db.background_provider_pin(&config, "worker").await.unwrap();
     assert_eq!(manager.evict_idle().await.unwrap(), 1);
     let result = models
         .ready(&pin, super::super::engine::now().unwrap() + 5)

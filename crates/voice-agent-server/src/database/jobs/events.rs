@@ -63,6 +63,7 @@ impl Database {
         id: &str,
         attempt: u32,
         diagnostic: &crate::services::background::plan::PlanValidationError,
+        run_id: &str,
     ) -> Result<(), JobError> {
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let status: Option<String> = sqlx::query_scalar("SELECT status FROM jobs WHERE id=?")
@@ -72,9 +73,35 @@ impl Database {
         if !matches!(status.as_deref(), Some("planning" | "running")) {
             return Err(JobError::Terminal);
         }
-        append(&mut tx,id,"plan_rejected",None,&json!({"attempt":attempt,"code":diagnostic.code,"path":diagnostic.path,"message":diagnostic.message})).await?;
+        append(&mut tx,id,"plan_rejected",None,&json!({"attempt":attempt,"code":diagnostic.code,"path":diagnostic.path,"message":diagnostic.message,"run_id":run_id})).await?;
         tx.commit().await?;
         self.job_changes.publish_committed(id);
+        Ok(())
+    }
+}
+
+impl Database {
+    pub(crate) async fn record_llm_activity(
+        &self,
+        run: &crate::services::background::model::LlmRunContext,
+        event_type: &'static str,
+        detail: Value,
+    ) -> Result<(), JobError> {
+        if !matches!(event_type, "llm_provider_acquired" | "llm_request_started" | "llm_response_received" | "llm_run_finished") {
+            return Err(JobError::InvalidArguments);
+        }
+        let mut payload = json!({"run_id":run.run_id});
+        let fields = detail.as_object().ok_or(JobError::InvalidArguments)?;
+        for (key,value) in fields {
+            if key == "run_id" || (value.is_string() && value.as_str().is_some_and(|s| s.len()>256)) {
+                return Err(JobError::InvalidArguments);
+            }
+            payload[key] = value.clone();
+        }
+        let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
+        append(&mut tx,&run.job_id,event_type,run.step_key.as_deref(),&payload).await?;
+        tx.commit().await?;
+        self.job_changes.publish_committed(&run.job_id);
         Ok(())
     }
 }
