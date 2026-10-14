@@ -602,3 +602,82 @@ async fn terminal_job_retention_deletes_durable_events_before_parent() {
     ));
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn admin_delete_rejects_live_jobs_and_removes_terminal_job_hierarchy() {
+    let (db, config, runtime) = harness().await;
+    let job = runtime.engine.submit(request("Delete terminal Job"), &JobRequester::Admin, None)
+        .await.unwrap().job;
+    let mut state = AppState::from_provider_set_with_database(
+        (*config).clone(), Arc::new(ProviderSet::unavailable()), Some((*db).clone()),
+    );
+    state.background = Some(runtime.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin/jobs/{}", listener.local_addr().unwrap(), job.id);
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state)).await.unwrap()
+    });
+    let client = reqwest::Client::new();
+    assert_eq!(client.delete(&base).send().await.unwrap().status(), 401);
+    let live = client.delete(&base).bearer_auth("background-test-token").send().await.unwrap();
+    assert_eq!(live.status(), 409);
+    assert_eq!(live.json::<Value>().await.unwrap()["error"]["code"], "job_delete_conflict");
+
+    runtime.engine.cancel(&job.id).await.unwrap();
+    let root_run = uuid::Uuid::new_v4().to_string();
+    let child_run = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO job_agent_runs(agent_run_id,job_id,role,goal_excerpt,allowed_operations_json,status,created_at) VALUES(?,?,'orchestrator','root','[]','succeeded',0)")
+        .bind(&root_run).bind(&job.id).execute(db.pool()).await.unwrap();
+    sqlx::query("INSERT INTO job_agent_runs(agent_run_id,job_id,parent_agent_run_id,fork_group_id,member_ordinal,role,goal_excerpt,allowed_operations_json,status,created_at) VALUES(?,?,?,'fork',0,'general','child','[]','succeeded',0)")
+        .bind(&child_run).bind(&job.id).bind(&root_run).execute(db.pool()).await.unwrap();
+    sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,status,created_at,updated_at) VALUES(?,'step',1,'succeeded',0,0)")
+        .bind(&job.id).execute(db.pool()).await.unwrap();
+    let artifact_id = uuid::Uuid::new_v4().to_string();
+    let artifact_dir = super::super::artifacts::root(&db).unwrap().join(&job.id);
+    tokio::fs::create_dir_all(&artifact_dir).await.unwrap();
+    tokio::fs::write(artifact_dir.join(&artifact_id), b"retired").await.unwrap();
+    sqlx::query("INSERT INTO job_artifacts(id,job_id,step_key,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,'step',?,'text/plain',7,'test-hash',0)")
+        .bind(&artifact_id).bind(&job.id).bind(format!("{}/{artifact_id}",job.id))
+        .execute(db.pool()).await.unwrap();
+
+    runtime.engine.cancellations.lock().unwrap().insert(job.id.clone(), tokio_util::sync::CancellationToken::new());
+    assert_eq!(client.delete(&base).bearer_auth("background-test-token").send().await.unwrap().status(), 409);
+    runtime.engine.cancellations.lock().unwrap().remove(&job.id);
+
+    assert_eq!(client.delete(&base).bearer_auth("background-test-token").send().await.unwrap().status(), 204);
+    assert_eq!(client.get(&base).bearer_auth("background-test-token").send().await.unwrap().status(), 404);
+    assert_eq!(client.get(format!("{base}/events")).bearer_auth("background-test-token").send().await.unwrap().status(), 404);
+    assert!(!artifact_dir.exists());
+    assert_eq!(client.delete(&base).bearer_auth("background-test-token").send().await.unwrap().status(), 404);
+    server.abort();
+    let _ = server.await;
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn admin_delete_blocks_retry_parent_until_descendant_removed() {
+    let (db, config, runtime) = harness().await;
+    let original = runtime.engine.submit(request("Retry hierarchy"), &JobRequester::Admin, None)
+        .await.unwrap().job;
+    runtime.engine.cancel(&original.id).await.unwrap();
+    let retry = runtime.engine.retry(&original.id, true, Some("retry-lineage-delete"))
+        .await.unwrap().job;
+    let mut state = AppState::from_provider_set_with_database(
+        (*config).clone(), Arc::new(ProviderSet::unavailable()), Some((*db).clone()),
+    );
+    state.background = Some(runtime.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin/jobs", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state)).await.unwrap()
+    });
+    let client = reqwest::Client::new();
+    let parent_url = format!("{base}/{}", original.id);
+    assert_eq!(client.delete(&parent_url).bearer_auth("background-test-token").send().await.unwrap().status(), 409);
+    runtime.engine.cancel(&retry.id).await.unwrap();
+    assert_eq!(client.delete(format!("{base}/{}",retry.id)).bearer_auth("background-test-token").send().await.unwrap().status(), 204);
+    assert_eq!(client.delete(&parent_url).bearer_auth("background-test-token").send().await.unwrap().status(), 204);
+    server.abort();
+    let _ = server.await;
+    runtime.shutdown().await;
+}
