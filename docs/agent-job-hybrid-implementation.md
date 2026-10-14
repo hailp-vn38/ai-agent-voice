@@ -47,7 +47,7 @@ Reserved function `submit_result` has required fields `status=completed,summary,
 
 1. Record LLM Turn, call provider with `tool_choice=required` and `parallel_tool_calls=false`.
 2. Reject text, zero/multiple function calls, duplicated IDs, unknown function names, invalid JSON/arguments. Record `agent_decision_rejected` with stable code/path; no Plugin Step. Repair only within existing budget.
-3. For a validated plugin function call: `agent_decision_accepted(action=call_plugin)` → `insert_dynamic_step` → `execute_plugin_step_cancel` → matched tool result. Known plugin failures return a tool result; `unknown_outcome` must fail-stop and **never auto-replay**.
+3. For a validated plugin function call: `agent_decision_accepted(action=call_plugin)` → `insert_dynamic_step` → `execute_plugin_step_cancel` → matched Tool Result containing bounded output plus **server-owned `evidence_refs` artifact IDs scoped to the persisted Step**. Known plugin failures return a tool result; `unknown_outcome` must fail-stop and **never auto-replay**. Child `submit_result.evidence_refs` are verified against artifacts belonging to that Child's succeeded Steps; URLs and foreign Child references are rejected with `invalid_child_evidence_refs` and an actionable bounded repair hint.
 4. For a valid `submit_result`: `agent_decision_accepted(action=finish)`, finish Child Run; join group; return compact typed result to Root.
 5. Root validates final coverage and uses existing `finish_job` status transitions.
 
@@ -62,7 +62,7 @@ Only bounded metadata goes into Job Events: `job_id`, `agent_run_id`, `run_id`, 
 | T03 | Child tool A → tool B → `submit_result`; two durable Steps, matched IDs |
 | T04 | Unknown/disallowed tool: no Step/Worker Attempt |
 | T05 | Zero/multiple calls or text: reject whole turn |
-| T06 | `submit_result` fake evidence ID: reject |
+| T06 | `submit_result` fake/foreign-Child evidence ID: reject with scoped allowed refs; actual Tool Result exposes Step artifact UUIDs |
 | T07 | Optional/null projection + source schema `oneOf/not` validation |
 | T08 | Capability absent or strict upstream rejection: fail closed |
 | T09 | Responses function call ↔ function_call_output `call_id` |
