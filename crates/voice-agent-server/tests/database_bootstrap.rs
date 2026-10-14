@@ -141,6 +141,25 @@ async fn current_database_is_idempotent_when_migrations_run_again() {
 }
 
 #[tokio::test]
+async fn database_with_applied_plugin_permissions_migration_reopens() {
+    let config = database_config(temp_database_url("applied-plugin-permissions"));
+    let database = Database::connect(&config).await.unwrap();
+    // Pin the checksum of migration 0109 already applied by the direct-network branch.
+    sqlx::query(
+        "INSERT OR REPLACE INTO _sqlx_migrations \
+         (version, description, success, checksum, execution_time) \
+         VALUES (109, 'remove stored plugin permissions', 1, \
+         X'587b50fd5e90519c766affdf619ea7ae242d6af2e4e3c4a9e9219126366418f9c09c2931ed8fc872d78e214581993cbc', 0)",
+    )
+    .execute(database.pool())
+    .await
+    .unwrap();
+    database.pool().close().await;
+
+    Database::connect(&config).await.unwrap();
+}
+
+#[tokio::test]
 async fn supported_old_schema_is_forward_migrated_to_the_current_indexes() {
     let config = database_config(temp_database_url("forward"));
     let options = SqliteConnectOptions::from_str(&config.url)

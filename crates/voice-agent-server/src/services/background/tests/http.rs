@@ -91,6 +91,182 @@ async fn admin_artifact_download_is_authenticated_and_scoped_to_job() {
 }
 
 #[tokio::test]
+async fn plugin_upload_installs_and_updates_native_package_without_losing_valid_installation() {
+    use sha2::{Digest, Sha256};
+    use std::io::{Cursor, Write};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn package(version: &str) -> Vec<u8> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../plugins/fixture-rust-1.0.0");
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for name in [
+            "plugin.toml",
+            "instructions.md",
+            "schemas/collect.input.json",
+            "schemas/collect.output.json",
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            let text = std::fs::read_to_string(root.join(name)).unwrap();
+            zip.write_all(text.replace("1.0.0", version).as_bytes())
+                .unwrap();
+        }
+        // Only package admission is under test; the Installer RPC is stubbed.
+        let mut elf = [0u8; 64];
+        elf[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        elf[16] = 2;
+        let machine: u16 = match std::env::consts::ARCH {
+            "x86_64" => 62,
+            "aarch64" => 183,
+            arch => panic!("unsupported plugin architecture: {arch}"),
+        };
+        elf[18..20].copy_from_slice(&machine.to_le_bytes());
+        zip.start_file("bin/plugin", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&elf).unwrap();
+        zip.finish().unwrap().into_inner()
+    }
+
+    let directory = std::env::temp_dir().join(format!("plugin-http-{}", uuid::Uuid::new_v4()));
+    let mut config = super::config();
+    config.database.url = format!("sqlite://{}", directory.join("test.db").display());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let root = directory.join("plugins");
+    let socket = std::env::temp_dir().join(format!("plugin-{}.sock", uuid::Uuid::new_v4()));
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    config.background.plugin_installer_socket = Some(socket.clone());
+    config.background.plugin_installations_dir = Some(root.join("installations"));
+    let installations = config.background.plugin_installations_dir.clone().unwrap();
+    let installer = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).await.unwrap();
+            let request: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(request["action"], "Prepare");
+            let digest = request["package_digest"].as_str().unwrap();
+            let installation: String = Sha256::digest(format!("{digest}:shared-v1"))
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let receipt = json!({"installation_digest":installation,"package_digest":digest});
+            let directory = installations.join(&installation);
+            tokio::fs::create_dir_all(&directory).await.unwrap();
+            tokio::fs::write(directory.join(".installation.json"), receipt.to_string())
+                .await
+                .unwrap();
+            let reply = json!({"ok":true,"value":receipt});
+            stream
+                .write_all(format!("{reply}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let runtime = BackgroundRuntime::foundation_harness(db.clone(), Arc::new(config.clone()))
+        .await
+        .unwrap();
+    let mut state = AppState::from_provider_set_with_database(
+        config,
+        Arc::new(ProviderSet::unavailable()),
+        Some((*db).clone()),
+    );
+    state.background = Some(runtime.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!(
+        "http://{}/api/admin/plugins",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router_with_state(state))
+            .await
+            .unwrap();
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let mut previous_digest = Value::Null;
+    for (version, revision) in [("1.0.0", 1), ("1.0.1", 3)] {
+        let response = client
+            .post(format!("{base}/install"))
+            .bearer_auth("background-test-token")
+            .multipart(reqwest::multipart::Form::new().part(
+                "package",
+                reqwest::multipart::Part::bytes(package(version)).file_name("fixture-rust.zip"),
+            ))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let installed: Value = response.json().await.unwrap();
+        assert_eq!(status, 201, "{installed}");
+        assert_eq!(installed["id"], "fixture-rust");
+        assert_eq!(installed["version"], version);
+        assert_eq!(installed["revision"], revision);
+        assert_eq!(installed["status"], "disabled");
+        assert_eq!(installed["runtime"]["language"], "rust");
+        assert_ne!(installed["digest"], previous_digest);
+        previous_digest = installed["digest"].clone();
+        let response = client
+            .post(format!("{base}/fixture-rust/activate"))
+            .bearer_auth("background-test-token")
+            .header(reqwest::header::IF_MATCH, format!("\"{revision}\""))
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.json::<Value>().await.unwrap()["status"], "ready");
+    }
+    let response = client
+        .post(format!("{base}/install"))
+        .bearer_auth("background-test-token")
+        .multipart(reqwest::multipart::Form::new().part(
+            "package",
+            reqwest::multipart::Part::bytes(b"invalid ZIP".to_vec()).file_name("bad.zip"),
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["error"]["code"],
+        "invalid_plugin_package"
+    );
+    let response: Value = client
+        .get(format!("{base}/fixture-rust"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["version"], "1.0.1");
+    assert_eq!(response["revision"], 4);
+    assert_eq!(response["status"], "ready");
+    assert_eq!(response["digest"], previous_digest);
+    let response: Value = client
+        .get(&base)
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["total"], 1);
+    installer.await.unwrap();
+    server.abort();
+    let _ = server.await;
+    runtime.shutdown().await;
+    tokio::fs::remove_file(socket).await.unwrap();
+    db.pool().close().await;
+    tokio::fs::remove_dir_all(directory).await.unwrap();
+}
+
+#[tokio::test]
 async fn plugin_upload_rejects_invalid_zip_at_admin_boundary() {
     let (db, config, runtime) = harness().await;
     let mut state = AppState::from_provider_set_with_database(
