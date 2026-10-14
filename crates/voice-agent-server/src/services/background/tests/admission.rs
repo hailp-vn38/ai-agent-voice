@@ -81,9 +81,10 @@ async fn ready_plugin_choices_freeze_at_submit_and_pin_nonterminal_installation(
         .await
         .unwrap()
         .job;
-    assert_eq!(created.plugin_choices.as_array().unwrap().len(), 5);
+    assert_eq!(created.plugin_choices.as_array().unwrap().len(), 10);
     assert_eq!(created.plugin_choices[0]["plugin_id"], "core");
-    assert_eq!(created.plugin_choices[3]["plugin_id"], "fixture-research");
+    assert_eq!(created.plugin_choices.as_array().unwrap().iter()
+        .filter(|choice| choice["plugin_id"] == "fixture-research").count(), 2);
     assert_eq!(
         runtime
             .engine
