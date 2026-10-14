@@ -18,6 +18,7 @@ export interface LlmRun {
   errorCode: string | null
   validationPath: string | null
   requestDurationMs: number | null
+  totalDurationMs: number | null
   inputTokens: number | null
   outputTokens: number | null
   events: JobEvent[]
@@ -42,7 +43,7 @@ export function projectLlmRuns(events: JobEvent[], status: AdminJob['status']): 
         stepKey: event.step_key, provider: text(event.payload.provider_ref) ?? '—',
         providerSource: text(event.payload.provider_source) ?? '—',
         model: null, adapter: null, transport: null, status: 'running',
-        errorCode: null, validationPath: null, requestDurationMs: null,
+        errorCode: null, validationPath: null, requestDurationMs: null, totalDurationMs: null,
         inputTokens: null, outputTokens: null, events: [event],
       })
       continue
@@ -61,6 +62,7 @@ export function projectLlmRuns(events: JobEvent[], status: AdminJob['status']): 
     } else if (event.event_type === 'llm_run_finished') {
       const state = text(event.payload.status)
       run.status = state === 'completed' || state === 'cancelled' ? state : 'failed'
+      run.totalDurationMs = int(event.payload.duration_ms)
       run.errorCode = text(event.payload.error_code) ?? text(event.payload.validation_code)
       run.validationPath = text(event.payload.validation_path)
     }
