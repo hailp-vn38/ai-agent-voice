@@ -283,9 +283,13 @@ fn parse_turn(
         BackgroundMode::Structured { .. } => BackgroundTurn::Text(output_text(body)?),
         BackgroundMode::Tools => {
             let mut calls = Vec::new();
+            let mut text_returned = false;
             for item in output {
                 match item["type"].as_str() {
                     Some("reasoning") => {}
+                    Some("message") => {
+                        text_returned = true;
+                    }
                     Some("function_call") => {
                         let id = item["call_id"]
                             .as_str()
@@ -306,7 +310,15 @@ fn parse_turn(
                     _ => return Err(LlmError::Rejected),
                 }
             }
-            BackgroundTurn::ToolCalls(calls)
+            if text_returned {
+                if !calls.is_empty() {
+                    return Err(LlmError::Rejected);
+                }
+                // Text-only native turns belong to the Child decision validator.
+                BackgroundTurn::Text(output_text(body)?)
+            } else {
+                BackgroundTurn::ToolCalls(calls)
+            }
         }
     };
     let usage = body
