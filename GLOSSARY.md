@@ -200,3 +200,34 @@ _Avoid_: Conversational Turn, Tool Round
 **Fork Group**:
 Tập Sub-Agent có cùng quyết định giao nhiệm vụ, được Join sau khi mọi thành viên kết thúc.
 _Avoid_: Job Queue, durable independent Job
+
+
+## Agent Job V3 — OpenCode-style delegation
+
+**Agent Configuration**:
+Server-owned specialist definition (initially research/document/general), including system instructions. It does not give permission to expand the frozen Job tool set.
+_Avoid_: Agent Run, ProviderPin, requester-provided executable code
+
+**Agent Session**:
+Durable independent transcript plus pinned route identity for one Root or Child. Child follow-up retains the Session but creates another Agent Run.
+_Avoid_: Agent Run, LLM Run, Voice Session
+
+**Canonical Message**:
+Provider-neutral system/user/assistant/tool-call/tool-result record persisted under an Agent Session and translated by a concrete provider Adapter.
+_Avoid_: raw provider response, Job Event, SSE metadata
+
+**Delegated Task Prompt**:
+Bounded full task instructions authored by Root and supplied as a new Child user message through the server-owned `subagent` tool.
+_Avoid_: `goal_excerpt`, Parent Session dump, permission grant
+
+**ChildOutcome**:
+Rust-owned task outcome containing session/run identity, status, bounded summary, verified artifact references and stable error code. It is delivered as a Tool Result matched to the Root's call ID.
+_Avoid_: raw Child transcript, model-defined Job status
+
+**Provider Capability**:
+A route-specific ability (native tools, structured output, replay constraints), verified for the pinned provider/model/transport, not inferred from adapter naming.
+_Avoid_: operator boolean alone, model marketing description
+
+**Root Tool Result**:
+Canonical tool observation paired with the original native Root `subagent` call ID, carrying only validated ChildOutcome rather than provider-native Child tool blocks.
+_Avoid_: joined_children synthetic user prompt
