@@ -40,14 +40,24 @@ pub(crate) trait JobModels: Send + Sync {
     }
     async fn turn_traced(
         &self,
-        _run: &LlmRunContext,
-        _pin: &ProviderPin,
-        _request: LlmRequest,
-        _mode: crate::providers::llm::BackgroundMode,
-        _deadline_at: i64,
-        _cancellation: CancellationToken,
+        run: &LlmRunContext,
+        pin: &ProviderPin,
+        request: LlmRequest,
+        mode: crate::providers::llm::BackgroundMode,
+        deadline_at: i64,
+        cancellation: CancellationToken,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        Err(JobError::CapabilityUnavailable)
+        // Test doubles for existing Root repair tests may implement only the
+        // structured completion seam. Production ManagedModels overrides this.
+        match mode {
+            crate::providers::llm::BackgroundMode::Structured { schema, .. } => {
+                let text = self.complete_structured_traced(run,pin,request,schema,deadline_at,cancellation).await?;
+                Ok(crate::providers::llm::BackgroundTurnResult {
+                    turn:crate::providers::llm::BackgroundTurn::Text(text),usage:None
+                })
+            }
+            crate::providers::llm::BackgroundMode::Tools => Err(JobError::CapabilityUnavailable),
+        }
     }
     async fn complete_traced(
         &self,
