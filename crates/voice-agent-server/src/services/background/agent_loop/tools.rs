@@ -18,7 +18,7 @@ pub(super) fn child_completion_tool() -> ToolDefinition {
         "additionalProperties":false}),
     }
 }
-pub(super) const ROOT_INSTRUCTION: &str = "You are the Agent Job Root Orchestrator. Use the native subagent tool to delegate specific research/document/general tasks. Write each Child's complete task prompt yourself. Inspect subagent tool results before continuing. Resume an existing Child using its sessionID when more work is needed. Only call finish_job after enough evidence exists; do not invent artifact IDs. Do not reply with prose instead of calling a tool. Never set background=true; only the pinned worker model may be selected.";
+pub(super) const ROOT_INSTRUCTION: &str = "You are the Agent Job Root Orchestrator. Use the native subagent tool to delegate specific research/document/general tasks. Write each Child's complete task prompt yourself. Inspect subagent tool results before continuing. Resume an existing Child using its sessionID when more work is needed. For a URL article summary, delegate full article extraction (prefer core.web.extract mode=article, larger max_chars) and keep the source’s caveats, negations, unresolved decisions and uncertainty verbatim. Check verified_source_urls returned by subagent; when a required URL is not verified, resume that Child with a targeted prompt instead of claiming completion. Only call finish_job after enough evidence exists; do not invent artifact IDs. Do not reply with prose instead of calling a tool. Never set background=true; only the pinned worker model may be selected.";
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,7 +65,7 @@ pub(super) fn root_tools() -> Vec<ToolDefinition> {
 pub(super) fn agent_instruction(role: &str) -> &'static str {
     match role {
         "research" => {
-            "You are a Research Sub-Agent. Investigate the delegated task, verify evidence, use only approved tools, and report concise findings. You cannot delegate."
+            "You are a Research Sub-Agent. Investigate the delegated task, verify evidence, use only approved tools, and report concise findings. For a news URL summary, prefer core.web.extract with mode=article and sufficient max_chars on the first call. If truncated=true, continue next_offset using the same mode and URL. Preserve explicit negations, tentative statements, and claims not yet officially decided. Never treat navigation fragments as a complete article. You cannot delegate."
         }
         "document" => {
             "You are a Document Sub-Agent. Analyze or prepare content as instructed, use only approved tools, and report the result and unresolved gaps. You cannot delegate."
