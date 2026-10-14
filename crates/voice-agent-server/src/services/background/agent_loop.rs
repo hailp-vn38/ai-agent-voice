@@ -435,26 +435,22 @@ async fn model_decision(
     let deadline = job
         .deadline_at
         .min(now.saturating_add(i64::from(job.snapshot.limits.step_timeout_seconds)));
-    let response = models
-        .complete_structured_traced(
-            context,
-            pin,
-            LlmRequest {
-                messages: vec![
-                    ChatMessage::System {
-                        content: system.to_owned(),
-                    },
-                    ChatMessage::User {
-                        content: payload.to_string(),
-                    },
-                ],
-                tools: Vec::new(),
-            },
-            schema,
-            deadline,
-            cancellation.clone(),
-        )
-        .await;
+    let request=LlmRequest {
+        messages: vec![
+            ChatMessage::System {content:system.to_owned()},
+            ChatMessage::User {content:payload.to_string()},
+        ],
+        tools:Vec::new(),
+    };
+    let response=if let Some(schema)=schema {
+        models.complete_structured_traced(
+            context,pin,request,schema,deadline,cancellation.clone()
+        ).await
+    } else {
+        models.complete_traced(
+            context,pin,request,deadline,cancellation.clone()
+        ).await
+    };
     let metadata = json!({"status":if response.is_ok(){"completed"}else{"failed"},
         "error_code":response.as_ref().err().map(|e|e.code()),
         "duration_ms":context.started_at.elapsed().as_millis() as u64});
