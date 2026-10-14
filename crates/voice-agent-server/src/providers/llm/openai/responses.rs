@@ -251,9 +251,11 @@ fn parse_turn(body: &Value, mode: &crate::providers::llm::BackgroundMode)
         BackgroundMode::Structured {..} => BackgroundTurn::Text(output_text(body)?),
         BackgroundMode::Tools => {
             let mut calls = Vec::new();
+            let mut text_returned = false;
             for item in output {
                 match item["type"].as_str() {
                     Some("reasoning") => {},
+                    Some("message") => { text_returned = true; }
                     Some("function_call") => {
                         let id = item["call_id"].as_str().filter(|s| !s.is_empty()).ok_or(LlmError::Rejected)?;
                         let name = item["name"].as_str().filter(|s| !s.is_empty()).ok_or(LlmError::Rejected)?;
@@ -264,7 +266,14 @@ fn parse_turn(body: &Value, mode: &crate::providers::llm::BackgroundMode)
                     _ => return Err(LlmError::Rejected),
                 }
             }
-            BackgroundTurn::ToolCalls(calls)
+            if text_returned {
+                if !calls.is_empty() { return Err(LlmError::Rejected); }
+                // Surface a text-only native turn to the Child validator so
+                // it can reject the decision and consume bounded repair budget.
+                BackgroundTurn::Text(output_text(body)?)
+            } else {
+                BackgroundTurn::ToolCalls(calls)
+            }
         }
     };
     let usage = body.get("usage").map(|v| crate::providers::llm::BackgroundTokenUsage {
