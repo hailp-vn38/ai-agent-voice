@@ -124,3 +124,41 @@ impl Database {
         Ok(())
     }
 }
+
+
+impl Database {
+    /// Persist a validated action or a safe rejection diagnostic independently
+    /// of the LLM transport status. No raw model output is written to SQLite.
+    pub(crate) async fn record_agent_decision(
+        &self,
+        run:&crate::services::background::model::LlmRunContext,
+        accepted:bool,
+        detail:Value,
+    )->Result<(),JobError>{
+        let fields=detail.as_object().ok_or(JobError::InvalidArguments)?;
+        let valid=if accepted {
+            fields.get("action").and_then(Value::as_str).is_some_and(|s|
+                matches!(s,"delegate"|"finish"|"call_plugin"))
+        } else {
+            fields.get("validation_code").and_then(Value::as_str).is_some_and(|s|
+                !s.is_empty()&&s.len()<=64&&s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'))
+            && fields.get("validation_path").and_then(Value::as_str).is_some_and(|s|
+                s.starts_with('$')&&s.len()<=128&&s.bytes().all(|b|
+                    b.is_ascii_alphanumeric()||b"$.[]_-".contains(&b)))
+        };
+        if !valid||fields.len()!=2&&accepted||fields.len()!=3&&!accepted
+            ||fields.get("attempt_no").and_then(Value::as_u64).is_none() {
+            return Err(JobError::InvalidArguments);
+        }
+        let mut payload=json!({"run_id":run.run_id,"turn_id":run.run_id,
+            "agent_run_id":run.agent_run_id,"role":run.role});
+        for (key,value) in fields {payload[key]=value.clone();}
+        let mut tx=self.pool().begin_with("BEGIN IMMEDIATE").await?;
+        append(&mut tx,&run.job_id,
+            if accepted {"agent_decision_accepted"} else {"agent_decision_rejected"},
+            None,&payload).await?;
+        tx.commit().await?;
+        self.job_changes.publish_committed(&run.job_id);
+        Ok(())
+    }
+}
