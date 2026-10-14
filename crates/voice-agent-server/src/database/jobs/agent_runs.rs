@@ -1,4 +1,4 @@
-//! Durable V2 Agent Run ownership. All SQL stays behind the Database seam.
+//! Durable Agent Run ownership. All SQL stays behind the Database seam.
 use super::*;
 use crate::services::background::{AgentRunView, model::DelegatedTask, plugins::FrozenChoice};
 use serde_json::{Value, json};
@@ -73,9 +73,13 @@ impl Database {
     pub(crate) async fn create_root_run(&self, id: &str) -> Result<AgentRunView, JobError> {
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let job: JobRow = sqlx::query_as(
-            "SELECT * FROM jobs WHERE id=? AND status='planning' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?"
-        ).bind(id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
+        let job: JobRow =
+            sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='planning' AND deadline_at>?")
+                .bind(id)
+                .bind(now)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(JobError::Terminal)?;
         let run_id = uuid::Uuid::new_v4().to_string();
         let goal =
             serde_json::from_str::<crate::services::background::JobRequest>(&job.request_json)
@@ -113,6 +117,7 @@ impl Database {
         row.view()
     }
 
+    #[cfg(test)]
     pub(crate) async fn create_children_for_decision(
         &self,
         job_id: &str,
@@ -240,8 +245,13 @@ impl Database {
             return Err(JobError::InvalidPlan);
         }
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?")
-            .bind(job_id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
+        let job: JobRow =
+            sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND deadline_at>?")
+                .bind(job_id)
+                .bind(now)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(JobError::Terminal)?;
         let choices: Vec<Value> = serde_json::from_str(&job.plugin_choices_json)
             .map_err(|_| JobError::DatabaseUnavailable)?;
         if !choices
@@ -276,7 +286,7 @@ impl Database {
     }
 }
 
-/// Shared atomic allocation seam for V2 and V3 session attachment.
+/// Atomic allocation seam for durable session attachment.
 pub(super) async fn create_children_in_tx(
     tx: &mut SqliteConnection,
     job_id: &str,
@@ -288,8 +298,13 @@ pub(super) async fn create_children_in_tx(
         return Err(JobError::InvalidPlan);
     }
     let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
-    let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?")
-            .bind(job_id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
+    let job: JobRow =
+        sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND deadline_at>?")
+            .bind(job_id)
+            .bind(now)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(JobError::Terminal)?;
     let root_valid:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND agent_run_id=? AND parent_agent_run_id IS NULL AND status='running'")
             .bind(job_id).bind(root).fetch_one(&mut *tx).await?;
     if root_valid != 1 {

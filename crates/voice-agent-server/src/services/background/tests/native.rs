@@ -15,16 +15,6 @@ struct NativePair {
 }
 #[async_trait::async_trait]
 impl JobModels for NativePair {
-    async fn complete(
-        &self,
-        _: &str,
-        _: &ProviderPin,
-        _: LlmRequest,
-        _: i64,
-        _: CancellationToken,
-    ) -> Result<String, JobError> {
-        panic!("native path required")
-    }
     async fn turn_traced(
         &self,
         _: &model::LlmRunContext,
@@ -53,7 +43,7 @@ impl JobModels for NativePair {
     }
 }
 #[tokio::test]
-async fn v3_native_root_chat_child_responses_roundtrips_keep_routes_and_history_isolated() {
+async fn native_root_chat_child_responses_roundtrips_keep_routes_and_history_isolated() {
     use axum::{Json, Router, routing::post};
     let roots = Arc::new(AtomicUsize::new(0));
     let children = Arc::new(AtomicUsize::new(0));
@@ -152,7 +142,6 @@ async fn v3_native_root_chat_child_responses_roundtrips_keep_routes_and_history_
             request("Local native qualification"),
             &JobRequester::Admin,
             crate::database::jobs::SubmissionIdentity {
-                test_execution_mode: Some("hierarchical_v3"),
                 ..Default::default()
             },
             crate::database::unix_seconds().unwrap(),

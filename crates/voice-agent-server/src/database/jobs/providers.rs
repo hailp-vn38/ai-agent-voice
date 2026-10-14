@@ -35,52 +35,6 @@ pub(super) async fn pin(
         digest: digest(&format!("{adapter}\n{configuration}")),
     })
 }
-/// Capabilities are declared for the exact pinned model + transport; both
-/// sources use the same canonical provider configuration.
-pub(super) async fn require_hybrid_capability(
-    connection: &mut SqliteConnection,
-    config: &AppConfig,
-    reference: &str,
-    required_flag: &str,
-) -> Result<(), JobError> {
-    if !matches!(
-        required_flag,
-        "supports_structured_outputs" | "supports_function_calling"
-    ) {
-        return Err(JobError::InvalidArguments);
-    }
-    let parsed =
-        ProviderRef::parse(reference, Some("llm")).map_err(|_| JobError::ProviderUnavailable)?;
-    let (adapter, config_json) = match parsed.origin {
-        ProviderOrigin::Config => {
-            let row = parsed
-                .snapshot(config)
-                .map_err(|_| JobError::ProviderUnavailable)?;
-            (row.adapter, row.config_json)
-        }
-        ProviderOrigin::Database => {
-            let row: Option<(String,String)> = sqlx::query_as(
-                "SELECT adapter,config_json FROM providers WHERE key=? AND type='llm' AND enabled=1")
-                .bind(&parsed.key).fetch_optional(connection).await?;
-            row.ok_or(JobError::ProviderUnavailable)?
-        }
-    };
-    let missing = match required_flag {
-        "supports_structured_outputs" => JobError::OrchestratorStructuredOutputsRequired,
-        "supports_function_calling" => JobError::WorkerFunctionCallingRequired,
-        _ => return Err(JobError::InvalidArguments),
-    };
-    if !matches!(adapter.as_str(), "openai" | "opencode_free") {
-        return Err(missing);
-    }
-    let values: serde_json::Value =
-        serde_json::from_str(&config_json).map_err(|_| JobError::ProviderUnavailable)?;
-    if values[required_flag].as_bool() != Some(true) {
-        return Err(missing);
-    }
-    Ok(())
-}
-
 pub(super) async fn options(
     connection: &mut SqliteConnection,
     config: &AppConfig,

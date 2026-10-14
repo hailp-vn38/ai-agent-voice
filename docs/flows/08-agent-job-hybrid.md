@@ -1,6 +1,6 @@
 # Flow 08 — Agent Job Hybrid (Root Structured / Child Tools)
 
-Status: implementation branch `feat/agent-job-hybrid-structured-tools`. Related: [implementation contract](../agent-job-hybrid-implementation.md), [ADR 0103](../adr/0103-hierarchical-agent-job-v2.md), [hybrid decision](../adr/0113-hybrid-agent-job-native-tool-calling.md).
+Status: implementation branch `feat/agent-job-hybrid-structured-tools`. Related: [ADR 0103](../adr/0103-hierarchical-agent-job-v2.md), [hybrid decision](../adr/0113-hybrid-agent-job-native-tool-calling.md).
 
 ## Overview
 
@@ -111,8 +111,6 @@ Child mode sets `tool_choice=required` and `parallel_tool_calls=false`; if upstr
 - Provider refusal/incomplete/unsupported strict ⇒ model failure, **no automatic fallback** to Chat JSON text or vendor-managed agent execution.
 - Cancel/deadline/revocation and failed-on-restart semantics unchanged.
 - Timeline B derives LLM / Root fork / Child tool Step / Child finish / join / Job terminal from durable `job_events` and Job Read View; provider `call_id` is only local Child history.
-
-The canonical acceptance matrix is in [the implementation guide](../agent-job-hybrid-implementation.md); do not duplicate it here.
 
 
 ## Core Operations in-process (ADR 0114)

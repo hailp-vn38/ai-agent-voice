@@ -1,16 +1,15 @@
-use super::{JobError, JobView, plan::JobPlan};
+use super::{JobError, JobView};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
 pub(super) fn terminal_result<'a>(
     job: &JobView,
-    plan: &JobPlan,
     results: &HashMap<String, Value>,
     failures: &HashMap<String, String>,
 ) -> Result<(&'a str, Value), JobError> {
     let mut sources = std::collections::HashSet::new();
     let mut capabilities = std::collections::HashSet::new();
-    for step in &plan.steps {
+    for step in job.steps.iter().filter(|step| step.agent_run_id.is_some()) {
         let Some(plugin) = &step.plugin_id else {
             continue;
         };
@@ -86,12 +85,7 @@ pub(super) fn terminal_result<'a>(
         .iter()
         .filter(|capability| !capabilities.contains(*capability))
         .collect();
-    let required_failed = plan
-        .steps
-        .iter()
-        .any(|step| step.required && failures.contains_key(&step.step_key));
-    let satisfied =
-        missing_sources.is_empty() && missing_capabilities.is_empty() && !required_failed;
+    let satisfied = missing_sources.is_empty() && missing_capabilities.is_empty();
     let status = if satisfied {
         "succeeded"
     } else if job.request.allow_partial && !job.artifacts.is_empty() && !results.is_empty() {

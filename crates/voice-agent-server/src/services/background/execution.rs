@@ -70,7 +70,7 @@ impl JobEngine {
         Ok(bytes)
     }
 
-    /// P3's planner supplies persisted Steps. P2's test harness supplies exactly one.
+    #[cfg(test)]
     pub(crate) async fn execute_plugin_step(
         &self,
         job_id: &str,
@@ -95,14 +95,9 @@ impl JobEngine {
         arguments: Value,
         cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<JobView, JobError> {
-        let inputs = self
-            .database
-            .plugin_step_inputs(job_id, step_key, &arguments)
+        self.database
+            .validate_plugin_step_arguments(job_id, step_key, &arguments)
             .await?;
-        let inputs = Value::Object(inputs);
-        if inputs.to_string().len() > 32768 {
-            return Err(JobError::CapacityUnavailable);
-        }
         let attempt = uuid::Uuid::new_v4().to_string();
         let deadline_at = self.get(job_id).await?.deadline_at;
         self.database
@@ -144,7 +139,7 @@ impl JobEngine {
             self.plugins
                 .invoke(
                     Invocation {
-                        inputs,
+                        inputs: serde_json::json!({}),
                         choice,
                         arguments,
                         job_id,

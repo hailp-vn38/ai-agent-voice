@@ -4,11 +4,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BackgroundConfig {
-    /// Operator release attestation after native/E2E qualification. Each string
-    /// is the serialized ProviderPin (Root, Child); any route change invalidates it.
-    /// Absent means new submissions retain hierarchical_v2.
-    #[serde(default)]
-    pub hierarchical_v3_qualified_pins: Option<[String; 2]>,
     #[serde(default)]
     pub limits: BackgroundLimits,
     /// Private shared-runtime Unix sockets (mounted through Compose).
@@ -30,6 +25,7 @@ pub struct BackgroundLimits {
     pub max_active_jobs: u32,
     pub max_container_workers: u32,
     pub max_steps: u32,
+    /// Retained only to deserialize existing configuration and Job snapshots.
     pub max_replans: u32,
     pub max_plan_repairs: u32,
     pub max_worker_rounds: u32,
@@ -65,7 +61,6 @@ impl BackgroundLimits {
             && (1..=2).contains(&self.max_active_jobs)
             && (1..=2).contains(&self.max_container_workers)
             && (1..=12).contains(&self.max_steps)
-            && self.max_replans <= 2
             && self.max_plan_repairs <= 2
             && (1..=8).contains(&self.max_worker_rounds)
             && (1..=8).contains(&self.max_child_runs)

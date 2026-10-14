@@ -8,7 +8,7 @@ Previously the Child generated ad-hoc JSON `call_plugin|finish`, leading to argu
 
 Provider declares `supports_structured_outputs` and `supports_function_calling` separately from existing `supports_responses`. They are opt-in assertions for the pinned model/transport and do not imply qualification. Requests fail closed if unsupported; never silently switch endpoints or drop strict validation. Legacy `dag_v1` and Voice streaming behavior remain unchanged.
 
-Alternatives rejected: JSON actions for both Root and Child (fragile dynamic plugin arguments), tool calling for Root (unnecessary dispatch semantics), and vendor-side tool execution (bypasses Rust-owned authority). See [implementation guide](../agent-job-hybrid-implementation.md) and [operational flow](../flows/08-agent-job-hybrid.md). ADR 0099's original Background tool-free rule still applies to **legacy** completions; this decision governs hierarchical native turns. ADR 0103's hierarchical model remains authoritative.
+Alternatives rejected: JSON actions for both Root and Child (fragile dynamic plugin arguments), tool calling for Root (unnecessary dispatch semantics), and vendor-side tool execution (bypasses Rust-owned authority). See [operational flow](../flows/08-agent-job-hybrid.md). ADR 0099's original Background tool-free rule still applies to **legacy** completions; this decision governs hierarchical native turns. ADR 0103's hierarchical model remains authoritative.
 
 
 ## Supersession for V3 (ADR 0114)

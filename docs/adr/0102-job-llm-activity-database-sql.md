@@ -6,7 +6,7 @@ Status: Accepted for implementation, 2026-10-14.
 
 An Agent Job currently exposes durable Job/Plan/Step checkpoints but cannot explain which LLM Provider was acquired, which background transport was used, where capacity waits occurred, or why a particular Plan Repair was needed. These operations are neither a new Agent nor a Job Step. Existing provider queries also leak SQLx connection/query details into Background orchestration/runtime files, making the Provider-pin safety checks harder to maintain.
 
-The accepted Admin UX is **View A: Timeline First** with four summary KPIs, a left chronological LLM Run timeline, and a persistent right Selected Run and Execution Progress inspector. See `docs/agent-job-llm-activity-view-a-design.md`.
+The accepted Admin UX is **View A: Timeline First** with four summary KPIs, a left chronological LLM Run timeline, and a persistent right Selected Run and Execution Progress inspector.
 
 ## Decision
 

@@ -275,7 +275,6 @@ Các benchmark dùng provider được chọn trong cấu hình và có thể t�
 
 1. [Domain model và thuật ngữ](CONTEXT.md).
 2. [Các flow voice pipeline](docs/flows/README.md).
-3. [Structured system prompt](docs/structured-voice-system-prompt.md).
-4. [API collection](docs/api/00-all-apis.postman_collection.json), [Provider/MCP testing](docs/api/live-testing.md), [tool allowlist](docs/api/tool-allowlist.md).
-5. [Chiến lược và contract tests](docs/testing/README.md).
-6. [Quyết định kiến trúc](docs/adr/).
+3. [API collection](docs/api/00-all-apis.postman_collection.json), [Provider/MCP testing](docs/api/live-testing.md), [tool allowlist](docs/api/tool-allowlist.md).
+4. [Chiến lược và contract tests](docs/testing/README.md).
+5. [Quyết định kiến trúc](docs/adr/).

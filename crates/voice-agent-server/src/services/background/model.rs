@@ -202,9 +202,6 @@ pub enum JobError {
     CapacityUnavailable,
     QueueFull,
     CapabilityUnavailable,
-    OrchestratorStructuredOutputsRequired,
-    OrchestratorFunctionCallingRequired,
-    WorkerFunctionCallingRequired,
     IdempotencyConflict,
     RevisionConflict,
     DeleteConflict,
@@ -238,11 +235,6 @@ impl JobError {
             Self::CapacityUnavailable => "background_capacity_unavailable",
             Self::QueueFull => "queue_full",
             Self::CapabilityUnavailable => "capability_unavailable",
-            Self::OrchestratorStructuredOutputsRequired => {
-                "orchestrator_structured_outputs_required"
-            }
-            Self::OrchestratorFunctionCallingRequired => "orchestrator_function_calling_required",
-            Self::WorkerFunctionCallingRequired => "worker_function_calling_required",
             Self::IdempotencyConflict => "idempotency_conflict",
             Self::RevisionConflict => "revision_conflict",
             Self::DeleteConflict => "job_delete_conflict",

@@ -81,8 +81,6 @@ hiển thị tên tool đang chạy dưới waveform khi đang processing, dùng
 mất kết nối. Không thêm status vào lịch sử ASR/LLM. Do control queue bounded,
 events là best-effort; terminal turn status vẫn quyết định lúc mở lượt mới.
 
-Xem [implementation guide](../tool-execution-status-websocket-implementation-guide.md).
-
 ## Opt-in turn status
 
 Only authenticated Virtual Device sessions with `features.turn_status=true`

@@ -1,5 +1,7 @@
 use super::*;
-use crate::providers::llm::{BackgroundMode, BackgroundTurn, ToolCall, ToolDefinition};
+use crate::providers::llm::{
+    BackgroundMode, BackgroundTurn, ChatMessage, ToolCall, ToolDefinition,
+};
 #[test]
 fn strict_function_call_uses_local_call_id_history() {
     let request = LlmRequest {

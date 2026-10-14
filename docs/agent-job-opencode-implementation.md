@@ -90,30 +90,31 @@ The V3 source implementation on `feat/agent-job-v3-opencode-session-runtime` now
 - FK-safe terminal deletion and retention of V3 Runs, messages and Child/Root Sessions; legacy V2/DAG dispatcher paths and rows remain separate.
 - Exact-route preflight, static Background-capacity rejection and deadline/cancellation-bounded dynamic admission, retaining Voice reservation.
 
-### New-submission release gate
+### Single native executor (2026-10-14)
 
-New production submissions default to `hierarchical_v2`. V3 requires the deployment field below **after** native provider and deployment E2E qualification. Capability flags alone do not establish qualification.
+The native Root/Child session executor is now the only Agent Loop implementation.
+Production submissions use it without a deployment attestation field or hierarchical
+capability checks. Provider pins, authorization, capacity, frozen operations and
+runtime checks remain enforced. Executor functions and session APIs have no version
+suffix. The persisted `hierarchical_v3` discriminator remains unchanged for SQLite
+compatibility. Runtime dispatch, session allocation, model budgets and terminal
+Agent Run updates no longer branch on `execution_mode`. The DAG planner, proposal
+compiler and legacy completion executor have been removed. Historical mode values
+remain readable; any admitted Job executes the single native session flow.
+Restart recovery and unknown-outcome no-replay rules remain unchanged.
+Manual retries create new Jobs using the native session executor.
 
-```toml
-[background]
-# Root and Child, in that order. Replace all placeholders with actual snapshot
-# ProviderPin JSON obtained for the exact routes qualified in an isolated run.
-# hierarchical_v3_qualified_pins = [
-#   '{"reference":"config:llm:root","incarnation":0,"revision":1,"digest":"<actual digest>"}',
-#   '{"reference":"config:llm:child","incarnation":0,"revision":1,"digest":"<actual digest>"}'
-# ]
-```
-
-Both pins must equal the current, transactionally frozen provider pair. A changed reference, incarnation, revision or digest rejects a new V3 submission with `configuration_changed`; malformed qualification JSON fails closed. There is no provider qualification registry. Removing the field restores V2 for new submissions and blocks new V3 manual retries; existing V3 Jobs retain their own mode and pinned executor. Retry of historical V2/DAG Jobs preserves its original mode.
-
-Keep this field unset in production while the deployment gates below remain open. For isolated qualification, use a test deployment with the candidate pins and then promote the same qualified route identities only after its acceptance succeeds.
+This explicitly supersedes the V2-executor preservation and release-gate portions
+of ADR 0103, ADR 0113 and ADR 0114 (durable Agent Sessions), per the current project
+request. Existing qualification evidence below describes its original baseline;
+it does not establish deployment acceptance for this change.
 
 ### Verification and acceptance evidence
 
 All repository checks use `scripts/agent-test.sh`:
 
 ```sh
-scripts/agent-test.sh targeted v3_ voice-agent-server
+scripts/agent-test.sh targeted services::background voice-agent-server
 scripts/agent-test.sh run -- cargo fmt --all --check
 scripts/agent-test.sh run -- cargo check --workspace --all-targets
 scripts/agent-test.sh full

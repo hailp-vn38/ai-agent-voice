@@ -376,5 +376,3 @@ Các event đi qua `OutboundMessage::TurnText` và generation gate hiện có;
 trường hợp cancel/stale hoặc bounded control queue đầy có thể bỏ event mà không
 thay đổi việc thực thi tool hoặc kết quả turn. Client chỉ dùng status để hiển
 thị tạm thời; không suy luận turn đã hoàn thành từ tool status.
-
-Chi tiết: [Tool Execution Status guide](../tool-execution-status-websocket-implementation-guide.md).

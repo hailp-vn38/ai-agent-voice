@@ -31,7 +31,7 @@ Deletion commits before reconciliation. If reconciliation fails, maintenance sch
 
 The canonical 31-row P4 register still records all scenarios as `NOT_RUN`, with commands/platform/images/evidence `pending`. In particular, rows 21/30 require deployed egress isolation/bypass/private-IP/redirect/DNS-rebinding/authority probes, and row 29 requires concurrent Voice/Reminder/Background load and measured latency bounds. Source tests and tracing events cannot satisfy those gates. Keep the qualified-host list empty until the actual topology and exact hosts pass qualification.
 
-P3 evidence `p3-qualification-2026-10-13.json` records PASS for the isolated continuous E2E and rootless execution. All seven recorded source hashes match current files. `P4-IMPLEMENTATION.md:3` still says those prior gates remain open; reconcile that stale statement with the evidence without upgrading P4 rows automatically.
+P3 evidence `p3-qualification-2026-10-13.json` records PASS for the isolated continuous E2E and rootless execution. All seven recorded source hashes match current files. Do not upgrade P4 rows automatically based on the P3 evidence.
 
 ## Checks executed
 
