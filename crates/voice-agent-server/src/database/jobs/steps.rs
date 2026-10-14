@@ -62,6 +62,21 @@ pub(super) async fn read(
 }
 
 impl Database {
+    /// Core Operations may inspect only metadata associated with this Job.
+    /// SQLx remains in the domain repository module, not under tools/.
+    pub(crate) async fn job_artifact_metadata(
+        &self,
+        job_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<(String, String)>, JobError> {
+        sqlx::query_as("SELECT media_type,sha256 FROM job_artifacts WHERE job_id=? AND id=?")
+            .bind(job_id)
+            .bind(artifact_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(Into::into)
+    }
+
     /// Return only immutable artifacts created by this exact persisted Step.
     /// IDs are safe to share in a Child's matched Tool Result.
     pub(crate) async fn job_step_artifact_refs(
