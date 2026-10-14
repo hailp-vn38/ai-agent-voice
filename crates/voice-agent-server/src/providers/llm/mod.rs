@@ -300,13 +300,16 @@ async fn stream_openai_request(
     let stream = client
         .chat_stream_with_tools(&messages, (!tools.is_empty()).then_some(tools.as_slice()))
         .await
-        .map_err(|_| {
+        .map_err(|error| {
             tracing::warn!(
                 event = "llm_provider_open_stream_failed",
                 adapter,
                 "OpenAI-compatible LLM stream could not be opened"
             );
-            LlmError::Failed
+            match error {
+                llm::error::LLMError::ResponseFormatError { .. } => LlmError::Rejected,
+                _ => LlmError::Failed,
+            }
         })?;
     Ok(Box::pin(stream.filter_map(|chunk| async move {
         adapt_stream_chunk(chunk)

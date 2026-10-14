@@ -82,6 +82,7 @@ pub struct LlmDiagnosticOperation {
     request: LlmRequest,
     max_text_bytes: usize,
     cancellation: Option<CancellationToken>,
+    terminal_acknowledged: bool,
 }
 
 impl LlmRuntime {
@@ -274,6 +275,7 @@ impl LlmRuntime {
             request,
             max_text_bytes,
             cancellation: None,
+            terminal_acknowledged: false,
         }
     }
 }
@@ -291,7 +293,10 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
             .provider
             .stream(self.request.clone())
             .await
-            .map_err(|_| ProviderDiagnosticOperationError::Failed)?;
+            .map_err(|error| {
+                self.terminal_acknowledged = matches!(error, crate::providers::LlmError::Rejected);
+                ProviderDiagnosticOperationError::Failed
+            })?;
         let mut text = String::new();
         loop {
             tokio::select! {
@@ -310,7 +315,10 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
                         return Err(ProviderDiagnosticOperationError::InvalidResponse);
                     }
                     Some(Ok(LlmEvent::Finished)) | None => return Ok(text),
-                    Some(Err(_)) => return Err(ProviderDiagnosticOperationError::Failed),
+                    Some(Err(error)) => {
+                        self.terminal_acknowledged = matches!(error, crate::providers::LlmError::Rejected);
+                        return Err(ProviderDiagnosticOperationError::Failed);
+                    }
                 },
             }
         }
@@ -326,7 +334,7 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
         // `LlmProvider` has no provider-specific cancellation acknowledgement seam. Dropping a
         // Rust stream is not evidence that its remote operation has terminated, so timeout must
         // retain (quarantine) this exact capacity rather than release it optimistically.
-        false
+        self.terminal_acknowledged
     }
 
     fn quarantine_exact(&mut self) {

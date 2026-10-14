@@ -242,3 +242,58 @@ async fn cancelled_waiter_keeps_diagnostic_admission_until_terminal_acknowledgem
     tokio::task::yield_now().await;
     assert!(service.begin(target(7)).is_ok());
 }
+
+#[tokio::test]
+async fn llm_rejection_does_not_leave_provider_test_busy() {
+    use crate::providers::llm::ConfiguredOpenAiLlm;
+    use axum::{Router, http::StatusCode, routing::post};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/v1/chat/completions",
+                post(|| async { StatusCode::TOO_MANY_REQUESTS }),
+            ),
+        )
+        .await
+        .unwrap();
+    });
+    let mut service = service(7);
+    service.registry = Arc::new(RuntimeCatalog {
+        llm: HashMap::from([(
+            "llm-a".into(),
+            Arc::new(LlmRuntime::new(
+                Arc::new(
+                    ConfiguredOpenAiLlm::build_with_responses(
+                        "public",
+                        &base,
+                        "space-bunny-free",
+                        1,
+                        true,
+                    )
+                    .unwrap(),
+                ),
+                2,
+                Duration::from_secs(1),
+            )),
+        )]),
+        ..RuntimeCatalog::default()
+    });
+    for _ in 0..2 {
+        let operation = service
+            .registry
+            .llm_diagnostic("llm-a", LlmRequest::text_turn("hello".into()), 1024)
+            .unwrap();
+        assert_eq!(
+            service
+                .execute(target(7), operation, Duration::from_millis(100))
+                .await
+                .err(),
+            Some(ProviderDiagnosticError::Failed)
+        );
+    }
+    server.abort();
+}

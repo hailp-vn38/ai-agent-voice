@@ -116,3 +116,26 @@ async fn session_reports_an_open_stream_failure_without_exposing_provider_detail
         })
     );
 }
+
+#[tokio::test]
+async fn diagnostic_acknowledges_rejection_but_not_ambiguous_stream_failure() {
+    for (error, acknowledged) in [(LlmError::Rejected, true), (LlmError::Failed, false)] {
+        let runtime = LlmRuntime::new(
+            Arc::new(ScriptedLlm {
+                events: vec![Err(error)],
+            }),
+            2,
+            Duration::from_secs(1),
+        );
+        let mut operation = runtime.diagnostic(LlmRequest::text_turn("hello".into()), 1024);
+        assert_eq!(
+            operation.execute(CancellationToken::new()).await,
+            Err(ProviderDiagnosticOperationError::Failed),
+        );
+        operation.cancel_exact();
+        assert_eq!(
+            operation.await_terminal_acknowledgement().await,
+            acknowledged
+        );
+    }
+}
