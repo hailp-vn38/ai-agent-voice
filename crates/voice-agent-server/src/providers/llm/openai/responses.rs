@@ -202,39 +202,67 @@ pub(crate) async fn complete_with_usage(
     Ok(crate::providers::llm::BackgroundCompletion { text, usage })
 }
 
-
-fn turn_body(model: &str, request: &LlmRequest, mode: &crate::providers::llm::BackgroundMode) -> Result<Value, LlmError> {
+fn turn_body(
+    model: &str,
+    request: &LlmRequest,
+    mode: &crate::providers::llm::BackgroundMode,
+) -> Result<Value, LlmError> {
     use crate::providers::llm::{BackgroundMode, ChatMessage};
     let mut input = Vec::new();
     for message in &request.messages {
         match message {
-            ChatMessage::System {content} => input.push(json!({"role":"system","content":content})),
-            ChatMessage::User {content} => input.push(json!({"role":"user","content":content})),
-            ChatMessage::AssistantText {content} => input.push(json!({"role":"assistant","content":content})),
-            ChatMessage::AssistantToolCalls {calls} => {
+            ChatMessage::System { content } => {
+                input.push(json!({"role":"system","content":content}))
+            }
+            ChatMessage::User { content } => input.push(json!({"role":"user","content":content})),
+            ChatMessage::AssistantText { content } => {
+                input.push(json!({"role":"assistant","content":content}))
+            }
+            ChatMessage::AssistantToolCalls { calls } => {
                 for call in calls {
-                    input.push(json!({"type":"function_call","call_id":call.id,"name":call.name,
-                        "arguments":call.arguments.to_string()}));
+                    input.push(
+                        json!({"type":"function_call","call_id":call.id,"name":call.name,
+                        "arguments":call.arguments.to_string()}),
+                    );
                 }
             }
-            ChatMessage::ToolResult {tool_call_id,content} => input.push(json!({
+            ChatMessage::ToolResult {
+                tool_call_id,
+                content,
+            } => input.push(json!({
                 "type":"function_call_output","call_id":tool_call_id,"output":content
             })),
         }
     }
-    if input.is_empty() { return Err(LlmError::Rejected); }
-    let mut body = json!({"model":model,"input":input,"store":false,"background":false,"stream":false});
+    if input.is_empty() {
+        return Err(LlmError::Rejected);
+    }
+    let mut body =
+        json!({"model":model,"input":input,"store":false,"background":false,"stream":false});
     match mode {
-        BackgroundMode::Structured {name,schema} => {
-            if !request.tools.is_empty() { return Err(LlmError::Rejected); }
-            body["text"] = json!({"format":{"type":"json_schema","name":name,"strict":true,"schema":schema}});
+        BackgroundMode::Structured { name, schema } => {
+            if !request.tools.is_empty() {
+                return Err(LlmError::Rejected);
+            }
+            body["text"] =
+                json!({"format":{"type":"json_schema","name":name,"strict":true,"schema":schema}});
         }
         BackgroundMode::Tools => {
-            if request.tools.is_empty() { return Err(LlmError::Rejected); }
-            body["tools"] = Value::Array(request.tools.iter().map(|tool| json!({
-                "type":"function","name":tool.name,"description":tool.description,
-                "parameters":tool.parameters,"strict":true
-            })).collect());
+            if request.tools.is_empty() {
+                return Err(LlmError::Rejected);
+            }
+            body["tools"] = Value::Array(
+                request
+                    .tools
+                    .iter()
+                    .map(|tool| {
+                        json!({
+                            "type":"function","name":tool.name,"description":tool.description,
+                            "parameters":tool.parameters,"strict":true
+                        })
+                    })
+                    .collect(),
+            );
             body["tool_choice"] = json!("required");
             body["parallel_tool_calls"] = json!(false);
         }
@@ -242,76 +270,106 @@ fn turn_body(model: &str, request: &LlmRequest, mode: &crate::providers::llm::Ba
     Ok(body)
 }
 
-fn parse_turn(body: &Value, mode: &crate::providers::llm::BackgroundMode)
-    -> Result<crate::providers::llm::BackgroundTurnResult, LlmError> {
+fn parse_turn(
+    body: &Value,
+    mode: &crate::providers::llm::BackgroundMode,
+) -> Result<crate::providers::llm::BackgroundTurnResult, LlmError> {
     use crate::providers::llm::{BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall};
-    if body["status"] != "completed" { return Err(LlmError::Rejected); }
+    if body["status"] != "completed" {
+        return Err(LlmError::Rejected);
+    }
     let output = body["output"].as_array().ok_or(LlmError::Rejected)?;
     let turn = match mode {
-        BackgroundMode::Structured {..} => BackgroundTurn::Text(output_text(body)?),
+        BackgroundMode::Structured { .. } => BackgroundTurn::Text(output_text(body)?),
         BackgroundMode::Tools => {
             let mut calls = Vec::new();
-            let mut text_returned = false;
             for item in output {
                 match item["type"].as_str() {
-                    Some("reasoning") => {},
-                    Some("message") => { text_returned = true; }
+                    Some("reasoning") => {}
                     Some("function_call") => {
-                        let id = item["call_id"].as_str().filter(|s| !s.is_empty()).ok_or(LlmError::Rejected)?;
-                        let name = item["name"].as_str().filter(|s| !s.is_empty()).ok_or(LlmError::Rejected)?;
+                        let id = item["call_id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .ok_or(LlmError::Rejected)?;
+                        let name = item["name"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .ok_or(LlmError::Rejected)?;
                         let args = item["arguments"].as_str().ok_or(LlmError::Rejected)?;
-                        calls.push(ToolCall{id:id.to_owned(),name:name.to_owned(),
-                            arguments:serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.to_owned()))});
-                    },
+                        calls.push(ToolCall {
+                            id: id.to_owned(),
+                            name: name.to_owned(),
+                            arguments: serde_json::from_str(args)
+                                .unwrap_or_else(|_| Value::String(args.to_owned())),
+                        });
+                    }
                     _ => return Err(LlmError::Rejected),
                 }
             }
-            if text_returned {
-                if !calls.is_empty() { return Err(LlmError::Rejected); }
-                // Surface a text-only native turn to the Child validator so
-                // it can reject the decision and consume bounded repair budget.
-                BackgroundTurn::Text(output_text(body)?)
-            } else {
-                BackgroundTurn::ToolCalls(calls)
-            }
+            BackgroundTurn::ToolCalls(calls)
         }
     };
-    let usage = body.get("usage").map(|v| crate::providers::llm::BackgroundTokenUsage {
-        input_tokens:v["input_tokens"].as_u64(),
-        output_tokens:v["output_tokens"].as_u64(),
-        reasoning_tokens:v.pointer("/output_tokens_details/reasoning_tokens").and_then(Value::as_u64),
-        cached_input_tokens:v.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64),
-    });
-    Ok(BackgroundTurnResult {turn,usage})
+    let usage = body
+        .get("usage")
+        .map(|v| crate::providers::llm::BackgroundTokenUsage {
+            input_tokens: v["input_tokens"].as_u64(),
+            output_tokens: v["output_tokens"].as_u64(),
+            reasoning_tokens: v
+                .pointer("/output_tokens_details/reasoning_tokens")
+                .and_then(Value::as_u64),
+            cached_input_tokens: v
+                .pointer("/input_tokens_details/cached_tokens")
+                .and_then(Value::as_u64),
+        });
+    Ok(BackgroundTurnResult { turn, usage })
 }
 
 /// Strict one-shot Responses path for hierarchical Job turns. Does not reuse remote state.
 pub(crate) async fn turn_with_usage(
-    base_url: &str, model: &str, api_key: &str, timeout_seconds: u64,
-    request: LlmRequest, mode: crate::providers::llm::BackgroundMode,
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    timeout_seconds: u64,
+    request: LlmRequest,
+    mode: crate::providers::llm::BackgroundMode,
 ) -> Result<crate::providers::llm::BackgroundTurnResult, LlmError> {
-    let url = url::Url::parse(&format!("{}/responses",base_url.trim_end_matches('/')))
+    let url = url::Url::parse(&format!("{}/responses", base_url.trim_end_matches('/')))
         .map_err(|_| LlmError::Failed)?;
-    if !matches!(url.scheme(),"https"|"http") || !url.username().is_empty() || url.password().is_some() {
+    if !matches!(url.scheme(), "https" | "http")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
         return Err(LlmError::Failed);
     }
     let body = turn_body(model, &request, &mode)?;
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(timeout_seconds))
-        .redirect(reqwest::redirect::Policy::none()).build().map_err(|_| LlmError::Failed)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_seconds))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| LlmError::Failed)?;
     let mut send = client.post(url).json(&body);
-    if !api_key.is_empty() { send = send.bearer_auth(api_key); }
+    if !api_key.is_empty() {
+        send = send.bearer_auth(api_key);
+    }
     let mut response = send.send().await.map_err(|_| LlmError::Failed)?;
-    if !response.status().is_success() { return Err(LlmError::Rejected); }
-    if response.content_length().is_some_and(|n| n > MAX_RESPONSE_BYTES as u64) {
+    if !response.status().is_success() {
+        return Err(LlmError::Rejected);
+    }
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
+    {
         return Err(LlmError::Failed);
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| LlmError::Failed)? {
-        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES { return Err(LlmError::Failed); }
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err(LlmError::Failed);
+        }
         bytes.extend(chunk);
     }
     let answer: Value = serde_json::from_slice(&bytes).map_err(|_| LlmError::Rejected)?;
-    parse_turn(&answer,&mode)
+    parse_turn(&answer, &mode)
 }
 
 #[cfg(test)]
