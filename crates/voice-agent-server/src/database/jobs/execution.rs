@@ -23,16 +23,16 @@ impl Database {
             v["plugin_id"] == choice.plugin_id
                 && v["operation"] == choice.operation
                 && v["package_digest"] == choice.package_digest
-                && v["image_digest"] == choice.image_digest
+                && v["installation_digest"] == choice.installation_digest
         }) {
             return Err(JobError::CapabilityUnavailable);
         }
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
         sqlx::query("UPDATE jobs SET status='running',plan_revision=1,updated_at=? WHERE id=? AND status='queued'")
             .bind(now).bind(job_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,image_digest,operation,arguments_json,status,created_at,updated_at) VALUES(?, ?,1,?,?,?,?,?,?,'pending',?,?)")
+        sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,installation_digest,operation,arguments_json,status,created_at,updated_at) VALUES(?, ?,1,?,?,?,?,?,?,'pending',?,?)")
             .bind(job_id).bind(step_key).bind(&choice.plugin_id).bind(&choice.version)
-            .bind(&choice.package_digest).bind(&choice.image_digest).bind(&choice.operation)
+            .bind(&choice.package_digest).bind(&choice.installation_digest).bind(&choice.operation)
             .bind(serde_json::to_string(arguments).map_err(|_| JobError::InvalidArguments)?)
             .bind(now).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -63,7 +63,14 @@ impl Database {
         if ledger.rows_affected() != 1 {
             return Err(JobError::CapacityUnavailable);
         }
-        events::append(&mut tx,job_id,"step_started",Some(step_key),&serde_json::json!({"attempt_state":"reserved"})).await?;
+        events::append(
+            &mut tx,
+            job_id,
+            "step_started",
+            Some(step_key),
+            &serde_json::json!({"attempt_state":"reserved"}),
+        )
+        .await?;
         tx.commit().await?;
         self.job_changes.publish_committed(job_id);
         Ok(())
@@ -92,13 +99,12 @@ impl Database {
             value["plugin_id"] == choice.plugin_id
                 && value["version"] == choice.version
                 && value["package_digest"] == choice.package_digest
-                && value["image_digest"] == choice.image_digest
+                && value["installation_digest"] == choice.installation_digest
                 && value["operation"] == choice.operation
-                && value["permission_digest"] == choice.permission_digest
         });
-        let step: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job_steps WHERE job_id=? AND step_key=? AND plugin_id=? AND plugin_version=? AND package_digest=? AND image_digest=? AND operation=? AND attempt_id=? AND attempt_state='reserved'")
+        let step: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job_steps WHERE job_id=? AND step_key=? AND plugin_id=? AND plugin_version=? AND package_digest=? AND installation_digest=? AND operation=? AND attempt_id=? AND attempt_state='reserved'")
             .bind(job_id).bind(step_key).bind(&choice.plugin_id).bind(&choice.version)
-            .bind(&choice.package_digest).bind(&choice.image_digest).bind(&choice.operation)
+            .bind(&choice.package_digest).bind(&choice.installation_digest).bind(&choice.operation)
             .bind(attempt_id).fetch_one(&mut *tx).await?;
         if !selected || step != 1 {
             return Err(JobError::CapabilityUnavailable);
@@ -111,12 +117,13 @@ impl Database {
         if enabled != 1 {
             return Err(JobError::Disabled);
         }
-        let live: Option<String> = sqlx::query_scalar("SELECT approved_permissions_json FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'")
-            .bind(&choice.plugin_id).bind(&choice.version).bind(&choice.package_digest)
-            .bind(&choice.image_digest).fetch_optional(&mut *tx).await?;
-        if live.as_ref().is_none_or(|approval| {
-            crate::services::background::model::digest(approval) != choice.permission_digest
-        }) {
+        let live: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",
+        )
+        .bind(&choice.plugin_id).bind(&choice.version)
+        .bind(&choice.package_digest).bind(&choice.installation_digest)
+        .fetch_optional(&mut *tx).await?;
+        if live.is_none() {
             return Err(JobError::CapabilityUnavailable);
         }
         let updated = sqlx::query("UPDATE job_steps SET attempt_state='start_requested',worker_instance_id=?,updated_at=? WHERE job_id=? AND step_key=? AND status='running' AND attempt=1 AND attempt_id=? AND attempt_state='reserved'")
@@ -175,9 +182,23 @@ impl Database {
         if job.is_some_and(|job| job.rows_affected() != 1) {
             return Err(JobError::Terminal);
         }
-        events::append(&mut tx,job_id,"step_finished",Some(step_key),&serde_json::json!({"status":"failed","error_code":code})).await?;
+        events::append(
+            &mut tx,
+            job_id,
+            "step_finished",
+            Some(step_key),
+            &serde_json::json!({"status":"failed","error_code":code}),
+        )
+        .await?;
         if finish_job {
-            events::append(&mut tx,job_id,"job_finished",None,&serde_json::json!({"status":"failed","error_code":code})).await?;
+            events::append(
+                &mut tx,
+                job_id,
+                "job_finished",
+                None,
+                &serde_json::json!({"status":"failed","error_code":code}),
+            )
+            .await?;
         }
         tx.commit().await?;
         self.job_changes.publish_committed(job_id);
@@ -241,9 +262,23 @@ impl Database {
                 return Err(JobError::Terminal);
             }
         }
-        events::append(&mut tx,job_id,"step_finished",Some(step_key),&serde_json::json!({"status":"succeeded"})).await?;
+        events::append(
+            &mut tx,
+            job_id,
+            "step_finished",
+            Some(step_key),
+            &serde_json::json!({"status":"succeeded"}),
+        )
+        .await?;
         if finish_job {
-            events::append(&mut tx,job_id,"job_finished",None,&serde_json::json!({"status":"succeeded"})).await?;
+            events::append(
+                &mut tx,
+                job_id,
+                "job_finished",
+                None,
+                &serde_json::json!({"status":"succeeded"}),
+            )
+            .await?;
         }
         tx.commit().await?;
         self.job_changes.publish_committed(job_id);

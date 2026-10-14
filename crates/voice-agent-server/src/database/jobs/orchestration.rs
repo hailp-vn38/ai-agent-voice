@@ -169,9 +169,9 @@ impl Database {
                     choice["plugin_id"] == *plugin && choice["operation"] == *operation
                 })
             });
-            sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,image_digest,operation,arguments_json,input_refs_json,output_schema_json,dependencies_json,required,instruction,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)")
+            sqlx::query("INSERT INTO job_steps(job_id,step_key,plan_revision,plugin_id,plugin_version,package_digest,installation_digest,operation,arguments_json,input_refs_json,output_schema_json,dependencies_json,required,instruction,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?)")
                 .bind(id).bind(&step.step_key).bind(revision).bind(&step.plugin_id)
-                .bind(choice.and_then(|v| v["version"].as_str())).bind(choice.and_then(|v| v["package_digest"].as_str())).bind(choice.and_then(|v| v["image_digest"].as_str()))
+                .bind(choice.and_then(|v| v["version"].as_str())).bind(choice.and_then(|v| v["package_digest"].as_str())).bind(choice.and_then(|v| v["installation_digest"].as_str()))
                 .bind(&step.operation).bind(encode(&step.arguments)?).bind(encode(&step.input_refs)?).bind(encode(&step.output_schema)?).bind(encode(&step.dependencies)?).bind(step.required)
                 .bind(&step.instruction).bind(now).bind(now).execute(&mut *tx).await?;
         }
@@ -179,19 +179,35 @@ impl Database {
         if changed.rows_affected() != 1 {
             return Err(JobError::Terminal);
         }
-        events::append(&mut tx,id,"plan_accepted",None,&json!({"plan_revision":revision,"step_count":step_count})).await?;
+        events::append(
+            &mut tx,
+            id,
+            "plan_accepted",
+            None,
+            &json!({"plan_revision":revision,"step_count":step_count}),
+        )
+        .await?;
         tx.commit().await?;
         self.job_changes.publish_committed(id);
         Ok(())
     }
 
-    pub(crate) async fn skip_dependency_step(&self,id:&str,step:&str)->Result<(),JobError>{
-        let mut tx=self.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let now=crate::services::background::engine::now()?;
+    pub(crate) async fn skip_dependency_step(&self, id: &str, step: &str) -> Result<(), JobError> {
+        let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let now = crate::services::background::engine::now()?;
         let updated=sqlx::query("UPDATE job_steps SET status='skipped',error_code='dependency_failed',updated_at=? WHERE job_id=? AND step_key=? AND status='pending'")
             .bind(now).bind(id).bind(step).execute(&mut *tx).await?;
-        if updated.rows_affected()!=1 {return Err(JobError::Terminal);}
-        events::append(&mut tx,id,"step_finished",Some(step),&json!({"status":"skipped","error_code":"dependency_failed"})).await?;
+        if updated.rows_affected() != 1 {
+            return Err(JobError::Terminal);
+        }
+        events::append(
+            &mut tx,
+            id,
+            "step_finished",
+            Some(step),
+            &json!({"status":"skipped","error_code":"dependency_failed"}),
+        )
+        .await?;
         tx.commit().await?;
         self.job_changes.publish_committed(id);
         Ok(())
@@ -226,7 +242,14 @@ impl Database {
             }
             return Err(JobError::Terminal);
         }
-        events::append(&mut tx,id,"step_finished",Some(step),&json!({"status":status,"error_code":error})).await?;
+        events::append(
+            &mut tx,
+            id,
+            "step_finished",
+            Some(step),
+            &json!({"status":status,"error_code":error}),
+        )
+        .await?;
         tx.commit().await?;
         self.job_changes.publish_committed(id);
         Ok(())
@@ -299,12 +322,16 @@ impl Database {
                 let choices: Vec<Value> = serde_json::from_str(&row.plugin_choices_json)
                     .map_err(|_| JobError::DatabaseUnavailable)?;
                 for choice in choices {
-                    let approval:Option<String>=sqlx::query_scalar("SELECT approved_permissions_json FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'")
-                        .bind(choice["plugin_id"].as_str()).bind(choice["version"].as_str()).bind(choice["package_digest"].as_str()).bind(choice["image_digest"].as_str()).fetch_optional(&mut *tx).await?;
-                    if approval.as_ref().is_none_or(|approval| {
-                        crate::services::background::model::digest(approval)
-                            != choice["permission_digest"].as_str().unwrap_or("")
-                    }) {
+                    let installed: Option<i64> = sqlx::query_scalar(
+                        "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",
+                    )
+                    .bind(choice["plugin_id"].as_str())
+                    .bind(choice["version"].as_str())
+                    .bind(choice["package_digest"].as_str())
+                    .bind(choice["installation_digest"].as_str())
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    if installed.is_none() {
                         status = "failed";
                         error = Some("capability_unavailable");
                     }
@@ -318,7 +345,14 @@ impl Database {
             .bind(error.unwrap_or("dependency_failed")).bind(now).bind(now).bind(id).execute(&mut *tx).await?;
         sqlx::query("UPDATE jobs SET status=?,error_code=?,result_json=?,updated_at=? WHERE id=? AND status IN ('planning','running','cancelling')")
             .bind(status).bind(error).bind(result.map(encode).transpose()?).bind(now).bind(id).execute(&mut *tx).await?;
-        events::append(&mut tx,id,"job_finished",None,&json!({"status":status,"error_code":error})).await?;
+        events::append(
+            &mut tx,
+            id,
+            "job_finished",
+            None,
+            &json!({"status":status,"error_code":error}),
+        )
+        .await?;
         tx.commit().await?;
         self.job_changes.publish_committed(id);
         Ok(())

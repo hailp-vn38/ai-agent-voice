@@ -120,7 +120,9 @@ pub enum LlmError {
 }
 
 /// Chat-only fallback for Background; no MCP, provider tools or streaming to the Device.
-pub(crate) async fn complete_background_chat(mut stream: LlmEventStream) -> Result<String, LlmError> {
+pub(crate) async fn complete_background_chat(
+    mut stream: LlmEventStream,
+) -> Result<String, LlmError> {
     use futures_util::StreamExt;
     let mut output = String::new();
     while let Some(event) = stream.next().await {

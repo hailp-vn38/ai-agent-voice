@@ -1,4 +1,4 @@
-//! Explicit live qualification against an operator-provisioned rootless deployment.
+//! Explicit live qualification against a deployed shared Installer and Runner.
 //! Credentials stay in environment variables and are never written to the report.
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
@@ -27,7 +27,7 @@ async fn checked(request: reqwest::RequestBuilder) -> Value {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Linux rootless deployment, real Voice/Orchestrator/Worker LLMs and enrolled Device"]
+#[ignore = "requires a running Linux shared runtime deployment, real Voice/Orchestrator/Worker LLMs and enrolled Device"]
 async fn live_voice_to_python_worker_and_admin_artifact() {
     let base = required("AGENT_P3_BASE_URL")
         .trim_end_matches('/')
@@ -58,19 +58,6 @@ async fn live_voice_to_python_worker_and_admin_artifact() {
     )
     .await;
     assert_eq!(installed["digest"], package_digest);
-    let approved = checked(
-        client
-            .put(format!(
-                "{base}/api/admin/plugins/fixture-research/permissions"
-            ))
-            .bearer_auth(&token)
-            .header(
-                "If-Match",
-                format!("\"{}\"", installed["revision"].as_i64().unwrap()),
-            )
-            .json(&json!({"network_hosts":[],"scratch_storage":false})),
-    )
-    .await;
     let active = checked(
         client
             .post(format!(
@@ -79,7 +66,7 @@ async fn live_voice_to_python_worker_and_admin_artifact() {
             .bearer_auth(&token)
             .header(
                 "If-Match",
-                format!("\"{}\"", approved["revision"].as_i64().unwrap()),
+                format!("\"{}\"", installed["revision"].as_i64().unwrap()),
             )
             .json(&json!({})),
     )
@@ -353,7 +340,7 @@ async fn live_voice_to_python_worker_and_admin_artifact() {
     .await;
     assert_eq!(after["total"], 1, "reconnect must not replay the Job");
     if let Ok(path) = std::env::var("AGENT_P3_REPORT") {
-        let report = json!({"schema_version":1,"result":"PASS","run_id":run_id,"job_id":id,"mcp_feature":mcp,"studio":studio,"package_digest":package_digest,"image_digest":active["image_digest"],"snapshot":job["snapshot"],"artifact_count":artifacts.len(),"receipt_order_gate":"PASS","browser_gate":"NOT_RUN"});
+        let report = json!({"schema_version":1,"result":"PASS","run_id":run_id,"job_id":id,"mcp_feature":mcp,"studio":studio,"package_digest":package_digest,"installation_digest":active["installation_digest"],"snapshot":job["snapshot"],"artifact_count":artifacts.len(),"receipt_order_gate":"PASS","browser_gate":"NOT_RUN"});
         use std::io::Write;
         let mut file = std::fs::OpenOptions::new()
             .write(true)

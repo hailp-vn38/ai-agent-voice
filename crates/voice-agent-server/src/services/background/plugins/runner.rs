@@ -1,196 +1,124 @@
+//! Job attempts run as supervised subprocesses in the shared runner container.
 use super::{PluginError, builder, protocol::MAX_STDOUT};
 use crate::config::BackgroundConfig;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{path::Path, process::Stdio, time::Duration};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use serde_json::json;
+use std::{path::Path, time::Duration};
+use tokio::time::{sleep, timeout};
 
 pub(super) struct Prepared {
-    name: String,
-    config: BackgroundConfig,
-    reaped: AtomicBool,
+    installation: String,
+    job: String,
+    attempt: String,
 }
 
 impl Prepared {
     pub(super) async fn create(
         config: &BackgroundConfig,
-        image: &str,
-        workspace: &Path,
+        installation: &str,
+        _workspace: &Path,
         job: &str,
         attempt: &str,
-        network: Option<&str>,
     ) -> Result<Self, PluginError> {
-        let name = format!("agent-job-{attempt}");
-        let mount = format!(
-            "type=bind,source={},target=/work/out",
-            workspace.join("out").display()
-        );
-        let mut command = builder::command(config)?;
-        command.args([
-            "create",
-            "--interactive",
-            "--name",
-            &name,
-            "--pull=never",
-            "--network",
-            network.unwrap_or("none"),
-            "--read-only",
-            "--cap-drop=ALL",
-            "--security-opt=no-new-privileges",
-            "--pids-limit=64",
-            "--memory=512m",
-            "--cpus=1",
-            "--user=65532:65532",
-            "--ulimit",
-            "fsize=20971520:20971520",
-            "--mount",
-            &mount,
-            "--label",
-            "agent.job.owner=voice-agent-server",
-            "--label",
-            &format!("agent.job.id={job}"),
-            "--label",
-            &format!("agent.job.attempt={attempt}"),
-        ]);
-        if network.is_some() {
-            command.args([
-                "--env",
-                "HTTPS_PROXY=http://egress:8080",
-                "--env",
-                "https_proxy=http://egress:8080",
-                "--env",
-                "HTTP_PROXY=http://egress:8080",
-                "--env",
-                "http_proxy=http://egress:8080",
-            ]);
-        }
-        command.arg(image);
-        let result = tokio::time::timeout(Duration::from_secs(15), command.output())
-            .await
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .map_err(|_| PluginError::SandboxUnavailable)?;
-        if !result.status.success() || result.stdout.len() > 256 {
-            return Err(PluginError::SandboxUnavailable);
-        }
+        builder::runner_preflight(config).await?;
+        uuid::Uuid::parse_str(job).map_err(|_| PluginError::InvalidPackage)?;
+        uuid::Uuid::parse_str(attempt).map_err(|_| PluginError::InvalidPackage)?;
         Ok(Self {
-            name,
-            config: config.clone(),
-            reaped: AtomicBool::new(false),
+            installation: installation.to_owned(),
+            job: job.to_owned(),
+            attempt: attempt.to_owned(),
         })
     }
-
-    pub(super) async fn start_container(
+    async fn call(
         &self,
         config: &BackgroundConfig,
-    ) -> Result<(), PluginError> {
-        let mut command = builder::command(config)?;
-        command.args(["start", &self.name]);
-        let output = tokio::time::timeout(Duration::from_secs(15), command.output())
-            .await
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .map_err(|_| PluginError::SandboxUnavailable)?;
-        if output.status.success() && output.stdout == format!("{}\n", self.name).as_bytes() {
-            Ok(())
-        } else {
-            Err(PluginError::SandboxUnavailable)
-        }
+        value: serde_json::Value,
+    ) -> Result<serde_json::Value, PluginError> {
+        let socket = config
+            .plugin_runner_socket
+            .as_deref()
+            .ok_or(PluginError::SandboxUnavailable)?;
+        builder::rpc(socket, value).await
     }
-
-    pub(super) async fn attach(
+    pub(super) async fn execute<F, Fut>(
         &self,
         config: &BackgroundConfig,
         request: &[u8],
-        timeout: Duration,
-    ) -> Result<Vec<u8>, PluginError> {
-        let mut command = builder::command(config)?;
-        command.args(["attach", "--sig-proxy=false", &self.name]);
-        command.stdin(Stdio::piped());
-        command.stderr(Stdio::piped());
-        let mut child = command
-            .spawn()
-            .map_err(|_| PluginError::SandboxUnavailable)?;
-        let mut stdin = child.stdin.take().ok_or(PluginError::SandboxUnavailable)?;
-        let stdout = child.stdout.take().ok_or(PluginError::SandboxUnavailable)?;
-        let stderr = child.stderr.take().ok_or(PluginError::SandboxUnavailable)?;
-        let output = async {
-            stdin
-                .write_all(request)
-                .await
-                .map_err(|_| PluginError::SandboxUnavailable)?;
-            drop(stdin);
-            let read_output = async {
-                let mut output = Vec::new();
-                stdout
-                    .take((MAX_STDOUT + 1) as u64)
-                    .read_to_end(&mut output)
-                    .await
-                    .map_err(|_| PluginError::SandboxUnavailable)?;
-                if output.len() > MAX_STDOUT {
-                    return Err(PluginError::WorkerProtocolError);
+        limit: Duration,
+        after_start: F,
+    ) -> Result<Vec<u8>, PluginError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), PluginError>>,
+    {
+        let text = std::str::from_utf8(request).map_err(|_| PluginError::WorkerProtocolError)?;
+        let result = self
+            .call(
+                config,
+                json!({
+                    "action":"Execute","attempt_id":self.attempt,"job_id":self.job,
+                    "installation_digest":self.installation,"jsonl_request":text
+                }),
+            )
+            .await?;
+        if result["state"] != "running" {
+            return Err(PluginError::PluginRuntimeError);
+        }
+        after_start().await?;
+        let output = timeout(limit, async {
+            loop {
+                let response = self
+                    .call(
+                        config,
+                        json!({"action":"GetAttempt","attempt_id":self.attempt}),
+                    )
+                    .await?;
+                match response["state"].as_str() {
+                    Some("running") | Some("cancelling") => sleep(Duration::from_millis(100)).await,
+                    Some("terminal") => {
+                        if response["ok"] != true {
+                            return Err(PluginError::PluginRuntimeError);
+                        }
+                        let bytes = response["stdout"]
+                            .as_str()
+                            .ok_or(PluginError::WorkerProtocolError)?
+                            .as_bytes()
+                            .to_vec();
+                        if bytes.len() > MAX_STDOUT {
+                            return Err(PluginError::WorkerProtocolError);
+                        }
+                        return Ok(bytes);
+                    }
+                    _ => return Err(PluginError::WorkerUnreaped),
                 }
-                Ok(output)
-            };
-            let read_diagnostics = async {
-                let mut diagnostics = Vec::new();
-                stderr
-                    .take(4097)
-                    .read_to_end(&mut diagnostics)
-                    .await
-                    .map_err(|_| PluginError::SandboxUnavailable)?;
-                if diagnostics.len() > 4096 {
-                    return Err(PluginError::WorkerProtocolError);
-                }
-                Ok(())
-            };
-            let wait = async {
-                child
-                    .wait()
-                    .await
-                    .map_err(|_| PluginError::SandboxUnavailable)
-            };
-            let (output, (), status) = tokio::try_join!(read_output, read_diagnostics, wait)?;
-            if !status.success() {
-                return Err(PluginError::PluginRuntimeError);
             }
-            Ok(output)
-        };
-        match tokio::time::timeout(timeout, output).await {
-            Ok(result) => result,
-            Err(_) => Err(PluginError::WorkerTimeout),
-        }
+        })
+        .await;
+        output.map_err(|_| PluginError::WorkerTimeout)?
     }
-
     pub(super) async fn remove(&self, config: &BackgroundConfig) -> Result<(), PluginError> {
-        let mut command = builder::command(config)?;
-        command.args(["rm", "--force", &self.name]);
-        command.stdout(Stdio::null());
-        let status = tokio::time::timeout(Duration::from_secs(15), command.status())
-            .await
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .map_err(|_| PluginError::SandboxUnavailable)?;
-        if status.success() {
-            self.reaped.store(true, Ordering::Release);
-            Ok(())
-        } else {
-            Err(PluginError::SandboxUnavailable)
+        let result = self
+            .call(config, json!({"action":"Cancel","attempt_id":self.attempt}))
+            .await?;
+        match result["state"].as_str() {
+            Some("not_found") | Some("terminal") => return Ok(()),
+            Some("cancelling") => {}
+            _ => return Err(PluginError::WorkerUnreaped),
         }
-    }
-}
-
-impl Drop for Prepared {
-    fn drop(&mut self) {
-        if self.reaped.load(Ordering::Acquire) {
-            return;
-        }
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            let name = self.name.clone();
-            let config = self.config.clone();
-            runtime.spawn(async move {
-                if let Ok(mut command) = builder::command(&config) {
-                    command.args(["rm", "--force", &name]);
-                    command.stdout(Stdio::null());
-                    let _ = tokio::time::timeout(Duration::from_secs(15), command.status()).await;
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let status = self
+                    .call(
+                        config,
+                        json!({"action":"GetAttempt","attempt_id":self.attempt}),
+                    )
+                    .await?;
+                if status["state"] == "terminal" || status["state"] == "not_found" {
+                    return Ok(());
                 }
-            });
-        }
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .map_err(|_| PluginError::WorkerUnreaped)?
     }
 }

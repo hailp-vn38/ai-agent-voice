@@ -214,18 +214,24 @@ async fn restart_preserves_queued_pins_and_recovers_cancelling_without_erasing_u
         .await
         .unwrap();
     assert_eq!(used, "{\"worker_launches\":1}");
-    assert_eq!(
-        restarted
-            .engine
-            .submit(
-                request("Blocked by unreaped worker"),
-                &JobRequester::Admin,
-                None
-            )
-            .await
-            .unwrap_err(),
-        JobError::RuntimeUnavailable
-    );
+    let worker: Option<String> = sqlx::query_scalar(
+        "SELECT worker_instance_id FROM job_steps WHERE job_id=? AND step_key='fetch'",
+    )
+    .bind(&interrupted.id)
+    .fetch_one(reopened.pool())
+    .await
+    .unwrap();
+    assert!(worker.is_none());
+    let admitted = restarted
+        .engine
+        .submit(
+            request("Runner owns previous attempts"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(admitted.job.status, "queued");
     restarted.shutdown().await;
 }
 

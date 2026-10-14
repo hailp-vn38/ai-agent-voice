@@ -110,7 +110,11 @@ async fn scheduler_rejects_invalid_dags_without_dispatching_worker() {
         json!({"steps":[unknown,proposal_step("final")]}),
         json!({"steps":[proposal_step("a")],"document_refs":[]}),
     ] {
-        let expected_calls = if proposal.get("document_refs").is_some() {1} else {3};
+        let expected_calls = if proposal.get("document_refs").is_some() {
+            1
+        } else {
+            3
+        };
         let config = Arc::new(config());
         let db = Arc::new(Database::connect(&config.database).await.unwrap());
         let runtime = BackgroundRuntime::execution_harness(
@@ -560,14 +564,24 @@ struct RepairModels {
 #[async_trait::async_trait]
 impl JobModels for RepairModels {
     async fn complete(
-        &self, _: &str, _: &ProviderPin, request: LlmRequest, _: i64, _: CancellationToken,
+        &self,
+        _: &str,
+        _: &ProviderPin,
+        request: LlmRequest,
+        _: i64,
+        _: CancellationToken,
     ) -> Result<String, JobError> {
         let planner = request.messages.iter().any(|message|
             matches!(message,crate::providers::llm::ChatMessage::System {content} if content.contains("Orchestrator")));
-        if !planner { return Ok(json!({"summary":"repaired successfully"}).to_string()); }
-        let count = self.planner_calls.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
-        if count==0 { Ok("not a JSON proposal".into()) }
-        else {
+        if !planner {
+            return Ok(json!({"summary":"repaired successfully"}).to_string());
+        }
+        let count = self
+            .planner_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if count == 0 {
+            Ok("not a JSON proposal".into())
+        } else {
             assert!(request.messages.iter().any(|message|
                 matches!(message,crate::providers::llm::ChatMessage::User {content} if content.contains("proposal_not_json"))));
             Ok(json!({"steps":[proposal_step("final")]}).to_string())
@@ -576,20 +590,45 @@ impl JobModels for RepairModels {
 }
 #[tokio::test]
 async fn invalid_model_json_is_repaired_before_worker_and_visible_in_timeline() {
-    let config=Arc::new(config());
-    let db=Arc::new(Database::connect(&config.database).await.unwrap());
-    let runtime=BackgroundRuntime::execution_harness(db.clone(),config,Arc::new(RepairModels {
-        planner_calls: Default::default(),
-    })).await.unwrap();
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::execution_harness(
+        db.clone(),
+        config,
+        Arc::new(RepairModels {
+            planner_calls: Default::default(),
+        }),
+    )
+    .await
+    .unwrap();
     enable(&runtime.engine).await;
-    let job=runtime.engine.submit(request("Repair malformed JSON"),&JobRequester::Admin,None).await.unwrap().job;
-    let done=wait_for(&runtime.engine,&job.id,|job|job.status=="succeeded").await;
-    assert_eq!(done.budget_used["planner_calls"],2);
-    assert_eq!(done.steps.len(),1);
-    assert_eq!(done.steps[0].status,"succeeded");
-    let events=db.job_events(&job.id,0,100).await.unwrap();
-    let kinds:Vec<_>=events.iter().map(|event|event.event_type.as_str()).collect();
-    assert_eq!(kinds,vec!["plan_attempt","plan_rejected","plan_attempt","plan_accepted","step_started","step_finished","job_finished"]);
-    assert_eq!(events[1].payload["code"],"proposal_not_json");
+    let job = runtime
+        .engine
+        .submit(request("Repair malformed JSON"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    let done = wait_for(&runtime.engine, &job.id, |job| job.status == "succeeded").await;
+    assert_eq!(done.budget_used["planner_calls"], 2);
+    assert_eq!(done.steps.len(), 1);
+    assert_eq!(done.steps[0].status, "succeeded");
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
+    let kinds: Vec<_> = events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "plan_attempt",
+            "plan_rejected",
+            "plan_attempt",
+            "plan_accepted",
+            "step_started",
+            "step_finished",
+            "job_finished"
+        ]
+    );
+    assert_eq!(events[1].payload["code"], "proposal_not_json");
     runtime.shutdown().await;
 }

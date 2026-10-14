@@ -98,7 +98,9 @@ async fn background_stream_requires_finished_even_after_valid_json() {
         Ok(LlmEvent::Finished),
     ]));
     assert_eq!(
-        crate::providers::llm::complete_background_chat(stream).await.unwrap(),
+        crate::providers::llm::complete_background_chat(stream)
+            .await
+            .unwrap(),
         json
     );
 }

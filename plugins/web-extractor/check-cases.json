@@ -16,10 +16,10 @@
     "expected_artifacts": 2
   },
   {
-    "name": "private IP rejected",
+    "name": "unsupported URL scheme rejected",
     "operation": "fetch_url",
     "arguments": {
-      "url": "http://127.0.0.1/secret"
+      "url": "file:///etc/passwd"
     },
     "expected_error": "invalid_url",
     "expected_artifacts": 0

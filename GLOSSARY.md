@@ -68,10 +68,34 @@ _Avoid_: generated assistant response, Reminder (khi nói về khả năng phát
 ## Background Jobs and Executable Plugins
 
 **Plugin Runtime**:
-Môi trường thực thi của một Plugin Package; độc lập với Plugin Operation và không phải một Agent hay quyền gọi công cụ.
-_Avoid_: MCP Binding, LLM Provider, Job
+Môi trường mà Plugin Operation được thực hiện, độc lập với Voice Session, Agent và quyền sử dụng công cụ.
+_Avoid_: MCP Binding, LLM Provider, Inference Worker Runtime
 
-Thuật ngữ của miền Job được định nghĩa tại [CONTEXT.md](CONTEXT.md#background-jobs-and-executable-plugins). Job độc lập với Reminder và Conversational Turn.
+**Plugin Package**:
+Gói ZIP chứa mã thực thi, manifest và các operation contract; được nhận diện theo nội dung bất biến.
+_Avoid_: Plugin Installation, Docker image
+
+**Plugin Installation**:
+Môi trường plugin đã chuẩn bị đầy đủ dependencies và entrypoint, được định danh bất biến bằng Installation Digest, nhưng chưa mặc nhiên được kích hoạt.
+_Avoid_: Plugin Package, runtime image
+
+**Installation Digest**:
+Định danh cho đúng môi trường Plugin Installation mà một Job đã lựa chọn và đóng băng.
+_Avoid_: Docker Image Digest, mutable latest
+
+**Worker Attempt**:
+Một lần thực thi Plugin Operation có danh tính riêng; kết quả process chỉ là bằng chứng cho Job Engine.
+_Avoid_: Plugin Installation, Agent Job
+
+**Plugin Activation**:
+Quyết định quản trị đưa một Plugin Installation vào trạng thái có thể được Job lựa chọn; không phải phê duyệt quyền truy cập mạng.
+_Avoid_: Plugin Permission Grant, Network Hosts Approval, Agent grant
+
+**Plugin Network Reachability**:
+Tập đích mạng mà môi trường thực thi plugin có thể tiếp cận; không phải quyền do manifest hoặc server cấp và không đảm bảo kết nối thành công.
+_Avoid_: Network Hosts, Egress Allowlist, Plugin Network Grant
+
+Thuật ngữ Job, Plugin Package, Plugin Installation và Worker Attempt được định nghĩa tại [CONTEXT.md](CONTEXT.md#background-jobs-and-executable-plugins); ranh giới mạng được quyết định tại [ADR 0101](docs/adr/0101-direct-plugin-worker-network.md). Job độc lập với Reminder và Conversational Turn.
 
 ## Agent Job Planning
 

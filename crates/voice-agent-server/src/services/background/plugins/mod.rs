@@ -2,7 +2,6 @@ mod archive;
 mod builder;
 mod contracts;
 mod dispatch;
-mod egress;
 #[allow(dead_code)]
 mod protocol;
 pub mod qualification;
@@ -15,7 +14,7 @@ pub(crate) use dispatch::{FrozenChoice, Invocation};
 
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use sqlx::FromRow;
 use std::{path::PathBuf, sync::Arc};
@@ -25,7 +24,6 @@ use tokio::sync::Semaphore;
 pub enum PluginError {
     InvalidPackage,
     SandboxUnavailable,
-    EgressPolicyUnavailable,
     ImageBuildFailed,
     BuildTimeout,
     PermissionRequired,
@@ -48,7 +46,6 @@ impl PluginError {
         match self {
             Self::InvalidPackage => "invalid_plugin_package",
             Self::SandboxUnavailable => "sandbox_unavailable",
-            Self::EgressPolicyUnavailable => "egress_policy_unavailable",
             Self::ImageBuildFailed => "image_build_failed",
             Self::BuildTimeout => "build_timeout",
             Self::PermissionRequired => "permission_required",
@@ -81,14 +78,11 @@ pub struct PluginView {
     pub description: String,
     pub version: String,
     pub digest: String,
-    pub image_digest: String,
+    pub installation_digest: String,
     pub status: String,
     pub revision: i64,
     pub runtime: RuntimeView,
     pub operations: Vec<OperationView>,
-    pub permissions: PermissionApproval,
-    pub approved_permissions: Option<PermissionApproval>,
-    pub permissions_approved: bool,
     pub last_error_code: Option<String>,
 }
 #[derive(Clone, Debug, Serialize)]
@@ -102,21 +96,14 @@ pub struct OperationView {
     pub description: String,
     pub replay: String,
 }
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct PermissionApproval {
-    pub network_hosts: Vec<String>,
-    pub scratch_storage: bool,
-}
 #[derive(FromRow)]
 struct Installation {
     plugin_id: String,
     version: String,
     package_digest: String,
-    image_digest: String,
+    installation_digest: String,
     status: String,
     revision: i64,
-    approved_permissions_json: String,
     operations_json: String,
     last_error_code: Option<String>,
 }
@@ -124,29 +111,20 @@ impl Installation {
     fn manifest(&self) -> Result<Manifest, PluginError> {
         serde_json::from_str(&self.operations_json).map_err(|_| PluginError::DatabaseUnavailable)
     }
-    fn approval(&self) -> Result<Option<PermissionApproval>, PluginError> {
-        if self.approved_permissions_json == "{}" {
-            return Ok(None);
-        }
-        serde_json::from_str(&self.approved_permissions_json)
-            .map(Some)
-            .map_err(|_| PluginError::DatabaseUnavailable)
-    }
     fn view(self) -> Result<PluginView, PluginError> {
         let manifest = self.manifest()?;
-        let approved = self.approval()?;
         Ok(PluginView {
             id: self.plugin_id,
             name: manifest.plugin.name,
             description: manifest.plugin.description,
             version: self.version,
             digest: self.package_digest,
-            image_digest: self.image_digest,
+            installation_digest: self.installation_digest,
             status: self.status,
             revision: self.revision,
             runtime: RuntimeView {
-                kind: "isolated_worker",
-                language: if manifest.runtime.kind == "rust_container" {
+                kind: "shared_process",
+                language: if manifest.runtime.kind == "rust" {
                     "rust"
                 } else {
                     "python"
@@ -161,12 +139,6 @@ impl Installation {
                     replay: operation.replay,
                 })
                 .collect(),
-            permissions: PermissionApproval {
-                network_hosts: manifest.permissions.network_hosts,
-                scratch_storage: false,
-            },
-            approved_permissions: approved.clone(),
-            permissions_approved: approved.is_some(),
             last_error_code: self.last_error_code,
         })
     }
@@ -300,7 +272,7 @@ impl PluginStore {
                 .await
                 .map_err(|_| PluginError::StorageUnavailable)?;
         }
-        let image = builder::build(&self.config, stage, &package).await?;
+        let installation = builder::build(&self.config, stage, package).await?;
         tokio::fs::write(stage.join("package.zip"), &package.source_zip)
             .await
             .map_err(|_| PluginError::StorageUnavailable)?;
@@ -338,45 +310,35 @@ impl PluginStore {
                     .await
                     .map_err(|_| PluginError::StorageUnavailable)?;
             }
-            tokio::fs::rename(stage, &target)
+            // Staging is mounted from the Installer volume; it may be on a
+            // different filesystem from packages. Publish through a sibling
+            // directory so the final rename is atomic on the package volume.
+            let pending = self
+                .root
+                .join("publishing")
+                .join(uuid::Uuid::new_v4().to_string());
+            for (name, content) in &package.files {
+                let path = pending.join(name);
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .map_err(|_| PluginError::StorageUnavailable)?;
+                }
+                tokio::fs::write(path, content)
+                    .await
+                    .map_err(|_| PluginError::StorageUnavailable)?;
+            }
+            tokio::fs::write(pending.join("package.zip"), &package.source_zip)
+                .await
+                .map_err(|_| PluginError::StorageUnavailable)?;
+            tokio::fs::rename(&pending, &target)
                 .await
                 .map_err(|_| PluginError::StorageUnavailable)?;
         }
         let now = crate::database::unix_seconds().ok_or(PluginError::DatabaseUnavailable)?;
-        sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES(?,?,?,?,'disabled',1,'{}',?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET version=excluded.version,package_digest=excluded.package_digest,image_digest=excluded.image_digest,status='disabled',revision=plugin_installations.revision+1,approved_permissions_json='{}',operations_json=excluded.operations_json,last_error_code=NULL,updated_at=excluded.updated_at")
-            .bind(id).bind(&package.manifest.plugin.version).bind(&package.digest).bind(&image).bind(manifest).bind(now).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,installation_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'disabled',1,?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET version=excluded.version,package_digest=excluded.package_digest,installation_digest=excluded.installation_digest,status='disabled',revision=plugin_installations.revision+1,operations_json=excluded.operations_json,last_error_code=NULL,updated_at=excluded.updated_at")
+            .bind(id).bind(&package.manifest.plugin.version).bind(&package.digest).bind(&installation).bind(manifest).bind(now).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
-        self.get(id).await
-    }
-    pub async fn approve(
-        &self,
-        id: &str,
-        expected: i64,
-        mut approval: PermissionApproval,
-    ) -> Result<PluginView, PluginError> {
-        let _publication = self.database.tool_security.publication.write().await;
-        let row = self.row(id).await?;
-        if row.revision != expected {
-            return Err(PluginError::RevisionConflict);
-        }
-        let manifest = row.manifest()?;
-        approval.network_hosts.sort();
-        approval.network_hosts.dedup();
-        if approval
-            .network_hosts
-            .iter()
-            .any(|h| !manifest.permissions.network_hosts.contains(h))
-            || approval.scratch_storage
-        {
-            return Err(PluginError::PermissionRequired);
-        }
-        let serialized =
-            serde_json::to_string(&approval).map_err(|_| PluginError::InvalidPackage)?;
-        let result = sqlx::query("UPDATE plugin_installations SET approved_permissions_json=?,status='disabled',revision=revision+1,updated_at=? WHERE plugin_id=? AND revision=?")
-            .bind(serialized).bind(crate::database::unix_seconds()).bind(id).bind(expected).execute(self.database.pool()).await?;
-        if result.rows_affected() != 1 {
-            return Err(PluginError::RevisionConflict);
-        }
         self.get(id).await
     }
     pub async fn activate(&self, id: &str, expected: i64) -> Result<PluginView, PluginError> {
@@ -385,22 +347,9 @@ impl PluginStore {
             return Err(PluginError::RevisionConflict);
         }
         let manifest = row.manifest()?;
-        let approval = row.approval()?.ok_or(PluginError::PermissionRequired)?;
-        if manifest
-            .permissions
-            .network_hosts
-            .iter()
-            .any(|h| !approval.network_hosts.contains(h))
-        {
-            return Err(PluginError::PermissionRequired);
-        }
-        builder::preflight(&self.config, &manifest.runtime).await?;
-        if !manifest.permissions.network_hosts.is_empty() {
-            egress::preflight(&self.config, &approval.network_hosts).await?;
-        }
         builder::verify_image(
             &self.config,
-            &row.image_digest,
+            &row.installation_digest,
             &row.package_digest,
             &manifest.runtime,
         )
@@ -464,23 +413,10 @@ impl PluginStore {
         if row.revision != expected {
             return Err(PluginError::RevisionConflict);
         }
-        let approval = row.approval()?.ok_or(PluginError::PermissionRequired)?;
         let manifest = row.manifest()?;
-        if manifest
-            .permissions
-            .network_hosts
-            .iter()
-            .any(|h| !approval.network_hosts.contains(h))
-        {
-            return Err(PluginError::PermissionRequired);
-        }
-        builder::preflight(&self.config, &manifest.runtime).await?;
-        if !manifest.permissions.network_hosts.is_empty() {
-            egress::preflight(&self.config, &approval.network_hosts).await?;
-        }
         builder::verify_image(
             &self.config,
-            &row.image_digest,
+            &row.installation_digest,
             &row.package_digest,
             &manifest.runtime,
         )
@@ -488,7 +424,7 @@ impl PluginStore {
     }
 
     /// Package-attributable failures stop later dispatches even when the Job
-    /// concurrently becomes terminal. The frozen image identity prevents a
+    /// concurrently becomes terminal. The frozen installation identity prevents a
     /// late worker from poisoning an upgraded installation.
     pub(crate) async fn fail_package(
         &self,
@@ -496,21 +432,21 @@ impl PluginStore {
         code: &str,
     ) -> Result<(), PluginError> {
         let _publication = self.database.tool_security.publication.write().await;
-        sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND version=? AND package_digest=? AND image_digest=? AND status='ready'")
+        sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'")
             .bind(code).bind(crate::database::unix_seconds()).bind(&choice.plugin_id)
-            .bind(&choice.version).bind(&choice.package_digest).bind(&choice.image_digest)
+            .bind(&choice.version).bind(&choice.package_digest).bind(&choice.installation_digest)
             .execute(self.database.pool()).await?;
         Ok(())
     }
 }
 
 /// Called within the same BEGIN IMMEDIATE transaction that commits the Job.
-/// Ready, reviewed choices are frozen before any newer approval can become visible.
+/// Ready plugin choices are frozen before installation versions can change.
 pub(crate) async fn frozen_choices(
     connection: &mut sqlx::SqliteConnection,
     request: &crate::services::background::JobRequest,
 ) -> Result<String, crate::services::background::JobError> {
-    use crate::services::background::{JobError, model::digest};
+    use crate::services::background::JobError;
     let rows: Vec<Installation> = sqlx::query_as(
         "SELECT * FROM plugin_installations WHERE status='ready' ORDER BY plugin_id LIMIT 33",
     )
@@ -522,26 +458,14 @@ pub(crate) async fn frozen_choices(
     let mut choices = Vec::new();
     for row in rows {
         let manifest = row.manifest().map_err(|_| JobError::DatabaseUnavailable)?;
-        let approval = row.approval().map_err(|_| JobError::DatabaseUnavailable)?;
-        let Some(approval) = approval else { continue };
-        if manifest
-            .permissions
-            .network_hosts
-            .iter()
-            .any(|h| !approval.network_hosts.contains(h))
-        {
-            continue;
-        }
-        let permission_digest =
-            digest(&serde_json::to_string(&approval).map_err(|_| JobError::DatabaseUnavailable)?);
         for (name, operation) in manifest.operations {
             if operation.replay != "safe_read" {
                 continue;
             }
             choices.push(json!({
                 "plugin_id": row.plugin_id, "version": row.version,
-                "package_digest": row.package_digest, "image_digest": row.image_digest,
-                "operation": name, "permission_digest": permission_digest,
+                "package_digest": row.package_digest, "installation_digest": row.installation_digest,
+                "operation": name,
                 "provides": operation.provides, "sources": operation.sources,
             }));
             if choices.len() > 64 {

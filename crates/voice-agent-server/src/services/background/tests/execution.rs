@@ -1,5 +1,5 @@
 use super::*;
-use crate::services::background::plugins::{FrozenChoice, PermissionApproval};
+use crate::services::background::plugins::FrozenChoice;
 use std::io::Read;
 
 #[tokio::test]
@@ -71,14 +71,9 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
         .read_to_string(&mut manifest)
         .unwrap();
     let json = serde_json::to_string(&toml::from_str::<toml::Value>(&manifest).unwrap()).unwrap();
-    let approved = serde_json::to_string(&PermissionApproval {
-        network_hosts: vec![],
-        scratch_storage: false,
-    })
-    .unwrap();
-    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,image_digest,status,revision,approved_permissions_json,operations_json,created_at,updated_at) VALUES('fixture-research','1.0.0',?,?,'ready',1,?,?,0,0)")
+    sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,installation_digest,status,revision,operations_json,created_at,updated_at) VALUES('fixture-research','1.0.0',?,?,'ready',1,?,0,0)")
         .bind("a".repeat(64)).bind(format!("sha256:{}", "b".repeat(64)))
-        .bind(approved).bind(json).execute(db.pool()).await.unwrap();
+        .bind(json).execute(db.pool()).await.unwrap();
     let job = runtime
         .engine
         .submit(request("Fixture attempt"), &JobRequester::Admin, None)
@@ -127,15 +122,22 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
     runtime.shutdown().await;
 }
 
-/// Run explicitly on a dedicated rootless Linux Docker host with pinned local images.
-/// This is the P2 acceptance gate, not a macOS/Docker Desktop simulation.
+/// Run explicitly on a Linux deployment with the shared Installer and Runner sockets.
+/// This is the P2 acceptance gate, not a local unit-test simulation.
 #[tokio::test]
-#[ignore = "requires dedicated rootless Linux Docker Engine and locally pinned images"]
+#[ignore = "requires deployed shared Installer/Runner and local test volumes"]
 async fn fixture_python_runs_through_job_step_and_checked_artifact() {
     let mut config = config();
-    config.background.plugin_docker_host = Some(std::env::var("AGENT_P2_DOCKER_HOST").unwrap());
-    config.background.plugin_python_image = Some(std::env::var("AGENT_P2_PYTHON_IMAGE").unwrap());
-    config.background.plugin_uv_image = Some(std::env::var("AGENT_P2_UV_IMAGE").unwrap());
+    config.background.plugin_installer_socket =
+        Some(std::env::var("AGENT_P2_INSTALLER_SOCKET").unwrap().into());
+    config.background.plugin_runner_socket =
+        Some(std::env::var("AGENT_P2_RUNNER_SOCKET").unwrap().into());
+    config.background.plugin_installations_dir =
+        Some(std::env::var("AGENT_P2_INSTALLATIONS_DIR").unwrap().into());
+    config.background.plugin_staging_dir =
+        Some(std::env::var("AGENT_P2_STAGING_DIR").unwrap().into());
+    config.background.plugin_attempts_dir =
+        Some(std::env::var("AGENT_P2_ATTEMPTS_DIR").unwrap().into());
     config.background.limits.step_timeout_seconds = 10;
     let config = Arc::new(config);
     let db = Arc::new(Database::connect(&config.database).await.unwrap());
@@ -147,23 +149,10 @@ async fn fixture_python_runs_through_job_step_and_checked_artifact() {
         "/../../plugins/fixture-research-1.0.0.zip"
     ));
     let installed = runtime.engine.plugins.install(zip).await.unwrap();
-    let reviewed = runtime
-        .engine
-        .plugins
-        .approve(
-            &installed.id,
-            installed.revision,
-            PermissionApproval {
-                network_hosts: vec![],
-                scratch_storage: false,
-            },
-        )
-        .await
-        .unwrap();
     runtime
         .engine
         .plugins
-        .activate(&reviewed.id, reviewed.revision)
+        .activate(&installed.id, installed.revision)
         .await
         .unwrap();
     enable(&runtime.engine).await;

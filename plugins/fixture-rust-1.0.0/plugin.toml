@@ -1,4 +1,4 @@
-manifest_version = 1
+manifest_version = 2
 
 [plugin]
 id = "fixture-rust"
@@ -7,12 +7,9 @@ version = "1.0.0"
 description = "Offline deterministic Rust plugin for verifying Agent Job execution"
 
 [runtime]
-kind = "rust_container"
-entrypoint = "fixture-rust"
+kind = "rust"
+entrypoint = "bin/plugin"
 protocol = "jsonl-v1"
-
-[permissions]
-network_hosts = []
 
 [agent]
 instructions = "instructions.md"

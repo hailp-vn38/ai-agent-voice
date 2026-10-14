@@ -93,9 +93,8 @@ async fn run(
         return Err(JobError::CapacityUnavailable);
     }
     let mut plan = propose(
-        &engine,
+        engine,
         models,
-        id,
         &job,
         &contracts,
         request,
@@ -165,7 +164,10 @@ async fn run(
                     .database
                     .reserve_model_call(id, Some(&step.step_key))
                     .await?;
-                engine.database.mark_llm_started(id, &step.step_key, &attempt).await?;
+                engine
+                    .database
+                    .mark_llm_started(id, &step.step_key, &attempt)
+                    .await?;
                 let inputs: HashMap<_, _> = step
                     .input_refs
                     .iter()
@@ -225,7 +227,6 @@ async fn run(
             let next = propose(
                 engine,
                 models,
-                id,
                 &job,
                 &contracts,
                 replan,
@@ -256,13 +257,13 @@ async fn run(
 async fn propose(
     engine: &JobEngine,
     models: &Arc<dyn super::models::JobModels>,
-    id: &str,
     job: &JobView,
     contracts: &HashMap<(String, String), Value>,
     payload: Value,
     previous: Option<&JobPlan>,
     cancellation: &CancellationToken,
 ) -> Result<JobPlan, JobError> {
+    let id = job.id.as_str();
     let mut messages = vec![
         ChatMessage::System {
             content: PLAN_INSTRUCTIONS.into(),

@@ -9,7 +9,7 @@ Three new top-level Admin pages. Existing AdminShell, PageHeader, Badge, Button,
 | Page | Route | Backend |
 |---|---|---|
 | Background | /background | GET/PUT /api/admin/background/settings |
-| Plugin Store | /plugins | GET /api/admin/plugins, GET /api/admin/plugins/:id, POST /api/admin/plugins/install, PUT /api/admin/plugins/:id/permissions, POST /api/admin/plugins/:id/{test,activate,disable}, DELETE /api/admin/plugins/:id |
+| Plugin Store | /plugins | GET /api/admin/plugins, GET /api/admin/plugins/:id, POST /api/admin/plugins/install, POST /api/admin/plugins/:id/{test,activate,disable}, DELETE /api/admin/plugins/:id |
 | Jobs | /jobs | GET/POST /api/admin/jobs, GET /api/admin/jobs/:id, POST /api/admin/jobs/:id/{cancel,retry} |
 
 Plugin Detail and Job Detail are modal views inside their pages, NOT new routes.
@@ -20,7 +20,7 @@ Plugin Detail and Job Detail are modal views inside their pages, NOT new routes.
 - One global Background switch and exactly two LLM Providers; source-qualified references.
 - A Voice-origin Job retains immutable requester Device incarnation / assigned Agent and verifies current Device enabled/assignment and Agent enabled before each dispatch. Admin Jobs use Admin scope. No Background Agent switch.
 - Executable Python plugin packages run in isolated workers. External MCP does not execute plugins.
-- Backend alone enforces authorization, plugin permissions, quotas and sandbox; Web requests are untrusted.
+- Backend alone enforces authorization, quotas and the container sandbox; Web requests are untrusted.
 
 ## Backend correctness contract
 
@@ -28,7 +28,7 @@ Plugin Detail and Job Detail are modal views inside their pages, NOT new routes.
 - PUT Settings and Plugin mutations send saved revision through If-Match; backend must reject conflicts with 409.
 - ZIP upload is multipart under package; server enforces limits, ZIP traversal checks, content digest, dependency installation, sandbox.
 - Plugin test is diagnostic. Activate is the only verified disabled/error -> ready action.
-- Admin must explicitly approve the declared plugin network/storage permissions via revision-guarded PUT /api/admin/plugins/:id/permissions before Activate; manifest alone cannot grant them. The backend must enforce approved permissions in worker sandbox.
+- Plugin activation requires Admin authorization and a revision guard, but there is no per-plugin network approval. Runtime workers use Docker's default network directly; the server does not provide an egress proxy or host allowlist.
 - Runtime error state is not triggered by legitimate empty search results.
 - Retry creates a new Job, never blindly replays unsafe or unknown-outcome operations.
 - Recover cancelling Jobs to cancelled after crash, recording unknown_outcome if external execution may have started.

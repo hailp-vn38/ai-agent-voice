@@ -17,7 +17,7 @@ export const agentPluginsApi = {
   get(id: string, signal?: AbortSignal) {
     return requestJson<InstalledPlugin>(pluginPath(id), {}, { signal })
   },
-  /** The server must validate ZIP content, digest, dependencies and permissions. */
+  /** The server validates the plugin package and immutable installation before activation. */
   install(zip: File) {
     const data = new FormData()
     data.append('package', zip, zip.name)
@@ -25,9 +25,6 @@ export const agentPluginsApi = {
   },
   test(id: string, revision: number) {
     return requestJson<PluginTestResult>(pluginPath(id) + '/test', jsonRequest('POST', {}), { revision })
-  },
-  approvePermissions(id: string, revision: number, permissions: { network_hosts: string[]; scratch_storage: boolean }) {
-    return requestJson<InstalledPlugin>(pluginPath(id) + '/permissions', jsonRequest('PUT', permissions), { revision })
   },
   activate(id: string, revision: number) {
     return requestJson<InstalledPlugin>(pluginPath(id) + '/activate', jsonRequest('POST', {}), { revision })

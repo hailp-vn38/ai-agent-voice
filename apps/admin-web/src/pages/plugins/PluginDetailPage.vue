@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, Code2, Cpu, FlaskConical, FileCode2, LockKeyhole, RefreshCw, ShieldAlert, Trash2 } from '@lucide/vue'
+import { Archive, Code2, Cpu, FlaskConical, FileCode2, RefreshCw, ShieldAlert, Trash2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentPluginsApi } from '@/api/agent-plugins'
@@ -11,8 +11,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
-type DetailTab = 'overview' | 'code' | 'permissions' | 'logs'
-type GuardedAction = 'approve' | 'uninstall'
+type DetailTab = 'overview' | 'code' | 'logs'
+type GuardedAction = 'uninstall'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -24,7 +24,7 @@ const busy = ref(false)
 const error = ref('')
 const notice = ref('')
 const confirmOpen = ref(false)
-const pendingAction = ref<GuardedAction>('approve')
+const pendingAction = ref<GuardedAction>('uninstall')
 let controller: AbortController | undefined
 
 const statusVariant = (status: PluginStatus): 'success' | 'danger' | 'secondary' =>
@@ -34,15 +34,8 @@ const statusLabel = (status: PluginStatus) =>
 const tabs = computed(() => [
   { key: 'overview' as DetailTab, label: t('jobUi.detailOverview') },
   { key: 'code' as DetailTab, label: t('jobUi.detailCode') },
-  { key: 'permissions' as DetailTab, label: t('jobUi.declaredPermissions') },
   { key: 'logs' as DetailTab, label: t('jobUi.detailLogs') },
 ])
-const permissionsApproved = computed(() => {
-  const item = plugin.value
-  if (!item) return false
-  return item.permissions_approved === true
-})
-
 async function load() {
   controller?.abort()
   const pending = new AbortController()
@@ -80,12 +73,6 @@ async function action(type: 'test' | 'activate' | 'disable' | GuardedAction) {
       await agentPluginsApi.uninstall(item.id, item.revision)
       await router.push({ name: 'plugins' })
       return
-    } else if (type === 'approve') {
-      plugin.value = await agentPluginsApi.approvePermissions(item.id, item.revision, {
-        network_hosts: item.permissions?.network_hosts ?? [],
-        scratch_storage: item.permissions?.scratch_storage ?? false,
-      })
-      notice.value = t('jobUi.saved')
     } else {
       plugin.value = type === 'activate'
         ? await agentPluginsApi.activate(item.id, item.revision)
@@ -123,7 +110,7 @@ onBeforeUnmount(() => controller?.abort())
         <Button variant="outline" :disabled="busy || loading" @click="load"><RefreshCw class="size-4" />{{ t('jobUi.refresh') }}</Button>
         <Button v-if="plugin" variant="outline" :disabled="busy" @click="action('test')"><FlaskConical class="size-4" />{{ t('jobUi.test') }}</Button>
         <Button v-if="plugin && plugin.status === 'ready'" variant="outline" :disabled="busy" @click="action('disable')">{{ t('jobUi.disable') }}</Button>
-        <Button v-if="plugin && plugin.status !== 'ready'" :disabled="busy || !permissionsApproved" @click="action('activate')">
+        <Button v-if="plugin && plugin.status !== 'ready'" :disabled="busy" @click="action('activate')">
           {{ plugin.status === 'error' ? t('jobUi.reset') : t('jobUi.activate') }}
         </Button>
       </template>
@@ -166,35 +153,11 @@ onBeforeUnmount(() => controller?.abort())
                 <code class="mt-2 block break-all text-xs">{{ plugin.digest || '—' }}</code>
               </div>
               <div class="rounded-xl border p-4">
-                <p class="text-xs font-medium text-muted-foreground">{{ t('jobUi.imageDigest') }}</p>
-                <code class="mt-2 block break-all text-xs">{{ plugin.image_digest || '—' }}</code>
+                <p class="text-xs font-medium text-muted-foreground">{{ 'Installation digest' }}</p>
+                <code class="mt-2 block break-all text-xs">{{ plugin.installation_digest || '—' }}</code>
               </div>
             </div>
             <p class="text-sm leading-relaxed text-muted-foreground">{{ t('jobUi.sourceUnavailable') }}</p>
-          </section>
-          <section v-else-if="tab === 'permissions'" class="studio-panel space-y-4 p-5">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <h2 class="font-semibold">{{ t('jobUi.declaredPermissions') }}</h2>
-              <Badge :variant="permissionsApproved ? 'success' : 'secondary'">
-                {{ permissionsApproved ? t('jobUi.permissionsApproved') : t('jobUi.permissionsPending') }}
-              </Badge>
-            </div>
-            <div class="divide-y text-sm">
-              <div class="flex flex-wrap justify-between gap-2 py-3">
-                <span class="text-muted-foreground">{{ t('jobUi.network') }}</span>
-                <span class="max-w-full break-all font-mono">{{ plugin.permissions?.network_hosts.join(', ') || '—' }}</span>
-              </div>
-              <div class="flex justify-between gap-2 py-3">
-                <span class="text-muted-foreground">{{ t('jobUi.scratch') }}</span>
-                <span>{{ plugin.permissions?.scratch_storage ? t('jobUi.yes') : t('jobUi.no') }}</span>
-              </div>
-              <div class="flex flex-wrap justify-between gap-2 py-3">
-                <span class="text-muted-foreground">{{ t('jobUi.approvedNetwork') }}</span>
-                <span class="break-all font-mono">{{ plugin.approved_permissions?.network_hosts.join(', ') || '—' }}</span>
-              </div>
-            </div>
-            <p class="text-xs text-muted-foreground">{{ t('jobUi.permissionsHint') }}</p>
-            <Button v-if="!permissionsApproved" variant="outline" :disabled="busy" @click="confirmAction('approve')"><LockKeyhole class="size-4" />{{ t('jobUi.approve') }}</Button>
           </section>
           <section v-else class="studio-panel space-y-3 p-5">
             <h2 class="font-semibold">{{ t('jobUi.detailLogs') }}</h2>
@@ -231,13 +194,10 @@ onBeforeUnmount(() => controller?.abort())
       </div>
     </template>
     <ConfirmDialog v-model="confirmOpen"
-      :title="pendingAction === 'approve' ? t('jobUi.approve') : t('jobUi.uninstall')"
-      :confirm-label="pendingAction === 'approve' ? t('jobUi.approve') : t('jobUi.uninstall')"
+      :title="t('jobUi.uninstall')"
+      :confirm-label="t('jobUi.uninstall')"
       @confirm="confirmedAction">
-      <p>{{ pendingAction === 'approve' ? t('jobUi.approveConfirm') : t('jobUi.uninstallConfirm') }}</p>
-      <p v-if="pendingAction === 'approve'" class="mt-2 break-all font-mono text-xs text-muted-foreground">
-        {{ plugin?.permissions?.network_hosts.join(', ') || '—' }} · {{ plugin?.digest }}
-      </p>
+      <p>{{ t('jobUi.uninstallConfirm') }}</p>
     </ConfirmDialog>
   </section>
 </template>

@@ -257,16 +257,16 @@ pub(super) async fn events(
     Query(query): Query<EventQuery>,
     request: Request,
 ) -> Response {
-    let Some(after) = query.after.or(Some(0)).filter(|n|*n>=0) else {
-        return failure(&request,JobError::InvalidArguments);
+    let Some(after) = query.after.or(Some(0)).filter(|n| *n >= 0) else {
+        return failure(&request, JobError::InvalidArguments);
     };
-    let limit=query.limit.unwrap_or(100).clamp(1,100);
+    let limit = query.limit.unwrap_or(100).clamp(1, 100);
     match runtime(&state) {
-        Ok(engine) => match engine.database.job_events(&id,after,limit).await {
+        Ok(engine) => match engine.database.job_events(&id, after, limit).await {
             Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
-            Err(err) => failure(&request,err),
+            Err(err) => failure(&request, err),
         },
-        Err(err) => failure(&request,err),
+        Err(err) => failure(&request, err),
     }
 }
 
@@ -282,43 +282,41 @@ pub(super) async fn stream(State(state): State<AppState>, request: Request) -> R
     };
     // Subscribe before emitting ready so the initial REST read cannot race admission.
     let receiver = engine.database.job_changes.subscribe();
-    let messages = futures_util::stream::unfold(
-        (receiver, true),
-        |(mut receiver, first)| async move {
+    let messages =
+        futures_util::stream::unfold((receiver, true), |(mut receiver, first)| async move {
             if first {
                 return Some((
                     Ok::<Event, Infallible>(Event::default().event("ready").data("{}")),
                     (receiver, false),
                 ));
             }
-            loop {
-                match receiver.recv().await {
-                    Ok(job_id) => {
-                        return Some((
-                            Ok(Event::default().event("job_changed").data(
-                                serde_json::json!({ "job_id": job_id }).to_string(),
-                            )),
-                            (receiver, false),
-                        ));
-                    }
-                    Err(RecvError::Lagged(_)) => {
-                        return Some((
-                            Ok(Event::default().event("resync_required").data("{}")),
-                            (receiver, false),
-                        ));
-                    }
-                    Err(RecvError::Closed) => return None,
-                }
+            match receiver.recv().await {
+                Ok(job_id) => Some((
+                    Ok(Event::default()
+                        .event("job_changed")
+                        .data(serde_json::json!({ "job_id": job_id }).to_string())),
+                    (receiver, false),
+                )),
+                Err(RecvError::Lagged(_)) => Some((
+                    Ok(Event::default().event("resync_required").data("{}")),
+                    (receiver, false),
+                )),
+                Err(RecvError::Closed) => None,
             }
-        },
-    );
+        });
     let mut response = Sse::new(messages)
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keepalive"))
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keepalive"),
+        )
         .into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, no-transform"),
     );
-    response.headers_mut().insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
     response
 }

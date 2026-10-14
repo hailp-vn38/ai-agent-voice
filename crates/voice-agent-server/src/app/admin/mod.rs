@@ -35,8 +35,9 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/plugins", get(plugins::list))
         .route(
             "/plugins/install",
-            axum::routing::post(plugins::install)
-                .layer(axum::extract::DefaultBodyLimit::max(plugins::MAX_UPLOAD_BODY)),
+            axum::routing::post(plugins::install).layer(axum::extract::DefaultBodyLimit::max(
+                plugins::MAX_UPLOAD_BODY,
+            )),
         )
         .route(
             "/plugins/curated/{id}/install",
@@ -46,7 +47,6 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/plugins/{id}",
             get(plugins::get).delete(plugins::uninstall),
         )
-        .route("/plugins/{id}/permissions", put(plugins::permissions))
         .route("/plugins/{id}/test", axum::routing::post(plugins::test))
         .route(
             "/plugins/{id}/activate",

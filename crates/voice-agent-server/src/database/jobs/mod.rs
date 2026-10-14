@@ -9,9 +9,9 @@ mod change_feed;
 pub(crate) use change_feed::JobChangeFeed;
 mod recovery;
 // P3 scheduler will consume these durable dispatch transitions.
+mod events;
 #[allow(dead_code)]
 mod execution;
-mod events;
 mod orchestration;
 mod steps;
 mod submission;

@@ -1,111 +1,15 @@
 use super::*;
 
 impl PluginStore {
-    /// Startup reconciliation never touches containers without our owner label.
+    /// The Runner owns process groups. A server restart must never blindly reap
+    /// them or delete output from an attempt that could still be running.
     pub(crate) async fn reap_owned(&self) -> Result<(), PluginError> {
-        if !cfg!(target_os = "linux") || self.config.plugin_docker_host.is_none() {
-            return Ok(());
-        }
-        let mut info = builder::command(&self.config)?;
-        info.args(["info", "--format", "{{.OSType}} {{json .SecurityOptions}}"]);
-        let observed = tokio::time::timeout(std::time::Duration::from_secs(5), info.output())
-            .await
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .map_err(|_| PluginError::SandboxUnavailable)?;
-        if !observed.status.success()
-            || !String::from_utf8_lossy(&observed.stdout).contains("name=rootless")
-        {
-            return Err(PluginError::SandboxUnavailable);
-        }
-        let mut list = builder::command(&self.config)?;
-        list.args([
-            "ps",
-            "--all",
-            "--quiet",
-            "--filter",
-            "label=agent.job.owner=voice-agent-server",
-        ]);
-        let listed = tokio::time::timeout(std::time::Duration::from_secs(5), list.output())
-            .await
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .map_err(|_| PluginError::SandboxUnavailable)?;
-        if !listed.status.success() || listed.stdout.len() > 8192 {
-            return Err(PluginError::SandboxUnavailable);
-        }
-        for id in String::from_utf8(listed.stdout)
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .lines()
-        {
-            if !(12..=64).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(PluginError::SandboxUnavailable);
-            }
-            let mut remove = builder::command(&self.config)?;
-            remove.args(["rm", "--force", id]);
-            remove.stdout(std::process::Stdio::null());
-            let status = tokio::time::timeout(std::time::Duration::from_secs(15), remove.status())
-                .await
-                .map_err(|_| PluginError::SandboxUnavailable)?
-                .map_err(|_| PluginError::SandboxUnavailable)?;
-            if !status.success() {
-                return Err(PluginError::SandboxUnavailable);
-            }
-        }
-        let mut networks = builder::command(&self.config)?;
-        networks.args([
-            "network",
-            "ls",
-            "--quiet",
-            "--filter",
-            "label=agent.job.owner=voice-agent-server",
-        ]);
-        let listed = tokio::time::timeout(std::time::Duration::from_secs(5), networks.output())
-            .await
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .map_err(|_| PluginError::SandboxUnavailable)?;
-        if !listed.status.success() || listed.stdout.len() > 8192 {
-            return Err(PluginError::SandboxUnavailable);
-        }
-        for id in String::from_utf8(listed.stdout)
-            .map_err(|_| PluginError::SandboxUnavailable)?
-            .lines()
-        {
-            if !(12..=64).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(PluginError::SandboxUnavailable);
-            }
-            let mut inspect = builder::command(&self.config)?;
-            inspect.args(["network", "inspect", "--format", "{{.Name}}", id]);
-            let name = tokio::time::timeout(std::time::Duration::from_secs(5), inspect.output())
-                .await
-                .map_err(|_| PluginError::SandboxUnavailable)?
-                .map_err(|_| PluginError::SandboxUnavailable)?;
-            if !name.status.success() || name.stdout.len() > 128 {
-                return Err(PluginError::SandboxUnavailable);
-            }
-            let name = std::str::from_utf8(&name.stdout)
-                .map_err(|_| PluginError::SandboxUnavailable)?
-                .trim();
-            let attempt = name
-                .strip_prefix("agent-egress-private-")
-                .or_else(|| name.strip_prefix("agent-egress-uplink-"))
-                .ok_or(PluginError::SandboxUnavailable)?;
-            if uuid::Uuid::parse_str(attempt).is_err() {
-                return Err(PluginError::SandboxUnavailable);
-            }
-            let mut remove = builder::command(&self.config)?;
-            remove.args(["network", "rm", id]);
-            remove.stdout(std::process::Stdio::null());
-            let status = tokio::time::timeout(std::time::Duration::from_secs(15), remove.status())
-                .await
-                .map_err(|_| PluginError::SandboxUnavailable)?
-                .map_err(|_| PluginError::SandboxUnavailable)?;
-            if !status.success() {
-                return Err(PluginError::SandboxUnavailable);
-            }
-        }
-        sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE worker_instance_id IS NOT NULL AND job_id IN (SELECT id FROM jobs WHERE status IN ('failed','cancelled','succeeded','partial_success'))").execute(self.database.pool()).await?;
-        self.drain_workspaces().await
+        sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE worker_instance_id IS NOT NULL AND job_id IN (SELECT id FROM jobs WHERE status IN ('failed','cancelled','succeeded','partial_success'))")
+            .execute(self.database.pool()).await?;
+        Ok(())
     }
 
+    #[cfg(test)]
     pub(super) async fn drain_workspaces(&self) -> Result<(), PluginError> {
         while self.clean_workspace_batch().await? == 1000 {
             tokio::task::yield_now().await;
@@ -116,6 +20,7 @@ impl PluginStore {
     /// The deployment lock and completed owned-worker reaping make every prior
     /// process workspace disposable. Reject unexpected entries rather than
     /// following attacker-created links outside the owned directory.
+    #[cfg(test)]
     async fn clean_workspace_batch(&self) -> Result<usize, PluginError> {
         let root = self.root.join("workspaces");
         let mut jobs = match tokio::fs::read_dir(root).await {

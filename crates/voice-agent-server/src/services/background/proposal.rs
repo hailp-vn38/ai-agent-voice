@@ -31,8 +31,12 @@ pub(crate) enum ProposedStep {
         required: bool,
     },
 }
-fn empty_object() -> Value { serde_json::json!({}) }
-fn required() -> bool { true }
+fn empty_object() -> Value {
+    serde_json::json!({})
+}
+fn required() -> bool {
+    true
+}
 
 impl PlanProposal {
     pub(crate) fn parse(raw: &str) -> Result<Self, serde_json::Error> {

@@ -1,4 +1,4 @@
-//! Operator checks using the same package, image, worker and artifact contracts as Jobs.
+//! Operator checks using the same package, installation, worker and artifact contracts as Jobs.
 use super::{PluginError, archive, builder, dispatch, protocol, runner};
 use crate::config::BackgroundConfig;
 use anyhow::{Context, Result, ensure};
@@ -72,13 +72,10 @@ pub async fn check(
     bytes: &[u8],
     cases: &[Case],
     deployment: Option<&BackgroundConfig>,
-    stage: &Path,
+    _stage: &Path,
 ) -> Result<Value> {
     let package = archive::validate(bytes).map_err(error)?;
-    ensure!(
-        package.manifest.runtime.kind == "rust_container",
-        "not a Rust plugin"
-    );
+    ensure!(package.manifest.runtime.kind == "rust", "not a Rust plugin");
     let instructions = &package
         .files
         .iter()
@@ -98,8 +95,6 @@ pub async fn check(
         "package_digest": package.digest,
         "package": "PASS",
         "runtime": "NOT_RUN",
-        "network": "NOT_RUN",
-        "declared_network_hosts": package.manifest.permissions.network_hosts,
         "cases": []
     });
     let Some(config) = deployment else {
@@ -107,60 +102,33 @@ pub async fn check(
     };
     ensure!(config.limits.valid(), "invalid background limits");
     validate_cases(&package, cases)?;
-    builder::preflight(config, &package.manifest.runtime)
-        .await
-        .map_err(error)?;
-    for (name, bytes) in &package.files {
-        let path = stage.join(name);
-        tokio::fs::create_dir_all(path.parent().context("invalid package path")?).await?;
-        tokio::fs::write(path, bytes).await?;
-    }
-    let tag = format!("agent-plugin-check-{}", uuid::Uuid::new_v4());
+    let staging_root = config
+        .plugin_staging_dir
+        .as_deref()
+        .context("plugin_staging_dir required for runtime checks")?;
+    let stage = staging_root.join(uuid::Uuid::new_v4().to_string());
+    tokio::fs::create_dir_all(&stage).await?;
     let outcome = async {
-        let image = builder::build_named(config, stage, &package, &tag)
-            .await
-            .map_err(error)?;
-        builder::verify_image(config, &image, &package.digest, &package.manifest.runtime)
-            .await
-            .map_err(error)?;
+        for (name, bytes) in &package.files {
+            let path = stage.join(name);
+            tokio::fs::create_dir_all(path.parent().context("invalid package path")?).await?;
+            tokio::fs::write(path, bytes).await?;
+        }
+        let installation = builder::build(config, &stage, &package).await.map_err(error)?;
+        builder::verify_image(config, &installation, &package.digest, &package.manifest.runtime).await.map_err(error)?;
         let mut results = Vec::new();
         for case in cases {
-            let artifacts = run_case(config, &package, &image, stage, case)
-                .await
+            let artifacts = run_case(config, &package, &installation, case).await
                 .with_context(|| format!("case {}", case.name))?;
-            results.push(json!({"name": case.name, "operation": case.operation,
-                "result": "PASS", "artifact_count": artifacts}));
+            results.push(json!({"name":case.name,"operation":case.operation,"result":"PASS","artifact_count":artifacts}));
         }
         report["runtime"] = json!("PASS");
-        report["network"] = json!(if package.manifest.permissions.network_hosts.is_empty() {
-            "NOT_REQUIRED"
-        } else {
-            "NOT_RUN"
-        });
         report["cases"] = json!(results);
         Ok(report)
-    }
-    .await;
-    // Remove only this check's tag; an installed image may have the same image ID.
-    let mut remove = builder::command(config).map_err(error)?;
-    remove.args(["image", "rm", &tag]);
-    let output = tokio::time::timeout(Duration::from_secs(15), remove.output()).await??;
-    if !output.status.success() {
-        let mut inspect = builder::command(config).map_err(error)?;
-        inspect.args([
-            "image",
-            "ls",
-            "--filter",
-            &format!("reference={tag}"),
-            "--format",
-            "{{.ID}}",
-        ]);
-        let output = tokio::time::timeout(Duration::from_secs(5), inspect.output()).await??;
-        ensure!(
-            output.status.success() && output.stdout.is_empty(),
-            "check image cleanup failed"
-        );
-    }
+    }.await;
+    tokio::fs::remove_dir_all(&stage)
+        .await
+        .context("qualification staging cleanup failed")?;
     outcome
 }
 
@@ -168,12 +136,16 @@ async fn run_case(
     config: &BackgroundConfig,
     package: &archive::Package,
     image: &str,
-    stage: &Path,
     case: &Case,
 ) -> Result<usize> {
     let attempt = uuid::Uuid::new_v4().to_string();
     let job = uuid::Uuid::new_v4().to_string();
-    let workspace = stage.join(&attempt);
+    let workspace = config
+        .plugin_attempts_dir
+        .as_deref()
+        .context("plugin_attempts_dir required for runtime checks")?
+        .join(&job)
+        .join(&attempt);
     let out = workspace.join("out");
     tokio::fs::create_dir_all(&out).await?;
     #[cfg(unix)]
@@ -187,23 +159,20 @@ async fn run_case(
     }))?;
     ensure!(request.len() <= 65535, "case exceeds Job request limit");
     let request = [request.as_slice(), b"\n"].concat();
-    let prepared = runner::Prepared::create(config, image, &workspace, &job, &attempt, None)
+    let prepared = runner::Prepared::create(config, image, &workspace, &job, &attempt)
         .await
         .map_err(error)?;
-    let outcome = async {
-        prepared.start_container(config).await.map_err(error)?;
-        prepared
-            .attach(
-                config,
-                &request,
-                Duration::from_secs(30).min(Duration::from_secs(
-                    config.limits.step_timeout_seconds.into(),
-                )),
-            )
-            .await
-            .map_err(error)
-    }
-    .await;
+    let outcome = prepared
+        .execute(
+            config,
+            &request,
+            Duration::from_secs(30).min(Duration::from_secs(
+                config.limits.step_timeout_seconds.into(),
+            )),
+            || async { Ok(()) },
+        )
+        .await
+        .map_err(error);
     prepared.remove(config).await.map_err(error)?;
     let operation = &package.manifest.operations[&case.operation];
     let response = protocol::parse_response(

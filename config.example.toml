@@ -345,18 +345,11 @@ allowed_hosts = []
 [system_mcp]
 enabled = false # Read-only tools for authenticated Studio Assistant sessions.
 
-# P1 executable Plugin Store is fail-closed unless the deployment uses a dedicated
-# rootless Linux Docker Engine. The pinned images below were resolved on 2026-10-13;
-# pull these exact digests into that Engine before enabling installs.
+# Shared runtime: installer and runner use one image, separate Unix sockets.
 # [background]
-# plugin_python_image = "python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
-# plugin_uv_image = "ghcr.io/astral-sh/uv@sha256:4de5495181a281bc744845b9579acf7b221d6791f99bcc211b9ec13f417c2853"
-# Optional for Rust plugins; pin both local images to OCI repository digests.
-# plugin_rust_builder_image = "rust:1.91-slim@sha256:<64-hex>"
-# plugin_rust_runtime_image = "debian:bookworm-slim@sha256:<64-hex>"
-# plugin_egress_image = "sha256:<image-id-from-scripts/build-agent-egress-proxy.sh>"
-# Set only after the target Linux host passes bypass, private-IP, redirect,
-# DNS rebinding and shared-IP authority tests for each exact host.
-# plugin_egress_qualified_hosts = ["example.com"]
-# plugin_docker_host = "unix:///run/user/1001/docker.sock"
+# plugin_installer_socket = "/run/plugin-installer/installer.sock"
+# plugin_runner_socket = "/run/plugin-runner/runner.sock"
+# plugin_installations_dir = "/app/data/plugins/installations"
+# plugin_staging_dir = "/app/data/plugins/staging"
+# plugin_attempts_dir = "/app/data/plugins/workspaces"
 # plugin_curated_dir = "data/curated-plugins"

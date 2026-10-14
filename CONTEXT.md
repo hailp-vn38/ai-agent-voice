@@ -702,6 +702,8 @@ Thuật ngữ được định nghĩa trong [GLOSSARY.md](GLOSSARY.md#reminders-
 
 ## Background Jobs and Executable Plugins
 
+Plugin Activation và Plugin Network Reachability có định nghĩa tại [GLOSSARY.md](GLOSSARY.md#background-jobs-and-executable-plugins); quyết định về ranh giới mạng ở [ADR 0101](docs/adr/0101-direct-plugin-worker-network.md). Các thuật ngữ này không phải quyền mạng của plugin.
+
 **Background Settings**:
 Deployment-wide configuration for whether Background execution is enabled and which two LLM Providers serve the Orchestrator and Sub-Agent roles.
 _Avoid_: Agent Template, Voice Profile, plugin-specific model
@@ -731,23 +733,19 @@ An identity of a normalized request used to distinguish a repeated submission fr
 _Avoid_: Job ID, prompt token
 
 **Plugin Package**:
-An immutable, versioned set of executable Python code, dependency definitions, instructions and operation schemas.
+An immutable, versioned bundle of executable plugin logic, runtime declaration, instructions and operation contracts, independent of installation availability.
 _Avoid_: MCP binding, installed status, Agent
 
 **Plugin Installation**:
-The deployment's active pinned package and executable environment for one Plugin, with its operator-controlled availability state.
+A deployment-owned, version-pinned package and runnable environment for one Plugin, with an Admin-controlled availability state. Installation alone does not make its operations eligible for Jobs.
 _Avoid_: Plugin Package, Job Step
 
 **Plugin Operation**:
 A named input/output-typed action provided by executable Plugin code and admitted by the platform.
 _Avoid_: MCP Tool, arbitrary system command
 
-**Plugin Permission Grant**:
-An administrator-approved set of capabilities allowed to a particular installed package, independent of which Agent submits a Job.
-_Avoid_: manifest request, per-Agent Background grant
-
 **Frozen Plugin Choices**:
-The immutable set of eligible Plugin Operations established at Job acceptance; later new grants do not enlarge it.
+The immutable set of eligible Plugin Operations and pinned package/image identities established at Job acceptance; later installation changes do not enlarge it.
 _Avoid_: currently available catalog, Step retry
 
 **Plugin Health Status**:
@@ -763,7 +761,7 @@ A durably identified part of a Job Plan with dependencies and a bounded result.
 _Avoid_: Plugin Operation, Conversational Turn
 
 **Agent Run**:
-A bounded execution of a Job Step using the global Sub-Agent role, optionally involving an approved executable Plugin Operation.
+A bounded execution of a Job Step using the global Sub-Agent role, optionally involving an eligible, pinned executable Plugin Operation.
 _Avoid_: new Agent account, Voice Session
 
 **Worker Attempt**:
