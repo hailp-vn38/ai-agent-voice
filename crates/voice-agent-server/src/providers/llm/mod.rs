@@ -81,6 +81,20 @@ impl From<&str> for LlmRequest {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct BackgroundTokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub cached_input_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BackgroundCompletion {
+    pub text: String,
+    pub usage: Option<BackgroundTokenUsage>,
+}
+
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
     fn supports_tools(&self) -> bool {
@@ -99,6 +113,18 @@ pub trait LlmProvider: Send + Sync {
         _schema: Option<Value>,
     ) -> Result<String, LlmError> {
         complete_background_chat(self.stream(request).await?).await
+    }
+
+    /// Background-only typed metadata; non-Responses providers may omit token usage.
+    async fn background_complete_with_usage(
+        &self,
+        request: LlmRequest,
+        schema: Option<Value>,
+    ) -> Result<BackgroundCompletion, LlmError> {
+        Ok(BackgroundCompletion {
+            text: self.background_complete(request, schema).await?,
+            usage: None,
+        })
     }
 
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
@@ -185,6 +211,23 @@ impl ConfiguredOpenAiLlm {
 
 #[async_trait::async_trait]
 impl LlmProvider for ConfiguredOpenAiLlm {
+    async fn background_complete_with_usage(
+        &self,
+        request: LlmRequest,
+        schema: Option<Value>,
+    ) -> Result<BackgroundCompletion, LlmError> {
+        if self.supports_responses {
+            openai::responses::complete_with_usage(
+                &self.base_url, &self.model, &self.api_key, self.timeout_seconds, request, schema
+            ).await
+        } else {
+            Ok(BackgroundCompletion {
+                text: self.background_complete(request, schema).await?,
+                usage: None,
+            })
+        }
+    }
+
     fn supports_tools(&self) -> bool {
         true
     }
