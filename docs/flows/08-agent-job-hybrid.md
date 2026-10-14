@@ -139,13 +139,18 @@ Frozen Core JSON records `kind=core`, `plugin_id=core`, `operation` and `contrac
 Scheduler, Step start and Job finalization check Core contract revisions rather than querying
 `plugin_installations`. Older persisted External choices continue to work.
 
-Core v1: `core.web.fetch`, `core.data.json_query`, `core.artifact.read_text`.
-No new tool registry, agent framework, migration, Store lifecycle or UI.
+Built-in Core Plugins (8 operations): Web (`web.fetch`, `web.extract`),
+Document (`document.extract`, `document.inspect`),
+Data (`data.json_query`, `data.transform`),
+Artifact (`artifact.read_text`, `artifact.inspect`).
+All operation names are qualified by `core.` in Root/Child allowlists.
+The read-only Admin endpoint `GET /api/admin/plugins/builtin` exposes them even without an External Store installation.
+No new tool registry, agent framework, migration or Store lifecycle.
 `dag_v1` remains supported; when a frozen Core choice appears in an older DAG
 execution path, its revision is recorded in the existing Step version field.
 
 **Release caveat:** Core is in-process and not sandboxed. New SSRF/DNS/IP/redirect
 and filesystem policy for Core is explicitly deferred (Risk 2). Do not expose
-`core.web.fetch` to untrusted/public tenants until independently reviewed.
+`core.web.fetch` or `core.web.extract` to untrusted/public tenants until independently reviewed.
 Core preserves the existing cancellation/deadline, bounded output, schema, owned artifact
 and durable Attempt contracts.
