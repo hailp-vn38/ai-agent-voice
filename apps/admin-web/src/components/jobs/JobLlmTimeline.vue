@@ -30,7 +30,10 @@ const isJobTerminal = computed(() => ['succeeded', 'partial_success', 'failed', 
 const finishedEvent = computed(() => [...props.events].reverse().find(e => e.event_type === 'job_finished'))
 const elapsed = computed(() => {
   const start = Date.parse(props.job.created_at)
-  const end = isJobTerminal.value && finishedEvent.value ? Date.parse(finishedEvent.value.created_at) : now.value
+  const lastObserved = props.events.length ? props.events[props.events.length - 1]?.created_at : null
+  const end = isJobTerminal.value
+    ? Date.parse(finishedEvent.value?.created_at ?? lastObserved ?? props.job.created_at)
+    : now.value
   if (!Number.isFinite(start) || !Number.isFinite(end)) return '—'
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
   return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0')
