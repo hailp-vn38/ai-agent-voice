@@ -158,16 +158,7 @@ impl PluginStore {
         .await?;
         let workspace = self.root.join("workspaces").join(job_id).join(attempt_id);
         let out = workspace.join("out");
-        tokio::fs::create_dir_all(&out)
-            .await
-            .map_err(|_| PluginError::StorageUnavailable)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o777))
-                .await
-                .map_err(|_| PluginError::StorageUnavailable)?;
-        }
+        // Runner creates the attempt directory as its single-use execution marker.
         let prepared = runner::Prepared::create(
             &self.config,
             &choice.installation_digest,

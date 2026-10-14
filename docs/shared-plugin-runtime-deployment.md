@@ -18,6 +18,41 @@ plugin_attempts_dir = "/app/data/plugins/workspaces"
 
 Run Compose with the existing `compose.yaml` and deployment override (`compose.prod.yaml` or `compose.test.yaml`). Both plugin containers must use the **same immutable image digest** in production; `PLUGIN_RUNTIME_TAG=local` is intended for development, not a release pin. Installer mounts staging read-only and installation storage read/write. Runner mounts installation storage read-only and attempt output read/write. Server mounts private control socket volumes and can read installations and attempts. Review Linux UID/GID ownership and read-only mounts on the target.
 
+## Local host server with rootless Docker on Debian 13
+
+The host server also needs Installer and Runner containers. The production Compose
+volumes are private Docker volumes, so starting those containers alone does not
+expose their sockets or package storage to a host process. Set the two socket
+paths in the host server's `[background]` configuration:
+
+```toml
+plugin_installer_socket = "data/plugins/control/installer/installer.sock"
+plugin_runner_socket = "data/plugins/control/runner/runner.sock"
+```
+
+Keep the installation, staging and attempt paths from `config.example.toml`.
+Start the local overlay with the rootless Docker context:
+
+```sh
+scripts/agent-test.sh run -- cargo build --locked -p voice-agent-server --bin plugin-runtime
+mkdir -p data/plugins/staging data/plugins/installations data/plugins/workspaces \
+  data/plugins/control/installer data/plugins/control/runner
+docker --context rootless compose -p voice-agent-local-plugins -f compose.yaml -f compose.plugins-local.yaml \
+  up -d --build --wait plugin-installer plugin-runner
+```
+
+This mounts the repository's `data/plugins` directories into the containers.
+Container UID 0 maps to the unprivileged host developer under rootless Docker;
+the inherited capability restrictions still apply. This overlay is for rootless
+Docker only. Restart the host server after changing its socket configuration.
+
+The local image uses Python 3.12 on Debian 13 to match host-built Rust binaries.
+It mounts `/mnt/storage/ai-agent-voice/target/debug/plugin-runtime` read-only,
+matching `.cargo/config.toml`. Set `PLUGIN_RUNTIME_BINARY` if your Cargo target
+directory differs. Rebuild the binary after runtime code
+changes and recreate the containers. Production continues using the production
+Dockerfile and requires plugin binaries built for its own architecture and ABI.
+
 ## Cutover
 
 1. Disable new Background Job submissions, wait for active Jobs to finish or terminalize them using existing cancellation semantics. Take a SQLite snapshot.

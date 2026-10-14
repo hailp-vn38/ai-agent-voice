@@ -146,12 +146,6 @@ async fn run_case(
         .join(&job)
         .join(&attempt);
     let out = workspace.join("out");
-    tokio::fs::create_dir_all(&out).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o777)).await?;
-    }
     let request = serde_json::to_vec(&json!({
         "schema_version": 1, "request_id": attempt, "operation": case.operation,
         "arguments": case.arguments, "artifact_dir": "/work/out"

@@ -81,10 +81,10 @@ impl Outcome {
                 "Invalid artifact name, type or size",
             ));
         }
-        if dir != "/work/out" {
+        if !artifact_directory(dir) {
             return Err(Failure::new(
                 "invalid_artifact_dir",
-                "Only /work/out is writable",
+                "Expected an absolute artifact directory without parent traversal",
             ));
         }
         let path = Path::new(dir);
@@ -130,6 +130,14 @@ struct Response<'a> {
     error: Option<ErrorInfo<'a>>,
 }
 
+fn artifact_directory(dir: &str) -> bool {
+    let path = Path::new(dir);
+    path.is_absolute()
+        && !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+}
+
 fn parse_request(input: impl Read) -> Result<Request, Failure> {
     let mut bytes = Vec::new();
     input
@@ -151,7 +159,7 @@ fn parse_request(input: impl Read) -> Result<Request, Failure> {
         || req.request_id.is_empty()
         || req.request_id.len() > 128
         || req.operation.is_empty()
-        || req.artifact_dir != "/work/out"
+        || !artifact_directory(&req.artifact_dir)
         || !req.arguments.is_object()
     {
         return Err(Failure::new("invalid_request", "Invalid request envelope"));

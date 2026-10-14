@@ -10,8 +10,17 @@ fn run(input: &str) -> Result<Value, &'static str> {
         return Err("invalid_request");
     }
     let request: Value = serde_json::from_str(input).map_err(|_| "invalid_json")?;
+    let dir = Path::new(
+        request
+            .get("artifact_dir")
+            .and_then(Value::as_str)
+            .ok_or("invalid_request")?,
+    );
     if request.get("schema_version").and_then(Value::as_u64) != Some(1)
-        || request.get("artifact_dir").and_then(Value::as_str) != Some("/work/out")
+        || !dir.is_absolute()
+        || dir
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
     {
         return Err("invalid_request");
     }
@@ -38,7 +47,6 @@ fn run(input: &str) -> Result<Value, &'static str> {
         "records": [{"id":"rust-fixture-001","topic":topic,"text":"Deterministic offline Rust result"}]
     });
     let data = serde_json::to_vec_pretty(&records).map_err(|_| "serialization_failed")?;
-    let dir = Path::new("/work/out");
     fs::write(dir.join("records.json"), &data).map_err(|_| "artifact_write_failed")?;
     Ok(json!({
         "schema_version": 1,
