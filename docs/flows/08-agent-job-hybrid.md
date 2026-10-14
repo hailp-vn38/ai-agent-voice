@@ -16,7 +16,7 @@ flowchart TD
     F -->|Delegate| H["Create 1-2 Child Runs / fork"]
     H --> I["Child LLM: native function tools"]
     I --> J{"Exactly one valid function?"}
-    J -->|Plugin| K["Rust: source-schema validate / persist Step / execute"]
+    J -->|Core or External| K["Rust: source-schema validate / persist Step / execute"]
     K --> L["Matched tool result + local history"]
     L --> I
     J -->|submit_result| M["Rust: validate Child evidence"]
@@ -113,3 +113,39 @@ Child mode sets `tool_choice=required` and `parallel_tool_calls=false`; if upstr
 - Timeline B derives LLM / Root fork / Child tool Step / Child finish / join / Job terminal from durable `job_events` and Job Read View; provider `call_id` is only local Child history.
 
 The canonical acceptance matrix is in [the implementation guide](../agent-job-hybrid-implementation.md); do not duplicate it here.
+
+
+## Core Operations in-process (ADR 0114)
+
+Core Operations are always frozen at submission alongside ready External Plugin Operations.
+Only the Root-selected, Child-allowed subset is presented to native Function Calling.
+Core does **not** have a Plugin Store installation, ZIP, image or worker subprocess.
+
+```mermaid
+flowchart TD
+    A["Freeze choices: Core + ready External"] --> B["Root delegate / Child permitted list"]
+    B --> C["Existing compile_child_tools and strict schema"]
+    C --> D["Validate native call + original JSON Schema"]
+    D --> E["Persist Step + reserve Attempt"]
+    E --> F{"Trusted frozen choice"}
+    F -->|Core| G["Check Core contract revision; execute Rust function"]
+    F -->|External| H["Check pinned installation; PluginStore invoke"]
+    G --> I["Common output validation, Step result, Artifact refs"]
+    H --> I
+    I --> J["Matched tool result / Child continues or submit_result"]
+```
+
+Frozen Core JSON records `kind=core`, `plugin_id=core`, `operation` and `contract_revision`; External JSON stays unchanged.
+Scheduler, Step start and Job finalization check Core contract revisions rather than querying
+`plugin_installations`. Older persisted External choices continue to work.
+
+Core v1: `core.web.fetch`, `core.data.json_query`, `core.artifact.read_text`.
+No new tool registry, agent framework, migration, Store lifecycle or UI.
+`dag_v1` remains supported; when a frozen Core choice appears in an older DAG
+execution path, its revision is recorded in the existing Step version field.
+
+**Release caveat:** Core is in-process and not sandboxed. New SSRF/DNS/IP/redirect
+and filesystem policy for Core is explicitly deferred (Risk 2). Do not expose
+`core.web.fetch` to untrusted/public tenants until independently reviewed.
+Core preserves the existing cancellation/deadline, bounded output, schema, owned artifact
+and durable Attempt contracts.
