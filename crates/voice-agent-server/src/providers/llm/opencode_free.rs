@@ -123,7 +123,7 @@ impl LlmProvider for OpenCodeFreeProvider {
     ) -> Result<super::BackgroundTurnResult, LlmError> {
         let qualified = match &mode {
             super::BackgroundMode::Structured { .. } => self.supports_structured_outputs,
-            super::BackgroundMode::Tools | super::BackgroundMode::ToolsAuto => self.supports_function_calling,
+            super::BackgroundMode::Tools | super::BackgroundMode::ToolsAuto | super::BackgroundMode::ToolsParallel => self.supports_function_calling,
         };
         if !qualified {
             return Err(LlmError::Rejected);
