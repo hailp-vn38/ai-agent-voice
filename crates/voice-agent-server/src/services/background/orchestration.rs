@@ -15,6 +15,9 @@ pub(super) async fn execute(engine: Arc<JobEngine>, id: String, cancellation: Ca
     use futures_util::FutureExt;
     let outcome = std::panic::AssertUnwindSafe(async {
         match engine.get(&id).await?.execution_mode.as_str() {
+            "hierarchical_v3" => {
+                super::agent_loop::run_root_v3(&engine, &id, cancellation.clone()).await
+            }
             "hierarchical_v2" => {
                 super::agent_loop::run_root(&engine, &id, cancellation.clone()).await
             }
