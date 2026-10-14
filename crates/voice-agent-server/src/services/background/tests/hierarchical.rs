@@ -669,7 +669,7 @@ async fn invalid_native_child_calls_never_create_plugin_steps() {
     for (kind, code) in [
         (RejectedChildKind::MultipleCalls, "tool_call_count"),
         (RejectedChildKind::UnknownFunction, "unknown_operation"),
-        (RejectedChildKind::FakeEvidence, "invalid_child_result"),
+        (RejectedChildKind::FakeEvidence, "invalid_child_evidence_refs"),
     ] {
         let config = Arc::new(config());
         let db = Arc::new(Database::connect(&config.database).await.unwrap());
