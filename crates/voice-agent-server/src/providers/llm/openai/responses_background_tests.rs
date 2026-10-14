@@ -57,3 +57,17 @@ fn strict_root_format_rejects_tools() {
     assert_eq!(body["text"]["format"]["strict"], true);
     assert!(body.get("tools").is_none());
 }
+
+
+#[test]
+fn v3_child_responses_auto_tools_accept_final_text() {
+    let request=LlmRequest{messages:vec![ChatMessage::User{content:"work".into()}],
+        tools:vec![ToolDefinition{name:"submit_result".into(),description:"Optional finish".into(),
+            parameters:json!({"type":"object","properties":{},"required":[],"additionalProperties":false})}]};
+    let body=turn_body("fixture",&request,&BackgroundMode::ToolsAuto).unwrap();
+    assert_eq!(body["tool_choice"],"auto");
+    let answer=json!({"status":"completed","output":[{"type":"message","role":"assistant",
+        "content":[{"type":"output_text","text":"Done with research"}]}]});
+    assert!(matches!(parse_turn(&answer,&BackgroundMode::ToolsAuto).unwrap().turn,
+        BackgroundTurn::Text(text) if text=="Done with research"));
+}
