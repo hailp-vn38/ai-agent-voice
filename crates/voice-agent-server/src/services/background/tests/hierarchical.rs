@@ -251,10 +251,11 @@ async fn invalid_root_decision_emits_precise_diagnostic_then_repairs_from_fenced
         .unwrap();
     assert_eq!(accepted.payload["action"], "finish");
     assert_eq!(
-        events
-            .iter()
-            .filter(|e| e.event_type == "llm_response_received")
-            .count(),
+        events.iter().filter(|e| e.event_type == "llm_run_started").count(),
+        2
+    );
+    assert_eq!(
+        events.iter().filter(|e| e.event_type == "llm_run_finished").count(),
         2
     );
     runtime.shutdown().await;
