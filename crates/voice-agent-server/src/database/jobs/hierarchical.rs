@@ -125,7 +125,7 @@ impl Database {
         }
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode='hierarchical_v2' AND deadline_at>?")
+        let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?")
             .bind(job_id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
         let root_valid:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND agent_run_id=? AND parent_agent_run_id IS NULL AND status='running'")
             .bind(job_id).bind(root).fetch_one(&mut *tx).await?;
@@ -330,7 +330,7 @@ impl Database {
             return Err(JobError::InvalidPlan);
         }
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode='hierarchical_v2' AND deadline_at>?")
+        let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?")
             .bind(job_id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
         let choices: Vec<Value> = serde_json::from_str(&job.plugin_choices_json)
             .map_err(|_| JobError::DatabaseUnavailable)?;
