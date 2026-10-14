@@ -280,3 +280,15 @@ fn web_observation_must_report_when_returned_text_is_too_large_for_child_context
     assert_eq!(observation["result_excerpt"].as_str().unwrap().chars().count(),6000);
     assert_eq!(observation["observation_truncated"],true);
 }
+
+
+#[test]
+fn verified_sources_are_scoped_to_the_owned_child_runs() {
+    let job=news_summary_fixture(false);
+    let foreign=vec!["unrelated_child".to_owned()];
+    let owned=vec!["child".to_owned()];
+    assert!(crate::services::background::coverage::completed_web_sources(
+        &job,Some(&foreign)).is_empty());
+    assert_eq!(crate::services::background::coverage::completed_web_sources(
+        &job,Some(&owned)),vec!["https://news.example/asian-cup.html".to_owned()]);
+}
