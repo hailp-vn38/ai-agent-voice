@@ -184,3 +184,14 @@ async fn background_stream_requires_finished_even_after_valid_json() {
         json
     );
 }
+
+#[tokio::test]
+async fn background_empty_terminal_response_is_rejected_without_quarantine() {
+    let stream = Box::pin(futures_util::stream::iter([Ok(
+        crate::providers::LlmEvent::Finished,
+    )]));
+    assert!(matches!(
+        crate::providers::llm::complete_background_chat(stream).await,
+        Err(crate::providers::LlmError::Rejected)
+    ));
+}

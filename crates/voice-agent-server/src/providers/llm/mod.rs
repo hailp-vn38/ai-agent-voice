@@ -161,7 +161,7 @@ pub(crate) async fn complete_background_chat(
             }
             LlmEvent::Finished => {
                 return if output.is_empty() {
-                    Err(LlmError::Failed)
+                    Err(LlmError::Rejected)
                 } else {
                     Ok(output)
                 };

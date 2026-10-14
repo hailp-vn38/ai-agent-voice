@@ -193,3 +193,40 @@ fn responses_is_opt_in_and_round_trips_through_admin_config() {
         })
     ));
 }
+
+#[test]
+fn tool_choice_matches_requested_tools() {
+    let provider = OpenCodeFreeProvider::build(&config("space-bunny-free")).unwrap();
+    let mut request = LlmRequest::from("Return a JSON plan without invoking tools.");
+    let client = provider.chat_client(&request);
+    assert!(matches!(
+        client.config.tool_choice,
+        Some(llm::chat::ToolChoice::None)
+    ));
+    request.tools.push(ToolDefinition {
+        name: "calendar".into(),
+        description: "Read today's calendar".into(),
+        parameters: serde_json::json!({"type": "object"}),
+    });
+    assert!(provider.chat_client(&request).config.tool_choice.is_none());
+}
+
+#[tokio::test]
+#[ignore = "calls the live OpenCode Zen free tier"]
+async fn live_space_bunny_background_returns_json_without_tools() {
+    let provider = OpenCodeFreeProvider::build(&config("space-bunny-free")).unwrap();
+    let request = LlmRequest {
+        messages: vec![
+            super::super::ChatMessage::System {
+                content: "Return only JSON. Do not invoke tools.".into(),
+            },
+            super::super::ChatMessage::User {
+                content: r#"Return {"summary":"OK"}."#.into(),
+            },
+        ],
+        tools: vec![],
+    };
+    let text = provider.background_complete(request, None).await.unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["summary"], "OK");
+}

@@ -73,6 +73,37 @@ impl OpenCodeFreeProvider {
             supports_responses: config.supports_responses,
         })
     }
+
+    fn chat_client(&self, request: &LlmRequest) -> OpenAICompatibleProvider<ZenChat> {
+        let system = request.messages.iter().find_map(|message| match message {
+            super::ChatMessage::System { content } => Some(content.clone()),
+            _ => None,
+        });
+        OpenAICompatibleProvider::<ZenChat>::new(
+            PUBLIC_KEY,
+            Some(BASE_URL.into()),
+            Some(self.model.clone()),
+            None,
+            None,
+            Some(self.timeout_seconds),
+            system,
+            None,
+            None,
+            None,
+            request
+                .tools
+                .is_empty()
+                .then_some(llm::chat::ToolChoice::None),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
 }
 
 #[async_trait::async_trait]
@@ -131,32 +162,8 @@ impl LlmProvider for OpenCodeFreeProvider {
 
     async fn stream(&self, mut request: LlmRequest) -> Result<LlmEventStream, LlmError> {
         use futures_util::StreamExt;
+        let client = self.chat_client(&request);
         let placeholders = add_fingerprint_tools(&mut request);
-        let system = request.messages.iter().find_map(|message| match message {
-            super::ChatMessage::System { content } => Some(content.clone()),
-            _ => None,
-        });
-        let client = OpenAICompatibleProvider::<ZenChat>::new(
-            PUBLIC_KEY,
-            Some(BASE_URL.into()),
-            Some(self.model.clone()),
-            None,
-            None,
-            Some(self.timeout_seconds),
-            system,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
         let stream = stream_openai_request(&client, request, self.adapter()).await?;
         Ok(Box::pin(stream.map(move |event| {
             reject_placeholder_call(event, &placeholders)
