@@ -498,3 +498,32 @@ async fn three_invalid_root_responses_report_exact_rejection_before_invalid_plan
     );
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn hierarchical_submission_rejects_provider_without_required_native_mode() {
+    let (db, config, runtime) = harness().await;
+    sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,created_at,updated_at) VALUES('unqualified','Unqualified','llm','openai','{}',0,0)")
+        .execute(db.pool()).await.unwrap();
+    for (root,worker) in [
+        ("unqualified","config:llm:planner"),
+        ("config:llm:planner","unqualified"),
+    ] {
+        let revision = runtime.engine.settings().await.unwrap().revision;
+        runtime.engine.update_settings(BackgroundSettingsUpdate {
+            enabled:true,
+            orchestrator_llm_provider:Some(root.into()),
+            worker_llm_provider:Some(worker.into()),
+        },revision).await.unwrap();
+        let receipt = db.submit_job(
+            &config, request("Requires strict provider"), &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                test_execution_mode: Some("hierarchical_v2"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            ||runtime.engine.runtime_ready(),
+        ).await;
+        assert!(matches!(receipt,Err(JobError::CapabilityUnavailable)));
+    }
+    runtime.shutdown().await;
+}
