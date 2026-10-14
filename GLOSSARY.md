@@ -165,6 +165,10 @@ _Avoid_: permission grant, MCP Binding, Plugin Activation
 Function nội bộ `submit_result` để Child đề xuất hoàn tất Agent Run, không phải Plugin Operation hoặc quyết định hoàn tất Job.
 _Avoid_: Plugin Step, Job Result
 
+**Child Evidence Reference**:
+UUID của Job Artifact được một Plugin Step thành công thuộc chính Sub-Agent đó tạo ra, được Rust đưa vào Tool Result và kiểm tra khi Child gọi `submit_result`.
+_Avoid_: URL nguồn bài viết, Step Key, Provider Call ID, Artifact của Sub-Agent khác
+
 **Root Orchestrator**:
 Agent Run sở hữu quyết định giao nhiệm vụ và kết thúc Job; chỉ nhận kết quả tổng hợp từ Sub-Agent.
 _Avoid_: Worker, plugin runner
