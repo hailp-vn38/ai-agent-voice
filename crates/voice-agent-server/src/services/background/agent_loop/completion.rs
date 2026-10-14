@@ -1,7 +1,7 @@
 //! Root completion admission, coverage and durable Job finalization.
 use super::{
     super::{JobEngine, JobError, model::LlmRunContext},
-    results::{RootResult, bounded_result, verified_coverage},
+    results::{RootResult, bounded_result, grounded_single_child_summary, verified_coverage},
 };
 use crate::providers::llm::{ChatMessage, ToolCall};
 use serde_json::json;
@@ -41,6 +41,12 @@ pub(super) async fn finish_root(
         None
     };
     let (mut status, coverage) = verified_coverage(&current)?;
+    // A Job with an explicit single article URL cannot succeed on empty
+    // required_sources merely because some partial HTML fragments were fetched.
+    if failure.is_none()
+        && coverage["source_complete"] == false {
+        failure = Some("source_not_fully_verified");
+    }
     if failure.is_none()
         && status == "failed"
         && (!current.request.required_sources.is_empty()
@@ -87,8 +93,12 @@ pub(super) async fn finish_root(
             "failed"
         };
     }
-    let value = json!({"summary":result.summary,"findings":result.findings,
-    "evidence_refs":result.evidence_refs,"unresolved":result.unresolved,"coverage":coverage});
+    let preserved = grounded_single_child_summary(&current, &coverage);
+    let summary_source = if preserved.is_some() { "verified_child" } else { "root" };
+    let final_summary = preserved.unwrap_or(result.summary);
+    let value = json!({"summary":final_summary,"summary_source":summary_source,
+    "findings":result.findings,"evidence_refs":result.evidence_refs,
+    "unresolved":result.unresolved,"coverage":coverage});
     engine
         .database
         .record_agent_decision(
