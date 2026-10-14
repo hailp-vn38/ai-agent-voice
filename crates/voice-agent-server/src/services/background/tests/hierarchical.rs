@@ -743,3 +743,94 @@ async fn invalid_native_child_calls_never_create_plugin_steps() {
         runtime.shutdown().await;
     }
 }
+
+
+
+struct V3SessionModels;
+
+#[async_trait::async_trait]
+impl JobModels for V3SessionModels {
+    async fn turn_traced(
+        &self,
+        _: &crate::services::background::model::LlmRunContext,
+        _: &ProviderPin,
+        request: LlmRequest,
+        mode: crate::providers::llm::BackgroundMode,
+        _: i64,
+        _: CancellationToken,
+    ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
+        use crate::providers::llm::{BackgroundMode,BackgroundTurn,BackgroundTurnResult,ToolCall};
+        let root = request.tools.iter().any(|tool|tool.name == "subagent");
+        let output = if root {
+            assert!(matches!(mode,BackgroundMode::Tools));
+            if request.messages.iter().any(|m|matches!(m,ChatMessage::ToolResult{..})) {
+                BackgroundTurn::ToolCalls(vec![ToolCall{
+                    id:"root_finish".into(),name:"finish_job".into(),
+                    arguments:json!({"summary":"Research done","findings":[],
+                        "evidence_refs":[],"unresolved":[]}),
+                }])
+            } else {
+                BackgroundTurn::ToolCalls(vec![ToolCall{
+                    id:"root_delegate".into(),name:"subagent".into(),
+                    arguments:json!({"agent":"research",
+                        "description":"Research task",
+                        "prompt":"Investigate exact session tool result behavior and report your evidence.",
+                        "model":null,"sessionID":null,"background":false}),
+                }])
+            }
+        } else {
+            assert!(matches!(mode,BackgroundMode::ToolsAuto));
+            assert!(request.messages.iter().any(|m|matches!(m,ChatMessage::User{content}
+                if content.contains("Investigate exact session tool result behavior"))));
+            BackgroundTurn::Text("Child completed a verified text investigation".into())
+        };
+        Ok(BackgroundTurnResult{turn:output,usage:None})
+    }
+
+    async fn complete(
+        &self, _: &str, _: &ProviderPin, _: LlmRequest, _: i64, _: CancellationToken
+    ) -> Result<String, JobError> {
+        Err(JobError::InvalidPlan)
+    }
+}
+
+#[tokio::test]
+async fn v3_root_subagent_prompt_child_text_and_matched_result_are_durable() {
+    let config=Arc::new(config());
+    let db=Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime=BackgroundRuntime::execution_harness(
+        db.clone(),config,Arc::new(V3SessionModels)
+    ).await.unwrap();
+    enable(&runtime.engine).await;
+    let receipt=db.submit_job(
+        &runtime.engine.config,
+        request("Research session tools"),
+        &JobRequester::Admin,
+        crate::database::jobs::SubmissionIdentity {
+            key:Some("v3-e2e"),test_execution_mode:Some("hierarchical_v3"),
+            ..Default::default()
+        },
+        crate::database::unix_seconds().unwrap(),
+        ||runtime.engine.runtime_ready()
+    ).await.unwrap();
+    let job=wait_for(&runtime.engine,&receipt.job.id,|j|j.status=="succeeded").await;
+    assert_eq!(job.execution_mode,"hierarchical_v3");
+    assert_eq!(job.agent_runs.len(),2);
+    let root=job.agent_runs.iter().find(|r|r.parent_agent_run_id.is_none()).unwrap();
+    let child=job.agent_runs.iter().find(|r|r.parent_agent_run_id.is_some()).unwrap();
+    let root_sid=db.v3_session_for_run(&job.id,&root.agent_run_id).await.unwrap();
+    let child_sid=db.v3_session_for_run(&job.id,&child.agent_run_id).await.unwrap();
+    assert_ne!(root_sid,child_sid);
+    let root_messages=db.v3_read_messages(&job.id,&root_sid).await.unwrap();
+    let child_messages=db.v3_read_messages(&job.id,&child_sid).await.unwrap();
+    assert!(child_messages.iter().any(|msg|matches!(msg,ChatMessage::User{content}
+        if content.contains("Investigate exact session tool result behavior"))));
+    assert!(child_messages.iter().any(|msg|matches!(msg,ChatMessage::AssistantText{content}
+        if content.contains("verified text investigation"))));
+    assert!(root_messages.iter().any(|msg|matches!(msg,ChatMessage::AssistantToolCalls{calls}
+        if calls.iter().any(|c|c.id=="root_delegate"))));
+    assert!(root_messages.iter().any(|msg|matches!(msg,ChatMessage::ToolResult{tool_call_id,content}
+        if tool_call_id=="root_delegate" && content.contains(&child_sid))));
+    let events=db.job_events(&job.id,0,100).await.unwrap();
+    assert_eq!(events.iter().filter(|e|e.event_type=="join_completed").count(),1);
+}
