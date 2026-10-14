@@ -30,43 +30,6 @@ jobs:
             echo
             echo "__RUSTFMT_END__${file}"
           done
-      - name: Agent Job rustfmt handoff (temporary)
-        if: ${{ always() && !cancelled() }}
-        run: |
-          for file in \
-            crates/voice-agent-server/src/app/admin/provider_test_drafts.rs \
-            crates/voice-agent-server/src/app/admin/provider_tests.rs \
-            crates/voice-agent-server/src/database/jobs/providers.rs \
-            crates/voice-agent-server/src/database/jobs/submission.rs \
-            crates/voice-agent-server/src/database/providers/config.rs \
-            crates/voice-agent-server/src/providers/factory_registry.rs \
-            crates/voice-agent-server/src/providers/llm/mod.rs \
-            crates/voice-agent-server/src/providers/llm/openai/chat.rs \
-            crates/voice-agent-server/src/providers/llm/openai/chat_tests.rs \
-            crates/voice-agent-server/src/providers/llm/openai/config.rs \
-            crates/voice-agent-server/src/providers/llm/openai/descriptor.rs \
-            crates/voice-agent-server/src/providers/llm/openai/mod.rs \
-            crates/voice-agent-server/src/providers/llm/openai/responses.rs \
-            crates/voice-agent-server/src/providers/llm/openai/responses_background_tests.rs \
-            crates/voice-agent-server/src/providers/llm/opencode_free.rs \
-            crates/voice-agent-server/src/providers/llm/opencode_free/tests.rs \
-            crates/voice-agent-server/src/providers/runtime_catalog.rs \
-            crates/voice-agent-server/src/services/background/agent_loop.rs \
-            crates/voice-agent-server/src/services/background/models.rs \
-            crates/voice-agent-server/src/services/background/plugins/contracts.rs \
-            crates/voice-agent-server/src/services/background/plugins/contracts_tests.rs \
-            crates/voice-agent-server/src/services/background/plugins/mod.rs \
-            crates/voice-agent-server/src/services/background/tests/hierarchical.rs \
-            crates/voice-agent-server/src/services/background/tests/mod.rs \
-            crates/voice-agent-server/src/services/provider/diagnostic.rs \
-            crates/voice-agent-server/src/services/provider/test.rs \
-            crates/voice-agent-server/src/workers/llm/mod.rs; do
-            rustfmt --edition 2024 --config skip_children=true "$file"
-            echo "__AGENT_RUSTFMT_BEGIN__${file}"
-            base64 -w0 "$file"
-            echo
-            echo "__AGENT_RUSTFMT_END__${file}"
-          done
       - name: Shared runtime binary
         run: cargo check --locked -p voice-agent-server --bin plugin-runtime
       - name: Plugin contract tests
