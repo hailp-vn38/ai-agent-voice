@@ -281,6 +281,38 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn background_responses_return_optional_usage_without_hidden_reasoning() {
+        use axum::{Json, Router, routing::post};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let app = Router::new().route("/v1/responses", post(|| async {
+            Json(json!({
+                "status": "completed",
+                "output": [{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":r#"{"summary":"ok"}"#}]}],
+                "usage": {
+                    "input_tokens": 121,
+                    "output_tokens": 37,
+                    "output_tokens_details": {"reasoning_tokens": 9},
+                    "input_tokens_details": {"cached_tokens": 20}
+                }
+            }))
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let result = complete_with_usage(
+            &base, "gpt-test", "test", 5,
+            LlmRequest::text_turn("Return JSON".into()), None,
+        ).await.unwrap();
+        assert_eq!(result.text, r#"{"summary":"ok"}"#);
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(121));
+        assert_eq!(usage.output_tokens, Some(37));
+        assert_eq!(usage.reasoning_tokens, Some(9));
+        assert_eq!(usage.cached_input_tokens, Some(20));
+        server.abort();
+    }
+
     #[test]
     fn response_request_is_job_only_stateless_and_tool_free() {
         let request = LlmRequest {
