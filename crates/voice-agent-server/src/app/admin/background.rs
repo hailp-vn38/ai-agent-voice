@@ -17,9 +17,7 @@ fn failure(request: &Request, cause: JobError) -> Response {
         JobError::RevisionConflict
         | JobError::IdempotencyConflict
         | JobError::Terminal
-        | JobError::DeleteConflict => {
-            StatusCode::CONFLICT
-        }
+        | JobError::DeleteConflict => StatusCode::CONFLICT,
         JobError::QueueFull => StatusCode::TOO_MANY_REQUESTS,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     };

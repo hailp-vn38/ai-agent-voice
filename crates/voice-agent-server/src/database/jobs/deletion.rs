@@ -28,12 +28,11 @@ impl Database {
             Some("succeeded" | "partial_success" | "failed" | "cancelled") => {}
             _ => return Err(JobError::DeleteConflict),
         }
-        let has_retries: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM jobs WHERE retry_of_job_id=?)",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let has_retries: i64 =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE retry_of_job_id=?)")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
         if has_retries != 0 {
             return Err(JobError::DeleteConflict);
         }

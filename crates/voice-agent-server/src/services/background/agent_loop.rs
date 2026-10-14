@@ -822,32 +822,31 @@ async fn run_child(
         }
         if call.name == "submit_result" {
             let result: Result<ChildResult, _> = serde_json::from_value(call.arguments.clone());
-            if let Ok(result) = result {
-                if problem.is_none()
-                    && result.status == "completed"
-                    && bounded_result(
-                        &serde_json::to_value(&result).map_err(|_| JobError::InvalidPlan)?,
-                    )
-                    .is_ok()
+            if let Ok(result) = result
+                && problem.is_none()
+                && result.status == "completed"
+                && bounded_result(
+                    &serde_json::to_value(&result).map_err(|_| JobError::InvalidPlan)?,
+                )
+                .is_ok()
+            {
+                let current = engine.get(&job.id).await?;
+                if result
+                    .evidence_refs
+                    .iter()
+                    .all(|id| current.artifacts.iter().any(|artifact| &artifact.id == id))
                 {
-                    let current = engine.get(&job.id).await?;
-                    if result
-                        .evidence_refs
-                        .iter()
-                        .all(|id| current.artifacts.iter().any(|artifact| &artifact.id == id))
-                    {
-                        engine
-                            .database
-                            .record_agent_decision(
-                                &context,
-                                true,
-                                json!({
-                                    "action":"finish","attempt_no":attempt
-                                }),
-                            )
-                            .await?;
-                        return Ok(result);
-                    }
+                    engine
+                        .database
+                        .record_agent_decision(
+                            &context,
+                            true,
+                            json!({
+                                "action":"finish","attempt_no":attempt
+                            }),
+                        )
+                        .await?;
+                    return Ok(result);
                 }
             }
             problem = Some("invalid_child_result");

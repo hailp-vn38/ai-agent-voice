@@ -252,7 +252,12 @@ impl JobEngine {
     /// Only completed Jobs with no owned worker or retry descendants can be deleted.
     pub async fn delete(&self, id: &str) -> Result<(), JobError> {
         // A terminal checkpoint can precede final worker teardown.
-        if self.cancellations.lock().expect("Job cancellations").contains_key(id) {
+        if self
+            .cancellations
+            .lock()
+            .expect("Job cancellations")
+            .contains_key(id)
+        {
             return Err(JobError::DeleteConflict);
         }
         self.database.delete_terminal_job(id).await?;

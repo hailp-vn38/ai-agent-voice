@@ -57,6 +57,8 @@ impl PluginStore {
     }
 }
 
+type ChildToolBindings = std::collections::HashMap<String, (FrozenChoice, serde_json::Value)>;
+
 /// Compile only already-frozen, Child-allowed operations. Never use a live store
 /// listing to expand the tool authority granted by the Root.
 pub(crate) fn compile_child_tools(
@@ -64,7 +66,7 @@ pub(crate) fn compile_child_tools(
 ) -> Result<
     (
         Vec<crate::providers::llm::ToolDefinition>,
-        std::collections::HashMap<String, (FrozenChoice, serde_json::Value)>,
+        ChildToolBindings,
     ),
     crate::services::background::JobError,
 > {
@@ -143,16 +145,16 @@ fn strict_projection(schema: &serde_json::Value) -> Option<serde_json::Value> {
             "string" | "integer" | "number" | "boolean" => json!({"type":kind}),
             _ => return None,
         };
-        if let Some(values) = input.get("enum").and_then(Value::as_array) {
-            if !values.is_empty() {
-                output["enum"] = Value::Array(values.clone());
-            }
+        if let Some(values) = input.get("enum").and_then(Value::as_array)
+            && !values.is_empty()
+        {
+            output["enum"] = Value::Array(values.clone());
         }
         if optional {
-            if let Some(values) = output.get_mut("enum").and_then(Value::as_array_mut) {
-                if !values.contains(&Value::Null) {
-                    values.push(Value::Null);
-                }
+            if let Some(values) = output.get_mut("enum").and_then(Value::as_array_mut)
+                && !values.contains(&Value::Null)
+            {
+                values.push(Value::Null);
             }
             output["type"] = json!([kind, "null"]);
         }
