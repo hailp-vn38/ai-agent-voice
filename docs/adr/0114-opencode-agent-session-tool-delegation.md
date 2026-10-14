@@ -32,3 +32,32 @@ More Root JSON repairs; injecting joined_children into ordinary user prompts; a 
 - [V3 flow](../flows/10-agent-job-opencode-v3.md)
 - [ADR 0103](0103-hierarchical-agent-job-v2.md)
 - [ADR 0113](0113-hybrid-agent-job-native-tool-calling.md)
+
+
+## Amendment: verified URL summaries (2026-10-15)
+
+The Root-to-Child message transport remains unchanged: Root delegates through the
+server-owned subagent tool, Child operates in its own Session, and the Root receives
+a matched ToolResult. Source URLs and artifact IDs have **different types of proof**.
+
+- For a single explicit URL summary request, Job completion requires successful,
+  source-matched, fully observed core.web.extract Step results. Contiguous Unicode
+  offsets from zero through an untruncated end are required; source URL, status,
+  provenance and text must agree. A nominal Step success or webpage title alone
+  is insufficient. This does not claim semantic/factual verification by a human.
+- Rust adds verified_source_urls to the typed ChildOutcome using persisted Steps
+  owned by the Child Session, including earlier Runs when the same Session resumes.
+  These URLs must never be stuffed into artifact_refs or copied from model text.
+- A Root finish_job attempt without complete requested URL evidence is answered by
+  a paired ToolResult error, enabling Root to resume the Child. No early Job success.
+- For the narrowly defined one-URL, one-Child summary, the Child's source-grounded
+  summary is preserved as the final summary instead of rewritten by Root; this
+  avoids accidental loss of critical qualifiers such as "not yet decided".
+- Core web.extract defaults to article-first extraction and gives explicit
+  pagination and model-visible truncation metadata. Pages observed by the model
+  must be no larger than the bounded excerpt. Full HTML page mode remains opt-in.
+
+The evidence guard is scoped to one-URL summary tasks; arbitrary multi-URL research,
+source credibility scoring, citation ranking and document fact-checking are NOT
+implicitly claimed by this amendment. Existing native provider/tool contracts,
+permissions, acceptance gates, and deferred Background Inbox remain unchanged.
