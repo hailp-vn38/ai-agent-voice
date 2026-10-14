@@ -168,7 +168,7 @@ Reuse `GET /api/admin/jobs/{id}/events?after=SEQ&limit=100`. `JobEvent` shape st
 
 **Provider identity:** `JobSnapshot` freezes the source-qualified Provider pin but not adapter/model. At `llm_run_started`, always persist the **expected pinned ref and revision**. After the **same** pin is verified/resolved, `llm_provider_acquired` stores the exact adapter/model/transport selected for that invocation. This is the first authoritative actual-provider identity; do not read mutable Admin Provider Catalog on historical page loads. In `configuration_changed`/unavailable cases, display the known pin and mark actual model/transport `unresolved`.
 
-`llm_request_started` must mean the provider transport was entered; an orchestration-layer call into `ManagedModels::complete_inner` is **not** by itself proof an HTTP request was sent. If a transport cannot instrument actual dispatch precisely, label the event `provider_request_started` (entry into adapter) in both code and UI; never claim wire delivery or remote execution success. Do not log `response_received` for transport errors.
+`llm_request_started` means entry into the **background provider request adapter** (dispatch initiation), not proof that bytes reached the remote endpoint. An orchestration-layer call into `ManagedModels::complete_inner` is **not** sufficient: instrument at the actual adapter entry. UI label: **Request started**, never **Request delivered**. Preserve this event name across the migration, Rust and frontend. Do not log `llm_response_received` for transport errors.
 
 ### 4.3 Run derivation, ordering and budgets
 
