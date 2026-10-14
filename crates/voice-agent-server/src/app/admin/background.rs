@@ -20,6 +20,7 @@ fn failure(request: &Request, cause: JobError) -> Response {
         | JobError::DeleteConflict => StatusCode::CONFLICT,
         JobError::QueueFull => StatusCode::TOO_MANY_REQUESTS,
         JobError::OrchestratorStructuredOutputsRequired
+        | JobError::OrchestratorFunctionCallingRequired
         | JobError::WorkerFunctionCallingRequired => StatusCode::CONFLICT,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     };
