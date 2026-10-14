@@ -791,7 +791,7 @@ async fn run_child(
             repairs += 1;
             if repairs>job.snapshot.limits.max_plan_repairs {return Err(JobError::InvalidPlan);}
             // A rejected function with a valid ID is answered by a matching error result.
-            if !call.id.is_empty() && call.id.len()<=128 {
+            if code!="invalid_tool_call_id" && !call.id.is_empty() && call.id.len()<=128 {
                 messages.push(ChatMessage::AssistantToolCalls{calls:vec![call.clone()]});
                 messages.push(ChatMessage::ToolResult {tool_call_id:call.id,
                     content:json!({"ok":false,"error_code":code}).to_string()});
