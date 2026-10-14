@@ -81,6 +81,7 @@ pub struct LlmDiagnosticOperation {
     provider: Arc<dyn LlmProvider>,
     request: LlmRequest,
     max_text_bytes: usize,
+    mode: Option<crate::providers::llm::BackgroundMode>,
     cancellation: Option<CancellationToken>,
     terminal_acknowledged: bool,
 }
@@ -281,8 +282,22 @@ impl LlmRuntime {
             provider: Arc::clone(&self.provider),
             request,
             max_text_bytes,
+            mode: None,
             cancellation: None,
             terminal_acknowledged: false,
+        }
+    }
+
+    pub(crate) fn diagnostic_strict(
+        &self,
+        request: LlmRequest,
+        mode: crate::providers::llm::BackgroundMode,
+        max_text_bytes: usize,
+    ) -> LlmDiagnosticOperation {
+        assert!(max_text_bytes > 0);
+        LlmDiagnosticOperation {
+            provider: Arc::clone(&self.provider), request, max_text_bytes,
+            mode: Some(mode), cancellation: None, terminal_acknowledged: false,
         }
     }
 }
@@ -296,6 +311,24 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
         cancellation: CancellationToken,
     ) -> Result<Self::Output, ProviderDiagnosticOperationError> {
         self.cancellation = Some(cancellation.clone());
+        if let Some(mode) = &self.mode {
+            let outcome = tokio::select! {
+                _ = cancellation.cancelled() => return Err(ProviderDiagnosticOperationError::Failed),
+                result = self.provider.background_turn(self.request.clone(), mode.clone()) => result,
+            };
+            let result = outcome.map_err(|error| {
+                self.terminal_acknowledged = matches!(error, crate::providers::LlmError::Rejected);
+                ProviderDiagnosticOperationError::Failed
+            })?;
+            self.terminal_acknowledged = true;
+            let text = match result.turn {
+                crate::providers::llm::BackgroundTurn::Text(text) => text,
+                crate::providers::llm::BackgroundTurn::ToolCalls(calls) =>
+                    serde_json::json!({"functions":calls.iter().map(|call| &call.name).collect::<Vec<_>>()}).to_string(),
+            };
+            if text.len() > self.max_text_bytes {return Err(ProviderDiagnosticOperationError::InvalidResponse);}
+            return Ok(text);
+        }
         let mut stream = self
             .provider
             .stream(self.request.clone())
