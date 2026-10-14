@@ -49,3 +49,20 @@ fn structured_request_forbids_tools() {
     assert_eq!(body["response_format"]["json_schema"]["strict"], true);
     assert!(body.get("tools").is_none());
 }
+
+
+#[test]
+fn v3_child_auto_tools_can_finish_with_text() {
+    let request=LlmRequest{messages:vec![ChatMessage::User{content:"work".into()}],
+        tools:vec![crate::providers::llm::ToolDefinition{
+            name:"submit_result".into(),description:"Optional finish".into(),
+            parameters:json!({"type":"object","properties":{},"required":[],"additionalProperties":false})
+        }]};
+    let body=request_body("fixture",&request,&BackgroundMode::ToolsAuto).unwrap();
+    assert_eq!(body["tool_choice"],"auto");
+    assert_eq!(body["parallel_tool_calls"],false);
+    let output=json!({"choices":[{"finish_reason":"stop",
+        "message":{"content":"The task is finished."}}]});
+    assert!(matches!(parse_response(&output,&BackgroundMode::ToolsAuto).unwrap().turn,
+        BackgroundTurn::Text(text) if text=="The task is finished."));
+}
