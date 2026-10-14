@@ -299,6 +299,31 @@ impl Database {
         Ok(ids)
     }
 
+    /// Group Child Runs by their owned Session for authoritative Job coverage.
+    /// Unlike collecting every Job Step globally, a group must not combine
+    /// incomplete URL fragments from unrelated Sub-Agents.
+    pub(crate) async fn job_child_session_run_groups(
+        &self,
+        job_id: &str,
+    ) -> Result<Vec<Vec<String>>, JobError> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT r.session_id, r.agent_run_id
+             FROM job_agent_runs r JOIN job_agent_sessions s
+                ON s.session_id=r.session_id AND s.job_id=r.job_id
+             WHERE r.job_id=? AND s.parent_session_id IS NOT NULL
+             ORDER BY r.session_id, r.created_at, r.agent_run_id",
+        )
+        .bind(job_id)
+        .fetch_all(self.pool())
+        .await?;
+        let mut groups: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (session, run) in rows {
+            groups.entry(session).or_default().push(run);
+        }
+        Ok(groups.into_values().collect())
+    }
+
     pub(crate) async fn session_for_run(
         &self,
         job_id: &str,
