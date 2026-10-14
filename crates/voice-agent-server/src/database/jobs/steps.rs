@@ -62,6 +62,41 @@ pub(super) async fn read(
 }
 
 impl Database {
+    /// Return only immutable artifacts created by this exact persisted Step.
+    /// IDs are safe to share in a Child's matched Tool Result.
+    pub(crate) async fn job_step_artifact_refs(
+        &self,
+        job_id: &str,
+        step_key: &str,
+    ) -> Result<Vec<String>, JobError> {
+        sqlx::query_scalar(
+            "SELECT a.id FROM job_artifacts a JOIN job_steps s ON s.job_id=a.job_id AND s.step_key=a.step_key \
+             WHERE a.job_id=? AND a.step_key=? AND s.status='succeeded' ORDER BY a.id LIMIT 64",
+        )
+        .bind(job_id)
+        .bind(step_key)
+        .fetch_all(self.pool())
+        .await
+        .map_err(Into::into)
+    }
+
+    /// A Child may cite its own persisted evidence, never another fork member's.
+    pub(crate) async fn job_child_artifact_refs(
+        &self,
+        job_id: &str,
+        agent_run_id: &str,
+    ) -> Result<Vec<String>, JobError> {
+        sqlx::query_scalar(
+            "SELECT a.id FROM job_artifacts a JOIN job_steps s ON s.job_id=a.job_id AND s.step_key=a.step_key \
+             WHERE a.job_id=? AND s.agent_run_id=? AND s.status='succeeded' ORDER BY a.id LIMIT 64",
+        )
+        .bind(job_id)
+        .bind(agent_run_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(Into::into)
+    }
+
     pub(crate) async fn job_step_outcome(
         &self,
         job_id: &str,
