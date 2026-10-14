@@ -121,7 +121,8 @@ impl Database {
         &self, config: &AppConfig, job_id: &str, expected: &ProviderPin
     ) -> Result<(), JobError> {
         let mut connection = self.pool().acquire().await?;
-        let row = self.job_row(job_id).await?;
+        let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
+            .bind(job_id).fetch_optional(&mut *connection).await?.ok_or(JobError::NotFound)?;
         if !matches!(row.status.as_str(), "planning" | "running") {
             return Err(JobError::Cancelled);
         }
