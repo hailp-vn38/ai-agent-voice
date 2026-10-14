@@ -126,3 +126,120 @@ fn root_source_schema_and_ids_reject_every_malformed_batch() {
         &std::collections::HashSet::from(["call".into()])
     ));
 }
+
+
+fn news_summary_fixture(truncated: bool) -> crate::services::background::JobView {
+    use crate::services::background::model::{
+        AgentRunView, JobRequest, JobSnapshot, JobStepView, ProviderPin,
+    };
+    let url="https://news.example/asian-cup.html";
+    let child_result=json!({
+        "status":"completed",
+        "summary":"AFC has NOT made an official decision to postpone the tournament.",
+        "findings":[],
+        "evidence_refs":[],
+        "unresolved":[]
+    });
+    let child=AgentRunView{
+        agent_run_id:"child".into(),
+        parent_agent_run_id:Some("root".into()),
+        fork_group_id:Some("fork".into()),
+        member_ordinal:Some(0),
+        role:"research".into(),
+        goal_excerpt:"Summarize article".into(),
+        allowed_operations:vec!["core.web.extract".into()],
+        status:"succeeded".into(),
+        result:Some(child_result),
+        error_code:None,
+        started_at:None,
+        finished_at:None,
+    };
+    let step=JobStepView{
+        step_key:"step_extract".into(),
+        agent_run_id:Some("child".into()),
+        agent_turn_id:Some("turn".into()),
+        status:"succeeded".into(),
+        plugin_id:Some("core".into()),
+        operation:Some("web.extract".into()),
+        error_code:None,
+        attempt_state:Some("finished".into()),
+        instruction:"web.extract".into(),
+        required:true,
+        dependencies:vec![],
+        input_refs:vec![],
+        arguments:json!({"url":url,"mode":"article","max_chars":12000}),
+        output_schema:json!({}),
+        result:Some(json!({
+            "url":url,"text":"AFC has NOT made an official decision to postpone the tournament.",
+            "status":200,"content_type":"text/html","title":"Asian Cup",
+            "truncated":truncated,"next_offset":if truncated {Some(62)}else{None},
+            "body_limit_reached":false,
+            "provenance":[{"source":"web","urls":[url],"capabilities":["web_extract"]}]
+        })),
+    };
+    let pin=ProviderPin{
+        reference:"config:llm:planner".into(),incarnation:1,
+        revision:1,digest:"fixture".into(),
+    };
+    crate::services::background::JobView{
+        id:"fixture-job".into(),
+        request:JobRequest{
+            goal:format!("tóm tắt nội dung bài viết tại URL: {url}"),
+            output_format:"text".into(),
+            allow_partial:false,
+            required_sources:vec![],
+            required_capabilities:vec![],
+        },
+        status:"running".into(),
+        execution_mode:"hierarchical_v3".into(),
+        agent_runs:vec![child],
+        requester_scope:"admin:deployment".into(),
+        snapshot:JobSnapshot{
+            orchestrator:pin.clone(),worker:pin,
+            limits:crate::services::background::tests::config().background.limits,
+        },
+        plugin_choices:json!([{
+            "plugin_id":"core","operation":"web.extract",
+            "sources":["web"],"provides":["web_extract"]
+        }]),
+        settings_revision:1,
+        deadline_at:0,
+        created_at:"2026-10-14T00:00:00Z".into(),
+        error_code:None,
+        scheduler_seen_at:None,
+        plan_revision:0,
+        retry_of_job_id:None,
+        result:None,
+        budget_used:json!({}),
+        steps:vec![step],
+        artifacts:vec![],
+    }
+}
+
+#[test]
+fn url_summary_with_truncated_web_steps_is_not_verified_success() {
+    let job = news_summary_fixture(true);
+    let (status,coverage)=super::results::verified_coverage(&job).unwrap();
+    assert_eq!(status,"failed");
+    assert_eq!(coverage["coverage_basis"],"goal_url_unverified");
+    assert_eq!(coverage["source_complete"],false);
+    assert!(coverage["verified_source_urls"].as_array().unwrap().is_empty());
+    assert!(super::results::grounded_single_child_summary(&job,&coverage).is_none());
+}
+
+#[test]
+fn verified_article_preserves_child_qualification_and_reports_source() {
+    let job = news_summary_fixture(false);
+    let (status,coverage)=super::results::verified_coverage(&job).unwrap();
+    assert_eq!(status,"succeeded");
+    assert_eq!(coverage["coverage_basis"],"goal_url_verified");
+    assert_eq!(coverage["verified_source_urls"][0],"https://news.example/asian-cup.html");
+    assert_eq!(coverage["source_complete"],true);
+    let summary=super::results::grounded_single_child_summary(&job,&coverage).unwrap();
+    assert!(summary.contains("NOT made an official decision"));
+    let child=super::results::ChildOutcome::from_run("child-session",&job.agent_runs[0],&job).unwrap();
+    let outcome=serde_json::to_value(child).unwrap();
+    assert_eq!(outcome["verified_source_urls"][0],"https://news.example/asian-cup.html");
+    assert!(outcome["artifact_refs"].as_array().unwrap().is_empty(),
+        "URLs must not be masqueraded as artifact IDs");
+}
