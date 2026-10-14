@@ -22,7 +22,7 @@ pub(super) fn coverage(operation: &str) -> (Vec<&'static str>, Vec<&'static str>
 pub(super) fn contract(operation: &str) -> Result<Value, PluginError> {
     let (description, input_schema, output_schema) = match operation {
         "web.extract" => (
-            "Extract HTTP(S) plain text in pages; select article or page mode and continue with next_offset until null.",
+            "Extract the MAIN ARTICLE from a URL. For news summaries use mode=article (default) and max_chars=12000-16000 on the first call; this omits navigation when article markup exists. Only use mode=page to inspect the whole webpage. If truncated=true, continue from next_offset with the SAME URL and mode until truncated=false.",
             json!({"type":"object","properties":{
                 "url":{"type":"string","minLength":8,"maxLength":2048},
                 "mode":{"type":"string","enum":["article","page"],"description":"Default article: prefer the largest article, falling back to page text. Page: extract all page text."},
