@@ -138,10 +138,24 @@ pub(crate) async fn invoke(
             }
             let value: Value = serde_json::from_str(document).map_err(|_| PluginError::ApplicationError)?;
             let selected = value.pointer(pointer).ok_or(PluginError::ApplicationError)?;
+            if selected.to_string().len() > 16000 {
+                return Err(PluginError::ApplicationError);
+            }
             json!({"value":selected})
         }
         "artifact.read_text" => {
             let artifact = arguments["artifact_id"].as_str().ok_or(PluginError::ApplicationError)?;
+            let media_type: Option<String> = sqlx::query_scalar(
+                "SELECT media_type FROM job_artifacts WHERE job_id=? AND id=?"
+            )
+                .bind(job_id).bind(artifact)
+                .fetch_optional(engine.database.pool()).await
+                .map_err(|_| PluginError::DatabaseUnavailable)?;
+            if !matches!(media_type.as_deref(),
+                Some("text/plain" | "text/markdown" | "application/json"))
+            {
+                return Err(PluginError::ApplicationError);
+            }
             let bytes = engine.read_artifact(job_id, artifact).await
                 .map_err(|_| PluginError::ApplicationError)?;
             let size = bytes.len();
@@ -162,14 +176,19 @@ pub(crate) async fn invoke(
                 .and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(128).collect::<String>();
             let mut response = response;
             let mut bytes = Vec::new();
+            let mut body_limit_reached = false;
             while let Some(chunk) = response.chunk().await.map_err(|_| PluginError::ApplicationError)? {
                 let budget = 65536usize.saturating_sub(bytes.len());
                 bytes.extend_from_slice(&chunk[..chunk.len().min(budget)]);
-                if bytes.len() >= 65536 { break; }
+                if bytes.len() >= 65536 {
+                    body_limit_reached = true;
+                    break;
+                }
             }
             let text = String::from_utf8_lossy(&bytes);
             let (text, truncated) = take_chars(&text, maximum);
-            json!({"text":text,"status":status,"content_type":content_type,"truncated":truncated})
+            json!({"text":text,"status":status,"content_type":content_type,
+                "truncated":truncated || body_limit_reached})
         }
         _ => return Err(PluginError::PermissionRequired),
     };
