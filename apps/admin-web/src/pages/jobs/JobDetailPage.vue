@@ -6,6 +6,7 @@ import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobEvent, JobStatus, StepStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
+import JobLlmTimeline from '@/components/jobs/JobLlmTimeline.vue'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,7 +32,7 @@ let retryRequest = { id: '', key: '' }
 const isTerminal = (status: JobStatus) => ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
 const canRetry = computed(() => job.value && ['failed', 'cancelled'].includes(job.value.status))
 const planningEvents = computed(() => events.value.filter(x => x.event_type.startsWith('plan_')))
-const executionEvents = computed(() => events.value.filter(x => !x.event_type.startsWith('plan_')))
+const executionEvents = computed(() => events.value.filter(x => !x.event_type.startsWith('plan_') && !x.event_type.startsWith('llm_')))
 const unknownOutcome = computed(() => job.value?.steps.some(step => step.attempt_state === 'unknown_outcome') ?? false)
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
@@ -165,6 +166,7 @@ onBeforeUnmount(() => { controller?.abort() })
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs text-danger">{{ job.error_code }}</p>
         <p v-if="unknownOutcome" class="mt-2 text-sm text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
       </div>
+      <JobLlmTimeline :job="job" :events="events" />
       <div class="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,1fr)]">
         <div class="min-w-0 space-y-4">
           <section class="studio-panel p-5">
