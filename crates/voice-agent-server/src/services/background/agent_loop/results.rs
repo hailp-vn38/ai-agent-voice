@@ -30,6 +30,15 @@ pub(super) fn bounded_result(value: &Value) -> Result<(), JobError> {
     }
 }
 pub(super) fn verified_coverage(job: &JobView) -> Result<(&'static str, Value), JobError> {
+    let verified = super::super::coverage::completed_web_sources(job, None);
+    verified_coverage_with_sources(job, verified)
+}
+
+/// Accept only URL observations previously grouped by authoritative Session IDs.
+pub(super) fn verified_coverage_with_sources(
+    job: &JobView,
+    verified: Vec<String>,
+) -> Result<(&'static str, Value), JobError> {
     let mut results = HashMap::new();
     let mut failures = HashMap::new();
     for step in &job.steps {
@@ -65,7 +74,6 @@ pub(super) fn verified_coverage(job: &JobView) -> Result<(&'static str, Value), 
         };
     }
     let requested = super::super::coverage::requested_summary_url(&job.request);
-    let verified = super::super::coverage::completed_web_sources(job, None);
     let verified_goal = requested.as_ref().is_some_and(|url| verified.contains(url));
     if requested.is_some() && !verified_goal && status == "succeeded" {
         status = "failed";
