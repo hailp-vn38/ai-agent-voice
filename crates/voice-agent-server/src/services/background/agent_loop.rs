@@ -1523,15 +1523,41 @@ pub(super) async fn run_root_v3(
         if finish {
             let result:RootResult=serde_json::from_value(calls[0].arguments.clone())
                 .map_err(|_|JobError::InvalidPlan)?;
-            bounded_result(&serde_json::to_value(&result).map_err(|_|JobError::InvalidPlan)?)?;
+            let bounded = serde_json::to_value(&result)
+                .map_err(|_|JobError::InvalidPlan)?;
             let current=engine.get(job_id).await?;
-            if current.agent_runs.iter().any(|r|r.parent_agent_run_id.is_some()
-                && matches!(r.status.as_str(),"queued"|"running"))
-            { return Err(JobError::InvalidPlan); }
-            if result.evidence_refs.iter().any(|id|!current.artifacts.iter().any(|a|&a.id==id)) {
-                return Err(JobError::InvalidPlan);
-            }
+            let mut failure=if bounded_result(&bounded).is_err() || result.summary.trim().is_empty() {
+                Some("invalid_finish_result")
+            } else if current.agent_runs.iter().any(|r|r.parent_agent_run_id.is_some()
+                && matches!(r.status.as_str(),"queued"|"running")) {
+                Some("children_still_running")
+            } else if result.evidence_refs.iter().any(|id|
+                !current.artifacts.iter().any(|a|&a.id==id)) {
+                Some("invalid_evidence_refs")
+            } else {None};
             let (mut status,coverage)=verified_coverage(&current)?;
+            if failure.is_none() && status=="failed"
+                && (!current.request.required_sources.is_empty()
+                    || !current.request.required_capabilities.is_empty()) {
+                failure=Some("requirements_unsatisfied");
+            }
+            if let Some(error_code)=failure {
+                engine.database.record_agent_decision(&context,false,json!({
+                    "validation_code":error_code,"validation_path":"$.tool_calls[0].arguments",
+                    "attempt_no":round
+                })).await?;
+                engine.database.v3_append_messages(job_id,&root_session,&[
+                    ChatMessage::AssistantToolCalls{calls:calls.clone()},
+                    ChatMessage::ToolResult{tool_call_id:calls[0].id.clone(),
+                        content:json!({"status":"failed","error_code":error_code,
+                            "coverage":coverage}).to_string()}
+                ]).await?;
+                repairs+=1;
+                if repairs>u32::from(job.snapshot.limits.max_plan_repairs) {
+                    return Err(JobError::InvalidPlan);
+                }
+                continue;
+            }
             if !result.unresolved.is_empty() && status=="succeeded" {
                 status=if current.request.allow_partial && !current.artifacts.is_empty() {
                     "partial_success"
