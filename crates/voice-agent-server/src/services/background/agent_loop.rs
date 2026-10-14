@@ -757,7 +757,7 @@ async fn run_child(
         if call.name=="submit_result" {
             let result: Result<ChildResult,_> = serde_json::from_value(call.arguments.clone());
             if let Ok(result) = result {
-                if result.status=="completed" &&
+                if problem.is_none() && result.status=="completed" &&
                     bounded_result(&serde_json::to_value(&result).map_err(|_|JobError::InvalidPlan)?).is_ok() {
                     let current = engine.get(&job.id).await?;
                     if result.evidence_refs.iter().all(|id|
