@@ -42,9 +42,11 @@ impl Database {
 
     pub(crate) async fn reserve_model_call(
         &self,
-        id: &str,
-        step: Option<&str>,
+        run: &crate::services::background::model::LlmRunContext,
+        pin: &crate::services::background::ProviderPin,
     ) -> Result<(), JobError> {
+        let id = run.job_id.as_str();
+        let step = run.step_key.as_deref();
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let job = sqlx::query_as::<_, JobRow>(
             "SELECT * FROM jobs WHERE id=? AND status IN ('planning','running')",
@@ -90,9 +92,17 @@ impl Database {
         .bind(id)
         .execute(&mut *tx)
         .await?;
+        events::append(&mut tx,id,"llm_run_started",step,&json!({
+            "run_id":run.run_id, "role":run.role, "phase":run.phase,
+            "attempt_no":run.attempt_no, "plan_revision":run.plan_revision,
+            "provider_ref":pin.reference,
+            "provider_source":if pin.reference.starts_with("config:") {"config"} else {"database"},
+            "pin_revision":pin.revision, "pin_incarnation":pin.incarnation
+        })).await?;
         if step.is_none() {
             events::append(&mut tx,id,"plan_attempt",None,&json!({
-                "attempt":next,"phase":if job.plan_revision == 0 {"initial_or_repair"}else{"replan_or_repair"}
+                "attempt":next,"phase":if job.plan_revision == 0 {"initial_or_repair"}else{"replan_or_repair"},
+                "run_id":run.run_id
             })).await?;
         }
         tx.commit().await?;
