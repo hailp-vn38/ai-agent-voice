@@ -66,7 +66,7 @@ pub(crate) trait JobModels: Send + Sync {
                     usage: None,
                 })
             }
-            crate::providers::llm::BackgroundMode::Tools | crate::providers::llm::BackgroundMode::ToolsAuto => Err(JobError::CapabilityUnavailable),
+            crate::providers::llm::BackgroundMode::Tools | crate::providers::llm::BackgroundMode::ToolsAuto | crate::providers::llm::BackgroundMode::ToolsParallel => Err(JobError::CapabilityUnavailable),
         }
     }
     async fn complete_traced(
