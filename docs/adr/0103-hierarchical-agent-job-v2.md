@@ -17,3 +17,7 @@ A dynamic global tool loop would flood Root context with raw observations. Recur
 
 ## Consequences
 The Job read view gains execution-mode and Agent Run metadata. Existing durable event cursor and authoritative REST are sufficient for the Web Timeline B. Legacy DAG planning remains available for persisted Jobs. Backward migration is forward-only and needs a data backup for binary rollback.
+
+## Decision validation diagnostics (2026-10-14)
+
+A transport-successful LLM response is **not** an accepted Agent Decision. Rust validates and journals each Root/Child decision as `agent_decision_accepted` or `agent_decision_rejected`, correlated by `agent_run_id`, `run_id`/`turn_id`, and `attempt_no`. Rejections carry only stable `validation_code` and `validation_path` (no model output, tool arguments, prompts, or secrets). Repair receives the typed diagnostic and a bounded previous-response excerpt only in the next transient LLM input. Chat-only providers keep Rust JSON validation; qualified Responses providers receive a strict Root decision schema. The normal Job/Agent failure code remains `invalid_plan` after the bounded repair budget is exhausted.
