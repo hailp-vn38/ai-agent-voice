@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, Clock3, Download, FileText, RefreshCw, RotateCcw, Square, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, BrainCircuit, Clock3, Cpu, Download, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -8,7 +8,10 @@ import { useAuthStore } from '@/stores/auth'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { AdminJob, JobEvent, JobStatus, StepStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
-import JobLlmTimeline from '@/components/jobs/JobLlmTimeline.vue'
+import JobUnifiedTimeline from '@/components/jobs/JobUnifiedTimeline.vue'
+import JobActivityInspector from '@/components/jobs/JobActivityInspector.vue'
+import { llmTokenSummary, projectLlmRuns } from '@/domain/jobs/llm-activity'
+import { projectUnifiedActivity, visibleActivities, type ActivityFilter } from '@/domain/jobs/unified-activity'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -43,6 +46,32 @@ const canRetry = computed(() => job.value && ['failed', 'cancelled'].includes(jo
 const planningEvents = computed(() => events.value.filter(x => x.event_type.startsWith('plan_')))
 const executionEvents = computed(() => events.value.filter(x => !x.event_type.startsWith('plan_') && !x.event_type.startsWith('llm_')))
 const unknownOutcome = computed(() => job.value?.steps.some(step => step.attempt_state === 'unknown_outcome') ?? false)
+
+const activityFilter = ref<ActivityFilter>({ kind: 'all' })
+const selectedActivityId = ref<string | null>(null)
+const llmRuns = computed(() => job.value ? projectLlmRuns(events.value, job.value.status) : [])
+const tokenUsage = computed(() => llmTokenSummary(llmRuns.value))
+const activeLlm = computed(() => llmRuns.value.filter(run => run.status === 'running').length)
+const pluginCalls = computed(() => job.value?.steps.filter(step => step.plugin_id && (step.attempt_state || step.status !== 'pending')).length ?? 0)
+const agentRuns = computed(() => [...(job.value?.agent_runs ?? [])].sort((a, b) => a.run_index - b.run_index))
+const roleFilters = computed(() => [...new Set(agentRuns.value.map(run => run.role))])
+const allActivity = computed(() => job.value ? projectUnifiedActivity(job.value, events.value) : [])
+const filteredActivity = computed(() => visibleActivities(allActivity.value, activityFilter.value))
+const selectedActivity = computed(() => filteredActivity.value.find(item => item.id === selectedActivityId.value) ?? null)
+const coverage = computed(() => job.value?.coverage ?? null)
+const sourcePercentage = computed(() => coverage.value && coverage.value.required_sources_count > 0
+  ? Math.min(100, Math.round(coverage.value.verified_sources_count * 100 / coverage.value.required_sources_count)) : 0)
+watch(filteredActivity, rows => {
+  if (!rows.some(item => item.id === selectedActivityId.value)) selectedActivityId.value = rows[0]?.id ?? null
+}, { immediate: true })
+function filterAgent(id: string) { activityFilter.value = { kind: 'agent', id } }
+function roleName(role: string) {
+  if (role === 'orchestrator') return t('jobUi.agentOrchestrator')
+  if (role === 'research') return t('jobUi.agentResearch')
+  if (role === 'document') return t('jobUi.agentDocument')
+  return t('jobUi.agentGeneral')
+}
+
 const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline' =>
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
     status === 'partial_success' || status === 'cancelled' ? 'outline' : 'secondary'
@@ -181,7 +210,7 @@ function startStream() {
 function onVisible() {
   if (!document.hidden) reconcile()
 }
-watch(jobId, () => { void load(true) }, { immediate: true })
+watch(jobId, () => { activityFilter.value = { kind: 'all' }; selectedActivityId.value = null; void load(true) }, { immediate: true })
 watch(() => auth.adminToken, startStream)
 onMounted(() => {
   mounted = true
@@ -224,8 +253,82 @@ onBeforeUnmount(() => {
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs text-danger">{{ job.error_code }}</p>
         <p v-if="unknownOutcome" class="mt-2 text-sm text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
       </div>
-      <JobLlmTimeline :job="job" :events="events" />
-      <div class="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,1fr)]">
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section class="studio-panel p-4">
+          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.timelineAgentRuns') }}</span><Layers class="size-4 text-studio-violet" /></div>
+          <p class="mt-2 text-2xl font-bold tracking-tight">{{ job.agent_runs ? agentRuns.length : '—' }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ job.agent_runs ? '1 root · ' + Math.max(0, agentRuns.length - 1) + ' sub-agents' : t('jobUi.legacyNoAgents') }}</p>
+        </section>
+        <section class="studio-panel p-4">
+          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.llmRuns') }}</span><BrainCircuit class="size-4 text-studio-violet" /></div>
+          <p class="mt-2 text-2xl font-bold tracking-tight">{{ llmRuns.length }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ activeLlm }} {{ t('jobUi.llmRunning') }} · {{ llmRuns.length - activeLlm }} {{ t('jobUi.timelineObserved') }}</p>
+        </section>
+        <section class="studio-panel p-4">
+          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.timelinePluginCalls') }}</span><Puzzle class="size-4 text-studio-violet" /></div>
+          <p class="mt-2 text-2xl font-bold tracking-tight">{{ pluginCalls }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.timelinePersistedSteps') }}</p>
+        </section>
+        <section class="studio-panel p-4">
+          <div class="flex items-center justify-between text-xs text-muted-foreground"><span>{{ t('jobUi.timelineTotalTokens') }}</span><Cpu class="size-4 text-studio-violet" /></div>
+          <p class="mt-2 text-2xl font-bold tracking-tight">{{ tokenUsage.known ? tokenUsage.tokens.toLocaleString() : '—' }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ tokenUsage.known }} / {{ tokenUsage.total }} {{ t('jobUi.llmUsageAvailable') }}<span v-if="tokenUsage.known < tokenUsage.total"> · {{ t('jobUi.timelinePartial') }}</span></p>
+        </section>
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="flex items-center gap-2 font-semibold"><Activity class="size-4 text-studio-violet" />{{ t('jobUi.executionJourney') }}</h2>
+          <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.executionJourneyHint') }}</p>
+        </div>
+        <span class="rounded-md border px-2 py-1 text-xs text-muted-foreground">{{ t('jobUi.timelineReadOnly') }}</span>
+      </div>
+      <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>
+      <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(290px,.85fr)]">
+        <JobUnifiedTimeline
+          :activities="filteredActivity"
+          :selected-id="selectedActivityId"
+          :filter="activityFilter"
+          :roles="roleFilters"
+          @select="selectedActivityId = $event"
+          @filter="activityFilter = $event"
+        />
+        <aside class="min-w-0 space-y-4">
+          <section class="studio-panel p-4">
+            <div class="mb-3 flex items-center justify-between gap-2">
+              <h3 class="flex items-center gap-2 text-sm font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.activeAgents') }}</h3>
+              <span class="text-xs text-muted-foreground">{{ agentRuns.length || '—' }}</span>
+            </div>
+            <p v-if="!agentRuns.length" class="text-xs text-muted-foreground">{{ t('jobUi.legacyNoAgents') }}</p>
+            <div v-for="run in agentRuns" :key="run.agent_run_id" class="border-t py-1">
+              <button type="button" class="flex w-full items-center gap-2 rounded-md p-2 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id ? 'bg-primary/10' : ''" :aria-pressed="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id" @click="filterAgent(run.agent_run_id)">
+                <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-studio-violet"><Workflow class="size-4" /></span>
+                <span class="min-w-0 flex-1">
+                  <strong class="block text-xs">{{ roleName(run.role) }}</strong>
+                  <span class="block truncate text-[10px] text-muted-foreground">{{ run.llm_rounds }} {{ t('jobUi.timelineRounds') }} · {{ run.tool_calls }} {{ t('jobUi.timelineTools') }}</span>
+                </span>
+                <span class="text-[10px] capitalize" :class="run.status === 'succeeded' ? 'text-success' : run.status === 'failed' ? 'text-danger' : 'text-studio-cyan'">{{ run.status }}</span>
+              </button>
+            </div>
+          </section>
+          <JobActivityInspector :activity="selectedActivity" />
+          <section class="studio-panel p-4">
+            <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.sourceCoverage') }}</h3>
+            <template v-if="coverage && coverage.required_sources_count > 0">
+              <div class="flex items-center justify-between gap-3 text-xs">
+                <strong>{{ coverage.verified_sources_count }} / {{ coverage.required_sources_count }} {{ t('jobUi.timelineSourcesVerified') }}</strong>
+                <span class="text-muted-foreground">{{ job.status === 'running' ? t('jobUi.llmRunning') : sourcePercentage === 100 ? t('jobUi.llmCompleted') : t('jobUi.timelinePartial') }}</span>
+              </div>
+              <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary" :style="{ width: sourcePercentage + '%' }" /></div>
+              <p class="mt-2 text-xs text-muted-foreground">{{ coverage.verified_capabilities_count }} / {{ coverage.required_capabilities_count }} {{ t('jobUi.timelineCapabilities') }}</p>
+            </template>
+            <p v-else-if="coverage" class="text-xs text-muted-foreground">{{ t('jobUi.goalOnlyUnverified') }}</p>
+            <p v-else class="text-xs text-muted-foreground">{{ t('jobUi.coverageUnavailable') }}</p>
+          </section>
+        </aside>
+      </div>
+      <details class="studio-panel p-4">
+        <summary class="cursor-pointer text-sm font-semibold text-studio-violet">{{ t('jobUi.technicalDetails') }}</summary>
+        <div class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,1fr)]">
         <div class="min-w-0 space-y-4">
           <section class="studio-panel p-5">
             <div class="mb-4 flex items-center justify-between gap-2">
@@ -315,7 +418,8 @@ onBeforeUnmount(() => {
             </div>
           </section>
         </aside>
-      </div>
+        </div>
+      </details>
     </template>
 
     <ConfirmDialog v-model="retryOpen" :title="t('jobUi.retryJob')" :confirm-label="t('jobUi.retryJob')" @confirm="retry">
