@@ -6,6 +6,7 @@ use crate::{
 };
 use sqlx::{FromRow, SqliteConnection};
 mod change_feed;
+mod deletion;
 pub(crate) use change_feed::JobChangeFeed;
 mod recovery;
 // P3 scheduler will consume these durable dispatch transitions.

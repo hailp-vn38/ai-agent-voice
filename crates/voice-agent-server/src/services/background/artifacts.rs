@@ -187,45 +187,29 @@ pub(crate) async fn reconcile(database: &Database) -> Result<(), JobError> {
     Ok(())
 }
 
-/// Retire bounded batches of terminal Jobs after 30 days. Retry descendants keep
-/// their parent until they have themselves expired, preserving visible lineage.
-/// Remove database references first; `reconcile` safely removes orphan files if
-/// the process stops between the commit and filesystem cleanup.
+/// Remove only the deleted Job's directory, never another Job's in-flight files.
+pub(crate) async fn remove_deleted_job(database: &Database, id: &str) -> Result<(), JobError> {
+    if uuid::Uuid::parse_str(id).is_err() {
+        return Err(JobError::InvalidArguments);
+    }
+    match tokio::fs::remove_dir_all(root(database)?.join(id)).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(JobError::DatabaseUnavailable),
+    }
+}
+
+/// Retire bounded batches of terminal Jobs after 30 days. Retry parents remain
+/// until their descendants have expired. Startup repairs orphan filesystem data.
 pub(crate) async fn expire_terminal(database: &Database, now: i64) -> Result<u64, JobError> {
     let cutoff = now
         .checked_sub(30 * 24 * 60 * 60)
         .ok_or(JobError::ClockUnavailable)?;
-    let mut tx = database.pool().begin_with("BEGIN IMMEDIATE").await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM jobs WHERE status IN ('succeeded','partial_success','failed','cancelled') AND updated_at<? AND NOT EXISTS (SELECT 1 FROM jobs AS child WHERE child.retry_of_job_id=jobs.id) ORDER BY updated_at,id LIMIT 100",
-    )
-    .bind(cutoff)
-    .fetch_all(&mut *tx)
-    .await?;
+    let ids = database.expire_terminal_jobs(cutoff).await?;
     for id in &ids {
-        sqlx::query("DELETE FROM job_events WHERE job_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM job_artifacts WHERE job_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM job_steps WHERE job_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM jobs WHERE id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    tx.commit().await?;
-    for id in &ids {
-        database.job_changes.publish_committed(id);
-    }
-    if !ids.is_empty() {
-        reconcile(database).await?;
+        if let Err(error) = remove_deleted_job(database, id).await {
+            tracing::warn!(event="background_retention_artifact_cleanup_failed",job_id=%id,code=%error.code());
+        }
     }
     Ok(ids.len() as u64)
 }
