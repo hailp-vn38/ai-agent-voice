@@ -305,3 +305,29 @@ async fn persisted_evidence_refs_are_step_and_child_scoped() {
     assert_eq!(db.job_child_artifact_refs(&job.id,"child-b").await.unwrap(),vec!["artifact-other"]);
     runtime.shutdown().await;
 }
+
+
+#[tokio::test]
+async fn core_only_json_query_executes_without_plugin_installation_or_container() {
+    let (db, _, runtime) = harness().await;
+    let job = runtime
+        .engine
+        .submit(request("Query JSON"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    let raw = job.plugin_choices.as_array().unwrap().iter()
+        .find(|v| v["plugin_id"] == "core" && v["operation"] == "data.json_query")
+        .unwrap();
+    let choice = crate::services::background::plugins::decode_choice(raw).unwrap();
+    let args = json!({"json_text":"{\"hello\":{\"answer\":42}}","pointer":"/hello/answer"});
+    db.test_plan_one_step(&job.id, "core_query", &choice, &args)
+        .await.unwrap();
+    let finished = runtime.engine.execute_plugin_step(
+        &job.id, "core_query", &choice, args
+    ).await.unwrap();
+    assert_eq!(finished.steps[0].status, "succeeded");
+    assert_eq!(finished.steps[0].result.as_ref().unwrap()["value"], 42);
+    assert_eq!(finished.steps[0].attempt_state.as_deref(), Some("finished"));
+    runtime.shutdown().await;
+}
