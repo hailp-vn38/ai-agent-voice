@@ -133,9 +133,19 @@ impl Database {
         }
         if execution_mode == "hierarchical_v2" {
             providers::require_hybrid_capability(
-                &mut tx,config,&orchestrator.reference,"supports_structured_outputs").await?;
+                &mut tx,
+                config,
+                &orchestrator.reference,
+                "supports_structured_outputs",
+            )
+            .await?;
             providers::require_hybrid_capability(
-                &mut tx,config,&worker.reference,"supports_function_calling").await?;
+                &mut tx,
+                config,
+                &worker.reference,
+                "supports_function_calling",
+            )
+            .await?;
         }
         let plugin_choices =
             crate::services::background::plugins::frozen_choices(&mut tx, &request).await?;
