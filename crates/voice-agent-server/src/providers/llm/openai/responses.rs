@@ -263,7 +263,11 @@ fn turn_body(
                     })
                     .collect(),
             );
-            body["tool_choice"] = json!(if matches!(mode, BackgroundMode::ToolsAuto) {"auto"} else {"required"});
+            body["tool_choice"] = json!(if matches!(mode, BackgroundMode::ToolsAuto) {
+                "auto"
+            } else {
+                "required"
+            });
             body["parallel_tool_calls"] = json!(matches!(mode, BackgroundMode::ToolsParallel));
         }
     }
@@ -286,7 +290,14 @@ fn parse_turn(
             let mut text_returned = false;
             for item in output {
                 match item["type"].as_str() {
-                    Some("reasoning") => {}
+                    Some("reasoning") => {
+                        // This stateless adapter cannot replay opaque continuation
+                        // blocks yet. Reject before any tool dispatch, rather than
+                        // silently dropping provider-required native state.
+                        if !item["encrypted_content"].is_null() || !item["id"].is_null() {
+                            return Err(LlmError::Rejected);
+                        }
+                    }
                     Some("message") => {
                         text_returned = true;
                     }

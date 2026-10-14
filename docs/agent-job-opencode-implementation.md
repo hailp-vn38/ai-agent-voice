@@ -81,20 +81,74 @@ Stop new V3 submissions, keep immutable mode of existing jobs, preserve interrup
 
 ## Current implementation checkpoint — 2026-10-14
 
-The branch `feat/agent-job-v3-opencode-session-runtime` includes the V3 SQLite migration, Root native `subagent` / `finish_job` loop, durable Root and Child transcripts, same-session follow-up with a new Child Run, source-validated plugin execution, Root full-batch matching, Chat/Responses `ToolsAuto` final text, and `ToolsParallel` for two Root delegations. V2 and DAG execution retain explicit separate dispatcher paths.
+The V3 source implementation on `feat/agent-job-v3-opencode-session-runtime` now includes:
 
-**Not yet verified:** no Rust compiler or Cargo is available in the execution environment, so the code has **not** passed `cargo fmt --check`, `cargo check`, `cargo test`, or a live migration smoke test. These are release blockers rather than completed acceptance items. The new tests are committed as fixtures, not claimed passing.
+- Native Root `subagent` / `finish_job`, source-schema and whole-batch validation, bounded repair, typed Child outcomes, and foreground two-Child fork/join even when one Child fails.
+- Durable Root/Child transcripts, exact authored prompts, specialist/runtime systems, same-Session follow-up with a new Run, and Session-owned evidence across previous Runs without granting another Session's evidence.
+- Atomic Child Run allocation, Session claims, task prompts and Root native call intent. A rejected attachment rolls the complete batch back. Migration 0115 enforces immutable Session provenance/transcript content, job/parent/run association and one active Run per Session.
+- Ordered, bounded transcripts with matched tool pairs; incomplete external-call intent cannot be continued. Plugin intent is persisted before dispatch; interrupted attempts retain unknown-outcome evidence and are never replayed.
+- FK-safe terminal deletion and retention of V3 Runs, messages and Child/Root Sessions; legacy V2/DAG dispatcher paths and rows remain separate.
+- Exact-route preflight, static Background-capacity rejection and deadline/cancellation-bounded dynamic admission, retaining Voice reservation.
 
-Run in the repository root before enabling V3 in production:
+### New-submission release gate
 
-```sh
-cargo fmt --all --check
-cargo check --workspace --all-targets
-cargo test -p voice-agent-server v3_ -- --nocapture
-cargo test --workspace
+New production submissions default to `hierarchical_v2`. V3 requires the deployment field below **after** native provider and deployment E2E qualification. Capability flags alone do not establish qualification.
+
+```toml
+[background]
+# Root and Child, in that order. Replace all placeholders with actual snapshot
+# ProviderPin JSON obtained for the exact routes qualified in an isolated run.
+# hierarchical_v3_qualified_pins = [
+#   '{"reference":"config:llm:root","incarnation":0,"revision":1,"digest":"<actual digest>"}',
+#   '{"reference":"config:llm:child","incarnation":0,"revision":1,"digest":"<actual digest>"}'
+# ]
 ```
 
-Then run a SQLite migration on a backed-up DB containing representative V2 and DAG rows; verify `PRAGMA foreign_key_check` returns no rows and that previous Job IDs, mode values, events and artifacts remain readable. Exercise real native Chat/Responses provider qualification with Root and Child pinned to distinct routes. Do not enable Anthropic/Gemini native Agent Jobs until actual adapters/fixtures have been added. Native reasoning/replay metadata compatibility for models requiring opaque continuation state is not yet independently qualified. Structured-only and background inbox modes remain deferred.
+Both pins must equal the current, transactionally frozen provider pair. A changed reference, incarnation, revision or digest rejects a new V3 submission with `configuration_changed`; malformed qualification JSON fails closed. There is no provider qualification registry. Removing the field restores V2 for new submissions and blocks new V3 manual retries; existing V3 Jobs retain their own mode and pinned executor. Retry of historical V2/DAG Jobs preserves its original mode.
+
+Keep this field unset in production while the deployment gates below remain open. For isolated qualification, use a test deployment with the candidate pins and then promote the same qualified route identities only after its acceptance succeeds.
+
+### Verification and acceptance evidence
+
+All repository checks use `scripts/agent-test.sh`:
+
+```sh
+scripts/agent-test.sh targeted v3_ voice-agent-server
+scripts/agent-test.sh run -- cargo fmt --all --check
+scripts/agent-test.sh run -- cargo check --workspace --all-targets
+scripts/agent-test.sh full
+scripts/agent-test.sh run -- cargo clippy -p voice-agent-server --all-targets -- -D warnings
+```
+
+Verification on 2026-10-14, against source baseline `bee57e57` plus this working tree:
+
+| Check | Result | Saved log basename |
+|---|---|---|
+| Targeted `v3_` | PASS — 22 unit tests + 1 populated migration test | `agent-test.targeted.quo7DY` |
+| Formatting | PASS | `agent-test.run.haiX6Q` |
+| Workspace/all-targets check | PASS | `agent-test.run.iCeXwq` |
+| Server/all-targets Clippy, `-D warnings` | PASS | `agent-test.run.bBjWUd` |
+| Workspace tests | PASS — existing explicitly ignored tests remain ignored | `agent-test.full.wsjIVC` |
+
+Logs are retained under the runner-reported temporary `ai-agent-voice-test-logs` directory. Intermediate fixture/compiler/Clippy failures were corrected; their earlier saved logs were not removed. These results apply to local source/fixtures, not deployment qualification.
+
+The deterministic V3 acceptance suite is in `services/background/tests/v3*.rs`, the existing hierarchical/root-contract tests and the Chat/Responses codec tests. `tests/job_v3_migration.rs` upgrades a populated pre-V3 database using the real startup migrator, checks retained V2/DAG modes, retry references, Runs, events, artifacts, indexes and immutable constraints, and verifies `PRAGMA foreign_key_check` is empty. It does not modify the operator's database.
+
+| Acceptance | Local evidence | Deployment boundary |
+|---|---|---|
+| A01–A02 | Authored prompt, both system instructions, paired results and one join | Real model behavior remains separate |
+| A03 | Two real Core operations → final text; persistent matched pairs | External Installer/Runner remains separate |
+| A04 | Resume/history, concurrent single-runner claim, foreign/busy/changed-route denial, prior-Run evidence | Deterministic SQLite/runtime coverage |
+| A05–A06 | Actual native Chat Root and Responses Child adapters against local HTTP fixtures; two-turn histories stay isolated; malformed/refusal/incomplete codec cases | External provider/model/transport qualification NOT_RUN |
+| A07 | Deferred by design | Structured-only rollout remains disabled |
+| A08–A10 | Source-schema rejection; unauthorized model/session/background rejects the whole batch; failed Child still joins; Root cannot finish with no Child outcome | Shared plugin schema/evidence/authority regression tests also remain required |
+| A11 | Durable unmatched external intent, restart unknown-outcome and denied replay | External Runner interruption qualification remains separate |
+| A12 | Static capacity eligibility; dynamic contention respects deadline/cancellation | Deployment admission envelope still requires qualification |
+| A13 | Frozen-pin checks and release attestation mismatch denial; shared provider/plugin revocation regression paths | Real revocation during deployed V3 work remains unqualified |
+| A14 | V2/DAG and existing Voice/Reminder/Direct TTS regression suite | Device/real-model acceptance is not inferred from host tests |
+| A15 | V3 event payloads omit private prompts/tool output; unchanged authenticated REST/SSE projection tests | Live browser/deployment acceptance remains separate |
+
+**Deployment release gates still NOT_RUN:** qualification against actual native Chat/Responses provider routes, models requiring opaque reasoning/replay continuation state, representative operator DB backup/upgrade, external Plugin Installer/Runner and live REST/SSE/Voice acceptance. The current stateless Responses adapter fails closed before tool dispatch if a reasoning item carries opaque replay state (`encrypted_content` or a native reasoning `id`); those models cannot be qualified with this adapter until route-local replay support is implemented. Local HTTP fixtures are codec/runtime evidence, not a claim about an external provider. Anthropic/Gemini native Agent Jobs, structured-only mode and background inbox remain disabled/deferred.
 
 ### Known scope limitations
 
@@ -102,4 +156,4 @@ Then run a SQLite migration on a backed-up DB containing representative V2 and D
 - Every Child uses the immutable worker route; `subagent.model` cannot freely select a third provider.
 - Each Child initially receives at most sixteen frozen plugin operations; a larger frozen catalog currently fails closed, pending a specific capability-selection policy.
 - The Session transcript is persisted without automatic summarization. Provider-context exhaustion is a bounded error, not automatic tool-pair truncation.
-- This checkpoint is **implementation in progress**, not a release-readiness declaration.
+- This checkpoint records source implementation and local acceptance; deployment release qualification remains open.

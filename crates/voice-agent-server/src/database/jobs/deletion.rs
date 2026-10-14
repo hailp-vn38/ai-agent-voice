@@ -9,6 +9,9 @@ async fn delete_rows(tx: &mut Transaction<'_, Sqlite>, id: &str) -> Result<(), J
         "DELETE FROM job_steps WHERE job_id=?",
         "DELETE FROM job_agent_runs WHERE job_id=? AND parent_agent_run_id IS NOT NULL",
         "DELETE FROM job_agent_runs WHERE job_id=?",
+        "DELETE FROM job_agent_messages WHERE session_id IN (SELECT session_id FROM job_agent_sessions WHERE job_id=?)",
+        "DELETE FROM job_agent_sessions WHERE job_id=? AND parent_session_id IS NOT NULL",
+        "DELETE FROM job_agent_sessions WHERE job_id=?",
         "DELETE FROM jobs WHERE id=?",
     ] {
         sqlx::query(statement).bind(id).execute(&mut **tx).await?;

@@ -120,101 +120,11 @@ impl Database {
         turn_id: &str,
         tasks: &[DelegatedTask],
     ) -> Result<Vec<AgentRunView>, JobError> {
-        if tasks.is_empty() || tasks.len() > 2 || turn_id.len() > 64 {
-            return Err(JobError::InvalidPlan);
-        }
-        let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?")
-            .bind(job_id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
-        let root_valid:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND agent_run_id=? AND parent_agent_run_id IS NULL AND status='running'")
-            .bind(job_id).bind(root).fetch_one(&mut *tx).await?;
-        if root_valid != 1 {
-            return Err(JobError::InvalidPlan);
-        }
-        let existing:Vec<RunRow>=sqlx::query_as("SELECT * FROM job_agent_runs WHERE job_id=? AND fork_group_id=? ORDER BY member_ordinal")
-            .bind(job_id).bind(turn_id).fetch_all(&mut *tx).await?;
-        if !existing.is_empty() {
-            if existing.len() != tasks.len() {
-                return Err(JobError::InvalidPlan);
-            }
-            return existing.into_iter().map(RunRow::view).collect();
-        }
-        let unjoined:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_agent_runs a WHERE a.job_id=? AND a.fork_group_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM job_events e WHERE e.job_id=a.job_id AND e.event_type='join_completed' AND json_extract(e.payload_json,'$.fork_group_id')=a.fork_group_id)")
-            .bind(job_id).fetch_one(&mut *tx).await?;
-        if unjoined > 0 {
-            return Err(JobError::InvalidPlan);
-        }
-        let snapshot: crate::services::background::JobSnapshot =
-            serde_json::from_str(&job.snapshot_json).map_err(|_| JobError::DatabaseUnavailable)?;
-        let choices: Vec<Value> = serde_json::from_str(&job.plugin_choices_json)
-            .map_err(|_| JobError::DatabaseUnavailable)?;
-        let mut seen = std::collections::HashSet::new();
-        for task in tasks {
-            if task.goal.trim().is_empty()
-                || task.goal.chars().count() > 256
-                || task.task_key.is_empty()
-                || task.task_key.len() > 64
-                || !task
-                    .task_key
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
-                || !seen.insert(&task.task_key)
-                || !matches!(task.role.as_str(), "research" | "document" | "general")
-                || task.allowed_operations.len() > 16
-                || task.allowed_operations.iter().any(|op| {
-                    !choices.iter().any(|c| {
-                        format!(
-                            "{}.{}",
-                            c["plugin_id"].as_str().unwrap_or(""),
-                            c["operation"].as_str().unwrap_or("")
-                        ) == *op
-                    })
-                })
-            {
-                return Err(JobError::InvalidPlan);
-            }
-        }
-        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND parent_agent_run_id IS NOT NULL")
-            .bind(job_id).fetch_one(&mut *tx).await?;
-        if count + tasks.len() as i64 > i64::from(snapshot.limits.max_child_runs) {
-            return Err(JobError::CapacityUnavailable);
-        }
-        let mut created = Vec::new();
-        for (ordinal, task) in tasks.iter().enumerate() {
-            let run_id = uuid::Uuid::new_v4().to_string();
-            let excerpt: String = task.goal.chars().take(256).collect();
-            sqlx::query("INSERT INTO job_agent_runs(agent_run_id,job_id,parent_agent_run_id,fork_group_id,member_ordinal,role,goal_excerpt,allowed_operations_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,'queued',?)")
-                .bind(&run_id).bind(job_id).bind(root).bind(turn_id).bind(ordinal as i64)
-                .bind(&task.role).bind(excerpt).bind(serde_json::to_string(&task.allowed_operations).map_err(|_|JobError::InvalidPlan)?)
-                .bind(now).execute(&mut *tx).await?;
-            events::append(
-                &mut tx,
-                job_id,
-                "agent_run_created",
-                None,
-                &json!({
-                    "agent_run_id":run_id,"parent_agent_run_id":root,"fork_group_id":turn_id,
-                    "member_ordinal":ordinal,"role":task.role
-                }),
-            )
-            .await?;
-            created.push(run_id);
-        }
+        let children = create_children_in_tx(&mut tx, job_id, root, turn_id, tasks).await?;
         tx.commit().await?;
         self.job_changes.publish_committed(job_id);
-        let mut connection = self.pool().acquire().await?;
-        let mut results = Vec::new();
-        for id in created {
-            let row: RunRow =
-                sqlx::query_as("SELECT * FROM job_agent_runs WHERE job_id=? AND agent_run_id=?")
-                    .bind(job_id)
-                    .bind(id)
-                    .fetch_one(&mut *connection)
-                    .await?;
-            results.push(row.view()?);
-        }
-        Ok(results)
+        Ok(children)
     }
 
     pub(crate) async fn start_child_run(&self, job_id: &str, run_id: &str) -> Result<(), JobError> {
@@ -364,4 +274,114 @@ impl Database {
         self.job_changes.publish_committed(job_id);
         Ok(key)
     }
+}
+
+/// Shared atomic allocation seam for V2 and V3 session attachment.
+pub(super) async fn create_children_in_tx(
+    tx: &mut SqliteConnection,
+    job_id: &str,
+    root: &str,
+    turn_id: &str,
+    tasks: &[DelegatedTask],
+) -> Result<Vec<AgentRunView>, JobError> {
+    if tasks.is_empty() || tasks.len() > 2 || turn_id.len() > 64 {
+        return Err(JobError::InvalidPlan);
+    }
+    let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
+    let job:JobRow=sqlx::query_as("SELECT * FROM jobs WHERE id=? AND status='running' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?")
+            .bind(job_id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
+    let root_valid:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND agent_run_id=? AND parent_agent_run_id IS NULL AND status='running'")
+            .bind(job_id).bind(root).fetch_one(&mut *tx).await?;
+    if root_valid != 1 {
+        return Err(JobError::InvalidPlan);
+    }
+    let existing: Vec<RunRow> = sqlx::query_as(
+        "SELECT * FROM job_agent_runs WHERE job_id=? AND fork_group_id=? ORDER BY member_ordinal",
+    )
+    .bind(job_id)
+    .bind(turn_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if !existing.is_empty() {
+        if existing.len() != tasks.len() {
+            return Err(JobError::InvalidPlan);
+        }
+        return existing.into_iter().map(RunRow::view).collect();
+    }
+    let unjoined:i64=sqlx::query_scalar("SELECT COUNT(*) FROM job_agent_runs a WHERE a.job_id=? AND a.fork_group_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM job_events e WHERE e.job_id=a.job_id AND e.event_type='join_completed' AND json_extract(e.payload_json,'$.fork_group_id')=a.fork_group_id)")
+            .bind(job_id).fetch_one(&mut *tx).await?;
+    if unjoined > 0 {
+        return Err(JobError::InvalidPlan);
+    }
+    let snapshot: crate::services::background::JobSnapshot =
+        serde_json::from_str(&job.snapshot_json).map_err(|_| JobError::DatabaseUnavailable)?;
+    let choices: Vec<Value> = serde_json::from_str(&job.plugin_choices_json)
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+    let mut seen = std::collections::HashSet::new();
+    for task in tasks {
+        if task.goal.trim().is_empty()
+            || task.goal.chars().count() > 256
+            || task.task_key.is_empty()
+            || task.task_key.len() > 64
+            || !task
+                .task_key
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+            || !seen.insert(&task.task_key)
+            || !matches!(task.role.as_str(), "research" | "document" | "general")
+            || task.allowed_operations.len() > 16
+            || task.allowed_operations.iter().any(|op| {
+                !choices.iter().any(|c| {
+                    format!(
+                        "{}.{}",
+                        c["plugin_id"].as_str().unwrap_or(""),
+                        c["operation"].as_str().unwrap_or("")
+                    ) == *op
+                })
+            })
+        {
+            return Err(JobError::InvalidPlan);
+        }
+    }
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND parent_agent_run_id IS NOT NULL",
+    )
+    .bind(job_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if count + tasks.len() as i64 > i64::from(snapshot.limits.max_child_runs) {
+        return Err(JobError::CapacityUnavailable);
+    }
+    let mut created = Vec::new();
+    for (ordinal, task) in tasks.iter().enumerate() {
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let excerpt: String = task.goal.chars().take(256).collect();
+        sqlx::query("INSERT INTO job_agent_runs(agent_run_id,job_id,parent_agent_run_id,fork_group_id,member_ordinal,role,goal_excerpt,allowed_operations_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,'queued',?)")
+                .bind(&run_id).bind(job_id).bind(root).bind(turn_id).bind(ordinal as i64)
+                .bind(&task.role).bind(excerpt).bind(serde_json::to_string(&task.allowed_operations).map_err(|_|JobError::InvalidPlan)?)
+                .bind(now).execute(&mut *tx).await?;
+        events::append(
+            tx,
+            job_id,
+            "agent_run_created",
+            None,
+            &json!({
+                "agent_run_id":run_id,"parent_agent_run_id":root,"fork_group_id":turn_id,
+                "member_ordinal":ordinal,"role":task.role
+            }),
+        )
+        .await?;
+        created.push(run_id);
+    }
+    let mut results = Vec::new();
+    for id in created {
+        let row: RunRow =
+            sqlx::query_as("SELECT * FROM job_agent_runs WHERE job_id=? AND agent_run_id=?")
+                .bind(job_id)
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        results.push(row.view()?);
+    }
+    Ok(results)
 }

@@ -10,9 +10,12 @@ mod locking;
 mod orchestration;
 mod providers;
 mod recovery;
+mod v3;
+mod v3_native;
+mod v3_sessions;
 mod voice_ws;
 
-fn config() -> AppConfig {
+pub(crate) fn config() -> AppConfig {
     toml::from_str(&format!(
         r#"
 [server]

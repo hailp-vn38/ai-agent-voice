@@ -11,6 +11,7 @@ mod deletion;
 pub(crate) use change_feed::JobChangeFeed;
 mod recovery;
 mod sessions;
+pub(crate) use sessions::V3SessionTask;
 // P3 scheduler will consume these durable dispatch transitions.
 mod eligibility;
 mod events;

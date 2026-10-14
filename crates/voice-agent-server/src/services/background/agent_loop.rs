@@ -1026,7 +1026,6 @@ async fn last_turn_id(
         .await
 }
 
-
 async fn run_child_v3(
     engine: &JobEngine,
     job: &JobView,
@@ -1073,14 +1072,22 @@ async fn run_child_v3(
     {
         return Err(JobError::CapacityUnavailable);
     }
-    let session_id = engine.database.v3_session_for_run(&job.id, &child.agent_run_id).await?;
-    let mut messages = engine.database.v3_read_messages(&job.id,&session_id).await?;
+    let session_id = engine
+        .database
+        .v3_session_for_run(&job.id, &child.agent_run_id)
+        .await?;
+    let mut messages = engine
+        .database
+        .v3_read_messages(&job.id, &session_id)
+        .await?;
     let mut attempt = 0u32;
     let mut repairs = 0u32;
     let mut used_call_ids = std::collections::HashSet::new();
     for msg in &messages {
         if let ChatMessage::AssistantToolCalls { calls } = msg {
-            for call in calls { used_call_ids.insert(call.id.clone()); }
+            for call in calls {
+                used_call_ids.insert(call.id.clone());
+            }
         }
     }
     for _ in 0..job.snapshot.limits.max_worker_rounds {
@@ -1125,14 +1132,27 @@ async fn run_child_v3(
             .await?;
         let calls = match answer?.turn {
             BackgroundTurn::Text(text) if !text.trim().is_empty() => {
-                let summary:String=text.trim().chars().take(2000).collect();
-                let refs=engine.database.job_child_artifact_refs(&job.id,&child.agent_run_id).await?;
-                let result=ChildResult{status:"completed".into(),summary:summary.clone(),
-                    findings:Vec::new(),evidence_refs:refs,unresolved:Vec::new()};
-                bounded_result(&serde_json::to_value(&result).map_err(|_|JobError::InvalidPlan)?)?;
-                engine.database.v3_append_messages(&job.id,&session_id,&[
-                    ChatMessage::AssistantText{content:summary}
-                ]).await?;
+                let summary: String = text.trim().chars().take(2000).collect();
+                let refs = engine
+                    .database
+                    .v3_child_artifact_refs(&job.id, &child.agent_run_id)
+                    .await?;
+                let result = ChildResult {
+                    status: "completed".into(),
+                    summary: summary.clone(),
+                    findings: Vec::new(),
+                    evidence_refs: refs,
+                    unresolved: Vec::new(),
+                };
+                bounded_result(&serde_json::to_value(&result).map_err(|_| JobError::InvalidPlan)?)?;
+                engine
+                    .database
+                    .v3_append_messages(
+                        &job.id,
+                        &session_id,
+                        &[ChatMessage::AssistantText { content: summary }],
+                    )
+                    .await?;
                 return Ok(result);
             }
             BackgroundTurn::ToolCalls(calls) if calls.len() == 1 => calls,
@@ -1143,10 +1163,14 @@ async fn run_child_v3(
                 if repairs > job.snapshot.limits.max_plan_repairs {
                     return Err(JobError::InvalidPlan);
                 }
-                let correction=ChatMessage::User {
-                    content: "Use a permitted function or provide a final assistant text answer.".into(),
+                let correction = ChatMessage::User {
+                    content: "Use a permitted function or provide a final assistant text answer."
+                        .into(),
                 };
-                engine.database.v3_append_messages(&job.id,&session_id,&[correction.clone()]).await?;
+                engine
+                    .database
+                    .v3_append_messages(&job.id, &session_id, std::slice::from_ref(&correction))
+                    .await?;
                 messages.push(correction);
                 continue;
             }
@@ -1176,7 +1200,7 @@ async fn run_child_v3(
                     {
                         allowed_evidence_refs = engine
                             .database
-                            .job_child_artifact_refs(&job.id, &child.agent_run_id)
+                            .v3_child_artifact_refs(&job.id, &child.agent_run_id)
                             .await?;
                         if child_evidence_allowed(&result.evidence_refs, &allowed_evidence_refs) {
                             engine
@@ -1192,7 +1216,10 @@ async fn run_child_v3(
                                 ChatMessage::ToolResult{tool_call_id:call.id.clone(),
                                     content:json!({"status":"completed","evidence_refs":result.evidence_refs}).to_string()}
                             ];
-                            engine.database.v3_append_messages(&job.id,&session_id,&pair).await?;
+                            engine
+                                .database
+                                .v3_append_messages(&job.id, &session_id, &pair)
+                                .await?;
                             return Ok(result);
                         }
                         problem = Some("invalid_child_evidence_refs");
@@ -1257,7 +1284,10 @@ async fn run_child_v3(
                     content: format!("Invalid function call: {code}"),
                 });
             }
-            engine.database.v3_append_messages(&job.id,&session_id,&messages[previous_len..]).await?;
+            engine
+                .database
+                .v3_append_messages(&job.id, &session_id, &messages[previous_len..])
+                .await?;
             continue;
         }
         repairs = 0;
@@ -1275,9 +1305,16 @@ async fn run_child_v3(
             )
             .await?;
         // Durable accepted call intent precedes the external plugin attempt.
-        engine.database.v3_append_messages(&job.id,&session_id,&[
-            ChatMessage::AssistantToolCalls{calls:vec![call.clone()]}
-        ]).await?;
+        engine
+            .database
+            .v3_append_messages(
+                &job.id,
+                &session_id,
+                &[ChatMessage::AssistantToolCalls {
+                    calls: vec![call.clone()],
+                }],
+            )
+            .await?;
         let turn_id = last_turn_id(engine, &job.id, &child.agent_run_id).await?;
         let key = engine
             .database
@@ -1313,11 +1350,19 @@ async fn run_child_v3(
             result.as_deref(),
             &evidence_refs,
         );
-        let pair=[
-            ChatMessage::AssistantToolCalls{calls:vec![call.clone()]},
-            ChatMessage::ToolResult{tool_call_id:call.id,content:observation.to_string()}
+        let pair = [
+            ChatMessage::AssistantToolCalls {
+                calls: vec![call.clone()],
+            },
+            ChatMessage::ToolResult {
+                tool_call_id: call.id,
+                content: observation.to_string(),
+            },
         ];
-        engine.database.v3_append_messages(&job.id,&session_id,&pair[1..]).await?;
+        engine
+            .database
+            .v3_append_messages(&job.id, &session_id, &pair[1..])
+            .await?;
         messages.extend(pair);
     }
     Err(JobError::CapacityUnavailable)
@@ -1371,28 +1416,86 @@ fn v3_root_tools() -> Vec<ToolDefinition> {
     ]
 }
 
+#[derive(Serialize)]
+struct V3ChildOutcome<'a> {
+    #[serde(rename = "sessionID")]
+    session_id: &'a str,
+    status: &'a str,
+    output: String,
+    findings: Vec<String>,
+    artifact_refs: Vec<String>,
+    unresolved: Vec<String>,
+    error_code: Option<&'a str>,
+}
+impl<'a> V3ChildOutcome<'a> {
+    fn from_run(session_id: &'a str, child: &'a AgentRunView) -> Result<Self, JobError> {
+        let result: Option<ChildResult> = child
+            .result
+            .clone()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        let result = result.unwrap_or(ChildResult {
+            status: child.status.clone(),
+            summary: String::new(),
+            findings: Vec::new(),
+            evidence_refs: Vec::new(),
+            unresolved: Vec::new(),
+        });
+        Ok(Self {
+            session_id,
+            status: if child.status == "succeeded" {
+                "completed"
+            } else {
+                &child.status
+            },
+            output: result.summary,
+            findings: result.findings,
+            artifact_refs: result.evidence_refs,
+            unresolved: result.unresolved,
+            error_code: child.error_code.as_deref(),
+        })
+    }
+}
+
 fn v3_agent_instruction(role: &str) -> &'static str {
     match role {
-        "research" => "You are a Research Sub-Agent. Investigate the delegated task, verify evidence, use only approved tools, and report concise findings. You cannot delegate.",
-        "document" => "You are a Document Sub-Agent. Analyze or prepare content as instructed, use only approved tools, and report the result and unresolved gaps. You cannot delegate.",
-        _ => "You are a General Sub-Agent. Complete the delegated task using only approved tools, report verified results and unresolved gaps. You cannot delegate.",
+        "research" => {
+            "You are a Research Sub-Agent. Investigate the delegated task, verify evidence, use only approved tools, and report concise findings. You cannot delegate."
+        }
+        "document" => {
+            "You are a Document Sub-Agent. Analyze or prepare content as instructed, use only approved tools, and report the result and unresolved gaps. You cannot delegate."
+        }
+        _ => {
+            "You are a General Sub-Agent. Complete the delegated task using only approved tools, report verified results and unresolved gaps. You cannot delegate."
+        }
     }
 }
 
 fn v3_validate_subagent(input: &V3SubagentInput, job: &JobView) -> Result<(), &'static str> {
     if !matches!(input.agent.as_str(), "research" | "document" | "general")
-        || input.description.trim().is_empty() || input.description.len() > 256
-        || input.prompt.trim().is_empty() || input.prompt.len() > 16000
+        || input.description.trim().is_empty()
+        || input.description.len() > 256
+        || input.prompt.trim().is_empty()
+        || input.prompt.len() > 16000
     {
         return Err("invalid_subagent_prompt");
     }
     if input.background {
         return Err("background_subagent_not_enabled");
     }
-    if input.model.as_deref().is_some_and(|model| model != job.snapshot.worker.reference) {
+    if input
+        .model
+        .as_deref()
+        .is_some_and(|model| model != job.snapshot.worker.reference)
+    {
         return Err("model_not_allowed");
     }
-    if input.session_id.as_deref().is_some_and(|id| id.is_empty() || id.len() > 128) {
+    if input
+        .session_id
+        .as_deref()
+        .is_some_and(|id| id.is_empty() || id.len() > 128)
+    {
         return Err("invalid_session_id");
     }
     Ok(())
@@ -1407,50 +1510,90 @@ async fn v3_root_turn(
     cancellation: &CancellationToken,
 ) -> Result<(BackgroundTurn, LlmRunContext), JobError> {
     let context = run_context(&job.id, root_id, "planner", attempt);
-    let messages = engine.database.v3_read_messages(&job.id, session_id).await?;
+    let messages = engine
+        .database
+        .v3_read_messages(&job.id, session_id)
+        .await?;
     let models = engine.models.as_ref().ok_or(JobError::RuntimeUnavailable)?;
-    engine.database.reserve_model_call(&context, &job.snapshot.orchestrator).await?;
-    let deadline = job.deadline_at.min(super::engine::now()?
-        .saturating_add(i64::from(job.snapshot.limits.step_timeout_seconds)));
-    let response = models.turn_traced(
-        &context, &job.snapshot.orchestrator,
-        LlmRequest { messages, tools: v3_root_tools() },
-        BackgroundMode::ToolsParallel,
-        deadline,
-        cancellation.clone()
-    ).await;
-    engine.database.record_llm_activity(&context, "llm_run_finished", json!({
-        "status":if response.is_ok(){"completed"}else{"failed"},
-        "error_code":response.as_ref().err().map(|e|e.code()),
-        "duration_ms":context.started_at.elapsed().as_millis() as u64,
-    })).await?;
-    response.map(|turn|(turn.turn,context))
+    engine
+        .database
+        .reserve_model_call(&context, &job.snapshot.orchestrator)
+        .await?;
+    let deadline = job.deadline_at.min(
+        super::engine::now()?.saturating_add(i64::from(job.snapshot.limits.step_timeout_seconds)),
+    );
+    let response = models
+        .turn_traced(
+            &context,
+            &job.snapshot.orchestrator,
+            LlmRequest {
+                messages,
+                tools: v3_root_tools(),
+            },
+            BackgroundMode::ToolsParallel,
+            deadline,
+            cancellation.clone(),
+        )
+        .await;
+    engine
+        .database
+        .record_llm_activity(
+            &context,
+            "llm_run_finished",
+            json!({
+                "status":if response.is_ok(){"completed"}else{"failed"},
+                "error_code":response.as_ref().err().map(|e|e.code()),
+                "duration_ms":context.started_at.elapsed().as_millis() as u64,
+            }),
+        )
+        .await?;
+    response.map(|turn| (turn.turn, context))
 }
 
 fn v3_root_call_batch_valid(
     calls: &[crate::providers::llm::ToolCall],
-    seen: &std::collections::HashSet<String>
+    seen: &std::collections::HashSet<String>,
 ) -> bool {
-    if calls.is_empty() || calls.len() > 2 { return false; }
-    let mut local=std::collections::HashSet::new();
-    let mut finished=false;
+    if calls.is_empty() || calls.len() > 2 {
+        return false;
+    }
+    let tools = v3_root_tools();
+    let mut local = std::collections::HashSet::new();
+    let mut finished = false;
     for call in calls {
-        if call.id.is_empty() || call.id.len()>128
-            || !local.insert(call.id.as_str()) || seen.contains(&call.id)
-            || !call.arguments.is_object() || call.arguments.to_string().len()>16384
-        { return false; }
+        if call.id.is_empty()
+            || call.id.len() > 128
+            || !local.insert(call.id.as_str())
+            || seen.contains(&call.id)
+            || !call.arguments.is_object()
+            || call.arguments.to_string().len() > 16384
+        {
+            return false;
+        }
+        let Some(tool) = tools.iter().find(|tool| tool.name == call.name) else {
+            return false;
+        };
+        if jsonschema::validator_for(&tool.parameters)
+            .map_or(true, |schema| !schema.is_valid(&call.arguments))
+        {
+            return false;
+        }
         match call.name.as_str() {
             "subagent" => {
-                if serde_json::from_value::<V3SubagentInput>(call.arguments.clone()).is_err() { return false; }
-            },
+                if serde_json::from_value::<V3SubagentInput>(call.arguments.clone()).is_err() {
+                    return false;
+                }
+            }
             "finish_job" => {
-                if serde_json::from_value::<RootResult>(call.arguments.clone()).is_err() { return false; }
+                if serde_json::from_value::<RootResult>(call.arguments.clone()).is_err() {
+                    return false;
+                }
                 finished = true;
-            },
+            }
             _ => return false,
         }
     }
-    !finished || calls.len()==1
+    !finished || calls.len() == 1
 }
 
 /// Native foreground Root loop. The result of every Child is a paired tool
@@ -1460,42 +1603,68 @@ pub(super) async fn run_root_v3(
     job_id: &str,
     cancellation: CancellationToken,
 ) -> Result<(), JobError> {
-    let root=engine.database.create_root_run(job_id).await?;
-    let job=engine.get(job_id).await?;
+    let root = engine.database.create_root_run(job_id).await?;
+    let job = engine.get(job_id).await?;
     // Give Root the requirements and only the frozen, credential-free tool
     // catalog. Root plans prompts; the Child executor remains authoritative.
-    let operations:Vec<Value>=job.plugin_choices.as_array()
+    let operations: Vec<Value> = job
+        .plugin_choices
+        .as_array()
         .ok_or(JobError::DatabaseUnavailable)?
         .iter()
-        .map(|choice| json!({
-            "plugin_id":choice["plugin_id"],
-            "operation":choice["operation"],
-            "provides":choice["provides"],
-            "sources":choice["sources"]
-        }))
+        .map(|choice| {
+            json!({
+                "plugin_id":choice["plugin_id"],
+                "operation":choice["operation"],
+                "provides":choice["provides"],
+                "sources":choice["sources"]
+            })
+        })
         .collect();
-    let root_context=json!({
+    let root_context = json!({
         "goal":job.request.goal,
         "output_format":job.request.output_format,
         "allow_partial":job.request.allow_partial,
         "required_sources":job.request.required_sources,
         "required_capabilities":job.request.required_capabilities,
         "frozen_operations":operations
-    }).to_string();
-    if root_context.len()>16000 { return Err(JobError::CapacityUnavailable); }
-    let root_session=engine.database.create_v3_root_session(
-        job_id,&root.agent_run_id,&job.snapshot.orchestrator,
-        ROOT_V3_INSTRUCTION,&root_context
-    ).await?;
-    let mut seen=std::collections::HashSet::new();
-    let max_rounds=u32::from(job.snapshot.limits.max_child_runs)
-        .saturating_add(u32::from(job.snapshot.limits.max_plan_repairs))
+    })
+    .to_string();
+    if root_context.len() > 16000 {
+        return Err(JobError::CapacityUnavailable);
+    }
+    let root_session = engine
+        .database
+        .create_v3_root_session(
+            job_id,
+            &root.agent_run_id,
+            &job.snapshot.orchestrator,
+            ROOT_V3_INSTRUCTION,
+            &root_context,
+        )
+        .await?;
+    let mut seen = std::collections::HashSet::new();
+    let max_rounds = job
+        .snapshot
+        .limits
+        .max_child_runs
+        .saturating_add(job.snapshot.limits.max_plan_repairs)
         .saturating_add(8);
-    let mut repairs=0u32;
+    let mut repairs = 0u32;
     for round in 1..=max_rounds {
-        if cancellation.is_cancelled() { return Err(JobError::Cancelled); }
-        let (turn,context)=v3_root_turn(engine,&job,&root.agent_run_id,&root_session,round,&cancellation).await?;
-        let calls=match turn {
+        if cancellation.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
+        let (turn, context) = v3_root_turn(
+            engine,
+            &job,
+            &root.agent_run_id,
+            &root_session,
+            round,
+            &cancellation,
+        )
+        .await?;
+        let calls = match turn {
             BackgroundTurn::ToolCalls(calls) => calls,
             BackgroundTurn::Text(text) => {
                 engine.database.record_agent_decision(&context,false,json!({
@@ -1505,210 +1674,374 @@ pub(super) async fn run_root_v3(
                     ChatMessage::AssistantText{content:text.chars().take(2000).collect()},
                     ChatMessage::User{content:"Use subagent or finish_job tools; plain text cannot complete the Job.".into()}
                 ]).await?;
-                repairs+=1;
-                if repairs>u32::from(job.snapshot.limits.max_plan_repairs) {return Err(JobError::InvalidPlan);}
-                continue;
-            }
-        };
-        if !v3_root_call_batch_valid(&calls,&seen) {
-            engine.database.record_agent_decision(&context,false,json!({
-                "validation_code":"agent_tool_protocol_error","validation_path":"$.tool_calls","attempt_no":round
-            })).await?;
-            let mut ids=std::collections::HashSet::new();
-            let matchable=!calls.is_empty() && calls.iter().all(|call|
-                !call.id.is_empty() && call.id.len()<=128
-                && !seen.contains(&call.id) && ids.insert(call.id.clone())
-            );
-            if matchable {
-                let mut messages=vec![ChatMessage::AssistantToolCalls{calls:calls.clone()}];
-                for call in &calls {
-                    messages.push(ChatMessage::ToolResult{
-                        tool_call_id:call.id.clone(),
-                        content:json!({"status":"failed","error_code":"agent_tool_protocol_error"}).to_string()
-                    });
-                    seen.insert(call.id.clone());
-                }
-                engine.database.v3_append_messages(job_id,&root_session,&messages).await?;
-            } else {
-                // Unusable IDs cannot form valid provider-native call/result pairs.
-                engine.database.v3_append_messages(job_id,&root_session,&[
-                    ChatMessage::User{content:"Invalid tool call batch; use valid, unique native tool IDs.".into()}
-                ]).await?;
-            }
-            repairs+=1;
-            if repairs>u32::from(job.snapshot.limits.max_plan_repairs) {return Err(JobError::InvalidPlan);}
-            continue;
-        }
-        for call in &calls { seen.insert(call.id.clone()); }
-        let finish=calls[0].name=="finish_job";
-        if finish {
-            let result:RootResult=serde_json::from_value(calls[0].arguments.clone())
-                .map_err(|_|JobError::InvalidPlan)?;
-            let bounded = serde_json::to_value(&result)
-                .map_err(|_|JobError::InvalidPlan)?;
-            let current=engine.get(job_id).await?;
-            let mut failure=if bounded_result(&bounded).is_err() || result.summary.trim().is_empty() {
-                Some("invalid_finish_result")
-            } else if current.agent_runs.iter().any(|r|r.parent_agent_run_id.is_some()
-                && matches!(r.status.as_str(),"queued"|"running")) {
-                Some("children_still_running")
-            } else if result.evidence_refs.iter().any(|id|
-                !current.artifacts.iter().any(|a|&a.id==id)) {
-                Some("invalid_evidence_refs")
-            } else {None};
-            let (mut status,coverage)=verified_coverage(&current)?;
-            if failure.is_none() && status=="failed"
-                && (!current.request.required_sources.is_empty()
-                    || !current.request.required_capabilities.is_empty()) {
-                failure=Some("requirements_unsatisfied");
-            }
-            if let Some(error_code)=failure {
-                engine.database.record_agent_decision(&context,false,json!({
-                    "validation_code":error_code,"validation_path":"$.tool_calls[0].arguments",
-                    "attempt_no":round
-                })).await?;
-                engine.database.v3_append_messages(job_id,&root_session,&[
-                    ChatMessage::AssistantToolCalls{calls:calls.clone()},
-                    ChatMessage::ToolResult{tool_call_id:calls[0].id.clone(),
-                        content:json!({"status":"failed","error_code":error_code,
-                            "coverage":coverage}).to_string()}
-                ]).await?;
-                repairs+=1;
-                if repairs>u32::from(job.snapshot.limits.max_plan_repairs) {
+                repairs += 1;
+                if repairs > job.snapshot.limits.max_plan_repairs {
                     return Err(JobError::InvalidPlan);
                 }
                 continue;
             }
-            if !result.unresolved.is_empty() && status=="succeeded" {
-                status=if current.request.allow_partial && !current.artifacts.is_empty() {
-                    "partial_success"
-                } else { "failed" };
-            }
-            let value=json!({"summary":result.summary,"findings":result.findings,
-                "evidence_refs":result.evidence_refs,"unresolved":result.unresolved,"coverage":coverage});
-            engine.database.record_agent_decision(&context,true,json!({
-                "action":"finish","attempt_no":round
+        };
+        if !v3_root_call_batch_valid(&calls, &seen) {
+            engine.database.record_agent_decision(&context,false,json!({
+                "validation_code":"agent_tool_protocol_error","validation_path":"$.tool_calls","attempt_no":round
             })).await?;
-            engine.database.v3_append_messages(job_id,&root_session,&[
-                ChatMessage::AssistantToolCalls{calls:calls.clone()},
-                ChatMessage::ToolResult{tool_call_id:calls[0].id.clone(),
-                    content:json!({"status":"accepted_for_validation"}).to_string()}
-            ]).await?;
-            return engine.database.finish_job(&engine.config,job_id,status,
-                (status!="succeeded").then_some("requirements_unsatisfied"),Some(&value)).await;
+            let mut ids = std::collections::HashSet::new();
+            let matchable = !calls.is_empty()
+                && calls.iter().all(|call| {
+                    !call.id.is_empty()
+                        && call.id.len() <= 128
+                        && !seen.contains(&call.id)
+                        && ids.insert(call.id.clone())
+                });
+            if matchable {
+                let mut messages = vec![ChatMessage::AssistantToolCalls {
+                    calls: calls.clone(),
+                }];
+                for call in &calls {
+                    messages.push(ChatMessage::ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content:
+                            json!({"status":"failed","error_code":"agent_tool_protocol_error"})
+                                .to_string(),
+                    });
+                    seen.insert(call.id.clone());
+                }
+                engine
+                    .database
+                    .v3_append_messages(job_id, &root_session, &messages)
+                    .await?;
+            } else {
+                // Unusable IDs cannot form valid provider-native call/result pairs.
+                engine
+                    .database
+                    .v3_append_messages(
+                        job_id,
+                        &root_session,
+                        &[ChatMessage::User {
+                            content: "Invalid tool call batch; use valid, unique native tool IDs."
+                                .into(),
+                        }],
+                    )
+                    .await?;
+            }
+            repairs += 1;
+            if repairs > job.snapshot.limits.max_plan_repairs {
+                return Err(JobError::InvalidPlan);
+            }
+            continue;
+        }
+        for call in &calls {
+            seen.insert(call.id.clone());
+        }
+        let finish = calls[0].name == "finish_job";
+        if finish {
+            let result: RootResult = serde_json::from_value(calls[0].arguments.clone())
+                .map_err(|_| JobError::InvalidPlan)?;
+            let bounded = serde_json::to_value(&result).map_err(|_| JobError::InvalidPlan)?;
+            let current = engine.get(job_id).await?;
+            let mut failure = if bounded_result(&bounded).is_err()
+                || result.summary.trim().is_empty()
+            {
+                Some("invalid_finish_result")
+            } else if current.agent_runs.iter().any(|r| {
+                r.parent_agent_run_id.is_some() && matches!(r.status.as_str(), "queued" | "running")
+            }) {
+                Some("children_still_running")
+            } else if !current
+                .agent_runs
+                .iter()
+                .any(|r| r.parent_agent_run_id.is_some())
+            {
+                Some("missing_child_outcome")
+            } else if result
+                .evidence_refs
+                .iter()
+                .any(|id| !current.artifacts.iter().any(|a| &a.id == id))
+            {
+                Some("invalid_evidence_refs")
+            } else {
+                None
+            };
+            let (mut status, coverage) = verified_coverage(&current)?;
+            if failure.is_none()
+                && status == "failed"
+                && (!current.request.required_sources.is_empty()
+                    || !current.request.required_capabilities.is_empty())
+            {
+                failure = Some("requirements_unsatisfied");
+            }
+            if let Some(error_code) = failure {
+                engine.database.record_agent_decision(&context,false,json!({
+                    "validation_code":error_code,"validation_path":"$.tool_calls[0].arguments",
+                    "attempt_no":round
+                })).await?;
+                engine
+                    .database
+                    .v3_append_messages(
+                        job_id,
+                        &root_session,
+                        &[
+                            ChatMessage::AssistantToolCalls {
+                                calls: calls.clone(),
+                            },
+                            ChatMessage::ToolResult {
+                                tool_call_id: calls[0].id.clone(),
+                                content: json!({"status":"failed","error_code":error_code,
+                            "coverage":coverage})
+                                .to_string(),
+                            },
+                        ],
+                    )
+                    .await?;
+                repairs += 1;
+                if repairs > job.snapshot.limits.max_plan_repairs {
+                    return Err(JobError::InvalidPlan);
+                }
+                continue;
+            }
+            if !result.unresolved.is_empty() && status == "succeeded" {
+                status = if current.request.allow_partial && !current.artifacts.is_empty() {
+                    "partial_success"
+                } else {
+                    "failed"
+                };
+            }
+            let value = json!({"summary":result.summary,"findings":result.findings,
+                "evidence_refs":result.evidence_refs,"unresolved":result.unresolved,"coverage":coverage});
+            engine
+                .database
+                .record_agent_decision(
+                    &context,
+                    true,
+                    json!({
+                        "action":"finish","attempt_no":round
+                    }),
+                )
+                .await?;
+            engine
+                .database
+                .v3_append_messages(
+                    job_id,
+                    &root_session,
+                    &[
+                        ChatMessage::AssistantToolCalls {
+                            calls: calls.clone(),
+                        },
+                        ChatMessage::ToolResult {
+                            tool_call_id: calls[0].id.clone(),
+                            content: json!({"status":"accepted_for_validation"}).to_string(),
+                        },
+                    ],
+                )
+                .await?;
+            return engine
+                .database
+                .finish_job(
+                    &engine.config,
+                    job_id,
+                    status,
+                    (status != "succeeded").then_some("requirements_unsatisfied"),
+                    Some(&value),
+                )
+                .await;
         }
 
         // Validate all semantic arguments before creating any Child or Plugin Step.
-        let mut tasks=Vec::with_capacity(calls.len());
-        let mut inputs=Vec::with_capacity(calls.len());
-        let frozen=job.plugin_choices.as_array().ok_or(JobError::DatabaseUnavailable)?;
-        let allowed:Vec<String>=frozen.iter().map(|v|format!("{}.{}",
-            v["plugin_id"].as_str().unwrap_or(""),v["operation"].as_str().unwrap_or(""))).collect();
-        if allowed.len()>16 {return Err(JobError::CapacityUnavailable);}
-        let mut invalid:Option<&'static str>=None;
-        for (index,call) in calls.iter().enumerate() {
-            let input:V3SubagentInput=serde_json::from_value(call.arguments.clone())
-                .map_err(|_|JobError::InvalidPlan)?;
-            if let Err(code)=v3_validate_subagent(&input,&job) {invalid=Some(code);}
-            let goal:String=input.prompt.chars().take(256).collect();
-            tasks.push(DelegatedTask{
-                task_key:format!("task_{}_{}",round,index),
-                role:input.agent.clone(),goal,allowed_operations:allowed.clone()
+        let mut tasks = Vec::with_capacity(calls.len());
+        let mut inputs = Vec::with_capacity(calls.len());
+        let frozen = job
+            .plugin_choices
+            .as_array()
+            .ok_or(JobError::DatabaseUnavailable)?;
+        let allowed: Vec<String> = frozen
+            .iter()
+            .map(|v| {
+                format!(
+                    "{}.{}",
+                    v["plugin_id"].as_str().unwrap_or(""),
+                    v["operation"].as_str().unwrap_or("")
+                )
+            })
+            .collect();
+        if allowed.len() > 16 {
+            return Err(JobError::CapacityUnavailable);
+        }
+        let mut invalid: Option<&'static str> = None;
+        for (index, call) in calls.iter().enumerate() {
+            let input: V3SubagentInput = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| JobError::InvalidPlan)?;
+            if let Err(code) = v3_validate_subagent(&input, &job) {
+                invalid = Some(code);
+            }
+            let goal: String = input.description.chars().take(256).collect();
+            tasks.push(DelegatedTask {
+                task_key: format!("task_{}_{}", round, index),
+                role: input.agent.clone(),
+                goal,
+                allowed_operations: allowed.clone(),
             });
             inputs.push(input);
         }
         if invalid.is_none() {
-            let mut sessions=std::collections::HashSet::new();
+            let mut sessions = std::collections::HashSet::new();
             for input in &inputs {
                 if let Some(session) = input.session_id.as_deref() {
                     if !sessions.insert(session) {
-                        invalid=Some("session_busy");
+                        invalid = Some("session_busy");
                         break;
                     }
-                    if let Err(error) = engine.database.v3_preflight_child_resume(
-                        job_id,&root.agent_run_id,session,&input.agent,&job.snapshot.worker
-                    ).await {
-                        invalid=Some(match error {
-                            JobError::CapacityUnavailable=>"session_busy",
-                            JobError::InvalidArguments=>"session_access_denied",
-                            _=>return Err(error)
+                    if let Err(error) = engine
+                        .database
+                        .v3_preflight_child_resume(
+                            job_id,
+                            &root.agent_run_id,
+                            session,
+                            &input.agent,
+                            &job.snapshot.worker,
+                        )
+                        .await
+                    {
+                        invalid = Some(match error {
+                            JobError::CapacityUnavailable => "session_busy",
+                            JobError::InvalidArguments => "session_access_denied",
+                            _ => return Err(error),
                         });
                         break;
                     }
                 }
             }
         }
-        if let Some(code)=invalid {
-            engine.database.record_agent_decision(&context,false,json!({
-                "validation_code":code,"validation_path":"$.tool_calls[0].arguments",
-                "attempt_no":round
-            })).await?;
-            let mut messages=vec![ChatMessage::AssistantToolCalls{calls:calls.clone()}];
+        if let Some(code) = invalid {
+            engine
+                .database
+                .record_agent_decision(
+                    &context,
+                    false,
+                    json!({
+                        "validation_code":code,"validation_path":"$.tool_calls[0].arguments",
+                        "attempt_no":round
+                    }),
+                )
+                .await?;
+            let mut messages = vec![ChatMessage::AssistantToolCalls {
+                calls: calls.clone(),
+            }];
             for call in &calls {
-                messages.push(ChatMessage::ToolResult{
-                    tool_call_id:call.id.clone(),
-                    content:json!({"status":"failed","error_code":code}).to_string()
+                messages.push(ChatMessage::ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: json!({"status":"failed","error_code":code}).to_string(),
                 });
             }
-            engine.database.v3_append_messages(job_id,&root_session,&messages).await?;
+            engine
+                .database
+                .v3_append_messages(job_id, &root_session, &messages)
+                .await?;
+            repairs += 1;
+            if repairs > job.snapshot.limits.max_plan_repairs {
+                return Err(JobError::InvalidPlan);
+            }
             continue;
         }
 
-        engine.database.record_agent_decision(&context,true,json!({
-            "action":"delegate","attempt_no":round
-        })).await?;
-        let turn_id=last_turn_id(engine,job_id,&root.agent_run_id).await?;
-        let children=engine.database.create_children_for_decision(
-            job_id,&root.agent_run_id,&turn_id,&tasks
-        ).await?;
-        let mut attached=Vec::with_capacity(children.len());
-        for (child,input) in children.iter().zip(inputs.iter()) {
-            let session=engine.database.attach_v3_child_session(
-                job_id,&root.agent_run_id,&child.agent_run_id,&input.agent,
-                input.session_id.as_deref(),&job.snapshot.worker,
-                v3_agent_instruction(&input.agent),&input.prompt
-            ).await?;
-            attached.push(session);
-        }
-        engine.database.v3_append_messages(job_id,&root_session,&[
-            ChatMessage::AssistantToolCalls{calls:calls.clone()}
-        ]).await?;
-        if children.len()==1 {
-            finish_child_v3(engine,&job,&children[0],cancellation.clone()).await?;
-        } else {
-            let (a,b)=tokio::join!(
-                finish_child_v3(engine,&job,&children[0],cancellation.clone()),
-                finish_child_v3(engine,&job,&children[1],cancellation.clone())
+        engine
+            .database
+            .record_agent_decision(
+                &context,
+                true,
+                json!({
+                    "action":"delegate","attempt_no":round
+                }),
+            )
+            .await?;
+        let turn_id = last_turn_id(engine, job_id, &root.agent_run_id).await?;
+        let sessions: Vec<_> = inputs
+            .iter()
+            .map(|input| crate::database::jobs::V3SessionTask {
+                agent_key: &input.agent,
+                resume_session_id: input.session_id.as_deref(),
+                pin: &job.snapshot.worker,
+                system: v3_agent_instruction(&input.agent),
+                prompt: &input.prompt,
+            })
+            .collect();
+        let children = engine
+            .database
+            .create_v3_children(
+                job_id,
+                &root.agent_run_id,
+                &turn_id,
+                &tasks,
+                &sessions,
+                &calls,
+            )
+            .await?;
+        let mut attached = Vec::with_capacity(children.len());
+        for child in &children {
+            attached.push(
+                engine
+                    .database
+                    .v3_session_for_run(job_id, &child.agent_run_id)
+                    .await?,
             );
-            a?;b?;
         }
-        let completed=engine.database.join_children(job_id,&root.agent_run_id,&turn_id).await?;
-        let mut feedback=Vec::with_capacity(calls.len());
-        for ((call,child),session) in calls.iter().zip(completed.iter()).zip(attached.iter()) {
-            feedback.push(ChatMessage::ToolResult{
-                tool_call_id:call.id.clone(),
-                content:json!({"sessionID":session,"status":if child.status=="succeeded" {"completed"} else {child.status.as_str()},
-                    "output":child.result.as_ref().map(|value|value["summary"].as_str().unwrap_or("")).unwrap_or(""),
-                    "artifact_refs":child.result.as_ref().map(|v|v["evidence_refs"].clone()).unwrap_or_else(||json!([])),
-                    "error_code":child.error_code
-                }).to_string()
+        if children.len() == 1 {
+            finish_child_v3(engine, &job, &children[0], cancellation.clone()).await?;
+        } else {
+            let (a, b) = tokio::join!(
+                finish_child_v3(engine, &job, &children[0], cancellation.clone()),
+                finish_child_v3(engine, &job, &children[1], cancellation.clone())
+            );
+            a?;
+            b?;
+        }
+        let completed = engine
+            .database
+            .join_children(job_id, &root.agent_run_id, &turn_id)
+            .await?;
+        let mut feedback = Vec::with_capacity(calls.len());
+        for ((call, child), session) in calls.iter().zip(completed.iter()).zip(attached.iter()) {
+            feedback.push(ChatMessage::ToolResult {
+                tool_call_id: call.id.clone(),
+                content: serde_json::to_string(&V3ChildOutcome::from_run(session, child)?)
+                    .map_err(|_| JobError::InvalidPlan)?,
             });
         }
-        engine.database.v3_append_messages(job_id,&root_session,&feedback).await?;
-        repairs=0;
+        engine
+            .database
+            .v3_append_messages(job_id, &root_session, &feedback)
+            .await?;
+        repairs = 0;
     }
     Err(JobError::CapacityUnavailable)
 }
 
 async fn finish_child_v3(
-    engine:&JobEngine, job:&JobView, child:&AgentRunView, cancel:CancellationToken
-)->Result<(),JobError>{
-    let outcome=run_child_v3(engine,job,child,cancel).await;
-    let (state,result,error)=match outcome {
-        Ok(value)=>("succeeded",Some(serde_json::to_value(value).map_err(|_|JobError::InvalidPlan)?),None),
-        Err(code)=>(if code==JobError::Cancelled {"cancelled"} else {"failed"},None,Some(code.code())),
+    engine: &JobEngine,
+    job: &JobView,
+    child: &AgentRunView,
+    cancel: CancellationToken,
+) -> Result<(), JobError> {
+    let outcome = run_child_v3(engine, job, child, cancel).await;
+    let (state, result, error) = match outcome {
+        Ok(value) => (
+            "succeeded",
+            Some(serde_json::to_value(value).map_err(|_| JobError::InvalidPlan)?),
+            None,
+        ),
+        Err(code) => (
+            if code == JobError::Cancelled {
+                "cancelled"
+            } else {
+                "failed"
+            },
+            None,
+            Some(code.code()),
+        ),
     };
-    engine.database.finish_child_run(&job.id,&child.agent_run_id,state,result.as_ref(),error).await
+    engine
+        .database
+        .finish_child_run(&job.id, &child.agent_run_id, state, result.as_ref(), error)
+        .await
 }
 
 #[cfg(test)]

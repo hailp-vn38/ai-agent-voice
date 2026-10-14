@@ -353,6 +353,11 @@ enabled = false # Read-only tools for authenticated Studio Assistant sessions.
 # Shared plugin runtime; sockets and directories must be mounted by compose.yaml.
 # Background enablement and LLM choices remain Admin settings.
 [background]
+# V3 stays off until native provider and deployment E2E qualification pass.
+# Then set hierarchical_v3_qualified_pins to the two JSON-serialized snapshot
+# ProviderPins [orchestrator, worker] from a qualified Job. Any pin change rejects
+# new V3 submissions; removing the field restores V2 for new submissions.
+# See docs/agent-job-opencode-implementation.md for rollout and acceptance.
 plugin_installer_socket = "/run/plugin-installer/installer.sock"
 plugin_runner_socket = "/run/plugin-runner/runner.sock"
 plugin_installations_dir = "data/plugins/installations"

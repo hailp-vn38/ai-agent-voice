@@ -264,6 +264,10 @@ impl LlmRuntime {
     }
 
     /// Background has no single-slot diagnostic exception and cannot borrow Voice reservation.
+    pub(crate) fn has_background_capacity(&self) -> bool {
+        self.admission.has_background_capacity()
+    }
+
     pub fn admit_background(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
         let _state = self.cancellations.lock().expect("LLM cancellations lock");
         if self.closed.load(Ordering::Acquire) {

@@ -66,7 +66,11 @@ pub(crate) trait JobModels: Send + Sync {
                     usage: None,
                 })
             }
-            crate::providers::llm::BackgroundMode::Tools | crate::providers::llm::BackgroundMode::ToolsAuto | crate::providers::llm::BackgroundMode::ToolsParallel => Err(JobError::CapabilityUnavailable),
+            crate::providers::llm::BackgroundMode::Tools
+            | crate::providers::llm::BackgroundMode::ToolsAuto
+            | crate::providers::llm::BackgroundMode::ToolsParallel => {
+                Err(JobError::CapabilityUnavailable)
+            }
         }
     }
     async fn complete_traced(
@@ -186,6 +190,9 @@ impl ManagedModels {
             .get(&key)
             .cloned()
             .ok_or(JobError::ProviderUnavailable)?;
+        if !runtime.has_background_capacity() {
+            return Err(JobError::CapacityUnavailable);
+        }
         Ok((lease, runtime, adapter, model, transport))
     }
 
@@ -250,16 +257,7 @@ impl ManagedModels {
         .await;
         let deadline = tokio::time::Instant::now() + remaining(deadline_at)?;
         let capacity_wait_started = std::time::Instant::now();
-        let permit = loop {
-            match runtime.admit_background() {
-                Ok(permit) => break permit,
-                Err(_) => tokio::select! {
-                    _ = cancellation.cancelled() => return Err(JobError::Cancelled),
-                    _ = tokio::time::sleep_until(deadline) => return Err(JobError::DeadlineExceeded),
-                    _ = tokio::time::sleep(Duration::from_millis(20)) => {},
-                },
-            }
-        };
+        let permit = wait_background(&runtime, deadline, &cancellation).await?;
         let capacity_wait_ms = capacity_wait_started.elapsed().as_millis() as u64;
         tracing::info!(event="background_provider_permit", job_id, provider=%previous.reference, capacity_wait_ms);
         let publication = self.database.tool_security.publication.read().await;
@@ -450,5 +448,73 @@ impl JobModels for ManagedModels {
         )
         .await
         .and_then(legacy_text)
+    }
+}
+
+/// Static zero capacity is an admission error; dynamic contention is bounded.
+async fn wait_background(
+    runtime: &crate::workers::LlmRuntime,
+    deadline: tokio::time::Instant,
+    cancellation: &CancellationToken,
+) -> Result<crate::workers::ProviderCapacityPermit, JobError> {
+    if !runtime.has_background_capacity() {
+        return Err(JobError::CapacityUnavailable);
+    }
+    loop {
+        if cancellation.is_cancelled() {
+            return Err(JobError::Cancelled);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(JobError::DeadlineExceeded);
+        }
+        if let Ok(permit) = runtime.admit_background() {
+            return Ok(permit);
+        }
+        tokio::select! {
+            _ = cancellation.cancelled() => return Err(JobError::Cancelled),
+            _ = tokio::time::sleep_until(deadline) => return Err(JobError::DeadlineExceeded),
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {},
+        }
+    }
+}
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+    #[tokio::test]
+    async fn v3_background_static_zero_rejects_and_dynamic_wait_obeys_deadline_and_cancellation() {
+        let provider = Arc::new(crate::providers::llm::UnavailableLlm);
+        let zero = crate::workers::LlmRuntime::new(provider.clone(), 1, Duration::from_secs(1));
+        let cancel = CancellationToken::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        assert!(matches!(
+            wait_background(&zero, deadline, &cancel).await,
+            Err(JobError::CapacityUnavailable)
+        ));
+        let dynamic = crate::workers::LlmRuntime::new(provider, 2, Duration::from_secs(1));
+        let held = dynamic.admit_background().unwrap();
+        assert!(
+            dynamic.has_background_capacity(),
+            "contention is not static zero capacity"
+        );
+        assert!(matches!(
+            wait_background(
+                &dynamic,
+                tokio::time::Instant::now() + Duration::from_millis(30),
+                &cancel
+            )
+            .await,
+            Err(JobError::DeadlineExceeded)
+        ));
+        cancel.cancel();
+        assert!(matches!(
+            wait_background(&dynamic, deadline, &cancel).await,
+            Err(JobError::Cancelled)
+        ));
+        drop(held);
+        assert!(
+            wait_background(&dynamic, deadline, &CancellationToken::new())
+                .await
+                .is_ok()
+        );
     }
 }

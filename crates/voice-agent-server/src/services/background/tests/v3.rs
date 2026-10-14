@@ -1,0 +1,313 @@
+//! Deterministic V3 executor acceptance, using real Core operation execution.
+use super::super::models::JobModels;
+use super::*;
+use crate::providers::llm::{
+    BackgroundMode, BackgroundTurn, BackgroundTurnResult, ChatMessage, LlmRequest, ToolCall,
+};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio_util::sync::CancellationToken;
+
+fn call(id: &str, name: &str, arguments: Value) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments,
+    }
+}
+fn delegate(id: &str, description: &str) -> ToolCall {
+    call(
+        id,
+        "subagent",
+        json!({"agent":"research","description":description,
+        "prompt":format!("PRIVATE_PROMPT_{description}: complete this task"),
+        "model":null,"sessionID":null,"background":false}),
+    )
+}
+fn finish() -> ToolCall {
+    call(
+        "finish",
+        "finish_job",
+        json!({"summary":"Done","findings":[],"evidence_refs":[],"unresolved":[]}),
+    )
+}
+struct Scenario {
+    chain: bool,
+    invalid: bool,
+    semantic: Option<&'static str>,
+    root_round: AtomicUsize,
+    child_round: AtomicUsize,
+}
+#[async_trait::async_trait]
+impl JobModels for Scenario {
+    async fn complete(
+        &self,
+        _: &str,
+        _: &ProviderPin,
+        _: LlmRequest,
+        _: i64,
+        _: CancellationToken,
+    ) -> Result<String, JobError> {
+        panic!("V3 must not use free-text decisions")
+    }
+    async fn turn_traced(
+        &self,
+        _: &model::LlmRunContext,
+        _: &ProviderPin,
+        request: LlmRequest,
+        mode: BackgroundMode,
+        _: i64,
+        _: CancellationToken,
+    ) -> Result<BackgroundTurnResult, JobError> {
+        let turn = if request.tools.iter().any(|t| t.name == "subagent") {
+            assert!(matches!(mode, BackgroundMode::ToolsParallel));
+            let round = self.root_round.fetch_add(1, Ordering::SeqCst);
+            if round == 0 {
+                if self.invalid {
+                    let mut bad = delegate("bad", "invalid");
+                    // Violates the SOURCE schema; serde's defaults must not authorize this.
+                    if let Some(mode) = self.semantic {
+                        match mode {
+                            "model" => bad.arguments["model"] = json!("config:llm:foreign"),
+                            "session" => bad.arguments["sessionID"] = json!("foreign-session"),
+                            "background" => bad.arguments["background"] = json!(true),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        bad.arguments.as_object_mut().unwrap().remove("background");
+                    }
+                    BackgroundTurn::ToolCalls(vec![delegate("valid", "valid"), bad])
+                } else if self.chain {
+                    BackgroundTurn::ToolCalls(vec![delegate("chain", "chain")])
+                } else {
+                    BackgroundTurn::ToolCalls(vec![
+                        delegate("good", "good"),
+                        delegate("failure", "failure"),
+                    ])
+                }
+            } else {
+                let results: Vec<Value> = request
+                    .messages
+                    .iter()
+                    .filter_map(|m| match m {
+                        ChatMessage::ToolResult { content, .. } => {
+                            Some(serde_json::from_str(content).unwrap())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if self.invalid {
+                    let code = match self.semantic {
+                        Some("model") => "model_not_allowed",
+                        Some("session") => "session_access_denied",
+                        Some("background") => "background_subagent_not_enabled",
+                        _ => "agent_tool_protocol_error",
+                    };
+                    assert!(results.len() >= 2);
+                    assert!(results.iter().take(2).all(|r| r["error_code"] == code));
+                } else if !self.chain {
+                    assert_eq!(results.len(), 2);
+                    assert_eq!(
+                        results
+                            .iter()
+                            .filter(|r| r["status"] == "completed")
+                            .count(),
+                        1
+                    );
+                    assert_eq!(
+                        results.iter().filter(|r| r["status"] == "failed").count(),
+                        1
+                    );
+                }
+                let mut final_call = finish();
+                final_call.id = format!("finish_{round}");
+                BackgroundTurn::ToolCalls(vec![final_call])
+            }
+        } else {
+            assert!(matches!(mode, BackgroundMode::ToolsAuto));
+            let prompt = request
+                .messages
+                .iter()
+                .find_map(|m| match m {
+                    ChatMessage::User { content } => Some(content.as_str()),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(request.messages.iter().any(|m|matches!(m,ChatMessage::System{content} if content.contains("Research Sub-Agent"))));
+            if prompt.contains("PRIVATE_PROMPT_failure") {
+                return Err(JobError::ModelFailed);
+            }
+            let round = self.child_round.fetch_add(1, Ordering::SeqCst);
+            if self.chain && round < 2 {
+                let (name, args) = if round == 0 {
+                    (
+                        "p_core_data_json_query",
+                        json!({"json_text":"{\"name\":\"Ada\"}","pointer":"/name"}),
+                    )
+                } else {
+                    (
+                        "p_core_data_transform",
+                        json!({"json_text":"{\"name\":\"Ada\",\"age\":20}","mode":"pick","fields":["name"],"field":null,"equals":null}),
+                    )
+                };
+                assert!(request.tools.iter().any(|t| t.name == name));
+                if round == 1 {
+                    assert!(request.messages.iter().any(|m|matches!(m,ChatMessage::ToolResult{tool_call_id,..} if tool_call_id=="tool_a")));
+                }
+                BackgroundTurn::ToolCalls(vec![call(
+                    if round == 0 { "tool_a" } else { "tool_b" },
+                    name,
+                    args,
+                )])
+            } else {
+                BackgroundTurn::Text("PRIVATE_CHILD_OUTPUT: Ada".into())
+            }
+        };
+        Ok(BackgroundTurnResult { turn, usage: None })
+    }
+}
+async fn execute(chain: bool, invalid: bool) -> (Arc<Database>, JobView) {
+    execute_scenario(chain, invalid, None).await
+}
+async fn execute_scenario(
+    chain: bool,
+    invalid: bool,
+    semantic: Option<&'static str>,
+) -> (Arc<Database>, JobView) {
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::execution_harness(
+        db.clone(),
+        config,
+        Arc::new(Scenario {
+            chain,
+            invalid,
+            semantic,
+            root_round: AtomicUsize::new(0),
+            child_round: AtomicUsize::new(0),
+        }),
+    )
+    .await
+    .unwrap();
+    enable(&runtime.engine).await;
+    let job = db
+        .submit_job(
+            &runtime.engine.config,
+            request("V3 acceptance"),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                test_execution_mode: Some("hierarchical_v3"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || true,
+        )
+        .await
+        .unwrap()
+        .job;
+    runtime.engine.wake.notify_one();
+    let result = wait_for(&runtime.engine, &job.id, |j| {
+        matches!(j.status.as_str(), "succeeded" | "failed")
+    })
+    .await;
+    runtime.shutdown().await;
+    (db, result)
+}
+#[tokio::test]
+async fn v3_child_tool_chain_persists_pairs_then_final_text_and_metadata_only_events() {
+    let (db, job) = execute(true, false).await;
+    assert_eq!(job.status, "succeeded", "{:?}", job.error_code);
+    assert_eq!(job.steps.len(), 2);
+    assert!(job.steps.iter().all(|s| s.status == "succeeded"));
+    let child = job
+        .agent_runs
+        .iter()
+        .find(|r| r.parent_agent_run_id.is_some())
+        .unwrap();
+    assert_eq!(
+        child.goal_excerpt, "chain",
+        "display title must not expose full task prompt"
+    );
+    let sid = db
+        .v3_session_for_run(&job.id, &child.agent_run_id)
+        .await
+        .unwrap();
+    let history = db.v3_read_messages(&job.id, &sid).await.unwrap();
+    for id in ["tool_a", "tool_b"] {
+        assert_eq!(
+            history
+                .iter()
+                .filter(|m| matches!(m,ChatMessage::AssistantToolCalls{calls} if calls[0].id==id))
+                .count(),
+            1
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(
+                    |m| matches!(m,ChatMessage::ToolResult{tool_call_id,..} if tool_call_id==id)
+                )
+                .count(),
+            1
+        );
+    }
+    assert!(matches!(
+        history.last().unwrap(),
+        ChatMessage::AssistantText { .. }
+    ));
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
+    let wire = serde_json::to_string(&events).unwrap();
+    assert!(!wire.contains("PRIVATE_PROMPT"));
+    assert!(!wire.contains("PRIVATE_CHILD_OUTPUT"));
+    // Terminal deletion must remove both sessions and transcript, with FK checks on.
+    db.delete_terminal_job(&job.id).await.unwrap();
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM job_agent_sessions WHERE job_id=?")
+            .bind(&job.id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0);
+}
+#[tokio::test]
+async fn v3_one_failed_child_still_joins_and_delivers_both_outcomes() {
+    let (db, job) = execute(false, false).await;
+    assert_eq!(job.status, "failed");
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.event_type == "join_completed")
+            .count(),
+        1
+    );
+    assert_eq!(
+        job.agent_runs
+            .iter()
+            .filter(|r| r.parent_agent_run_id.is_some() && r.status == "succeeded")
+            .count(),
+        1
+    );
+}
+#[tokio::test]
+async fn v3_schema_invalid_second_call_rejects_whole_batch_without_children_or_steps() {
+    let (_, job) = execute(false, true).await;
+    assert_eq!(job.agent_runs.len(), 1);
+    assert!(job.steps.is_empty());
+}
+
+#[tokio::test]
+async fn v3_unauthorized_model_session_or_background_rejects_whole_batch_with_paired_errors() {
+    for violation in ["model", "session", "background"] {
+        let (_, job) = execute_scenario(false, true, Some(violation)).await;
+        assert_eq!(
+            job.agent_runs.len(),
+            1,
+            "{violation} must reject the valid sibling too"
+        );
+        assert!(job.steps.is_empty());
+        assert_eq!(
+            job.status, "failed",
+            "Root text alone must not bypass completion validation"
+        );
+    }
+}

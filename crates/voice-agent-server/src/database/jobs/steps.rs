@@ -96,6 +96,19 @@ impl Database {
     }
 
     /// A Child may cite its own persisted evidence, never another fork member's.
+    pub(crate) async fn v3_child_artifact_refs(
+        &self,
+        job_id: &str,
+        agent_run_id: &str,
+    ) -> Result<Vec<String>, JobError> {
+        sqlx::query_scalar(
+            "SELECT a.id FROM job_artifacts a JOIN job_steps s ON s.job_id=a.job_id AND s.step_key=a.step_key
+             JOIN job_agent_runs owner ON owner.job_id=s.job_id AND owner.agent_run_id=s.agent_run_id
+             JOIN job_agent_runs current ON current.job_id=owner.job_id AND current.session_id=owner.session_id
+             WHERE a.job_id=? AND current.agent_run_id=? AND s.status='succeeded' ORDER BY a.id LIMIT 64"
+        ).bind(job_id).bind(agent_run_id).fetch_all(self.pool()).await.map_err(Into::into)
+    }
+
     pub(crate) async fn job_child_artifact_refs(
         &self,
         job_id: &str,

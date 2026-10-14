@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BackgroundConfig {
+    /// Operator release attestation after native/E2E qualification. Each string
+    /// is the serialized ProviderPin (Root, Child); any route change invalidates it.
+    /// Absent means new submissions retain hierarchical_v2.
+    #[serde(default)]
+    pub hierarchical_v3_qualified_pins: Option<[String; 2]>,
     #[serde(default)]
     pub limits: BackgroundLimits,
     /// Private shared-runtime Unix sockets (mounted through Compose).

@@ -604,75 +604,77 @@ impl JobModels for AdversarialChildModels {
         use crate::providers::llm::{
             BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall,
         };
-        let turn =
-            match mode {
-                BackgroundMode::Structured { .. } => {
-                    let input = request
-                        .messages
-                        .iter()
-                        .find_map(|m| {
-                            if let ChatMessage::User { content } = m {
-                                serde_json::from_str::<Value>(content).ok()
-                            } else {
-                                None
-                            }
-                        })
-                        .ok_or(JobError::InvalidPlan)?;
-                    if input["joined_children"]
-                        .as_array()
-                        .is_some_and(Vec::is_empty)
-                    {
-                        BackgroundTurn::Text(json!({"decision":{"action":"delegate","tasks":[{
-                        "task_key":"research","role":"research","goal":"Inspect a reference",
-                        "allowed_operations":[]
-                    }]}}).to_string())
-                    } else {
-                        BackgroundTurn::Text(
-                            json!({"decision":{"action":"finish","result":{
-                                "summary":"Child did not provide usable evidence",
-                                "findings":[],"evidence_refs":[],"unresolved":["Child failed"]
-                            }}})
-                            .to_string(),
-                        )
-                    }
+        let turn = match mode {
+            BackgroundMode::Structured { .. } => {
+                let input = request
+                    .messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::User { content } = m {
+                            serde_json::from_str::<Value>(content).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or(JobError::InvalidPlan)?;
+                if input["joined_children"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+                {
+                    BackgroundTurn::Text(
+                        json!({"decision":{"action":"delegate","tasks":[{
+                            "task_key":"research","role":"research","goal":"Inspect a reference",
+                            "allowed_operations":[]
+                        }]}})
+                        .to_string(),
+                    )
+                } else {
+                    BackgroundTurn::Text(
+                        json!({"decision":{"action":"finish","result":{
+                            "summary":"Child did not provide usable evidence",
+                            "findings":[],"evidence_refs":[],"unresolved":["Child failed"]
+                        }}})
+                        .to_string(),
+                    )
                 }
-                BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
-                    assert_eq!(
-                        request.tools.len(),
-                        1,
-                        "only internal completion tool should be exposed"
-                    );
-                    assert_eq!(request.tools[0].name, "submit_result");
-                    let n = self
-                        .attempts
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let call = ToolCall {
-                        id: format!("call_{n}"),
-                        name: "submit_result".into(),
-                        arguments: json!({"status":"completed","summary":"claimed",
+            }
+            BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
+                assert_eq!(
+                    request.tools.len(),
+                    1,
+                    "only internal completion tool should be exposed"
+                );
+                assert_eq!(request.tools[0].name, "submit_result");
+                let n = self
+                    .attempts
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let call = ToolCall {
+                    id: format!("call_{n}"),
+                    name: "submit_result".into(),
+                    arguments: json!({"status":"completed","summary":"claimed",
                         "findings":[],"evidence_refs":[],"unresolved":[]}),
-                    };
-                    let calls = match self.kind {
-                        RejectedChildKind::MultipleCalls => vec![
-                            call.clone(),
-                            ToolCall {
-                                id: format!("extra_{n}"),
-                                ..call
-                            },
-                        ],
-                        RejectedChildKind::UnknownFunction => vec![ToolCall {
-                            name: "unfrozen_plugin".into(),
+                };
+                let calls = match self.kind {
+                    RejectedChildKind::MultipleCalls => vec![
+                        call.clone(),
+                        ToolCall {
+                            id: format!("extra_{n}"),
                             ..call
-                        }],
-                        RejectedChildKind::FakeEvidence => vec![ToolCall {
-                            arguments: json!({"status":"completed","summary":"claimed",
+                        },
+                    ],
+                    RejectedChildKind::UnknownFunction => vec![ToolCall {
+                        name: "unfrozen_plugin".into(),
+                        ..call
+                    }],
+                    RejectedChildKind::FakeEvidence => vec![ToolCall {
+                        arguments: json!({"status":"completed","summary":"claimed",
                             "findings":[],"evidence_refs":["forged_artifact"],"unresolved":[]}),
-                            ..call
-                        }],
-                    };
-                    BackgroundTurn::ToolCalls(calls)
-                }
-            };
+                        ..call
+                    }],
+                };
+                BackgroundTurn::ToolCalls(calls)
+            }
+        };
         Ok(BackgroundTurnResult { turn, usage: None })
     }
 }
@@ -744,8 +746,6 @@ async fn invalid_native_child_calls_never_create_plugin_steps() {
     }
 }
 
-
-
 struct V3SessionModels;
 
 #[async_trait::async_trait]
@@ -759,36 +759,57 @@ impl JobModels for V3SessionModels {
         _: i64,
         _: CancellationToken,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        use crate::providers::llm::{BackgroundMode,BackgroundTurn,BackgroundTurnResult,ToolCall};
-        let root = request.tools.iter().any(|tool|tool.name == "subagent");
+        use crate::providers::llm::{
+            BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall,
+        };
+        let root = request.tools.iter().any(|tool| tool.name == "subagent");
         let output = if root {
-            assert!(matches!(mode,BackgroundMode::ToolsParallel));
-            if request.messages.iter().any(|m|matches!(m,ChatMessage::ToolResult{..})) {
-                BackgroundTurn::ToolCalls(vec![ToolCall{
-                    id:"root_finish".into(),name:"finish_job".into(),
-                    arguments:json!({"summary":"Research done","findings":[],
+            assert!(matches!(mode, BackgroundMode::ToolsParallel));
+            if request
+                .messages
+                .iter()
+                .any(|m| matches!(m, ChatMessage::ToolResult { .. }))
+            {
+                BackgroundTurn::ToolCalls(vec![ToolCall {
+                    id: "root_finish".into(),
+                    name: "finish_job".into(),
+                    arguments: json!({"summary":"Research done","findings":[],
                         "evidence_refs":[],"unresolved":[]}),
                 }])
             } else {
-                BackgroundTurn::ToolCalls(vec![ToolCall{
-                    id:"root_delegate".into(),name:"subagent".into(),
-                    arguments:json!({"agent":"research",
+                BackgroundTurn::ToolCalls(vec![ToolCall {
+                    id: "root_delegate".into(),
+                    name: "subagent".into(),
+                    arguments: json!({"agent":"research",
                         "description":"Research task",
                         "prompt":"Investigate exact session tool result behavior and report your evidence.",
                         "model":null,"sessionID":null,"background":false}),
                 }])
             }
         } else {
-            assert!(matches!(mode,BackgroundMode::ToolsAuto));
-            assert!(request.messages.iter().any(|m|matches!(m,ChatMessage::User{content}
-                if content.contains("Investigate exact session tool result behavior"))));
+            assert!(matches!(mode, BackgroundMode::ToolsAuto));
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|m| matches!(m,ChatMessage::User{content}
+                if content.contains("Investigate exact session tool result behavior")))
+            );
             BackgroundTurn::Text("Child completed a verified text investigation".into())
         };
-        Ok(BackgroundTurnResult{turn:output,usage:None})
+        Ok(BackgroundTurnResult {
+            turn: output,
+            usage: None,
+        })
     }
 
     async fn complete(
-        &self, _: &str, _: &ProviderPin, _: LlmRequest, _: i64, _: CancellationToken
+        &self,
+        _: &str,
+        _: &ProviderPin,
+        _: LlmRequest,
+        _: i64,
+        _: CancellationToken,
     ) -> Result<String, JobError> {
         Err(JobError::InvalidPlan)
     }
@@ -796,45 +817,86 @@ impl JobModels for V3SessionModels {
 
 #[tokio::test]
 async fn v3_root_subagent_prompt_child_text_and_matched_result_are_durable() {
-    let config=Arc::new(config());
-    let db=Arc::new(Database::connect(&config.database).await.unwrap());
-    let runtime=BackgroundRuntime::execution_harness(
-        db.clone(),config,Arc::new(V3SessionModels)
-    ).await.unwrap();
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime =
+        BackgroundRuntime::execution_harness(db.clone(), config, Arc::new(V3SessionModels))
+            .await
+            .unwrap();
     enable(&runtime.engine).await;
-    let receipt=db.submit_job(
-        &runtime.engine.config,
-        request("Research session tools"),
-        &JobRequester::Admin,
-        crate::database::jobs::SubmissionIdentity {
-            key:Some("v3-e2e"),test_execution_mode:Some("hierarchical_v3"),
-            ..Default::default()
-        },
-        crate::database::unix_seconds().unwrap(),
-        ||runtime.engine.runtime_ready()
-    ).await.unwrap();
-    let job=wait_for(&runtime.engine,&receipt.job.id,|j|j.status=="succeeded").await;
-    assert_eq!(job.execution_mode,"hierarchical_v3");
-    assert_eq!(job.agent_runs.len(),2);
-    let root=job.agent_runs.iter().find(|r|r.parent_agent_run_id.is_none()).unwrap();
-    let child=job.agent_runs.iter().find(|r|r.parent_agent_run_id.is_some()).unwrap();
-    let root_sid=db.v3_session_for_run(&job.id,&root.agent_run_id).await.unwrap();
-    let child_sid=db.v3_session_for_run(&job.id,&child.agent_run_id).await.unwrap();
-    assert_ne!(root_sid,child_sid);
-    let root_messages=db.v3_read_messages(&job.id,&root_sid).await.unwrap();
-    let child_messages=db.v3_read_messages(&job.id,&child_sid).await.unwrap();
-    assert!(child_messages.iter().any(|msg|matches!(msg,ChatMessage::User{content}
-        if content.contains("Investigate exact session tool result behavior"))));
-    assert!(child_messages.iter().any(|msg|matches!(msg,ChatMessage::AssistantText{content}
-        if content.contains("verified text investigation"))));
-    assert!(root_messages.iter().any(|msg|matches!(msg,ChatMessage::AssistantToolCalls{calls}
-        if calls.iter().any(|c|c.id=="root_delegate"))));
-    assert!(root_messages.iter().any(|msg|matches!(msg,ChatMessage::ToolResult{tool_call_id,content}
-        if tool_call_id=="root_delegate" && content.contains(&child_sid))));
-    let events=db.job_events(&job.id,0,100).await.unwrap();
-    assert_eq!(events.iter().filter(|e|e.event_type=="join_completed").count(),1);
+    let receipt = db
+        .submit_job(
+            &runtime.engine.config,
+            request("Research session tools"),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                key: Some("v3-e2e"),
+                test_execution_mode: Some("hierarchical_v3"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || runtime.engine.runtime_ready(),
+        )
+        .await
+        .unwrap();
+    let job = wait_for(&runtime.engine, &receipt.job.id, |j| {
+        j.status == "succeeded"
+    })
+    .await;
+    assert_eq!(job.execution_mode, "hierarchical_v3");
+    assert_eq!(job.agent_runs.len(), 2);
+    let root = job
+        .agent_runs
+        .iter()
+        .find(|r| r.parent_agent_run_id.is_none())
+        .unwrap();
+    let child = job
+        .agent_runs
+        .iter()
+        .find(|r| r.parent_agent_run_id.is_some())
+        .unwrap();
+    let root_sid = db
+        .v3_session_for_run(&job.id, &root.agent_run_id)
+        .await
+        .unwrap();
+    let child_sid = db
+        .v3_session_for_run(&job.id, &child.agent_run_id)
+        .await
+        .unwrap();
+    assert_ne!(root_sid, child_sid);
+    let root_messages = db.v3_read_messages(&job.id, &root_sid).await.unwrap();
+    let child_messages = db.v3_read_messages(&job.id, &child_sid).await.unwrap();
+    assert!(
+        child_messages
+            .iter()
+            .any(|msg| matches!(msg,ChatMessage::User{content}
+        if content.contains("Investigate exact session tool result behavior")))
+    );
+    assert!(
+        child_messages
+            .iter()
+            .any(|msg| matches!(msg,ChatMessage::AssistantText{content}
+        if content.contains("verified text investigation")))
+    );
+    assert!(
+        root_messages
+            .iter()
+            .any(|msg| matches!(msg,ChatMessage::AssistantToolCalls{calls}
+        if calls.iter().any(|c|c.id=="root_delegate")))
+    );
+    assert!(root_messages.iter().any(
+        |msg| matches!(msg,ChatMessage::ToolResult{tool_call_id,content}
+        if tool_call_id=="root_delegate" && content.contains(&child_sid))
+    ));
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.event_type == "join_completed")
+            .count(),
+        1
+    );
 }
-
 
 struct V3DelegationModels {
     resume: bool,
@@ -850,127 +912,227 @@ impl JobModels for V3DelegationModels {
         mode: crate::providers::llm::BackgroundMode,
         _: i64,
         _: CancellationToken,
-    ) -> Result<crate::providers::llm::BackgroundTurnResult,JobError> {
-        use crate::providers::llm::{BackgroundMode,BackgroundTurn,BackgroundTurnResult,ToolCall};
-        let make_sub = |id:&str,agent:&str,prompt:&str,session:Option<String>| ToolCall {
-            id:id.into(),name:"subagent".into(),
-            arguments:json!({"agent":agent,"description":"Investigate",
-                "prompt":prompt,"model":null,"sessionID":session,"background":false})
+    ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
+        use crate::providers::llm::{
+            BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall,
         };
-        let root=request.tools.iter().any(|t|t.name=="subagent");
-        let turn=if root {
-            assert!(matches!(mode,BackgroundMode::ToolsParallel));
-            let outcomes:Vec<_>=request.messages.iter().filter_map(|msg|{
-                if let ChatMessage::ToolResult{content,..}=msg {
-                    serde_json::from_str::<serde_json::Value>(content).ok()
-                } else { None }
-            }).filter(|v|v.get("sessionID").is_some()).collect();
+        let make_sub = |id: &str, agent: &str, prompt: &str, session: Option<String>| ToolCall {
+            id: id.into(),
+            name: "subagent".into(),
+            arguments: json!({"agent":agent,"description":"Investigate",
+                "prompt":prompt,"model":null,"sessionID":session,"background":false}),
+        };
+        let root = request.tools.iter().any(|t| t.name == "subagent");
+        let turn = if root {
+            assert!(matches!(mode, BackgroundMode::ToolsParallel));
+            let outcomes: Vec<_> = request
+                .messages
+                .iter()
+                .filter_map(|msg| {
+                    if let ChatMessage::ToolResult { content, .. } = msg {
+                        serde_json::from_str::<serde_json::Value>(content).ok()
+                    } else {
+                        None
+                    }
+                })
+                .filter(|v| v.get("sessionID").is_some())
+                .collect();
             if outcomes.is_empty() {
                 if self.resume {
-                    BackgroundTurn::ToolCalls(vec![make_sub("start_1","research","Initial analysis",None)])
+                    BackgroundTurn::ToolCalls(vec![make_sub(
+                        "start_1",
+                        "research",
+                        "Initial analysis",
+                        None,
+                    )])
                 } else {
                     BackgroundTurn::ToolCalls(vec![
-                        make_sub("parallel_a","research","Research architecture",None),
-                        make_sub("parallel_b","document","Summarize architecture",None)
+                        make_sub("parallel_a", "research", "Research architecture", None),
+                        make_sub("parallel_b", "document", "Summarize architecture", None),
                     ])
                 }
-            } else if self.resume && outcomes.len()==1 {
-                let session=outcomes[0]["sessionID"].as_str().unwrap();
+            } else if self.resume && outcomes.len() == 1 {
+                let session = outcomes[0]["sessionID"].as_str().unwrap();
                 BackgroundTurn::ToolCalls(vec![make_sub(
-                    "resume_2","research","Verify previous findings",Some(session.into())
+                    "resume_2",
+                    "research",
+                    "Verify previous findings",
+                    Some(session.into()),
                 )])
             } else {
-                BackgroundTurn::ToolCalls(vec![ToolCall{
-                    id:"end_3".into(),name:"finish_job".into(),
-                    arguments:json!({"summary":"Tasks completed","findings":[],
-                        "evidence_refs":[],"unresolved":[]})
+                BackgroundTurn::ToolCalls(vec![ToolCall {
+                    id: "end_3".into(),
+                    name: "finish_job".into(),
+                    arguments: json!({"summary":"Tasks completed","findings":[],
+                        "evidence_refs":[],"unresolved":[]}),
                 }])
             }
         } else {
-            assert!(matches!(mode,BackgroundMode::ToolsAuto));
+            assert!(matches!(mode, BackgroundMode::ToolsAuto));
             let resumed=request.messages.iter().any(|msg|
                 matches!(msg,ChatMessage::User{content} if content=="Verify previous findings")
             );
             if resumed {
-                assert!(request.messages.iter().any(|msg|matches!(msg,ChatMessage::AssistantText{content}
-                    if content=="Initial analysis completed")));
+                assert!(
+                    request
+                        .messages
+                        .iter()
+                        .any(|msg| matches!(msg,ChatMessage::AssistantText{content}
+                    if content=="Initial analysis completed"))
+                );
                 BackgroundTurn::Text("Verification completed".into())
-            } else if request.messages.iter().any(|msg|matches!(msg,ChatMessage::User{content}
-                if content=="Initial analysis")) {
+            } else if request.messages.iter().any(|msg| {
+                matches!(msg,ChatMessage::User{content}
+                if content=="Initial analysis")
+            }) {
                 BackgroundTurn::Text("Initial analysis completed".into())
             } else {
                 BackgroundTurn::Text("Independent task completed".into())
             }
         };
-        Ok(BackgroundTurnResult{turn,usage:None})
+        Ok(BackgroundTurnResult { turn, usage: None })
     }
 
     async fn complete(
-        &self, _: &str, _: &ProviderPin, _: LlmRequest, _: i64, _: CancellationToken
-    ) -> Result<String,JobError> {
+        &self,
+        _: &str,
+        _: &ProviderPin,
+        _: LlmRequest,
+        _: i64,
+        _: CancellationToken,
+    ) -> Result<String, JobError> {
         Err(JobError::InvalidPlan)
     }
 }
 
 #[tokio::test]
 async fn v3_two_native_subagents_return_two_paired_results_and_one_join() {
-    let config=Arc::new(config());
-    let db=Arc::new(Database::connect(&config.database).await.unwrap());
-    let runtime=BackgroundRuntime::execution_harness(
-        db.clone(),config,Arc::new(V3DelegationModels{resume:false})
-    ).await.unwrap();
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::execution_harness(
+        db.clone(),
+        config,
+        Arc::new(V3DelegationModels { resume: false }),
+    )
+    .await
+    .unwrap();
     enable(&runtime.engine).await;
-    let receipt=db.submit_job(
-        &runtime.engine.config,request("Two parallel investigations"),&JobRequester::Admin,
-        crate::database::jobs::SubmissionIdentity {
-            test_execution_mode:Some("hierarchical_v3"),..Default::default()
-        },crate::database::unix_seconds().unwrap(),||runtime.engine.runtime_ready()
-    ).await.unwrap();
-    let job=wait_for(&runtime.engine,&receipt.job.id,|j|j.status=="succeeded").await;
-    assert_eq!(job.agent_runs.len(),3);
-    assert!(job.agent_runs.iter().all(|r|r.status=="succeeded"));
-    let root=job.agent_runs.iter().find(|r|r.parent_agent_run_id.is_none()).unwrap();
-    let session=db.v3_session_for_run(&job.id,&root.agent_run_id).await.unwrap();
-    let messages=db.v3_read_messages(&job.id,&session).await.unwrap();
-    let results:Vec<String>=messages.iter().filter_map(|m|{
-        if let ChatMessage::ToolResult{tool_call_id,..}=m {
-            Some(tool_call_id.clone())
-        } else {None}
-    }).collect();
+    let receipt = db
+        .submit_job(
+            &runtime.engine.config,
+            request("Two parallel investigations"),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                test_execution_mode: Some("hierarchical_v3"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || runtime.engine.runtime_ready(),
+        )
+        .await
+        .unwrap();
+    let job = wait_for(&runtime.engine, &receipt.job.id, |j| {
+        j.status == "succeeded"
+    })
+    .await;
+    assert_eq!(job.agent_runs.len(), 3);
+    assert!(job.agent_runs.iter().all(|r| r.status == "succeeded"));
+    let root = job
+        .agent_runs
+        .iter()
+        .find(|r| r.parent_agent_run_id.is_none())
+        .unwrap();
+    let session = db
+        .v3_session_for_run(&job.id, &root.agent_run_id)
+        .await
+        .unwrap();
+    let messages = db.v3_read_messages(&job.id, &session).await.unwrap();
+    let results: Vec<String> = messages
+        .iter()
+        .filter_map(|m| {
+            if let ChatMessage::ToolResult { tool_call_id, .. } = m {
+                Some(tool_call_id.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
     assert!(results.contains(&"parallel_a".to_owned()));
     assert!(results.contains(&"parallel_b".to_owned()));
-    let log=db.job_events(&job.id,0,100).await.unwrap();
-    assert_eq!(log.iter().filter(|e|e.event_type=="join_completed").count(),1);
+    let log = db.job_events(&job.id, 0, 100).await.unwrap();
+    assert_eq!(
+        log.iter()
+            .filter(|e| e.event_type == "join_completed")
+            .count(),
+        1
+    );
     runtime.shutdown().await;
 }
 
 #[tokio::test]
 async fn v3_resume_child_creates_new_run_and_keeps_prior_session_messages() {
-    let config=Arc::new(config());
-    let db=Arc::new(Database::connect(&config.database).await.unwrap());
-    let runtime=BackgroundRuntime::execution_harness(
-        db.clone(),config,Arc::new(V3DelegationModels{resume:true})
-    ).await.unwrap();
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let runtime = BackgroundRuntime::execution_harness(
+        db.clone(),
+        config,
+        Arc::new(V3DelegationModels { resume: true }),
+    )
+    .await
+    .unwrap();
     enable(&runtime.engine).await;
-    let receipt=db.submit_job(
-        &runtime.engine.config,request("Investigate and follow up"),&JobRequester::Admin,
-        crate::database::jobs::SubmissionIdentity {
-            test_execution_mode:Some("hierarchical_v3"),..Default::default()
-        },crate::database::unix_seconds().unwrap(),||runtime.engine.runtime_ready()
-    ).await.unwrap();
-    let job=wait_for(&runtime.engine,&receipt.job.id,|j|j.status=="succeeded").await;
-    let children:Vec<_>=job.agent_runs.iter().filter(|r|r.parent_agent_run_id.is_some()).collect();
-    assert_eq!(children.len(),2);
-    assert_ne!(children[0].agent_run_id,children[1].agent_run_id);
-    let first=db.v3_session_for_run(&job.id,&children[0].agent_run_id).await.unwrap();
-    let second=db.v3_session_for_run(&job.id,&children[1].agent_run_id).await.unwrap();
-    assert_eq!(first,second);
-    let messages=db.v3_read_messages(&job.id,&first).await.unwrap();
-    assert!(messages.iter().any(|m|matches!(m,ChatMessage::User{content}
-        if content=="Initial analysis")));
-    assert!(messages.iter().any(|m|matches!(m,ChatMessage::User{content}
-        if content=="Verify previous findings")));
-    assert!(messages.iter().any(|m|matches!(m,ChatMessage::AssistantText{content}
-        if content=="Initial analysis completed")));
+    let receipt = db
+        .submit_job(
+            &runtime.engine.config,
+            request("Investigate and follow up"),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                test_execution_mode: Some("hierarchical_v3"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || runtime.engine.runtime_ready(),
+        )
+        .await
+        .unwrap();
+    let job = wait_for(&runtime.engine, &receipt.job.id, |j| {
+        j.status == "succeeded"
+    })
+    .await;
+    let children: Vec<_> = job
+        .agent_runs
+        .iter()
+        .filter(|r| r.parent_agent_run_id.is_some())
+        .collect();
+    assert_eq!(children.len(), 2);
+    assert_ne!(children[0].agent_run_id, children[1].agent_run_id);
+    let first = db
+        .v3_session_for_run(&job.id, &children[0].agent_run_id)
+        .await
+        .unwrap();
+    let second = db
+        .v3_session_for_run(&job.id, &children[1].agent_run_id)
+        .await
+        .unwrap();
+    assert_eq!(first, second);
+    let messages = db.v3_read_messages(&job.id, &first).await.unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m,ChatMessage::User{content}
+        if content=="Initial analysis"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m,ChatMessage::User{content}
+        if content=="Verify previous findings"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m,ChatMessage::AssistantText{content}
+        if content=="Initial analysis completed"))
+    );
     runtime.shutdown().await;
 }

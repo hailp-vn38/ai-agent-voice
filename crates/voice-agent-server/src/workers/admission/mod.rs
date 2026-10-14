@@ -30,6 +30,13 @@ pub struct ProviderCapacityPermit {
 }
 
 impl ProviderRuntimeAdmission {
+    /// Static eligibility, independent of current contention in composed quotas.
+    pub(crate) fn has_background_capacity(&self) -> bool {
+        self.0.iter().all(|state| {
+            let state = state.lock().expect("provider admission poisoned");
+            state.total > state.reserved_voice
+        })
+    }
     /// Work owned by this view. Composed global counters may include other views.
     pub(crate) fn view_usage(&self) -> usize {
         self.0
