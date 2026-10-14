@@ -331,3 +331,39 @@ async fn core_only_json_query_executes_without_plugin_installation_or_container(
     assert_eq!(finished.steps[0].attempt_state.as_deref(), Some("finished"));
     runtime.shutdown().await;
 }
+
+
+#[tokio::test]
+async fn core_artifact_read_rejects_foreign_job_and_binary_media_type() {
+    let (db, _, runtime) = harness().await;
+    let owner = runtime.engine.submit(
+        request("Own artifact"), &JobRequester::Admin, None
+    ).await.unwrap().job;
+    let foreign = runtime.engine.submit(
+        request("Other artifact"), &JobRequester::Admin, None
+    ).await.unwrap().job;
+    let choice = crate::services::background::plugins::decode_choice(
+        owner.plugin_choices.as_array().unwrap().iter()
+            .find(|v| v["operation"] == "artifact.read_text").unwrap()
+    ).unwrap();
+
+    let foreign_id = uuid::Uuid::new_v4().to_string();
+    let binary_id = uuid::Uuid::new_v4().to_string();
+    for (job_id, artifact_id, media_type) in [
+        (&foreign.id, &foreign_id, "text/plain"),
+        (&owner.id, &binary_id, "image/png"),
+    ] {
+        sqlx::query("INSERT INTO job_artifacts(id,job_id,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,0,'hash',0)")
+            .bind(artifact_id).bind(job_id).bind(format!("{job_id}/{artifact_id}"))
+            .bind(media_type).execute(db.pool()).await.unwrap();
+    }
+    for artifact_id in [&foreign_id, &binary_id] {
+        assert_eq!(
+            crate::tools::core::invoke(
+                &runtime.engine, &choice, json!({"artifact_id":artifact_id}), &owner.id
+            ).await.unwrap_err(),
+            crate::services::background::plugins::PluginError::ApplicationError
+        );
+    }
+    runtime.shutdown().await;
+}
