@@ -247,7 +247,7 @@ fn turn_body(
             body["text"] =
                 json!({"format":{"type":"json_schema","name":name,"strict":true,"schema":schema}});
         }
-        BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
+        BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
             if request.tools.is_empty() {
                 return Err(LlmError::Rejected);
             }
@@ -264,7 +264,7 @@ fn turn_body(
                     .collect(),
             );
             body["tool_choice"] = json!(if matches!(mode, BackgroundMode::ToolsAuto) {"auto"} else {"required"});
-            body["parallel_tool_calls"] = json!(false);
+            body["parallel_tool_calls"] = json!(matches!(mode, BackgroundMode::ToolsParallel));
         }
     }
     Ok(body)
@@ -281,7 +281,7 @@ fn parse_turn(
     let output = body["output"].as_array().ok_or(LlmError::Rejected)?;
     let turn = match mode {
         BackgroundMode::Structured { .. } => BackgroundTurn::Text(output_text(body)?),
-        BackgroundMode::Tools | BackgroundMode::ToolsAuto => {
+        BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
             let mut calls = Vec::new();
             let mut text_returned = false;
             for item in output {
