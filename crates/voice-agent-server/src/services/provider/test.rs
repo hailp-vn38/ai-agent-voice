@@ -111,7 +111,7 @@ impl ProviderTestRunner<'_> {
         input: ProviderTestInput,
     ) -> Result<ProviderTestOutput, ProviderTestError> {
         let expected = match &input {
-            ProviderTestInput::Llm(_) | ProviderTestInput::LlmStrict {..} => "llm",
+            ProviderTestInput::Llm(_) | ProviderTestInput::LlmStrict { .. } => "llm",
             ProviderTestInput::Tts(_) => "tts",
             ProviderTestInput::Asr(_) => "asr",
         };
@@ -128,8 +128,11 @@ impl ProviderTestRunner<'_> {
             ProviderTestInput::Llm(text) if text.is_empty() || text.len() > 8192 => {
                 return Err(ProviderDiagnosticRequestError::InvalidInput.into());
             }
-            ProviderTestInput::LlmStrict {text,mode} if text.is_empty() || text.len()>8192
-                || !matches!(mode.as_str(),"structured"|"tools") => {
+            ProviderTestInput::LlmStrict { text, mode }
+                if text.is_empty()
+                    || text.len() > 8192
+                    || !matches!(mode.as_str(), "structured" | "tools") =>
+            {
                 return Err(ProviderDiagnosticRequestError::InvalidInput.into());
             }
             ProviderTestInput::Tts(request)
@@ -178,7 +181,7 @@ impl ProviderTestRunner<'_> {
                     language: None,
                 })
             }
-            ProviderTestInput::LlmStrict {text,mode} => {
+            ProviderTestInput::LlmStrict { text, mode } => {
                 let result = service.execute_llm_strict("draft", text, mode).await?;
                 Ok(ProviderTestOutput::Text {
                     text: result.text,
