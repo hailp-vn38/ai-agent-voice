@@ -294,3 +294,25 @@ async fn restart_fails_running_work_and_configuration_changes_without_replaying(
     );
     restarted.shutdown().await;
 }
+
+#[tokio::test]
+async fn retention_preserves_uncommitted_artifacts_of_other_jobs() {
+    let (db, _, runtime) = harness().await;
+    let old = runtime.engine.submit(request("Old retained Job"), &JobRequester::Admin, None)
+        .await.unwrap().job;
+    let active = runtime.engine.submit(request("Publishing artifact"), &JobRequester::Admin, None)
+        .await.unwrap().job;
+    runtime.shutdown().await;
+    let now = crate::database::unix_seconds().unwrap();
+    sqlx::query("UPDATE jobs SET status='failed',updated_at=? WHERE id=?")
+        .bind(now - 31 * 24 * 60 * 60).bind(&old.id).execute(db.pool()).await.unwrap();
+    sqlx::query("UPDATE jobs SET status='running',updated_at=? WHERE id=?")
+        .bind(now).bind(&active.id).execute(db.pool()).await.unwrap();
+    let artifact_dir = crate::services::background::artifacts::root(&db).unwrap().join(&active.id);
+    tokio::fs::create_dir_all(&artifact_dir).await.unwrap();
+    let pending = artifact_dir.join(uuid::Uuid::new_v4().to_string());
+    tokio::fs::write(&pending, b"before metadata commit").await.unwrap();
+    assert_eq!(crate::services::background::artifacts::expire_terminal(&db, now).await.unwrap(), 1);
+    assert!(pending.exists(), "retention must not erase a publishing Job's uncommitted artifact");
+    assert!(runtime.engine.get(&old.id).await.is_err());
+}
