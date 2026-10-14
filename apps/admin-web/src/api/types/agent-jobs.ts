@@ -97,7 +97,7 @@ export interface JobArtifact {
   sha256: string
 }
 export interface AdminJob {
-  execution_mode?: 'dag_v1' | 'hierarchical_v2'
+  execution_mode?: 'dag_v1' | 'hierarchical_v2' | 'hierarchical_v3'
   agent_runs?: AgentRunView[]
   coverage?: CoverageView | null
   id: string
