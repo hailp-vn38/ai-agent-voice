@@ -358,12 +358,13 @@ async fn core_artifact_read_rejects_foreign_job_and_binary_media_type() {
             .bind(media_type).execute(db.pool()).await.unwrap();
     }
     for artifact_id in [&foreign_id, &binary_id] {
-        assert_eq!(
-            crate::tools::core::invoke(
-                &runtime.engine, &choice, json!({"artifact_id":artifact_id}), &owner.id
-            ).await.unwrap_err(),
-            crate::services::background::plugins::PluginError::ApplicationError
-        );
+        match crate::tools::core::invoke(
+            &runtime.engine, &choice, json!({"artifact_id":artifact_id}), &owner.id
+        ).await {
+            Err(crate::services::background::plugins::PluginError::ApplicationError) => {}
+            Err(other) => panic!("unexpected Core error: {other:?}"),
+            Ok(_) => panic!("Core allowed an invalid artifact"),
+        }
     }
     runtime.shutdown().await;
 }
