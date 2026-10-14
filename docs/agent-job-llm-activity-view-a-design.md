@@ -1,370 +1,395 @@
-# Agent Job — LLM Activity / View A (Timeline First)
+# Agent Job — LLM Activity / View A
 
-> **Status:** Design v1.0 — ready for implementation review.  
-> **Baseline:** `main` (reviewed 2026-10-14). **Working branch:** `feature/job-llm-activity-view-a`.  
-> **Scope:** Admin Web Job Detail + Rust Background Job observability. No production code changes in this design commit.  
-> **Decision:** View A — Timeline First, with on-demand Run Inspector (not permanent three-column split).
+> **Status:** Design v1.1 — revised after PONYTAIL Review, 2026-10-14.  
+> **Baseline:** `main`; implementation branch: `feature/job-llm-activity-view-a`.  
+> **Approved visual source:** `job-llm-activity-3-views.html`, **View A / Timeline First**, from the approved UI prototype shared in the conversation.  
+> **Scope:** Specification only; this document does **not** implement production code.
 
-## 1. Outcome and scope
+## 1. Binding decisions
 
-When an Admin opens `Jobs > Job Detail`, the primary activity display must show **a durable `LLM Run Started` entry as soon as a model invocation is reserved**, even while the provider is unavailable or waiting for capacity. The first card identifies the pinned Orchestrator/Worker Provider; subsequent entries explain **which provider/model/transport really executed**, wait times, request/response boundaries, validation, Plan Repair, Worker outcomes, and Job completion.
+1. **UI fidelity overrides PONYTAIL reductions.** The approved **View A** is the target, **not** a generic accordion list: retain the existing Voice Agent Studio shell, Job Detail header, **four summary cards**, **left execution timeline**, and the **right-hand Selected LLM Run + Execution Progress panels**. Run card selection synchronizes the persistent inspector; clicking an already-selected card toggles its inline stages.
+2. **LLM activity starts at reservation:** create a durable `llm_run_started` before provider acquisition, atomically with the existing model-call budget reservation. Provider failure/timeout must still leave a visible Run.
+3. **Historical identity is exact:** initially display the pinned Provider ref/source; after validation/acquisition, display the **actual adapter, model and transport** resolved for that Run. Never resolve historical model identity from mutable current settings.
+4. **Backend SQL ownership is mandatory:** **all SQL queries/transactions for this feature, including Provider lookups and Background Settings authorization, live exclusively under `crates/voice-agent-server/src/database/`.** The orchestration, runtime, provider-adapter, and Admin handler Modules call typed Database Interfaces. No `sqlx::query*`, raw `SELECT/INSERT/UPDATE/DELETE`, `pool().acquire()` or `BEGIN` inside those logic files. SQLx migrations live in the existing `crates/voice-agent-server/migrations/` directory as the sole permitted schema-DDL exception.
+5. **PONYTAIL simplification:** reduce redundant lifecycle events and pass-through abstractions, and reuse the existing `job_events`, `JobChangeFeed`, Admin SSE and database access patterns. Do **not** delete/alter the accepted View A visual elements.
+6. Rust `PlanCompiler`, the scheduler, quota, pin/authority checks, Step checkpoints, unknown-outcome rules and Voice LLM transport remain authoritative and unchanged in behavior.
 
-A model **Run** (also called *LLM Invocation* in implementation discussion) is **one bounded call to a model**, not an Agent account, Voice Session, Job, Job Step, or OpenAI Responses background task. Each Planner/Repair/Replan/Worker model call receives a unique `run_id`. Rust remains the authority for Plan compilation, Job status, Step checkpoint, security and recovery.
+### Non-goals
 
-### Goals
+No full prompts/responses, hidden reasoning text, credentials, plugin stdout, token-stream rendering, vendor-background polling, OpenTelemetry, Redis, new public endpoint, Agent enable toggle, new top-level Logs page, or second `job_llm_calls` table. Responses remains one-shot (`store:false`, `background:false`, `stream:false`), per ADR 0099.
 
-1. Start the visible LLM log at admission of each actual model invocation: `llm_run_started` is committed atomically with the existing model-call budget reservation, **before provider acquisition**.
-2. Identify provider reference, source, pinned revision/incarnation, and later the **resolved adapter, model and actual transport** (`responses` or `chat_completions`) without looking up mutable current settings for historical records.
-3. Show lifecycle, validated outcomes, bounded diagnostics and real usage metadata as events appear; work for both failed and successful runs.
-4. Maintain the current Job Detail header, sidebar/navigation, action buttons, Step/Artifact/Result data, i18n and palette; preserve desktop/mobile behavior.
-5. Reuse SQLite `job_events`, Admin bearer authorization, `JobChangeFeed` and `GET /api/admin/jobs/stream`; REST is the authoritative source and SSE is only a hint.
-6. Keep preexisting Jobs, `job_events` and clients readable; do not modify scheduler execution semantics or retry behavior.
+## 2. Verified main baseline and implications
 
-### Out of scope
-
-Raw prompts, complete model output, hidden chain-of-thought, token-stream display, live plugin stdout, tracing infrastructure, OpenTelemetry, Redis, new WebSocket channel, a new top-level Admin page, configuration toggles per Agent, or changing `Voice Session` routing. The `Responses` adapter remains one-shot `store:false`, `background:false`, `stream:false` per ADR 0099; **no simulated token progress**.
-
-## 2. Verified main baseline (2026-10-14)
-
-| Concern | Existing seam/file | Observation |
+| Location on `main` | Current behavior | Impact of the design |
 |---|---|---|
-| UI | `apps/admin-web/src/pages/jobs/JobDetailPage.vue` | Compact `DetailHeader`; 2-column `xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,1fr)]`; left Steps/Artifacts/Result, right Execution Context/Event Timeline; Cancel/Retry/Refresh. |
-| Styling | `apps/admin-web/src/style.css` | Semantic Tailwind tokens, `studio-panel`, violet/cyan accents, light/dark themes. |
-| UI contracts | `apps/admin-web/src/api/types/agent-jobs.ts` | `AdminJob`, six `JobEventType` values; paged events `{items}`. |
-| UI data | `apps/admin-web/src/api/agent-jobs.ts` | `job()`, `events(after, limit=100)`; no dedicated LLM API. |
-| Realtime | `apps/admin-web/src/api/job-updates.ts` | Authenticated fetch SSE, resync on lag/reconnect and aborted streams; 60-second fallback in Job Detail. |
-| Admin routes | `crates/voice-agent-server/src/app/admin/mod.rs` | `/jobs/{id}`, `/jobs/{id}/events`, `/jobs/stream` are behind Admin auth. |
-| Persistence | `crates/voice-agent-server/src/database/jobs/events.rs`; migration `0107_job_execution_events.sql` | Append-only `job_events` with per-Job sequence and payload <=4096 bytes; CHECK restricts types to six existing events. |
-| Model reservation | `database/jobs/orchestration.rs::reserve_model_call()` | Updates planner/step budget; Planner appends `plan_attempt` in same transaction. |
-| Orchestration | `services/background/orchestration.rs` | `propose()` handles initial/repair/replan, Worker calls `complete_structured()`, Rust validates output and checkpoints Step. |
-| Runtime | `services/background/models.rs` | Verifies pinned provider, acquires lease/capacity, authorizes again and calls `runtime.background_complete()`; wait times currently mostly only in `tracing`. |
-| Provider pin | `services/background/model.rs::ProviderPin` | `reference`, `incarnation`, `revision` and `digest`; model/adapter are **not** present in `JobSnapshot`. |
-| Responses | `providers/llm/openai/responses.rs` | Extracts usage metadata for `tracing` but background result is currently only `String`. |
-| Job recovery/retention | `database/jobs/recovery.rs`, `services/background/artifacts.rs` | Restart terminalizes interrupted Jobs; retention deletes `job_events` before parent Job. |
+| `apps/admin-web/src/pages/jobs/JobDetailPage.vue` | `DetailHeader` + two columns; Steps/Artifacts/Result left, Execution Context + Event Timeline right; SSE reconciles authoritative reads. | **Replace the primary two-column content arrangement with the approved View A**; preserve existing Step/Artifact/Result actions in lower secondary sections so no capability is lost. |
+| `apps/admin-web/src/style.css` | `studio-panel`, semantic Tailwind tokens, light/dark palettes. | Map approved mock surfaces to existing tokens, no hard-coded theme or new design system. |
+| `apps/admin-web/src/api/types/agent-jobs.ts` | `JobEventType` has six types. | Extend the union with metadata-only LLM event types, keep REST envelope. |
+| `apps/admin-web/src/api/agent-jobs.ts` / `api/job-updates.ts` | Cursor-paged events + authenticated SSE invalidations. | Reuse unchanged transport; project Run cards from the same events. |
+| `database/jobs/events.rs` and migration `0107_job_execution_events.sql` | Append-only event sequence per Job, max 4096-byte JSON. | New forward migration widens event CHECK; no mutation/backfill of old data. |
+| `database/jobs/orchestration.rs::reserve_model_call` | One `BEGIN IMMEDIATE` handles budget and `plan_attempt`. | Add `llm_run_started` to **that same transaction**, not a second post-reservation write. |
+| `services/background/orchestration.rs` | Planner/Repair/Replan use `propose()`; Worker validates JSON and checkpoints. | Supply `run_id` and record validation outcome without changing executable Plan control flow. |
+| `services/background/models.rs` | Acquires pinned provider and capacity; checks auth and settings; calls `background_complete`. **Contains direct SQL/provider-row access today.** | **Move SQL into `database/`**; emit safe lifecycle events at existing steps. |
+| `services/background/providers.rs` | `pin()` and `options()` query `providers` via SQLx outside `database/`. | **Move their DB implementation into `database/jobs/providers.rs`**; update all callers in `engine.rs`/`models.rs`/DB. Delete the old DB-querying implementation after migration. |
+| `services/background/engine.rs` | Opens raw DB connections and calls `providers::pin/options`. | Use typed Database Interfaces rather than handling `SqliteConnection` in logic. |
+| `providers/llm/openai/responses.rs` | Actual usage currently available only via `tracing`; return type is `String`. | Return optional typed Background usage metadata; Voice `stream()` untouched. |
+| `database/jobs/recovery.rs` | Terminalizes interrupted Jobs and emits `job_finished`. | No new recovery query for v1; UI derives interrupted Run from existing Job terminal event. |
+| `services/background/artifacts.rs` | Retention already deletes `job_events` before Job deletion. | Reuse same retention; no new GC. |
 
-**Compatibility decisions:** ADR 0098 keeps untrusted Plan Proposal and Plan Repair metadata-only; ADR 0099 preserves Voice Chat Completions and opts Agent Jobs into Responses; ADR 0100 makes SQLite authoritative with best-effort SSE. This document extends those decisions, rather than replacing them.
+### Architecture rule for SQL (explicit acceptance gate)
 
-## 3. View A — screen composition
+**Allowed runtime query sites:** `crates/voice-agent-server/src/database/**`, including `database/jobs/events.rs`, `database/jobs/orchestration.rs`, and new `database/jobs/providers.rs` (or the repository's equivalent existing DB submodule). Schema DDL: `crates/voice-agent-server/migrations/**`.
 
-### 3.1 Desktop layout (>=1280px)
+**Not allowed:** any SQL literal, `sqlx::query`/`query_as`/`query_scalar`, DB pool borrow, `SqliteConnection` or transaction acquisition inside:
+- `services/background/orchestration.rs`
+- `services/background/models.rs`
+- `services/background/engine.rs`
+- `services/background/providers.rs` (should become a pure typed adapter or be removed)
+- `providers/llm/*`
+- `app/admin/background.rs`
 
-Keep existing page route, Admin sidebar, compact `DetailHeader`, and the two-column grid. Move the new **LLM Activity** section to the **top of the wide left column**. Place Steps, Artifacts, and Result below it (collapsible only where already supported). Keep **Execution Context** and the **existing Job Event Timeline** in the narrower right column. Avoid a permanent third column.
+**Specific main debt to relocate while implementing:** provider `SELECT ... FROM providers` in `services/background/models.rs::acquire`; `SELECT enabled FROM background_settings` and direct requester authorization in `complete_inner`; `providers::pin/options` from `services/background/providers.rs`; `engine.rs`'s connection acquisition and pin resolution. Keep only business orchestration, provider runtime leases, timeouts, capacity permits and cancellation in `services/background/*`. Do not perform a repository-wide unrelated SQL migration as part of this feature.
 
 ```text
-Admin sidebar   Jobs / Job Detail
-┌──────────────────────────────────────────────────────────────────────┐
-│ ← Jobs  Job ID / Goal         [Running] [Refresh] [Cancel / Retry] │
-├──────────────────────────────────────────────────────────────────────┤
-│ [LLM Calls 04] [Errors 01] [Known Tokens 1,820] [Elapsed 00:23]    │
-├──────────────────────────────────────────┬───────────────────────────┤
-│ LLM Activity                  ● Live     │ Execution Context         │
-│ [All] [Planner] [Worker] [Errors]        │ Job status / requester    │
-│                                          │ Plan rev / Budget         │
-│ ● LLM Run #1  Planner        Failed      │                           │
-│   Provider: openai-primary • Responses   │ Existing Job Timeline     │
-│   Model: ... • Attempt 1 • 3.8s          │ plan_attempt / rejected   │
-│   ▾ Run stages / validation              │ plan_accepted / step_*    │
-│                                          │                           │
-│ ● LLM Run #2  Repair         Completed   │                           │
-│   Provider: openai-primary • Responses   │                           │
-│   Model: ... • Attempt 2                 │                           │
-│                                          │                           │
-│ ◉ LLM Run #3  Worker         Running     │                           │
-│   Provider: worker-llm • Chat            │                           │
-│   [Inspect run]                          │                           │
-│                                          │                           │
-│ Job Steps (existing)                     │                           │
-│ Artifacts / Result (existing)            │                           │
-└──────────────────────────────────────────┴───────────────────────────┘
+Admin Job Detail / SSE ──> JobEngine / orchestration ──> Database (typed Interface)
+                                        │                  ├─ jobs/orchestration.rs
+                                        │                  ├─ jobs/events.rs
+                                        │                  └─ jobs/providers.rs
+                                        │                        └─ SQLx queries and transactions
+                                        └── ManagedModels ──> runtime.background_complete()
+                                             │
+                                             └── Database::... (no direct SQL in models.rs)
 ```
 
-This wireframe is illustrative; labels/models must come from the persisted run data. Prefer card density comparable to `studio-panel p-5`, `text-xs` metadata and current Lucide icon family. No oversized hero/banner or floating Debug console.
+**Provider safety:** preserve exactly pinned `ProviderPin` (ref, incarnation, revision, digest), config/database origin, deployment snapshot behavior, reauthorization immediately before dispatch, publication guard lifetime, deadline/cancellation, permit quarantine and job status checks. Extracting SQL must not remove or reorder these enforcement points. The Database Interface should provide the needed **typed resolved snapshot** and **pre-dispatch authorization/pin check**; the caller still owns provider-runtime admission and cancellations.
 
-### 3.2 Tablet/mobile (<1280px)
+## 3. Approved View A — precise web UI contract
 
-- Existing columns stack into one; order: Header -> Job warning -> compact KPIs -> LLM Activity -> Steps -> Artifacts/Result -> Execution Context -> existing Job Timeline.
-- Filters scroll horizontally if needed; all essential identifiers wrap/truncate safely; run card is full-width.
-- Click a card's **Inspect**/chevron to open the **Run Inspector** as a `Dialog`/drawer on desktop; on mobile use an accessible full-width modal or inline expandable details, **not** a fixed multi-column inspector.
-- Preserve Job's current Cancel/Retry/Refresh behavior and confirmation flows. No new sidebar item.
+The approved `job-llm-activity-3-views.html` is the **visual acceptance baseline**. Implement its `renderA()` composition and interaction, adapted to the production Admin layout, i18n, accessibility and real data. Ignore the **prototype-only View A/B/C switcher, banner, "Design intent" explanatory card, mocked names/values and artificial progress** in production.
 
-### 3.3 Per-Run card: collapsed vs expanded
+### 3.1 Full page hierarchy — DO NOT restructure into a modal inspector
 
-**Collapsed:** status icon + "LLM Run #N", role label (`Planner`, `Plan Repair`, `Replan`, `Worker`), attempt, pinned provider display name/ref, model if resolved, actual transport if known, elapsed/duration and linked `step_key`. Prioritize error code on failed cards, not the full JSON diagnostic.
+**Preserve from approved prototype:**
+1. Left Studio navigation: existing `Overview / Agents / Devices / Providers / Background / Jobs / Plugin Store`. `Jobs` is active. In production reuse the real Admin shell/sidebar.
+2. Workspace breadcrumb/topbar (or the existing shell's equivalent).
+3. Compact Job Detail header: **Back to Jobs**, Goal/Job title, Job ID, creation/requester metadata, status badge and **Refresh/Cancel** or **Retry** actions according to current Job status. Preserve `DetailHeader` behavior on `main`.
+4. **Four summary KPI cards in a row**, exactly the approved information hierarchy:
+   - **LLM Runs** — total Run count; current running/finished subtitle.
+   - **Plan Repair** — repair count; accepted attempt/status subtitle.
+   - **Observed Tokens** — sum only **known** usage, marked partial when some Providers report none; do not invent totals.
+   - **Elapsed Time** — Job elapsed time, progressing while active, frozen when terminal.
+5. **Two-column View A body**: left **Execution Timeline**, right stacked **Selected LLM Run** and **Execution Progress** cards.
+6. Keep prior Step / Artifact / Result UI **below** the approved View A body, as a secondary information area; they must not replace a View A right panel or interrupt its primary timeline. Existing downloads, links and result formatting still work.
+7. Old six-type raw Execution Timeline/Context, if retained for legacy/debugging, belongs in a **collapsed secondary section below View A**, not in the approved right-hand inspector slot. Do not display the same LLM event twice by default.
 
-**Expanded/Inspector:** ordered lifecycle entries with time and durations, provider identity, request metadata, response metadata, plan validation diagnostic (`code`, `path`, short safe `message`), related Plan revision/Step, optional usage. Show an explicit **"Not available"** for usage/model/transport not yet resolved; never infer values from currently selected Provider settings. A Run can be `waiting_provider`, `waiting_capacity`, `requesting`, `validating`, `completed`, `failed`, `cancelled` or **`interrupted` (derived, see section 6.6)**.
+**Explicitly reject these prior-document suggestions:** "4 KPI deletion", "Inspector as popup/drawer", "All/Planner/Worker/Errors filter bar", "All/Errors filter", "auto-expand newest active Run", "permanent three-column split", or "Execution Context/legacy Event Timeline occupying View A's right column". These would deviate from the approved HTML.
 
-The **Job status** and **Run status** remain separate. "LLM response received" does *not* mean "Plan accepted". Only a committed `plan_accepted` confirms publication; only `step_finished`/`job_finished` confirm domain checkpoints.
+### 3.2 View A desktop structure
 
-### 3.4 View states
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Voice Agent Studio sidebar │ Breadcrumbs: Workspace / Background / Jobs / Job detail     │
+│                           ├───────────────────────────────────────────────────────────────┤
+│ Jobs (active)             │ ← Back to Jobs   Job goal / ID       Running  Refresh  Cancel │
+│                           ├───────────────────────────────────────────────────────────────┤
+│                           │ [LLM RUNS] [PLAN REPAIR] [OBSERVED TOKENS] [ELAPSED TIME]     │
+│                           ├────────────────────────────────────┬──────────────────────────┤
+│                           │ VIEW A · TIMELINE FIRST             │                          │
+│                           │ LLM activity, in execution order    │                          │
+│                           │                                    │                          │
+│                           │ Execution timeline       3 runs    │ Selected LLM Run         │
+│                           │                                    │ Read-only                │
+│                           │ ├ 09:42  Run 01 · Planner  Failed   │ Provider | Model         │
+│                           │ │  title, provider, model, transport│ Transport | Source       │
+│                           │ │  ▾ expanded lifecycle stages     │ LLM Role | Run ID       │
+│                           │ │  attempt / Collapse              │ ─────────────────────   │
+│                           │ ├ 09:42  Run 02 · Plan Repair ✓     │ Output & metrics         │
+│                           │ │  provider, model, transport      │ Duration / Token usage  │
+│                           │ └ 09:42  Run 03 · Worker  Running   ├──────────────────────────┤
+│                           │    provider, model, transport      │ Execution progress       │
+│                           │                                    │ Progress bar             │
+│                           │                                    │ Planner & Repair ✓       │
+│                           │                                    │ Worker synthesis ◉       │
+│                           │                                    │ Job checkpoint ○         │
+│                           ├────────────────────────────────────┴──────────────────────────┤
+│                           │ [Existing Steps / Artifacts / Result, secondary below]         │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-| Job / data state | UI behavior |
+The order, card placement and role of each section **must** match the approved View A. This wireframe is a textual mapping of that HTML, not a new alternative.
+
+### 3.3 Timeline card, selection and Inspector — actual prototype interactions
+
+The approved View A uses `state.selected` and `state.expanded`:
+- Each Run card: **time rail with status circle**, Run number + role, status pill, work title, inline provider badge + model + transport, and attempt/Step footer.
+- Selecting an **unselected** card: selects it, **expands its lifecycle stages** and updates the **Selected LLM Run panel on the right** immediately. Previously expanded cards may remain expanded, matching the prototype.
+- Clicking the **already-selected** card: toggles its inline stages between **View stages** and **Collapse**, keeping it selected in the right inspector.
+- Stage rows use check/error/pending icons, a stage label and safe duration/error path. Failure highlights the diagnostic; running state highlights the active stage.
+- Right **Selected LLM Run** card is **always visible at desktop widths**, not a modal. Two-column property grid: Provider, Model, Transport, Source, LLM Role, Run ID. Beneath: Output & Metrics showing Duration and Token Usage. **Read-only** label.
+- Right **Execution Progress** card: progress bar and three rows **Planner & Repair**, **Worker synthesis**, **Job checkpoint**. Calculate from actual committed Job Plan/Steps/Events, not the mock's "2 of 3 stages" text. For Jobs without Worker Steps, describe real phase; do not fabricate completed stages.
+- Initial selection: first Run when available (prototype initializes `llm_01` expanded). When a new Run arrives, preserve current selection and expansion; if no Run existed, select and expand the first.
+- All visible data comes from real per-Job events; no demo placeholders or fake runtime activity in production.
+
+### 3.4 Styling and responsive rules
+
+| Approved prototype visual | Production equivalent |
 |---|---|
-| `queued` | Show "Waiting for scheduler"; zero LLM Runs; do not fabricate a start event. |
-| `planning` but no Run yet | Show "Preparing first model invocation"; normal loading state. |
-| Run reserved but provider unresolved | Show pinned `provider_ref` and `source`; `Model: resolving`; status "Acquiring provider". |
-| Provider pin mismatch/unavailable | Keep the failed Run visible with `configuration_changed` / `llm_provider_unavailable`, no dispatch checkmark. |
-| Capacity blocked | "Waiting for capacity" and elapsed time from committed start; no fake progress %. |
-| Responses in flight | Spinner/"Waiting for model response"; **no streaming tokens** because background Responses is one-shot. |
-| Validation rejected | Failed validation diagnostic; show next Repair Run separately if started. |
-| Step/Job terminal | Completed/failed/cancelled display; in-progress Run with no terminal event is "interrupted/unconfirmed" (not success). |
-| Lost SSE/reconnect | REST reconciliation via existing event cursor, visibility trigger and fallback; preserve selected Run. |
-| Old Job without new events | Show existing Job Timeline/Steps normally and "Detailed LLM tracing wasn't available for this Job". |
-| Empty/fetched partial/error | Stable skeleton/empty and retry affordance; do not silently show a complete timeline if paging truncated. |
+| White rounded panels, subtle border/shadow | Existing `studio-panel`, `bg-card`, `border-border`, semantic elevation |
+| Violet selected Run, provider pill | Existing `studio-violet`/`primary` tokens, current `Badge` variants |
+| Cyan running pulse, green complete, red error | Existing semantic `studio-cyan` / `success` / `danger`; respect reduced motion |
+| Two-column timeline / stacked Inspector | Existing responsive grid conventions, left wider than right; **do not** add a third desktop column |
+| Four KPI row | Compact cards on desktop, responsive 2x2 or stacked on small screens |
+| Right Inspector | Below Timeline on narrow screens with the same fields and stage selection; no new overlay required |
+| Sidebar/topbar/header | Real shared Admin shell + `DetailHeader`; do not duplicate the shell within `JobDetailPage.vue` |
 
-### 3.5 Interaction and accessibility
+Accessibility: each card selection is an actual keyboard-operable button/summary, accessible state shown with `aria-expanded`/`aria-current` (as appropriate); no nested buttons. Reuse existing `Badge`, `Button`, CSS tokens and VI/EN i18n. Render ID/model/diagnostics as escaped Vue text, no `v-html`. The mock's View switcher is **not** part of production.
 
-- Default filter `All`, plus `Planner`, `Worker` and `Errors`. `All` includes repair and replan; Planner includes planner/repair/replan. Filters are client-side over loaded events, not server mutation.
-- When a Job is running, auto-expand **the newest active Run** only when the Admin has not selected another; on failure, offer a prominent inspection affordance. Do **not** auto-scroll while the user reads older logs.
-- Each Run card has one click/keyboard target (`button` with `aria-expanded` / accessible label); event row is not a nested link. Copy Run ID and error code with existing clipboard UI primitives, not raw request/response.
-- Timestamps use the existing locale/i18n functions; durations use measured milliseconds. Never imply millisecond precision for `job_events.created_at`, which is stored in Unix **seconds** today. Ordering comes from per-Job sequence.
-- Preserve theme tokens from `style.css`, `Badge` and `Button` patterns, native keyboard focus, reduced-motion, error contrast and English/Vietnamese dictionary entries.
-- Provider, model, IDs and code paths are text only; render through normal Vue interpolation (no `v-html`).
+### 3.5 Empty, error and historical data
 
-## 4. Durable event contract
+- Job `queued`: show real status; zero Runs; **do not synthesize `llm_run_started`**.
+- `planning` with no model reservation yet: pending state until actual first Run.
+- Run started but Provider not acquired: show **pinned ref and source**, "Resolving model" or "—" for unknown adapter/model/transport.
+- Provider failure, capacity timeout or refusal: show the Run and the **last verified stage only**, plus bounded error.
+- Responses in-flight: "Waiting for response", no simulated tokens (Responses `stream:false`).
+- Repaired Plan: distinct Planner and Plan Repair Runs. A rejected proposal is **not** a completed Job.
+- Terminal Job with Run missing terminal event: display "Interrupted / unconfirmed" using existing `job_finished`/Job status; never mark Run completed.
+- Legacy Jobs with only old events: four KPIs use supported values, timeline shows **Detailed LLM activity unavailable for this Job**, and old Steps/Events stay readable.
+- SSE loss/reconnect, server restart or route change: reload authoritative events, deduplicate by `sequence` and keep the selected Run where possible.
 
-### 4.1 Extend `job_events`, do not create a new log database
+## 4. Minimal durable LLM event contract (PONYTAIL)
 
-Add a **new migration** (next available sequential migration number on implementation branch) that recreates `job_events` with the existing data and constraints plus the new permitted event types below. Do **not** edit migration `0107` or relax the 4096-byte cap. Retain `PRIMARY KEY(job_id,sequence)` and the Job FK. Backfill is **not** required for old Jobs; existing six event types remain valid.
+Keep `job_events`. The original six types stay unchanged: `plan_attempt`, `plan_rejected`, `plan_accepted`, `step_started`, `step_finished`, `job_finished`.
 
-**New append-only types (v1):**
+**Five additive event types** are sufficient for the approved UI:
 
-| Event type | Stage | Mandatory bounded payload | Optional safe payload |
-|---|---|---|---|
-| `llm_run_started` | Budget reserved, **before acquisition** | `run_id`, `role`, `attempt_no`, `provider_ref`, `provider_source`, `pin_revision` | `step_key`, `plan_revision`, `pin_incarnation` |
-| `llm_provider_acquired` | Exact pinned provider resolved and lease acquired | `run_id`, `adapter`, `model`, `transport` | `provider_wait_ms` |
-| `llm_capacity_acquired` | Admission permit obtained | `run_id`, `capacity_wait_ms` | — |
-| `llm_request_started` | Background provider transport about to issue the request | `run_id`, `transport` | `message_count`, `input_bytes` |
-| `llm_response_received` | Provider returned a completed text response | `run_id`, `output_bytes` | `request_duration_ms`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `cached_input_tokens` |
-| `llm_validation_finished` | Rust checked output | `run_id`, `status` (accepted/rejected) | `validation_code`, `validation_path`, `validation_message` |
-| `llm_run_finished` | Terminal invocation outcome | `run_id`, `status` (completed/failed/cancelled) | `error_code`, `duration_ms`, `outcome_known` |
+| Type | When and mandatory payload | Optional safe metadata |
+|---|---|---|
+| `llm_run_started` | **Same transaction as budget reservation**; `run_id`, `role` (planner/worker), `attempt_no`, `provider_ref`, `provider_source` | `step_key`, `plan_revision`, `phase` (initial/repair/replan), `pin_revision`/`pin_incarnation` |
+| `llm_provider_acquired` | Exact Provider pin verified/leased; `run_id`, `adapter`, `model`, `transport` | `provider_wait_ms` |
+| `llm_request_started` | Provider background invocation initiated immediately before `runtime.background_complete()`; `run_id` | `capacity_wait_ms`, `message_count`, `input_bytes` |
+| `llm_response_received` | Successful provider text response received; `run_id` | `request_duration_ms`, `output_bytes`, optional `input_tokens`/`output_tokens`/`reasoning_tokens`/`cached_input_tokens` |
+| `llm_run_finished` | Invocation outcome after Rust validation or error; `run_id`, `status` (completed/failed/cancelled) | `error_code`, `duration_ms`, `validation_code`, `validation_path`, `validation_message`, `capacity_wait_ms` (failure before dispatch) |
 
-**Existing types remain** `plan_attempt`, `plan_rejected`, `plan_accepted`, `step_started`, `step_finished`, `job_finished`. Add `run_id` only to the payloads for directly related plan attempts/rejections when context is available; do not reinterpret existing Plan/Step ownership or rewrite history.
+### Deliberate simplifications
 
-The persisted `role` enum is `planner` | `plan_repair` | `replan` | `worker`. A repair of an initial Plan uses `plan_repair`; a repair of an append-only Replan also uses `plan_repair` with `plan_revision`/`phase` identifying the replan context. `attempt_no` is 1-based **within the corresponding proposal round**, not necessarily the lifetime budget counter; `run_id` is globally unique (UUID).
+- No separate `llm_capacity_acquired` event: `llm_request_started.capacity_wait_ms` describes successful capacity admission; if it times out, `llm_run_finished` records the failure and wait duration.
+- No separate `llm_validation_finished` event: Rust emits `plan_rejected`, `plan_accepted` or `step_finished` at domain checkpoints; `llm_run_finished` carries safe validation diagnostics. UI can show "JSON validation passed / Plan rejected" as **derived labels** from these events, not a seventh durable event.
+- Two `role` values (`planner` and `worker`); display **Plan Repair** and **Replan** from explicit `phase`/`attempt_no`/`plan_revision`, never from guesswork. Preserve accepted domain meanings.
+- For `llm_request_started`, UI keeps the **approved text** "Request dispatched" as shorthand for **the Provider background call being initiated**. It is **not** proof the upstream server received or processed the HTTP request. This stage can only be recorded after the existing admission/authorization checks, never when only an orchestration-layer method was entered.
+- `llm_response_received` means accepted **provider completion text** was obtained. Rust Plan compilation still decides acceptance; a rejected Plan shows a failure stage even when the Provider returned successfully.
+- Missing usage is `null`/not available, never fabricated zero; only aggregate observed tokens with coverage context.
+- Use opaque UUID `run_id`, not `Job ID` or Step attempt ID, as per-call correlation. If possible include `run_id` in `plan_rejected`/`plan_attempt` payloads; do not rewrite historical rows.
 
-**No event is emitted for every model token or plugin stdout line.** Normal budget-constrained calls yield a maximum of seven LLM-specific events plus existing Job/Plan/Step checkpoints. Unknown/absent fields are omitted rather than fabricated as zero.
+### Example — actual REST contract
 
-### 4.2 Example REST envelope
-
-Reuse `GET /api/admin/jobs/{id}/events?after=SEQ&limit=100`. `JobEvent` shape stays `{sequence,event_type,created_at,step_key,payload}`. A new event example:
+`GET /api/admin/jobs/{id}/events?after=SEQ&limit=100` remains the only event read route.
 
 ```json
 {
-  "sequence": 8,
+  "sequence": 12,
   "event_type": "llm_run_started",
   "created_at": "2026-10-14T02:42:01Z",
   "step_key": null,
   "payload": {
-    "run_id": "eeb86c41-1c1f-4c6e-b617-7f20b908f976",
+    "run_id": "19a37f79-18aa-422f-9f2f-e0f3a930e1ef",
     "role": "planner",
+    "phase": "initial",
     "attempt_no": 1,
     "provider_ref": "config:llm:openai-primary",
     "provider_source": "config",
-    "pin_revision": 4,
-    "pin_incarnation": 0
+    "pin_revision": 4
   }
 }
 ```
 
-**Provider identity:** `JobSnapshot` freezes the source-qualified Provider pin but not adapter/model. At `llm_run_started`, always persist the **expected pinned ref and revision**. After the **same** pin is verified/resolved, `llm_provider_acquired` stores the exact adapter/model/transport selected for that invocation. This is the first authoritative actual-provider identity; do not read mutable Admin Provider Catalog on historical page loads. In `configuration_changed`/unavailable cases, display the known pin and mark actual model/transport `unresolved`.
+Per-Job `sequence` is the ordering authority; existing `created_at` has **second** precision. Use monotonic timers for measured milliseconds and avoid claims that durable event timestamps are millisecond precise.
 
-`llm_request_started` means entry into the **background provider request adapter** (dispatch initiation), not proof that bytes reached the remote endpoint. An orchestration-layer call into `ManagedModels::complete_inner` is **not** sufficient: instrument at the actual adapter entry. UI label: **Request started**, never **Request delivered**. Preserve this event name across the migration, Rust and frontend. Do not log `llm_response_received` for transport errors.
+### Write rules / migration
 
-### 4.3 Run derivation, ordering and budgets
+1. Create a **new forward SQLx migration** rebuilding the current `job_events` CHECK with these five extra values. Preserve existing rows, `PRIMARY KEY(job_id, sequence)`, Job FK, 4096-byte JSON cap and backward-compatible read payload. **Do not edit migration `0107`.**
+2. At `reserve_model_call` inside `database/jobs/orchestration.rs`: quota check + `budget_used_json` update + `llm_run_started` + existing Planner `plan_attempt` share **one** `BEGIN IMMEDIATE` transaction. On failure, no budget increment and no phantom Run.
+3. Other activity appends use bounded SQLx writes **only in `database/jobs/events.rs`**, short transactions, and `job_changes.publish_committed(job_id)` only **after commit**. No transaction spans provider awaits.
+4. Safe metadata only; caps: `model`/`provider_ref` <=128 bytes, diagnostic/path <=256 bytes; never persist raw request/response, headers, token strings, API key, plugin output, source text or hidden reasoning.
+5. A telemetry write failure must not make the executor retry an ambiguous LLM call. Treat progress telemetry separately from authoritative Step/Job checkpoint: log write failure to server tracing, preserve real execution result and current quarantine policy. Commit related terminal domain checkpoint and its event atomically where relevant.
+6. Existing Job retention already removes `job_events`; no second garbage collector.
 
-- `reserve_model_call()` is the only budget admission path. Extend it to accept typed `LlmRunContext`, and **atomically** update `budget_used_json`, append `llm_run_started`, and (for Planner) append the existing `plan_attempt`. Commit before invoking Provider. If reservation fails, no Run exists; show Job's real error instead.
-- All events append with the current `job_events` sequence, under SQLite short transactions; publish `JobChangeFeed` **after commit**. Never hold a SQLite write transaction across provider await/capacity wait.
-- Keep monotonically ordered events by `sequence`, not wall-clock timestamp. `run_id` is attached to every LLM-specific event and relevant Plan diagnostic.
-- The provider is resolved against the exact `ProviderPin` and checked again before use, as today. No new permission or automatic provider fallback.
-- Add a bounded pure frontend projection `projectLlmRuns(events, job.status)` that groups by `payload.run_id`, sorts by first `sequence` and derives UI stage/status; late/missing/duplicate event reads must not crash it. Old events remain in the legacy timeline only.
-- Do not extend `JobSnapshot` or expose provider secrets to achieve historical display.
+## 5. Backend Module/Interface design with strict SQL locality
 
-### 4.4 Durability, migration and retention
+### 5.1 Single Database owner — no new pass-through JobLlmActivity Module
 
-- Use a new SQLite SQLx migration to rebuild/check the permitted `event_type` set. Copy old rows, retain exact old sequences and referential constraints. Treat a partially applied migration as an error; verify upgrade on populated DB and on empty DB. Do not disable foreign-key integrity as an ongoing server setting.
-- `job_events` stays metadata-only, payload <=4096 bytes (Rust validates before insert, SQLite enforces). Bound field lengths: for example model/ref <=128 bytes, `validation_path` <=256 bytes, diagnostic message <=256 bytes; use stable diagnostic codes instead of raw provider response bodies.
-- Existing terminal retention in `services/background/artifacts.rs::expire_terminal` deletes `job_events` before deleting `jobs`, so LLM activity follows the Job's existing retention; no separate GC.
-- Provider/Worker outcomes remain the source of execution truth; a lost activity event must not synthesize a success. Any **terminal checkpoint** and its related domain events should commit atomically where practical. Non-critical progress append failure should be recorded in server `tracing` and must never trigger a second remote LLM request.
-- A missing `llm_run_finished` after restart is **not** evidence of completion. For display, if Job is terminal, project a derived `interrupted` label with "no terminal Run checkpoint"; optionally emit a recovery closure event only as a later explicitly tested enhancement. Retain the existing unknown-outcome/quarantine semantics and no automatic replay.
-
-## 5. Rust Module design (deep interface)
-
-### 5.1 Placement
-
-Create `services/background/llm_activity.rs` for **`JobLlmActivity`**, a deep Module hiding event formats, safety limits, identity and lifecycle mapping. Use the existing `database/jobs/events.rs` as the durable append seam (with narrow typed helpers if needed); keep provider transport independent of Admin UI DTOs.
+Prefer the existing `Database` and `database/jobs/events.rs` instead of introducing `services/background/llm_activity.rs` just to forward writes. The Interface is small, typed and testable:
 
 ```rust
-pub(crate) struct LlmRunContext {
-    pub run_id: uuid::Uuid,
-    pub job_id: String,
-    pub step_key: Option<String>,
-    pub role: LlmRunRole,
-    pub attempt_no: u32,
+// Illustrative Interface; refine names/types to match existing code.
+struct LlmRunContext {
+    run_id: Uuid,
+    job_id: String,
+    step_key: Option<String>,
+    role: LlmRole,    // Planner | Worker
+    phase: LlmPhase,  // Initial | Repair | Replan | Step
+    attempt_no: u32,
 }
 
-impl JobLlmActivity {
-    // Reservation is atomic with the existing model-call budget update.
-    pub(crate) async fn begin(
-        &self, ctx: &LlmRunContext, pin: &ProviderPin,
+impl Database {
+    // Contains existing budget transaction and appends llm_run_started.
+    async fn reserve_model_call(
+        &self, ctx: &LlmRunContext, pin: &ProviderPin
     ) -> Result<(), JobError>;
 
-    // Bounded metadata-only activity; publishes only after SQLite commit.
-    pub(crate) async fn record(
-        &self, ctx: &LlmRunContext, activity: LlmActivity,
+    // SQL append + commit + publish. Safe metadata-only.
+    async fn record_llm_activity(
+        &self, ctx: &LlmRunContext, activity: LlmActivity
+    ) -> Result<(), JobError>;
+
+    // DB lookups, pin verification and settings/authorization queries
+    // formerly spread across services/background/models.rs / providers.rs.
+    async fn resolve_pinned_llm_provider(
+        &self, config: &AppConfig, pin: &ProviderPin
+    ) -> Result<ResolvedLlmProvider, JobError>;
+
+    async fn authorize_background_model_call(
+        &self, config: &AppConfig, job_id: &str, pin: &ProviderPin
     ) -> Result<(), JobError>;
 }
 ```
 
-This is an **illustrative Interface**, not a code signature to paste unmodified. Prefer plumbing `ctx` through the existing `JobModels` seam over a task-local/global singleton, adding an optional span or callbacks only if required by the actual provider code. Do **not** introduce a second persistent `job_llm_calls` table in v1: it would duplicate authoritative event history and complicate cleanup/consistency.
+Return typed snapshots/identities without credentials in events. A runtime Provider snapshot may carry secret material **only in memory through existing credential resolution**, never into Job Event payloads or Admin responses. Keep a single actual implementation; do not introduce speculative trait adapters, a new SQL repository framework or a second DB pool.
 
-### 5.2 Call sites and ownership
+### 5.2 Responsibility map / concrete refactor
 
-| Existing file | Required change |
+| File | Permitted logic | SQL policy |
+|---|---|---|
+| `database/jobs/orchestration.rs` | Budget reservation, Job checkpoint, transactional start event | **SQL allowed / owned** |
+| `database/jobs/events.rs` | Validate bounded event metadata, insert/read events, commit, broadcast after commit | **SQL allowed / owned** |
+| **New** `database/jobs/providers.rs` | `providers` reads, Provider pin/canonical option resolution, background enabled and requester checks | **SQL allowed / owned** |
+| `database/jobs/mod.rs` | Register DB Modules, expose the minimum typed Database methods | **SQL allowed** |
+| `services/background/orchestration.rs` | Decide Planner/Repair/Replan/Worker, allocate Run ID, compile/validate proposal, invoke DB methods | **NO SQL/DB connection borrowing** |
+| `services/background/models.rs` | Time provider acquisition, manage provider leases and capacity, call typed DB pre-dispatch check, invoke model | **NO SQL/DB connection borrowing** |
+| `services/background/engine.rs` | Submit/route Job and apply settings through typed DB methods | **NO SQL/DB connection borrowing** |
+| `services/background/providers.rs` | Remove after its DB-backed `pin/options` are moved, or retain only pure ref parsing | **NO SQL** |
+| `providers/llm/openai/responses.rs` and other LLM adapters | Parse/model HTTP, return typed completion + usage; no Job persistence | **NO SQL** |
+| `app/admin/background.rs` | Authenticate/validate HTTP and map DTOs; call engine/db methods | **NO SQL** |
+
+**Required move from existing main:** 
+- `models.rs::acquire()`: replace `database.pool().acquire()`/raw provider SELECT/`providers::pin` with `Database::resolve_pinned_llm_provider(...)`; call existing `ProviderRuntimeManager` with the returned exact snapshot.
+- `models.rs::complete_inner()`: replace raw `SELECT enabled FROM background_settings`, `authorize(...)` and exact re-pin query with `Database::authorize_background_model_call(...)`. Respect existing publication guard and cancellation/revocation order; keep backend admission semantics.
+- `engine.rs`: replace direct DB connection use in settings update, `validate_pair()` and provider options with typed `Database` methods.
+- `services/background/providers.rs`: migrate config/database pin construction and Provider options to `database/jobs/providers.rs`; update all references, including `database/jobs/orchestration.rs`'s current cross-call back into `services/background/providers::pin`, avoiding the old circular SQL ownership.
+- For all changed files, verify no `sqlx::query*`/`pool().acquire()` remains outside `database/`. Do not expand this task into unrelated preexisting features.
+
+### 5.3 Provider lifetime, usage and provider-specific transport
+
+At each call: `reserve_model_call` (run started) -> exact pinned Provider resolution -> runtime lease -> capacity permit -> exact pre-dispatch DB authorization -> `llm_request_started` -> `background_complete` -> typed usage / output -> Rust validation -> `llm_run_finished`.
+
+Actual `adapter/model/transport` are recorded only after exact Provider resolution. The "request dispatched" UI stage corresponds to **the background completion invocation starting**, not to an acknowledged upstream packet. Persist `provider_wait_ms` at acquisition and `capacity_wait_ms` at call start/failure. On provider failure before acquisition: only pinned identity + terminal failure.
+
+Change only the **Background** LLM completion result where necessary, e.g. `BackgroundCompletion { text: String, usage: Option<TokenUsage> }`; retain existing `JobModels` testing seam and avoid inventing a separate observer trait. `TokenUsage` may contain input/output/reasoning/cached counts; absent upstream fields stay absent. Responses uses actual `usage`; Chat-completions adapters may legitimately return `None`. Preserve `LlmProvider::stream` and Voice `/chat/completions`; Responses opted-in routing and no silent fallback remain per ADR 0099.
+
+**Termination guarantee:** ensure once a Run is reserved, all normal success/error/timeout/cancellation return paths attempt to emit `llm_run_finished`. No new retry is permitted to fill missing telemetry; restart-interrupted runs are derived as unconfirmed from existing Job terminalization.
+
+## 6. Frontend structure (PONYTAIL without changing View A)
+
+Implement a small number of production Modules while reproducing all approved visible panels:
+
+| Module/file | Work |
 |---|---|
-| `services/background/orchestration.rs` | For each call in `propose()` and Worker Step, allocate unique `run_id` and typed role/attempt; invoke atomic reservation/start; emit typed Rust validation outcome; relate rejections to `run_id`; preserve Repair/Replan controls and limits. |
-| `database/jobs/orchestration.rs` | Extend `reserve_model_call` so quota increase and `llm_run_started` are one `BEGIN IMMEDIATE` transaction; keep original `plan_attempt` and commit order. Optional `run_id` in `reject_plan` payload, no added Job status. |
-| `services/background/models.rs` | Pass `LlmRunContext` through managed model call, record provider acquired/capacity wait/request/response lifecycle; preserve existing cancellation, deadline, exact pin check, admission and quarantine. |
-| `services/background/providers.rs` | Reuse existing pin resolution; surface only safe resolved provider identity from the validated snapshot; no new mutable display lookup. |
-| `providers/llm/mod.rs` and `providers/llm/openai/responses.rs` | Background-only typed completion metadata for actual model/transport/usage, e.g. `BackgroundCompletion { text, usage: Option<Usage> }`. Chat-only fallback may return `usage: None`. Keep `LlmProvider::stream()` unchanged for Voice. |
-| `providers/llm/opencode_free.rs` | Report actual background transport selected by its explicit capability (no fallback), not by guessed model name. |
-| `database/jobs/events.rs` | Bounded append, page existing events, extend safe types and ensure post-commit invalidation through existing feed. |
-| `database/jobs/recovery.rs` | Qualify interrupted Run projections against Job terminal state, without automatic provider retry. |
-| SQLx migration | Rebuild `job_events` CHECK while retaining data/FK/sequence constraints. |
-| Existing Rust tests | Update `JobModels` fakes/qualification tests if signature changes; keep all prior plan/step/recovery behavior. |
+| `pages/jobs/JobDetailPage.vue` | Keep route, `DetailHeader`, actions, SSE load/cursor, and render 4 KPI cards + approved View A grid; preserve existing Step/Artifact/Result UI below. |
+| **New** `components/jobs/JobLlmTimeline.vue` | Timeline rail, cards, inline expandable stages, **persistent right Selected LLM Run and Execution Progress**, selection state. One Module, not three thin Vue wrappers. |
+| **New** `domain/jobs/llm-activity.ts` (or adjacent pure helper) | Project existing `JobEvent[]` into Run cards, metrics, progress; deterministic/read-only, unit-testable. |
+| `api/types/agent-jobs.ts` | Extend event type and safe payload types, leave existing `JobEvent` envelope unchanged. |
+| Existing VI/EN i18n catalogs | All labels, statuses, metric subtitles, no hard-coded English outside existing translation practices. |
+| `api/agent-jobs.ts`, `api/job-updates.ts` | **Reuse** REST/SSE; no new polling or stream. |
 
-**Metrics:** Prefer `BackgroundCompletion { text, usage: Option<...> }` over parsing `tracing` output. With Responses parse the existing `usage` payload; for Chat Comple­tions only record fields actually exposed by the provider/adapter. `reasoning_tokens` is a count, **not** hidden reasoning content. Missing usage remains `null`, not `0`. Model latency uses monotonic `Instant` around the actual awaited operation; wall-clock event timestamps remain durable seconds.
+A separate `JobLlmRunCard.vue` or `JobLlmRunInspector.vue` is **not required for v1**: keep sub-rendering inside `JobLlmTimeline.vue` until there is a demonstrated second caller/complexity. **The persistent Inspector panel itself is required**, even if not a separate Vue file.
 
-## 6. Admin frontend design
+### Realtime, paging and projection
 
-### 6.1 Modules/changes
+- Use existing `GET /api/admin/jobs/{id}` + cursor-based `GET /api/admin/jobs/{id}/events` and `GET /api/admin/jobs/stream`. `JobChangeFeed` publishes after commit; SSE carries only Job ID; REST remains authoritative.
+- On SSE ready/change/resync, visibility and fallback: reuse the current `JobDetailPage.vue` reconcile loop; do not add a separate stream just for LLM Runs. The current `main` loads event pages until a page shorter than 100 (with a route-aware abort).
+- Group events by opaque `run_id`, sort by **first sequence ascending** as in approved View A, ignore malformed/unknown future event types safely, and preserve legacy events in their secondary view.
+- Preserve selection by `run_id` across event refresh; for one selected card, clicking again toggles stages. If a Run disappears because the Job route changes, choose the first available Run. Do not auto-scroll or auto-select newest activity.
+- If a Job has very many events, performance tuning may be a later feature. Do not introduce a parallel "50 cards" pagination state or extra Load More controller in v1 without demonstrated need; existing authoritative cursor loading already solves correctness for normal bounded Jobs.
+- Refresh the four KPIs and Execution Progress from actual events/Job read model. Display running elapsed through a lightweight local display timer only where needed; no fake backend activity.
+- One-to-one UI source-of-truth: no second full LLM activity rendering inside the existing raw Event Timeline by default.
 
-| Existing/new file | Change |
-|---|---|
-| `pages/jobs/JobDetailPage.vue` | Insert LLM KPIs and `JobLlmTimeline` as first section of left column; keep `DetailHeader`, warning, Actions, Steps, Artifacts, Result and right aside. Reuse existing event fetch/SSE lifecycle. |
-| `components/jobs/JobLlmTimeline.vue` (new) | Timeline list, filters, empty/loading/truncated states; callbacks for selecting Run. |
-| `components/jobs/JobLlmRunCard.vue` (new) | Compact current/failed/completed Run, provider/model/transport summary and keyboard accessible expand. |
-| `components/jobs/JobLlmRunInspector.vue` (new) | On-demand dialog or inline details with lifecycle, safe diagnostics, usage and step links. Prefer existing dialog primitives, not a new overlay system. |
-| `domain/jobs/llm-activity.ts` (new, pure) | `projectLlmRuns`, statuses, role grouping, safe event type guards, totals; no HTTP or Vue state. |
-| `api/types/agent-jobs.ts` | Widen `JobEventType` union, add typed optional metadata fields/projection types, keep old `JobEvent` shape unchanged. |
-| `i18n/messages` catalogs | Add VI/EN strings for labels/empty/errors/filters/status; avoid raw English fallback in Vietnamese UI. |
-| `api/agent-jobs.ts`, `api/job-updates.ts` | Keep existing REST and SSE endpoints, no extra socket or polling loop. |
-
-### 6.2 Loading, cursor and reconnection correctness
-
-Current UI loads an initial Job snapshot then pages Job Events by `after`, fetching up to 32 pages, and SSE requests a reconcile. Keep this pattern but **do not claim the timeline is complete when the cap is reached**. The projection must handle paginated data; add an explicit "Load older/more" or scheduled continuation until bounded convergence. Preserve dedupe by `sequence`.
-
-The SSE `job_changed` payload contains only Job ID; Reactivity compares current route ID, schedules one coalesced refresh and REST loads after cursor. On `ready`/`resync_required`/visibility change, re-read. The 60-second fallback continues only when Job is active, as today. Handle route changes by cancelling previous requests; do not change the selected Run merely because one event was appended.
-
-For high volume, render only the newest ~50 cards at once with a "Load more" affordance; older events can still be paged by existing REST. Cap DOM rendering independently of the durable event history. No unbounded frontend accumulation requirement for a long-running Job.
-
-### 6.3 Status projection rules
-
-- `llm_run_started` creates the card immediately with pinned ref, role and status "Acquiring provider". A second Run must never rewrite the first Run's provider.
-- `llm_provider_acquired` fills adapter/model/transport; `llm_capacity_acquired` changes stage to "Ready to call".
-- `llm_request_started` switches to "Requesting"; `llm_response_received` switches to "Validating" (for Planner/Worker).
-- `llm_validation_finished` records validation success/failure; `llm_run_finished` closes Run. Plan acceptance remains linked to `plan_accepted`, Step success to `step_finished`.
-- A Run with unknown future event names remains readable; partial/malformed payloads show placeholders and a safe warning rather than throwing.
-- Running elapsed is a local display timer at most once per second **only for visible active cards**; never write fake events as a timer.
-
-### 6.4 Security and UX constraints
-
-- Admin bearer auth is already enforced by `app/admin/mod.rs`. Do not expose LLM activity over Device WS or public endpoints; no third-party analytics collection of event payloads.
-- Never persist API keys, credentials, authorization headers, raw prompts, model response body, secret refs, plugin stdout or detailed source documents. A diagnostic code/path is allowed; message is a vetted bounded Rust string.
-- Avoid provider detail hyperlinks for `config` Providers if they have no writable Admin detail route. Show plain text for unresolvable historical Provider rows. Never claim current Provider availability from a historical Run.
-- Card content is user-visible **observation** and must not be used to drive Job state transitions.
-
-## 7. End-to-end examples
-
-### 7.1 Invalid proposal repaired
+## 7. End-to-end example: invalid Plan -> Repair -> Worker
 
 ```text
-[01] LLM Run Started     planner, pinned Orchestrator, attempt 1
-[02] Provider Acquired   actual OpenAI/model/Responses
-[03] Capacity Acquired
-[04] Request Started
-[05] Response Received
-[06] Validation Rejected  unknown_operation, $.steps[1].operation
-[07] plan_rejected        diagnostic; linked run_id
-[08] Run Finished         failed_validation (UI projection from validation + terminal)
-[09] LLM Run Started     plan_repair, same pinned Orchestrator, attempt 2
-[10] Provider Acquired
-[11] Request Started
-[12] Response Received
-[13] Validation Accepted
-[14] Run Finished         completed (provider + validation)
-[15] plan_accepted        executable Plan revision 1 committed
-[16] LLM Run Started     worker, pinned Worker, step=synthesize
-...
-[NN] step_finished       checkpoint committed
-[NN] job_finished        Job terminal
+09:42:01  Run 01 / Planner       llm_run_started      pinned openai-primary
+          Provider Acquired    llm_provider_acquired  OpenAI / gpt-5 / Responses
+          Request Dispatched  llm_request_started   capacity wait: 48ms
+          Response Received   llm_response_received observed usage available
+          Validation Rejected plan_rejected         unknown_operation at $.steps[1].operation
+          Run Failed          llm_run_finished      safe validation_code/path
+09:42:06  Run 02 / Plan Repair   llm_run_started      same pinned provider, attempt 2
+          Provider Acquired    llm_provider_acquired  OpenAI / gpt-5 / Responses
+          Request Dispatched  llm_request_started
+          Response Received   llm_response_received
+          Run Completed       llm_run_finished      validation passed
+          Plan Accepted       plan_accepted         Rust PlanCompiler checkpoint
+09:42:09  Run 03 / Worker        llm_run_started      worker pin; step=synthesize_result
+          Provider Acquired    llm_provider_acquired  model from exact runtime snapshot
+          Request Dispatched  llm_request_started
+          Waiting Response... no fabricated token stream
+          Run Completed       llm_run_finished      after JSON/schema validation
+          Step Finished       step_finished         Rust-owned checkpoint
+          Job Finished        job_finished          terminal Job state
 ```
 
-Note `failed_validation` is a **UI derived reason**, not necessarily a `llm_run_finished.status` enum. `llm_run_finished.status` remains `completed/failed/cancelled`, accompanied by a separate `validation_code`.
+Both the rejected Planner Run and successful Repair stay visible. Right Inspector displays exact identity/usage for whichever card Admin selects. Rejection is **not** equivalent to Job failure; Worker response success is **not** equivalent to Step success until Rust validates/checkpoints it.
 
-### 7.2 Provider unavailable / timeout / restart
+## 8. Delivery phases
 
-- Unavailable: `llm_run_started` -> (no acquired) -> `llm_run_finished {status:"failed",error_code:"llm_provider_unavailable"}` -> Job fails under existing rules. UI must **not** display "request sent".
-- Capacity timeout: start -> acquired -> (wait) -> finished with `deadline_exceeded`. No `request_started`.
-- Responses refused/rejected: start -> acquired -> capacity -> request started -> failed with `llm_execution_failed`, no fake successful response event. Capture safe coarse error reason if qualified; keep old ambiguous outcome quarantine behavior.
-- Restart: start (possibly acquired/request started) -> no terminal Run event -> existing `job_finished {error_code:"interrupted"}` from recovery. UI derives Run "interrupted (unconfirmed)" and makes **no replay**.
-- Old Job: only `plan_*` and `step_*`. UI shows legacy timeline without inventing Run IDs or resolved model history.
+**Phase 1 — Database-first**
+- Add forward migration expanding six existing `job_events` types by five LLM types (keep old rows/FK/sequence/payload cap).
+- Move touched Background Provider/Settings/authorization SQL into `database/jobs/providers.rs`; expose typed Database Interfaces and eliminate direct SQL/connection acquisition from the touched `services/background` logic files.
+- Extend atomic `reserve_model_call` and typed `record_llm_activity`; test quota rollback, event order, no raw secrets, and after-commit SSE hint.
 
-## 8. Delivery phases (implementation order)
+**Phase 2 — LLM instrumentation**
+- Allocate `run_id` per Planner, Repair, Replan and Worker attempt; pass context through existing `JobModels` seam.
+- Observe Provider acquisition/capacity/dispatch/result; typed Responses usage; preserve exact pin, timeouts, cancellation and quarantine.
+- Validate Plan errors and attach safe `run_id` diagnostics without modifying Rust Plan compiler authority.
 
-**Phase A — Durable contract and domain tests**
-1. Write new migration to extend `job_events` CHECK; test upgrade retaining old records, FK integrity, ordering, retention.
-2. Define typed LLM Run identity/metadata. Extend atomic `reserve_model_call`; assert quota failure creates neither budget increase nor start event.
-3. Add lifecycle methods for bounded safe metadata and after-commit invalidation. Test failure, cancellation, restart and no raw outputs.
+**Phase 3 — Approved View A**
+- Implement 4 KPI cards, chronological rail, expandable Run cards, selected Run right panel and Execution Progress panel **to match the approved HTML**.
+- Preserve existing Step/Artifact/Result features below, Job actions, styling tokens, responsiveness and VI/EN translations.
+- Reuse existing REST/SSE/Job Detail state. No filters, modal Inspector, alternative layout or fake progress.
 
-**Phase B — Managed model/provider instrumentation**
-1. Thread `LlmRunContext` through Planner/Repair/Replan/Worker and `JobModels`; update fake implementations.
-2. Capture provider resolution, actual transport, capacity wait, request boundary and timing without keeping SQLite transaction open across the await.
-3. Add Background typed usage, Responses parsing and Chat fallback null usage. Verify Voice `stream()` transport never changes.
-
-**Phase C — Admin UI View A**
-1. Build pure projection + unit tests for fragmented event histories, two interleaved Run IDs, old events, incomplete Run and unknown new event types.
-2. Build Timeline, cards and Run Inspector using existing components/tokens and VI/EN i18n.
-3. Integrate with Job Detail layout/REST/SSE; verify live refresh, route changes, mobile keyboard behavior and no unnecessary network loop.
-
-**Phase D — Qualification**
-1. Run real Agent Job with Planner rejection -> Plan Repair -> accepted Plan -> Worker success and inspect identity/log ordering.
-2. Exercise unavailable/config-changed provider, capacity timeout, cancellation, restart and event pagination/reconnect.
-3. Verify large/long history, retention and existing Jobs. Check security by scanning actual event payloads (no prompt/response/auth secret).
+**Phase 4 — Qualification**
+- Test failed Planner -> Repair -> Worker; provider mismatch/unavailable; capacity timeout; cancellation; restart; old Jobs; event pagination/reconnect; token-usage absence and retention.
+- Confirm no new SQL/raw SQLite connection in logic Modules, no exposure of keys/raw prompts, correct display identity after Provider settings change, and no changes to Voice transport.
+- Run project checks through `scripts/agent-test.sh` (not direct `cargo test`); targeted Rust tests first, then web test/typecheck/build and relevant full checks.
 
 ## 9. Acceptance criteria
 
-- [ ] New Run has a **durable start event** in the same transaction as budget reservation; the first UI card exists before provider acquisition even if provider fails.
-- [ ] Card initially shows pinned provider; after exact validation it shows **actual adapter + model + transport**; historical views do not resolve from mutable current provider settings.
-- [ ] Planner initial, Plan Repair, Replan and Worker calls have distinct IDs, linked attempts/Steps; no conflation with Plan/Job acceptance.
-- [ ] All normal lifecycle stages are ordered by per-Job `sequence`, bounded, metadata-only and visible after commit through existing SSE+REST.
-- [ ] Not-yet-dispatched, timed-out, cancelled, ambiguous and recovered cases never show fake `request_sent`/`completed` outcomes.
-- [ ] Responses usage is captured as optional typed metadata; null when missing, without showing hidden reasoning text.
-- [ ] Existing six event types, old Jobs, retention, Job Read View, voice transport, plugin execution and retry semantics remain unchanged.
-- [ ] UI uses existing `DetailHeader`, `studio-panel`, two-column layout, existing actions and dark/light tokens. Responsive, keyboard accessible and bilingual.
-- [ ] SSE resync / pagination does not lose or duplicate Run cards; >32 pages never appear falsely complete.
-- [ ] Rust tests and web tests pass through repo-approved `scripts/agent-test.sh`.
+- [ ] **Approved View A visual structure**: real Studio shell + Job header + **4 KPIs + left timeline + persistent right Selected LLM Run + right Execution Progress**. Selecting a card updates Inspector and expands stages; clicking again toggles expansion. No filter bar or modal.
+- [ ] Original Steps/Artifacts/Result/Job actions still work, placed below the approved primary View A, without replacing its right-hand panels.
+- [ ] Durable `llm_run_started` shares model budget transaction; a failed provider still yields a Run with pinned Provider displayed.
+- [ ] Each Planner/Repair/Replan/Worker invocation correlates by unique `run_id`; provider/model/transport reflect the **resolved pinned runtime**, not mutable current config.
+- [ ] Five (not seven) additive LLM events are enough for provider activity, response, safe validation diagnostics and Run terminal status; existing six Job events remain available.
+- [ ] The UI does not claim upstream request ACK, token streaming, usage where unavailable, Plan acceptance before Rust compile, or terminal success without checkpoint.
+- [ ] **All SQL/SQLx queries and DB pool/connection acquisition in the touched Agent Job flow are located under `crates/voice-agent-server/src/database/`**; `services/background/*` and Admin handlers call typed Database methods. Migrations remain under `migrations/`.
+- [ ] No unauthorized change to pin checks, budget, cancellation, quarantine, recovery, plugin authority, Voice LLM, or existing retention.
+- [ ] SSE reconciliation reuses existing code; Job events are ordered by `sequence` and support previous Jobs.
+- [ ] Bilingual, responsive, keyboard accessible, light/dark theme; no prototype switcher or mock data shipped.
+- [ ] Tests/checks run using `scripts/agent-test.sh`; document any inability to execute tests instead of claiming success.
 
-Suggested checks, run **targeted before broad** (test names are implementation targets, not currently existing):
+## 10. PONYTAIL decisions recorded
 
-```bash
-scripts/agent-test.sh targeted llm_run
-scripts/agent-test.sh targeted plan_repair
-scripts/agent-test.sh targeted job_events
-scripts/agent-test.sh check voice-agent-server
-scripts/agent-test.sh web test
-scripts/agent-test.sh web typecheck
-scripts/agent-test.sh web build
-scripts/agent-test.sh package
-scripts/agent-test.sh run -- cargo fmt --check
-scripts/agent-test.sh full
-```
+| Review recommendation | v1.1 decision | Reason |
+|---|---|---|
+| Reduce 7 lifecycle types to 5 | **Accept** | Five events + existing plan/step events show the approved timeline. |
+| Remove thin `JobLlmActivity` wrapper | **Accept** | Existing Database/`events.rs` owns durable writes. |
+| Shrink Vue component proliferation | **Accept internally** | One timeline Module + pure projection, but all View A visible panels remain. |
+| Replace Inspector with inline only / modal | **Reject** | Approved HTML requires a permanent right **Selected LLM Run** panel plus inline stages. |
+| Delete 4 KPI cards | **Reject** | Approved HTML includes them. |
+| Add All/Errors-only filter | **Reject** | Approved View A has no filter bar. |
+| Two role values; derive Plan Repair/Replan | **Accept** | Explicit phase/attempt ensures distinct labels without four role kinds. |
+| Put provider-call start in managed runtime | **Accept** | Accurate bounded event after admission; UI text is shorthand, not network acknowledgment. |
+| Do not add recovery queries | **Accept** | Existing `job_finished` is enough for derived interrupted state. |
+| Reuse cursor data load | **Accept** | Main already supports paged reads, no second pagination subsystem. |
+| Shrink duplicate examples | **Accept** | One flow plus acceptance checklist. |
+| **User requirement: strict SQL locality** | **Mandatory** | Provider/Settings SQL currently exists in logic; relocate into `database/`. |
+| **User requirement: exact approved UI** | **Mandatory** | View A HTML is stronger than generic simplification suggestions. |
 
-## 10. Decisions and non-decisions
-
-**Chosen:** one user-facing View A inside Job Detail; per-model-Invocation identity; additive durable events in existing `job_events`; optional on-demand Inspector; historical provider identity from the verified pin/runtime; existing authenticated SSE; metadata-only.
-
-**Rejected for this iteration:** always-on three-column debugger, new top-level Logs page, second table `job_llm_calls`, unbounded event stream, raw request/response retention, provider fallback, queue-to-LLM fake Run, per-token progress, new broker, or speculative background model retry.
-
-**Future optional design:** a separate opt-in, short-retention Diagnostic Capture Module may store sanitized request/response previews under explicit Admin access. It needs its own threat model and is **not authorized by this spec**.
-
-**Implementation caveat:** This is an architecture/UI specification. No production code, migrations or tests were run as part of publishing this document. The event names, safe metadata typed shapes, and migrations are proposed contracts to implement and qualify on the new branch.
+**Implementation status:** Document updated only. No production Rust, database migrations or Vue code was changed or tested in this documentation update.
