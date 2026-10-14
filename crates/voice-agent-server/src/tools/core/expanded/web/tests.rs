@@ -1,5 +1,40 @@
 use super::*;
 
+#[tokio::test]
+#[ignore = "requires the live 24h website"]
+async fn extracts_live_24h_article() {
+    let result = execute(&json!({"url":"https://www.24h.com.vn/bong-da/vff-thong-tin-ve-viec-hoan-vck-asian-cup-2027-c48a1802459.html", "max_chars":1000}), true).await.unwrap();
+    assert_eq!(result["status"], 200);
+    assert_eq!(
+        result["title"],
+        "VFF thông tin về việc hoãn VCK Asian Cup 2027"
+    );
+    let text = result["text"].as_str().unwrap();
+    assert!(
+        text.contains("Ngày 13/10"),
+        "article introduction missing ({} chars)",
+        text.chars().count()
+    );
+    assert!(text.contains("Saudi Arabia"), "article body missing");
+}
+
+#[tokio::test]
+async fn prioritizes_article_over_navigation_before_text_limit() {
+    let body = format!(
+        "<title>Article</title><nav>{}</nav>\
+         <article class=\"teaser\"><a>Related headline</a></article>\
+         <article class=\"cate-24h-foot-arti-deta-info\"><h2>INTRO</h2>\
+         <p>ARTICLE_BODY</p><div><p>ARTICLE_END</p></div></article><footer>FOOTER</footer>",
+        "Menu ".repeat(400)
+    );
+    let (url, server) = serve_html(body).await;
+    let result = execute(&json!({"url":url,"max_chars":1000}), true).await;
+    server.abort();
+    let result = result.unwrap();
+    assert_eq!(result["text"], "INTRO ARTICLE_BODY ARTICLE_END");
+    assert_eq!(result["truncated"], false);
+}
+
 #[test]
 fn strips_active_html_and_extracts_title() {
     let (title, text) = html_plain_text(
@@ -10,6 +45,33 @@ fn strips_active_html_and_extracts_title() {
     assert_eq!(title, "A & B");
     assert_eq!(text, "Hi <there> World");
     assert!(!text.contains("alert"));
+}
+
+#[test]
+fn article_selection_ignores_script_markup_and_handles_nesting() {
+    let (_, text) = html_plain_text(
+        "<script>const fake = '<article>FAKE</article>';</script>\
+         <!-- <article>COMMENT</article> -->\
+         <article><p>INTRO</p><article><p>NESTED</p></article><p>END</p></article>\
+         <article><script>padding padding padding padding</script>Teaser</article>",
+    )
+    .unwrap();
+    assert_eq!(text, "INTRO NESTED END");
+}
+
+#[test]
+fn falls_back_to_page_for_empty_or_incomplete_articles() {
+    for body in [
+        "<p>KEEP</p><article> </article>",
+        "<p>KEEP</p><article><script>hidden</script></article>",
+        "<p>KEEP</p><article>",
+        "<article/><p>KEEP</p>",
+    ] {
+        let (_, text) = html_plain_text(body).unwrap();
+        assert_eq!(text, "KEEP");
+    }
+    let (_, text) = html_plain_text("<p>BEFORE</p><article><p>PARTIAL</p>").unwrap();
+    assert_eq!(text, "BEFORE PARTIAL");
 }
 
 #[test]

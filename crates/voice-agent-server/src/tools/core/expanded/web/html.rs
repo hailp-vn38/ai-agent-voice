@@ -98,7 +98,8 @@ fn extract_title(html: &str) -> String {
     String::new()
 }
 
-/// Strip toàn bộ markup thành text. Các block script/style/noscript/template/
+/// Strip markup thành text, ưu tiên article có nhiều text nhất nếu có.
+/// Các block script/style/noscript/template/
 /// title bị bỏ theo đúng tag đóng của chính nó; block không có tag đóng
 /// (fetch bị cắt giữa chừng) thì bỏ tới EOF thay vì rò nội dung ra text.
 /// Tag thường được bỏ tôn trọng quote nên `id="<Compound Path>"` không làm
@@ -107,6 +108,10 @@ fn strip_to_plain_text(html: &str) -> String {
     let bytes = html.as_bytes();
     let mut out = String::with_capacity(html.len().min(1 << 20));
     let mut i = 0;
+    let mut article_depth = 0usize;
+    let mut article_start = 0;
+    let mut best_article = None;
+    let mut best_length = 0;
     while i < bytes.len() {
         if bytes[i] != b'<' {
             let next = html[i..].find('<').map(|p| i + p).unwrap_or(html.len());
@@ -182,13 +187,40 @@ fn strip_to_plain_text(html: &str) -> String {
         // Tag thường (mở hoặc đóng): bỏ tới `>` tôn trọng quote.
         match tag_end(bytes, i) {
             Some(end) => {
+                // Track ranges in the stripped output, so markup/scripts cannot
+                // make a teaser look larger than the actual article. Nested
+                // articles belong to their outer article. Incomplete articles
+                // fall back to the page text rather than discarding content.
+                if name == "article" {
+                    if is_closing && article_depth > 0 {
+                        article_depth -= 1;
+                        if article_depth == 0 {
+                            let length = out[article_start..]
+                                .split_whitespace()
+                                .map(str::len)
+                                .sum::<usize>();
+                            if length > best_length {
+                                best_length = length;
+                                best_article = Some(article_start..out.len());
+                            }
+                        }
+                    } else if !is_closing && bytes[end - 1] != b'/' {
+                        if article_depth == 0 {
+                            article_start = out.len();
+                        }
+                        article_depth += 1;
+                    }
+                }
                 i = end + 1;
                 out.push(' ');
             }
             None => break,
         }
     }
-    out
+    match best_article {
+        Some(range) if article_depth == 0 => out[range].to_owned(),
+        _ => out,
+    }
 }
 
 /// Best-effort plain-text extraction, không phải browser renderer.
