@@ -301,7 +301,7 @@ impl Database {
                 let pins: JobSnapshot = serde_json::from_str(&row.snapshot_json)
                     .map_err(|_| JobError::DatabaseUnavailable)?;
                 for old in [&pins.orchestrator, &pins.worker] {
-                    match crate::services::background::providers::pin(
+                    match providers::pin(
                         &mut tx,
                         config,
                         &old.reference,
