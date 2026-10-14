@@ -74,7 +74,7 @@ impl Database {
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let job: JobRow = sqlx::query_as(
-            "SELECT * FROM jobs WHERE id=? AND status='planning' AND execution_mode='hierarchical_v2' AND deadline_at>?"
+            "SELECT * FROM jobs WHERE id=? AND status='planning' AND execution_mode IN ('hierarchical_v2','hierarchical_v3') AND deadline_at>?"
         ).bind(id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
         let run_id = uuid::Uuid::new_v4().to_string();
         let goal =
