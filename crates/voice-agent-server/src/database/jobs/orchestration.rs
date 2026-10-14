@@ -66,7 +66,7 @@ impl Database {
             .await?;
         let mut used: Value =
             serde_json::from_str(&raw).map_err(|_| JobError::DatabaseUnavailable)?;
-        let legacy_attempt = if job.execution_mode == "hierarchical_v2" {
+        let legacy_attempt = if matches!(job.execution_mode.as_str(),"hierarchical_v2" | "hierarchical_v3") {
             let agent_id = run.agent_run_id.as_deref().ok_or(JobError::InvalidPlan)?;
             let active:i64=sqlx::query_scalar(
                 "SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND agent_run_id=? AND status='running'"
@@ -397,7 +397,7 @@ impl Database {
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
-        if mode == "hierarchical_v2" {
+        if matches!(mode.as_str(),"hierarchical_v2" | "hierarchical_v3") {
             let root:Option<String>=sqlx::query_scalar(
                 "SELECT agent_run_id FROM job_agent_runs WHERE job_id=? AND parent_agent_run_id IS NULL AND status='running'"
             ).bind(id).fetch_optional(&mut *tx).await?;
