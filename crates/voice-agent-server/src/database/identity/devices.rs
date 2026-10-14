@@ -216,3 +216,13 @@ impl Database {
         audit_conflict(&self.pool, request_id.into(), "device", id, expected).await;
     }
 }
+
+impl Database {
+    /// Resolve the incarnation used by the active-session registry without loading assignments.
+    pub(crate) async fn device_row_id(&self, device_id: &str) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT id FROM devices WHERE device_id=?")
+            .bind(device_id)
+            .fetch_optional(self.pool())
+            .await
+    }
+}

@@ -25,11 +25,11 @@ pub(crate) fn decode_choice(raw: &serde_json::Value) -> Result<FrozenChoice, Plu
     }
 }
 
+use crate::database::plugins::Installation;
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
 use serde::Serialize;
 use serde_json::json;
-use sqlx::FromRow;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Semaphore;
 
@@ -109,17 +109,6 @@ pub struct OperationView {
     pub description: String,
     pub replay: String,
 }
-#[derive(FromRow)]
-struct Installation {
-    plugin_id: String,
-    version: String,
-    package_digest: String,
-    installation_digest: String,
-    status: String,
-    revision: i64,
-    operations_json: String,
-    last_error_code: Option<String>,
-}
 impl Installation {
     fn manifest(&self) -> Result<Manifest, PluginError> {
         serde_json::from_str(&self.operations_json).map_err(|_| PluginError::DatabaseUnavailable)
@@ -191,11 +180,7 @@ impl PluginStore {
         }
     }
     async fn row(&self, id: &str) -> Result<Installation, PluginError> {
-        sqlx::query_as("SELECT * FROM plugin_installations WHERE plugin_id=?")
-            .bind(id)
-            .fetch_optional(self.database.pool())
-            .await?
-            .ok_or(PluginError::NotFound)
+        self.database.plugin_installation(id).await
     }
     pub async fn get(&self, id: &str) -> Result<PluginView, PluginError> {
         self.row(id).await?.view()
@@ -222,10 +207,10 @@ impl PluginStore {
                     .replace('_', "\\_")
             )
         });
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM plugin_installations WHERE (? IS NULL OR status=?) AND (? IS NULL OR plugin_id LIKE ? ESCAPE '\\')")
-            .bind(status).bind(status).bind(&pattern).bind(&pattern).fetch_one(self.database.pool()).await?;
-        let rows: Vec<Installation> = sqlx::query_as("SELECT * FROM plugin_installations WHERE (? IS NULL OR status=?) AND (? IS NULL OR plugin_id LIKE ? ESCAPE '\\') ORDER BY plugin_id LIMIT ? OFFSET ?")
-            .bind(status).bind(status).bind(&pattern).bind(&pattern).bind(size).bind(i64::from(page-1)*i64::from(size)).fetch_all(self.database.pool()).await?;
+        let (rows, total) = self
+            .database
+            .list_plugin_installations(page, size, status, pattern.as_deref())
+            .await?;
         Ok((
             rows.into_iter()
                 .map(Installation::view)
@@ -321,49 +306,50 @@ impl PluginStore {
         if manifest.len() > 65536 {
             return Err(PluginError::InvalidPackage);
         }
-        let _publication = self.database.tool_security.publication.write().await;
-        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let pinned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','planning','running','cancelling') AND EXISTS (SELECT 1 FROM json_each(jobs.plugin_choices_json) WHERE json_extract(value,'$.plugin_id')=?)")
-            .bind(id).fetch_one(&mut *tx).await?;
-        if pinned != 0 {
-            return Err(PluginError::InUse);
-        }
-        if publish_package {
-            if let Some(parent) = target.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|_| PluginError::StorageUnavailable)?;
-            }
-            // Staging is mounted from the Installer volume; it may be on a
-            // different filesystem from packages. Publish through a sibling
-            // directory so the final rename is atomic on the package volume.
-            let pending = self
-                .root
-                .join("publishing")
-                .join(uuid::Uuid::new_v4().to_string());
-            for (name, content) in &package.files {
-                let path = pending.join(name);
-                if let Some(parent) = path.parent() {
-                    tokio::fs::create_dir_all(parent)
-                        .await
-                        .map_err(|_| PluginError::StorageUnavailable)?;
-                }
-                tokio::fs::write(path, content)
-                    .await
-                    .map_err(|_| PluginError::StorageUnavailable)?;
-            }
-            tokio::fs::write(pending.join("package.zip"), &package.source_zip)
-                .await
-                .map_err(|_| PluginError::StorageUnavailable)?;
-            tokio::fs::rename(&pending, &target)
-                .await
-                .map_err(|_| PluginError::StorageUnavailable)?;
-        }
-        let now = crate::database::unix_seconds().ok_or(PluginError::DatabaseUnavailable)?;
-        sqlx::query("INSERT INTO plugin_installations(plugin_id,version,package_digest,installation_digest,status,revision,operations_json,created_at,updated_at) VALUES(?,?,?,?,'disabled',1,?,?,?) ON CONFLICT(plugin_id) DO UPDATE SET version=excluded.version,package_digest=excluded.package_digest,installation_digest=excluded.installation_digest,status='disabled',revision=plugin_installations.revision+1,operations_json=excluded.operations_json,last_error_code=NULL,updated_at=excluded.updated_at")
-            .bind(id).bind(&package.manifest.plugin.version).bind(&package.digest).bind(&installation).bind(manifest).bind(now).bind(now).execute(&mut *tx).await?;
-        tx.commit().await?;
-        self.get(id).await
+        self.database
+            .publish_plugin_installation(
+                id,
+                &package.manifest.plugin.version,
+                &package.digest,
+                &installation,
+                &manifest,
+                || async {
+                    if publish_package {
+                        if let Some(parent) = target.parent() {
+                            tokio::fs::create_dir_all(parent)
+                                .await
+                                .map_err(|_| PluginError::StorageUnavailable)?;
+                        }
+                        // Staging is mounted from the Installer volume; it may be on a
+                        // different filesystem from packages. Publish through a sibling
+                        // directory so the final rename is atomic on the package volume.
+                        let pending = self
+                            .root
+                            .join("publishing")
+                            .join(uuid::Uuid::new_v4().to_string());
+                        for (name, content) in &package.files {
+                            let path = pending.join(name);
+                            if let Some(parent) = path.parent() {
+                                tokio::fs::create_dir_all(parent)
+                                    .await
+                                    .map_err(|_| PluginError::StorageUnavailable)?;
+                            }
+                            tokio::fs::write(path, content)
+                                .await
+                                .map_err(|_| PluginError::StorageUnavailable)?;
+                        }
+                        tokio::fs::write(pending.join("package.zip"), &package.source_zip)
+                            .await
+                            .map_err(|_| PluginError::StorageUnavailable)?;
+                        tokio::fs::rename(&pending, &target)
+                            .await
+                            .map_err(|_| PluginError::StorageUnavailable)?;
+                    }
+                    Ok(())
+                },
+            )
+            .await?
+            .view()
     }
     pub async fn activate(&self, id: &str, expected: i64) -> Result<PluginView, PluginError> {
         let row = self.row(id).await?;
@@ -391,46 +377,19 @@ impl PluginStore {
         if checked.digest != row.package_digest || checked.manifest.plugin.id != row.plugin_id {
             return Err(PluginError::InvalidPackage);
         }
-        let _publication = self.database.tool_security.publication.write().await;
-        let result = sqlx::query("UPDATE plugin_installations SET status='ready',revision=revision+1,last_error_code=NULL,updated_at=? WHERE plugin_id=? AND revision=? AND status IN ('disabled','error')")
-            .bind(crate::database::unix_seconds()).bind(id).bind(expected).execute(self.database.pool()).await?;
-        if result.rows_affected() != 1 {
-            return Err(PluginError::RevisionConflict);
-        }
-        self.get(id).await
+        self.database
+            .activate_plugin_installation(id, expected)
+            .await?
+            .view()
     }
     pub async fn disable(&self, id: &str, expected: i64) -> Result<PluginView, PluginError> {
-        let _publication = self.database.tool_security.publication.write().await;
-        let result = sqlx::query("UPDATE plugin_installations SET status='disabled',revision=revision+1,updated_at=? WHERE plugin_id=? AND revision=?")
-            .bind(crate::database::unix_seconds()).bind(id).bind(expected).execute(self.database.pool()).await?;
-        if result.rows_affected() != 1 {
-            return Err(PluginError::RevisionConflict);
-        }
-        self.get(id).await
+        self.database
+            .disable_plugin_installation(id, expected)
+            .await?
+            .view()
     }
     pub async fn uninstall(&self, id: &str, expected: i64) -> Result<(), PluginError> {
-        let _publication = self.database.tool_security.publication.write().await;
-        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let row: Option<Installation> =
-            sqlx::query_as("SELECT * FROM plugin_installations WHERE plugin_id=?")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let row = row.ok_or(PluginError::NotFound)?;
-        if row.revision != expected {
-            return Err(PluginError::RevisionConflict);
-        }
-        let pinned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','planning','running','cancelling') AND EXISTS (SELECT 1 FROM json_each(jobs.plugin_choices_json) WHERE json_extract(value,'$.plugin_id')=?)")
-            .bind(id).fetch_one(&mut *tx).await?;
-        if pinned != 0 {
-            return Err(PluginError::InUse);
-        }
-        sqlx::query("DELETE FROM plugin_installations WHERE plugin_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
+        self.database.uninstall_plugin(id, expected).await
     }
     pub async fn test(&self, id: &str, expected: i64) -> Result<(), PluginError> {
         let row = self.row(id).await?;
@@ -455,27 +414,17 @@ impl PluginStore {
         choice: &FrozenChoice,
         code: &str,
     ) -> Result<(), PluginError> {
-        let _publication = self.database.tool_security.publication.write().await;
-        sqlx::query("UPDATE plugin_installations SET status='error',last_error_code=?,revision=revision+1,updated_at=? WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'")
-            .bind(code).bind(crate::database::unix_seconds()).bind(&choice.plugin_id)
-            .bind(&choice.version).bind(&choice.package_digest).bind(&choice.installation_digest)
-            .execute(self.database.pool()).await?;
-        Ok(())
+        self.database.fail_plugin_installation(choice, code).await
     }
 }
 
-/// Called within the same BEGIN IMMEDIATE transaction that commits the Job.
-/// Ready plugin choices are frozen before installation versions can change.
-pub(crate) async fn frozen_choices(
-    connection: &mut sqlx::SqliteConnection,
+/// Freeze ready installation rows read by the Job submission write transaction.
+/// The database retains that transaction until the Job is committed.
+pub(crate) fn frozen_choices(
+    rows: Vec<Installation>,
     request: &crate::services::background::JobRequest,
 ) -> Result<String, crate::services::background::JobError> {
     use crate::services::background::JobError;
-    let rows: Vec<Installation> = sqlx::query_as(
-        "SELECT * FROM plugin_installations WHERE status='ready' ORDER BY plugin_id LIMIT 33",
-    )
-    .fetch_all(connection)
-    .await?;
     if rows.len() > 32 {
         return Err(JobError::CapacityUnavailable);
     }

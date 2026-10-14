@@ -5,6 +5,7 @@ use crate::{
     },
 };
 use sqlx::{FromRow, SqliteConnection};
+mod artifacts;
 mod change_feed;
 mod deletion;
 pub(crate) use change_feed::JobChangeFeed;

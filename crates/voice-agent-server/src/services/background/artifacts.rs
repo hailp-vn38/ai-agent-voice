@@ -160,14 +160,7 @@ pub(crate) async fn reconcile(database: &Database) -> Result<(), JobError> {
                 return Err(JobError::CapacityUnavailable);
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            let retained: i64 = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM job_artifacts WHERE job_id=? AND id=?)",
-            )
-            .bind(&job_id)
-            .bind(&name)
-            .fetch_one(database.pool())
-            .await?;
-            if retained == 0 {
+            if !database.job_artifact_exists(&job_id, &name).await? {
                 let kind = entry
                     .file_type()
                     .await

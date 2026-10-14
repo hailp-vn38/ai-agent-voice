@@ -107,6 +107,23 @@ async fn ready_plugin_choices_freeze_at_submit_and_pin_nonterminal_installation(
             .unwrap_err(),
         PluginError::InUse
     );
+    // A pinned Job must reject installation replacement before any filesystem publication.
+    let mut published = false;
+    let replacement = db
+        .publish_plugin_installation(
+            "fixture-research",
+            "2.0.0",
+            &"c".repeat(64),
+            &"d".repeat(64),
+            "{}",
+            || {
+                published = true;
+                async { Ok(()) }
+            },
+        )
+        .await;
+    assert_eq!(replacement.err(), Some(PluginError::InUse));
+    assert!(!published);
     runtime
         .engine
         .plugins

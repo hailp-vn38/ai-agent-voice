@@ -4,9 +4,7 @@ impl PluginStore {
     /// The Runner owns process groups. A server restart must never blindly reap
     /// them or delete output from an attempt that could still be running.
     pub(crate) async fn reap_owned(&self) -> Result<(), PluginError> {
-        sqlx::query("UPDATE job_steps SET worker_instance_id=NULL WHERE worker_instance_id IS NOT NULL AND job_id IN (SELECT id FROM jobs WHERE status IN ('failed','cancelled','succeeded','partial_success'))")
-            .execute(self.database.pool()).await?;
-        Ok(())
+        self.database.clear_terminal_plugin_workers().await
     }
 
     #[cfg(test)]

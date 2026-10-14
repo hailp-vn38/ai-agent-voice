@@ -157,3 +157,51 @@ fn worker_response_requires_one_bounded_matching_schema_line() {
     assert!(parse_response(wrong, "attempt-1", &schema).is_err());
     assert!(parse_response(&vec![b'x'; 65537], "attempt-1", &schema).is_err());
 }
+
+#[tokio::test]
+async fn installation_publication_failure_preserves_previous_revision() {
+    use super::PluginError;
+    let (db, _, runtime) = crate::services::background::tests::harness().await;
+    let digest = "a".repeat(64);
+    let installation = format!("sha256:{}", "b".repeat(64));
+    let first = db
+        .publish_plugin_installation(
+            "fixture-research",
+            "1.0.0",
+            &digest,
+            &installation,
+            "{}",
+            || async { Ok(()) },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status, "disabled");
+    assert_eq!(first.revision, 1);
+    let replacement = db
+        .publish_plugin_installation(
+            "fixture-research",
+            "2.0.0",
+            &digest,
+            &installation,
+            "{}",
+            || async { Err(PluginError::StorageUnavailable) },
+        )
+        .await;
+    assert_eq!(replacement.err(), Some(PluginError::StorageUnavailable));
+    let retained = db.plugin_installation("fixture-research").await.unwrap();
+    assert_eq!(retained.version, "1.0.0");
+    assert_eq!(retained.revision, 1);
+    assert_eq!(
+        db.activate_plugin_installation("fixture-research", 2)
+            .await
+            .err(),
+        Some(PluginError::RevisionConflict)
+    );
+    let activated = db
+        .activate_plugin_installation("fixture-research", 1)
+        .await
+        .unwrap();
+    assert_eq!(activated.status, "ready");
+    assert_eq!(activated.revision, 2);
+    runtime.shutdown().await;
+}

@@ -52,8 +52,7 @@ impl BackgroundRuntime {
         database.recover_jobs(now()?).await?;
         if !foundation_harness && models.is_none() {
             // An old enable bit must never activate an incomplete P0 deployment.
-            let _publication = database.tool_security.publication.write().await;
-            sqlx::query("UPDATE background_settings SET enabled=0,revision=revision+1 WHERE singleton=1 AND enabled=1").execute(database.pool()).await?;
+            database.disable_background_execution().await?;
         }
         let engine = Arc::new(JobEngine {
             plugins: super::plugins::PluginStore::new(database.clone(), config.background.clone()),

@@ -2,6 +2,13 @@ use super::Database;
 use crate::services::background::{BackgroundSettingsUpdate, JobError};
 
 impl Database {
+    pub(crate) async fn disable_background_execution(&self) -> Result<(), JobError> {
+        let _publication = self.tool_security.publication.write().await;
+        sqlx::query("UPDATE background_settings SET enabled=0,revision=revision+1 WHERE singleton=1 AND enabled=1")
+            .execute(self.pool()).await?;
+        Ok(())
+    }
+
     pub(crate) async fn background_settings(
         &self,
     ) -> Result<(BackgroundSettingsUpdate, i64), JobError> {

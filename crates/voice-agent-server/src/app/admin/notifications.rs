@@ -70,12 +70,7 @@ pub(super) async fn list(
     {
         Ok(mut v) => {
             if let Some(summary) = v.get_mut("schedule_summary").and_then(Value::as_object_mut) {
-                let id = sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE device_id=?")
-                    .bind(&device)
-                    .fetch_optional(database.pool())
-                    .await
-                    .ok()
-                    .flatten();
+                let id = database.device_row_id(&device).await.ok().flatten();
                 let session = id.and_then(|id| state.active_device_sessions.current(id));
                 summary.insert(
                     "session_connected".into(),
@@ -238,11 +233,7 @@ async fn publish_sync(state: &AppState, device: &str, revision: i64) {
     let Some(database) = &state.database else {
         return;
     };
-    let Ok(Some(id)) = sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE device_id=?")
-        .bind(device)
-        .fetch_optional(database.pool())
-        .await
-    else {
+    let Ok(Some(id)) = database.device_row_id(device).await else {
         return;
     };
     state.active_device_sessions.sync_required(id, revision);

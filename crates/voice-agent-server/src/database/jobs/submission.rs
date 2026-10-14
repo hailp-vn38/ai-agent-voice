@@ -147,8 +147,12 @@ impl Database {
             )
             .await?;
         }
-        let plugin_choices =
-            crate::services::background::plugins::frozen_choices(&mut tx, &request).await?;
+        let plugin_choices = crate::services::background::plugins::frozen_choices(
+            crate::database::plugins::ready_installations(&mut tx)
+                .await
+                .map_err(|_| JobError::DatabaseUnavailable)?,
+            &request,
+        )?;
         let used: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'")
             .fetch_one(&mut *tx)
             .await?;
