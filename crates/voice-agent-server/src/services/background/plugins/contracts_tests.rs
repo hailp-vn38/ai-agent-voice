@@ -80,13 +80,13 @@ fn legacy_external_and_core_frozen_choices_share_one_tool_compiler() {
         "package_digest":"package","installation_digest":"installation",
         "operation":"collect_topic"
     });
-    let parsed = super::super::decode_choice(&external).unwrap();
+    let parsed = crate::services::background::plugins::decode_choice(&external).unwrap();
     assert_eq!(parsed.plugin_id, "fixture-research");
     assert!(!crate::tools::core::is_core(&parsed));
     assert!(crate::tools::core::matches_frozen(&external, &parsed));
 
     let core_raw = crate::tools::core::frozen_choices();
-    let choice = super::super::decode_choice(&core_raw[0]).unwrap();
+    let choice = crate::services::background::plugins::decode_choice(&core_raw[0]).unwrap();
     let contract = crate::tools::core::contract(&choice).unwrap();
     let (defs, bindings) = compile_child_tools(&[(choice, contract)]).unwrap();
     assert_eq!(defs[0].name, "p_core_web_fetch");
@@ -98,5 +98,5 @@ fn legacy_external_and_core_frozen_choices_share_one_tool_compiler() {
 
     let mut invalid = core_raw[0].clone();
     invalid["contract_revision"] = serde_json::json!("changed");
-    assert!(super::super::decode_choice(&invalid).is_err());
+    assert!(crate::services::background::plugins::decode_choice(&invalid).is_err());
 }
