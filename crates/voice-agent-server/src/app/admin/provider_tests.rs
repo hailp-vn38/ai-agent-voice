@@ -42,6 +42,8 @@ pub(super) async fn test_vad_provider(
 #[serde(deny_unknown_fields)]
 struct LlmTestRequest {
     input: String,
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -65,10 +67,11 @@ pub(super) async fn test_llm_provider(
         return error(&request, StatusCode::BAD_REQUEST, "invalid_test_input");
     }
     let started = Instant::now();
-    let outcome = state
-        .provider_diagnostics
-        .execute_llm(&key, body.input)
-        .await;
+    let outcome = if let Some(mode) = body.mode {
+        state.provider_diagnostics.execute_llm_strict(&key, body.input, mode).await
+    } else {
+        state.provider_diagnostics.execute_llm(&key, body.input).await
+    };
     let diagnostic = match outcome {
         Ok(value) => value,
         Err(diagnostic_error) => return request_error_response(&request, diagnostic_error),
