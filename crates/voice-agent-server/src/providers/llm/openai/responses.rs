@@ -259,12 +259,11 @@ fn parse_turn(body: &Value, mode: &crate::providers::llm::BackgroundMode)
                         let name = item["name"].as_str().filter(|s| !s.is_empty()).ok_or(LlmError::Rejected)?;
                         let args = item["arguments"].as_str().ok_or(LlmError::Rejected)?;
                         calls.push(ToolCall{id:id.to_owned(),name:name.to_owned(),
-                            arguments:serde_json::from_str(args).map_err(|_| LlmError::Rejected)?});
+                            arguments:serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.to_owned()))});
                     },
                     _ => return Err(LlmError::Rejected),
                 }
             }
-            if calls.is_empty() { return Err(LlmError::Rejected); }
             BackgroundTurn::ToolCalls(calls)
         }
     };
