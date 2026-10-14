@@ -125,17 +125,31 @@ impl LlmProvider for OpenCodeFreeProvider {
             super::BackgroundMode::Structured { .. } => self.supports_structured_outputs,
             super::BackgroundMode::Tools => self.supports_function_calling,
         };
-        if !qualified { return Err(LlmError::Rejected); }
+        if !qualified {
+            return Err(LlmError::Rejected);
+        }
         if self.supports_responses {
             super::openai::responses::turn_with_usage(
-                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds, request, mode
-            ).await
+                BASE_URL,
+                &self.model,
+                PUBLIC_KEY,
+                self.timeout_seconds,
+                request,
+                mode,
+            )
+            .await
         } else {
             let headers = <ZenChat as OpenAIProviderConfig>::custom_headers().unwrap_or_default();
             super::openai::chat::turn_with_usage(
-                BASE_URL, &self.model, PUBLIC_KEY, self.timeout_seconds,
-                request, mode, &headers
-            ).await
+                BASE_URL,
+                &self.model,
+                PUBLIC_KEY,
+                self.timeout_seconds,
+                request,
+                mode,
+                &headers,
+            )
+            .await
         }
     }
     async fn background_complete_with_usage(
@@ -259,8 +273,26 @@ fn reject_placeholder_call(
 }
 
 const FIELDS: &[ProviderConfigField] = &[
-    field("supports_structured_outputs", "Supports Structured Outputs (Agent Job)", ConfigFieldType::Boolean, false, None, None, None, None),
-    field("supports_function_calling", "Supports Function Calling (Agent Job)", ConfigFieldType::Boolean, false, None, None, None, None),
+    field(
+        "supports_structured_outputs",
+        "Supports Structured Outputs (Agent Job)",
+        ConfigFieldType::Boolean,
+        false,
+        None,
+        None,
+        None,
+        None,
+    ),
+    field(
+        "supports_function_calling",
+        "Supports Function Calling (Agent Job)",
+        ConfigFieldType::Boolean,
+        false,
+        None,
+        None,
+        None,
+        None,
+    ),
     field(
         "supports_responses",
         "Supports Responses (Agent Job only)",
