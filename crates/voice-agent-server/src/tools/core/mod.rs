@@ -1,6 +1,8 @@
 //! Statically linked, safe-read Agent Job operations. Not Plugin Store installations.
 //! Risk 2 (network target/SSRF policy) is explicitly deferred; do not expose web.fetch
 //! to untrusted tenants until a separate policy is implemented.
+mod expanded;
+
 use crate::services::background::{
     JobEngine,
     plugins::{FrozenChoice, InvokeResult, PluginError},
@@ -8,7 +10,10 @@ use crate::services::background::{
 use serde_json::{Value, json};
 
 pub(crate) const REVISION: &str = "1";
-const OPERATIONS: [&str; 3] = ["web.fetch", "data.json_query", "artifact.read_text"];
+const OPERATIONS: [&str; 8] = [
+    "web.fetch", "data.json_query", "artifact.read_text", "web.extract",
+    "document.extract", "document.inspect", "data.transform", "artifact.inspect",
+];
 
 pub(crate) fn is_core(choice: &FrozenChoice) -> bool {
     choice.plugin_id == "core"
@@ -21,7 +26,8 @@ pub(crate) fn frozen_choices() -> Vec<Value> {
         let (provides, sources) = match *operation {
             "web.fetch" => (vec!["web_fetch"], vec!["web"]),
             "data.json_query" => (vec!["json_query"], vec![]),
-            _ => (vec!["artifact_read"], vec![]),
+            "artifact.read_text" => (vec!["artifact_read"], vec![]),
+            other => expanded::coverage(other),
         };
         json!({
             "kind":"core","plugin_id":"core","operation":operation,
@@ -102,7 +108,7 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
                 "size_bytes":{"type":"integer"}
             },"required":["text","truncated","size_bytes"],"additionalProperties":false}),
         ),
-        _ => return Err(PluginError::PermissionRequired),
+        _ => return expanded::contract(&choice.operation),
     };
     let (provides, sources) = match choice.operation.as_str() {
         "web.fetch" => (vec!["web_fetch"], vec!["web"]),
@@ -114,6 +120,34 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
         "input_schema":input_schema,"output_schema":output_schema,
         "provides":provides,"sources":sources
     }))
+}
+
+/// Read-only catalog for the preinstalled Core plugins. These are not rows
+/// in plugin_installations and cannot be activated, disabled or uninstalled.
+pub(crate) fn bundled_catalog() -> Value {
+    let groups: [(&str, &str, &[&str]); 4] = [
+        ("core.web", "Core Web", &["web.fetch", "web.extract"]),
+        ("core.document", "Core Document", &["document.extract", "document.inspect"]),
+        ("core.data", "Core Data", &["data.json_query", "data.transform"]),
+        ("core.artifact", "Core Artifact", &["artifact.read_text", "artifact.inspect"]),
+    ];
+    let items: Vec<Value> = groups.iter().map(|(id, name, operations)| {
+        let operations: Vec<Value> = operations.iter().map(|operation| {
+            let choice = FrozenChoice {
+                plugin_id: "core".into(), operation: (*operation).into(),
+                version: REVISION.into(), package_digest: String::new(),
+                installation_digest: String::new(),
+            };
+            let description = contract(&choice).ok()
+                .and_then(|schema| schema["description"].as_str().map(str::to_owned))
+                .unwrap_or_default();
+            json!({"name":operation,"description":description,
+                "contract_revision":REVISION,"replay":"safe_read"})
+        }).collect();
+        json!({"id":id,"name":name,"status":"ready","kind":"built_in",
+            "runtime":{"kind":"in_process","language":"rust"},"operations":operations})
+    }).collect();
+    json!({"items":items,"total":items.len(),"operation_total":OPERATIONS.len()})
 }
 
 fn take_chars(input: &str, cap: usize) -> (String, bool) {
@@ -150,52 +184,15 @@ pub(crate) async fn invoke(
             json!({"value":selected})
         }
         "artifact.read_text" => {
-            let artifact = arguments["artifact_id"].as_str().ok_or(PluginError::ApplicationError)?;
-            let media_type: Option<String> = sqlx::query_scalar(
-                "SELECT media_type FROM job_artifacts WHERE job_id=? AND id=?"
-            )
-                .bind(job_id).bind(artifact)
-                .fetch_optional(engine.database.pool()).await
-                .map_err(|_| PluginError::DatabaseUnavailable)?;
-            if !matches!(media_type.as_deref(),
-                Some("text/plain" | "text/markdown" | "application/json"))
-            {
-                return Err(PluginError::ApplicationError);
-            }
-            let bytes = engine.read_artifact(job_id, artifact).await
-                .map_err(|_| PluginError::ApplicationError)?;
-            let size = bytes.len();
-            let content = std::str::from_utf8(&bytes).map_err(|_| PluginError::ApplicationError)?;
-            let (text, truncated) = take_chars(content, maximum);
+            let id = arguments["artifact_id"].as_str().ok_or(PluginError::ApplicationError)?;
+            let (_, content, size) = expanded::owned_text(engine, job_id, id).await?;
+            let (text, truncated) = take_chars(&content, maximum);
             json!({"text":text,"truncated":truncated,"size_bytes":size})
         }
-        "web.fetch" => {
-            let url = arguments["url"].as_str().ok_or(PluginError::ApplicationError)?;
-            if !(url.starts_with("https://") || url.starts_with("http://")) {
-                return Err(PluginError::ApplicationError);
-            }
-            // Target restrictions are deferred by design; response size is still bounded.
-            let response = reqwest::Client::new().get(url).send().await
-                .map_err(|_| PluginError::ApplicationError)?;
-            let status = response.status().as_u16();
-            let content_type = response.headers().get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(128).collect::<String>();
-            let mut response = response;
-            let mut bytes = Vec::new();
-            let mut body_limit_reached = false;
-            while let Some(chunk) = response.chunk().await.map_err(|_| PluginError::ApplicationError)? {
-                let budget = 65536usize.saturating_sub(bytes.len());
-                bytes.extend_from_slice(&chunk[..chunk.len().min(budget)]);
-                if bytes.len() >= 65536 {
-                    body_limit_reached = true;
-                    break;
-                }
-            }
-            let text = String::from_utf8_lossy(&bytes);
-            let (text, truncated) = take_chars(&text, maximum);
-            json!({"text":text,"status":status,"content_type":content_type,
-                "truncated":truncated || body_limit_reached,
-                "provenance":[{"source":"web","urls":[url],"capabilities":["web_fetch"]}]})
+        "web.fetch" => expanded::fetch(&arguments).await?,
+        "web.extract" | "document.extract" | "document.inspect"
+        | "data.transform" | "artifact.inspect" => {
+            expanded::invoke(engine, &choice.operation, &arguments, job_id).await?
         }
         _ => return Err(PluginError::PermissionRequired),
     };
