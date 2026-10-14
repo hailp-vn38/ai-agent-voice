@@ -147,7 +147,8 @@ pub(crate) fn bundled_catalog() -> Value {
         json!({"id":id,"name":name,"status":"ready","kind":"built_in",
             "runtime":{"kind":"in_process","language":"rust"},"operations":operations})
     }).collect();
-    json!({"items":items,"total":items.len(),"operation_total":OPERATIONS.len()})
+    let total = items.len();
+    json!({"items":items,"total":total,"operation_total":OPERATIONS.len()})
 }
 
 fn take_chars(input: &str, cap: usize) -> (String, bool) {
