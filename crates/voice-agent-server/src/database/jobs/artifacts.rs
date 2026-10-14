@@ -17,37 +17,19 @@ impl Database {
         .await?;
         Ok(row)
     }
-    pub(crate) async fn plugin_step_inputs(
+    pub(crate) async fn validate_plugin_step_arguments(
         &self,
         job_id: &str,
         step_key: &str,
         arguments: &Value,
-    ) -> Result<serde_json::Map<String, Value>, JobError> {
+    ) -> Result<(), JobError> {
         let stored: String = sqlx::query_scalar("SELECT arguments_json FROM job_steps WHERE job_id=? AND step_key=? AND status='pending'").bind(job_id).bind(step_key).fetch_optional(self.pool()).await?.ok_or(JobError::Terminal)?;
         if serde_json::from_str::<Value>(&stored).map_err(|_| JobError::DatabaseUnavailable)?
             != *arguments
         {
             return Err(JobError::InvalidPlan);
         }
-        let refs: String = sqlx::query_scalar(
-            "SELECT input_refs_json FROM job_steps WHERE job_id=? AND step_key=?",
-        )
-        .bind(job_id)
-        .bind(step_key)
-        .fetch_one(self.pool())
-        .await?;
-        let refs: Vec<String> =
-            serde_json::from_str(&refs).map_err(|_| JobError::DatabaseUnavailable)?;
-        let mut inputs = serde_json::Map::new();
-        for key in refs {
-            let raw:Option<String>=sqlx::query_scalar("SELECT result_json FROM job_steps WHERE job_id=? AND step_key=? AND status='succeeded'").bind(job_id).bind(&key).fetch_optional(self.pool()).await?.flatten();
-            inputs.insert(
-                key,
-                serde_json::from_str(&raw.ok_or(JobError::InvalidPlan)?)
-                    .map_err(|_| JobError::DatabaseUnavailable)?,
-            );
-        }
-        Ok(inputs)
+        Ok(())
     }
     pub(crate) async fn clear_plugin_worker(
         &self,

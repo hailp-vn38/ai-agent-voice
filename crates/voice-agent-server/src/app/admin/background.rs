@@ -19,9 +19,6 @@ fn failure(request: &Request, cause: JobError) -> Response {
         | JobError::Terminal
         | JobError::DeleteConflict => StatusCode::CONFLICT,
         JobError::QueueFull => StatusCode::TOO_MANY_REQUESTS,
-        JobError::OrchestratorStructuredOutputsRequired
-        | JobError::OrchestratorFunctionCallingRequired
-        | JobError::WorkerFunctionCallingRequired => StatusCode::CONFLICT,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     };
     error(request, status, cause.code())

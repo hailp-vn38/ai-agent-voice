@@ -161,37 +161,3 @@ async fn concurrent_idempotent_requests_commit_exactly_one_job() {
     assert_eq!(runtime.engine.list(1, 30, None, None).await.unwrap().1, 1);
     runtime.shutdown().await;
 }
-
-#[tokio::test]
-async fn background_stream_requires_finished_even_after_valid_json() {
-    use crate::providers::LlmEvent;
-    let json = r#"{"summary":"valid but unconfirmed"}"#;
-    let stream = Box::pin(futures_util::stream::iter([Ok(LlmEvent::TextDelta(
-        json.into(),
-    ))]));
-    assert!(matches!(
-        crate::providers::llm::complete_background_chat(stream).await,
-        Err(crate::providers::LlmError::Failed)
-    ));
-    let stream = Box::pin(futures_util::stream::iter([
-        Ok(LlmEvent::TextDelta(json.into())),
-        Ok(LlmEvent::Finished),
-    ]));
-    assert_eq!(
-        crate::providers::llm::complete_background_chat(stream)
-            .await
-            .unwrap(),
-        json
-    );
-}
-
-#[tokio::test]
-async fn background_empty_terminal_response_is_rejected_without_quarantine() {
-    let stream = Box::pin(futures_util::stream::iter([Ok(
-        crate::providers::LlmEvent::Finished,
-    )]));
-    assert!(matches!(
-        crate::providers::llm::complete_background_chat(stream).await,
-        Err(crate::providers::LlmError::Rejected)
-    ));
-}

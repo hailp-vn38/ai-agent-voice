@@ -49,7 +49,7 @@ pub(super) fn parse_response(
     if response
         .result
         .as_ref()
-        .is_some_and(crate::services::background::plan::forbidden)
+        .is_some_and(crate::services::background::validation::forbidden)
     {
         return Err(PluginError::WorkerProtocolError);
     }

@@ -4,7 +4,7 @@ Type: task
 Status: resolved
 Baseline: c6c8861
 
-Implement P0 from `docs/agent-job-platform-v1.5.1-integration/IMPLEMENTATION-PHASES.md`; move ADR 0092–0097 into repository `docs/adr/`, preserve ADR 0087–0091 and migration 0104.
+Implement P0; move ADR 0092–0097 into repository `docs/adr/`, preserve ADR 0087–0091 and migration 0104.
 
 ## Acceptance
 
@@ -38,7 +38,7 @@ Workspace first run: FAIL, 26 SQLite in-memory regressions caused by SQLx URL re
 
 ## Answer
 
-P0 foundation completed. Production remains disabled/runtime_unavailable until P3 by contract. Canonical ADRs are in docs/adr; Job vocabulary is in CONTEXT.md. Evidence: docs/agent-job-platform-v1.5.1-integration/P0-IMPLEMENTATION.md.
+P0 foundation completed. Production remains disabled/runtime_unavailable until P3 by contract. Canonical ADRs are in docs/adr; Job vocabulary is in CONTEXT.md.
 
 Final gates: P0 15 tests PASS; production HTTP PASS; Reminder and Direct Speech targeted regressions PASS; System MCP 14 tests PASS after in-memory fix; workspace 735 passed / 11 ignored / 0 failed; strict Clippy all targets/all features PASS; Web 227 tests PASS and typecheck PASS; formatting PASS. Standards and Spec re-review PASS, no outstanding findings.
 

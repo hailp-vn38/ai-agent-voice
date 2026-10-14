@@ -1,6 +1,6 @@
 //! Durable Session ownership, transactional batches and release admission.
 use super::*;
-use crate::database::jobs::V3SessionTask;
+use crate::database::jobs::SessionTask;
 use crate::providers::llm::{ChatMessage, ToolCall};
 use crate::services::background::model::DelegatedTask;
 
@@ -16,10 +16,9 @@ async fn root(db: &Database, config: &AppConfig) -> (JobView, AgentRunView, Stri
     let job = db
         .submit_job(
             config,
-            request("Owned V3 session"),
+            request("Owned session"),
             &JobRequester::Admin,
             crate::database::jobs::SubmissionIdentity {
-                test_execution_mode: Some("hierarchical_v3"),
                 ..Default::default()
             },
             crate::database::unix_seconds().unwrap(),
@@ -31,7 +30,7 @@ async fn root(db: &Database, config: &AppConfig) -> (JobView, AgentRunView, Stri
     assert!(db.claim_job(&job.id, 2).await.unwrap());
     let run = db.create_root_run(&job.id).await.unwrap();
     let sid = db
-        .create_v3_root_session(
+        .create_root_session(
             &job.id,
             &run.agent_run_id,
             &job.snapshot.orchestrator,
@@ -43,7 +42,7 @@ async fn root(db: &Database, config: &AppConfig) -> (JobView, AgentRunView, Stri
     (job, run, sid)
 }
 #[tokio::test]
-async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_back() {
+async fn session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_back() {
     let (db, config, runtime) = harness().await;
     runtime.shutdown().await;
     let (job, run, root_sid) = root(&db, &config).await;
@@ -52,11 +51,11 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
         .await
         .unwrap();
     let sid = db
-        .attach_v3_child_session(
+        .attach_child_session(
             &job.id,
             &run.agent_run_id,
             &children[0].agent_run_id,
-            V3SessionTask {
+            SessionTask {
                 agent_key: "research",
                 resume_session_id: None,
                 pin: &job.snapshot.worker,
@@ -67,7 +66,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
         .await
         .unwrap();
     assert_eq!(
-        db.v3_preflight_child_resume(
+        db.preflight_child_resume(
             &job.id,
             &run.agent_run_id,
             &sid,
@@ -81,7 +80,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
     db.start_child_run(&job.id, &children[0].agent_run_id)
         .await
         .unwrap();
-    db.v3_append_messages(
+    db.append_messages(
         &job.id,
         &sid,
         &[ChatMessage::AssistantText {
@@ -99,14 +98,14 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
     let mut changed = job.snapshot.worker.clone();
     changed.digest = "changed".into();
     assert_eq!(
-        db.v3_preflight_child_resume(&job.id, &run.agent_run_id, &sid, "research", &changed)
+        db.preflight_child_resume(&job.id, &run.agent_run_id, &sid, "research", &changed)
             .await
             .unwrap_err(),
         JobError::InvalidArguments
     );
     let (other, other_run, _) = root(&db, &config).await;
     assert_eq!(
-        db.v3_preflight_child_resume(
+        db.preflight_child_resume(
             &other.id,
             &other_run.agent_run_id,
             &sid,
@@ -117,7 +116,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
         .unwrap_err(),
         JobError::InvalidArguments
     );
-    assert!(db.v3_read_messages(&other.id, &sid).await.is_err());
+    assert!(db.read_messages(&other.id, &sid).await.is_err());
     let calls = vec![
         ToolCall {
             id: "one".into(),
@@ -132,7 +131,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
     ];
     let before = db.job_events(&job.id, 0, 100).await.unwrap().len();
     let error = db
-        .create_v3_children(
+        .create_session_children(
             &job.id,
             &run.agent_run_id,
             "atomic",
@@ -142,7 +141,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
                 (Some("foreign"), "system", "second prompt"),
             ]
             .iter()
-            .map(|(resume, system, prompt)| V3SessionTask {
+            .map(|(resume, system, prompt)| SessionTask {
                 agent_key: "research",
                 resume_session_id: *resume,
                 pin: &job.snapshot.worker,
@@ -157,10 +156,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
     assert_eq!(error, JobError::InvalidArguments);
     assert_eq!(db.job_view(&job.id).await.unwrap().agent_runs.len(), 2);
     assert_eq!(db.job_events(&job.id, 0, 100).await.unwrap().len(), before);
-    assert_eq!(
-        db.v3_read_messages(&job.id, &root_sid).await.unwrap().len(),
-        2
-    );
+    assert_eq!(db.read_messages(&job.id, &root_sid).await.unwrap().len(), 2);
     assert!(
         sqlx::query("UPDATE job_agent_sessions SET provider_route_json='{}' WHERE session_id=?")
             .bind(&sid)
@@ -183,7 +179,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
     sqlx::query("INSERT INTO job_artifacts(id,job_id,step_key,relative_path,media_type,size_bytes,sha256,created_at) VALUES('prior-artifact',?,'prior-evidence','prior/path','text/plain',1,'digest',0)")
         .bind(&job.id).execute(db.pool()).await.unwrap();
     let resumed = db
-        .create_v3_children(
+        .create_session_children(
             &job.id,
             &run.agent_run_id,
             "resume",
@@ -194,7 +190,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
                 "new user task",
             )]
             .iter()
-            .map(|(resume, system, prompt)| V3SessionTask {
+            .map(|(resume, system, prompt)| SessionTask {
                 agent_key: "research",
                 resume_session_id: *resume,
                 pin: &job.snapshot.worker,
@@ -207,30 +203,30 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
         .await
         .unwrap();
     assert_eq!(
-        db.v3_session_for_run(&job.id, &resumed[0].agent_run_id)
+        db.session_for_run(&job.id, &resumed[0].agent_run_id)
             .await
             .unwrap(),
         sid
     );
     assert_eq!(
-        db.v3_child_artifact_refs(&job.id, &resumed[0].agent_run_id)
+        db.child_artifact_refs(&job.id, &resumed[0].agent_run_id)
             .await
             .unwrap(),
         vec!["prior-artifact"]
     );
     assert!(
-        db.v3_child_artifact_refs(&other.id, &other_run.agent_run_id)
+        db.child_artifact_refs(&other.id, &other_run.agent_run_id)
             .await
             .unwrap()
             .is_empty()
     );
-    let messages = db.v3_read_messages(&job.id, &sid).await.unwrap();
+    let messages = db.read_messages(&job.id, &sid).await.unwrap();
     assert!(matches!(&messages[0],ChatMessage::System{content} if content=="Specialist original"));
     assert!(
         matches!(messages.last().unwrap(),ChatMessage::User{content} if content=="new user task")
     );
     assert_eq!(
-        db.v3_preflight_child_resume(
+        db.preflight_child_resume(
             &job.id,
             &run.agent_run_id,
             &sid,
@@ -243,7 +239,7 @@ async fn v3_session_foreign_busy_and_changed_route_are_denied_and_batch_rolls_ba
     );
 }
 #[tokio::test]
-async fn v3_unknown_call_intent_cannot_resume_or_be_replayed_after_restart() {
+async fn unknown_call_intent_cannot_resume_or_be_replayed_after_restart() {
     let (db, config, runtime) = harness().await;
     runtime.shutdown().await;
     let (job, run, _) = root(&db, &config).await;
@@ -253,11 +249,11 @@ async fn v3_unknown_call_intent_cannot_resume_or_be_replayed_after_restart() {
         .unwrap()
         .remove(0);
     let sid = db
-        .attach_v3_child_session(
+        .attach_child_session(
             &job.id,
             &run.agent_run_id,
             &child.agent_run_id,
-            V3SessionTask {
+            SessionTask {
                 agent_key: "research",
                 resume_session_id: None,
                 pin: &job.snapshot.worker,
@@ -270,7 +266,7 @@ async fn v3_unknown_call_intent_cannot_resume_or_be_replayed_after_restart() {
     db.start_child_run(&job.id, &child.agent_run_id)
         .await
         .unwrap();
-    db.v3_append_messages(
+    db.append_messages(
         &job.id,
         &sid,
         &[ChatMessage::AssistantToolCalls {
@@ -284,7 +280,7 @@ async fn v3_unknown_call_intent_cannot_resume_or_be_replayed_after_restart() {
     .await
     .unwrap();
     assert!(
-        db.v3_append_messages(
+        db.append_messages(
             &job.id,
             &sid,
             &[ChatMessage::User {
@@ -318,23 +314,21 @@ async fn v3_unknown_call_intent_cannot_resume_or_be_replayed_after_restart() {
     assert_eq!(count, 1, "unknown intent remains as evidence");
 }
 #[tokio::test]
-async fn v3_release_attestation_must_match_both_exact_pins() {
+async fn submission_needs_no_release_attestation_or_hierarchical_capability_flags() {
     let (db, config, runtime) = harness().await;
     runtime.shutdown().await;
-    let pin = db
-        .background_provider_pin(&config, "config:llm:planner")
-        .await
-        .unwrap();
     let mut config = (*config).clone();
-    let raw = serde_json::to_string(&pin).unwrap();
-    config.background.hierarchical_v3_qualified_pins = Some([raw.clone(), raw]);
+    let provider = config.providers.llm.instances.get_mut("planner").unwrap();
+    let mut value = serde_json::to_value(&*provider).unwrap();
+    value["supports_structured_outputs"] = json!(false);
+    value["supports_function_calling"] = json!(false);
+    *provider = serde_json::from_value(value).unwrap();
     let receipt = db
         .submit_job(
             &config,
-            request("Qualified pair"),
+            request("Native session without release gates"),
             &JobRequester::Admin,
             crate::database::jobs::SubmissionIdentity {
-                test_execution_mode: Some("hierarchical_v3"),
                 ..Default::default()
             },
             crate::database::unix_seconds().unwrap(),
@@ -343,33 +337,10 @@ async fn v3_release_attestation_must_match_both_exact_pins() {
         .await
         .unwrap();
     assert_eq!(receipt.job.execution_mode, "hierarchical_v3");
-    let mut different = pin;
-    different.revision += 1;
-    config
-        .background
-        .hierarchical_v3_qualified_pins
-        .as_mut()
-        .unwrap()[1] = serde_json::to_string(&different).unwrap();
-    assert_eq!(
-        db.submit_job(
-            &config,
-            request("Changed pair"),
-            &JobRequester::Admin,
-            crate::database::jobs::SubmissionIdentity {
-                test_execution_mode: Some("hierarchical_v3"),
-                ..Default::default()
-            },
-            crate::database::unix_seconds().unwrap(),
-            || true
-        )
-        .await
-        .unwrap_err(),
-        JobError::ConfigurationChanged
-    );
 }
 
 #[tokio::test]
-async fn v3_concurrent_resume_claims_one_runner_and_appends_only_one_prompt() {
+async fn concurrent_resume_claims_one_runner_and_appends_only_one_prompt() {
     let (db, config, runtime) = harness().await;
     runtime.shutdown().await;
     let (job, run, _) = root(&db, &config).await;
@@ -379,11 +350,11 @@ async fn v3_concurrent_resume_claims_one_runner_and_appends_only_one_prompt() {
         .unwrap()
         .remove(0);
     let sid = db
-        .attach_v3_child_session(
+        .attach_child_session(
             &job.id,
             &run.agent_run_id,
             &first.agent_run_id,
-            V3SessionTask {
+            SessionTask {
                 agent_key: "research",
                 resume_session_id: None,
                 pin: &job.snapshot.worker,
@@ -412,11 +383,11 @@ async fn v3_concurrent_resume_claims_one_runner_and_appends_only_one_prompt() {
         .await
         .unwrap();
     let (a, b) = tokio::join!(
-        db.attach_v3_child_session(
+        db.attach_child_session(
             &job.id,
             &run.agent_run_id,
             &attempts[0].agent_run_id,
-            V3SessionTask {
+            SessionTask {
                 agent_key: "research",
                 resume_session_id: Some(&sid),
                 pin: &job.snapshot.worker,
@@ -424,11 +395,11 @@ async fn v3_concurrent_resume_claims_one_runner_and_appends_only_one_prompt() {
                 prompt: "resume a"
             }
         ),
-        db.attach_v3_child_session(
+        db.attach_child_session(
             &job.id,
             &run.agent_run_id,
             &attempts[1].agent_run_id,
-            V3SessionTask {
+            SessionTask {
                 agent_key: "research",
                 resume_session_id: Some(&sid),
                 pin: &job.snapshot.worker,
@@ -443,7 +414,7 @@ async fn v3_concurrent_resume_claims_one_runner_and_appends_only_one_prompt() {
         Ok(_) => b.unwrap_err(),
     };
     assert_eq!(denied, JobError::CapacityUnavailable);
-    let messages = db.v3_read_messages(&job.id, &sid).await.unwrap();
+    let messages = db.read_messages(&job.id, &sid).await.unwrap();
     assert_eq!(
         messages
             .iter()
@@ -459,4 +430,50 @@ async fn v3_concurrent_resume_claims_one_runner_and_appends_only_one_prompt() {
     .await
     .unwrap();
     assert_eq!(occupied, 1);
+}
+
+#[tokio::test]
+async fn retry_of_old_job_uses_native_executor_and_preserves_history() {
+    let (db, config, runtime) = harness().await;
+    runtime.shutdown().await;
+    let old = db
+        .submit_job(
+            &config,
+            request("Old execution mode"),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                test_execution_mode: Some("hierarchical_v2"),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || true,
+        )
+        .await
+        .unwrap()
+        .job;
+    assert!(db.claim_job(&old.id, 2).await.unwrap());
+    db.finish_job(&config, &old.id, "failed", Some("interrupted"), None)
+        .await
+        .unwrap();
+    let retry = db
+        .submit_job(
+            &config,
+            old.request.clone(),
+            &JobRequester::Admin,
+            crate::database::jobs::SubmissionIdentity {
+                retry_of: Some(&old.id),
+                ..Default::default()
+            },
+            crate::database::unix_seconds().unwrap(),
+            || true,
+        )
+        .await
+        .unwrap()
+        .job;
+    assert_eq!(retry.execution_mode, "hierarchical_v3");
+    assert_eq!(retry.retry_of_job_id.as_deref(), Some(old.id.as_str()));
+    assert_eq!(
+        db.job_view(&old.id).await.unwrap().execution_mode,
+        "hierarchical_v2"
+    );
 }

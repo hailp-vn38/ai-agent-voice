@@ -3,16 +3,16 @@ use crate::{config::AppConfig, database::Database};
 use serde_json::{Value, json};
 use std::sync::Arc;
 mod admission;
+mod delegation;
 mod execution;
-mod hierarchical;
 mod http;
 mod locking;
+mod native;
 mod orchestration;
 mod providers;
 mod recovery;
-mod v3;
-mod v3_native;
-mod v3_sessions;
+mod sessions;
+mod sessions_execution;
 mod voice_ws;
 
 pub(crate) fn config() -> AppConfig {

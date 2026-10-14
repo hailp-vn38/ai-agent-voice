@@ -1,4 +1,4 @@
-//! Deterministic V3 executor acceptance, using real Core operation execution.
+//! Deterministic native executor acceptance, using real Core operation execution.
 use super::super::models::JobModels;
 use super::*;
 use crate::providers::llm::{
@@ -39,16 +39,6 @@ struct Scenario {
 }
 #[async_trait::async_trait]
 impl JobModels for Scenario {
-    async fn complete(
-        &self,
-        _: &str,
-        _: &ProviderPin,
-        _: LlmRequest,
-        _: i64,
-        _: CancellationToken,
-    ) -> Result<String, JobError> {
-        panic!("V3 must not use free-text decisions")
-    }
     async fn turn_traced(
         &self,
         _: &model::LlmRunContext,
@@ -192,10 +182,9 @@ async fn execute_scenario(
     let job = db
         .submit_job(
             &runtime.engine.config,
-            request("V3 acceptance"),
+            request("native acceptance"),
             &JobRequester::Admin,
             crate::database::jobs::SubmissionIdentity {
-                test_execution_mode: Some("hierarchical_v3"),
                 ..Default::default()
             },
             crate::database::unix_seconds().unwrap(),
@@ -213,7 +202,7 @@ async fn execute_scenario(
     (db, result)
 }
 #[tokio::test]
-async fn v3_child_tool_chain_persists_pairs_then_final_text_and_metadata_only_events() {
+async fn child_tool_chain_persists_pairs_then_final_text_and_metadata_only_events() {
     let (db, job) = execute(true, false).await;
     assert_eq!(job.status, "succeeded", "{:?}", job.error_code);
     assert_eq!(job.steps.len(), 2);
@@ -228,10 +217,10 @@ async fn v3_child_tool_chain_persists_pairs_then_final_text_and_metadata_only_ev
         "display title must not expose full task prompt"
     );
     let sid = db
-        .v3_session_for_run(&job.id, &child.agent_run_id)
+        .session_for_run(&job.id, &child.agent_run_id)
         .await
         .unwrap();
-    let history = db.v3_read_messages(&job.id, &sid).await.unwrap();
+    let history = db.read_messages(&job.id, &sid).await.unwrap();
     for id in ["tool_a", "tool_b"] {
         assert_eq!(
             history
@@ -269,7 +258,7 @@ async fn v3_child_tool_chain_persists_pairs_then_final_text_and_metadata_only_ev
     assert_eq!(remaining, 0);
 }
 #[tokio::test]
-async fn v3_one_failed_child_still_joins_and_delivers_both_outcomes() {
+async fn one_failed_child_still_joins_and_delivers_both_outcomes() {
     let (db, job) = execute(false, false).await;
     assert_eq!(job.status, "failed");
     let events = db.job_events(&job.id, 0, 100).await.unwrap();
@@ -289,14 +278,14 @@ async fn v3_one_failed_child_still_joins_and_delivers_both_outcomes() {
     );
 }
 #[tokio::test]
-async fn v3_schema_invalid_second_call_rejects_whole_batch_without_children_or_steps() {
+async fn schema_invalid_second_call_rejects_whole_batch_without_children_or_steps() {
     let (_, job) = execute(false, true).await;
     assert_eq!(job.agent_runs.len(), 1);
     assert!(job.steps.is_empty());
 }
 
 #[tokio::test]
-async fn v3_unauthorized_model_session_or_background_rejects_whole_batch_with_paired_errors() {
+async fn unauthorized_model_session_or_background_rejects_whole_batch_with_paired_errors() {
     for violation in ["model", "session", "background"] {
         let (_, job) = execute_scenario(false, true, Some(violation)).await;
         assert_eq!(

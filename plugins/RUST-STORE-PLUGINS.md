@@ -32,4 +32,3 @@ Plugin stdout: exactly one bounded newline-terminated JSON object with matching 
 - Runner attempts share a container; this is not a strong per-plugin sandbox. Only install reviewed trusted packages.
 - The current JSONL request limit is 65,535 bytes, output is 64 KiB, and artifacts are bounded by existing Job policy. Large binary PDF/DOCX inputs still require a separate artifact input interface.
 - Installing/upgrading packages used by active Jobs remains blocked. Activation still requires an Admin revision check.
-- For production cutover and rollback, see [deployment guide](../docs/shared-plugin-runtime-deployment.md).

@@ -1,38 +1,8 @@
-use super::*;
-
-fn delegate(operations: Value) -> Value {
-    json!({"decision":{"action":"delegate","tasks":[{
-        "task_key":"research","role":"research","goal":"Read references",
-        "allowed_operations":operations
-    }]}})
-}
-
-#[test]
-fn root_schema_limits_operations_to_frozen_names() {
-    let schema = root_response_schema(&["web-extractor.fetch_url".into(), "documents.read".into()]);
-    let validator = jsonschema::validator_for(&schema).unwrap();
-    assert!(validator.is_valid(&delegate(json!([
-        "web-extractor.fetch_url",
-        "documents.read"
-    ]))));
-    assert!(validator.is_valid(&delegate(json!([]))));
-    for operation in ["web-extractor.search", "web.search", "fetch_url"] {
-        assert!(!validator.is_valid(&delegate(json!([operation]))));
-    }
-}
-
-#[test]
-fn root_schema_with_empty_catalog_only_allows_empty_operations() {
-    let schema = root_response_schema(&[]);
-    let validator = jsonschema::validator_for(&schema).unwrap();
-    assert!(validator.is_valid(&delegate(json!([]))));
-    assert!(!validator.is_valid(&delegate(json!(["web-extractor.fetch_url"]))));
-    assert!(
-        validator.is_valid(&json!({"decision":{"action":"finish","result":{
-            "summary":"No tools available","findings":[],"evidence_refs":[],"unresolved":[]
-        }}}))
-    );
-}
+use super::{
+    results::{child_evidence_allowed, plugin_tool_result},
+    tools::{root_call_batch_valid, root_tools},
+};
+use serde_json::json;
 
 #[test]
 fn plugin_tool_result_exposes_only_persisted_artifact_ids() {
@@ -71,8 +41,8 @@ fn evidence_refs_cannot_cross_child_or_invent_artifact_ids() {
 }
 
 #[test]
-fn v3_subagent_schema_exposes_full_prompt_and_session_resume() {
-    let tools = v3_root_tools();
+fn subagent_schema_exposes_full_prompt_and_session_resume() {
+    let tools = root_tools();
     assert!(tools.iter().any(|tool| tool.name == "subagent"));
     assert!(tools.iter().any(|tool| tool.name == "finish_job"));
     let schema = &tools
@@ -85,7 +55,7 @@ fn v3_subagent_schema_exposes_full_prompt_and_session_resume() {
 }
 
 #[test]
-fn v3_invalid_root_batches_cannot_execute_any_children() {
+fn invalid_root_batches_cannot_execute_any_children() {
     use crate::providers::llm::ToolCall;
     let sub = ToolCall {
         id: "call_1".into(),
@@ -99,16 +69,13 @@ fn v3_invalid_root_batches_cannot_execute_any_children() {
         arguments: json!({"summary":"Done","findings":[],"evidence_refs":[],"unresolved":[]}),
     };
     let seen = std::collections::HashSet::new();
-    assert!(v3_root_call_batch_valid(std::slice::from_ref(&sub), &seen));
-    assert!(!v3_root_call_batch_valid(&[sub.clone(), finish], &seen));
-    assert!(!v3_root_call_batch_valid(
-        &[sub.clone(), sub.clone()],
-        &seen
-    ));
+    assert!(root_call_batch_valid(std::slice::from_ref(&sub), &seen));
+    assert!(!root_call_batch_valid(&[sub.clone(), finish], &seen));
+    assert!(!root_call_batch_valid(&[sub.clone(), sub.clone()], &seen));
 }
 
 #[test]
-fn v3_root_source_schema_and_ids_reject_every_malformed_batch() {
+fn root_source_schema_and_ids_reject_every_malformed_batch() {
     use crate::providers::llm::ToolCall;
     let valid = ToolCall {
         id: "call".into(),
@@ -128,7 +95,7 @@ fn v3_root_source_schema_and_ids_reject_every_malformed_batch() {
     ] {
         let mut bad = valid.clone();
         bad.arguments.as_object_mut().unwrap().remove(field);
-        assert!(!v3_root_call_batch_valid(&[bad], &seen), "missing {field}");
+        assert!(!root_call_batch_valid(&[bad], &seen), "missing {field}");
     }
     for id in ["", "duplicate"] {
         let mut bad = valid.clone();
@@ -138,23 +105,23 @@ fn v3_root_source_schema_and_ids_reject_every_malformed_batch() {
         } else {
             vec![bad.clone(), bad]
         };
-        assert!(!v3_root_call_batch_valid(&batch, &seen));
+        assert!(!root_call_batch_valid(&batch, &seen));
     }
     let mut unknown = valid.clone();
     unknown.name = "shell".into();
-    assert!(!v3_root_call_batch_valid(&[unknown], &seen));
+    assert!(!root_call_batch_valid(&[unknown], &seen));
     let mut extra = valid.clone();
     extra.arguments["authority"] = json!("admin");
-    assert!(!v3_root_call_batch_valid(&[extra], &seen));
+    assert!(!root_call_batch_valid(&[extra], &seen));
     let mut other = valid.clone();
     other.id = "two".into();
     let mut third = valid.clone();
     third.id = "three".into();
-    assert!(!v3_root_call_batch_valid(
+    assert!(!root_call_batch_valid(
         &[valid.clone(), other, third],
         &seen
     ));
-    assert!(!v3_root_call_batch_valid(
+    assert!(!root_call_batch_valid(
         &[valid],
         &std::collections::HashSet::from(["call".into()])
     ));

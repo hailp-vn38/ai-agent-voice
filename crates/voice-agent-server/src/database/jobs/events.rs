@@ -58,26 +58,6 @@ impl Database {
             })
             .collect()
     }
-    pub(crate) async fn reject_plan(
-        &self,
-        id: &str,
-        attempt: u32,
-        diagnostic: &crate::services::background::plan::PlanValidationError,
-        run_id: &str,
-    ) -> Result<(), JobError> {
-        let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let status: Option<String> = sqlx::query_scalar("SELECT status FROM jobs WHERE id=?")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?;
-        if !matches!(status.as_deref(), Some("planning" | "running")) {
-            return Err(JobError::Terminal);
-        }
-        append(&mut tx,id,"plan_rejected",None,&json!({"attempt":attempt,"code":diagnostic.code,"path":diagnostic.path,"message":diagnostic.message,"run_id":run_id})).await?;
-        tx.commit().await?;
-        self.job_changes.publish_committed(id);
-        Ok(())
-    }
 }
 
 impl Database {

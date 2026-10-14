@@ -15,29 +15,6 @@ pub(crate) trait JobModels: Send + Sync {
     async fn ready(&self, _: &ProviderPin, _: i64) -> Result<(), JobError> {
         Ok(())
     }
-    async fn complete(
-        &self,
-        job_id: &str,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError>;
-
-    /// Native output schema is used by Responses providers. Chat-only test adapters
-    /// and providers retain the existing Rust validation semantics.
-    async fn complete_structured(
-        &self,
-        job_id: &str,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        _schema: serde_json::Value,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError> {
-        self.complete(job_id, pin, request, deadline_at, cancellation)
-            .await
-    }
     async fn turn_traced(
         &self,
         run: &LlmRunContext,
@@ -46,56 +23,7 @@ pub(crate) trait JobModels: Send + Sync {
         mode: crate::providers::llm::BackgroundMode,
         deadline_at: i64,
         cancellation: CancellationToken,
-    ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        // Test doubles for existing Root repair tests may implement only the
-        // structured completion seam. Production ManagedModels overrides this.
-        match mode {
-            crate::providers::llm::BackgroundMode::Structured { schema, .. } => {
-                let text = self
-                    .complete_structured_traced(
-                        run,
-                        pin,
-                        request,
-                        schema,
-                        deadline_at,
-                        cancellation,
-                    )
-                    .await?;
-                Ok(crate::providers::llm::BackgroundTurnResult {
-                    turn: crate::providers::llm::BackgroundTurn::Text(text),
-                    usage: None,
-                })
-            }
-            crate::providers::llm::BackgroundMode::Tools
-            | crate::providers::llm::BackgroundMode::ToolsAuto
-            | crate::providers::llm::BackgroundMode::ToolsParallel => {
-                Err(JobError::CapabilityUnavailable)
-            }
-        }
-    }
-    async fn complete_traced(
-        &self,
-        run: &LlmRunContext,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError> {
-        self.complete(&run.job_id, pin, request, deadline_at, cancellation)
-            .await
-    }
-    async fn complete_structured_traced(
-        &self,
-        run: &LlmRunContext,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        schema: serde_json::Value,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError> {
-        self.complete_structured(&run.job_id, pin, request, schema, deadline_at, cancellation)
-            .await
-    }
+    ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError>;
 }
 
 pub(crate) struct ManagedModels {
@@ -110,16 +38,9 @@ pub(crate) struct ManagedModels {
     >,
 }
 
-struct CompletionRequest {
+struct TurnRequest {
     request: LlmRequest,
-    schema: Option<serde_json::Value>,
-    mode: Option<crate::providers::llm::BackgroundMode>,
-}
-fn legacy_text(value: crate::providers::llm::BackgroundTurnResult) -> Result<String, JobError> {
-    match value.turn {
-        crate::providers::llm::BackgroundTurn::Text(text) => Ok(text),
-        _ => Err(JobError::ModelFailed),
-    }
+    mode: crate::providers::llm::BackgroundMode,
 }
 
 pub(crate) fn remaining(deadline_at: i64) -> Result<Duration, JobError> {
@@ -196,20 +117,16 @@ impl ManagedModels {
         Ok((lease, runtime, adapter, model, transport))
     }
 
-    async fn complete_inner(
+    async fn turn_inner(
         &self,
         job_id: &str,
         previous: &ProviderPin,
-        completion: CompletionRequest,
+        turn: TurnRequest,
         deadline_at: i64,
         cancellation: CancellationToken,
         run: Option<&LlmRunContext>,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        let CompletionRequest {
-            request,
-            schema,
-            mode,
-        } = completion;
+        let TurnRequest { request, mode } = turn;
         let bytes = request
             .messages
             .iter()
@@ -238,7 +155,6 @@ impl ManagedModels {
                     .collect::<Vec<_>>(),
             )
             .map_or(true, |s| s.len() > 16384)
-            || (mode.is_none() && !request.tools.is_empty())
         {
             return Err(JobError::CapacityUnavailable);
         }
@@ -282,14 +198,7 @@ impl ManagedModels {
             _=cancellation.cancelled()=>(Err(JobError::Cancelled),true),
             _=tokio::time::sleep_until(deadline)=>(Err(JobError::DeadlineExceeded),true),
             result=async {
-                if let Some(mode) = mode {
-                    runtime.background_turn(request,mode).await
-                } else {
-                    runtime.background_complete_with_usage(request,schema).await
-                        .map(|v| crate::providers::llm::BackgroundTurnResult {
-                            turn:crate::providers::llm::BackgroundTurn::Text(v.text),usage:v.usage
-                        })
-                }
+                runtime.background_turn(request, mode).await
             }=>match result {
                 Ok(value)=>(Ok(value),false),
                 Err(crate::providers::LlmError::Rejected)=>(Err(JobError::ModelFailed),false),
@@ -335,14 +244,10 @@ impl JobModels for ManagedModels {
         deadline_at: i64,
         cancellation: CancellationToken,
     ) -> Result<crate::providers::llm::BackgroundTurnResult, JobError> {
-        self.complete_inner(
+        self.turn_inner(
             &run.job_id,
             pin,
-            CompletionRequest {
-                request,
-                schema: None,
-                mode: Some(mode),
-            },
+            TurnRequest { request, mode },
             deadline_at,
             cancellation,
             Some(run),
@@ -353,101 +258,6 @@ impl JobModels for ManagedModels {
         self.acquire(pin, deadline_at, CancellationToken::new())
             .await
             .map(|_| ())
-    }
-
-    async fn complete(
-        &self,
-        job_id: &str,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError> {
-        self.complete_inner(
-            job_id,
-            pin,
-            CompletionRequest {
-                request,
-                schema: None,
-                mode: None,
-            },
-            deadline_at,
-            cancellation,
-            None,
-        )
-        .await
-        .and_then(legacy_text)
-    }
-    async fn complete_structured(
-        &self,
-        job_id: &str,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        schema: serde_json::Value,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError> {
-        self.complete_inner(
-            job_id,
-            pin,
-            CompletionRequest {
-                request,
-                schema: Some(schema),
-                mode: None,
-            },
-            deadline_at,
-            cancellation,
-            None,
-        )
-        .await
-        .and_then(legacy_text)
-    }
-    async fn complete_traced(
-        &self,
-        run: &LlmRunContext,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError> {
-        self.complete_inner(
-            &run.job_id,
-            pin,
-            CompletionRequest {
-                request,
-                schema: None,
-                mode: None,
-            },
-            deadline_at,
-            cancellation,
-            Some(run),
-        )
-        .await
-        .and_then(legacy_text)
-    }
-    async fn complete_structured_traced(
-        &self,
-        run: &LlmRunContext,
-        pin: &ProviderPin,
-        request: LlmRequest,
-        schema: serde_json::Value,
-        deadline_at: i64,
-        cancellation: CancellationToken,
-    ) -> Result<String, JobError> {
-        self.complete_inner(
-            &run.job_id,
-            pin,
-            CompletionRequest {
-                request,
-                schema: Some(schema),
-                mode: None,
-            },
-            deadline_at,
-            cancellation,
-            Some(run),
-        )
-        .await
-        .and_then(legacy_text)
     }
 }
 
@@ -481,7 +291,7 @@ async fn wait_background(
 mod capacity_tests {
     use super::*;
     #[tokio::test]
-    async fn v3_background_static_zero_rejects_and_dynamic_wait_obeys_deadline_and_cancellation() {
+    async fn background_static_zero_rejects_and_dynamic_wait_obeys_deadline_and_cancellation() {
         let provider = Arc::new(crate::providers::llm::UnavailableLlm);
         let zero = crate::workers::LlmRuntime::new(provider.clone(), 1, Duration::from_secs(1));
         let cancel = CancellationToken::new();

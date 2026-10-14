@@ -314,7 +314,7 @@ onBeforeUnmount(() => {
               <h3 class="flex items-center gap-2 text-sm font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.activeAgents') }}</h3>
               <span class="text-xs text-muted-foreground">{{ agentRuns.length || '—' }}</span>
             </div>
-            <p v-if="!agentRuns.length" class="text-xs text-muted-foreground">{{ (job.execution_mode === 'hierarchical_v2' || job.execution_mode === 'hierarchical_v3') ? t('jobUi.noAgentRunsYet') : t('jobUi.legacyNoAgents') }}</p>
+            <p v-if="!agentRuns.length" class="text-xs text-muted-foreground">{{ t('jobUi.noAgentRunsYet') }}</p>
             <div v-for="run in agentRuns" :key="run.agent_run_id" class="border-t py-1">
               <button type="button" class="flex w-full items-center gap-2 rounded-md p-2 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id ? 'bg-primary/10' : ''" :aria-pressed="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id" @click="filterAgent(run.agent_run_id)">
                 <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-studio-violet"><Workflow class="size-4" /></span>

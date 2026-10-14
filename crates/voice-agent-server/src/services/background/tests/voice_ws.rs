@@ -99,7 +99,7 @@ async fn admitted_physical_ws_without_mcp_creates_durable_job_and_disconnect_doe
     let runtime = BackgroundRuntime::execution_harness(
         db.clone(),
         config.clone(),
-        Arc::new(super::orchestration::ScriptedModels),
+        Arc::new(super::delegation::SessionModels),
     )
     .await
     .unwrap();

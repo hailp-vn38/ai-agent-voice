@@ -89,12 +89,6 @@ pub struct BackgroundTokenUsage {
     pub cached_input_tokens: Option<u64>,
 }
 
-#[derive(Clone, Debug)]
-pub struct BackgroundCompletion {
-    pub text: String,
-    pub usage: Option<BackgroundTokenUsage>,
-}
-
 /// Strict Agent Job output; never an advisory schema.
 #[derive(Clone, Debug)]
 pub enum BackgroundMode {
@@ -139,28 +133,6 @@ pub trait LlmProvider: Send + Sync {
         Err(LlmError::Failed)
     }
 
-    /// Background-only completion. Voice always uses `stream()` (Chat Completions).
-    /// Structured schema is advisory for chat-only providers; Rust validates the result.
-    async fn background_complete(
-        &self,
-        request: LlmRequest,
-        _schema: Option<Value>,
-    ) -> Result<String, LlmError> {
-        complete_background_chat(self.stream(request).await?).await
-    }
-
-    /// Background-only typed metadata; non-Responses providers may omit token usage.
-    async fn background_complete_with_usage(
-        &self,
-        request: LlmRequest,
-        schema: Option<Value>,
-    ) -> Result<BackgroundCompletion, LlmError> {
-        Ok(BackgroundCompletion {
-            text: self.background_complete(request, schema).await?,
-            usage: None,
-        })
-    }
-
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
         let response = self.complete(&request)?;
         Ok(Box::pin(futures_util::stream::iter([
@@ -177,33 +149,6 @@ pub enum LlmError {
     /// A terminal provider response definitively rejected or failed to produce usable output.
     #[error("LLM returned a terminal invalid response")]
     Rejected,
-}
-
-/// Chat-only fallback for Background; no MCP, provider tools or streaming to the Device.
-pub(crate) async fn complete_background_chat(
-    mut stream: LlmEventStream,
-) -> Result<String, LlmError> {
-    use futures_util::StreamExt;
-    let mut output = String::new();
-    while let Some(event) = stream.next().await {
-        match event? {
-            LlmEvent::TextDelta(delta) => {
-                if output.len().saturating_add(delta.len()) > 65536 {
-                    return Err(LlmError::Failed);
-                }
-                output.push_str(&delta);
-            }
-            LlmEvent::Finished => {
-                return if output.is_empty() {
-                    Err(LlmError::Rejected)
-                } else {
-                    Ok(output)
-                };
-            }
-            LlmEvent::ToolCall(_) => return Err(LlmError::Failed),
-        }
-    }
-    Err(LlmError::Failed)
 }
 
 pub struct UnavailableLlm;
@@ -291,46 +236,12 @@ impl LlmProvider for ConfiguredOpenAiLlm {
             .await
         }
     }
-    async fn background_complete_with_usage(
-        &self,
-        request: LlmRequest,
-        schema: Option<Value>,
-    ) -> Result<BackgroundCompletion, LlmError> {
-        if self.supports_responses {
-            openai::responses::complete_with_usage(
-                &self.base_url,
-                &self.model,
-                &self.api_key,
-                self.timeout_seconds,
-                request,
-                schema,
-            )
-            .await
-        } else {
-            Ok(BackgroundCompletion {
-                text: self.background_complete(request, schema).await?,
-                usage: None,
-            })
-        }
-    }
 
     fn supports_tools(&self) -> bool {
         true
     }
     fn adapter(&self) -> &'static str {
         "openai"
-    }
-
-    async fn background_complete(
-        &self,
-        request: LlmRequest,
-        schema: Option<Value>,
-    ) -> Result<String, LlmError> {
-        if self.supports_responses {
-            openai::responses::complete(self, request, schema).await
-        } else {
-            complete_background_chat(self.stream(request).await?).await
-        }
     }
 
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {

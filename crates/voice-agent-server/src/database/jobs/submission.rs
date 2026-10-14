@@ -53,9 +53,9 @@ impl Database {
             test_execution_mode,
         } = identity;
         #[cfg(test)]
-        let mut execution_mode = test_execution_mode.unwrap_or("dag_v1").to_owned();
+        let execution_mode = test_execution_mode.unwrap_or("hierarchical_v3").to_owned();
         #[cfg(not(test))]
-        let mut execution_mode = new_execution_mode(config).to_owned();
+        let execution_mode = "hierarchical_v3".to_owned();
         let request_json = encode(&request)?;
         if request_json.len() > 16384 {
             return Err(JobError::InvalidArguments);
@@ -92,15 +92,12 @@ impl Database {
             return Err(JobError::RuntimeUnavailable);
         }
         if let Some(id) = retry_of {
-            let previous: Option<(String, String)> =
-                sqlx::query_as("SELECT status,execution_mode FROM jobs WHERE id=?")
-                    .bind(id)
-                    .fetch_optional(&mut *tx)
-                    .await?;
+            let previous: Option<String> = sqlx::query_scalar("SELECT status FROM jobs WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
             match previous {
-                Some((status, mode)) if matches!(status.as_str(), "failed" | "cancelled") => {
-                    execution_mode = mode;
-                }
+                Some(status) if matches!(status.as_str(), "failed" | "cancelled") => {}
                 None => return Err(JobError::NotFound),
                 _ => return Err(JobError::Terminal),
             }
@@ -130,58 +127,6 @@ impl Database {
         .await?;
         if validated_pair.is_some_and(|pair| pair[0] != orchestrator || pair[1] != worker) {
             return Err(JobError::ConfigurationChanged);
-        }
-        if execution_mode == "hierarchical_v3" {
-            // Rollback stops new V3 jobs (including manual retries), while
-            // persisted queued/running jobs retain their immutable mode.
-            if let Some(qualified) = &config.background.hierarchical_v3_qualified_pins {
-                let expected: Vec<crate::services::background::ProviderPin> = qualified
-                    .iter()
-                    .map(|raw| serde_json::from_str(raw).map_err(|_| JobError::InvalidArguments))
-                    .collect::<Result<_, _>>()?;
-                if expected != [orchestrator.clone(), worker.clone()] {
-                    return Err(JobError::ConfigurationChanged);
-                }
-            } else {
-                #[cfg(not(test))]
-                return Err(JobError::CapabilityUnavailable);
-            }
-            providers::require_hybrid_capability(
-                &mut tx,
-                config,
-                &orchestrator.reference,
-                "supports_function_calling",
-            )
-            .await
-            .map_err(|error| match error {
-                JobError::WorkerFunctionCallingRequired => {
-                    JobError::OrchestratorFunctionCallingRequired
-                }
-                other => other,
-            })?;
-            providers::require_hybrid_capability(
-                &mut tx,
-                config,
-                &worker.reference,
-                "supports_function_calling",
-            )
-            .await?;
-        }
-        if execution_mode == "hierarchical_v2" {
-            providers::require_hybrid_capability(
-                &mut tx,
-                config,
-                &orchestrator.reference,
-                "supports_structured_outputs",
-            )
-            .await?;
-            providers::require_hybrid_capability(
-                &mut tx,
-                config,
-                &worker.reference,
-                "supports_function_calling",
-            )
-            .await?;
         }
         let plugin_choices = crate::services::background::plugins::frozen_choices(
             crate::database::plugins::ready_installations(&mut tx)
@@ -228,24 +173,5 @@ impl Database {
             job,
             replayed: false,
         })
-    }
-}
-
-fn new_execution_mode(config: &AppConfig) -> &'static str {
-    if config.background.hierarchical_v3_qualified_pins.is_some() {
-        "hierarchical_v3"
-    } else {
-        "hierarchical_v2"
-    }
-}
-#[cfg(test)]
-mod release_tests {
-    use super::*;
-    #[test]
-    fn v3_new_submission_mode_requires_explicit_release_gate() {
-        let mut config = crate::services::background::tests::config();
-        assert_eq!(new_execution_mode(&config), "hierarchical_v2");
-        config.background.hierarchical_v3_qualified_pins = Some(["root".into(), "child".into()]);
-        assert_eq!(new_execution_mode(&config), "hierarchical_v3");
     }
 }

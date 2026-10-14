@@ -1,6 +1,5 @@
 # Studio Assistant validation
 
-Spec: [implementation guide](../../docs/studio-assistant-virtual-device-ws-implementation-guide.md).
 Implemented on the current branch; no new runtime or WS route.
 
 ## Automated checks

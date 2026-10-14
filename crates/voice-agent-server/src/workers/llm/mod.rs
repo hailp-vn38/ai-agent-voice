@@ -87,16 +87,7 @@ pub struct LlmDiagnosticOperation {
 }
 
 impl LlmRuntime {
-    /// Caller retains its Background capacity permit until this stream terminalizes.
-    pub(crate) async fn background_complete_with_usage(
-        &self,
-        request: LlmRequest,
-        schema: Option<serde_json::Value>,
-    ) -> Result<crate::providers::llm::BackgroundCompletion, crate::providers::LlmError> {
-        self.provider
-            .background_complete_with_usage(request, schema)
-            .await
-    }
+    /// Caller retains its Background capacity permit until this turn terminalizes.
     pub(crate) async fn background_turn(
         &self,
         request: LlmRequest,

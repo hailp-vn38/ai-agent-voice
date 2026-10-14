@@ -4,7 +4,7 @@ Type: task
 Status: claimed
 Baseline: ed2f383
 
-Implement P2 from `docs/agent-job-platform-v1.5.1-integration/IMPLEMENTATION-PHASES.md`.
+Implement P2.
 
 ## Acceptance
 

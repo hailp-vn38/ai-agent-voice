@@ -154,56 +154,12 @@ impl LlmProvider for OpenCodeFreeProvider {
             .await
         }
     }
-    async fn background_complete_with_usage(
-        &self,
-        request: LlmRequest,
-        schema: Option<serde_json::Value>,
-    ) -> Result<super::BackgroundCompletion, LlmError> {
-        if self.supports_responses {
-            super::openai::responses::complete_with_usage(
-                BASE_URL,
-                &self.model,
-                PUBLIC_KEY,
-                self.timeout_seconds,
-                request,
-                schema,
-            )
-            .await
-        } else {
-            Ok(super::BackgroundCompletion {
-                text: self.background_complete(request, schema).await?,
-                usage: None,
-            })
-        }
-    }
 
     fn supports_tools(&self) -> bool {
         true
     }
     fn adapter(&self) -> &'static str {
         "opencode_free"
-    }
-
-    async fn background_complete(
-        &self,
-        request: LlmRequest,
-        schema: Option<serde_json::Value>,
-    ) -> Result<String, LlmError> {
-        if self.supports_responses {
-            // Only opted-in free models use Zen Responses. The public credential
-            // may be rejected upstream; never silently fall back to Chat.
-            super::openai::responses::complete_with(
-                BASE_URL,
-                &self.model,
-                PUBLIC_KEY,
-                self.timeout_seconds,
-                request,
-                schema,
-            )
-            .await
-        } else {
-            super::complete_background_chat(self.stream(request).await?).await
-        }
     }
 
     async fn stream(&self, mut request: LlmRequest) -> Result<LlmEventStream, LlmError> {

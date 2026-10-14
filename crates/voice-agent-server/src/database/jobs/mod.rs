@@ -11,13 +11,13 @@ mod deletion;
 pub(crate) use change_feed::JobChangeFeed;
 mod recovery;
 mod sessions;
-pub(crate) use sessions::V3SessionTask;
+pub(crate) use sessions::SessionTask;
 // P3 scheduler will consume these durable dispatch transitions.
+mod agent_runs;
 mod eligibility;
 mod events;
 #[allow(dead_code)]
 mod execution;
-mod hierarchical;
 mod orchestration;
 mod providers;
 mod steps;
@@ -133,7 +133,7 @@ impl Database {
         .bind(id)
         .fetch_all(&mut *tx)
         .await?;
-        let runs = hierarchical::read_runs(&mut tx, id).await?;
+        let runs = agent_runs::read_runs(&mut tx, id).await?;
         tx.commit().await?;
         let mut view = row.view(steps, artifacts)?;
         view.agent_runs = runs;

@@ -1,4 +1,4 @@
-//! V3 Agent Session persistence behind the existing Database seam.
+//! Agent Session persistence behind the existing Database seam.
 //! Session identity is independent of each Agent Run. Full transcripts are
 //! deliberately not projected into Job SSE or metadata-only events.
 use super::*;
@@ -7,7 +7,7 @@ use crate::services::background::ProviderPin;
 
 /// Complete immutable input for a Child Session attachment.
 #[derive(Clone, Copy)]
-pub(crate) struct V3SessionTask<'a> {
+pub(crate) struct SessionTask<'a> {
     pub agent_key: &'a str,
     pub resume_session_id: Option<&'a str>,
     pub pin: &'a ProviderPin,
@@ -106,8 +106,8 @@ async fn append_in_tx(
 }
 
 impl Database {
-    /// Attach a newly created V3 Root Run to exactly one durable Root Session.
-    pub(crate) async fn create_v3_root_session(
+    /// Attach a newly created Root Run to exactly one durable Root Session.
+    pub(crate) async fn create_root_session(
         &self,
         job_id: &str,
         root_run_id: &str,
@@ -121,7 +121,7 @@ impl Database {
             "SELECT COUNT(*) FROM job_agent_runs r JOIN jobs j ON j.id=r.job_id
              WHERE r.job_id=? AND r.agent_run_id=? AND r.parent_agent_run_id IS NULL
              AND r.session_id IS NULL AND r.status='running'
-             AND j.execution_mode='hierarchical_v3' AND j.status='running'",
+             AND j.status='running'",
         )
         .bind(job_id)
         .bind(root_run_id)
@@ -170,7 +170,7 @@ impl Database {
 
     /// Foreground preflight: reject invalid or concurrently used Child Session
     /// before creating a new Child Run. The attach transaction repeats checks.
-    pub(crate) async fn v3_preflight_child_resume(
+    pub(crate) async fn preflight_child_resume(
         &self,
         job_id: &str,
         parent_run_id: &str,
@@ -211,19 +211,19 @@ impl Database {
         if active > 0 {
             return Err(JobError::CapacityUnavailable);
         }
-        self.v3_read_messages(job_id, child_session_id).await?;
+        self.read_messages(job_id, child_session_id).await?;
         Ok(())
     }
 
     /// A follow-up has a NEW child Run but an EXISTING child Session.
     /// The parent, specialist and pinned route are checked in one transaction.
     #[cfg(test)]
-    pub(crate) async fn attach_v3_child_session(
+    pub(crate) async fn attach_child_session(
         &self,
         job_id: &str,
         parent_run_id: &str,
         child_run_id: &str,
-        task: V3SessionTask<'_>,
+        task: SessionTask<'_>,
     ) -> Result<String, JobError> {
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let session =
@@ -233,13 +233,13 @@ impl Database {
     }
 
     /// Allocation, ownership claims, prompts and native Root intent commit together.
-    pub(crate) async fn create_v3_children(
+    pub(crate) async fn create_session_children(
         &self,
         job_id: &str,
         root: &str,
         turn_id: &str,
         tasks: &[crate::services::background::model::DelegatedTask],
-        sessions: &[V3SessionTask<'_>],
+        sessions: &[SessionTask<'_>],
         calls: &[crate::providers::llm::ToolCall],
     ) -> Result<Vec<crate::services::background::AgentRunView>, JobError> {
         if tasks.len() != sessions.len() || tasks.len() != calls.len() {
@@ -247,8 +247,7 @@ impl Database {
         }
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let children =
-            super::hierarchical::create_children_in_tx(&mut tx, job_id, root, turn_id, tasks)
-                .await?;
+            super::agent_runs::create_children_in_tx(&mut tx, job_id, root, turn_id, tasks).await?;
         for ((child, task), session) in children.iter().zip(tasks).zip(sessions) {
             if session.agent_key != task.role {
                 return Err(JobError::InvalidArguments);
@@ -277,7 +276,7 @@ impl Database {
         Ok(children)
     }
 
-    pub(crate) async fn v3_session_for_run(
+    pub(crate) async fn session_for_run(
         &self,
         job_id: &str,
         run_id: &str,
@@ -288,7 +287,7 @@ impl Database {
             .ok_or(JobError::InvalidPlan)
     }
 
-    pub(crate) async fn v3_read_messages(
+    pub(crate) async fn read_messages(
         &self,
         job_id: &str,
         session_id: &str,
@@ -311,7 +310,7 @@ impl Database {
     }
 
     /// One ordered transaction per batch. The provider is never called while holding it.
-    pub(crate) async fn v3_append_messages(
+    pub(crate) async fn append_messages(
         &self,
         job_id: &str,
         session_id: &str,
@@ -350,9 +349,9 @@ async fn attach_child_in_tx(
     job_id: &str,
     parent_run_id: &str,
     child_run_id: &str,
-    task: &V3SessionTask<'_>,
+    task: &SessionTask<'_>,
 ) -> Result<String, JobError> {
-    let V3SessionTask {
+    let SessionTask {
         agent_key,
         resume_session_id,
         pin,
@@ -376,7 +375,7 @@ async fn attach_child_in_tx(
     let parent_session: Option<String> = sqlx::query_scalar(
         "SELECT r.session_id FROM job_agent_runs r JOIN jobs j ON j.id=r.job_id
              WHERE r.job_id=? AND r.agent_run_id=? AND r.parent_agent_run_id IS NULL
-             AND r.status='running' AND j.status='running' AND j.execution_mode='hierarchical_v3'",
+             AND r.status='running' AND j.status='running'",
     )
     .bind(job_id)
     .bind(parent_run_id)
