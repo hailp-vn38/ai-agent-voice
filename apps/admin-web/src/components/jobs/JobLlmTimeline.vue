@@ -69,6 +69,21 @@ function stateLabel(status: LlmRun['status']) {
 function statusTone(status: LlmRun['status']): 'success' | 'danger' | 'secondary' | 'outline' {
   return status === 'completed' ? 'success' : status === 'failed' ? 'danger' : status === 'running' ? 'secondary' : 'outline'
 }
+function description(run: LlmRun) {
+  if (run.stepKey) return props.job.steps.find(step => step.step_key === run.stepKey)?.instruction ?? run.stepKey
+  if (run.phase === 'repair') return t('jobUi.llmRepairDescription')
+  if (run.phase === 'replan') return t('jobUi.llmReplanDescription')
+  return t('jobUi.llmPlannerDescription')
+}
+function pendingStage(run: LlmRun) {
+  if (run.status !== 'running') return null
+  const last = run.events[run.events.length - 1]?.event_type
+  if (last === 'llm_run_started') return t('jobUi.llmAcquiringProvider')
+  if (last === 'llm_provider_acquired') return t('jobUi.llmWaitingCapacity')
+  if (last === 'llm_request_started') return t('jobUi.llmWaitingResponse')
+  if (last === 'llm_response_received') return t('jobUi.llmValidating')
+  return null
+}
 function eventName(event: JobEvent) {
   switch (event.event_type) {
     case 'llm_run_started': return t('jobUi.llmStarted')
@@ -161,7 +176,7 @@ function progressLabel(done: boolean, activeStage: boolean) {
                 <strong class="text-sm">{{ t('jobUi.llmRun') }} {{ String(run.number).padStart(2,'0') }} · {{ role(run) }}</strong>
                 <Badge :variant="statusTone(run.status)">{{ stateLabel(run.status) }}</Badge>
               </div>
-              <p class="mt-2 text-xs text-muted-foreground">{{ run.stepKey || role(run) }}</p>
+              <p class="mt-2 text-xs text-muted-foreground">{{ description(run) }}</p>
               <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span class="rounded-md bg-primary/10 px-2 py-1 font-medium text-primary">{{ run.provider }}</span>
                 <span>{{ run.model ?? '—' }}</span>
@@ -173,6 +188,10 @@ function progressLabel(done: boolean, activeStage: boolean) {
                   <AlertCircle v-else class="mt-0.5 size-3.5 shrink-0 text-danger" />
                   <span class="min-w-0 flex-1">{{ eventName(stage) }}<span v-if="stage.payload.validation_path || stage.payload.path" class="ml-2 break-all font-mono text-danger">{{ stage.payload.validation_path || stage.payload.path }}</span></span>
                   <span class="shrink-0 text-muted-foreground">{{ eventNote(stage) }}</span>
+                </div>
+                <div v-if="pendingStage(run)" class="flex items-center gap-2 text-xs text-studio-cyan">
+                  <PlayCircle class="size-3.5 shrink-0" />
+                  <span>{{ pendingStage(run) }}</span>
                 </div>
                 <p v-if="run.errorCode" class="break-all font-mono text-xs text-danger">{{ run.errorCode }}</p>
               </div>
