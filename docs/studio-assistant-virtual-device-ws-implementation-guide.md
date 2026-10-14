@@ -38,8 +38,8 @@
 | `crates/voice-agent-server/src/app/mod.rs` | `/voice/v1/` là WebSocket route; `/api/admin/*` được mount riêng khi enabled. | Dùng cùng đường WS; thêm ticket issuance trong admin router. |
 | `crates/voice-agent-server/src/app/websocket.rs` | Kiểm `protocol-version`, `device-id`, `client-id`, Voice bearer, `enrollment::route()`, admission và upgrade. | Bổ sung **tách loại xác thực trước bearer check**, không phá đường cũ. Browser chỉ truyền WS query vì JS không đặt arbitrary upgrade header. |
 | `crates/voice-agent-server/src/app/enrollment/mod.rs` | Unknown Device khi enrollment WS enabled → pending code; registered → voice; blocked → reject. | Virtual Device được provision vào `devices` trước khi WS; không vào pending enrollment. |
-| `crates/voice-agent-server/src/database/devices.rs` | Device gắn `agent_key`, optional `template_key`, enabled/revision; Admin API tạo Device trực tiếp. | Tái sử dụng quan hệ và CAS/audit; bổ sung **loại Device do server quản lý** không dựa `metadata_json`. |
-| `crates/voice-agent-server/src/database/admission.rs` | `admit_device(device_id)` chụp Device→Agent→Template→Provider graph từ DB. | Giữ nguyên resolver; WS ticket gate kiểm loại Device trước admission. |
+| `crates/voice-agent-server/src/database/identity/devices.rs` | Device gắn `agent_key`, optional `template_key`, enabled/revision; Admin API tạo Device trực tiếp. | Tái sử dụng quan hệ và CAS/audit; bổ sung **loại Device do server quản lý** không dựa `metadata_json`. |
+| `crates/voice-agent-server/src/database/identity/admission.rs` | `admit_device(device_id)` chụp Device→Agent→Template→Provider graph từ DB. | Giữ nguyên resolver; WS ticket gate kiểm loại Device trước admission. |
 | `crates/voice-agent-server/src/protocol/client.rs` | Hello v1 Opus 16 kHz mono 60 ms; `listen:start` (manual/auto/realtime), `listen:stop`, `listen:detect`, `abort`, `mcp`. | Text đã có đường hợp lệ, không cần thêm message `chat`. |
 | `crates/voice-agent-server/src/session/actor/listening.rs` | `listen:detect` nhận text **khi Listening** (manual/auto), vào LLM pipeline; lệnh manual start trước đó mở ASR. | Browser phải chờ hello, gửi `listen:start manual`, rồi `listen:detect`. Không gửi detect trực tiếp từ Ready. |
 | `crates/voice-agent-server/src/session/actor/delivery.rs` | Accepted user text phát `stt`; LLM input lấy từ dialog và profile prompt. | User text hiển thị qua `stt` echo; UI không tự nhân đôi. |
@@ -670,8 +670,9 @@ crates/voice-agent-server/src/
 │   │   └── assistant_device.rs            # System settings + ticket issuance
 │   └── web_assistant_auth.rs              # scoped one-time WS ticket operations
 ├── database/
-│   ├── devices.rs                         # kind guards cho generic CRUD
-│   └── assistant_device.rs                # managed singleton create/update/read
+│   └── identity/
+│       ├── devices.rs                     # kind guards cho generic CRUD
+│       └── assistant_device.rs            # managed singleton create/update/read
 ├── session/
 │   └── actor/
 │       └── ...                            # turn_status opt-in (required)

@@ -7,6 +7,8 @@ import type { AdminAgent, AgentTemplateLink } from '@/api/types/agents'
 import type { ClaimDeviceEnrollmentInput } from '@/api/types/devices'
 import AgentToolAllowlist from '@/components/agents/AgentToolAllowlist.vue'
 import AgentMcpBindings from '@/components/agents/AgentMcpBindings.vue'
+import AgentReminders from '@/components/agents/AgentReminders.vue'
+import AgentReminderPolicy from '@/components/agents/AgentReminderPolicy.vue'
 import AgentSpeakerPolicy from '@/components/agents/AgentSpeakerPolicy.vue'
 import AgentDeviceList from '@/components/agents/AgentDeviceList.vue'
 import ClaimDeviceEnrollmentModal from '@/components/agents/ClaimDeviceEnrollmentModal.vue'
@@ -42,7 +44,7 @@ const templates = computed(() => store.getTemplatesForAgent(agentId.value))
 const availableTemplates = computed(() => store.getAvailableTemplatesForAgent(agentId.value))
 const devices = computed(() => store.devicesForAgent(agentId.value))
 
-const activeTab = ref<'studio' | 'tools' | 'speakers' | 'devices'>('studio')
+const activeTab = ref<'studio' | 'tools' | 'speakers' | 'devices' | 'reminders'>('studio')
 const toolReviewKey = ref(0)
 const selectedTemplateId = ref<string | null>(null)
 const settingDefaultTemplate = ref(false)
@@ -455,9 +457,13 @@ async function confirmDeleteDevice() {
       <section class="studio-panel p-5">
         <AgentToolAllowlist :key="toolReviewKey" :agent-id="agentId" />
       </section>
+      <AgentReminderPolicy :agent-id="agentId" />
     </div>
     <div v-if="activeTab === 'speakers'" id="studio-panel-speakers" role="tabpanel" aria-labelledby="studio-tab-speakers" class="studio-panel p-5">
       <AgentSpeakerPolicy :agent-id="agentId" />
+    </div>
+    <div v-if="activeTab === 'reminders'" id="studio-panel-reminders" role="tabpanel" aria-labelledby="studio-tab-reminders">
+      <AgentReminders :agent-id="agentId" />
     </div>
     <div v-if="activeTab === 'devices'" id="studio-panel-devices" role="tabpanel" aria-labelledby="studio-tab-devices">
       <AgentDeviceList

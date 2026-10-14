@@ -1,0 +1,31 @@
+manifest_version = 2
+
+[plugin]
+id = "web-extractor"
+name = "Web Extractor"
+version = "1.0.0"
+description = "Extract readable text, headings, links and metadata from public HTML pages"
+
+[runtime]
+kind = "rust"
+entrypoint = "bin/plugin"
+protocol = "jsonl-v1"
+
+[agent]
+instructions = "instructions.md"
+
+[operations.extract_html]
+description = "Parse supplied HTML without fetching the network"
+provides = ["web.extract"]
+sources = ["web"]
+input_schema = "schemas/extract_html.input.json"
+output_schema = "schemas/extract.output.json"
+replay = "safe_read"
+
+[operations.fetch_url]
+description = "Fetch a public HTML URL using direct network access and extract content"
+provides = ["web.extract", "web.fetch"]
+sources = ["web"]
+input_schema = "schemas/fetch_url.input.json"
+output_schema = "schemas/extract.output.json"
+replay = "safe_read"

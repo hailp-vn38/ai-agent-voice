@@ -52,6 +52,7 @@ pub struct SpeechOutput {
     audio_starved_at: Option<Instant>,
     playback_end_deadline: Option<Instant>,
     json_filter: JsonFilter,
+    direct_text: bool,
     segmenter: SentenceSegmenter,
     pending_filtered_text: String,
     finish_requested: bool,
@@ -102,6 +103,7 @@ impl SpeechOutput {
             audio_starved_at: None,
             playback_end_deadline: None,
             json_filter: JsonFilter::default(),
+            direct_text: false,
             segmenter: SentenceSegmenter::new(config),
             pending_filtered_text: String::new(),
             finish_requested: false,
@@ -134,6 +136,16 @@ impl SpeechOutput {
     pub fn push_delta(&mut self, text: &str) -> Result<(), SpeechOutputError> {
         let text = self.json_filter.push(text);
         self.pending_filtered_text.push_str(&text);
+        self.advance_filtered_text()
+    }
+
+    /// Caller-supplied text bypasses model-artifact filtering and punctuation rewriting.
+    pub fn push_direct_delta(&mut self, text: &str) -> Result<(), SpeechOutputError> {
+        if !self.direct_text {
+            self.json_filter.reset();
+        }
+        self.direct_text = true;
+        self.pending_filtered_text.push_str(text);
         self.advance_filtered_text()
     }
 

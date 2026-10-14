@@ -46,6 +46,7 @@ impl SessionActor {
             max_capture_frames,
             max_history_messages,
             SessionRuntimes {
+                job_submit: None,
                 asr: asr_runtime,
                 vad: vad_runtime,
                 llm: llm_runtime,
@@ -103,6 +104,7 @@ impl SessionActor {
             max_capture_frames,
             max_history_messages,
             SessionRuntimes {
+                job_submit: None,
                 asr: asr_runtime,
                 vad: vad_runtime,
                 llm: std::sync::Arc::new(LlmRuntime::new(
@@ -214,7 +216,10 @@ impl SessionActor {
             llm_finish_pending: false,
             generated_response: String::new(),
             // Nothing has been generated yet, so no text can be the model's yet either.
-            generated_by_model: false,
+            speech_origin: SpeechOrigin::Llm,
+            direct_request_id: None,
+            direct_metadata: false,
+            direct_session_closes: Vec::new(),
             tts_runtime: std::sync::Arc::clone(&runtimes.tts),
             speech_output: SpeechOutput::with_worker(
                 std::sync::Arc::new(UnavailableTts),
@@ -236,6 +241,9 @@ impl SessionActor {
             trust_client_aec_feature: false,
             mcp: DeviceMcpState::default(),
             tool_batch: None,
+            job_submit: runtimes.job_submit,
+            job_mailbox: None,
+            job_pending: None,
             llm_messages: Vec::new(),
             llm_round: None,
             // The documented defaults, until a deployment installs its own validated caps.

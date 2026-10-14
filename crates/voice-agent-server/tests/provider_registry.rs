@@ -318,3 +318,23 @@ fn native_transducers_accept_every_advertised_decoding_method() {
         }
     }
 }
+
+#[test]
+fn opencode_free_model_is_a_text_input_without_a_fixed_catalog() {
+    let descriptor = compiled_provider_adapter_registry()
+        .get("opencode_free")
+        .unwrap();
+    let wire = serde_json::to_value(descriptor).unwrap();
+    let model = wire["config_schema"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["key"] == "model")
+        .unwrap();
+    assert_eq!(model["type"], "string");
+    assert_eq!(model["required"], true);
+    assert_eq!(model["max_length"], 256);
+    assert!(model.get("enum_source").is_none());
+    assert!(wire["capabilities"].get("models").is_none());
+    assert_eq!(wire["discovery"]["models"], "unsupported");
+}

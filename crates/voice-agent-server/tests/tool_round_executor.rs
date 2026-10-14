@@ -517,6 +517,7 @@ fn config_with_external(
         }),
     );
     AppConfig {
+        background: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
@@ -622,7 +623,7 @@ async fn seed(url: &str, external_url: &str) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('device',1,1,1,1)")
+    sqlx::query("INSERT INTO devices (device_id,agent_id,enabled,created_at,updated_at) VALUES ('device',1,1,1,1), ('second',1,1,1,1)")
         .execute(&pool)
         .await
         .unwrap();
@@ -704,6 +705,8 @@ struct Peer {
     device_calls: Vec<DeviceCall>,
     /// Every `llm` text segment the client was shown, in order.
     spoken: Vec<String>,
+    direct_spoken: Vec<String>,
+    playback: Vec<&'static str>,
     turn_closed: bool,
     /// When false, the peer records each `tools/call` and never answers it, so a test can watch a
     /// turn run out of time on a request that really was made.
@@ -716,9 +719,13 @@ struct Peer {
 
 impl Peer {
     async fn open(base: &str) -> Self {
+        Self::open_device(base, "device").await
+    }
+
+    async fn open_device(base: &str, device_id: &str) -> Self {
         let ota: serde_json::Value = reqwest::Client::new()
             .post(format!("{base}/voice/ota/"))
-            .header("Device-Id", "device")
+            .header("Device-Id", device_id)
             .header("Client-Id", "tool-round")
             .json(&serde_json::json!({}))
             .send()
@@ -735,7 +742,7 @@ impl Peer {
         {
             let headers = request.headers_mut();
             headers.insert("Protocol-Version", "1".parse().unwrap());
-            headers.insert("Device-Id", "device".parse().unwrap());
+            headers.insert("Device-Id", device_id.parse().unwrap());
             headers.insert("Client-Id", "tool-round".parse().unwrap());
         }
         let (mut socket, _) = connect_async(request).await.unwrap();
@@ -762,6 +769,8 @@ impl Peer {
             session_id,
             device_calls: Vec::new(),
             spoken: Vec::new(),
+            direct_spoken: Vec::new(),
+            playback: Vec::new(),
             turn_closed: false,
             answer_device_calls: true,
             discovered: false,
@@ -827,6 +836,14 @@ impl Peer {
             else {
                 return;
             };
+            if let Message::Binary(packet) = &frame {
+                let mut decoder = opus2::Decoder::new(24_000, opus2::Channels::Mono).unwrap();
+                assert_eq!(
+                    decoder.decode(packet, &mut [0_i16; 1_440], false).unwrap(),
+                    1_440
+                );
+                self.playback.push("audio");
+            }
             let Message::Text(text) = frame else { continue };
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
                 continue;
@@ -838,7 +855,17 @@ impl Peer {
                         self.spoken.push(text.to_owned());
                     }
                 }
-                Some("tts") if value["state"] == "stop" => self.turn_closed = true,
+                Some("tts") if value["state"] == "start" => self.playback.push("start"),
+                Some("tts") if value["state"] == "sentence_start" => {
+                    self.playback.push("sentence_start");
+                    if let Some(text) = value["text"].as_str() {
+                        self.direct_spoken.push(text.to_owned());
+                    }
+                }
+                Some("tts") if value["state"] == "stop" => {
+                    self.playback.push("stop");
+                    self.turn_closed = true;
+                }
                 _ => {}
             }
         }
@@ -1060,10 +1087,17 @@ async fn a_session_local_action_runs_in_the_same_order_as_the_mcp_calls_around_i
          order and the action only decides what the client hears"
     );
     assert!(
-        peer.spoken.iter().any(|text| text.contains("Tạm biệt")),
+        peer.direct_spoken
+            .iter()
+            .any(|text| text.contains("Tạm biệt")),
         "the action's own answer is what the client hears: {:?}",
-        peer.spoken
+        peer.direct_spoken
     );
+    assert!(
+        peer.spoken.is_empty(),
+        "tool speech must not impersonate the LLM"
+    );
+    assert_eq!(peer.playback, ["start", "sentence_start", "audio", "stop"]);
     let observed = observed
         .lock()
         .expect("the observation mailbox is not poisoned");
@@ -1334,7 +1368,7 @@ async fn two_sessions_calling_one_server_never_exceed_the_shared_per_server_boun
     first.run_turn().await;
     gate.wait_until_held(1).await;
 
-    let mut second = Peer::open(&voice.base).await;
+    let mut second = Peer::open_device(&voice.base, "second").await;
     second.run_turn().await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 

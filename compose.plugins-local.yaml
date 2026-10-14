@@ -1,0 +1,35 @@
+# Rootless Docker overlay for a server running on the Debian 13 host.
+services:
+  plugin-installer:
+    image: voice-plugin-runtime:host-dev
+    build:
+      context: .
+      dockerfile: docker/plugin-runtime-local.Dockerfile
+    user: "0:0"
+    volumes: !override
+      - type: bind
+        source: ${PLUGIN_RUNTIME_BINARY:-/mnt/storage/ai-agent-voice/target/debug/plugin-runtime}
+        target: /usr/local/bin/plugin-runtime
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data/plugins/control/installer:/control
+      - ./data/plugins/staging:/staging:ro
+      - ./data/plugins/installations:/installations
+
+  plugin-runner:
+    image: voice-plugin-runtime:host-dev
+    build:
+      context: .
+      dockerfile: docker/plugin-runtime-local.Dockerfile
+    user: "0:0"
+    volumes: !override
+      - type: bind
+        source: ${PLUGIN_RUNTIME_BINARY:-/mnt/storage/ai-agent-voice/target/debug/plugin-runtime}
+        target: /usr/local/bin/plugin-runtime
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data/plugins/control/runner:/control
+      - ./data/plugins/installations:/installations:ro
+      - ./data/plugins/workspaces:/attempts

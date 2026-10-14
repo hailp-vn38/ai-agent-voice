@@ -44,6 +44,7 @@ impl SessionActor {
                 );
             }
             BuiltinTool::SwitchTemplate => self.execute_template_switch(call),
+            BuiltinTool::CreateJob => self.execute_job_submit(call),
         }
     }
 

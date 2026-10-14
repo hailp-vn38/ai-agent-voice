@@ -7,27 +7,26 @@ use sqlx::{
 use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
-pub mod admission;
-pub(crate) mod agents;
-pub(crate) mod assistant_device;
-mod audit;
-pub mod credentials;
-pub(crate) mod deletion;
-pub mod device_enrollments;
-pub(crate) mod devices;
-pub mod external_mcp;
-pub mod external_mcp_policy;
+pub(crate) mod background;
 pub mod history;
-pub mod load_plan;
-pub(crate) mod mcp_servers;
-pub mod provider_config;
+mod identity;
+pub(crate) mod jobs;
+mod mcp;
+mod mutations;
+pub mod notifications;
 pub(crate) mod providers;
-pub mod secrets;
+mod security;
 pub(crate) mod speakers;
 pub(crate) mod templates;
-pub mod tool_allowlist;
-pub mod tool_security;
-pub(crate) mod writes;
+
+pub use identity::{admission, device_enrollments};
+pub(crate) use identity::{agents, devices};
+pub(crate) use mcp::mcp_servers;
+pub use mcp::{external_mcp, external_mcp_policy, tool_allowlist};
+use mutations::audit;
+pub(crate) use mutations::{deletion, writes};
+pub use providers::{config as provider_config, load_plan};
+pub use security::{credentials, secrets, tool_security};
 
 pub use history::{
     HistoryArchive, HistoryDrop, HistoryRole, HistoryWrite, HistoryWriter, HistoryWriterCounters,
@@ -50,7 +49,9 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 #[derive(Clone, Debug)]
 pub struct Database {
     pool: SqlitePool,
+    durable_path: Option<std::path::PathBuf>,
     pub tool_security: std::sync::Arc<tool_security::ToolSecurity>,
+    pub(crate) job_changes: jobs::JobChangeFeed,
 }
 
 pub use providers::DesiredProvider;
@@ -119,14 +120,36 @@ impl Database {
         } else {
             ensure_schema_is_current(&pool).await?;
         }
+        // Ask the opened database, not a reconstructed URL: in-memory/URI forms
+        // have no backing file, and SQLx's generated memory filename is not a URL.
+        let filename: String =
+            sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name='main'")
+                .fetch_one(&pool)
+                .await
+                .map_err(map_sqlx_error)?;
+        let durable_path = if filename.is_empty() {
+            None
+        } else {
+            Some(
+                tokio::fs::canonicalize(filename)
+                    .await
+                    .map_err(|_| DatabaseError::Unavailable)?,
+            )
+        };
         Ok(Self {
             pool,
+            durable_path,
             tool_security: Default::default(),
+            job_changes: Default::default(),
         })
     }
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    pub(crate) fn durable_path(&self) -> Option<&std::path::Path> {
+        self.durable_path.as_deref()
     }
 
     /// Whether the database still answers at all.
@@ -223,7 +246,3 @@ async fn ensure_schema_is_current(pool: &SqlitePool) -> Result<(), DatabaseError
 pub(crate) fn is_busy(error: &sqlx::Error) -> bool {
     matches!(error, sqlx::Error::Database(error) if matches!(error.code().as_deref(), Some("5" | "6" | "SQLITE_BUSY" | "SQLITE_LOCKED")))
 }
-
-pub(crate) mod system_mcp;
-
-mod system_mcp_grants;

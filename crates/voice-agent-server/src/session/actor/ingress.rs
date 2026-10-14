@@ -30,6 +30,7 @@ impl SessionActor {
         // else: applying one can start the next call of the round, or the next round's LLM request,
         // and both belong in this same drain rather than in the next tick.
         self.drain_async_call_completions();
+        self.expire_job_submit();
         self.drain_template_preparation();
         while let Ok(event) = self.asr_events.try_recv() {
             self.on_asr_event(event);
@@ -113,8 +114,13 @@ impl SessionActor {
                                 turn_id,
                             );
                         }
-                        self.dialogue_history
-                            .commit_assistant(turn_id, delivery.assistant_text);
+                        if matches!(
+                            self.speech_origin,
+                            SpeechOrigin::Llm | SpeechOrigin::ToolDirect
+                        ) {
+                            self.dialogue_history
+                                .commit_assistant(turn_id, delivery.assistant_text);
+                        }
                     }
                 }
                 let actions = self.pending_actions.take_for_turn(turn_id);
@@ -157,6 +163,23 @@ impl SessionActor {
                     self.drain_speech_output();
                 }
                 event = ingress.recv() => match event {
+                    Some(SessionEvent::JobSubmitCompleted {session_id,turn_id,generation,tool_call_id,outcome}) => {
+                        self.apply_reported_turn_outcomes();
+                        self.complete_job_submit(session_id,turn_id,generation,tool_call_id,outcome);
+                    }
+                    Some(SessionEvent::DirectSpeech { request, reply }) => {
+                        self.apply_reported_turn_outcomes();
+                        if !reply.is_closed() {
+                            let result = self.admit_direct_speech(request);
+                            if reply.send(result).is_err() && result.is_ok() {
+                                self.interrupt_active_turn();
+                                self.complete_recognition();
+                            }
+                        }
+                    }
+                    Some(SessionEvent::ReminderControl { text }) => {
+                        let _ = self.send_control(text);
+                    }
                     Some(SessionEvent::ClientMessage(message)) => {
                         if self.speaker_security_revoked() {
                             self.begin_application_shutdown();
@@ -262,7 +285,7 @@ impl SessionActor {
                     self.on_mcp_message(payload);
                 }
             }
-            ClientMessage::Hello(_) | ClientMessage::Unknown => {}
+            ClientMessage::Hello(_) | ClientMessage::Reminder { .. } | ClientMessage::Unknown => {}
         }
     }
 
@@ -296,7 +319,7 @@ impl SessionActor {
 
     /// Security epoch recheck: a revoked Speaker/grant/policy/template snapshot never restores
     /// authority, even if a message raced ahead of the close.
-    fn speaker_security_revoked(&self) -> bool {
+    pub(super) fn speaker_security_revoked(&self) -> bool {
         self.speaker_observe
             .as_ref()
             .is_some_and(|observe| observe.security_cancelled())

@@ -57,6 +57,9 @@ impl AppConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.background.limits.valid() {
+            return Err(ConfigError::Validation("invalid Background limits".into()));
+        }
         validate_transport(self)?;
         validate_audio(self)?;
         validate_capacity(self)?;

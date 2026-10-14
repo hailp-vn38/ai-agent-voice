@@ -1,9 +1,8 @@
 use crate::session::{
     ActiveTemplateProfile, ActiveTurnLimiter, GenerationGate, ObserveDiagnostic, ProfileSource,
-    SessionPhase, SpeakerObserve, TemplateSwitchCatalog, TurnId,
-    event::SessionEvent,
+    SessionPhase, SpeakerObserve, SpeechOrigin, TemplateSwitchCatalog, TurnId,
+    interaction::{ActiveTurnPermit, DialogueHistory, SessionEvent},
     speech_output::{SpeechOutput, SpeechOutputEvent},
-    turn::{ActiveTurnPermit, DialogueHistory},
 };
 use crate::{
     audio::{
@@ -102,12 +101,10 @@ pub struct SessionActor {
     pending_llm_delta: Option<(String, usize)>,
     llm_finish_pending: bool,
     generated_response: String,
-    /// Whether `generated_response` holds the model's own text rather than a tool's result.
-    ///
-    /// A round that starts or continues an LLM operation clears it, so the only way it can be set
-    /// is the seam where a tool result is handed straight to speech.  It is what keeps a delivered
-    /// tool result out of the Persistent Transcript.
-    generated_by_model: bool,
+    speech_origin: SpeechOrigin,
+    direct_request_id: Option<String>,
+    direct_metadata: bool,
+    direct_session_closes: Vec<CancellationToken>,
     tts_runtime: std::sync::Arc<TtsWorkerRuntime>,
     speech_output: SpeechOutput,
     tts_started: bool,
@@ -133,6 +130,9 @@ pub struct SessionActor {
     trust_client_aec_feature: bool,
     mcp: DeviceMcpState,
     tool_batch: Option<ToolBatchState>,
+    job_submit: Option<crate::services::background::VoiceJobSubmit>,
+    job_mailbox: Option<mpsc::WeakSender<SessionEvent>>,
+    job_pending: Option<tools::job::PendingJobSubmit>,
     llm_messages: Vec<ChatMessage>,
     llm_round: Option<LlmRoundBuffer>,
     /// The shared Tool-round Executor's per-turn state: the caps this deployment validated, how
@@ -489,6 +489,7 @@ pub enum WriterEvent {
 
 /// Application-owned runtimes shared by every voice session.
 pub struct SessionRuntimes {
+    pub job_submit: Option<crate::services::background::VoiceJobSubmit>,
     pub asr: std::sync::Arc<AsrWorkerRuntime>,
     pub vad: std::sync::Arc<VadWorkerRuntime>,
     pub llm: std::sync::Arc<LlmRuntime>,

@@ -252,6 +252,7 @@ fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         }),
     );
     let mut config = AppConfig {
+        background: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
@@ -534,6 +535,9 @@ async fn speak_and_observe(socket: &mut Socket) -> TurnOutcome {
                     Some("llm") => {
                         observed.answer = value["text"].as_str().unwrap_or_default().to_owned()
                     }
+                    Some("tts") if value["state"] == "sentence_start" => {
+                        observed.answer = value["text"].as_str().unwrap_or_default().to_owned()
+                    }
                     Some("tts") if value["state"] == "stop" => return observed,
                     _ => {}
                 }
@@ -749,6 +753,10 @@ async fn a_turn_that_speaks_a_tool_argument_never_archives_it() {
     assert_eq!(
         turn.answer, GOODBYE_ARGUMENT,
         "the tool's own answer really was delivered to the client"
+    );
+    assert!(
+        turn.audio_frames > 0,
+        "the direct tool result must include audio"
     );
 
     let archived = await_rows(&pool, 1).await;

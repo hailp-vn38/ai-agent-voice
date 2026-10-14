@@ -80,19 +80,120 @@ impl SessionActor {
         self.start_llm_round(true);
     }
 
+    pub(crate) fn with_direct_metadata(mut self, enabled: bool) -> Self {
+        self.direct_metadata = enabled;
+        self
+    }
+
+    pub(crate) fn with_direct_session_close(mut self, close: CancellationToken) -> Self {
+        self.direct_session_closes.push(close);
+        self
+    }
+
+    fn direct_control(&self, state: &str) -> serde_json::Value {
+        let mut payload =
+            serde_json::json!({"session_id": self.session_id, "type": "tts", "state": state});
+        if self.direct_metadata
+            && let Some(request_id) = &self.direct_request_id
+        {
+            payload["request_id"] = serde_json::json!(request_id);
+            payload["source"] = serde_json::json!(match &self.speech_origin {
+                SpeechOrigin::AdminDirect => "admin_direct",
+                SpeechOrigin::ClientDirect => "client_direct",
+                SpeechOrigin::Reminder { .. } => "reminder",
+                _ => "tool_direct",
+            });
+            if let SpeechOrigin::Reminder {
+                reminder_id,
+                attempt_id,
+            } = &self.speech_origin
+            {
+                payload["reminder_id"] = serde_json::json!(reminder_id);
+                payload["attempt_id"] = serde_json::json!(attempt_id);
+            }
+        }
+        payload
+    }
+
+    pub(super) fn direct_speech_busy(&self) -> bool {
+        self.turn.is_some()
+            || self.template_prepare.is_some()
+            || self.managed_switch_boundary.is_some()
+            || !matches!(self.phase, SessionPhase::Ready | SessionPhase::Listening)
+            || self.auto_speech_active
+            || self.auto_reset_pending
+            || self.asr_stream.is_some()
+            || self.listen_arm_pending
+            || (self.phase == SessionPhase::Listening
+                && matches!(self.listening_mode, Some(ListenMode::Manual)))
+    }
+
+    pub(super) fn admit_direct_speech(
+        &mut self,
+        request: crate::session::DirectSpeechRequest,
+    ) -> Result<(), crate::session::DirectSpeechError> {
+        use crate::session::DirectSpeechError;
+        crate::session::validate_direct_speech(&request)?;
+        if !self.admission_gate.is_open()
+            || self.speaker_security_revoked()
+            || self
+                .direct_session_closes
+                .iter()
+                .any(CancellationToken::is_cancelled)
+        {
+            return Err(DirectSpeechError::ShuttingDown);
+        }
+        if !matches!(
+            request.origin,
+            SpeechOrigin::ClientDirect | SpeechOrigin::AdminDirect | SpeechOrigin::Reminder { .. }
+        ) {
+            return Err(DirectSpeechError::Unauthorized);
+        }
+        if self.direct_speech_busy() {
+            return Err(DirectSpeechError::SessionBusy);
+        }
+        if self.tts_runtime.provider().adapter() == "unavailable" {
+            return Err(DirectSpeechError::TtsUnavailable);
+        }
+        if self.pilot_admission.enabled() && self.pipeline_permit.is_none() {
+            self.pipeline_permit = Some(
+                self.pilot_admission
+                    .try_voice()
+                    .ok_or(DirectSpeechError::CapacityReached)?,
+            );
+        }
+        if !self.advance_generation() {
+            return Err(DirectSpeechError::ShuttingDown);
+        }
+        if self.begin_active_turn().is_none() {
+            return Err(DirectSpeechError::CapacityReached);
+        }
+        self.turn_status_outcome = "cancelled";
+        self.phase = SessionPhase::Processing;
+        self.direct_request_id = Some(request.request_id);
+        self.begin_direct_speech(request.text, request.origin);
+        Ok(())
+    }
+
     pub(super) fn begin_direct_tool_speech(&mut self, text: String) {
         tracing::info!(
             event = "mcp_direct_response_started",
             response_chars = text.chars().count(),
             "Starting direct MCP response speech without LLM continuation"
         );
+        self.begin_direct_speech(text, SpeechOrigin::ToolDirect);
+    }
+
+    /// Caller admission owns the turn; every origin shares its worker, writer and cancellation.
+    pub(super) fn begin_direct_speech(&mut self, text: String, origin: SpeechOrigin) {
         self.generated_response = text.clone();
-        // This is a tool's own result, so it is never the model's Delivered Assistant Response and
-        // never belongs in the Persistent Transcript.
-        self.generated_by_model = false;
+        // Direct text is never a Delivered Assistant Response in the Persistent Transcript.
+        self.speech_origin = origin;
         self.pending_llm_delta = Some((text, 0));
         self.llm_finish_pending = true;
-        self.flush_pending_llm_text();
+        if self.speech_origin == SpeechOrigin::ToolDirect {
+            self.flush_pending_llm_text();
+        }
     }
 
     fn start_llm_round(&mut self, allow_tools: bool) {
@@ -109,7 +210,8 @@ impl SessionActor {
         self.llm_finish_pending = false;
         // Whatever this round produces comes from the model, whatever the previous turn's last
         // words were.
-        self.generated_by_model = true;
+        self.speech_origin = SpeechOrigin::Llm;
+        self.direct_request_id = None;
         let tools = if allow_tools {
             self.available_llm_tools()
         } else {
@@ -267,7 +369,12 @@ impl SessionActor {
                 .next()
                 .expect("offset is a character boundary");
             let end = *offset + next.len_utf8();
-            if let Err(error) = self.speech_output.push_delta(&text[*offset..end]) {
+            let result = if self.speech_origin == SpeechOrigin::Llm {
+                self.speech_output.push_delta(&text[*offset..end])
+            } else {
+                self.speech_output.push_direct_delta(&text[*offset..end])
+            };
+            if let Err(error) = result {
                 warn!(?error, "LLM text could not enter speech output");
                 self.fail_speech_delivery();
                 return;
@@ -312,6 +419,9 @@ impl SessionActor {
             };
             match event {
                 SpeechOutputEvent::SegmentReady { text } => {
+                    if self.speech_origin != SpeechOrigin::Llm {
+                        continue;
+                    }
                     let payload = serde_json::json!({
                         "session_id": self.session_id,
                         "type": "llm",
@@ -334,11 +444,7 @@ impl SessionActor {
                         self.fail_speech_delivery();
                         break;
                     };
-                    let payload = serde_json::json!({
-                        "session_id": self.session_id,
-                        "type": "tts",
-                        "state": "start",
-                    });
+                    let payload = self.direct_control("start");
                     if serde_json::to_string(&payload).ok().is_none_or(|payload| {
                         self.control_tx
                             .try_send(OutboundMessage::BeginTurn {
@@ -351,6 +457,18 @@ impl SessionActor {
                         warn!("TTS start control could not enter outbound queue");
                         self.fail_speech_delivery();
                         break;
+                    }
+                    if self.speech_origin != SpeechOrigin::Llm {
+                        let payload = serde_json::json!({
+                            "session_id": self.session_id,
+                            "type": "tts",
+                            "state": "sentence_start",
+                            "text": self.generated_response,
+                        });
+                        if self.send_turn_control(payload.to_string()).is_err() {
+                            self.fail_speech_delivery();
+                            break;
+                        }
                     }
                 }
                 SpeechOutputEvent::AudioPacket(packet) => {
@@ -380,11 +498,7 @@ impl SessionActor {
                         self.fail_speech_delivery();
                         break;
                     };
-                    let payload = serde_json::json!({
-                        "session_id": self.session_id,
-                        "type": "tts",
-                        "state": "stop",
-                    });
+                    let payload = self.direct_control("stop");
                     let Some(payload) = serde_json::to_string(&payload).ok() else {
                         self.fail_speech_delivery();
                         break;
@@ -403,7 +517,7 @@ impl SessionActor {
                     self.pending_delivery = Some(PendingDelivery {
                         turn_id,
                         assistant_text: std::mem::take(&mut self.generated_response),
-                        archives_as_assistant: self.generated_by_model,
+                        archives_as_assistant: self.speech_origin == SpeechOrigin::Llm,
                     });
                     if self.writer_events.is_none() {
                         self.on_writer_event(WriterEvent::TurnClosed {
@@ -476,11 +590,7 @@ impl SessionActor {
             // Writer owns whether start crossed the wire. This merely prevents a recursive
             // urgent-admission failure from attempting the same abort command again.
             self.tts_started = false;
-            let payload = serde_json::json!({
-                "session_id": self.session_id,
-                "type": "tts",
-                "state": "stop",
-            });
+            let payload = self.direct_control("stop");
             if let Ok(payload) = serde_json::to_string(&payload)
                 && self
                     .urgent_tx
@@ -537,12 +647,25 @@ impl SessionActor {
     }
 
     pub(super) fn release_active_turn(&mut self) {
+        let mut terminal_admission_failed = false;
+        if self.direct_metadata && self.direct_request_id.is_some() {
+            let mut payload = self.direct_control("result");
+            payload["outcome"] = serde_json::json!(self.turn_status_outcome);
+            terminal_admission_failed = self
+                .control_tx
+                .try_send(OutboundMessage::Text(payload.to_string()))
+                .is_err();
+        }
+        self.direct_request_id = None;
         if self.turn.is_some() && self.turn_status_active {
             self.turn_status_active = false;
             self.emit_turn_status(self.turn_status_outcome, None);
         }
         if let Some(turn) = self.turn.take() {
             drop(turn.permit);
+        }
+        if terminal_admission_failed {
+            self.fail_closed();
         }
     }
 

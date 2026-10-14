@@ -37,14 +37,11 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 mod admin;
-mod cors;
+mod assistant;
 mod enrollment;
 pub(crate) mod mcp_server;
-mod ota;
 mod state;
-mod vision;
-mod web_assistant_auth;
-mod websocket;
+mod transport;
 
 pub use state::{AppState, SessionProfileAdmissionError};
 
@@ -89,6 +86,7 @@ pub async fn bootstrap_with_providers_and_secret_resolver(
         secret_resolver,
         lifecycle,
     );
+    prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     Ok(router_with_state(state))
 }
@@ -104,6 +102,17 @@ pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
     RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
 pub fn router_with_state(mut state: AppState) -> Router {
+    if !state
+        .reminder_scheduler_started
+        .swap(true, std::sync::atomic::Ordering::AcqRel)
+        && let Some(database) = state.database.clone()
+    {
+        crate::services::reminder_scheduler::start(
+            crate::database::notifications::DeviceNotifications::new((*database).clone()),
+            state.active_device_sessions.clone(),
+            state.lifecycle.stopping().clone(),
+        );
+    }
     state.system_mcp = Some(Arc::new(
         crate::tools::system_mcp::SystemMcp::new(
             state.config.system_mcp.enabled,
@@ -118,35 +127,38 @@ pub fn router_with_state(mut state: AppState) -> Router {
     let router = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
-        .route_layer(cors::layer())
+        .route_layer(transport::cors::layer())
         .route(
             "/voice/ota/",
-            get(ota::handler)
-                .post(ota::handler)
-                .options(ota::options)
-                .layer(middleware::from_fn(ota::cors_response)),
+            get(enrollment::ota::handler)
+                .post(enrollment::ota::handler)
+                .options(enrollment::ota::options)
+                .layer(middleware::from_fn(enrollment::ota::cors_response)),
         )
-        .route("/voice/v1/", get(websocket::handler).layer(cors::layer()));
+        .route(
+            "/voice/v1/",
+            get(transport::websocket::handler).layer(transport::cors::layer()),
+        );
     let router = if state.config.database.devices.enrollment.enabled {
         router
             .route(
                 "/voice/ota",
-                get(ota::handler)
-                    .post(ota::handler)
-                    .options(ota::options)
-                    .layer(middleware::from_fn(ota::cors_response)),
+                get(enrollment::ota::handler)
+                    .post(enrollment::ota::handler)
+                    .options(enrollment::ota::options)
+                    .layer(middleware::from_fn(enrollment::ota::cors_response)),
             )
             .route(
                 "/voice/ota/activate",
-                axum::routing::post(ota::activate)
-                    .options(ota::options)
-                    .layer(middleware::from_fn(ota::cors_response)),
+                axum::routing::post(enrollment::ota::activate)
+                    .options(enrollment::ota::options)
+                    .layer(middleware::from_fn(enrollment::ota::cors_response)),
             )
             .route(
                 "/voice/ota/activate/",
-                axum::routing::post(ota::activate)
-                    .options(ota::options)
-                    .layer(middleware::from_fn(ota::cors_response)),
+                axum::routing::post(enrollment::ota::activate)
+                    .options(enrollment::ota::options)
+                    .layer(middleware::from_fn(enrollment::ota::cors_response)),
             )
     } else {
         router
@@ -154,14 +166,14 @@ pub fn router_with_state(mut state: AppState) -> Router {
     let router = if vision_enabled {
         router.route(
             "/mcp/vision/explain",
-            get(vision::get_handler)
-                .post(vision::post_handler)
-                .options(vision::options_handler)
-                .layer(vision::body_limit(
+            get(transport::vision::get_handler)
+                .post(transport::vision::post_handler)
+                .options(transport::vision::options_handler)
+                .layer(transport::vision::body_limit(
                     vision_config.max_image_bytes,
                     vision_config.max_question_bytes,
                 ))
-                .layer(middleware::map_response(vision::cors_response)),
+                .layer(middleware::map_response(transport::vision::cors_response)),
         )
     } else {
         router
@@ -169,7 +181,7 @@ pub fn router_with_state(mut state: AppState) -> Router {
     let router = if state.config.api.enabled {
         router.nest(
             "/api/admin",
-            admin::router(state.clone()).layer(cors::layer()),
+            admin::router(state.clone()).layer(transport::cors::layer()),
         )
     } else {
         router
@@ -261,6 +273,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
         lifecycle,
     );
     prepare_builtin_speaker(&mut state).await;
+    prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     state
         .system_metrics
@@ -411,12 +424,31 @@ async fn managed_startup(
         }
     }
     prepare_builtin_speaker(&mut state).await;
+    prepare_background(&mut state).await?;
     prepare_enrollment(&mut state).await?;
     state
         .system_metrics
         .clone()
         .start(state.lifecycle.listening().clone());
     Ok(router_with_state(state))
+}
+
+async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> {
+    if state.background.is_none()
+        && let Some(database) = state.database.clone()
+        && database.durable_path().is_some()
+    {
+        state.background = Some(
+            crate::services::background::BackgroundRuntime::open_with_manager(
+                database,
+                state.config.clone(),
+                state.lifecycle.stopping().clone(),
+                state.provider_runtime_manager.clone(),
+            )
+            .await?,
+        );
+    }
+    Ok(())
 }
 
 async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> {
@@ -542,6 +574,8 @@ async fn ready(State(state): State<AppState>) -> Response {
 
 #[derive(Debug, Error)]
 pub enum BootstrapError {
+    #[error(transparent)]
+    Background(#[from] crate::services::background::JobError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
     #[error("provider_startup_failed")]

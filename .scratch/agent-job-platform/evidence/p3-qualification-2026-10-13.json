@@ -1,0 +1,524 @@
+{
+  "schema_version": 1,
+  "phase": "P3",
+  "date": "2026-10-13",
+  "result": "PASS",
+  "scope": "Isolated first-functional-E2E qualification; P4 remains open",
+  "revision": "1b32a24748203a9cf3d1ec9eae2ebf6b5643d54d",
+  "source_sha256": {
+    "crates/voice-agent-server/src/services/background/models.rs": "d5d85d6a827f363323119036c69755195726beefdff9aa382499c72fd0603693",
+    "crates/voice-agent-server/src/services/background/orchestration.rs": "6809c50a1ba9540b1e30b9b65bf9a9fa8051b3c9be423c2ae45d926fa74d5082",
+    "crates/voice-agent-server/src/services/background/tests/orchestration.rs": "94ab166eeb0ded41eb93dec25db1dd558de3d66bab6007b01ac6e4b09fbb1636",
+    "crates/voice-agent-server/src/services/background/tests/providers.rs": "17701d8e34efd2bda193404f1baed75da74dcc7e12de9acf879cfa0c9fc42085",
+    "crates/voice-agent-server/src/services/background/tests/voice_ws.rs": "452ed78af51bcc70b5441ff3cdb38cc244b1a26e9c1367db578595ab3145c3f4",
+    "crates/voice-agent-server/tests/background_p3_live.rs": "18595f27c96c4497ad9e7add7d429b538e533af034eb3307ccd0bb55315ace84",
+    "crates/voice-agent-server/tests/background_p3_live/receipt.rs": "354eb90d58fb8fb015c390c841f342f1050fb6074c313db3859d7788ef295dff"
+  },
+  "production_process_sha256": "16207cf03dad53dde72e458553b190169ded94bf265f17e3b26d5139a1f3200c",
+  "live_tracer_sha256": "62400e874cb552194002c410631bf0b992fd7f600d3df877a631cab8374fc415",
+  "platform": {
+    "system": "Linux",
+    "machine": "x86_64",
+    "release": "6.12.111+deb13-amd64",
+    "docker_security_options": [
+      "seccomp",
+      "rootless",
+      "cgroupns"
+    ],
+    "runner": "Dedicated rootless daemon with isolated storage and private socket mount namespace",
+    "python_image": "python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+    "uv_image": "ghcr.io/astral-sh/uv@sha256:4de5495181a281bc744845b9579acf7b221d6791f99bcc211b9ec13f417c2853"
+  },
+  "source_gates": {
+    "background": {
+      "passed": 35,
+      "ignored": 1,
+      "log": "agent-test.run.18x5nA"
+    },
+    "voice_job": {
+      "passed": 4,
+      "log": "agent-test.run.B2W6DK"
+    },
+    "terminal_checkpoint": {
+      "passed": 4,
+      "log": "agent-test.run.oRvMUn"
+    },
+    "live_tracer_order": {
+      "passed": 2,
+      "ignored": 1,
+      "log": "agent-test.run.s2hxsx"
+    },
+    "workspace": {
+      "passed": 773,
+      "failed": 0,
+      "ignored": 13,
+      "log": "agent-test.full.V0ghHo"
+    },
+    "fmt": {
+      "result": "PASS",
+      "log": "agent-test.run.p5kRod"
+    },
+    "clippy": {
+      "result": "PASS",
+      "log": "agent-test.run.kOJgr2"
+    },
+    "web_tests": {
+      "passed": 229,
+      "log": "agent-test.web.UoIf3A"
+    },
+    "web_typecheck": {
+      "result": "PASS",
+      "log": "agent-test.web.SbcbbT"
+    },
+    "web_build": {
+      "result": "PASS",
+      "log": "agent-test.web.7h4ETQ"
+    },
+    "standards_review": {
+      "result": "PASS"
+    },
+    "spec_review": {
+      "result": "PASS"
+    }
+  },
+  "rootless_execution": {
+    "result": "PASS",
+    "log": "agent-test.run.mzpanA"
+  },
+  "live_matrix": [
+    {
+      "delivery": "silent",
+      "admission": "physical",
+      "mcp_feature": false,
+      "job_id": "903b0347-16c7-4e3f-84da-89b883efa499",
+      "result": "PASS",
+      "report": "live-silent-physical-false.json",
+      "run_id": "9defbe06-c051-4100-84d9-2ad4945b1732",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:bbc793c75d5291b7ebb7fbe0bac2b14d8fc5ffb42ef4e5a29dd8b26483daf9ed",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    },
+    {
+      "delivery": "silent",
+      "admission": "physical",
+      "mcp_feature": true,
+      "job_id": "89cec3c0-6eb3-46ad-828a-85f8df98630c",
+      "result": "PASS",
+      "report": "live-silent-physical-true.json",
+      "run_id": "dcf936a8-e330-4462-be0b-046d9d2ecc22",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:e088ca6078bc2a123eb32428497ae31ec7c4395cc3db223270b8d2c1122bcabf",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    },
+    {
+      "delivery": "silent",
+      "admission": "studio",
+      "mcp_feature": false,
+      "job_id": "0ef9fb06-1977-4598-a34d-9f4cf4ff8bea",
+      "result": "PASS",
+      "report": "live-silent-studio-false.json",
+      "run_id": "64ad071e-1892-4efd-818b-cf83428f95a9",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:385d8cd3e50731253106b39b4276d176bc892f56d19bb6655c07c4cc79e9ef33",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    },
+    {
+      "delivery": "silent",
+      "admission": "studio",
+      "mcp_feature": true,
+      "job_id": "62137894-2b09-4653-b546-8b2750392956",
+      "result": "PASS",
+      "report": "live-silent-studio-true.json",
+      "run_id": "7fe8c29b-bb8f-4ed7-9b2f-7f9bb9c5a4f2",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:a882c3b47a61bf925e2c6435ffe52045e2a38c9eb9f0d53e2d421a78b9153a1d",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    },
+    {
+      "delivery": "direct_tts",
+      "admission": "physical",
+      "mcp_feature": false,
+      "job_id": "918dbf97-1c66-49a4-9989-259e4d4d7e53",
+      "result": "PASS",
+      "report": "live-direct_tts-physical-false.json",
+      "run_id": "a9c304af-49b4-492b-be0f-ab0e60fa6282",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:dff7a6f6afe30ffc856cc89ebef08605023b9144fc511069d6a0b3ab8c1412e5",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    },
+    {
+      "delivery": "direct_tts",
+      "admission": "physical",
+      "mcp_feature": true,
+      "job_id": "a47dba11-abf7-4f4f-9f50-a002196ec0f2",
+      "result": "PASS",
+      "report": "live-direct_tts-physical-true.json",
+      "run_id": "f2abf8c5-24b5-4c70-bf59-41a2a69dce7f",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:4a686783e3ba8559408c79d54e04ef565790fcbfe155807130d87d5b851cc7ac",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    },
+    {
+      "delivery": "direct_tts",
+      "admission": "studio",
+      "mcp_feature": false,
+      "job_id": "c6e2cbf2-4661-41df-b0bc-a6bd48003301",
+      "result": "PASS",
+      "report": "live-direct_tts-studio-false.json",
+      "run_id": "fa9b54b5-aed9-4cf5-8eac-4c42595b30d3",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:6e6e0931bf0b6ccd099064d57539db207f0b2b471c8202c0caa2066c97a1791e",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    },
+    {
+      "delivery": "direct_tts",
+      "admission": "studio",
+      "mcp_feature": true,
+      "job_id": "3faf3227-ce4d-4722-be23-538542392d06",
+      "result": "PASS",
+      "report": "live-direct_tts-studio-true.json",
+      "run_id": "740f7e8c-2bf4-4478-9b51-5c0e609fbff0",
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "image_digest": "sha256:62cae03f5ea5c795375f647815b22a988bd3d6a6cf098b8350c0e5de11ce2a27",
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "artifact_count": 2,
+      "receipt_order_gate": "PASS"
+    }
+  ],
+  "live_matrix_logs": [
+    "agent-test.run.DM091O",
+    "agent-test.run.eNVZPm"
+  ],
+  "continuous_browser_voice": {
+    "report": {
+      "artifact_count": 2,
+      "browser_gate": "NOT_RUN",
+      "image_digest": "sha256:bc1b623e15da099c9e4ede2f2bc042911ee189862a297fcf6e5bfaad1a8c0f1b",
+      "job_id": "69d08ad9-d4f1-4768-9cb4-854085bb5244",
+      "mcp_feature": false,
+      "package_digest": "3af0a77f55d76cbf6456384d4d89dd51dbe3f1cf23c26f076a1e1fc920792247",
+      "receipt_order_gate": "PASS",
+      "result": "PASS",
+      "run_id": "6d76949f-24c6-4306-b9af-97dd164901c3",
+      "schema_version": 1,
+      "snapshot": {
+        "limits": {
+          "artifact_bytes_per_job": 20971520,
+          "job_deadline_seconds": 1800,
+          "max_active_jobs": 2,
+          "max_container_workers": 2,
+          "max_queued_jobs": 64,
+          "max_replans": 2,
+          "max_steps": 12,
+          "max_worker_rounds": 8,
+          "scheduler_scan_ms": 1000,
+          "step_timeout_seconds": 300
+        },
+        "orchestrator": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        },
+        "worker": {
+          "digest": "7bc41eb4bf55bba514bddb78ae9955c4724e0d6f46dfe99d419700144efdd96a",
+          "incarnation": 0,
+          "reference": "config:llm:openai_primary",
+          "revision": 1
+        }
+      },
+      "studio": false
+    },
+    "log": "agent-test.run.HGYFQK"
+  },
+  "browser": {
+    "schema_version": 1,
+    "result": "PASS",
+    "voice_job_id": "69d08ad9-d4f1-4768-9cb4-854085bb5244",
+    "authenticated_downloads": [
+      {
+        "id": "1de33ad4-d148-458b-a9ac-f486727a3f81",
+        "sha256": "ed46f7b493555be439f3c1eac10cdee07ffa48006de2804a221876f81ca51be4",
+        "size_bytes": 564
+      },
+      {
+        "id": "d1373d94-e5fb-4e2f-92ac-c28e83489bad",
+        "sha256": "70a0b974df5c446d227a762cba07ac3e1f24bde374b0e42c8c036315304baf8f",
+        "size_bytes": 739
+      }
+    ],
+    "automatic_poll_job_id": "40b824f1-3ad4-4a82-a1ae-c77363f1567e",
+    "failed_job_id": "8eaf7a2c-fc50-47a1-a291-0147f8a97cb4",
+    "retry_job_id": "b257fcdc-0c94-4b71-9f48-0fb6951ac204",
+    "cancelled_job_id": "0e76db24-ce39-46bc-b3b5-cc4e42b44bb3",
+    "live_voice_poll_gate": "PASS",
+    "studio_ticket_gate": "PASS",
+    "page_errors": 0,
+    "log": "agent-test.run.MLG78Z"
+  },
+  "http_failure_cases": {
+    "schema_version": 1,
+    "result": "PASS",
+    "cases": [
+      {
+        "case": "background_disabled",
+        "result": "PASS",
+        "code": "background_disabled"
+      },
+      {
+        "case": "committed_replay_after_disable",
+        "result": "PASS"
+      },
+      {
+        "case": "payload_bound_replay_key",
+        "result": "PASS",
+        "code": "idempotency_conflict"
+      },
+      {
+        "case": "admin_authentication",
+        "result": "PASS",
+        "code": "unauthorized"
+      },
+      {
+        "case": "missing_required_capability",
+        "result": "PASS",
+        "code": "capability_unavailable"
+      },
+      {
+        "case": "forged_identity",
+        "result": "PASS",
+        "code": "invalid_json"
+      }
+    ],
+    "new_jobs": 0,
+    "log": "agent-test.run.vBEXMw"
+  },
+  "regression_red_log": "agent-test.run.vU26Ba",
+  "remaining_outside_p3": [
+    "P4 egress and complete normative deployment/load/crash matrix",
+    "Separate P2 external pinned Python dependency gate"
+  ],
+  "cleanup": {
+    "result": "PASS",
+    "server_shutdown_log": "agent-test.run.CNqDmH",
+    "owned_container_count": 0,
+    "owned_container_check_log": "agent-test.run.nTTte0",
+    "dedicated_daemon_stopped": true,
+    "admin_web_stopped": true,
+    "temporary_credentials_removed": true
+  }
+}

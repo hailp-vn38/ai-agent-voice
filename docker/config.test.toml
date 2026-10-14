@@ -29,3 +29,13 @@ adapter = "qualification_llm"
 
 [providers.tts.instances.test_tts]
 adapter = "qualification_tts"
+
+# Shared plugin runtime; sockets and directories must be mounted by compose.yaml.
+# Background enablement and LLM choices remain Admin settings.
+[background]
+plugin_installer_socket = "/run/plugin-installer/installer.sock"
+plugin_runner_socket = "/run/plugin-runner/runner.sock"
+plugin_installations_dir = "data/plugins/installations"
+plugin_staging_dir = "data/plugins/staging"
+plugin_attempts_dir = "data/plugins/workspaces"
+plugin_curated_dir = "data/curated-plugins"

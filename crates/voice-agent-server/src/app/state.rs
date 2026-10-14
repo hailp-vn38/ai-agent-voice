@@ -31,11 +31,15 @@ use std::{
 /// Application-owned state. Production sessions resolve a fixed runtime snapshot from catalogs.
 #[derive(Clone)]
 pub struct AppState {
+    pub background: Option<Arc<crate::services::background::BackgroundRuntime>>,
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
+    pub active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
+    /// Router construction may be repeated in tests; only one reminder scanner belongs to state.
+    pub reminder_scheduler_started: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
-    pub(crate) web_assistant: Arc<super::web_assistant_auth::WebAssistantAuth>,
+    pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,
     /// Identity of this process incarnation, pinned into enrollment drafts as provenance so a
     /// restart can detect a stale runtime and repin a still-compatible draft.
     pub runtime_id: String,
@@ -659,7 +663,10 @@ impl AppState {
             .with_pilot_admission(pilot_admission.clone()),
         );
         let state = Self {
+            background: None,
             started_at: Instant::now(),
+            active_device_sessions: Arc::new(Default::default()),
+            reminder_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             system_mcp: None,
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
             web_assistant: Arc::new(Default::default()),

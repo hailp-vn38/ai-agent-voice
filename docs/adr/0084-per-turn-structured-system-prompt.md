@@ -13,3 +13,7 @@ Speaker data is bounded JSON in a `<speakers_info>` data block, filters control 
 ## Consequences
 
 Prompt templates stay intentionally single-pass rather than becoming a general scripting language. A missing, unknown, timed-out, or unverified speaker never inherits a prior identity; it either replaces the optional slot with an explicit unknown marker or leaves a legacy prompt unchanged.
+
+## Reminder context (proposed)
+
+[ADR-0091](0091-reminder-authorization-and-turn-context.md) đề xuất append conditional reminder policy và bounded escaped reminder context tại compose seam, không thêm placeholder hay rewrite legacy Templates. Khi triển khai vẫn compose một System message/turn, giữ cap 96 KiB và dùng cùng snapshot qua tool continuation; không chèn full reminders hoặc query pending count mỗi turn. Phần mở rộng này chưa triển khai.

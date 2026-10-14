@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { formatApiError } from '@/api/errors'
+import DeviceReminders from '@/components/devices/DeviceReminders.vue'
 import { devicesApi } from '@/api/devices'
 import type { AdminDevice } from '@/api/types/devices'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
@@ -29,6 +30,10 @@ const error = ref('')
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 const copied = ref(false)
+const speechText = ref('')
+const speaking = ref(false)
+const speechStatus = ref('')
+const speechError = ref('')
 const form = ref({ name: '', description: '', agentKey: '', templateKey: '' })
 let activeRequest: AbortController | undefined
 
@@ -45,6 +50,21 @@ const canSave = computed(() =>
   form.value.name.trim().length > 0 &&
   (form.value.templateKey === '' || linkedTemplates.value.some((item) => item.id === form.value.templateKey)),
 )
+
+async function speak() {
+  if (!device.value || speaking.value || !speechText.value.trim()) return
+  speaking.value = true
+  speechStatus.value = ''
+  speechError.value = ''
+  try {
+    await devicesApi.speak(device.value.device_id, speechText.value, crypto.randomUUID())
+    speechStatus.value = t('directSpeech.accepted')
+  } catch (cause) {
+    speechError.value = formatApiError(cause)
+  } finally {
+    speaking.value = false
+  }
+}
 
 function formattedDate(seconds?: number) {
   const date = displayDeviceDate(seconds)
@@ -205,6 +225,21 @@ onBeforeUnmount(() => activeRequest?.abort())
         </template>
       </DetailHeader>
 
+      <section v-if="device.kind !== 'web_assistant'" class="studio-panel p-5">
+        <h2 class="font-semibold">{{ t('directSpeech.title') }}</h2>
+        <p class="mt-2 text-sm">{{ device.ws_online ? t('directSpeech.online') : t('directSpeech.offline') }}</p>
+        <p v-if="device.ws_online && !device.direct_tts_supported" class="mt-2 text-sm text-muted-foreground">{{ t('directSpeech.unsupported') }}</p>
+        <form data-direct-speech class="mt-4 space-y-3" @submit.prevent="speak">
+          <label for="direct-speech-text" class="block text-sm">{{ t('directSpeech.text') }}</label>
+          <textarea id="direct-speech-text" v-model="speechText" maxlength="1024" rows="3" class="w-full rounded-lg border bg-background p-3" :disabled="speaking" required />
+          <Button type="submit" :disabled="speaking || !device.ws_online || !device.direct_tts_supported || !speechText.trim()">
+            {{ speaking ? t('common.loading') : t('directSpeech.send') }}
+          </Button>
+          <p v-if="speechStatus" role="status" class="text-sm">{{ speechStatus }}</p>
+          <p v-if="speechError" role="alert" class="text-sm text-danger-foreground">{{ speechError }}</p>
+        </form>
+      </section>
+
       <div class="grid items-start gap-4 lg:grid-cols-2">
         <section class="studio-panel min-w-0 p-5">
           <h2 class="font-semibold">{{ t('deviceDetail.identity') }}</h2>
@@ -322,5 +357,6 @@ onBeforeUnmount(() => activeRequest?.abort())
 
     <ConfirmDialog v-model="deleteOpen" :title="t('agentDevices.deleteTitle', { name: device?.name || device?.device_id || '' })"
       :description="t('agentDevices.deleteDescription')" :confirm-label="t('agentDevices.delete')" tone="danger" @confirm="deleteDevice" />
+    <DeviceReminders v-if="device?.kind === 'physical'" :device-id="device.device_id" />
   </section>
 </template>

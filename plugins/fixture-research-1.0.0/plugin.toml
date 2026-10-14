@@ -1,0 +1,32 @@
+manifest_version = 2
+
+[plugin]
+id = "fixture-research"
+name = "Fixture Research"
+version = "1.0.0"
+description = "Offline deterministic research fixture for testing the Agent Job Python worker"
+
+[runtime]
+kind = "python"
+python = "3.12"
+entrypoint = "src/main.py"
+protocol = "jsonl-v1"
+
+[agent]
+instructions = "instructions.md"
+
+[operations.collect_topic]
+description = "Search synthetic local posts by topic and write JSON/Markdown artifacts"
+provides = ["fixture.collect", "research.collect"]
+sources = ["fixture"]
+input_schema = "schemas/collect_topic.input.json"
+output_schema = "schemas/collect_topic.output.json"
+replay = "safe_read"
+
+[operations.simulate_failure]
+description = "TEST ONLY: simulate application error, crash, timeout, or malformed output"
+provides = ["fixture.diagnostics"]
+sources = ["fixture"]
+input_schema = "schemas/simulate_failure.input.json"
+output_schema = "schemas/simulate_failure.output.json"
+replay = "safe_read"

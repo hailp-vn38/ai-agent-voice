@@ -28,6 +28,9 @@ export const devicesApi = {
   update(deviceId: string, input: UpdateDeviceInput, revision: number) {
     return requestJson<AdminDevice>(devicePath(deviceId), jsonRequest('PATCH', input), { revision })
   },
+  speak(deviceId: string, text: string, requestId: string) {
+    return requestJson<{ request_id: string; status: 'accepted' }>(`${devicePath(deviceId)}/speak`, jsonRequest('POST', { request_id: requestId, text }))
+  },
   async remove(deviceId: string, revision: number) {
     await request(devicePath(deviceId), { method: 'DELETE' }, { revision })
   },

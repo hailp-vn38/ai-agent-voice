@@ -34,8 +34,8 @@
 | `crates/voice-agent-server/src/app/state.rs` | Quản lý instance `Arc<SystemMcp>` và đưa context/capability qua admission. Không đưa `AppState` nguyên khối vào actor. |
 | `crates/voice-agent-server/src/session/actor/tools/catalog.rs` | Bổ sung route `ToolTarget::SystemMcp` và LLM-visible definitions. |
 | `crates/voice-agent-server/src/session/actor/tools/round.rs` | Dispatch bằng executor tuần tự có sẵn; reuse budget, outcome, status, cancellation. |
-| `crates/voice-agent-server/src/database/tool_security.rs` | Dùng publication/revocation pattern hiện có để ngăn stale permissions. |
-| `crates/voice-agent-server/src/database/tool_allowlist.rs` | Giữ nguyên External MCP allowlist, revision/fingerprint; System MCP không được bypass phê duyệt này. |
+| `crates/voice-agent-server/src/database/security/tool_security.rs` | Dùng publication/revocation pattern hiện có để ngăn stale permissions. |
+| `crates/voice-agent-server/src/database/mcp/tool_allowlist.rs` | Giữ nguyên External MCP allowlist, revision/fingerprint; System MCP không được bypass phê duyệt này. |
 | `crates/voice-agent-server/src/app/admin/{system,mcp_servers,tool_allowlist}.rs` | Tái sử dụng truy vấn/DB mutations đã có; **không gọi HTTP handler từ tool**. Chỉ trích xuất helper nghiệp vụ khi có logic bị lặp thực sự. |
 | `crates/voice-agent-server/src/app/mod.rs` | Chỉ P4 mới mount `/mcp/system`. `/mcp/vision/explain` hiện có không phải MCP Streamable HTTP server. |
 | Root `Cargo.toml` | `rmcp = "=3.5.0"` hiện bật *client features*; khi làm P4 phải xác minh server features đúng version đã pin. |
@@ -233,7 +233,7 @@ enabled = false  # Chỉ mount khi dedicated remote authorization verifier đã 
 |---|---|---|
 | **P1** | `tools/mod.rs`; **mới** `tools/system_mcp/{mod,catalog}.rs` (chưa cần 5 file con); `app/state.rs`; `config/mod.rs`; `app/websocket.rs`; `session/actor/{mod,construct}.rs`; `session/actor/tools/{catalog,round}.rs`; tests | 6 tool đọc được dữ liệu qua Floating Chat; physical Device bị deny; không có HTTP route; CPU/RAM & MCP metadata được redact/bounded; typecheck/test pass. |
 | **P2** | `tools/system_mcp/*` nếu cần tách theo complexity thực; `app/admin/assistant_device.rs` hoặc `system_mcp.rs`; database grants có revision; `apps/admin-web/src/components/system/AssistantDeviceSettings.vue`; API web + Floating Chat labels | Admin bật/tắt grant; `mcp_discover_tools` có timeout, không tự approve; revoke chặn call mới; history/WS/TTS không regress. |
-| **P3** | `tools/system_mcp/*` pending registry; `app/admin/system_mcp.rs`; existing `database/{mcp_servers,tool_allowlist}.rs`; Admin confirmation UI; tests | Proposal không gây side effect; Admin confirm một lần; stale revision deny; mutation+audit atomic; không tự approve bằng LLM. **Không cần approval migration P3**. |
+| **P3** | `tools/system_mcp/*` pending registry; `app/admin/system_mcp.rs`; existing `database/mcp/{mcp_servers/mod,tool_allowlist}.rs`; Admin confirmation UI; tests | Proposal không gây side effect; Admin confirm một lần; stale revision deny; mutation+audit atomic; không tự approve bằng LLM. **Không cần approval migration P3**. |
 | **P4** | Root `Cargo.toml`, crate manifest; **mới** `app/mcp_server/mod.rs` (+ auth code cần thiết); `app/mod.rs`; `config/mod.rs`; integration tests + `docs/api/system-mcp.md` | Endpoint disabled mặc định; verified remote auth; `initialize/tools/list/tools/call` hoạt động bằng `rmcp`; hai client; core tool không đổi. |
 
 ### Test tối thiểu, dùng lại infrastructure sẵn có
@@ -260,7 +260,7 @@ npm ci && npm run typecheck && npm test && npm run build
 
 ## 11. Nguồn đối chiếu
 
-- Repository: [`tools/catalog.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/session/actor/tools/catalog.rs), [`tools/round.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/session/actor/tools/round.rs), [`app/state.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/app/state.rs), [`app/websocket.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/app/websocket.rs), [`database/tool_security.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/database/tool_security.rs).
+- Repository: [`tools/catalog.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/session/actor/tools/catalog.rs), [`tools/round.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/session/actor/tools/round.rs), [`app/state.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/app/state.rs), [`app/websocket.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/app/websocket.rs), [`database/security/tool_security.rs`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/crates/voice-agent-server/src/database/security/tool_security.rs).
 - Contracts: [`docs/api/studio-assistant.md`](https://github.com/hailp-vn38/ai-agent-voice/blob/main/docs/api/studio-assistant.md), ADR **0051, 0053, 0054, 0058, 0060, 0066**.
 - MCP: [MCP specification](https://modelcontextprotocol.io/specification), [Rust SDK `rmcp`](https://github.com/modelcontextprotocol/rust-sdk). Xác minh source **tag version được pin** khi làm P4.
 

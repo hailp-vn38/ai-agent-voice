@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-13",
+  "result": "PASS",
+  "scope": "Native Rust ZIP compatibility and offline rootless execution; not production/deployment qualification",
+  "production_qualified": false,
+  "plugins": [
+    {
+      "cases": [
+        {
+          "artifact_count": 2,
+          "name": "offline HTML content and metadata",
+          "operation": "extract_html",
+          "result": "PASS"
+        },
+        {
+          "artifact_count": 0,
+          "name": "private IP rejected",
+          "operation": "fetch_url",
+          "result": "PASS"
+        },
+        {
+          "artifact_count": 0,
+          "name": "unavailable network fails cleanly",
+          "operation": "fetch_url",
+          "result": "PASS"
+        }
+      ],
+      "declared_network_hosts": [
+        "example.com",
+        "en.wikipedia.org"
+      ],
+      "network": "NOT_RUN",
+      "package": "PASS",
+      "package_digest": "b3e9df2ed056e320b8add82450fd028242dd9f8bca3b3509b9ff2ea4195911c7",
+      "plugin_id": "web-extractor",
+      "runtime": "PASS",
+      "schema_version": 1,
+      "version": "1.0.0",
+      "log": "agent-test.run.bPUlKl"
+    },
+    {
+      "cases": [
+        {
+          "artifact_count": 2,
+          "name": "Markdown text headings and statistics",
+          "operation": "analyze_document",
+          "result": "PASS"
+        },
+        {
+          "artifact_count": 0,
+          "name": "malformed PDF returns application error",
+          "operation": "analyze_document",
+          "result": "PASS"
+        },
+        {
+          "artifact_count": 0,
+          "name": "malformed DOCX returns application error",
+          "operation": "analyze_document",
+          "result": "PASS"
+        },
+        {
+          "artifact_count": 2,
+          "name": "selectable PDF text and artifacts",
+          "operation": "analyze_document",
+          "result": "PASS"
+        },
+        {
+          "artifact_count": 2,
+          "name": "selectable DOCX text and artifacts",
+          "operation": "analyze_document",
+          "result": "PASS"
+        }
+      ],
+      "declared_network_hosts": [],
+      "network": "NOT_REQUIRED",
+      "package": "PASS",
+      "package_digest": "07cd67b42d918521b9e10106d57c7820daa1958a2392f41e6a4279582ea5d0cd",
+      "plugin_id": "document-analysis",
+      "runtime": "PASS",
+      "schema_version": 1,
+      "version": "1.0.0",
+      "log": "agent-test.run.2HAuLM"
+    },
+    {
+      "cases": [
+        {
+          "artifact_count": 1,
+          "name": "offline collect and artifact",
+          "operation": "collect",
+          "result": "PASS"
+        }
+      ],
+      "declared_network_hosts": [],
+      "network": "NOT_REQUIRED",
+      "package": "PASS",
+      "package_digest": "b2492cd87939a0e6bdd74f5e82cae7c18157ccc365cdbd319dce0e7b3d1a275f",
+      "plugin_id": "fixture-rust",
+      "runtime": "PASS",
+      "schema_version": 1,
+      "version": "1.0.0",
+      "log": "agent-test.run.3s9DH1"
+    }
+  ],
+  "checks": [
+    {
+      "name": "server plugin contracts",
+      "passed": 18,
+      "log": "agent-test.run.xb9Lrq"
+    },
+    {
+      "name": "background regression",
+      "passed": 36,
+      "ignored": 1,
+      "log": "agent-test.run.xMHtpw"
+    },
+    {
+      "name": "SDK",
+      "passed": 4,
+      "log": "agent-test.run.nEoQkX"
+    },
+    {
+      "name": "native plugin tests and release/static packaging",
+      "passed": 10,
+      "log": "agent-test.run.tFCeGp"
+    },
+    {
+      "name": "packaging unit tests",
+      "passed": 2,
+      "log": "agent-test.run.fBo689"
+    },
+    {
+      "name": "web strict Clippy",
+      "log": "agent-test.run.Gb0I9q"
+    },
+    {
+      "name": "document strict Clippy",
+      "log": "agent-test.run.yIproF"
+    },
+    {
+      "name": "SDK strict Clippy",
+      "log": "agent-test.run.DNKN8b"
+    },
+    {
+      "name": "server checker Clippy",
+      "log": "agent-test.run.GqjQYL",
+      "note": "Four existing warnings outside the new checker; no -D warnings on this run."
+    }
+  ],
+  "source_sha256": {
+    "scripts/check-rust-plugin.sh": "a074f2cd223bcdef073d6f83d8d5c6582b75ea74d9e7e93c462b4f737a3ff667",
+    "scripts/package-rust-plugins.py": "71d770f7775c6e905d0bf3aec20405a6fcad564be2a737ba391dee9510f5b1a8",
+    "crates/voice-agent-server/examples/check-plugin.rs": "5e953406259d4918f011abd0cb53c74fbe33517554f2e23e87042e0278ee46ca",
+    "crates/voice-agent-server/src/services/background/plugins/reaper.rs": "b91f7c1466e3d60f0ee5c6abc3614175bc9950d08ddb6927b3da92bc39d6e036",
+    "crates/voice-agent-server/src/services/background/plugins/mod.rs": "94a853c06b1ae54181e14a900144e070d4177d6f4dfaad2ff331e3ef80f25e01",
+    "crates/voice-agent-server/src/services/background/plugins/protocol.rs": "aa0181b6d564087365d1e35f1d474569b24e18f9f3e567fafd1e920bfe50e6fe",
+    "crates/voice-agent-server/src/services/background/plugins/egress.rs": "a0a78b96f8426a146f1a5ede0914b570180d3836d4d86770a0cfbeb0b2f9f9dc",
+    "crates/voice-agent-server/src/services/background/plugins/dispatch.rs": "7efad798ca0dad3f912677e551bedea0d1d8714def7cdc5ddb80b1cd4c93afa5",
+    "crates/voice-agent-server/src/services/background/plugins/tests.rs": "aaf685e69b5e8f3062d63a75ea3f91ecc93708d4075adcf9768c2183eeca0bfc",
+    "crates/voice-agent-server/src/services/background/plugins/contracts.rs": "8d05a44a669d4079b0c18e641221a378051324ddf9f9a1d844a5dccc43c36769",
+    "crates/voice-agent-server/src/services/background/plugins/builder.rs": "2f1495e851b127be6aca18deec55cb3f2282c73770de8e4f9d640b43215b2552",
+    "crates/voice-agent-server/src/services/background/plugins/qualification.rs": "cf35f2c4464b246331b227311d85210aacb6f5cd79f3a154936478ea8f37bd81",
+    "crates/voice-agent-server/src/services/background/plugins/archive.rs": "77e0415ea7977cf8c3d054962f68c90dbfb097df37ce8639a154d8f5e4e40f16",
+    "crates/voice-agent-server/src/services/background/plugins/runner.rs": "b36d1330086d05ec0b6ebe0c628ddf4b9f0af933ee76f2b299eb635113320cc8",
+    "plugins/document-analysis/src/main.rs": "f6cdbb2d0cd42291be3c61bfb114028459c2a2d5ab83664f6720a6dca0fcf598",
+    "plugins/document-analysis/src/tests.rs": "808e59fe5a77ae90444e27d2c887c60a912e05a6e10990aeccb7dd7d5b764ebb",
+    "plugins/rust-plugin-sdk/src/lib.rs": "0669afed32289852337140ddc99f7758cb45ad63f69239d346ba89dccbd5bd24",
+    "plugins/rust-plugin-sdk/src/tests.rs": "dd24d2315a42b80ad7c0e31f0fe42379293f040d3e2069c3dfd18e6fbf1f4806",
+    "plugins/fixture-rust-1.0.0/src/main.rs": "53495d2d3714f20388e48870a5f0792d26f1924bb5569fb09fe5824802192507",
+    "plugins/fixture-rust-1.0.0/src/tests.rs": "c82b5fd3071e84077ab487d6cc55c61d97fa0f97356088f20e355076607c5eb1",
+    "plugins/web-extractor/src/main.rs": "8f6c62382264454f18f4a0ef4c27a8d59a41b08f476998d9e635d6fd215a0a80",
+    "plugins/web-extractor/src/tests.rs": "6568192764bb7da0f1fcd1799c3f2ff23584b8df19726d7efb9ddb9ff34aebd0",
+    "plugins/document-analysis/Cargo.lock": "743829153c2ee1f3aca9161bd094f374a28ea932af73d69ee91e08914f28a2f5",
+    "plugins/rust-plugin-sdk/Cargo.lock": "1d9ad3054cff636fc603de25df5df75016ccac61d6305b07d14a3ea9e66afdbe",
+    "plugins/fixture-rust-1.0.0/Cargo.lock": "b72413d8dca3d9a43d7b0c702976ed0d7f576be96e35e01c9895a875abc46ef5",
+    "plugins/web-extractor/Cargo.lock": "dd707eacde4564276853f782783d54ddad921e92d83ba5cd7a7a9bab1c80d95d",
+    "plugins/document-analysis/check-cases.json": "3441e603d7a051026e99424c06754499949f37997ad846f6efe2840529cf7f6c",
+    "plugins/fixture-rust-1.0.0/check-cases.json": "f0edc057ff9427047df5304ca4613cc6ee215614079f44de92c4ad226511d9ca",
+    "plugins/web-extractor/check-cases.json": "f087eb7980988b10df38ac450a3a167718fc5bcca778ce2d1bbc0650e56b4a01",
+    ".github/workflows/rust-agent-plugins.yml": "dddd25cbf361d20c19c9506cc82426212f102e7269cd2a2f05db62b562fe2bc3"
+  },
+  "cleanup": {
+    "result": "PASS",
+    "owned_containers": 0,
+    "check_image_tags": 0,
+    "store_unchanged": true,
+    "logs": [
+      "agent-test.run.2eGoWy",
+      "agent-test.run.xjopVy"
+    ]
+  },
+  "corrected_failures": [
+    {
+      "log": "agent-test.run.wqTYBS",
+      "reason": "Duration u32/u64 compile mismatch",
+      "resolution": "converted seconds and reran plugin tests"
+    },
+    {
+      "log": "agent-test.run.dWO8fb",
+      "reason": "fixture Cargo.lock needed an update under --locked",
+      "resolution": "regenerated locked dependency graph offline; final default packaging passed with --locked"
+    },
+    {
+      "log": "agent-test.run.ZSAOWV",
+      "reason": "unused IP import after URL host validation change",
+      "resolution": "removed import; strict Clippy passed"
+    }
+  ],
+  "not_run": [
+    "successful HTTP fetch through qualified deployment egress",
+    "full LLM Job/Voice flow",
+    "full workspace suite",
+    "GitHub Actions hosted run"
+  ]
+}

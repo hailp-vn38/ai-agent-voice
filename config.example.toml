@@ -303,6 +303,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # Requalify this reservation for your machine and workload.
 # vieneu_native = 2147483648
 # openai = 67108864
+# opencode_free = 67108864
 # chillaudio_ws = 67108864
 # vieneu_http = 67108864
 
@@ -343,3 +344,13 @@ allowed_hosts = []
 
 [system_mcp]
 enabled = false # Read-only tools for authenticated Studio Assistant sessions.
+
+# Shared plugin runtime; sockets and directories must be mounted by compose.yaml.
+# Background enablement and LLM choices remain Admin settings.
+[background]
+plugin_installer_socket = "/run/plugin-installer/installer.sock"
+plugin_runner_socket = "/run/plugin-runner/runner.sock"
+plugin_installations_dir = "data/plugins/installations"
+plugin_staging_dir = "data/plugins/staging"
+plugin_attempts_dir = "data/plugins/workspaces"
+plugin_curated_dir = "data/curated-plugins"

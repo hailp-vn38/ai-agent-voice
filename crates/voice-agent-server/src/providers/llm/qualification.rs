@@ -33,6 +33,9 @@ pub static REGISTRATION: ProviderAdapterRegistration =
     ProviderAdapterRegistration::remote(&DESCRIPTOR, None);
 pub struct QualificationLlm;
 impl LlmProvider for QualificationLlm {
+    fn supports_tools(&self) -> bool {
+        true
+    }
     fn adapter(&self) -> &'static str {
         "qualification_llm"
     }

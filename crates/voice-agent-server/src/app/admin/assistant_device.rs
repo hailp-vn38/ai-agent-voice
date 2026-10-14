@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::web_assistant_auth::trusted_origin;
+use crate::app::assistant::trusted_origin;
 use crate::database::devices::Device;
 
 fn settings(device: Option<Device>, active: usize) -> Value {
@@ -60,7 +60,6 @@ pub(super) async fn put(State(state): State<AppState>, request: Request) -> Resp
         }
     };
     let _publication = state.web_assistant.publication.write().await;
-    let _tool_publication = db.tool_security.publication.write().await;
     match db
         .save_assistant_device(
             &input.agent_key,

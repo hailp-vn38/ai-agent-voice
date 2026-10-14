@@ -34,6 +34,7 @@ fn database_url() -> String {
 
 fn config(address: std::net::SocketAddr, database_url: String) -> AppConfig {
     AppConfig {
+        background: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,

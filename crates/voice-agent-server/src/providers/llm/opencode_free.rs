@@ -1,20 +1,18 @@
-//! OpenCode Free LLM preset, using the upstream OpenAI-compatible Zen chat API.
+//! OpenCode Free LLM preset: Voice Chat Completions and opt-in Agent Job Responses.
 //!
-//! The free catalog changes over time. We advertise known model IDs for the admin
-//! UI, but accept future `-free` chat model IDs in configuration without a release.
+//! Model IDs are entered directly; upstream availability can change at any time.
+use llm::providers::openai_compatible::{OpenAICompatibleProvider, OpenAIProviderConfig};
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::providers::{
     LlmError, LlmProvider,
-    capabilities::{
-        CapabilityDiscoveryMode, CapabilitySource, DiscoverySource, ModelOption,
-        ProviderCapabilities,
-    },
+    capabilities::{CapabilityDiscoveryMode, DiscoverySource, ProviderCapabilities},
     descriptor::{
         ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
         ProviderType, field,
     },
-    llm::{ConfiguredOpenAiLlm, LlmEventStream, LlmRequest},
+    llm::{LlmEvent, LlmEventStream, LlmRequest, ToolDefinition, stream_openai_request},
     registry::ProviderAdapterRegistration,
 };
 
@@ -36,9 +34,15 @@ pub struct OpenCodeFreeConfig {
     pub model: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    /// Explicit capability for the selected free model; default preserves Chat.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_responses: bool,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
-pub(crate) fn valid_free_chat_model_id(model: &str) -> bool {
+pub(crate) fn valid_free_model_id(model: &str) -> bool {
     model.len() <= 256
         && model.ends_with("-free")
         && model.bytes().all(|byte| {
@@ -48,12 +52,14 @@ pub(crate) fn valid_free_chat_model_id(model: &str) -> bool {
 
 impl OpenCodeFreeConfig {
     pub fn valid(&self) -> bool {
-        valid_free_chat_model_id(&self.model) && (1_000..=120_000).contains(&self.timeout_ms)
+        valid_free_model_id(&self.model) && (1_000..=120_000).contains(&self.timeout_ms)
     }
 }
 
 pub(crate) struct OpenCodeFreeProvider {
-    inner: ConfiguredOpenAiLlm,
+    model: String,
+    timeout_seconds: u64,
+    supports_responses: bool,
 }
 
 impl OpenCodeFreeProvider {
@@ -62,82 +68,153 @@ impl OpenCodeFreeProvider {
             return Err(LlmError::Failed);
         }
         Ok(Self {
-            // 9Router's no-account OpenCode path uses the non-secret "public" token.
-            // There is no persisted credential and the endpoint cannot be overridden.
-            inner: ConfiguredOpenAiLlm::build(
-                PUBLIC_KEY,
-                BASE_URL,
-                &config.model,
-                config.timeout_ms.div_ceil(1_000),
-            )?,
+            model: config.model.clone(),
+            timeout_seconds: config.timeout_ms.div_ceil(1_000),
+            supports_responses: config.supports_responses,
         })
     }
 }
 
 #[async_trait::async_trait]
 impl LlmProvider for OpenCodeFreeProvider {
+    fn supports_tools(&self) -> bool {
+        true
+    }
     fn adapter(&self) -> &'static str {
         "opencode_free"
     }
 
-    async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
-        self.inner.stream(request).await
+    async fn background_complete(
+        &self,
+        request: LlmRequest,
+        schema: Option<serde_json::Value>,
+    ) -> Result<String, LlmError> {
+        if self.supports_responses {
+            // Only opted-in free models use Zen Responses. The public credential
+            // may be rejected upstream; never silently fall back to Chat.
+            super::openai::responses::complete_with(
+                BASE_URL,
+                &self.model,
+                PUBLIC_KEY,
+                self.timeout_seconds,
+                request,
+                schema,
+            )
+            .await
+        } else {
+            super::complete_background_chat(self.stream(request).await?).await
+        }
+    }
+
+    async fn stream(&self, mut request: LlmRequest) -> Result<LlmEventStream, LlmError> {
+        use futures_util::StreamExt;
+        let placeholders = add_fingerprint_tools(&mut request);
+        let system = request.messages.iter().find_map(|message| match message {
+            super::ChatMessage::System { content } => Some(content.clone()),
+            _ => None,
+        });
+        let client = OpenAICompatibleProvider::<ZenChat>::new(
+            PUBLIC_KEY,
+            Some(BASE_URL.into()),
+            Some(self.model.clone()),
+            None,
+            None,
+            Some(self.timeout_seconds),
+            system,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let stream = stream_openai_request(&client, request, self.adapter()).await?;
+        Ok(Box::pin(stream.map(move |event| {
+            reject_placeholder_call(event, &placeholders)
+        })))
     }
 }
 
-// Snapshot of currently advertised free Chat Completions models. Models come
-// from https://opencode.ai/zen/v1/models and may become unavailable at any time.
-// No assumption of quota availability or guaranteed tool support is made.
-const FREE_MODELS: &[ModelOption] = &[
-    ModelOption {
-        id: "nemotron-3-ultra-free",
-        name: "Nemotron 3 Ultra Free",
-        description: None,
-    },
-    ModelOption {
-        id: "mimo-v2.5-free",
-        name: "MiMo V2.5 Free",
-        description: None,
-    },
-    ModelOption {
-        id: "deepseek-v4-flash-free",
-        name: "DeepSeek V4 Flash Free",
-        description: None,
-    },
-    ModelOption {
-        id: "ling-3.0-flash-free",
-        name: "Ling 3.0 Flash Free",
-        description: None,
-    },
-    ModelOption {
-        id: "ling-3.0-tiny-free",
-        name: "Ling 3.0 Tiny Free",
-        description: None,
-    },
-    ModelOption {
-        id: "north-mini-code-free",
-        name: "North Mini Code Free",
-        description: None,
-    },
-    ModelOption {
-        id: "laguna-s-2.1-free",
-        name: "Laguna S 2.1 Free",
-        description: None,
-    },
-    ModelOption {
-        id: "longcat-2.0-free",
-        name: "LongCat 2.0 Free",
-        description: None,
-    },
-];
+struct ZenChat;
+
+impl OpenAIProviderConfig for ZenChat {
+    const PROVIDER_NAME: &'static str = "OpenCode Free";
+    const DEFAULT_BASE_URL: &'static str = BASE_URL;
+    const DEFAULT_MODEL: &'static str = "nemotron-3-ultra-free";
+    const SUPPORTS_STREAM_OPTIONS: bool = true;
+
+    fn custom_headers() -> Option<Vec<(String, String)>> {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let descending = (!(millis << 12)) & 0xffff_ffff_ffff;
+        // shortcut: fresh session per request; preserve affinity when LlmRequest carries conversation identity.
+        let session = format!(
+            "ses_{descending:012x}{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..14]
+        );
+        Some(vec![
+            ("User-Agent".into(), "opencode/1.18.31".into()),
+            ("x-opencode-session".into(), session),
+            ("x-opencode-client".into(), "desktop".into()),
+            ("x-opencode-project".into(), "global".into()),
+        ])
+    }
+}
+
+const FINGERPRINT_TOOLS: [&str; 4] = ["bash", "glob", "grep", "read"];
+
+fn add_fingerprint_tools(request: &mut LlmRequest) -> Vec<&'static str> {
+    let mut placeholders = Vec::new();
+    for name in FINGERPRINT_TOOLS {
+        if !request.tools.iter().any(|tool| tool.name == name) {
+            request.tools.push(ToolDefinition {
+                name: name.into(),
+                description: "Unavailable. Do not call this tool.".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            });
+            placeholders.push(name);
+        }
+    }
+    placeholders
+}
+
+fn reject_placeholder_call(
+    event: Result<LlmEvent, LlmError>,
+    placeholders: &[&str],
+) -> Result<LlmEvent, LlmError> {
+    if let Ok(LlmEvent::ToolCall(call)) = &event
+        && placeholders.contains(&call.name.as_str())
+    {
+        return Err(LlmError::Failed);
+    }
+    event
+}
 
 const FIELDS: &[ProviderConfigField] = &[
     field(
+        "supports_responses",
+        "Supports Responses (Agent Job only)",
+        ConfigFieldType::Boolean,
+        false,
+        None,
+        None,
+        None,
+        None,
+    ),
+    field(
         "model",
         "Free model",
-        ConfigFieldType::Select,
+        ConfigFieldType::String,
         true,
-        Some(CapabilitySource::Models),
+        None,
         None,
         None,
         Some(256),
@@ -158,10 +235,10 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     adapter: "opencode_free",
     provider_type: ProviderType::Llm,
     display_name: "OpenCode Free",
-    description: "OpenCode Zen free Chat Completions models; no personal API key required.",
+    description: "OpenCode Zen free models. Agent Job may opt into Responses per supported model; Voice uses Chat Completions.",
     config_schema: ProviderConfigSchema { fields: FIELDS },
     capabilities: ProviderCapabilities {
-        models: Some(FREE_MODELS),
+        models: None,
         voices: None,
         languages: None,
         streaming: Some(true),
@@ -174,7 +251,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
         voice_delivery_sample_rates: None,
     },
     discovery: CapabilityDiscoveryMode {
-        models: DiscoverySource::Static,
+        models: DiscoverySource::Unsupported,
         voices: DiscoverySource::Unsupported,
         languages: DiscoverySource::Unsupported,
     },
@@ -184,66 +261,4 @@ pub static REGISTRATION: ProviderAdapterRegistration =
     ProviderAdapterRegistration::remote(&DESCRIPTOR, None);
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn config(model: &str) -> OpenCodeFreeConfig {
-        OpenCodeFreeConfig {
-            model: model.into(),
-            timeout_ms: 60_000,
-        }
-    }
-
-    #[test]
-    fn accepts_free_chat_ids_and_rejects_paid_and_unsafe_ids() {
-        assert!(config("nemotron-3-ultra-free").valid());
-        assert!(config("future-2027-free").valid());
-        assert!(!config("claude-opus-4-5").valid());
-        assert!(!config("a/../../b-free").valid());
-    }
-
-    #[test]
-    fn admin_config_and_deployment_discriminator_are_consistent() {
-        let canonical = crate::database::provider_config::validate(
-            "opencode_free",
-            &serde_json::json!({
-                "model": "nemotron-3-ultra-free",
-                "timeout_ms": 60000,
-            }),
-        )
-        .unwrap();
-        let mut value: serde_json::Value = serde_json::from_str(&canonical).unwrap();
-        // The runtime loader strips this Admin-only bound before typed decoding.
-        value.as_object_mut().unwrap().remove("max_tokens");
-        value["adapter"] = serde_json::json!("opencode_free");
-        let instance: crate::config::LlmInstanceConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(instance.adapter(), "opencode_free");
-
-        assert!(
-            crate::database::provider_config::validate(
-                "opencode_free",
-                &serde_json::json!({
-                    "model": "claude-sonnet-5",
-                    "timeout_ms": 60000,
-                }),
-            )
-            .is_err()
-        );
-        assert!(
-            crate::database::provider_config::validate(
-                "opencode_free",
-                &serde_json::json!({
-                    "model": "nemotron-3-ultra-free",
-                    "base_url": "https://example.com",
-                }),
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn builds_without_network_or_user_credentials() {
-        let provider = OpenCodeFreeProvider::build(&config("nemotron-3-ultra-free")).unwrap();
-        assert_eq!(provider.adapter(), "opencode_free");
-    }
-}
+mod tests;

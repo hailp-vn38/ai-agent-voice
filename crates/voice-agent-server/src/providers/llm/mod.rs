@@ -83,9 +83,22 @@ impl From<&str> for LlmRequest {
 
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
+    fn supports_tools(&self) -> bool {
+        false
+    }
     fn adapter(&self) -> &'static str;
     fn complete(&self, _: &LlmRequest) -> Result<String, LlmError> {
         Err(LlmError::Failed)
+    }
+
+    /// Background-only completion. Voice always uses `stream()` (Chat Completions).
+    /// Structured schema is advisory for chat-only providers; Rust validates the result.
+    async fn background_complete(
+        &self,
+        request: LlmRequest,
+        _schema: Option<Value>,
+    ) -> Result<String, LlmError> {
+        complete_background_chat(self.stream(request).await?).await
     }
 
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
@@ -101,6 +114,36 @@ pub trait LlmProvider: Send + Sync {
 pub enum LlmError {
     #[error("LLM completion failed")]
     Failed,
+    /// A terminal provider response definitively rejected or failed to produce usable output.
+    #[error("LLM returned a terminal invalid response")]
+    Rejected,
+}
+
+/// Chat-only fallback for Background; no MCP, provider tools or streaming to the Device.
+pub(crate) async fn complete_background_chat(
+    mut stream: LlmEventStream,
+) -> Result<String, LlmError> {
+    use futures_util::StreamExt;
+    let mut output = String::new();
+    while let Some(event) = stream.next().await {
+        match event? {
+            LlmEvent::TextDelta(delta) => {
+                if output.len().saturating_add(delta.len()) > 65536 {
+                    return Err(LlmError::Failed);
+                }
+                output.push_str(&delta);
+            }
+            LlmEvent::Finished => {
+                return if output.is_empty() {
+                    Err(LlmError::Failed)
+                } else {
+                    Ok(output)
+                };
+            }
+            LlmEvent::ToolCall(_) => return Err(LlmError::Failed),
+        }
+    }
+    Err(LlmError::Failed)
 }
 
 pub struct UnavailableLlm;
@@ -116,55 +159,56 @@ pub(crate) struct ConfiguredOpenAiLlm {
     base_url: String,
     model: String,
     timeout_seconds: u64,
+    supports_responses: bool,
 }
 
 impl ConfiguredOpenAiLlm {
-    pub(crate) fn build(
+    pub(crate) fn build_with_responses(
         api_key: &str,
         base_url: &str,
         model: &str,
         timeout_seconds: u64,
+        supports_responses: bool,
     ) -> Result<Self, LlmError> {
+        if model.trim().is_empty() || timeout_seconds == 0 {
+            return Err(LlmError::Failed);
+        }
         Ok(Self {
             api_key: api_key.into(),
             base_url: base_url.into(),
             model: model.into(),
             timeout_seconds,
+            supports_responses,
         })
     }
 }
 
 #[async_trait::async_trait]
 impl LlmProvider for ConfiguredOpenAiLlm {
+    fn supports_tools(&self) -> bool {
+        true
+    }
     fn adapter(&self) -> &'static str {
         "openai"
     }
 
+    async fn background_complete(
+        &self,
+        request: LlmRequest,
+        schema: Option<Value>,
+    ) -> Result<String, LlmError> {
+        if self.supports_responses {
+            openai::responses::complete(self, request, schema).await
+        } else {
+            complete_background_chat(self.stream(request).await?).await
+        }
+    }
+
     async fn stream(&self, request: LlmRequest) -> Result<LlmEventStream, LlmError> {
-        use futures_util::StreamExt;
         let system = request.messages.iter().find_map(|message| match message {
             ChatMessage::System { content } => Some(content.as_str()),
             _ => None,
         });
-        let messages = request
-            .messages
-            .iter()
-            .filter(|message| !matches!(message, ChatMessage::System { .. }))
-            .map(to_llm_message)
-            .collect::<Vec<_>>();
-        let tools = request
-            .tools
-            .iter()
-            .map(|tool| llm::chat::Tool {
-                tool_type: "function".into(),
-                function: llm::chat::FunctionTool {
-                    name: tool.name.clone(),
-                    description: tool.description.clone(),
-                    parameters: tool.parameters.clone(),
-                },
-                cache_control: None,
-            })
-            .collect::<Vec<_>>();
         let mut builder = llm::builder::LLMBuilder::new()
             .backend(llm::builder::LLMBackend::OpenAI)
             .api_key(&self.api_key)
@@ -175,21 +219,49 @@ impl LlmProvider for ConfiguredOpenAiLlm {
             builder = builder.system(system);
         }
         let client = builder.build().map_err(|_| LlmError::Failed)?;
-        let stream = client
-            .chat_stream_with_tools(&messages, (!tools.is_empty()).then_some(tools.as_slice()))
-            .await
-            .map_err(|_| {
-                tracing::warn!(
-                    event = "llm_provider_open_stream_failed",
-                    adapter = self.adapter(),
-                    "OpenAI-compatible LLM stream could not be opened"
-                );
-                LlmError::Failed
-            })?;
-        Ok(Box::pin(stream.filter_map(|chunk| async move {
-            adapt_stream_chunk(chunk)
-        })))
+        stream_openai_request(client.as_ref(), request, self.adapter()).await
     }
+}
+
+async fn stream_openai_request(
+    client: &dyn llm::chat::ChatProvider,
+    request: LlmRequest,
+    adapter: &'static str,
+) -> Result<LlmEventStream, LlmError> {
+    use futures_util::StreamExt;
+    let messages = request
+        .messages
+        .iter()
+        .filter(|message| !matches!(message, ChatMessage::System { .. }))
+        .map(to_llm_message)
+        .collect::<Vec<_>>();
+    let tools = request
+        .tools
+        .iter()
+        .map(|tool| llm::chat::Tool {
+            tool_type: "function".into(),
+            function: llm::chat::FunctionTool {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.parameters.clone(),
+            },
+            cache_control: None,
+        })
+        .collect::<Vec<_>>();
+    let stream = client
+        .chat_stream_with_tools(&messages, (!tools.is_empty()).then_some(tools.as_slice()))
+        .await
+        .map_err(|_| {
+            tracing::warn!(
+                event = "llm_provider_open_stream_failed",
+                adapter,
+                "OpenAI-compatible LLM stream could not be opened"
+            );
+            LlmError::Failed
+        })?;
+    Ok(Box::pin(stream.filter_map(|chunk| async move {
+        adapt_stream_chunk(chunk)
+    })))
 }
 
 /// Maps provider transport chunks to the small domain vocabulary used by the actor.

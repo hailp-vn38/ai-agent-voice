@@ -1,0 +1,300 @@
+use super::*;
+use crate::database::notifications::{CreateReminder, DeviceNotifications, NotificationError};
+fn failure(request: &Request, cause: NotificationError) -> Response {
+    let (status, code) = match cause {
+        NotificationError::Invalid("unauthorized_target") => {
+            (StatusCode::FORBIDDEN, "unauthorized_target")
+        }
+        NotificationError::Invalid(code) => (StatusCode::BAD_REQUEST, code),
+        NotificationError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        NotificationError::Conflict(code) => (StatusCode::CONFLICT, code),
+        NotificationError::Sql(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "device_notifications_unavailable",
+        ),
+    };
+    error(request, status, code)
+}
+pub(super) async fn create(
+    State(state): State<AppState>,
+    Path(device): Path<String>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, CreateReminder) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let key = match mutation_key(&request) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let database = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match notifications(database, &request)
+        .create(&device, "admin", key, input, "web", id(&request))
+        .await
+    {
+        Ok(v) => {
+            publish_sync(&state, &device, v.schedule_revision).await;
+            (StatusCode::CREATED, Json(v)).into_response()
+        }
+        Err(e) => failure(&request, e),
+    }
+}
+#[derive(Deserialize)]
+pub(super) struct ListQuery {
+    page: Option<u32>,
+    page_size: Option<u32>,
+    status: Option<String>,
+}
+pub(super) async fn list(
+    State(state): State<AppState>,
+    Path(device): Path<String>,
+    Query(query): Query<ListQuery>,
+    request: Request,
+) -> Response {
+    let database = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match notifications(database, &request)
+        .list(
+            &device,
+            query.status.as_deref(),
+            query.page.unwrap_or(1),
+            query.page_size.unwrap_or(50),
+        )
+        .await
+    {
+        Ok(mut v) => {
+            if let Some(summary) = v.get_mut("schedule_summary").and_then(Value::as_object_mut) {
+                let id = sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE device_id=?")
+                    .bind(&device)
+                    .fetch_optional(database.pool())
+                    .await
+                    .ok()
+                    .flatten();
+                let session = id.and_then(|id| state.active_device_sessions.current(id));
+                summary.insert(
+                    "session_connected".into(),
+                    serde_json::json!(session.is_some()),
+                );
+                summary.insert(
+                    "reminder_capable".into(),
+                    serde_json::json!(session.is_some_and(|s| s.features.reminders)),
+                );
+            }
+            Json(v).into_response()
+        }
+        Err(e) => failure(&request, e),
+    }
+}
+pub(super) async fn grant(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let database = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match DeviceNotifications::new(database.clone()).grant(&key).await {
+        Ok((enabled, revision)) => {
+            Json(serde_json::json!({"reminders_enabled":enabled,"revision":revision}))
+                .into_response()
+        }
+        Err(e) => failure(&request, e),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantPatch {
+    reminders_enabled: bool,
+}
+pub(super) async fn patch_grant(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, GrantPatch) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let revision = match expected(request.headers()) {
+        Ok(v) => v,
+        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
+    };
+    let database = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match DeviceNotifications::new(database.clone())
+        .set_grant(&key, input.reminders_enabled, revision, id(&request))
+        .await
+    {
+        Ok(revision) => Json(
+            serde_json::json!({"reminders_enabled":input.reminders_enabled,"revision":revision}),
+        )
+        .into_response(),
+        Err(e) => failure(&request, e),
+    }
+}
+
+pub(super) async fn update(
+    State(state): State<AppState>,
+    Path((device, reminder)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, crate::database::notifications::UpdateReminder) =
+        match json(request).await {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+    let revision = match expected(request.headers()) {
+        Ok(v) => v,
+        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
+    };
+    let key = match mutation_key(&request) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let db = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match notifications(db, &request)
+        .update(
+            &device,
+            &reminder,
+            revision,
+            "admin",
+            key,
+            input,
+            id(&request),
+        )
+        .await
+    {
+        Ok(v) => {
+            publish_sync(&state, &device, v.schedule_revision).await;
+            Json(v).into_response()
+        }
+        Err(e) => failure(&request, e),
+    }
+}
+pub(super) async fn cancel(
+    State(state): State<AppState>,
+    Path((device, reminder)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, Value) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if !input.as_object().is_some_and(|v| v.is_empty()) {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    let revision = match expected(request.headers()) {
+        Ok(v) => v,
+        Err(e) => return error(&request, StatusCode::BAD_REQUEST, e),
+    };
+    let key = match mutation_key(&request) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let db = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match notifications(db, &request)
+        .cancel(&device, &reminder, revision, "admin", key, id(&request))
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => failure(&request, e),
+    }
+}
+#[allow(clippy::result_large_err)]
+fn mutation_key(request: &Request) -> Result<&str, Response> {
+    request
+        .headers()
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| error(request, StatusCode::BAD_REQUEST, "idempotency_key_required"))
+}
+
+#[derive(Clone)]
+struct AgentScope(String);
+fn notifications(database: &crate::database::Database, request: &Request) -> DeviceNotifications {
+    let service = DeviceNotifications::new(database.clone());
+    match request.extensions().get::<AgentScope>() {
+        Some(scope) => service.scoped_to_agent(&scope.0),
+        None => service,
+    }
+}
+
+async fn publish_sync(state: &AppState, device: &str, revision: i64) {
+    let Some(database) = &state.database else {
+        return;
+    };
+    let Ok(Some(id)) = sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE device_id=?")
+        .bind(device)
+        .fetch_optional(database.pool())
+        .await
+    else {
+        return;
+    };
+    state.active_device_sessions.sync_required(id, revision);
+}
+pub(super) async fn agent_list(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Query(query): Query<crate::database::notifications::AgentReminderQuery>,
+    request: Request,
+) -> Response {
+    let db = match database(&state) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match DeviceNotifications::new(db.clone())
+        .list_agent(&key, &query)
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => failure(&request, e),
+    }
+}
+pub(super) async fn scoped_create(
+    state: State<AppState>,
+    Path((agent, device)): Path<(String, String)>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    create(state, Path(device), request).await
+}
+pub(super) async fn scoped_list(
+    state: State<AppState>,
+    Path((agent, device)): Path<(String, String)>,
+    query: Query<ListQuery>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    list(state, Path(device), query, request).await
+}
+pub(super) async fn scoped_update(
+    state: State<AppState>,
+    Path((agent, device, reminder)): Path<(String, String, String)>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    update(state, Path((device, reminder)), request).await
+}
+pub(super) async fn scoped_cancel(
+    state: State<AppState>,
+    Path((agent, device, reminder)): Path<(String, String, String)>,
+    mut request: Request,
+) -> Response {
+    request.extensions_mut().insert(AgentScope(agent));
+    cancel(state, Path((device, reminder)), request).await
+}

@@ -1,0 +1,1336 @@
+use super::super::*;
+use crate::services::provider_runtime::{RuntimeMetrics, RuntimePhase};
+use std::time::Instant;
+
+pub(crate) async fn handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<WebsocketQuery>,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let connect_started = Instant::now();
+    let metrics = state
+        .provider_runtime_manager
+        .as_ref()
+        .map(|manager| manager.metrics().clone());
+    let _pre_upgrade_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsPreUpgrade));
+    let config = state.config.clone();
+    let bearer_auth_enabled = !config.auth.token.is_empty();
+    // Registered before anything else happens, so the drain can observe and close a connection
+    // even if it never reaches the handshake.  The handle is moved into the socket task, which is
+    // what keeps this connection counted for exactly as long as it exists.
+    let drain = state.register_session();
+    if !state.admission_gate().is_open() {
+        log_ws_auth(
+            bearer_auth_enabled,
+            "not_checked",
+            "unavailable",
+            "denied",
+            "shutting_down",
+        );
+        return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
+    }
+    for name in [
+        "protocol-version",
+        "device-id",
+        "client-id",
+        "authorization",
+    ] {
+        if headers.get_all(name).iter().count() > 1 {
+            log_ws_auth(
+                bearer_auth_enabled,
+                "not_checked",
+                "not_checked",
+                "denied",
+                "duplicate_protocol_header",
+            );
+            return (StatusCode::BAD_REQUEST, "duplicate protocol header").into_response();
+        }
+    }
+    for (name, value) in [
+        ("protocol-version", &query.protocol_version),
+        ("device-id", &query.device_id),
+        ("client-id", &query.client_id),
+        ("authorization", &query.authorization),
+    ] {
+        if headers.contains_key(name) && value.is_some() {
+            return (StatusCode::BAD_REQUEST, "ambiguous protocol identity").into_response();
+        }
+    }
+    if !header_or_query_is_or_absent(
+        &headers,
+        "protocol-version",
+        query.protocol_version.as_deref(),
+        "1",
+    ) || !header_or_query_present(&headers, "device-id", query.device_id.as_deref())
+        || !header_or_query_present(&headers, "client-id", query.client_id.as_deref())
+    {
+        log_ws_auth(
+            bearer_auth_enabled,
+            "not_checked",
+            "not_checked",
+            "denied",
+            "invalid_protocol_headers",
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            "Protocol-Version, Device-Id and Client-Id are required",
+        )
+            .into_response();
+    }
+    let device_id = header_or_query_value(&headers, "device-id", query.device_id.as_deref())
+        .expect("validated above");
+    if !valid_device_identity(device_id) {
+        log_ws_auth(
+            bearer_auth_enabled,
+            bearer_auth_result(bearer_auth_enabled),
+            "denied",
+            "denied",
+            "invalid_device_id",
+        );
+        return (StatusCode::BAD_REQUEST, "invalid Device-Id").into_response();
+    }
+    let client_id = header_or_query_value(&headers, "client-id", query.client_id.as_deref())
+        .expect("validated above");
+    if !valid_device_identity(client_id) {
+        log_ws_auth(
+            bearer_auth_enabled,
+            bearer_auth_result(bearer_auth_enabled),
+            "denied",
+            "denied",
+            "invalid_client_id",
+        );
+        return (StatusCode::BAD_REQUEST, "invalid Client-Id").into_response();
+    }
+    let assistant_auth = state.web_assistant.clone();
+    // Hold publication through graph resolution and connection registration; System saves cannot
+    // rebind between credential validation and the immutable profile snapshot.
+    let publication = assistant_auth.publication.read().await;
+    let device = match &state.database {
+        Some(db) => match crate::database::devices::get_device_by(db, device_id).await {
+            Ok(d) => Some(d),
+            Err(sqlx::Error::RowNotFound) => None,
+            Err(_) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "device admission unavailable",
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+    let assistant_connection = if device.as_ref().is_some_and(|d| d.kind == "web_assistant") {
+        if headers.contains_key(header::AUTHORIZATION) || query.authorization.is_some() {
+            return (StatusCode::BAD_REQUEST, "ambiguous authentication").into_response();
+        }
+        let Some(ticket) = query.ticket.as_deref() else {
+            return (StatusCode::UNAUTHORIZED, "ticket required").into_response();
+        };
+        let Some(origin) = super::super::assistant::trusted_origin(&state, &headers) else {
+            return (StatusCode::FORBIDDEN, "untrusted origin").into_response();
+        };
+        match assistant_auth.consume(
+            ticket,
+            device.as_ref().expect("managed Device"),
+            client_id,
+            &origin,
+        ) {
+            Ok(connection) => Some(connection),
+            Err("assistant_capacity_exceeded") => {
+                return (StatusCode::TOO_MANY_REQUESTS, "assistant capacity exceeded")
+                    .into_response();
+            }
+            Err(_) => return (StatusCode::UNAUTHORIZED, "invalid ticket").into_response(),
+        }
+    } else {
+        drop(publication);
+        if query.ticket.is_some() {
+            return (StatusCode::UNAUTHORIZED, "ticket requires managed Device").into_response();
+        }
+        if bearer_auth_enabled
+            && !header_or_query_is(
+                &headers,
+                header::AUTHORIZATION.as_str(),
+                query.authorization.as_deref(),
+                &format!("Bearer {}", config.auth.token),
+            )
+        {
+            log_ws_auth(
+                true,
+                "denied",
+                "not_checked",
+                "denied",
+                "invalid_bearer_token",
+            );
+            return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
+        }
+        None
+    };
+    let routing_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsRouting));
+    match super::super::enrollment::route(&state, device_id, client_id).await {
+        Ok(super::super::enrollment::Route::Voice) => {}
+        Ok(super::super::enrollment::Route::Pending(connection)) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "pending_enrollment",
+                "accepted",
+                "pending_enrollment",
+            );
+            return upgrade
+                .max_frame_size(config.websocket.max_frame_bytes.saturating_add(1024))
+                .on_upgrade(move |socket| {
+                    super::super::enrollment::run(socket, state, connection, drain)
+                })
+                .into_response();
+        }
+        Err(response) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "denied",
+                "denied",
+                "device_route_rejected",
+            );
+            return *response;
+        }
+    }
+    drop(routing_timer);
+    // One immutable Effective Session Profile per connection.  Resolution is fail-closed: a
+    // database-backed Agent whose default Template cannot be materialized is never silently
+    // downgraded to the deployment's server defaults.
+    let profile = match state.resolve_session_profile(device_id).await {
+        Ok(profile) => profile,
+        Err(SessionProfileAdmissionError::Runtime(error)) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "profile_runtime_unavailable",
+            );
+            return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
+        }
+        Err(SessionProfileAdmissionError::Denied) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "denied",
+                "denied",
+                "device_not_admitted",
+            );
+            return (StatusCode::FORBIDDEN, "device not admitted").into_response();
+        }
+        Err(SessionProfileAdmissionError::AdmissionUnavailable) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "device_admission_unavailable",
+            );
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "device admission unavailable",
+            )
+                .into_response();
+        }
+        Err(SessionProfileAdmissionError::ProfileUnavailable) => {
+            debug!(
+                device_id = %device_id,
+                "the admitted agent has no usable effective session profile"
+            );
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "profile_unavailable",
+            );
+            return (StatusCode::SERVICE_UNAVAILABLE, "agent profile unavailable").into_response();
+        }
+        Err(SessionProfileAdmissionError::ShuttingDown) => {
+            log_ws_auth(
+                bearer_auth_enabled,
+                bearer_auth_result(bearer_auth_enabled),
+                "unavailable",
+                "denied",
+                "shutting_down",
+            );
+            return (StatusCode::SERVICE_UNAVAILABLE, "server is shutting down").into_response();
+        }
+    };
+    if assistant_connection.is_some()
+        && let Some(guard) = &profile.external_mcp().guard
+    {
+        assistant_auth.register_close(&guard.close);
+    }
+    // Only the consumed, origin-bound ticket plus managed admission can create this capability.
+    let system_mcp =
+        if assistant_connection.is_some() && profile.device_db_id > 0 && profile.agent_id > 0 {
+            if let (Some(core), Some(database)) = (&state.system_mcp, &state.database) {
+                let _publication = database.tool_security.publication.read().await;
+                match database
+                    .system_mcp_grants(state.config.system_mcp.enabled)
+                    .await
+                {
+                    Ok(settings) => {
+                        let context = crate::tools::system_mcp::SystemToolContext {
+                            caller: crate::tools::system_mcp::SystemCaller::WebAssistant {
+                                device_db_id: profile.device_db_id,
+                                agent_id: profile.agent_id,
+                            },
+                            grants: settings.grants,
+                            revoked: database.tool_security.register_system_mcp(profile.agent_id),
+                            cancellation: CancellationToken::new(),
+                            deadline: tokio::time::Instant::now(),
+                        };
+                        assistant_auth.register_close(&context.revoked);
+                        Some(crate::tools::system_mcp::SessionSystemMcp {
+                            core: core.clone(),
+                            tools: core.list_tools(&context),
+                            context,
+                        })
+                    }
+                    Err(_) => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+    let resolved_runtimes = match profile
+        .selected_runtimes
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| state.runtimes.resolve(&profile.providers))
+    {
+        Ok(runtimes) => runtimes,
+        Err(error) => {
+            debug!(%error, "configured provider runtime is unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "configured provider runtime is unavailable",
+            )
+                .into_response();
+        }
+    };
+    // One session identity, used both as the Voice Session's own id and as the archive's session
+    // key: a transcript row groups by the same WebSocket connection, so a second database-side
+    // session identity would be a second thing to keep in step.
+    let session_id = Uuid::new_v4().to_string();
+    let transcript = state.transcript_capture(&session_id, &profile);
+    let admission_gate = Arc::clone(state.admission_gate());
+    // Resolve the immutable, Agent-scoped candidate snapshot before the upgrade closure owns state.
+    let speaker_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsSpeaker));
+    let speaker_observe =
+        match resolve_speaker_observe(&state, &profile, &resolved_runtimes, &config).await {
+            Ok(resolved) => resolved,
+            Err(response) => return response,
+        };
+    drop(speaker_timer);
+    let active_turn_limiter = state.active_turn_limiter;
+    let pilot_admission = state.pilot_admission;
+    let stopping = state.lifecycle.stopping().clone();
+    let writer_probe = state.writer_outcome_probe.clone();
+    info!(
+        agent_key = %profile.agent_key,
+        template = ?profile.source,
+        "WebSocket upgrade accepted"
+    );
+    log_ws_auth(
+        bearer_auth_enabled,
+        bearer_auth_result(bearer_auth_enabled),
+        "admitted",
+        "accepted",
+        "ok",
+    );
+    let max = config.websocket.max_frame_bytes;
+    upgrade
+        .max_frame_size(max.saturating_add(1024))
+        .on_upgrade(move |socket| {
+            handle_socket(
+                socket,
+                config,
+                SocketRuntimes {
+                    job_submit: crate::services::background::VoiceJobSubmit::admitted(
+                        state
+                            .background
+                            .as_ref()
+                            .map(|runtime| runtime.engine.clone()),
+                        profile.device_db_id,
+                        profile.agent_id,
+                    ),
+                    asr: resolved_runtimes.asr,
+                    vad: resolved_runtimes.vad,
+                    llm: resolved_runtimes.llm,
+                    tts: resolved_runtimes.tts,
+                    vad_segmenter: resolved_runtimes.vad_segmenter,
+                    vad_pre_roll_samples: resolved_runtimes.vad_pre_roll_samples,
+                    active_turn_limiter,
+                    pilot_admission,
+                    writer_probe,
+                    profile,
+                    session_id,
+                    transcript,
+                    speaker_observe,
+                    admission_gate,
+                    connect_started,
+                    metrics,
+                    assistant_connection,
+                    system_mcp,
+                    active_device_sessions: state.active_device_sessions.clone(),
+                    database: state.database.clone(),
+                },
+                SessionControl {
+                    stopping,
+                    drain_close: drain.close_signal(),
+                    registration: drain,
+                },
+            )
+        })
+        .into_response()
+}
+
+fn bearer_auth_result(enabled: bool) -> &'static str {
+    if enabled { "accepted" } else { "not_required" }
+}
+
+/// Connection telemetry deliberately has no raw headers, token, Device ID or Client ID.
+fn log_ws_auth(
+    bearer_auth_enabled: bool,
+    bearer_auth_result: &'static str,
+    device_admission_result: &'static str,
+    result: &'static str,
+    reason_code: &'static str,
+) {
+    if result == "accepted" {
+        info!(
+            event = "ws_auth",
+            bearer_auth_enabled,
+            bearer_auth_result,
+            device_admission_result,
+            result,
+            reason_code,
+            "WebSocket authentication decision"
+        );
+    } else {
+        warn!(
+            event = "ws_auth",
+            bearer_auth_enabled,
+            bearer_auth_result,
+            device_admission_result,
+            result,
+            reason_code,
+            "WebSocket authentication decision"
+        );
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WebsocketQuery {
+    #[serde(rename = "protocol-version")]
+    protocol_version: Option<String>,
+    #[serde(rename = "device-id")]
+    device_id: Option<String>,
+    #[serde(rename = "client-id")]
+    client_id: Option<String>,
+    authorization: Option<String>,
+    ticket: Option<String>,
+}
+
+struct PlaybackTurn {
+    id: crate::session::TurnId,
+    start_was_sent: bool,
+}
+
+/// Reports a turn's terminal outcome to the actor, giving a test harness its boundary probe.
+/// Every `TurnClosed` the writer produces goes through here so no boundary can bypass the seam.
+async fn report_turn_closed(
+    writer_event_tx: &mpsc::Sender<WriterEvent>,
+    probe: Option<&Arc<dyn crate::session::WriterOutcomeProbe>>,
+    turn_id: crate::session::TurnId,
+    outcome: WriterTurnOutcome,
+) {
+    if let Some(probe) = probe {
+        probe
+            .before_terminal_outcome(turn_id, outcome.clone())
+            .await;
+    }
+    let _ = writer_event_tx
+        .send(WriterEvent::TurnClosed {
+            turn_id,
+            outcome: outcome.clone(),
+        })
+        .await;
+    if let Some(probe) = probe {
+        probe
+            .after_terminal_outcome_reported(turn_id, outcome)
+            .await;
+    }
+}
+
+fn header_is(headers: &HeaderMap, name: &str, expected: &str) -> bool {
+    headers.get(name).and_then(|value| value.to_str().ok()) == Some(expected)
+}
+
+/// Browser clients cannot set custom headers; legacy clients may omit the version entirely.
+fn header_or_query_is_or_absent(
+    headers: &HeaderMap,
+    header_name: &str,
+    query_value: Option<&str>,
+    expected: &str,
+) -> bool {
+    match headers.get(header_name) {
+        Some(_) => header_is(headers, header_name, expected),
+        None => query_value.is_none_or(|value| value == expected),
+    }
+}
+
+fn header_or_query_is(
+    headers: &HeaderMap,
+    header_name: &str,
+    query_value: Option<&str>,
+    expected: &str,
+) -> bool {
+    match headers.get(header_name) {
+        Some(_) => header_is(headers, header_name, expected),
+        None => query_value == Some(expected),
+    }
+}
+
+/// Browser WebSocket APIs cannot set custom headers, so accept identity query fallbacks.
+fn header_or_query_present(
+    headers: &HeaderMap,
+    header_name: &str,
+    query_value: Option<&str>,
+) -> bool {
+    match headers.get(header_name) {
+        Some(value) => value.to_str().is_ok_and(|value| !value.is_empty()),
+        None => query_value.is_some_and(|value| !value.is_empty()),
+    }
+}
+
+fn header_or_query_value<'a>(
+    headers: &'a HeaderMap,
+    header_name: &str,
+    query_value: Option<&'a str>,
+) -> Option<&'a str> {
+    headers
+        .get(header_name)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .or(query_value.filter(|value| !value.is_empty()))
+}
+
+/// Device identity is an opaque protocol key: bounded, printable and never normalized before
+/// admission so the database unique key retains the exact client-provided identity.
+fn valid_device_identity(value: &str) -> bool {
+    (1..=128).contains(&value.len())
+        && !value
+            .bytes()
+            .any(|byte| byte == b'\0' || byte.is_ascii_control())
+}
+
+struct SocketRuntimes {
+    job_submit: Option<crate::services::background::VoiceJobSubmit>,
+    active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
+    database: Option<Arc<crate::database::Database>>,
+    system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
+    assistant_connection: Option<super::super::assistant::Connection>,
+    connect_started: Instant,
+    metrics: Option<Arc<RuntimeMetrics>>,
+    asr: Arc<AsrWorkerRuntime>,
+    vad: Arc<VadWorkerRuntime>,
+    llm: Arc<LlmRuntime>,
+    tts: Arc<TtsWorkerRuntime>,
+    vad_segmenter: VadSegmenterConfig,
+    vad_pre_roll_samples: u64,
+    active_turn_limiter: Arc<ActiveTurnLimiter>,
+    pilot_admission: crate::session::pilot::PilotAdmission,
+    /// Test-only; see [`WriterOutcomeProbe`](crate::session::WriterOutcomeProbe).
+    writer_probe: Option<Arc<dyn crate::session::WriterOutcomeProbe>>,
+    profile: crate::session::EffectiveSessionProfile,
+    /// This connection's own session identity, resolved before the upgrade so the archive and the
+    /// Voice Session cannot disagree about which connection a transcript belongs to.
+    session_id: String,
+    /// The optional Persistent Transcript binding, resolved with the profile above.  `None` means
+    /// capture is off or this session has no database identity, and the actor then archives
+    /// nothing at all.
+    transcript: Option<crate::database::history::TranscriptCapture>,
+    /// Ticket 10 Observe, resolved at admission. `None` keeps the actor free of speaker inference
+    /// and utterance PCM retention.
+    speaker_observe: Option<Arc<SpeakerObserve>>,
+    /// The application admission gate. The actor only asks; the application closes it.
+    admission_gate: Arc<crate::lifecycle::AdmissionGate>,
+}
+
+/// The application-owned handles that keep one connection countable and closable.
+///
+/// Holding `registration` is what keeps this connection in the drain registry: it is registered
+/// before the upgrade and released when the socket task ends, so the registry's count is a fact
+/// about live connections rather than a guess.  The two signals are separate decisions — `stopping`
+/// is the process finishing, `drain_close` is the deadline reaching *this* connection — and a
+/// controlled close is a request the session performs itself, not a force.
+struct SessionControl {
+    stopping: CancellationToken,
+    drain_close: CancellationToken,
+    registration: crate::lifecycle::DrainRegistration,
+}
+
+async fn handle_socket(
+    socket: WebSocket,
+    config: Arc<AppConfig>,
+    runtimes: SocketRuntimes,
+    control: SessionControl,
+) {
+    let active_device_sessions = runtimes.active_device_sessions;
+    let database = runtimes.database;
+    let device_db_id = runtimes.profile.device_db_id;
+    let physical_connection = runtimes.assistant_connection.is_none();
+    let replacement_close = CancellationToken::new();
+    let assistant_connection = runtimes.assistant_connection;
+    let assistant_close = assistant_connection
+        .as_ref()
+        .map(|c| c.close.clone())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
+    let system_security_close = runtimes
+        .system_mcp
+        .as_ref()
+        .map(|system| system.context.revoked.clone())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
+    let socket_started = Instant::now();
+    let connect_started = runtimes.connect_started;
+    let metrics = runtimes.metrics;
+    // The profile stays owned by the connection lifetime. SessionActor receives only the
+    // materialized snapshot, its admission-time switch catalog and the External MCP tools it may
+    // call, never a Database/pool or a live Device/Agent row.
+    let admitted = runtimes.profile.into_admitted_profile();
+    let tool_security_close = admitted
+        .external_mcp
+        .guard
+        .as_ref()
+        .map(|g| g.close.clone())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
+    // The Speaker/grant/policy/template snapshot this session pinned. Cancelled by the registry on
+    // any mutation that revokes it, exactly like the external tool guard above.
+    let speaker_security_close = runtimes
+        .speaker_observe
+        .as_ref()
+        .map(|observe| observe.security_token())
+        .unwrap_or_else(|| Arc::new(CancellationToken::new()));
+    let writer_probe = runtimes.writer_probe;
+    let session_id = runtimes.session_id;
+    let stopping = control.stopping.clone();
+    let drain_close = control.drain_close.clone();
+    // `control` itself is held to the end of this function: its registration is the connection's
+    // place in the drain registry, and dropping it early would un-count a live session.
+    let (mut sender, mut receiver) = socket.split();
+    let hello_wait_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsHelloWait));
+    let first = tokio::select! {
+        _ = stopping.cancelled() => return,
+        _ = assistant_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
+        _ = system_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
+        _ = tool_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
+        _ = speaker_security_close.cancelled() => { close_direct(&mut sender,1008).await; return; },
+        first = timeout(Duration::from_millis(config.server.hello_timeout_ms), receiver.next()) => first,
+    };
+    drop(hello_wait_timer);
+    let hello_init_timer = metrics
+        .as_ref()
+        .map(|metrics| metrics.timer(RuntimePhase::WsHelloInit));
+    let hello = match first {
+        Ok(Some(Ok(message))) => message,
+        _ => {
+            close_direct(&mut sender, 1002).await;
+            return;
+        }
+    };
+    let text = match checked_text(hello, config.websocket.max_frame_bytes) {
+        Ok(text) => text,
+        Err(code) => {
+            close_direct(&mut sender, code).await;
+            return;
+        }
+    };
+    let hello = match parse_client_message(&text) {
+        Ok(ClientMessage::Hello(hello)) if hello.validate_v1().is_ok() => hello,
+        _ => {
+            close_direct(&mut sender, 1002).await;
+            return;
+        }
+    };
+    info!(transport = %hello.transport, "ClientHello accepted");
+
+    let (control_tx, mut control_rx) = mpsc::channel(config.limits.outbound_control_queue);
+    let (urgent_tx, mut urgent_rx) = mpsc::channel(config.limits.urgent_control_queue);
+    let (audio_tx, mut audio_rx) = mpsc::channel(config.limits.outbound_audio_queue);
+    let (writer_event_tx, writer_event_rx) = mpsc::channel(config.limits.session_event_queue);
+    let generation_gate = Arc::new(crate::session::GenerationGate::new());
+    let (ingress_tx, ingress_rx) = mpsc::channel(config.limits.session_event_queue);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    // The writer reads this to learn the application stopped it. It must outlive SessionActor's own
+    // sender — an actor that ends for an ordinary reason would otherwise stop the writer mid-drain —
+    // and is released explicitly once the actor has finished and every lane has been closed.
+    let writer_shutdown_tx = shutdown_tx.clone();
+    let actor = match SessionActor::new_with_runtimes_and_limiter_and_outbound(
+        session_id.clone(),
+        control_tx.clone(),
+        urgent_tx.clone(),
+        audio_tx,
+        Arc::clone(&generation_gate),
+        shutdown_tx,
+        config.max_capture_frames(),
+        config.llm.max_history_messages,
+        SessionRuntimes {
+            job_submit: runtimes.job_submit,
+            asr: runtimes.asr,
+            vad: runtimes.vad,
+            llm: runtimes.llm,
+            tts: runtimes.tts,
+            active_turn_limiter: runtimes.active_turn_limiter,
+            vad_segmenter_config: runtimes.vad_segmenter,
+            pre_roll_samples: runtimes.vad_pre_roll_samples,
+        },
+    ) {
+        Ok(actor) => actor,
+        Err(error) => {
+            debug!(%error, "failed to initialize session audio runtime");
+            close_direct(&mut sender, 1011).await;
+            return;
+        }
+    };
+    if actor.job_submit_available_without_tool_support() {
+        tracing::warn!(
+            event = "voice_job_prerequisite_unavailable",
+            code = "llm_tool_calls_unavailable",
+            "Admitted Agent has no tool-capable Voice LLM"
+        );
+    }
+    let (pipeline_writer_done, pipeline_writer_terminal) = tokio::sync::watch::channel(false);
+    let actor = actor
+        .with_direct_session_close(replacement_close.clone())
+        .with_direct_session_close((*tool_security_close).clone())
+        .with_direct_session_close((*system_security_close).clone())
+        .with_direct_session_close((*speaker_security_close).clone())
+        .with_direct_session_close((*assistant_close).clone())
+        .with_direct_session_close(stopping.clone())
+        .with_direct_session_close(drain_close.clone())
+        .with_direct_metadata(hello.features.direct_tts || hello.features.reminders)
+        .with_turn_status(assistant_connection.is_some() && hello.features.turn_status)
+        .with_tool_status(tool_status_enabled(
+            assistant_connection.is_some(),
+            &hello.features,
+        ));
+    let actor = actor.with_pipeline_writer_terminal(pipeline_writer_terminal);
+    let actor =
+        actor.with_pilot_admission(runtimes.pilot_admission, hello.features.pipeline_status);
+    let pipeline_request = actor.pipeline_request_epoch();
+    let actor = actor.with_switch_ingress_limits(
+        config.limits.session_event_queue,
+        config.websocket.max_frame_bytes,
+    );
+    let actor = match actor.with_delivery_runtime_config(config.speech_output.clone()) {
+        Ok(actor) => actor,
+        Err(error) => {
+            debug!(%error, "failed to initialize session speech output");
+            close_direct(&mut sender, 1011).await;
+            return;
+        }
+    };
+    let actor = match actor.with_effective_profile(
+        admitted.active,
+        admitted.switch_catalog,
+        admitted.external_mcp,
+        config.llm.max_tool_result_chars,
+    ) {
+        Ok(actor) => actor,
+        Err(error) => {
+            debug!(%error, "session profile prompt exceeds the system prompt bound");
+            close_direct(&mut sender, 1011).await;
+            return;
+        }
+    };
+    // Ticket 10: install Observe only when the Agent policy enables it. Best-effort and
+    // admission-time: a resolution/DB failure degrades to `off`, never fails the session.
+    let mut actor = actor
+        .with_system_mcp(runtimes.system_mcp)
+        .with_transcript(runtimes.transcript)
+        .with_speaker_observe(
+            runtimes.speaker_observe.clone(),
+            hello.features.speaker_status,
+        )
+        .with_admission_gate(runtimes.admission_gate)
+        .with_writer_outcome_probe_opt(writer_probe.clone())
+        .with_client_capabilities(
+            hello.features.aec,
+            crate::session::BargeInPolicy {
+                enabled: config.barge_in.enabled,
+                trust_client_aec_feature: config.barge_in.trust_client_aec_feature,
+            },
+        )
+        .with_device_mcp(
+            hello.features.mcp && assistant_connection.is_none(),
+            &config.mcp,
+            vision_capability(&config),
+        )
+        .with_tool_round_limits(crate::tools::round::ToolRoundLimits::from_config(
+            &config.llm.tools,
+        ))
+        .with_writer_events(writer_event_rx)
+        .with_job_mailbox(ingress_tx.clone());
+    let server_hello = serde_json::to_string(&ServerHello::v1(actor.session_id()))
+        .expect("ServerHello is serializable");
+    if actor.send_control(server_hello).is_err() {
+        close_direct(&mut sender, 1011).await;
+        return;
+    }
+    drop(hello_init_timer);
+    let hello_queued = Instant::now();
+    actor.start_mcp_discovery();
+    let writer = tokio::spawn(async move {
+        let probe = writer_probe.clone();
+        let mut active_turn: Option<PlaybackTurn> = None;
+        let mut deferred_finish: Option<OutboundMessage> = None;
+        let mut hello_pending = true;
+        loop {
+            tokio::select! {
+                biased;
+                Some(message) = urgent_rx.recv() => {
+                    match message {
+                        OutboundMessage::AbortTurn { turn_id, text } => {
+                            if active_turn.as_ref().is_some_and(|active| active.id == turn_id) {
+                                deferred_finish = None;
+                                let start_was_sent = active_turn.as_ref().is_some_and(|active| active.start_was_sent);
+                                let stop_was_sent = if start_was_sent {
+                                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                                        break;
+                                    }
+                                    true
+                                } else {
+                                    false
+                                };
+                                active_turn = None;
+                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent, stop_was_sent }).await;
+                            } else {
+                                // Begin may still be queued behind this urgent command. The
+                                // actor needs a terminal outcome so it can release this turn's
+                                // permit; a later Begin for the same invalid generation is
+                                // rejected at the gate.
+                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Aborted { start_was_sent: false, stop_was_sent: false }).await;
+                            }
+                        }
+                        message => if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
+                            break;
+                        },
+                    }
+                },
+                // A normal stop follows the final paced packet, but only after the urgent
+                // lane has had its chance to preempt it.
+                _ = std::future::ready(()), if deferred_finish.is_some() && audio_rx.is_empty() => {
+                    let OutboundMessage::FinishTurn { turn_id, text } = deferred_finish.take().expect("checked above") else { unreachable!() };
+                    if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                        break;
+                    }
+                    active_turn = None;
+                    report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
+                },
+                Some(message) = control_rx.recv() => {
+                    match message {
+                        OutboundMessage::BeginTurn { generation, turn_id, text } => {
+                            if active_turn.is_none() && generation_gate.admits(generation) {
+                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                                    let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                                    break;
+                                }
+                                active_turn = Some(PlaybackTurn { id: turn_id, start_was_sent: true });
+                            }
+                        }
+                        message @ OutboundMessage::FinishTurn { .. } => {
+                            if !audio_rx.is_empty() {
+                                deferred_finish = Some(message);
+                            } else if let OutboundMessage::FinishTurn { turn_id, text } = message
+                                && active_turn.as_ref().is_some_and(|active| active.id == turn_id)
+                            {
+                                if send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await {
+                                    let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                                    break;
+                                }
+                                active_turn = None;
+                                report_turn_closed(&writer_event_tx, probe.as_ref(), turn_id, WriterTurnOutcome::Normal).await;
+                            }
+                        }
+                        message => {
+                            let sends_hello = hello_pending && matches!(&message, OutboundMessage::Text(_));
+                            if send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await {
+                                break;
+                            }
+                            if sends_hello {
+                                hello_pending = false;
+                                if let Some(metrics) = &metrics {
+                                    metrics.observe(RuntimePhase::WsHelloSend, hello_queued.elapsed());
+                                    metrics.observe(RuntimePhase::WsConnect, connect_started.elapsed());
+                                }
+                                info!(event = "ws_connected", elapsed_ms = connect_started.elapsed().as_millis() as u64,
+                                    pre_upgrade_ms = socket_started.duration_since(connect_started).as_millis() as u64,
+                                    after_upgrade_ms = socket_started.elapsed().as_millis() as u64,
+                                    "ServerHello sent; voice session connected");
+                            }
+                        },
+                    }
+                },
+                Some(message) = audio_rx.recv() => {
+                    if let OutboundMessage::Binary { turn_id, .. } = &message
+                        && active_turn.as_ref().is_some_and(|active| active.start_was_sent && active.id == *turn_id)
+                        && send_outbound(&mut sender, message, &generation_gate, &pipeline_request).await
+                    {
+                        break;
+                    }
+                },
+                // The application's stop signal for this writer is deliberately the *last* branch,
+                // and `biased` makes that deterministic: every lane above is served first, so a
+                // terminal control message the actor already queued — `Close(1001)` on a controlled
+                // close — still reaches the client before the loop ends. Stopping here first would
+                // discard it.
+                //
+                // It is also the only branch that can stay pending once every lane has closed,
+                // because it never completes while any sender for the watch channel lives — and
+                // until it completes, `select!` keeps the whole loop pending no matter how many
+                // lanes have closed. That is why the sender is released explicitly during teardown
+                // rather than left to the end of this function: a writer waiting on it is a session
+                // the drain can never observe finishing.
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        break;
+                    }
+                },
+                else => {
+                    if let Some(OutboundMessage::FinishTurn { turn_id, text }) = deferred_finish.take()
+                        && send_outbound(&mut sender, OutboundMessage::Text(text), &generation_gate, &pipeline_request).await
+                    {
+                        let _ = writer_event_tx.send(WriterEvent::Failed { turn_id: Some(turn_id) }).await;
+                        break;
+                    }
+                    break;
+                },
+            }
+        }
+        let _ = pipeline_writer_done.send(true);
+    });
+
+    if physical_connection {
+        active_device_sessions.register(
+            device_db_id,
+            session_id.clone(),
+            hello.features.clone(),
+            ingress_tx.clone(),
+            replacement_close.clone(),
+        );
+    }
+    let session = tokio::spawn(actor.run(ingress_rx));
+
+    loop {
+        tokio::select! {
+            // The deadline reached this session. It closes cleanly: the actor is told to stop,
+            // sends its terminal close frame and lets the writer drain, and this loop only exits
+            // once the connection itself is done. No task is aborted.
+            _ = replacement_close.cancelled() => {
+                let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
+                break;
+            }
+            _ = assistant_close.cancelled() => {
+                let _ = ingress_tx.send(SessionEvent::SecurityInvalidated).await;
+                break;
+            }
+            _ = system_security_close.cancelled() => {
+                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
+                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
+                break;
+            }
+            _ = tool_security_close.cancelled() => {
+                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
+                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
+                break;
+            }
+            // A Speaker/grant/policy/template mutation revoked this session's snapshot. Same close
+            // as the external-tool path: no new dispatch, close 1008, terminal event. If the mailbox
+            // is gone the send fails and this loop simply ends, which is the shutdown escape path.
+            _ = speaker_security_close.cancelled() => {
+                let _ = urgent_tx.send(OutboundMessage::Close(1008)).await;
+                let _ = ingress_tx.try_send(SessionEvent::SecurityInvalidated);
+                break;
+            }
+            _ = drain_close.cancelled() => {
+                info!("controlled close issued at the shutdown grace deadline");
+                let _ = ingress_tx.send(SessionEvent::Shutdown).await;
+                break;
+            }
+            // The process is finishing outright. There is no deadline left to wait for, so this
+            // session ends now rather than holding the process open.
+            _ = stopping.cancelled() => {
+                let _ = ingress_tx.send(SessionEvent::Shutdown).await;
+                break;
+            }
+            next = receiver.next() => {
+                let Some(next) = next else { break; };
+                match next {
+            Ok(Message::Text(text)) => {
+                if text.len() > config.websocket.max_frame_bytes {
+                    let _ = urgent_tx.send(OutboundMessage::Close(1009)).await;
+                    break;
+                }
+                match parse_client_message(&text) {
+                    Ok(message) => {
+                        if let ClientMessage::Reminder { session_id: inbound, event } = message {
+                            if hello.features.reminders && inbound == session_id {
+                                handle_reminder_message(
+                                    database.as_deref(), &active_device_sessions, device_db_id,
+                                    &session_id, event, &ingress_tx,
+                                ).await;
+                            }
+                            continue;
+                        }
+                        if ingress_tx
+                            .try_send(SessionEvent::ClientMessage(message))
+                            .is_err()
+                        {
+                            let _ = urgent_tx.send(OutboundMessage::Close(1013)).await;
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        debug!(%error, "ignored invalid application message after handshake")
+                    }
+                }
+            }
+            Ok(Message::Binary(payload)) => {
+                if payload.len() > config.websocket.max_frame_bytes {
+                    let _ = urgent_tx.send(OutboundMessage::Close(1009)).await;
+                    break;
+                }
+                if ingress_tx
+                    .try_send(SessionEvent::ClientAudio(payload.to_vec()))
+                    .is_err()
+                {
+                    debug!("dropped binary because bounded ingress is full or session is closed");
+                }
+            }
+            Ok(Message::Close(frame)) => {
+                info!(?frame, "websocket peer closed connection");
+                break;
+            }
+            Err(error) => {
+                warn!(%error, "websocket receive failed");
+                break;
+            }
+                    Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+                }
+            }
+        }
+    }
+    if physical_connection {
+        active_device_sessions.unregister(device_db_id, &session_id);
+    }
+    drop(ingress_tx);
+    let _ = session.await;
+    drop(control_tx);
+    drop(urgent_tx);
+    // The actor is gone and no lane can produce another message, so the watch channel's last sender
+    // goes too. That is what lets the writer's stop branch complete; awaiting it before this point
+    // is the deadlock this ordering exists to avoid.
+    drop(writer_shutdown_tx);
+    let _ = writer.await;
+    // The session is finished: releasing its drain registration here is what lets a shutdown that
+    // is waiting observe that this connection is gone.
+    drop(control.registration);
+    info!("voice session disconnected");
+}
+
+async fn handle_reminder_message(
+    database: Option<&crate::database::Database>,
+    sessions: &crate::services::active_device_sessions::ActiveDeviceSessions,
+    device: i64,
+    session_id: &str,
+    event: crate::protocol::ReminderEvent,
+    ingress: &mpsc::Sender<SessionEvent>,
+) {
+    let Some(database) = database else { return };
+    let notifications = crate::database::notifications::DeviceNotifications::new(database.clone());
+    match event {
+        crate::protocol::ReminderEvent::SyncRequest { known_revision: _ } => {
+            let Ok(snapshot) = notifications.snapshot(device).await else {
+                return;
+            };
+            let snapshot_id = Uuid::new_v4().to_string();
+            let ids = snapshot.items.iter().map(|item| item.id.clone()).collect();
+            if !sessions.remember_snapshot(
+                device,
+                session_id,
+                snapshot_id.clone(),
+                snapshot.revision,
+                ids,
+            ) {
+                return;
+            }
+            let text = serde_json::json!({
+                "type":"reminder", "event":"sync", "session_id":session_id,
+                "snapshot_id":snapshot_id, "revision":snapshot.revision,
+                "server_time_ms":snapshot.server_time_ms, "items":snapshot.items,
+                "has_more":snapshot.has_more, "next_sync_at_ms":snapshot.server_time_ms + 60_000,
+            })
+            .to_string();
+            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
+        }
+        crate::protocol::ReminderEvent::SyncAck {
+            snapshot_id,
+            revision,
+            next_wake_at_ms,
+        } => {
+            let Some(snapshot) =
+                sessions.acknowledge_snapshot(device, session_id, &snapshot_id, revision)
+            else {
+                return;
+            };
+            let _ = notifications
+                .acknowledge_snapshot(
+                    device,
+                    snapshot.revision,
+                    &snapshot.item_ids,
+                    next_wake_at_ms,
+                )
+                .await;
+        }
+        crate::protocol::ReminderEvent::Played {
+            reminder_id,
+            attempt_id,
+        } => {
+            let Ok(Some(revision)) = notifications
+                .complete_attempt(device, session_id, &reminder_id, &attempt_id)
+                .await
+            else {
+                return;
+            };
+            sessions.sync_required(device, revision);
+            let text = serde_json::json!({
+                "type":"reminder", "event":"delivery_result", "session_id":session_id,
+                "reminder_id":reminder_id, "attempt_id":attempt_id, "status":"completed", "revision":revision,
+            }).to_string();
+            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
+        }
+    }
+}
+
+fn vision_capability(config: &AppConfig) -> Option<crate::tools::device_mcp::VisionCapability> {
+    if config.vision.enabled
+        && config.vision.advertise_via_mcp
+        && config.provider_defaults.vision.is_some()
+    {
+        Some(crate::tools::device_mcp::VisionCapability {
+            url: config.vision.public_url.as_ref()?.to_string(),
+            token: config.auth.token.clone(),
+        })
+    } else {
+        None
+    }
+}
+
+fn checked_text(message: Message, max: usize) -> Result<String, u16> {
+    match message {
+        Message::Text(text) if text.len() <= max => Ok(text.to_string()),
+        Message::Text(_) => Err(1009),
+        Message::Binary(_) => Err(1002),
+        _ => Err(1002),
+    }
+}
+
+/// Web Assistant must observe server-owned tool execution even if its ClientHello
+/// predates the optional tool_status feature. This is independent of Device MCP.
+fn tool_status_enabled(is_web_assistant: bool, features: &crate::protocol::ClientFeatures) -> bool {
+    is_web_assistant || features.tool_status
+}
+
+async fn send_outbound(
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    message: OutboundMessage,
+    generation_gate: &crate::session::GenerationGate,
+    pipeline_request: &std::sync::atomic::AtomicU64,
+) -> bool {
+    if let OutboundMessage::PipelineStatus { request, .. } = &message
+        && *request != pipeline_request.load(std::sync::atomic::Ordering::Acquire)
+    {
+        return false;
+    }
+    let generation = match &message {
+        OutboundMessage::TurnText { generation, .. }
+        | OutboundMessage::Binary { generation, .. } => Some(*generation),
+        OutboundMessage::Text(_)
+        | OutboundMessage::PipelineStatus { .. }
+        | OutboundMessage::SpeakerStatus { .. }
+        | OutboundMessage::BeginTurn { .. }
+        | OutboundMessage::FinishTurn { .. }
+        | OutboundMessage::AbortTurn { .. }
+        | OutboundMessage::Close(_)
+        | OutboundMessage::CloseWithReason { .. } => None,
+    };
+    if let Some(generation) = generation.filter(|generation| !generation_gate.admits(*generation)) {
+        tracing::debug!(
+            event = "outbound_generation_rejected",
+            generation,
+            "Dropped stale turn-scoped outbound message"
+        );
+        return false;
+    }
+    let closes = matches!(message, OutboundMessage::Close(_));
+    let result = match message {
+        OutboundMessage::Text(text)
+        | OutboundMessage::TurnText { text, .. }
+        | OutboundMessage::SpeakerStatus { text }
+        | OutboundMessage::PipelineStatus { text, .. } => {
+            let llm_message = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .filter(|value| value["type"] == "llm");
+            let result = sender.send(Message::Text(text.into())).await;
+            if result.is_ok()
+                && let Some(message) = llm_message
+                && let Some(llm_text) = message["text"].as_str()
+            {
+                info!(
+                    message_type = "llm",
+                    chars = llm_text.chars().count(),
+                    "WebSocket text sent to client"
+                );
+            }
+            result
+        }
+        OutboundMessage::Binary { packet, .. } => sender.send(Message::Binary(packet.into())).await,
+        // Semantic playback commands must be consumed by the writer state machine above.
+        OutboundMessage::BeginTurn { .. }
+        | OutboundMessage::FinishTurn { .. }
+        | OutboundMessage::AbortTurn { .. } => return false,
+        OutboundMessage::Close(code) => {
+            sender
+                .send(Message::Close(Some(CloseFrame {
+                    code,
+                    reason: "".into(),
+                })))
+                .await
+        }
+        OutboundMessage::CloseWithReason { code, reason } => {
+            sender
+                .send(Message::Close(Some(CloseFrame {
+                    code,
+                    reason: reason.into(),
+                })))
+                .await
+        }
+    };
+    if let Err(ref error) = result {
+        warn!(%error, "websocket writer failed");
+    }
+    closes || result.is_err()
+}
+
+async fn close_direct(sender: &mut futures_util::stream::SplitSink<WebSocket, Message>, code: u16) {
+    let _ = sender
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: "".into(),
+        })))
+        .await;
+}
+
+/// Install optional, Agent-scoped speaker identification. No voice-based admission
+/// or tool gate exists: inference failures do not interrupt the ordinary pipeline.
+#[allow(clippy::result_large_err)] // The admission boundary returns its HTTP rejection directly.
+async fn resolve_speaker_observe(
+    state: &AppState,
+    profile: &crate::session::EffectiveSessionProfile,
+    _resolved: &crate::providers::ResolvedAgentRuntimes,
+    config: &AppConfig,
+) -> Result<Option<Arc<SpeakerObserve>>, Response> {
+    let Some(database) = state.database.as_ref() else {
+        return Ok(None);
+    };
+    let policy = match crate::session::resolve_speaker_policy(database, profile.agent_id).await {
+        Ok(Some(mode)) => mode,
+        Ok(None) => crate::session::SpeakerPolicyMode::Off,
+        Err(cause) => {
+            warn!(%cause, "speaker identification preference unavailable");
+            return Ok(None);
+        }
+    };
+    let enabled = policy == crate::session::SpeakerPolicyMode::Observe;
+    let runtime = state.speaker_runtime.as_ref();
+    if !enabled || runtime.is_none() {
+        info!(
+            agent_key = %profile.agent_key,
+            speaker_enabled = enabled,
+            engine_available = runtime.is_some(),
+            candidate_count = 0,
+            "ws speaker identification configuration"
+        );
+        return Ok(None);
+    }
+    let runtime = runtime.expect("checked built-in speaker runtime availability");
+    let plan = match crate::session::resolve_observe_plan(
+        database,
+        profile.agent_id,
+        0,
+        runtime.embedding_space_id(),
+    )
+    .await
+    {
+        Ok(crate::session::ObserveResolution::Plan(plan)) => plan,
+        Ok(_) => {
+            info!(agent_key = %profile.agent_key, speaker_enabled = true,
+                engine_available = true, candidate_count = 0,
+                "ws speaker identification configuration");
+            return Ok(None);
+        }
+        Err(cause) => {
+            warn!(%cause, "speaker candidates unavailable, continuing without identification");
+            return Ok(None);
+        }
+    };
+    if plan.candidates.len() > config.speaker_recognition.max_candidates_per_agent {
+        warn!(agent_key = %profile.agent_key, "speaker candidate cap exceeded");
+        return Ok(None);
+    }
+    info!(
+        agent_key = %profile.agent_key,
+        speaker_enabled = true,
+        engine_available = true,
+        candidate_count = plan.candidates.len(),
+        "ws speaker identification configuration"
+    );
+    let observe_config = &config.speaker_recognition.observe;
+    let quality = crate::audio::enrollment::QualityProfile {
+        min_clip_ms: observe_config.min_clip_ms,
+        max_clip_ms: 6_000, // Observe PCM buffer hard cap.
+        min_speech_ms: observe_config.min_speech_ms,
+        max_window_ms: observe_config.max_window_ms,
+    };
+    Ok(Some(Arc::new(SpeakerObserve::new_builtin(
+        Arc::clone(runtime),
+        plan,
+        quality,
+        config.speaker_recognition.similarity_threshold,
+        observe_config.join_timeout_ms,
+    ))))
+}
+
+#[cfg(test)]
+#[path = "websocket/tool_status_tests.rs"]
+mod tool_status_negotiation_tests;

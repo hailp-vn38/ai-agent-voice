@@ -85,6 +85,17 @@ pub struct LlmDiagnosticOperation {
 }
 
 impl LlmRuntime {
+    /// Caller retains its Background capacity permit until this stream terminalizes.
+    pub(crate) async fn background_complete(
+        &self,
+        request: LlmRequest,
+        schema: Option<serde_json::Value>,
+    ) -> Result<String, crate::providers::LlmError> {
+        self.provider.background_complete(request, schema).await
+    }
+    pub fn supports_tools(&self) -> bool {
+        self.provider.supports_tools()
+    }
     /// Physical work remains occupied until terminal acknowledgement, including quarantine.
     pub(crate) fn pilot_work_pending(&self) -> bool {
         self.admission.view_usage() != 0
@@ -239,6 +250,15 @@ impl LlmRuntime {
             return Err(ProviderAdmissionError::Capacity);
         }
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
+    }
+
+    /// Background has no single-slot diagnostic exception and cannot borrow Voice reservation.
+    pub fn admit_background(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
+        let _state = self.cancellations.lock().expect("LLM cancellations lock");
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ProviderAdmissionError::Capacity);
+        }
+        self.admission.try_admit(ProviderWorkloadClass::Background)
     }
 
     /// Builds an operation for the already-materialized provider. Capacity is admitted by

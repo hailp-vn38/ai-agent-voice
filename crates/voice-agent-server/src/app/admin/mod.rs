@@ -1,5 +1,8 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
+mod background;
+mod notifications;
+mod plugins;
 mod system_mcp;
 use super::AppState;
 use crate::database::{external_mcp_policy, provider_config};
@@ -29,6 +32,73 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        .route("/plugins", get(plugins::list))
+        .route(
+            "/plugins/install",
+            axum::routing::post(plugins::install).layer(axum::extract::DefaultBodyLimit::max(
+                plugins::MAX_UPLOAD_BODY,
+            )),
+        )
+        .route(
+            "/plugins/curated/{id}/install",
+            axum::routing::post(plugins::install_curated),
+        )
+        .route(
+            "/plugins/{id}",
+            get(plugins::get).delete(plugins::uninstall),
+        )
+        .route("/plugins/{id}/test", axum::routing::post(plugins::test))
+        .route(
+            "/plugins/{id}/activate",
+            axum::routing::post(plugins::activate),
+        )
+        .route(
+            "/plugins/{id}/disable",
+            axum::routing::post(plugins::disable),
+        )
+        .route(
+            "/background/settings",
+            get(background::settings).put(background::save_settings),
+        )
+        .route("/jobs", get(background::list).post(background::create))
+        .route("/jobs/stream", get(background::stream))
+        .route("/jobs/{id}", get(background::get))
+        .route("/jobs/{id}/events", get(background::events))
+        .route(
+            "/jobs/{id}/artifacts/{artifact_id}",
+            get(background::artifact),
+        )
+        .route("/jobs/{id}/cancel", axum::routing::post(background::cancel))
+        .route("/jobs/{id}/retry", axum::routing::post(background::retry))
+        .route("/agents/{key}/reminders", get(notifications::agent_list))
+        .route(
+            "/agents/{key}/devices/{device_id}/reminders",
+            get(notifications::scoped_list).post(notifications::scoped_create),
+        )
+        .route(
+            "/agents/{key}/devices/{device_id}/reminders/{reminder_id}",
+            axum::routing::patch(notifications::scoped_update),
+        )
+        .route(
+            "/agents/{key}/devices/{device_id}/reminders/{reminder_id}/cancel",
+            axum::routing::post(notifications::scoped_cancel),
+        )
+        .route(
+            "/devices/{device_id}/reminders/{reminder_id}",
+            axum::routing::patch(notifications::update),
+        )
+        .route(
+            "/devices/{device_id}/reminders/{reminder_id}/cancel",
+            axum::routing::post(notifications::cancel),
+        )
+        .route(
+            "/devices/{device_id}/reminders",
+            get(notifications::list).post(notifications::create),
+        )
+        .route(
+            "/agents/{key}/reminder-policy",
+            get(notifications::grant).patch(notifications::patch_grant),
+        )
         .route(
             "/mcp-tests/connection",
             axum::routing::post(mcp_tests::draft_connection),
@@ -170,6 +240,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/agents/{key}/tool-allowlist",
             get(tool_allowlist::list).put(tool_allowlist::review),
         )
+        .route(
+            "/devices/{device_id}/speak",
+            axum::routing::post(devices::speak),
+        )
         .route("/devices", get(list_devices).post(create_device))
         .route(
             "/device-enrollments/claim",
@@ -290,7 +364,9 @@ async fn transport(request: Request, next: Next) -> Response {
         &http::Method::POST | &http::Method::PATCH | &http::Method::PUT
     );
     if is_mutation {
-        let max_body = if request.uri().path().ends_with("/test/asr")
+        let max_body = if request.uri().path().ends_with("/plugins/install") {
+            plugins::MAX_UPLOAD_BODY
+        } else if request.uri().path().ends_with("/test/asr")
             || request.uri().path().ends_with("/provider-tests/asr")
         {
             MAX_ASR_TEST_BODY + 80 * 1024

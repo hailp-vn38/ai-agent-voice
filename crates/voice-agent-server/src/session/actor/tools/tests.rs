@@ -44,7 +44,7 @@ fn worker() -> WorkerRuntimeConfig {
 
 /// Carries a second LLM and VAD instance so a switch is observable as a runtime change and not
 /// only as a prompt change.
-fn catalog() -> RuntimeCatalog {
+pub(super) fn catalog() -> RuntimeCatalog {
     let segmenter = VadSegmenterConfig::default();
     RuntimeCatalog {
         speaker: HashMap::new(),
@@ -126,7 +126,7 @@ fn candidate(
 }
 
 /// A session admitted to the default Template and one switchable candidate.
-fn admitted_actor(catalog: &RuntimeCatalog) -> SessionActor {
+pub(super) fn admitted_actor(catalog: &RuntimeCatalog) -> SessionActor {
     let profile = resolve_effective_session_profile(
         1,
         2,
@@ -160,6 +160,7 @@ fn admitted_actor(catalog: &RuntimeCatalog) -> SessionActor {
         16,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: bound.asr,
             vad: bound.vad,
             llm: bound.llm,
@@ -285,6 +286,7 @@ fn a_switch_that_keeps_the_capture_runtimes_leaves_their_leases_open() {
         16,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: bound.asr,
             vad: bound.vad,
             llm: bound.llm,
@@ -423,6 +425,7 @@ pub(super) fn session_with_external_mcp(external_mcp: SessionExternalMcp) -> Ses
         16,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: bound.asr,
             vad: bound.vad,
             llm: bound.llm,
@@ -613,6 +616,7 @@ fn a_session_without_a_catalog_is_never_offered_the_switch_tool() {
         16,
         20,
         SessionRuntimes {
+            job_submit: None,
             asr: bound.asr,
             vad: bound.vad,
             llm: bound.llm,
