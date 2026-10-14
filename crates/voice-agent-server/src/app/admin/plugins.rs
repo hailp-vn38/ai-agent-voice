@@ -4,6 +4,13 @@ use axum::extract::Multipart;
 
 pub(super) const MAX_UPLOAD_BODY: usize = 21 * 1024 * 1024;
 
+/// Bundled Core plugins exist with the Rust binary, even when no External
+/// package is installed. They cannot be updated through the Plugin Store.
+pub(super) async fn builtin_catalog() -> Response {
+    Json(crate::tools::core::bundled_catalog()).into_response()
+}
+
+
 fn store(state: &AppState) -> Option<&PluginStore> {
     state
         .background
