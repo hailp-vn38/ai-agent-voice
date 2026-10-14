@@ -1405,7 +1405,7 @@ async fn v3_root_turn(
     session_id: &str,
     attempt: u32,
     cancellation: &CancellationToken,
-) -> Result<BackgroundTurn, JobError> {
+) -> Result<(BackgroundTurn, LlmRunContext), JobError> {
     let context = run_context(&job.id, root_id, "planner", attempt);
     let messages = engine.database.v3_read_messages(&job.id, session_id).await?;
     let models = engine.models.as_ref().ok_or(JobError::RuntimeUnavailable)?;
@@ -1424,7 +1424,7 @@ async fn v3_root_turn(
         "error_code":response.as_ref().err().map(|e|e.code()),
         "duration_ms":context.started_at.elapsed().as_millis() as u64,
     })).await?;
-    response.map(|turn|turn.turn)
+    response.map(|turn|(turn.turn,context))
 }
 
 fn v3_root_call_batch_valid(
@@ -1473,10 +1473,13 @@ pub(super) async fn run_root_v3(
     let mut repairs=0u32;
     for round in 1..=max_rounds {
         if cancellation.is_cancelled() { return Err(JobError::Cancelled); }
-        let turn=v3_root_turn(engine,&job,&root.agent_run_id,&root_session,round,&cancellation).await?;
+        let (turn,context)=v3_root_turn(engine,&job,&root.agent_run_id,&root_session,round,&cancellation).await?;
         let calls=match turn {
             BackgroundTurn::ToolCalls(calls) => calls,
             BackgroundTurn::Text(text) => {
+                engine.database.record_agent_decision(&context,false,json!({
+                    "validation_code":"expected_tool_call","validation_path":"$.tool_calls","attempt_no":round
+                })).await?;
                 engine.database.v3_append_messages(job_id,&root_session,&[
                     ChatMessage::AssistantText{content:text.chars().take(2000).collect()},
                     ChatMessage::User{content:"Use subagent or finish_job tools; plain text cannot complete the Job.".into()}
@@ -1487,6 +1490,9 @@ pub(super) async fn run_root_v3(
             }
         };
         if !v3_root_call_batch_valid(&calls,&seen) {
+            engine.database.record_agent_decision(&context,false,json!({
+                "validation_code":"agent_tool_protocol_error","validation_path":"$.tool_calls","attempt_no":round
+            })).await?;
             let mut ids=std::collections::HashSet::new();
             let matchable=!calls.is_empty() && calls.iter().all(|call|
                 !call.id.is_empty() && call.id.len()<=128
@@ -1533,6 +1539,9 @@ pub(super) async fn run_root_v3(
             }
             let value=json!({"summary":result.summary,"findings":result.findings,
                 "evidence_refs":result.evidence_refs,"unresolved":result.unresolved,"coverage":coverage});
+            engine.database.record_agent_decision(&context,true,json!({
+                "action":"finish","attempt_no":round
+            })).await?;
             engine.database.v3_append_messages(job_id,&root_session,&[
                 ChatMessage::AssistantToolCalls{calls:calls.clone()},
                 ChatMessage::ToolResult{tool_call_id:calls[0].id.clone(),
@@ -1583,6 +1592,10 @@ pub(super) async fn run_root_v3(
             }
         }
         if let Some(code)=invalid {
+            engine.database.record_agent_decision(&context,false,json!({
+                "validation_code":code,"validation_path":"$.tool_calls[0].arguments",
+                "attempt_no":round
+            })).await?;
             let mut messages=vec![ChatMessage::AssistantToolCalls{calls:calls.clone()}];
             for call in &calls {
                 messages.push(ChatMessage::ToolResult{
@@ -1594,6 +1607,9 @@ pub(super) async fn run_root_v3(
             continue;
         }
 
+        engine.database.record_agent_decision(&context,true,json!({
+            "action":"delegate","attempt_no":round
+        })).await?;
         let turn_id=last_turn_id(engine,job_id,&root.agent_run_id).await?;
         let children=engine.database.create_children_for_decision(
             job_id,&root.agent_run_id,&turn_id,&tasks
