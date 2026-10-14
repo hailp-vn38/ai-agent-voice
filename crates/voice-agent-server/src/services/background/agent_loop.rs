@@ -1462,9 +1462,30 @@ pub(super) async fn run_root_v3(
 ) -> Result<(), JobError> {
     let root=engine.database.create_root_run(job_id).await?;
     let job=engine.get(job_id).await?;
+    // Give Root the requirements and only the frozen, credential-free tool
+    // catalog. Root plans prompts; the Child executor remains authoritative.
+    let operations:Vec<Value>=job.plugin_choices.as_array()
+        .ok_or(JobError::DatabaseUnavailable)?
+        .iter()
+        .map(|choice| json!({
+            "plugin_id":choice["plugin_id"],
+            "operation":choice["operation"],
+            "provides":choice["provides"],
+            "sources":choice["sources"]
+        }))
+        .collect();
+    let root_context=json!({
+        "goal":job.request.goal,
+        "output_format":job.request.output_format,
+        "allow_partial":job.request.allow_partial,
+        "required_sources":job.request.required_sources,
+        "required_capabilities":job.request.required_capabilities,
+        "frozen_operations":operations
+    }).to_string();
+    if root_context.len()>16000 { return Err(JobError::CapacityUnavailable); }
     let root_session=engine.database.create_v3_root_session(
         job_id,&root.agent_run_id,&job.snapshot.orchestrator,
-        ROOT_V3_INSTRUCTION,&job.request.goal
+        ROOT_V3_INSTRUCTION,&root_context
     ).await?;
     let mut seen=std::collections::HashSet::new();
     let max_rounds=u32::from(job.snapshot.limits.max_child_runs)
