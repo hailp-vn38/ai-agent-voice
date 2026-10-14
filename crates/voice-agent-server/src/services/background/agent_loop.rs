@@ -5,7 +5,7 @@ use super::{
     plan::{JobPlan, PlanStep},
     plugins::FrozenChoice,
 };
-use crate::providers::llm::{BackgroundMode, BackgroundTurn, ChatMessage, LlmRequest, ToolCall, ToolDefinition};
+use crate::providers::llm::{BackgroundMode, BackgroundTurn, ChatMessage, LlmRequest, ToolDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -824,7 +824,8 @@ async fn run_child(
         }).to_string()});
         // Keep initial instruction/goal and at most three complete call/result pairs.
         if messages.len()>8 {
-            messages.drain(2..messages.len()-6);
+            let excess = messages.len()-8;
+            messages.drain(2..2+excess);
         }
     }
     Err(JobError::CapacityUnavailable)
