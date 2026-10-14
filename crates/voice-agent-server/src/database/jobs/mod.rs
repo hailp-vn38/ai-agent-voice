@@ -13,6 +13,7 @@ mod events;
 #[allow(dead_code)]
 mod execution;
 mod orchestration;
+mod providers;
 mod steps;
 mod submission;
 pub(crate) use submission::SubmissionIdentity;
