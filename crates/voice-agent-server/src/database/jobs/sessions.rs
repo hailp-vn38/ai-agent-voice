@@ -72,6 +72,39 @@ impl Database {
         Ok(session_id)
     }
 
+    /// Foreground preflight: reject invalid or concurrently used Child Session
+    /// before creating a new Child Run. The attach transaction repeats checks.
+    pub(crate) async fn v3_preflight_child_resume(
+        &self,
+        job_id:&str,
+        parent_run_id:&str,
+        child_session_id:&str,
+        agent_key:&str,
+        pin:&ProviderPin,
+    ) -> Result<(), JobError> {
+        let parent_session:Option<String>=sqlx::query_scalar(
+            "SELECT session_id FROM job_agent_runs WHERE job_id=? AND agent_run_id=?
+             AND parent_agent_run_id IS NULL AND status='running'"
+        ).bind(job_id).bind(parent_run_id).fetch_optional(self.pool()).await?;
+        let parent=parent_session.ok_or(JobError::InvalidArguments)?;
+        let previous:Option<(String,String,String,String)>=sqlx::query_as(
+            "SELECT job_id,parent_session_id,agent_key,provider_route_json
+             FROM job_agent_sessions WHERE session_id=?"
+        ).bind(child_session_id).fetch_optional(self.pool()).await?;
+        let route=serde_json::to_string(pin).map_err(|_|JobError::InvalidArguments)?;
+        match previous {
+            Some((job,owner,key,model))
+                if job==job_id && owner==parent && key==agent_key && model==route=>{},
+            _=>return Err(JobError::InvalidArguments),
+        }
+        let active:i64=sqlx::query_scalar(
+            "SELECT COUNT(*) FROM job_agent_runs WHERE job_id=? AND session_id=?
+             AND status IN ('queued','running')"
+        ).bind(job_id).bind(child_session_id).fetch_one(self.pool()).await?;
+        if active>0 {return Err(JobError::CapacityUnavailable);}
+        Ok(())
+    }
+
     /// A follow-up has a NEW child Run but an EXISTING child Session.
     /// The parent, specialist and pinned route are checked in one transaction.
     pub(crate) async fn attach_v3_child_session(
