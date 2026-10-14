@@ -104,3 +104,51 @@ flowchart TD
 
 ## Acceptance map
 A01 prompt; A02 fork/join; A03 tool chains and final text; A04 resume; A05-A07 provider portability; A08-A10 rejection and completion gate; A11 unknown replay; A12 capacity; A13 pin/revocation; A14 regression; A15 Timeline.
+
+
+## Grounded single-article summary and URL proof
+
+A real Job with goal "tóm tắt ... https://..." formerly showed five
+core.web.extract(mode=page,max_chars=1000) calls scanning navigation;
+Child produced a qualified summary, Root compressed it into a potentially
+misleading summary, and Job coverage said goal_only_unverified despite success.
+
+The corrected path preserves the same OpenCode-style Session/ToolResult flow:
+
+```mermaid
+sequenceDiagram
+    participant Root as Root Agent Session
+    participant Child as Child Session
+    participant Web as Core web.extract
+    participant Store as Job Steps + Session Store
+    participant Finish as Rust finish_job gate
+    Root->>Child: subagent(prompt="Read/summarize URL; keep caveats")
+    Child->>Web: mode=article,max_chars<=6000,offset=0
+    Web-->>Child: article text, truncated, next_offset, provenance
+    Child->>Store: Persist paired ToolCall and visible ToolResult
+    opt Article result truncated
+        Child->>Web: same URL/mode,next_offset
+        Web-->>Child: next article text
+    end
+    Child-->>Root: ChildOutcome(output,verified_source_urls from own Session)
+    Root->>Finish: finish_job(summary,artifact references)
+    alt URL unverified/incomplete
+        Finish-->>Root: Matched ToolResult source_not_fully_verified
+        Root->>Child: subagent(sessionID=old,prompt="Continue the article")
+    else Complete server-verified Step provenance
+        Finish->>Store: Terminal Job; keep Child summary for single-URL text task
+    end
+```
+
+**Trust boundary:** verified_source_urls is reconstructed from persisted,
+successful core.web.extract observations with matching HTTP status, URL,
+declared provenance, continuous offsets and final untruncated text visible
+in tool messages. Do not treat a title/HTTP 200/menu text as verified content.
+URL evidence is not an artifact ID. The terminal coverage basis for this
+narrow case is goal_url_verified (or goal_url_unverified), with requested_url,
+verified_source_urls and source_complete on the Job result. A Root rejection
+remains one matched ToolResult in its own transcript.
+
+This is source-completeness verification, not semantic truth verification. The
+user's text may still contain incorrect claims; content trust and citation
+credibility checks are independent policies.
