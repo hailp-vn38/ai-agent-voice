@@ -334,7 +334,10 @@ impl Database {
             .bind(job_id).bind(now).fetch_optional(&mut *tx).await?.ok_or(JobError::Terminal)?;
         let choices: Vec<Value> = serde_json::from_str(&job.plugin_choices_json)
             .map_err(|_| JobError::DatabaseUnavailable)?;
-        if !choices.iter().any(|v| crate::tools::core::matches_frozen(v, choice)) {
+        if !choices
+            .iter()
+            .any(|v| crate::tools::core::matches_frozen(v, choice))
+        {
             return Err(JobError::CapabilityUnavailable);
         }
         let run:Option<String>=sqlx::query_scalar("SELECT allowed_operations_json FROM job_agent_runs WHERE job_id=? AND agent_run_id=? AND parent_agent_run_id IS NOT NULL AND status='running'")

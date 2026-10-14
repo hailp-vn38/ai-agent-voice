@@ -399,11 +399,10 @@ async fn root_operation_allowlist_repairs_unknown_operation_with_and_without_plu
                 .bind(serde_json::to_string(&manifest).unwrap())
                 .execute(db.pool()).await.unwrap();
         }
-        let mut expected_operations: Vec<String> =
-            crate::tools::core::frozen_choices().iter()
-                .map(|choice| format!("core.{}",
-                    choice["operation"].as_str().unwrap()))
-                .collect();
+        let mut expected_operations: Vec<String> = crate::tools::core::frozen_choices()
+            .iter()
+            .map(|choice| format!("core.{}", choice["operation"].as_str().unwrap()))
+            .collect();
         if installed {
             expected_operations.extend([
                 "fixture-research.collect_topic".to_owned(),
@@ -526,8 +525,16 @@ async fn hierarchical_submission_rejects_provider_without_required_native_mode()
     sqlx::query("INSERT INTO providers(key,name,type,adapter,config_json,created_at,updated_at) VALUES('unqualified','Unqualified','llm','openai','{}',0,0)")
         .execute(db.pool()).await.unwrap();
     for (root, worker, expected_code) in [
-        ("unqualified", "config:llm:planner", "orchestrator_structured_outputs_required"),
-        ("config:llm:planner", "unqualified", "worker_function_calling_required"),
+        (
+            "unqualified",
+            "config:llm:planner",
+            "orchestrator_structured_outputs_required",
+        ),
+        (
+            "config:llm:planner",
+            "unqualified",
+            "worker_function_calling_required",
+        ),
     ] {
         let revision = runtime.engine.settings().await.unwrap().revision;
         runtime
@@ -555,8 +562,10 @@ async fn hierarchical_submission_rejects_provider_without_required_native_mode()
                 || runtime.engine.runtime_ready(),
             )
             .await;
-        assert!(matches!(receipt, Err(error) if error.code() == expected_code),
-            "Missing capability must identify the selected role and required native mode");
+        assert!(
+            matches!(receipt, Err(error) if error.code() == expected_code),
+            "Missing capability must identify the selected role and required native mode"
+        );
     }
     runtime.shutdown().await;
 }
@@ -673,7 +682,10 @@ async fn invalid_native_child_calls_never_create_plugin_steps() {
     for (kind, code) in [
         (RejectedChildKind::MultipleCalls, "tool_call_count"),
         (RejectedChildKind::UnknownFunction, "unknown_operation"),
-        (RejectedChildKind::FakeEvidence, "invalid_child_evidence_refs"),
+        (
+            RejectedChildKind::FakeEvidence,
+            "invalid_child_evidence_refs",
+        ),
     ] {
         let config = Arc::new(config());
         let db = Arc::new(Database::connect(&config.database).await.unwrap());

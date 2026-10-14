@@ -80,7 +80,7 @@ pub(crate) fn compile_child_tools(
         let name = format!(
             "p_{}_{}",
             choice.plugin_id.replace('-', "_"),
-            choice.operation.replace('-', "_").replace('.', "_")
+            choice.operation.replace(['-', '.'], "_")
         );
         if name.len() > 64
             || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')

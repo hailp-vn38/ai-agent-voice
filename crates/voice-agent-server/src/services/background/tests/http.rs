@@ -803,15 +803,34 @@ async fn builtin_core_catalog_is_authenticated_and_independent_of_installed_pack
     );
     state.background = Some(runtime.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}/api/admin/plugins", listener.local_addr().unwrap());
+    let base = format!(
+        "http://{}/api/admin/plugins",
+        listener.local_addr().unwrap()
+    );
     let server = tokio::spawn(async move {
-        axum::serve(listener, router_with_state(state)).await.unwrap()
+        axum::serve(listener, router_with_state(state))
+            .await
+            .unwrap()
     });
     let client = reqwest::Client::new();
-    assert_eq!(client.get(format!("{base}/builtin")).send().await.unwrap().status(), 401);
-    let catalog: Value = client.get(format!("{base}/builtin"))
+    assert_eq!(
+        client
+            .get(format!("{base}/builtin"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let catalog: Value = client
+        .get(format!("{base}/builtin"))
         .bearer_auth("background-test-token")
-        .send().await.unwrap().json().await.unwrap();
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(catalog["total"], 4);
     assert_eq!(catalog["operation_total"], 8);
     let groups = catalog["items"].as_array().unwrap();
@@ -822,8 +841,15 @@ async fn builtin_core_catalog_is_authenticated_and_independent_of_installed_pack
         assert_eq!(group["operations"].as_array().unwrap().len(), 2);
     }
     assert_eq!(
-        client.get(&base).bearer_auth("background-test-token")
-            .send().await.unwrap().json::<Value>().await.unwrap()["total"],
+        client
+            .get(&base)
+            .bearer_auth("background-test-token")
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()["total"],
         0,
         "Core operations must not create Plugin Store installation rows"
     );

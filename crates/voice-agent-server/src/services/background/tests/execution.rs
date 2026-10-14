@@ -81,10 +81,15 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
         .unwrap()
         .job;
     let choice: FrozenChoice = serde_json::from_value(
-        job.plugin_choices.as_array().unwrap().iter()
+        job.plugin_choices
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|v| v["plugin_id"] == "fixture-research" && v["operation"] == "collect_topic")
-            .unwrap().clone()
-    ).unwrap();
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
     db.test_plan_one_step(&job.id, "collect", &choice, &json!({"topic":"AI"}))
         .await
         .unwrap();
@@ -193,10 +198,15 @@ async fn fixture_python_runs_through_job_step_and_checked_artifact() {
     );
     assert!(!replacement_path.exists());
     let choice: FrozenChoice = serde_json::from_value(
-        job.plugin_choices.as_array().unwrap().iter()
+        job.plugin_choices
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|v| v["plugin_id"] == "fixture-research" && v["operation"] == "collect_topic")
-            .unwrap().clone()
-    ).unwrap();
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
     let args = json!({"topic":"AI", "limit":2});
     db.test_plan_one_step(&job.id, "collect", &choice, &args)
         .await
@@ -275,12 +285,22 @@ async fn persisted_evidence_refs_are_step_and_child_scoped() {
     // Mirrors a real fetch_url: plugin artifacts exist in SQLite but the
     // Child only receives references to its own succeeded Steps.
     let (db, _config, runtime) = harness().await;
-    let job = runtime.engine.submit(
-        request("Summarize fetched article"), &JobRequester::Admin, None
-    ).await.unwrap().job;
+    let job = runtime
+        .engine
+        .submit(
+            request("Summarize fetched article"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap()
+        .job;
     sqlx::query("UPDATE jobs SET status='running' WHERE id=?")
-        .bind(&job.id).execute(db.pool()).await.unwrap();
-    for (step,run,status) in [
+        .bind(&job.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    for (step, run, status) in [
         ("a-fetch", "child-a", "succeeded"),
         ("b-fetch", "child-b", "succeeded"),
         ("a-failed", "child-a", "failed"),
@@ -289,7 +309,7 @@ async fn persisted_evidence_refs_are_step_and_child_scoped() {
             .bind(&job.id).bind(step).bind(status).bind(run)
             .execute(db.pool()).await.unwrap();
     }
-    for (id,step) in [
+    for (id, step) in [
         ("artifact-own", "a-fetch"),
         ("artifact-other", "b-fetch"),
         ("artifact-failed", "a-failed"),
@@ -299,13 +319,30 @@ async fn persisted_evidence_refs_are_step_and_child_scoped() {
             .bind(format!("{}/{id}",job.id))
             .execute(db.pool()).await.unwrap();
     }
-    assert_eq!(db.job_step_artifact_refs(&job.id,"a-fetch").await.unwrap(),vec!["artifact-own"]);
-    assert!(db.job_step_artifact_refs(&job.id,"a-failed").await.unwrap().is_empty());
-    assert_eq!(db.job_child_artifact_refs(&job.id,"child-a").await.unwrap(),vec!["artifact-own"]);
-    assert_eq!(db.job_child_artifact_refs(&job.id,"child-b").await.unwrap(),vec!["artifact-other"]);
+    assert_eq!(
+        db.job_step_artifact_refs(&job.id, "a-fetch").await.unwrap(),
+        vec!["artifact-own"]
+    );
+    assert!(
+        db.job_step_artifact_refs(&job.id, "a-failed")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        db.job_child_artifact_refs(&job.id, "child-a")
+            .await
+            .unwrap(),
+        vec!["artifact-own"]
+    );
+    assert_eq!(
+        db.job_child_artifact_refs(&job.id, "child-b")
+            .await
+            .unwrap(),
+        vec!["artifact-other"]
+    );
     runtime.shutdown().await;
 }
-
 
 #[tokio::test]
 async fn core_only_json_query_executes_without_plugin_installation_or_container() {
@@ -316,36 +353,54 @@ async fn core_only_json_query_executes_without_plugin_installation_or_container(
         .await
         .unwrap()
         .job;
-    let raw = job.plugin_choices.as_array().unwrap().iter()
+    let raw = job
+        .plugin_choices
+        .as_array()
+        .unwrap()
+        .iter()
         .find(|v| v["plugin_id"] == "core" && v["operation"] == "data.json_query")
         .unwrap();
     let choice = crate::services::background::plugins::decode_choice(raw).unwrap();
     let args = json!({"json_text":"{\"hello\":{\"answer\":42}}","pointer":"/hello/answer"});
     db.test_plan_one_step(&job.id, "core_query", &choice, &args)
-        .await.unwrap();
-    let finished = runtime.engine.execute_plugin_step(
-        &job.id, "core_query", &choice, args
-    ).await.unwrap();
+        .await
+        .unwrap();
+    let finished = runtime
+        .engine
+        .execute_plugin_step(&job.id, "core_query", &choice, args)
+        .await
+        .unwrap();
     assert_eq!(finished.steps[0].status, "succeeded");
     assert_eq!(finished.steps[0].result.as_ref().unwrap()["value"], 42);
     assert_eq!(finished.steps[0].attempt_state.as_deref(), Some("finished"));
     runtime.shutdown().await;
 }
 
-
 #[tokio::test]
 async fn core_artifact_read_rejects_foreign_job_and_binary_media_type() {
     let (db, _, runtime) = harness().await;
-    let owner = runtime.engine.submit(
-        request("Own artifact"), &JobRequester::Admin, None
-    ).await.unwrap().job;
-    let foreign = runtime.engine.submit(
-        request("Other artifact"), &JobRequester::Admin, None
-    ).await.unwrap().job;
+    let owner = runtime
+        .engine
+        .submit(request("Own artifact"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
+    let foreign = runtime
+        .engine
+        .submit(request("Other artifact"), &JobRequester::Admin, None)
+        .await
+        .unwrap()
+        .job;
     let choice = crate::services::background::plugins::decode_choice(
-        owner.plugin_choices.as_array().unwrap().iter()
-            .find(|v| v["operation"] == "artifact.read_text").unwrap()
-    ).unwrap();
+        owner
+            .plugin_choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["operation"] == "artifact.read_text")
+            .unwrap(),
+    )
+    .unwrap();
 
     let foreign_id = uuid::Uuid::new_v4().to_string();
     let binary_id = uuid::Uuid::new_v4().to_string();
@@ -359,8 +414,13 @@ async fn core_artifact_read_rejects_foreign_job_and_binary_media_type() {
     }
     for artifact_id in [&foreign_id, &binary_id] {
         match crate::tools::core::invoke(
-            &runtime.engine, &choice, json!({"artifact_id":artifact_id}), &owner.id
-        ).await {
+            &runtime.engine,
+            &choice,
+            json!({"artifact_id":artifact_id}),
+            &owner.id,
+        )
+        .await
+        {
             Err(crate::services::background::plugins::PluginError::ApplicationError) => {}
             Err(other) => panic!("unexpected Core error: {other:?}"),
             Ok(_) => panic!("Core allowed an invalid artifact"),
@@ -374,15 +434,27 @@ async fn bundled_document_and_artifact_operations_use_verified_owned_files() {
     use sha2::{Digest, Sha256};
 
     let (db, _, runtime) = harness().await;
-    let job = runtime.engine.submit(
-        request("Inspect Markdown artifact"), &JobRequester::Admin, None
-    ).await.unwrap().job;
+    let job = runtime
+        .engine
+        .submit(
+            request("Inspect Markdown artifact"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap()
+        .job;
     let artifact_id = uuid::Uuid::new_v4().to_string();
     let bytes = b"# Heading\n[Read](https://example.org) *bold*";
     let directory = super::super::artifacts::root(&db).unwrap().join(&job.id);
     tokio::fs::create_dir_all(&directory).await.unwrap();
-    tokio::fs::write(directory.join(&artifact_id), bytes).await.unwrap();
-    let sha = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect::<String>();
+    tokio::fs::write(directory.join(&artifact_id), bytes)
+        .await
+        .unwrap();
+    let sha = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     sqlx::query(
         "INSERT INTO job_artifacts(id,job_id,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,0)"
     )
@@ -391,36 +463,60 @@ async fn bundled_document_and_artifact_operations_use_verified_owned_files() {
     .execute(db.pool()).await.unwrap();
 
     let run = |operation: &str| {
-        let raw = job.plugin_choices.as_array().unwrap().iter()
-            .find(|value| value["operation"] == operation).unwrap();
+        let raw = job
+            .plugin_choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|value| value["operation"] == operation)
+            .unwrap();
         crate::services::background::plugins::decode_choice(raw).unwrap()
     };
     let arguments = json!({"artifact_id":artifact_id});
     let document = crate::tools::core::invoke(
-        &runtime.engine, &run("document.extract"), arguments.clone(), &job.id
-    ).await.unwrap();
+        &runtime.engine,
+        &run("document.extract"),
+        arguments.clone(),
+        &job.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(document.result["text"], "Heading\nRead bold");
     assert_eq!(document.result["format"], "text/markdown");
     assert_eq!(document.result["provenance"][0]["records"][0], artifact_id);
 
     let document_info = crate::tools::core::invoke(
-        &runtime.engine, &run("document.inspect"), arguments.clone(), &job.id
-    ).await.unwrap();
+        &runtime.engine,
+        &run("document.inspect"),
+        arguments.clone(),
+        &job.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(document_info.result["lines"], 2);
     assert!(document_info.result["words"].as_u64().unwrap() >= 3);
 
     let artifact_info = crate::tools::core::invoke(
-        &runtime.engine, &run("artifact.inspect"), arguments, &job.id
-    ).await.unwrap();
+        &runtime.engine,
+        &run("artifact.inspect"),
+        arguments,
+        &job.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(artifact_info.result["sha256"], sha);
     assert_eq!(artifact_info.result["size_bytes"], bytes.len());
     assert_eq!(artifact_info.result["media_type"], "text/markdown");
 
     let transformed = crate::tools::core::invoke(
-        &runtime.engine, &run("data.transform"),
+        &runtime.engine,
+        &run("data.transform"),
         json!({"json_text":r#"{"name":"Ada","role":"research"}"#,
-            "mode":"pick","fields":["name"]}), &job.id
-    ).await.unwrap();
+            "mode":"pick","fields":["name"]}),
+        &job.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(transformed.result["value"], json!({"name":"Ada"}));
     runtime.shutdown().await;
 }

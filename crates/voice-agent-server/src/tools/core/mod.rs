@@ -11,8 +11,14 @@ use serde_json::{Value, json};
 
 pub(crate) const REVISION: &str = "1";
 const OPERATIONS: [&str; 8] = [
-    "web.fetch", "data.json_query", "artifact.read_text", "web.extract",
-    "document.extract", "document.inspect", "data.transform", "artifact.inspect",
+    "web.fetch",
+    "data.json_query",
+    "artifact.read_text",
+    "web.extract",
+    "document.extract",
+    "document.inspect",
+    "data.transform",
+    "artifact.inspect",
 ];
 
 pub(crate) fn is_core(choice: &FrozenChoice) -> bool {
@@ -22,18 +28,21 @@ pub(crate) fn is_core(choice: &FrozenChoice) -> bool {
 }
 
 pub(crate) fn frozen_choices() -> Vec<Value> {
-    OPERATIONS.iter().map(|operation| {
-        let (provides, sources) = match *operation {
-            "web.fetch" => (vec!["web_fetch"], vec!["web"]),
-            "data.json_query" => (vec!["json_query"], vec![]),
-            "artifact.read_text" => (vec!["artifact_read"], vec![]),
-            other => expanded::coverage(other),
-        };
-        json!({
-            "kind":"core","plugin_id":"core","operation":operation,
-            "contract_revision":REVISION,"provides":provides,"sources":sources
+    OPERATIONS
+        .iter()
+        .map(|operation| {
+            let (provides, sources) = match *operation {
+                "web.fetch" => (vec!["web_fetch"], vec!["web"]),
+                "data.json_query" => (vec!["json_query"], vec![]),
+                "artifact.read_text" => (vec!["artifact_read"], vec![]),
+                other => expanded::coverage(other),
+            };
+            json!({
+                "kind":"core","plugin_id":"core","operation":operation,
+                "contract_revision":REVISION,"provides":provides,"sources":sources
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Decode a frozen Core choice into the existing invocation representation.
@@ -43,8 +52,12 @@ pub(crate) fn decode(raw: &Value) -> Result<FrozenChoice, PluginError> {
     if raw["kind"] != "core" || raw["plugin_id"] != "core" {
         return Err(PluginError::PermissionRequired);
     }
-    let operation = raw["operation"].as_str().ok_or(PluginError::PermissionRequired)?;
-    let revision = raw["contract_revision"].as_str().ok_or(PluginError::PermissionRequired)?;
+    let operation = raw["operation"]
+        .as_str()
+        .ok_or(PluginError::PermissionRequired)?;
+    let revision = raw["contract_revision"]
+        .as_str()
+        .ok_or(PluginError::PermissionRequired)?;
     let choice = FrozenChoice {
         plugin_id: "core".into(),
         operation: operation.into(),
@@ -127,26 +140,47 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
 pub(crate) fn bundled_catalog() -> Value {
     let groups: [(&str, &str, &[&str]); 4] = [
         ("core.web", "Core Web", &["web.fetch", "web.extract"]),
-        ("core.document", "Core Document", &["document.extract", "document.inspect"]),
-        ("core.data", "Core Data", &["data.json_query", "data.transform"]),
-        ("core.artifact", "Core Artifact", &["artifact.read_text", "artifact.inspect"]),
+        (
+            "core.document",
+            "Core Document",
+            &["document.extract", "document.inspect"],
+        ),
+        (
+            "core.data",
+            "Core Data",
+            &["data.json_query", "data.transform"],
+        ),
+        (
+            "core.artifact",
+            "Core Artifact",
+            &["artifact.read_text", "artifact.inspect"],
+        ),
     ];
-    let items: Vec<Value> = groups.iter().map(|(id, name, operations)| {
-        let operations: Vec<Value> = operations.iter().map(|operation| {
-            let choice = FrozenChoice {
-                plugin_id: "core".into(), operation: (*operation).into(),
-                version: REVISION.into(), package_digest: String::new(),
-                installation_digest: String::new(),
-            };
-            let description = contract(&choice).ok()
-                .and_then(|schema| schema["description"].as_str().map(str::to_owned))
-                .unwrap_or_default();
-            json!({"name":operation,"description":description,
+    let items: Vec<Value> = groups
+        .iter()
+        .map(|(id, name, operations)| {
+            let operations: Vec<Value> = operations
+                .iter()
+                .map(|operation| {
+                    let choice = FrozenChoice {
+                        plugin_id: "core".into(),
+                        operation: (*operation).into(),
+                        version: REVISION.into(),
+                        package_digest: String::new(),
+                        installation_digest: String::new(),
+                    };
+                    let description = contract(&choice)
+                        .ok()
+                        .and_then(|schema| schema["description"].as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    json!({"name":operation,"description":description,
                 "contract_revision":REVISION,"replay":"safe_read"})
-        }).collect();
-        json!({"id":id,"name":name,"status":"ready","kind":"built_in",
+                })
+                .collect();
+            json!({"id":id,"name":name,"status":"ready","kind":"built_in",
             "runtime":{"kind":"in_process","language":"rust"},"operations":operations})
-    }).collect();
+        })
+        .collect();
     let total = items.len();
     json!({"items":items,"total":total,"operation_total":OPERATIONS.len()})
 }
@@ -172,27 +206,36 @@ pub(crate) async fn invoke(
     let maximum = arguments["max_chars"].as_u64().unwrap_or(16000).min(16000) as usize;
     let result = match choice.operation.as_str() {
         "data.json_query" => {
-            let document = arguments["json_text"].as_str().ok_or(PluginError::ApplicationError)?;
-            let pointer = arguments["pointer"].as_str().ok_or(PluginError::ApplicationError)?;
+            let document = arguments["json_text"]
+                .as_str()
+                .ok_or(PluginError::ApplicationError)?;
+            let pointer = arguments["pointer"]
+                .as_str()
+                .ok_or(PluginError::ApplicationError)?;
             if !pointer.is_empty() && !pointer.starts_with('/') {
                 return Err(PluginError::ApplicationError);
             }
-            let value: Value = serde_json::from_str(document).map_err(|_| PluginError::ApplicationError)?;
-            let selected = value.pointer(pointer).ok_or(PluginError::ApplicationError)?;
+            let value: Value =
+                serde_json::from_str(document).map_err(|_| PluginError::ApplicationError)?;
+            let selected = value
+                .pointer(pointer)
+                .ok_or(PluginError::ApplicationError)?;
             if selected.to_string().len() > 16000 {
                 return Err(PluginError::ApplicationError);
             }
             json!({"value":selected})
         }
         "artifact.read_text" => {
-            let id = arguments["artifact_id"].as_str().ok_or(PluginError::ApplicationError)?;
+            let id = arguments["artifact_id"]
+                .as_str()
+                .ok_or(PluginError::ApplicationError)?;
             let (_, content, size) = expanded::owned_text(engine, job_id, id).await?;
             let (text, truncated) = take_chars(&content, maximum);
             json!({"text":text,"truncated":truncated,"size_bytes":size})
         }
         "web.fetch" => expanded::fetch(&arguments).await?,
-        "web.extract" | "document.extract" | "document.inspect"
-        | "data.transform" | "artifact.inspect" => {
+        "web.extract" | "document.extract" | "document.inspect" | "data.transform"
+        | "artifact.inspect" => {
             expanded::invoke(engine, &choice.operation, &arguments, job_id).await?
         }
         _ => return Err(PluginError::PermissionRequired),
@@ -202,7 +245,10 @@ pub(crate) async fn invoke(
     if !output_validator.is_valid(&result) {
         return Err(PluginError::WorkerProtocolError);
     }
-    Ok(InvokeResult { result, artifacts: Vec::new() })
+    Ok(InvokeResult {
+        result,
+        artifacts: Vec::new(),
+    })
 }
 
 #[cfg(test)]

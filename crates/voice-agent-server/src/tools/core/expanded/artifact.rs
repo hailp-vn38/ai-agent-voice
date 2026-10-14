@@ -11,16 +11,17 @@ pub(super) async fn owned_artifact(
     if uuid::Uuid::parse_str(artifact_id).is_err() {
         return Err(PluginError::ApplicationError);
     }
-    let metadata: Option<(String, String)> = sqlx::query_as(
-        "SELECT media_type,sha256 FROM job_artifacts WHERE job_id=? AND id=?",
-    )
-    .bind(job_id)
-    .bind(artifact_id)
-    .fetch_optional(engine.database.pool())
-    .await
-    .map_err(|_| PluginError::DatabaseUnavailable)?;
+    let metadata: Option<(String, String)> =
+        sqlx::query_as("SELECT media_type,sha256 FROM job_artifacts WHERE job_id=? AND id=?")
+            .bind(job_id)
+            .bind(artifact_id)
+            .fetch_optional(engine.database.pool())
+            .await
+            .map_err(|_| PluginError::DatabaseUnavailable)?;
     let (media_type, digest) = metadata.ok_or(PluginError::ApplicationError)?;
-    let bytes = engine.read_artifact(job_id, artifact_id).await
+    let bytes = engine
+        .read_artifact(job_id, artifact_id)
+        .await
         .map_err(|_| PluginError::ApplicationError)?;
     Ok((media_type, bytes, digest))
 }
@@ -31,7 +32,10 @@ pub(super) async fn read_owned_text(
     artifact_id: &str,
 ) -> Result<(String, String, usize), PluginError> {
     let (media_type, bytes, _) = owned_artifact(engine, job_id, artifact_id).await?;
-    if !matches!(media_type.as_str(), "text/plain" | "text/markdown" | "application/json") {
+    if !matches!(
+        media_type.as_str(),
+        "text/plain" | "text/markdown" | "application/json"
+    ) {
         return Err(PluginError::ApplicationError);
     }
     let size = bytes.len();
@@ -44,7 +48,9 @@ pub(super) async fn inspect(
     arguments: &Value,
     job_id: &str,
 ) -> Result<Value, PluginError> {
-    let id = arguments["artifact_id"].as_str().ok_or(PluginError::ApplicationError)?;
+    let id = arguments["artifact_id"]
+        .as_str()
+        .ok_or(PluginError::ApplicationError)?;
     let (media_type, bytes, sha) = owned_artifact(engine, job_id, id).await?;
     Ok(json!({"artifact_id":id,"media_type":media_type,
         "size_bytes":bytes.len(),"sha256":sha}))

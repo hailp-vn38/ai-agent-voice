@@ -10,7 +10,6 @@ pub(super) async fn builtin_catalog() -> Response {
     Json(crate::tools::core::bundled_catalog()).into_response()
 }
 
-
 fn store(state: &AppState) -> Option<&PluginStore> {
     state
         .background

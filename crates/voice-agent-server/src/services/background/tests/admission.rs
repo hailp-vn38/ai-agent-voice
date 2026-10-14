@@ -26,8 +26,13 @@ async fn scheduler_checks_frozen_shared_plugin_installation() {
         .unwrap()
         .job;
     assert_eq!(
-        created.plugin_choices.as_array().unwrap().iter()
-            .find(|v| v["plugin_id"] == "fixture-research").unwrap()["installation_digest"],
+        created
+            .plugin_choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["plugin_id"] == "fixture-research")
+            .unwrap()["installation_digest"],
         installation
     );
     let job = db.job_row(&created.id).await.unwrap();
@@ -83,8 +88,16 @@ async fn ready_plugin_choices_freeze_at_submit_and_pin_nonterminal_installation(
         .job;
     assert_eq!(created.plugin_choices.as_array().unwrap().len(), 10);
     assert_eq!(created.plugin_choices[0]["plugin_id"], "core");
-    assert_eq!(created.plugin_choices.as_array().unwrap().iter()
-        .filter(|choice| choice["plugin_id"] == "fixture-research").count(), 2);
+    assert_eq!(
+        created
+            .plugin_choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|choice| choice["plugin_id"] == "fixture-research")
+            .count(),
+        2
+    );
     assert_eq!(
         runtime
             .engine
@@ -222,7 +235,10 @@ async fn voice_scope_is_non_reusable_and_reminder_permission_is_independent() {
         .await
         .unwrap()
         .job;
-    assert_eq!(job.plugin_choices, json!(crate::tools::core::frozen_choices()));
+    assert_eq!(
+        job.plugin_choices,
+        json!(crate::tools::core::frozen_choices())
+    );
     // Recreate the same public identities within the same timestamp: row incarnations change.
     sqlx::query("DELETE FROM devices WHERE device_id='voice-device'")
         .execute(db.pool())

@@ -2,7 +2,6 @@ use super::{
     JobEngine, JobError, JobView,
     model::LlmRunContext,
     plan::{JobPlan, PlanCompiler, PlanErrorCategory, PlanValidationError},
-    plugins::FrozenChoice,
     proposal::PlanProposal,
 };
 use crate::providers::llm::{ChatMessage, LlmRequest};
@@ -150,7 +149,8 @@ async fn run(
                             choice["plugin_id"] == *plugin && choice["operation"] == *operation
                         })
                         .ok_or(JobError::CapabilityUnavailable)?,
-                ).map_err(JobError::from_plugin)?;
+                )
+                .map_err(JobError::from_plugin)?;
                 engine
                     .execute_plugin_step_cancel(
                         id,

@@ -167,32 +167,34 @@ impl JobEngine {
                 }
             }.await
         } else {
-            self.plugins.invoke(
-                Invocation {
-                    inputs,
-                    choice,
-                    arguments,
-                    job_id,
-                    attempt_id: &attempt,
-                    timeout: std::time::Duration::from_secs(
-                        self.config.background.limits.step_timeout_seconds.into(),
-                    ),
-                    deadline_at,
-                    cancellation,
-                },
-                || async {
-                    self.database
-                        .request_plugin_start(job_id, step_key, &attempt, choice)
-                        .await
-                        .map_err(PluginError::JobRejected)
-                },
-                || async {
-                    self.database
-                        .mark_plugin_started(job_id, step_key, &attempt)
-                        .await
-                        .map_err(PluginError::JobRejected)
-                },
-            ).await
+            self.plugins
+                .invoke(
+                    Invocation {
+                        inputs,
+                        choice,
+                        arguments,
+                        job_id,
+                        attempt_id: &attempt,
+                        timeout: std::time::Duration::from_secs(
+                            self.config.background.limits.step_timeout_seconds.into(),
+                        ),
+                        deadline_at,
+                        cancellation,
+                    },
+                    || async {
+                        self.database
+                            .request_plugin_start(job_id, step_key, &attempt, choice)
+                            .await
+                            .map_err(PluginError::JobRejected)
+                    },
+                    || async {
+                        self.database
+                            .mark_plugin_started(job_id, step_key, &attempt)
+                            .await
+                            .map_err(PluginError::JobRejected)
+                    },
+                )
+                .await
         };
         match result {
             Ok(output) => {
@@ -304,14 +306,15 @@ impl JobEngine {
                         step_key,
                         &attempt,
                         code,
-                        !crate::tools::core::is_core(choice) && matches!(
-                            error,
-                            PluginError::WorkerTimeout
-                                | PluginError::WorkerDeadlineExceeded
-                                | PluginError::SandboxUnavailable
-                                | PluginError::WorkerUnreaped
-                                | PluginError::JobRejected(JobError::Cancelled)
-                        ),
+                        !crate::tools::core::is_core(choice)
+                            && matches!(
+                                error,
+                                PluginError::WorkerTimeout
+                                    | PluginError::WorkerDeadlineExceeded
+                                    | PluginError::SandboxUnavailable
+                                    | PluginError::WorkerUnreaped
+                                    | PluginError::JobRejected(JobError::Cancelled)
+                            ),
                         self.foundation_harness,
                     )
                     .await?;

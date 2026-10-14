@@ -25,7 +25,6 @@ pub(crate) fn decode_choice(raw: &serde_json::Value) -> Result<FrozenChoice, Plu
     }
 }
 
-
 use crate::{config::BackgroundConfig, database::Database};
 use archive::{Manifest, Package};
 use serde::Serialize;
@@ -483,7 +482,9 @@ pub(crate) async fn frozen_choices(
     let mut choices = crate::tools::core::frozen_choices();
     for row in rows {
         // Core is a reserved namespace, never an External Store installation.
-        if row.plugin_id == "core" { return Err(JobError::CapabilityUnavailable); }
+        if row.plugin_id == "core" {
+            return Err(JobError::CapabilityUnavailable);
+        }
         let manifest = row.manifest().map_err(|_| JobError::DatabaseUnavailable)?;
         for (name, operation) in manifest.operations {
             if operation.replay != "safe_read" {
