@@ -5,7 +5,9 @@ import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError } from '@/api/errors'
 import type { JobArtifact } from '@/api/types/agent-jobs'
 import { Button } from '@/components/ui/button'
+import { useI18n } from '@/composables/useI18n'
 
+const { t } = useI18n()
 const props = defineProps<{ jobId: string; artifact: JobArtifact }>()
 const emit = defineEmits<{ close: []; download: [] }>()
 const loading = ref(true)
@@ -61,7 +63,7 @@ onBeforeUnmount(() => {
       <img v-else-if="kind === 'image'" :src="url" :alt="artifact.filename || 'Artifact image'" class="max-h-[65vh] w-full object-contain" />
       <pre v-else class="max-h-[65vh] overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/50 p-4 text-xs">{{ text }}</pre>
       <footer class="flex justify-end gap-2">
-        <Button variant="outline" size="sm" @click="emit('download')"><Download class="size-4" />Download</Button>
+        <Button variant="outline" size="sm" @click="emit('download')"><Download class="size-4" />{{ t('jobUi.download') }}</Button>
         <Button size="sm" @click="emit('close')">Close</Button>
       </footer>
     </section>
