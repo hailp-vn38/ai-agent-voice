@@ -27,13 +27,14 @@ fn finish() -> ToolCall {
     call(
         "finish",
         "finish_job",
-        json!({"summary":"Done","findings":[],"evidence_refs":[],"unresolved":[]}),
+        json!({"summary":"Done","findings":[],"unresolved":[]}),
     )
 }
 struct Scenario {
     chain: bool,
     invalid: bool,
     semantic: Option<&'static str>,
+    legacy_finish_refs: bool,
     root_round: AtomicUsize,
     child_round: AtomicUsize,
 }
@@ -108,8 +109,22 @@ impl JobModels for Scenario {
                         1
                     );
                 }
+                if self.legacy_finish_refs && round == 2 {
+                    assert!(request.messages.iter().any(|msg|
+                        matches!(msg, ChatMessage::ToolResult{tool_call_id, content}
+                            if tool_call_id == "finish_1"
+                            && content.contains("finish_job_server_owned_evidence")
+                            && content.contains("Remove evidence_refs"))
+                    ));
+                }
                 let mut final_call = finish();
                 final_call.id = format!("finish_{round}");
+                if self.legacy_finish_refs && round == 1 {
+                    // Replays the real regression: Root cites the source URL as
+                    // an artifact, although a URL extract created no artifact.
+                    final_call.arguments["evidence_refs"] =
+                        json!(["https://news.example/asian-cup.html"]);
+                }
                 BackgroundTurn::ToolCalls(vec![final_call])
             }
         } else {
@@ -163,6 +178,15 @@ async fn execute_scenario(
     invalid: bool,
     semantic: Option<&'static str>,
 ) -> (Arc<Database>, JobView) {
+    execute_scenario_with_legacy(chain, invalid, semantic, false).await
+}
+
+async fn execute_scenario_with_legacy(
+    chain: bool,
+    invalid: bool,
+    semantic: Option<&'static str>,
+    legacy_finish_refs: bool,
+) -> (Arc<Database>, JobView) {
     let config = Arc::new(config());
     let db = Arc::new(Database::connect(&config.database).await.unwrap());
     let runtime = BackgroundRuntime::execution_harness(
@@ -172,6 +196,7 @@ async fn execute_scenario(
             chain,
             invalid,
             semantic,
+            legacy_finish_refs,
             root_round: AtomicUsize::new(0),
             child_round: AtomicUsize::new(0),
         }),
@@ -299,4 +324,29 @@ async fn unauthorized_model_session_or_background_rejects_whole_batch_with_paire
             "Root text alone must not bypass completion validation"
         );
     }
+}
+
+#[tokio::test]
+async fn root_bad_url_evidence_gets_matched_guidance_then_finishes_without_artifacts() {
+    // Correct integration seam: Root -> Child native tools -> Child completes
+    // with no artifact -> Root sends legacy URL in evidence_refs -> matched
+    // protocol error -> Root retries with new schema -> persisted Job succeeds.
+    let (db, job) = execute_scenario_with_legacy(true, false, None, true).await;
+    assert_eq!(job.status, "succeeded", "{:?}", job.error_code);
+    assert!(job.artifacts.is_empty());
+    assert_eq!(job.result.as_ref().unwrap()["evidence_refs"], json!([]));
+    let root = job.agent_runs.iter().find(|run| run.parent_agent_run_id.is_none()).unwrap();
+    let root_session = db.session_for_run(&job.id, &root.agent_run_id).await.unwrap();
+    let messages = db.read_messages(&job.id, &root_session).await.unwrap();
+    let repairs: Vec<_> = messages.iter().filter_map(|message| match message {
+        ChatMessage::ToolResult { tool_call_id, content } if tool_call_id == "finish_1" =>
+            Some(serde_json::from_str::<Value>(content).unwrap()),
+        _ => None,
+    }).collect();
+    assert_eq!(repairs.len(), 1);
+    assert_eq!(repairs[0]["error_code"], "finish_job_server_owned_evidence");
+    assert!(repairs[0]["guidance"].as_str().unwrap().contains("Remove evidence_refs"));
+    let events = db.job_events(&job.id, 0, 200).await.unwrap();
+    assert!(events.iter().any(|event| event.event_type == "agent_decision_rejected"
+        && event.payload["validation_code"] == "finish_job_server_owned_evidence"));
 }
