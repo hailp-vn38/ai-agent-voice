@@ -57,6 +57,12 @@ const roleFilters = computed(() => [...new Set(agentRuns.value.map(run => run.ro
 const allActivity = computed(() => job.value ? projectUnifiedActivity(job.value, events.value) : [])
 const filteredActivity = computed(() => visibleActivities(allActivity.value, activityFilter.value))
 const selectedActivity = computed(() => filteredActivity.value.find(item => item.id === selectedActivityId.value) ?? null)
+const selectedAgent = computed(() => agentRuns.value.find(run => run.agent_run_id === selectedActivity.value?.agentRunId) ?? null)
+const selectedSteps = computed(() => {
+  const activity = selectedActivity.value
+  if (activity?.step) return [activity.step]
+  return activity?.agentRunId ? job.value?.steps.filter(step => step.agent_run_id === activity.agentRunId) ?? [] : []
+})
 const coverage = computed(() => job.value?.coverage ?? null)
 const sourcePercentage = computed(() => coverage.value && coverage.value.required_sources_count > 0
   ? Math.min(100, Math.round(coverage.value.verified_sources_count * 100 / coverage.value.required_sources_count)) : 0)
@@ -325,6 +331,26 @@ onBeforeUnmount(() => {
             </template>
             <p v-else-if="coverage" class="text-xs text-muted-foreground">{{ t('jobUi.goalOnlyUnverified') }}</p>
             <p v-else class="text-xs text-muted-foreground">{{ t('jobUi.coverageUnavailable') }}</p>
+            <div v-if="selectedActivity" :key="selectedActivity.id" class="mt-4 space-y-3 border-t pt-3 text-xs">
+              <h4 class="break-words font-semibold">{{ selectedActivity.title }}</h4>
+              <details v-if="selectedAgent?.goal_excerpt">
+                <summary class="cursor-pointer font-semibold">{{ t('jobUi.goal') }}</summary>
+                <p class="mt-1 whitespace-pre-wrap break-words">{{ selectedAgent.goal_excerpt }}</p>
+              </details>
+              <details v-for="step in selectedSteps" :key="step.step_key" class="space-y-2 border-t pt-3">
+                <summary class="cursor-pointer break-words font-semibold">{{ step.instruction }}</summary>
+                <p class="break-all font-mono text-muted-foreground">{{ step.step_key }}</p>
+                <h5 class="text-muted-foreground">{{ t('jobUi.toolArguments') }}</h5>
+                <pre class="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3">{{ JSON.stringify(step.arguments, null, 2) }}</pre>
+                <h5 class="text-muted-foreground">{{ t('jobUi.result') }}</h5>
+                <pre class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3">{{ step.result == null ? '—' : JSON.stringify(step.result, null, 2) }}</pre>
+              </details>
+              <details v-if="selectedAgent?.result">
+                <summary class="cursor-pointer font-semibold">{{ t('jobUi.agentResult') }}</summary>
+                <pre class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3">{{ JSON.stringify(selectedAgent.result, null, 2) }}</pre>
+              </details>
+              <p v-if="!selectedSteps.length && !selectedAgent?.result" class="text-muted-foreground">{{ t('jobUi.noSourceDetails') }}</p>
+            </div>
           </section>
           <section class="studio-panel p-5">
             <h2 class="mb-4 flex items-center gap-2 font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.artifacts') }}</h2>

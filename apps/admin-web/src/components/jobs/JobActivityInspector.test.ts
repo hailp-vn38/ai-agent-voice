@@ -19,6 +19,23 @@ function events(count: number): JobEvent[] {
 beforeEach(() => setLocale('en'))
 
 describe('Job activity presentation', () => {
+  it('starts collapsed, toggles from the heading and collapses for another activity', async () => {
+    const activity = projectUnifiedActivity(view, events(5))[0]!
+    const wrapper = mount(JobActivityInspector, { props: { activity } })
+    try {
+      const details = () => wrapper.get('details').element as HTMLDetailsElement
+      expect(details().open).toBe(false)
+      wrapper.get('summary').element.click()
+      expect(details().open).toBe(true)
+      expect(wrapper.text()).toContain(activity.title)
+      wrapper.get('summary').element.click()
+      expect(details().open).toBe(false)
+      wrapper.get('summary').element.click()
+      await wrapper.setProps({ activity: { ...activity, id: 'another-invocation' } })
+      expect(details().open).toBe(false)
+    } finally { wrapper.unmount() }
+  })
+
   it('updates the pending message through provider, capacity, response and validation stages', async () => {
     const keys = [
       'jobUi.llmAcquiringProvider', 'jobUi.llmWaitingCapacity', 'jobUi.llmWaitingResponse', 'jobUi.llmValidating',

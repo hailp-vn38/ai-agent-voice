@@ -51,14 +51,14 @@ function stageNote(event: JobEvent): string {
 </script>
 
 <template>
-  <section class="studio-panel p-4">
-    <div class="mb-3 flex items-center justify-between gap-2">
-      <h3 class="flex items-center gap-2 text-sm font-semibold"><Cpu class="size-4 text-studio-violet" />{{ t('jobUi.eventInspector') }}</h3>
-      <Badge variant="outline">{{ t('jobUi.llmReadOnly') }}</Badge>
-    </div>
-    <p v-if="!activity" class="text-xs text-muted-foreground">{{ t('jobUi.selectTimelineEvent') }}</p>
+  <details :key="activity?.id" class="studio-panel p-4">
+    <summary class="cursor-pointer">
+      <h3 class="inline-flex items-center gap-2 text-sm font-semibold"><Cpu class="size-4 text-studio-violet" />{{ t('jobUi.eventInspector') }}</h3>
+      <Badge variant="outline" class="ml-2">{{ t('jobUi.llmReadOnly') }}</Badge>
+    </summary>
+    <p v-if="!activity" class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.selectTimelineEvent') }}</p>
     <template v-else>
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div class="mb-3 mt-3 flex flex-wrap items-center justify-between gap-2">
         <strong class="break-words text-xs">{{ activity.title }}</strong>
         <span class="text-[10px] font-semibold capitalize" :class="activity.status === 'completed' ? 'text-success' : activity.status === 'failed' || activity.status === 'unknown' ? 'text-danger' : 'text-studio-cyan'">{{ activity.status }}</span>
       </div>
@@ -106,5 +106,5 @@ function stageNote(event: JobEvent): string {
         </dl>
       </template>
     </template>
-  </section>
+  </details>
 </template>

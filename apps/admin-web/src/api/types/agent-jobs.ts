@@ -55,6 +55,7 @@ export interface AgentRunView {
   parent_agent_run_id: string | null
   role: AgentRole
   goal_excerpt: string
+  result?: Record<string, unknown> | null
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   run_index: number
   llm_rounds: number

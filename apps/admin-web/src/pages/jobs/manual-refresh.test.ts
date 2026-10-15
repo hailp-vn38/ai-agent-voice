@@ -37,6 +37,65 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers() })
 
+it('shows the selected timeline item input and extracted source in Source coverage', async () => {
+  const job = await api.job()
+  const steps = ['first', 'second'].map(name => ({
+    step_key: name, agent_run_id: 'child', plugin_id: 'core', operation: 'web.extract',
+    status: 'succeeded', attempt_state: 'finished', instruction: 'Extract ' + name,
+    arguments: { url: 'https://example.com/' + name, max_chars: 6000 },
+    result: { title: 'Article ' + name, text: 'Extracted news ' + name,
+      provenance: [{ source: 'web', urls: ['https://example.com/' + name], capabilities: ['web_extract'] }] },
+    required: true, dependencies: [], input_refs: [], output_schema: {},
+  }))
+  api.job.mockClear().mockResolvedValue({ ...job, steps, agent_runs: [
+    { agent_run_id: 'root', role: 'orchestrator', goal_excerpt: 'Coordinate extraction', result: null },
+    { agent_run_id: 'child', role: 'general', goal_excerpt: 'Fetch news highlights', result: { summary: 'News summary' } },
+  ] })
+  api.events.mockResolvedValue({ items: [...steps.map((step, index) => ({
+    sequence: index + 1, event_type: 'step_finished', step_key: step.step_key,
+    created_at: '2026-10-15T01:16:25Z', payload: { status: 'succeeded', agent_run_id: 'child' },
+  })), ...['child', 'root'].map((id, index) => ({
+    sequence: index + 3, event_type: 'agent_run_finished', step_key: null,
+    created_at: '2026-10-15T01:16:26Z', payload: { status: 'succeeded', agent_run_id: id },
+  }))] })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    const coverageHeading = wrapper.findAll('h3').find(node => node.text() === translate('jobUi.sourceCoverage'))!
+    const coverageCard = coverageHeading.element.parentElement!
+    const items = wrapper.findAll('ol button')
+    await items[1]!.trigger('click')
+    expect(coverageCard.querySelectorAll('details').length).toBe(3)
+    expect(coverageCard.querySelector('details[open]')).toBeNull()
+    const stepDetails = coverageCard.querySelectorAll('details')[1]!
+    stepDetails.querySelector('summary')!.click()
+    expect(stepDetails.open).toBe(true)
+    stepDetails.querySelector('summary')!.click()
+    expect(stepDetails.open).toBe(false)
+    stepDetails.querySelector('summary')!.click()
+    expect(coverageCard.textContent).toContain('Extract second')
+    expect(coverageCard.textContent).toContain('https://example.com/second')
+    expect(coverageCard.textContent).toContain('Article second')
+    expect(coverageCard.textContent).toContain('Extracted news second')
+    expect(coverageCard.textContent).toContain('web_extract')
+    expect(coverageCard.textContent).not.toContain('Extracted news first')
+    await items[0]!.trigger('click')
+    expect(coverageCard.querySelector('details[open]')).toBeNull()
+    expect(coverageCard.textContent).toContain('Extracted news first')
+    expect(coverageCard.textContent).not.toContain('Extracted news second')
+    await items[2]!.trigger('click')
+    expect(coverageCard.textContent).toContain('Fetch news highlights')
+    expect(coverageCard.textContent).toContain('News summary')
+    expect(coverageCard.textContent).toContain('Extracted news first')
+    expect(coverageCard.textContent).toContain('Extracted news second')
+    await items[3]!.trigger('click')
+    expect(coverageCard.textContent).toContain('Coordinate extraction')
+    expect(coverageCard.textContent).toContain(translate('jobUi.noSourceDetails'))
+    expect(coverageCard.textContent).not.toContain('Extracted news')
+    expect(coverageCard.textContent).not.toContain('News summary')
+  } finally { wrapper.unmount() }
+})
+
 it.each([
   { result: { summary: 'Completed report' }, expected: 'Completed report' },
   { result: { count: 2 }, expected: JSON.stringify({ count: 2 }, null, 2) },
@@ -49,9 +108,9 @@ it.each([
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    expect(wrapper.find('details').exists()).toBe(false)
     const heading = wrapper.findAll('h2').find(node => node.text() === translate('jobUi.result'))!
     const card = heading.element.parentElement!
+    expect(card.closest('details')).toBeNull()
     expect(card.parentElement).toBe(wrapper.element)
     expect(card.textContent).toContain(expected)
     const coverage = wrapper.findAll('h3').find(node => node.text() === translate('jobUi.sourceCoverage'))!
