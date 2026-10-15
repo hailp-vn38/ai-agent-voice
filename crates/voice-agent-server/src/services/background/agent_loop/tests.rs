@@ -391,6 +391,9 @@ fn finish_job_artifact_references_are_resolved_by_rust_only() {
     job.artifacts
         .push(crate::services::background::model::JobArtifactView {
             id: "owned-artifact".into(),
+            step_key: None,
+            filename: "owned-artifact".into(),
+            created_at: "1970-01-01T00:00:00Z".into(),
             media_type: "text/plain".into(),
             size_bytes: 5,
             sha256: "0123456789".into(),
