@@ -5,8 +5,10 @@ import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError } from '@/api/errors'
 import type { AdminJob, JobArtifact } from '@/api/types/agent-jobs'
 import { Button } from '@/components/ui/button'
+import { useI18n } from '@/composables/useI18n'
 import ArtifactPreviewDialog from './ArtifactPreviewDialog.vue'
 
+const { t } = useI18n()
 const props = defineProps<{ job: AdminJob }>()
 const selected = ref<JobArtifact | null>(null)
 const error = ref('')
@@ -50,7 +52,7 @@ async function download(item: JobArtifact) {
 </script>
 
 <template>
-  <div v-if="!job.artifacts.length" class="text-sm text-muted-foreground">No artifacts</div>
+  <div v-if="!job.artifacts.length" class="text-sm text-muted-foreground">{{ t('jobUi.noArtifacts') }}</div>
   <div v-else class="space-y-1">
     <div v-for="item in job.artifacts" :key="item.id" class="flex items-center justify-between gap-3 border-t py-3">
       <div class="flex min-w-0 items-center gap-3">
@@ -63,7 +65,7 @@ async function download(item: JobArtifact) {
       </div>
       <div class="flex shrink-0 gap-2">
         <Button variant="outline" size="sm" :disabled="downloading !== null" @click="download(item)">
-          <Download class="size-4" />Download
+          <Download class="size-4" />{{ t('jobUi.download') }}
         </Button>
         <Button v-if="canPreview(item)" variant="outline" size="sm" @click="selected = item"><Eye class="size-4" />Preview</Button>
       </div>
