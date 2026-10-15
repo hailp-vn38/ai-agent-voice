@@ -17,33 +17,71 @@ mod tests;
 
 /// One-time physical relocation, under the existing deployment lock and before reconciliation.
 pub(crate) async fn relocate(database: &Database) -> Result<(), JobError> {
-    let path = database.durable_path().ok_or(JobError::DatabaseUnavailable)?;
+    let path = database
+        .durable_path()
+        .ok_or(JobError::DatabaseUnavailable)?;
     let old = PathBuf::from(format!("{}.job-artifacts", path.display()));
     let new = root(database)?;
-    let old_exists = tokio::fs::try_exists(&old).await.map_err(|_| JobError::DatabaseUnavailable)?;
-    let new_exists = tokio::fs::try_exists(&new).await.map_err(|_| JobError::DatabaseUnavailable)?;
-    if !old_exists { return Ok(()); }
-    if !new_exists {
-        tokio::fs::rename(&old, &new).await.map_err(|_| JobError::DatabaseUnavailable)?;
-        sync_directory(new.parent().ok_or(JobError::DatabaseUnavailable)?.to_path_buf())
-            .await.map_err(|_| JobError::DatabaseUnavailable)?;
+    let old_exists = tokio::fs::try_exists(&old)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+    let new_exists = tokio::fs::try_exists(&new)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+    if !old_exists {
         return Ok(());
     }
-    let mut old_entries = tokio::fs::read_dir(&old).await.map_err(|_| JobError::DatabaseUnavailable)?;
-    let mut new_entries = tokio::fs::read_dir(&new).await.map_err(|_| JobError::DatabaseUnavailable)?;
-    let old_has_files = old_entries.next_entry().await.map_err(|_| JobError::DatabaseUnavailable)?.is_some();
-    let new_has_files = new_entries.next_entry().await.map_err(|_| JobError::DatabaseUnavailable)?.is_some();
+    if !new_exists {
+        tokio::fs::rename(&old, &new)
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        sync_directory(
+            new.parent()
+                .ok_or(JobError::DatabaseUnavailable)?
+                .to_path_buf(),
+        )
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+        return Ok(());
+    }
+    let mut old_entries = tokio::fs::read_dir(&old)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+    let mut new_entries = tokio::fs::read_dir(&new)
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
+    let old_has_files = old_entries
+        .next_entry()
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?
+        .is_some();
+    let new_has_files = new_entries
+        .next_entry()
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?
+        .is_some();
     if old_has_files && new_has_files {
         // Never merge two independent stores automatically.
         return Err(JobError::DatabaseUnavailable);
     }
     if old_has_files {
-        tokio::fs::remove_dir(&new).await.map_err(|_| JobError::DatabaseUnavailable)?;
-        tokio::fs::rename(&old, &new).await.map_err(|_| JobError::DatabaseUnavailable)?;
-        sync_directory(new.parent().ok_or(JobError::DatabaseUnavailable)?.to_path_buf())
-            .await.map_err(|_| JobError::DatabaseUnavailable)?;
+        tokio::fs::remove_dir(&new)
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        tokio::fs::rename(&old, &new)
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
+        sync_directory(
+            new.parent()
+                .ok_or(JobError::DatabaseUnavailable)?
+                .to_path_buf(),
+        )
+        .await
+        .map_err(|_| JobError::DatabaseUnavailable)?;
     } else {
-        tokio::fs::remove_dir(&old).await.map_err(|_| JobError::DatabaseUnavailable)?;
+        tokio::fs::remove_dir(&old)
+            .await
+            .map_err(|_| JobError::DatabaseUnavailable)?;
     }
     Ok(())
 }
