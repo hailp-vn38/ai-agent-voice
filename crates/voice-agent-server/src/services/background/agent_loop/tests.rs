@@ -228,6 +228,35 @@ fn url_summary_with_truncated_web_steps_is_not_verified_success() {
 }
 
 #[test]
+fn verified_article_with_unresolved_factual_question_still_satisfies_requirements() {
+    // The story says the organizing body has not decided whether the event
+    // will be postponed. That is a factual uncertainty, not unfinished work.
+    let mut job = news_summary_fixture(false);
+    job.agent_runs[0].result.as_mut().unwrap()["unresolved"] = json!([
+        "AFC chưa công bố quyết định chính thức về lịch tổ chức."
+    ]);
+    let (status, coverage) = super::results::verified_coverage(&job).unwrap();
+    assert_eq!(status, "succeeded");
+    assert_eq!(coverage["coverage_basis"], "goal_url_verified");
+    assert_eq!(coverage["source_complete"], true);
+    assert!(coverage["missing_sources"].as_array().unwrap().is_empty());
+    assert!(coverage["missing_capabilities"].as_array().unwrap().is_empty());
+    assert!(job.artifacts.is_empty());
+}
+
+#[test]
+fn unresolved_information_cannot_hide_incomplete_requested_url() {
+    let mut job = news_summary_fixture(true);
+    job.agent_runs[0].result.as_mut().unwrap()["unresolved"] = json!([
+        "AFC chưa công bố quyết định chính thức."
+    ]);
+    let (status, coverage) = super::results::verified_coverage(&job).unwrap();
+    assert_eq!(status, "failed");
+    assert_eq!(coverage["coverage_basis"], "goal_url_unverified");
+    assert_eq!(coverage["source_complete"], false);
+}
+
+#[test]
 fn verified_article_preserves_child_qualification_and_reports_source() {
     let job = news_summary_fixture(false);
     let (status,coverage)=super::results::verified_coverage(&job).unwrap();
