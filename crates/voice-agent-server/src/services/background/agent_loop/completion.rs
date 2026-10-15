@@ -40,7 +40,11 @@ pub(super) async fn finish_root(
             verified.insert(url);
         }
     }
-    let (mut status, coverage) =
+    // Completion status is owned by the evidence/requirement/Child gates.
+    // RootResult.unresolved describes open questions in the *source material*,
+    // not pending Agent work. Never fail a completed Job just for disclosing
+    // factual uncertainty (e.g. "AFC has not made an official decision").
+    let (status, coverage) =
         verified_coverage_with_sources(&current, verified.into_iter().collect())?;
     // A Job with an explicit single article URL cannot succeed on empty
     // required_sources merely because some partial HTML fragments were fetched.
@@ -94,13 +98,6 @@ pub(super) async fn finish_root(
             )
             .await?;
         return Ok(false);
-    }
-    if !result.unresolved.is_empty() && status == "succeeded" {
-        status = if current.request.allow_partial && !current.artifacts.is_empty() {
-            "partial_success"
-        } else {
-            "failed"
-        };
     }
     let preserved = grounded_single_child_summary(&current, &coverage);
     let summary_source = if preserved.is_some() { "verified_child" } else { "root" };
