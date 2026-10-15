@@ -27,10 +27,16 @@ pub(super) async fn run(
             _=engine.wake.notified()=>{},
             Some(result)=jobs.join_next()=>{if let Err(error)=result { tracing::warn!(event="background_task_failed",%error); }},
         }
-        if engine.models.is_some() {
+        {
             match engine.database.queued_jobs().await {
                 Ok(queued) => {
                     for job in queued {
+                        // Foundation test harnesses deliberately have no LLM runtime.
+                        // Only plugin-only Jobs can run without models; do not steal
+                        // historical Agent Jobs from their deterministic test setup.
+                        if job.execution_mode != "plugin_operation_v3" && engine.models.is_none() {
+                            continue;
+                        }
                         if jobs.len() >= engine.config.background.limits.max_active_jobs as usize {
                             break;
                         }
@@ -60,11 +66,16 @@ pub(super) async fn run(
                                     .lock()
                                     .expect("Job cancellations")
                                     .insert(job.id.clone(), cancellation.clone());
-                                jobs.spawn(super::orchestration::execute(
-                                    engine.clone(),
-                                    job.id,
-                                    cancellation,
-                                ));
+                                let plugin_only = job.execution_mode == "plugin_operation_v3";
+                                let engine = engine.clone();
+                                jobs.spawn(async move {
+                                    if plugin_only {
+                                        super::manual::execute(engine, job.id, cancellation).await;
+                                    } else {
+                                        super::orchestration::execute(engine, job.id, cancellation)
+                                            .await;
+                                    }
+                                });
                             }
                             Ok(false) => {}
                             Err(error) => tracing::warn!(code=%error,"Background claim failed"),
@@ -158,6 +169,15 @@ pub(super) async fn eligible(
 ) -> Result<(), JobError> {
     engine
         .database
-        .job_eligible(&engine.config, job, timestamp, engine.runtime_ready())
+        .job_eligible(
+            &engine.config,
+            job,
+            timestamp,
+            if job.execution_mode == "plugin_operation_v3" {
+                engine.running.load(Ordering::Acquire)
+            } else {
+                engine.runtime_ready()
+            },
+        )
         .await
 }

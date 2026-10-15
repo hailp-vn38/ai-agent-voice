@@ -97,8 +97,16 @@ impl JobEngine {
         self.database
             .validate_plugin_step_arguments(job_id, step_key, &arguments)
             .await?;
+        let settings = self
+            .plugins
+            .resolved_job_settings(job_id, choice)
+            .await
+            .map_err(JobError::from_plugin)?;
         let attempt = uuid::Uuid::new_v4().to_string();
-        let deadline_at = self.get(job_id).await?.deadline_at;
+        let job = self.get(job_id).await?;
+        let deadline_at = job.deadline_at;
+        let finish_step_job =
+            self.foundation_harness || job.execution_mode == "plugin_operation_v3";
         self.database
             .reserve_plugin_attempt(job_id, step_key, &attempt)
             .await?;
@@ -139,6 +147,7 @@ impl JobEngine {
                 .invoke(
                     Invocation {
                         inputs: serde_json::json!({}),
+                        settings,
                         choice,
                         arguments,
                         job_id,
@@ -229,7 +238,7 @@ impl JobEngine {
                             (
                                 self.config.background.limits.artifact_bytes_per_job,
                                 self.config.background.limits.artifact_global_bytes,
-                                self.foundation_harness,
+                                finish_step_job,
                             ),
                         )
                         .await
@@ -249,7 +258,7 @@ impl JobEngine {
                             &attempt,
                             error.code(),
                             false,
-                            self.foundation_harness,
+                            finish_step_job,
                         )
                         .await?;
                 }
@@ -297,7 +306,7 @@ impl JobEngine {
                                     | PluginError::WorkerUnreaped
                                     | PluginError::JobRejected(JobError::Cancelled)
                             ),
-                        self.foundation_harness,
+                        finish_step_job,
                     )
                     .await?;
                 health_result.map_err(|_| JobError::DatabaseUnavailable)?;

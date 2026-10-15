@@ -69,6 +69,7 @@ pub(crate) struct InvokeResult {
 #[allow(dead_code)]
 pub(crate) struct Invocation<'a> {
     pub inputs: serde_json::Value,
+    pub settings: Option<serde_json::Value>,
     pub choice: &'a FrozenChoice,
     pub arguments: serde_json::Value,
     pub job_id: &'a str,
@@ -94,6 +95,7 @@ impl PluginStore {
     {
         let Invocation {
             inputs,
+            settings,
             choice,
             arguments,
             job_id,
@@ -161,7 +163,13 @@ impl PluginStore {
             &manifest.runtime,
         )
         .await?;
-        let workspace = self.root.join("workspaces").join(job_id).join(attempt_id);
+        let workspace = self
+            .config
+            .plugin_attempts_dir
+            .clone()
+            .unwrap_or_else(|| self.root.join("workspaces"))
+            .join(job_id)
+            .join(attempt_id);
         let out = workspace.join("out");
         // Runner creates the attempt directory as its single-use execution marker.
         let prepared = runner::Prepared::create(
@@ -191,6 +199,9 @@ impl PluginStore {
                 "arguments":arguments,"artifact_dir":"/work/out"
             });
             if inputs.as_object().is_some_and(|inputs| !inputs.is_empty()) {envelope["inputs"]=inputs;}
+            if manifest.settings.is_some() {
+                envelope["settings"] = settings.unwrap_or_else(|| json!({}));
+            }
             let request = serde_json::to_vec(&envelope)
             .map_err(|_| PluginError::InvalidPackage)?;
             if request.len() > 65535 {

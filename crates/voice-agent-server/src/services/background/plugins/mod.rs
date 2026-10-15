@@ -8,6 +8,7 @@ pub mod qualification;
 mod reaper;
 #[allow(dead_code)]
 mod runner;
+mod settings;
 #[cfg(test)]
 mod tests;
 pub(crate) use contracts::{compile_child_tools, normalize_tool_arguments};
@@ -229,8 +230,10 @@ impl PluginStore {
             .map_err(|_| PluginError::SandboxUnavailable)?;
         builder::preflight(&self.config, &package.manifest.runtime).await?;
         let stage = self
-            .root
-            .join("staging")
+            .config
+            .plugin_staging_dir
+            .clone()
+            .unwrap_or_else(|| self.root.join("staging"))
             .join(uuid::Uuid::new_v4().to_string());
         tokio::fs::create_dir_all(&stage)
             .await
@@ -377,6 +380,7 @@ impl PluginStore {
         if checked.digest != row.package_digest || checked.manifest.plugin.id != row.plugin_id {
             return Err(PluginError::InvalidPackage);
         }
+        self.value_settings_activatable(id).await?;
         self.database
             .activate_plugin_installation(id, expected)
             .await?

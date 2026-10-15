@@ -3,6 +3,7 @@ import { Archive, ArrowRight, Boxes, LoaderCircle, PackagePlus, RefreshCw, Searc
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentPluginsApi } from '@/api/agent-plugins'
+import PluginManagePanel from '@/components/plugins/PluginManagePanel.vue'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { CorePluginView, InstalledPlugin, PluginStatus } from '@/api/types/agent-jobs'
 import PageHeader from '@/components/admin/PageHeader.vue'
@@ -20,6 +21,9 @@ const coreItems = ref<CorePluginView[]>([])
 const coreLoading = ref(true)
 const coreError = ref('')
 const coreBusy = ref<string | null>(null)
+const coreManageOpen = ref(false)
+const coreManageItem = ref<CorePluginView | null>(null)
+const coreManageMode = ref<'settings' | 'functions' | 'runs'>('functions')
 let coreController: AbortController | undefined
 const search = ref('')
 const filter = ref<'all' | PluginStatus>('all')
@@ -114,6 +118,11 @@ async function setCoreEnabled(plugin: CorePluginView) {
   } finally {
     coreBusy.value = null
   }
+}
+function manageCore(plugin: CorePluginView, mode: 'settings' | 'functions' | 'runs') {
+  coreManageItem.value = plugin
+  coreManageMode.value = mode
+  coreManageOpen.value = true
 }
 function refresh() { void load(); void loadCore() }
 function openDetail(id: string) {
@@ -246,7 +255,12 @@ onBeforeUnmount(() => { controller?.abort(); coreController?.abort() })
                 <p class="mt-2 line-clamp-2 text-xs text-muted-foreground">{{ plugin.operations.map(op => op.name).join(' · ') }}</p>
               </div>
               <div class="mt-auto flex items-center justify-between gap-2 border-t pt-3">
-                <span class="text-xs text-muted-foreground">{{ plugin.operations.length }} ops</span>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-xs text-muted-foreground">{{ plugin.operations.length }} ops</span>
+                  <Button size="sm" variant="outline" @click="manageCore(plugin, 'settings')">Settings</Button>
+                  <Button size="sm" variant="outline" :disabled="!plugin.enabled" @click="manageCore(plugin, 'functions')">Functions</Button>
+                  <Button size="sm" variant="outline" @click="manageCore(plugin, 'runs')">Runs</Button>
+                </div>
                 <Button size="sm" variant="outline" :aria-label="(plugin.enabled ? t('jobUi.coreDisable') : t('jobUi.coreEnable')) + ' ' + plugin.name"
                   :disabled="coreBusy !== null" @click="setCoreEnabled(plugin)">
                   {{ coreBusy === plugin.id ? t('jobUi.coreSaving') : plugin.enabled ? t('jobUi.coreDisable') : t('jobUi.coreEnable') }}
@@ -284,6 +298,12 @@ onBeforeUnmount(() => { controller?.abort(); coreController?.abort() })
       </TabsContent>
     </Tabs>
 
+    <BaseModal v-model="coreManageOpen" :title="coreManageItem?.name || 'Core Plugin'">
+      <PluginManagePanel v-if="coreManageItem" :key="coreManageItem.id + coreManageMode"
+        :plugin-key="coreManageItem.id"
+        :operations="coreManageItem.operations.map(operation => operation.name)"
+        :enabled="coreManageItem.enabled" :mode="coreManageMode" />
+    </BaseModal>
     <BaseModal v-model="installOpen" :title="t('jobUi.installZip')" :description="t('jobUi.installHint')" :close-disabled="busy">
       <div class="space-y-4" :aria-busy="busy">
         <div class="rounded-lg border border-dashed p-6 text-center transition-colors"

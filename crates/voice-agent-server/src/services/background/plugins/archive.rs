@@ -19,7 +19,15 @@ pub struct Manifest {
     pub runtime: Runtime,
     pub agent: Agent,
     pub operations: BTreeMap<String, Operation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<SettingsDescriptor>,
 }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsDescriptor {
+    pub schema: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginIdentity {
@@ -154,6 +162,8 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
     .map_err(|_| PluginError::InvalidPackage)?;
     if manifest.manifest_version != 2
         || !token(&manifest.plugin.id, 64)
+        || manifest.plugin.id == "core"
+        || manifest.plugin.id.starts_with("core.")
         || !token(&manifest.plugin.version, 64)
         || manifest.plugin.name.is_empty()
         || manifest.plugin.name.len() > 128
@@ -282,6 +292,95 @@ pub fn validate(bytes: &[u8]) -> Result<Package, PluginError> {
             if !schema.is_object() {
                 return Err(PluginError::InvalidPackage);
             }
+        }
+    }
+    if let Some(settings) = &manifest.settings {
+        if !relative(&settings.schema) {
+            return Err(PluginError::InvalidPackage);
+        }
+        let bytes = required(&files, &settings.schema)?;
+        if bytes.len() > 16 * 1024 {
+            return Err(PluginError::InvalidPackage);
+        }
+        let schema: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| PluginError::InvalidPackage)?;
+        // Settings V1 deliberately supports only flat scalar fields. An
+        // allowlist rejects hidden remote refs inside allOf/oneOf/definitions
+        // before the JSON Schema compiler can resolve anything.
+        const ROOT_FIELDS: &[&str] = &[
+            "type",
+            "properties",
+            "required",
+            "additionalProperties",
+            "description",
+            "title",
+        ];
+        const SCALAR_FIELDS: &[&str] = &[
+            "type",
+            "description",
+            "title",
+            "default",
+            "enum",
+            "x-secret",
+            "minLength",
+            "maxLength",
+            "minimum",
+            "maximum",
+        ];
+        let valid_root = schema.as_object().is_some_and(|root| {
+            root.keys()
+                .all(|field| ROOT_FIELDS.contains(&field.as_str()))
+        });
+        let valid_required = schema.get("required").is_none_or(|values| {
+            values.as_array().is_some_and(|values| {
+                values.len() <= 32
+                    && values.iter().all(|value| {
+                        value
+                            .as_str()
+                            .is_some_and(|name| schema["properties"].get(name).is_some())
+                    })
+            })
+        });
+        // Settings V1 deliberately supports only flat, local, scalar fields.
+        if !valid_root
+            || !valid_required
+            || schema["type"] != "object"
+            || schema["additionalProperties"] != false
+            || schema.get("$ref").is_some()
+            || schema["properties"].as_object().is_none()
+            || schema["properties"].as_object().is_some_and(|props| {
+                props.len() > 32
+                    || props.iter().any(|(name, field)| {
+                        !token(name, 64)
+                            || field.as_object().is_none_or(|fields| {
+                                fields
+                                    .keys()
+                                    .any(|key| !SCALAR_FIELDS.contains(&key.as_str()))
+                            })
+                            || field.get("enum").is_some_and(|values| {
+                                !values.as_array().is_some_and(|values| {
+                                    values.len() <= 32
+                                        && values.iter().all(|value| {
+                                            value.is_string()
+                                                || value.is_boolean()
+                                                || value.is_number()
+                                        })
+                                })
+                            })
+                            || !matches!(
+                                field["type"].as_str(),
+                                Some("string" | "integer" | "number" | "boolean")
+                            )
+                            || field.get("$ref").is_some()
+                            || field.get("properties").is_some()
+                            || field.get("items").is_some()
+                            || (field.get("x-secret").is_some()
+                                && (field["x-secret"] != true || field["type"] != "string"))
+                    })
+            })
+            || jsonschema::validator_for(&schema).is_err()
+        {
+            return Err(PluginError::InvalidPackage);
         }
     }
     let digest = Sha256::digest(bytes)

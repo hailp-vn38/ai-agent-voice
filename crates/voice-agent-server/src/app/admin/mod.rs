@@ -35,6 +35,19 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/plugins", get(plugins::list))
         .route("/plugins/builtin", get(plugins::builtin_catalog))
         .route(
+            "/plugins/{id}/settings",
+            get(plugins::value_settings).put(plugins::save_value_settings),
+        )
+        .route("/plugins/{id}/runs", get(plugins::list_operation_runs))
+        .route(
+            "/plugins/{id}/operations/{operation}",
+            get(plugins::operation_detail),
+        )
+        .route(
+            "/plugins/{id}/operations/{operation}/runs",
+            axum::routing::post(plugins::run_operation),
+        )
+        .route(
             "/plugins/builtin/{id}",
             axum::routing::patch(plugins::builtin_set_enabled),
         )

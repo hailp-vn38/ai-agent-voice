@@ -4,6 +4,8 @@ mod artifacts;
 mod coverage;
 pub(crate) mod engine;
 mod execution;
+mod manual;
+mod manual_admission;
 pub(crate) mod model;
 mod models;
 mod orchestration;

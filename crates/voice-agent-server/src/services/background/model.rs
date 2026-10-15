@@ -101,7 +101,7 @@ pub struct ProviderOption {
     pub name: String,
     pub source: &'static str,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderPin {
     pub reference: String,
     pub incarnation: i64,
@@ -110,9 +110,31 @@ pub struct ProviderPin {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JobSnapshot {
+    // Historical Agent snapshots remain byte-compatible: the mode tag and
+    // omitted provider pins exist only on no-LLM plugin_operation_v3 Jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "empty_provider_pin")]
     pub orchestrator: ProviderPin,
+    #[serde(default, skip_serializing_if = "empty_provider_pin")]
     pub worker: ProviderPin,
     pub limits: BackgroundLimits,
+}
+fn empty_provider_pin(pin: &ProviderPin) -> bool {
+    pin.reference.is_empty() && pin.incarnation == 0 && pin.revision == 0 && pin.digest.is_empty()
+}
+impl JobSnapshot {
+    pub(crate) fn plugin_operation(limits: BackgroundLimits) -> Self {
+        Self {
+            mode: Some("plugin_operation_v3".into()),
+            orchestrator: ProviderPin::default(),
+            worker: ProviderPin::default(),
+            limits,
+        }
+    }
+    pub(crate) fn is_plugin_operation(&self) -> bool {
+        self.mode.as_deref() == Some("plugin_operation_v3")
+    }
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct JobView {
@@ -206,6 +228,7 @@ pub enum JobError {
     QueueFull,
     CapabilityUnavailable,
     CorePluginDisabled,
+    UnsupportedInputBinding,
     IdempotencyConflict,
     RevisionConflict,
     DeleteConflict,
@@ -240,6 +263,7 @@ impl JobError {
             Self::QueueFull => "queue_full",
             Self::CapabilityUnavailable => "capability_unavailable",
             Self::CorePluginDisabled => "core_plugin_disabled",
+            Self::UnsupportedInputBinding => "unsupported_input_binding",
             Self::IdempotencyConflict => "idempotency_conflict",
             Self::RevisionConflict => "revision_conflict",
             Self::DeleteConflict => "job_delete_conflict",

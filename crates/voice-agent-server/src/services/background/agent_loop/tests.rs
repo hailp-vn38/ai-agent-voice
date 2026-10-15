@@ -196,6 +196,7 @@ fn news_summary_fixture(truncated: bool) -> crate::services::background::JobView
         agent_runs: vec![child],
         requester_scope: "admin:deployment".into(),
         snapshot: JobSnapshot {
+            mode: None,
             orchestrator: pin.clone(),
             worker: pin,
             limits: crate::services::background::tests::config()

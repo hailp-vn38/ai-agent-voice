@@ -131,7 +131,7 @@ impl Database {
                     .await?;
             let rejected = if row.deadline_at <= now {
                 Some(JobError::DeadlineExceeded)
-            } else if enabled != 1 {
+            } else if row.execution_mode != "plugin_operation_v3" && enabled != 1 {
                 Some(JobError::Disabled)
             } else {
                 authorize(&mut tx, &row.requester()?).await.err()
@@ -143,16 +143,18 @@ impl Database {
             if matches!(status, "succeeded" | "partial_success") {
                 let pins: JobSnapshot = serde_json::from_str(&row.snapshot_json)
                     .map_err(|_| JobError::DatabaseUnavailable)?;
-                for old in [&pins.orchestrator, &pins.worker] {
-                    match providers::pin(&mut tx, config, &old.reference).await {
-                        Ok(pin) if &pin == old => {}
-                        Ok(_) => {
-                            status = "failed";
-                            error = Some("configuration_changed");
-                        }
-                        Err(reason) => {
-                            status = "failed";
-                            error = Some(reason.code());
+                if row.execution_mode != "plugin_operation_v3" {
+                    for old in [&pins.orchestrator, &pins.worker] {
+                        match providers::pin(&mut tx, config, &old.reference).await {
+                            Ok(pin) if &pin == old => {}
+                            Ok(_) => {
+                                status = "failed";
+                                error = Some("configuration_changed");
+                            }
+                            Err(reason) => {
+                                status = "failed";
+                                error = Some(reason.code());
+                            }
                         }
                     }
                 }

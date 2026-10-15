@@ -1,0 +1,186 @@
+{
+  "result": "PASS",
+  "from_version": 119,
+  "to_version": 121,
+  "existing_tables_preserved": 44,
+  "tables": {
+    "admin_audit_events": {
+      "rows": 116,
+      "sha256": "16ad581150ee552dc79afeeee9eaec826484864a5719967043e595e33d4df16e"
+    },
+    "agent_external_tool_allowlist": {
+      "rows": 6,
+      "sha256": "d37c238a6c6b01e28335d3bc27f6d605c8ab8c13590de45c33c484c4575540f3"
+    },
+    "agent_mcp_bindings": {
+      "rows": 2,
+      "sha256": "86ae4c233848a2988e7a1118b64a4cb4866904c3bcc97c985ac20b2d5f42ecda"
+    },
+    "agent_speaker_candidates": {
+      "rows": 2,
+      "sha256": "103db96a66c20aa73e454ac1e33a1f6797fac0cff71b87824d9f12d7fa017daa"
+    },
+    "agent_speaker_policies": {
+      "rows": 2,
+      "sha256": "c378f4548cde7d5561329b4b198dcb164777f49d23c560184f0c5ff4f171bb65"
+    },
+    "agent_speaker_template_grants": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "agent_template_assignments": {
+      "rows": 2,
+      "sha256": "1176dedd36a2fd4517a4eebef5f2d6531c93d8fa1983e6f3378b25a04415c8a3"
+    },
+    "agent_templates": {
+      "rows": 3,
+      "sha256": "6d70c8f6e2ae27aef2c38f75ce6db23bfcb5b74e36f491e8d37c0011c8694bfa"
+    },
+    "agents": {
+      "rows": 3,
+      "sha256": "8896fbce25f5dc20c77d11b41ec255cb7f32a96c843449fe77e1e3072147cc0a"
+    },
+    "background_settings": {
+      "rows": 1,
+      "sha256": "b07d96cd991389b3fa99ef7866ef2b301fbc2e226137ebdc070f26d21acd9a48"
+    },
+    "core_plugin_settings": {
+      "rows": 4,
+      "sha256": "56fdb075c1294542c07e5c0d3a3ba51d00153e90805ad5660154e60a371a99ac"
+    },
+    "device_enrollments": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "device_reminder_cached_items": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "device_reminder_sync": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "device_reminders": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "devices": {
+      "rows": 2,
+      "sha256": "be68818502baf6ec77cebc12d502f9caeaf7569e24e9fffe664578fdbcea29ff"
+    },
+    "external_tool_observations": {
+      "rows": 3,
+      "sha256": "bb9d3043de9e946031591d7cb9d4dbb3fca5c5ab77170431d0f257ec31ad33ba"
+    },
+    "history_messages": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "job_agent_messages": {
+      "rows": 74,
+      "sha256": "feb7f930dd2225ce725a7ebafe57dc2c163414e8126874e0398fa17464885bba"
+    },
+    "job_agent_runs": {
+      "rows": 12,
+      "sha256": "22a7f2ec0808762c22b0d5de8dcbb6e0f60a74582a6a3dfa002ba7b6e5f46b3a"
+    },
+    "job_agent_sessions": {
+      "rows": 12,
+      "sha256": "e5982d848534d0c6fd32e4f7dfc47e6f171c555ba37c06a04db1d851f6af3717"
+    },
+    "job_artifacts": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "job_events": {
+      "rows": 188,
+      "sha256": "0914510b660e53c96a79b5ca3ad0ee7034ea7350840631f89e1a15de80092c58"
+    },
+    "job_steps": {
+      "rows": 6,
+      "sha256": "417754116ff133a8623f16ebd9fee73f7f143c866e9d6f288f73740d6892fc9e"
+    },
+    "jobs": {
+      "rows": 6,
+      "sha256": "d4a32a34a3123517a1c89cb5262d34ce54cfb595b9557a8ca907a78705352bd9"
+    },
+    "legacy_background_settings": {
+      "rows": 1,
+      "sha256": "791fed93926e89ff0eba61e0bac87f813534248f08883c5f4369758622cb158c"
+    },
+    "legacy_plugin_installations": {
+      "rows": 1,
+      "sha256": "334b737ebd8fb9596cdb2729e84274184ef6c617480b0eefc7b5daf14bc11a7c"
+    },
+    "legacy_sqlx_migrations": {
+      "rows": 4,
+      "sha256": "22e2c1ba49e8d473dfc860b4d0228d4ce5f7ff40be97cea61fd68794ab2563b7"
+    },
+    "mcp_servers": {
+      "rows": 1,
+      "sha256": "ddced3226a4fef8e3f72625e2d269ca50052ad82d0d80b2be40db307a82eeb8d"
+    },
+    "plugin_installations": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "providers": {
+      "rows": 5,
+      "sha256": "312a90bedee969f78ef3acaacff220faffcd9d0ff4338c9a539cf57802bc8fae"
+    },
+    "reminder_delivery_attempts": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "reminder_mutation_keys": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "speaker_calibration_catalog": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "speaker_calibration_evidence": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "speaker_catalog": {
+      "rows": 1,
+      "sha256": "f15fbf2dd5945e9478eeb396a23470c6155366057aefbda911069fe986fa4a43"
+    },
+    "speaker_enrollment_drafts": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "speaker_enrollment_samples": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "speaker_quick_captures": {
+      "rows": 2,
+      "sha256": "41dd5106e315209493846ba02d1313d9956a80c3d17ba8c9b04d1a57caa43a89"
+    },
+    "speaker_voiceprints": {
+      "rows": 1,
+      "sha256": "d92e043f2a3290083db3a22a76478caf2c973fcf823c639beb246daca8284ad6"
+    },
+    "speakers": {
+      "rows": 1,
+      "sha256": "e4ca987c7f1803e41153da97ef2aba06147fc09ce93147777ae7898d9479ca48"
+    },
+    "system_mcp_grants": {
+      "rows": 1,
+      "sha256": "7922e4addfec4a328abcc3590e0370780dc18ea00d7c4bed2e91a35d521a7f9c"
+    },
+    "system_mcp_token_revocations": {
+      "rows": 0,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "template_provider_bindings": {
+      "rows": 11,
+      "sha256": "067ffb6e43c9ac11ae9e2f4d7b08aa5558d51e27cf90bd1e1ca0a93c10f51086"
+    }
+  },
+  "foreign_keys": "PASS",
+  "integrity": "PASS"
+}

@@ -250,3 +250,29 @@ _Avoid_: Job Artifact
 **Display Filename**:
 Tên tệp hiển thị cho người dùng của Job Artifact, không phải định danh hay khóa sở hữu.
 _Avoid_: Artifact ID, đường dẫn lưu trữ
+
+## Plugin Value Settings and Manual Operation Jobs
+
+**Plugin Key**:
+Định danh ổn định để Admin quản lý một Core Plugin group hoặc External Plugin installation; khác frozen plugin ID dùng để thực thi Core Operation.
+_Avoid_: Frozen Operation Choice, installation digest, Device Tool ID
+
+**Plugin Value Settings**:
+Các giá trị cấu hình được Admin cấp cho một Plugin và được kiểm tra theo Settings Schema, độc lập trạng thái bật/tắt hoặc installation lifecycle.
+_Avoid_: Plugin Activation, Agent Job Settings, Tool Arguments
+
+**Plugin Config Revision**:
+Một phiên bản bất biến của Plugin Value Settings mà Job có thể tham chiếu để giữ đúng cấu hình được chấp nhận tại admission.
+_Avoid_: Core activation revision, package version, live config pointer
+
+**Plugin Config Pin**:
+Quyền tham chiếu của một Job tới một Plugin Config Revision cụ thể; không cho phép lấy ngầm cấu hình mới hoặc secrets mới sau admission.
+_Avoid_: Provider Pin, live Settings, credential reference
+
+**Plugin Operation Job**:
+Job được Admin yêu cầu để chạy chính xác một Plugin Operation đã công bố mà không cần Root/Sub-Agent, Agent Session hoặc LLM.
+_Avoid_: Agent Job, subagent call, Plugin Runtime Check
+
+**Operation Contract**:
+Mô tả được Plugin công bố cho một operation gồm tên, đầu vào và đầu ra hợp lệ; là căn cứ Rust xác thực trước khi gọi thực thi.
+_Avoid_: arbitrary function, LLM-generated tool implementation

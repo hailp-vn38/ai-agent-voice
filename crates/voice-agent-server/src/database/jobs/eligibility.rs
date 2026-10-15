@@ -20,7 +20,8 @@ impl Database {
             sqlx::query_scalar("SELECT enabled FROM background_settings WHERE singleton=1")
                 .fetch_one(&mut *tx)
                 .await?;
-        if enabled != 1 {
+        // Admin plugin-only jobs do not consume Agent Background enablement.
+        if job.execution_mode != "plugin_operation_v3" && enabled != 1 {
             return Err(JobError::Disabled);
         }
         let unreaped: i64 = sqlx::query_scalar(
@@ -31,9 +32,18 @@ impl Database {
         }
         let snapshot: JobSnapshot =
             serde_json::from_str(&job.snapshot_json).map_err(|_| JobError::ConfigurationChanged)?;
-        for expected in [&snapshot.orchestrator, &snapshot.worker] {
-            if &providers::pin(&mut tx, config, &expected.reference).await? != expected {
+        if job.execution_mode == "plugin_operation_v3" {
+            if !snapshot.is_plugin_operation() {
                 return Err(JobError::ConfigurationChanged);
+            }
+        } else {
+            if snapshot.is_plugin_operation() {
+                return Err(JobError::ConfigurationChanged);
+            }
+            for expected in [&snapshot.orchestrator, &snapshot.worker] {
+                if &providers::pin(&mut tx, config, &expected.reference).await? != expected {
+                    return Err(JobError::ConfigurationChanged);
+                }
             }
         }
         let choices: Vec<serde_json::Value> = serde_json::from_str(&job.plugin_choices_json)

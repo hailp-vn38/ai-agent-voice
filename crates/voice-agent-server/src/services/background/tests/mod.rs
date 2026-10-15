@@ -9,6 +9,7 @@ mod deletion;
 mod execution;
 mod http;
 mod locking;
+mod manual;
 mod native;
 mod orchestration;
 mod providers;

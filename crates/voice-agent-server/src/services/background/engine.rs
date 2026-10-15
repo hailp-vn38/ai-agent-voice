@@ -6,6 +6,8 @@ use std::sync::{
 };
 use tokio::sync::Notify;
 
+pub use super::manual_admission::ArtifactInputBinding;
+
 pub struct JobEngine {
     pub plugins: super::plugins::PluginStore,
     pub(crate) submission_gate: tokio::sync::RwLock<()>,
@@ -154,6 +156,10 @@ impl JobEngine {
             return Err(JobError::InvalidArguments);
         }
         let old = self.get(id).await?;
+        if old.execution_mode == "plugin_operation_v3" {
+            // "Run again" is a fresh admission, never an implicit Agent retry.
+            return Err(JobError::InvalidArguments);
+        }
         if !matches!(old.status.as_str(), "failed" | "cancelled") {
             return Err(JobError::Terminal);
         }

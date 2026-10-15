@@ -159,6 +159,7 @@ impl Database {
             .ok_or(JobError::ClockUnavailable)?;
         let id = uuid::Uuid::new_v4().to_string();
         let snapshot = JobSnapshot {
+            mode: None,
             orchestrator,
             worker,
             limits: config.background.limits.clone(),
@@ -166,8 +167,38 @@ impl Database {
         let (device, agent) = requester.incarnations();
         sqlx::query("INSERT INTO jobs(id,requester_scope,device_incarnation,agent_incarnation,request_json,request_fingerprint,snapshot_json,plugin_choices_json,settings_revision,budget_limit_json,execution_mode,status,deadline_at,idempotency_key,retry_of_job_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued',?,?,?,?,?)")
             .bind(&id).bind(scope).bind(device).bind(agent).bind(request_json).bind(fingerprint).bind(encode(&snapshot)?)
-            .bind(plugin_choices)
+            .bind(&plugin_choices)
             .bind(revision).bind(encode(&snapshot.limits)?).bind(execution_mode).bind(deadline).bind(key).bind(retry_of).bind(now).bind(now).execute(&mut *tx).await?;
+        // Pin only configured value-setting versions. A missing pin means the
+        // legacy empty-settings behavior, never current live secrets.
+        let choices: Vec<serde_json::Value> =
+            serde_json::from_str(&plugin_choices).map_err(|_| JobError::DatabaseUnavailable)?;
+        let mut keys = std::collections::BTreeSet::new();
+        for choice in &choices {
+            let plugin_key = if choice["kind"] == "core" {
+                crate::tools::core::group_for(
+                    choice["operation"]
+                        .as_str()
+                        .ok_or(JobError::CapabilityUnavailable)?,
+                )
+                .ok_or(JobError::CapabilityUnavailable)?
+            } else {
+                choice["plugin_id"]
+                    .as_str()
+                    .ok_or(JobError::CapabilityUnavailable)?
+            };
+            keys.insert(plugin_key.to_owned());
+        }
+        for key in keys {
+            sqlx::query(
+                "INSERT INTO job_plugin_config_pins(job_id,plugin_key,revision)
+                SELECT ?,plugin_key,current_revision FROM plugin_configs WHERE plugin_key=?",
+            )
+            .bind(&id)
+            .bind(&key)
+            .execute(&mut *tx)
+            .await?;
+        }
         let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
             .bind(&id)
             .fetch_one(&mut *tx)

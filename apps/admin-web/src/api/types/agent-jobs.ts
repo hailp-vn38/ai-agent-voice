@@ -55,6 +55,49 @@ export interface CorePluginPage {
   operation_total: number
 }
 
+/** Value-settings revisions are independent of activation/installation CAS. */
+export interface PluginValueSettings {
+  plugin_key: string
+  revision: number
+  values: Record<string, string | number | boolean>
+  secret_set: Record<string, boolean>
+  schema: {
+    type: 'object'
+    properties: Record<string, { type: 'string' | 'integer' | 'number' | 'boolean'; 'x-secret'?: boolean; description?: string }>
+    required?: string[]
+  }
+  schema_digest: string
+  package_digest: string | null
+  needs_reconfiguration: boolean
+}
+export interface PluginOperationContract {
+  description?: string
+  instructions?: string
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+}
+export interface PluginArtifactBinding {
+  argument_pointer: string
+  source_job_id: string
+  source_artifact_id: string
+}
+export interface PluginRunsPage {
+  items: Array<{
+    id: string
+    status: string
+    created_at: string
+    execution_mode: 'plugin_operation_v3'
+  }>
+  total: number
+  page: number
+  page_size: number
+}
+export interface PluginOperationRun {
+  job_id: string
+  status: 'queued'
+  execution_mode: 'plugin_operation_v3'
+}
+
 export interface PluginTestResult {
   ok: boolean
   message?: string
@@ -120,7 +163,7 @@ export interface JobArtifact {
   created_at: string
 }
 export interface AdminJob {
-  execution_mode?: 'dag_v1' | 'hierarchical_v2' | 'hierarchical_v3'
+  execution_mode?: 'dag_v1' | 'hierarchical_v2' | 'hierarchical_v3' | 'plugin_operation_v3'
   agent_runs?: AgentRunView[]
   coverage?: CoverageView | null
   id: string

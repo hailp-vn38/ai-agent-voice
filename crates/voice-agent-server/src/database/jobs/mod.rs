@@ -15,6 +15,8 @@ pub(crate) use sessions::SessionTask;
 // P3 scheduler will consume these durable dispatch transitions.
 mod agent_runs;
 mod eligibility;
+mod manual;
+pub(crate) use manual::ImportedArtifact;
 mod events;
 #[allow(dead_code)]
 mod execution;

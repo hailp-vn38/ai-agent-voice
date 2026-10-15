@@ -125,7 +125,7 @@ impl Database {
             sqlx::query_scalar("SELECT enabled FROM background_settings WHERE singleton=1")
                 .fetch_one(&mut *tx)
                 .await?;
-        if enabled != 1 {
+        if job.execution_mode != "plugin_operation_v3" && enabled != 1 {
             return Err(JobError::Disabled);
         }
         if crate::tools::core::is_core(choice) {

@@ -87,6 +87,193 @@ pub(super) async fn builtin_set_enabled(
     }
 }
 
+/// Value-setting revision is intentionally independent of activation CAS.
+fn config_if_match(headers: &axum::http::HeaderMap) -> Result<i64, &'static str> {
+    headers
+        .get(axum::http::header::IF_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix('"'))
+        .and_then(|value| value.strip_suffix('"'))
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|revision| *revision >= 0)
+        .ok_or("invalid_if_match")
+}
+
+pub(super) async fn value_settings(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let Some(store) = store(&state) else {
+        return unavailable();
+    };
+    match store.value_settings_view(&id).await {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => failure(error),
+    }
+}
+
+pub(super) async fn save_value_settings(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    let revision = match config_if_match(request.headers()) {
+        Ok(value) => value,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        values: serde_json::Value,
+    }
+    let (request, input): (_, Input) = match json(request).await {
+        Ok(parsed) => parsed,
+        Err(error) => return error,
+    };
+    let Some(store) = store(&state) else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "sandbox_unavailable",
+        );
+    };
+    match store.save_value_settings(&id, revision, input.values).await {
+        Ok(view) => Json(view).into_response(),
+        Err(crate::services::background::plugins::PluginError::RevisionConflict) => {
+            error(&request, StatusCode::CONFLICT, "revision_conflict")
+        }
+        Err(cause) => failure(cause),
+    }
+}
+
+pub(super) async fn operation_detail(
+    State(state): State<AppState>,
+    Path((id, operation)): Path<(String, String)>,
+) -> Response {
+    let Some(store) = store(&state) else {
+        return unavailable();
+    };
+    match store.operation_descriptor(&id, &operation).await {
+        Ok(contract) => Json(contract).into_response(),
+        Err(error) => failure(error),
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct RunsQuery {
+    page: Option<u32>,
+    page_size: Option<u32>,
+    operation: Option<String>,
+}
+pub(super) async fn list_operation_runs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<RunsQuery>,
+    request: Request,
+) -> Response {
+    let Some(runtime) = &state.background else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runtime_unavailable",
+        );
+    };
+    let page = query.page.unwrap_or(1);
+    let size = query.page_size.unwrap_or(30);
+    match runtime
+        .engine
+        .database
+        .list_plugin_runs(&id, query.operation.as_deref(), page, size)
+        .await
+    {
+        Ok((items, total)) => Json(serde_json::json!({
+            "items":items, "total":total, "page":page, "page_size":size
+        }))
+        .into_response(),
+        Err(cause) => {
+            use crate::services::background::JobError;
+            let code = if cause == JobError::InvalidArguments {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            };
+            error(&request, code, cause.code())
+        }
+    }
+}
+
+pub(super) async fn run_operation(
+    State(state): State<AppState>,
+    Path((id, operation)): Path<(String, String)>,
+    request: Request,
+) -> Response {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RunInput {
+        arguments: serde_json::Value,
+        #[serde(default)]
+        artifact_bindings: Vec<crate::services::background::engine::ArtifactInputBinding>,
+    }
+    let idempotency_key = match request.headers().get("Idempotency-Key") {
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value.to_owned()),
+            Err(_) => return error(&request, StatusCode::BAD_REQUEST, "invalid_arguments"),
+        },
+        None => None,
+    };
+    let (request, input): (_, RunInput) = match json(request).await {
+        Ok(parsed) => parsed,
+        Err(response) => return response,
+    };
+    let Some(runtime) = &state.background else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runtime_unavailable",
+        );
+    };
+    match runtime
+        .engine
+        .submit_plugin_operation_with_bindings(
+            &id,
+            &operation,
+            input.arguments,
+            input.artifact_bindings,
+            idempotency_key.as_deref(),
+        )
+        .await
+    {
+        Ok(receipt) => (
+            if receipt.replayed {
+                StatusCode::OK
+            } else {
+                StatusCode::ACCEPTED
+            },
+            Json(serde_json::json!({
+                "job_id":receipt.job.id,"status":receipt.job.status,
+                "execution_mode":"plugin_operation_v3","replayed":receipt.replayed
+            })),
+        )
+            .into_response(),
+        Err(cause) => {
+            use crate::services::background::JobError;
+            let status = match cause {
+                JobError::InvalidArguments | JobError::UnsupportedInputBinding => {
+                    StatusCode::BAD_REQUEST
+                }
+                JobError::NotFound => StatusCode::NOT_FOUND,
+                JobError::RevisionConflict
+                | JobError::IdempotencyConflict
+                | JobError::CapabilityUnavailable
+                | JobError::CorePluginDisabled => StatusCode::CONFLICT,
+                JobError::QueueFull => StatusCode::TOO_MANY_REQUESTS,
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            error(&request, status, cause.code())
+        }
+    }
+}
+
 fn store(state: &AppState) -> Option<&PluginStore> {
     state
         .background

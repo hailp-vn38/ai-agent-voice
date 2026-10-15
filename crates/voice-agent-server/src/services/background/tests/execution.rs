@@ -191,6 +191,33 @@ async fn fixture_python_runs_through_job_step_and_checked_artifact() {
         .activate(&installed.id, installed.revision)
         .await
         .unwrap();
+    assert!(!runtime.engine.settings().await.unwrap().settings.enabled);
+    let manual = runtime
+        .engine
+        .submit_plugin_operation(
+            "fixture-research",
+            "collect_topic",
+            json!({"topic":"AI", "limit":2}),
+        )
+        .await
+        .unwrap();
+    let completed = wait_for(&runtime.engine, &manual.job.id, |job| {
+        matches!(job.status.as_str(), "succeeded" | "failed" | "cancelled")
+    })
+    .await;
+    assert_eq!(completed.status, "succeeded", "{:?}", completed.error_code);
+    assert_eq!(completed.execution_mode, "plugin_operation_v3");
+    assert!(completed.agent_runs.is_empty());
+    assert_eq!(completed.artifacts.len(), 2);
+    for artifact in &completed.artifacts {
+        let bytes = runtime
+            .engine
+            .read_artifact(&completed.id, &artifact.id)
+            .await
+            .unwrap();
+        assert_eq!(bytes.len(), artifact.size_bytes as usize);
+        assert!(!bytes.is_empty());
+    }
     enable(&runtime.engine).await;
     let mut input = request("Research fixture AI posts");
     input.required_capabilities = vec!["fixture.collect".into()];

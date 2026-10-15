@@ -18,9 +18,18 @@ fn arg_string<'a>(req: &'a Request, key: &str) -> Result<&'a str, Failure> {
         ))
 }
 fn optional_limits(req: &Request) -> Result<(usize, usize), Failure> {
+    // Plugin-level settings are deployment defaults. Operation arguments may
+    // override them within the original bounded input contract.
+    let settings = req.settings.as_ref();
+    let default_chars = settings.and_then(|v| v.get("default_max_chars"))
+        .and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok())
+        .filter(|v| (1..=20_000).contains(v)).unwrap_or(12_000);
+    let default_links = settings.and_then(|v| v.get("default_max_links"))
+        .and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok())
+        .filter(|v| (1..=100).contains(v)).unwrap_or(30);
     Ok((
-        positive_limit(req.arguments.get("max_chars"), 12000, 20000)?,
-        positive_limit(req.arguments.get("max_links"), 30, 100)?,
+        positive_limit(req.arguments.get("max_chars"), default_chars, 20_000)?,
+        positive_limit(req.arguments.get("max_links"), default_links, 100)?,
     ))
 }
 fn http_url(s: &str) -> Result<Url, Failure> {

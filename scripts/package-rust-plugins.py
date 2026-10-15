@@ -23,6 +23,8 @@ def package(folder, binary, destination):
     )
     files = {"plugin.toml": text.encode(), "bin/plugin": binary.read_bytes()}
     required = {manifest["agent"]["instructions"]}
+    if "settings" in manifest:
+        required.add(manifest["settings"]["schema"])
     for operation in manifest["operations"].values():
         required.update((operation["input_schema"], operation["output_schema"]))
     for name in required:

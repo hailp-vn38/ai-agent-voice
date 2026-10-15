@@ -10,5 +10,7 @@
 8. [Agent Job Hybrid — Rust server](08-agent-job-hybrid.md)
 9. [Agent Job Hybrid — Web Timeline B](09-agent-job-web-timeline.md)
 10. [Agent Job V3 — OpenCode-style Root/Child Sessions](10-agent-job-opencode-v3.md)
+11. [Core Plugin Activation V3](11-core-plugin-activation-v3.md)
+12. [Plugin Settings & Manual Operation V3](12-plugin-settings-and-manual-operation-v3.md)
 
 Mỗi flow mô tả boundary, sequence, invariants và test contract. Khi hành vi runtime thay đổi, tài liệu flow tương ứng phải được cập nhật cùng PR.

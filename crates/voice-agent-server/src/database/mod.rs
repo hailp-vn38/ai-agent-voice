@@ -15,6 +15,7 @@ pub(crate) mod jobs;
 mod mcp;
 mod mutations;
 pub mod notifications;
+pub(crate) mod plugin_configs;
 pub(crate) mod plugins;
 pub(crate) mod providers;
 mod security;

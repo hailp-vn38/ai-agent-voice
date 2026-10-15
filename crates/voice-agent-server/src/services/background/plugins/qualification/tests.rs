@@ -13,6 +13,7 @@ fn package() -> archive::Package {
         "schemas/extract_html.input.json",
         "schemas/fetch_url.input.json",
         "schemas/extract.output.json",
+        "schemas/settings.json",
     ] {
         writer
             .start_file(name, zip::write::SimpleFileOptions::default())

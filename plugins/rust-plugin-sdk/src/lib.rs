@@ -12,7 +12,7 @@ const MAX_REQUEST: u64 = 65_535;
 const MAX_RESPONSE: usize = 65_536;
 const MAX_ARTIFACT: usize = 1024 * 1024;
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema_version: u32,
@@ -22,6 +22,25 @@ pub struct Request {
     pub artifact_dir: String,
     #[serde(default)]
     pub inputs: Option<Value>,
+    /// Added only for packages that opt into [settings] in manifest v2.
+    /// Absent for legacy jsonl-v1 plugins; never merge with user arguments.
+    #[serde(default)]
+    pub settings: Option<Value>,
+}
+
+// Plugin value-settings may contain credentials. A derived Debug would print
+// them into stderr, which the shared runner can retain as diagnostic output.
+impl std::fmt::Debug for Request {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Request")
+            .field("schema_version", &self.schema_version)
+            .field("request_id", &self.request_id)
+            .field("operation", &self.operation)
+            .field("arguments", &"[REDACTED]")
+            .field("inputs", &"[REDACTED]")
+            .field("settings", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Serialize)]
