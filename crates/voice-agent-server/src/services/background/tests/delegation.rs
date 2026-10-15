@@ -31,7 +31,7 @@ impl JobModels for SessionModels {
                     id: "root_finish".into(),
                     name: "finish_job".into(),
                     arguments: json!({"summary":"Research done","findings":[],
-                        "evidence_refs":[],"unresolved":[]}),
+                        "unresolved":[]}),
                 }])
             } else {
                 BackgroundTurn::ToolCalls(vec![ToolCall {
@@ -208,7 +208,7 @@ impl JobModels for DelegationModels {
                     id: "end_3".into(),
                     name: "finish_job".into(),
                     arguments: json!({"summary":"Tasks completed","findings":[],
-                        "evidence_refs":[],"unresolved":[]}),
+                        "unresolved":[]}),
                 }])
             }
         } else {
