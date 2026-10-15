@@ -42,3 +42,30 @@ async fn artifact_copy_respects_byte_budget() {
     assert!(super::stage_output(source, dir.join(".staging"), 100, None, None).await.is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[tokio::test]
+async fn legacy_v3_artifact_root_moves_once_without_changing_bytes() {
+    let (db, _, runtime) = crate::services::background::tests::harness().await;
+    runtime.shutdown().await;
+    let old_root = std::path::PathBuf::from(format!(
+        "{}.job-artifacts",
+        db.durable_path().unwrap().display()
+    ));
+    let new_root = super::root(&db).unwrap();
+    let job = uuid::Uuid::new_v4().to_string();
+    let artifact = uuid::Uuid::new_v4().to_string();
+    let old_folder = old_root.join(&job);
+    tokio::fs::create_dir_all(&old_folder).await.unwrap();
+    tokio::fs::write(old_folder.join(&artifact), b"immutable V3 file")
+        .await
+        .unwrap();
+    super::relocate(&db).await.unwrap();
+    super::relocate(&db).await.unwrap();
+    assert_eq!(
+        tokio::fs::read(new_root.join(job).join(artifact))
+            .await
+            .unwrap(),
+        b"immutable V3 file"
+    );
+    assert!(!old_root.exists());
+}
