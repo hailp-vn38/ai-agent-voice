@@ -125,10 +125,9 @@ adapter = "openai"
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
-# Agent Job Hybrid: enable only after Provider Test confirms this model + endpoint.
-# Root requires Structured Outputs; Child requires native Function Calling.
+# Agent Jobs use native Function Calling without a capability opt-in.
+# Legacy structured decisions still require Structured Outputs support.
 # supports_structured_outputs = true
-# supports_function_calling = true
 # supports_responses = true  # Optional Agent Job /responses route; Voice still uses Chat.
 
 [providers.tts.instances.zerotts_maichi]

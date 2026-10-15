@@ -3,6 +3,19 @@ use crate::{database::Database, services::background::JobError};
 use serde_json::Value;
 
 impl Database {
+    pub(crate) async fn job_uncertain_plugin_attempts(
+        &self,
+        job_id: &str,
+    ) -> Result<Vec<(String, String)>, JobError> {
+        // Recovery may clear worker pins while an external attempt remains uncertain.
+        Ok(sqlx::query_as(
+            "SELECT step_key,attempt_id FROM job_steps WHERE job_id=? AND installation_digest<>'' AND attempt_id IS NOT NULL AND (worker_instance_id IS NOT NULL OR attempt_state IN ('start_requested','started','unknown_outcome'))",
+        )
+        .bind(job_id)
+        .fetch_all(self.pool())
+        .await?)
+    }
+
     pub(crate) async fn job_artifact_record(
         &self,
         job_id: &str,

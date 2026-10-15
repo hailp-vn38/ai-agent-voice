@@ -389,10 +389,7 @@ impl LlmFactory for OpenAiFactory {
             .map_err(|_| {
                 ProviderLoadError::Provider("OpenAI provider initialization failed".into())
             })?
-            .with_background_capabilities(
-                options.supports_structured_outputs,
-                options.supports_function_calling,
-            ),
+            .with_structured_outputs(options.supports_structured_outputs),
         ))
     }
 }

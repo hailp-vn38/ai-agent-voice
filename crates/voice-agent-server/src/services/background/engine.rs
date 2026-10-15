@@ -103,7 +103,13 @@ impl JobEngine {
         if let Some(key) = key
             && let Some(old) = self.database.receipt_by_key(requester, key).await?
         {
-            if old.job.request != input || old.job.retry_of_job_id.is_some() {
+            if self
+                .database
+                .job_row(&old.job.id)
+                .await?
+                .request_fingerprint
+                != digest(&encode(&input)?)
+            {
                 return Err(JobError::IdempotencyConflict);
             }
             return Ok(old);
@@ -249,17 +255,37 @@ impl JobEngine {
         }
         self.database.list_jobs(page, size, status, q).await
     }
-    /// Only completed Jobs with no owned worker or retry descendants can be deleted.
+    /// Stop remaining owned work before deleting a terminal Job; retries survive independently.
     pub async fn delete(&self, id: &str) -> Result<(), JobError> {
-        // A terminal checkpoint can precede final worker teardown.
-        if self
+        let job = self.database.job_row(id).await?;
+        if !matches!(
+            job.status.as_str(),
+            "succeeded" | "partial_success" | "failed" | "cancelled"
+        ) {
+            return Err(JobError::DeleteConflict);
+        }
+        let cancellation = self
             .cancellations
             .lock()
             .expect("Job cancellations")
-            .contains_key(id)
-        {
-            return Err(JobError::DeleteConflict);
-        }
+            .get(id)
+            .cloned();
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            if let Some(cancellation) = cancellation {
+                cancellation.cancel();
+                while self
+                    .cancellations
+                    .lock()
+                    .expect("Job cancellations")
+                    .contains_key(id)
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+            }
+            self.plugins.stop_job_workers(id).await
+        })
+        .await
+        .map_err(|_| JobError::DeleteConflict)??;
         self.database.delete_terminal_job(id).await?;
         if let Err(error) = super::artifacts::remove_deleted_job(&self.database, id).await {
             // DB committed: do not report a rollback. Startup orphan repair can retry.

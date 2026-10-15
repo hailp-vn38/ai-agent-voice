@@ -7,6 +7,66 @@ struct WaitingModels {
     started: tokio::sync::Notify,
 }
 struct DeadlineModels;
+#[tokio::test]
+async fn delete_terminal_job_cancels_and_waits_for_its_execution_owner() {
+    let config = Arc::new(config());
+    let db = Arc::new(Database::connect(&config.database).await.unwrap());
+    let models = Arc::new(WaitingModels {
+        started: Default::default(),
+    });
+    let runtime = BackgroundRuntime::execution_harness(db.clone(), config.clone(), models.clone())
+        .await
+        .unwrap();
+    enable(&runtime.engine).await;
+    let job = runtime
+        .engine
+        .submit(
+            request("Delete terminal worker"),
+            &JobRequester::Admin,
+            None,
+        )
+        .await
+        .unwrap()
+        .job;
+    models.started.notified().await;
+    assert_eq!(
+        runtime.engine.delete(&job.id).await.unwrap_err(),
+        JobError::DeleteConflict
+    );
+    assert!(
+        !runtime
+            .engine
+            .cancellations
+            .lock()
+            .unwrap()
+            .get(&job.id)
+            .unwrap()
+            .is_cancelled()
+    );
+    db.finish_job(
+        &config,
+        &job.id,
+        "failed",
+        Some("llm_execution_failed"),
+        None,
+    )
+    .await
+    .unwrap();
+    runtime.engine.delete(&job.id).await.unwrap();
+    assert!(
+        !runtime
+            .engine
+            .cancellations
+            .lock()
+            .unwrap()
+            .contains_key(&job.id)
+    );
+    assert!(matches!(
+        runtime.engine.get(&job.id).await,
+        Err(JobError::NotFound)
+    ));
+    runtime.shutdown().await;
+}
 #[async_trait::async_trait]
 impl JobModels for DeadlineModels {
     async fn turn_traced(

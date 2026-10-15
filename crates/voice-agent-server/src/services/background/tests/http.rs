@@ -662,23 +662,23 @@ async fn admin_delete_rejects_live_jobs_and_removes_terminal_job_hierarchy() {
         .bind(&artifact_id).bind(&job.id).bind(format!("{}/{artifact_id}",job.id))
         .execute(db.pool()).await.unwrap();
 
+    let cancellation = tokio_util::sync::CancellationToken::new();
     runtime
         .engine
         .cancellations
         .lock()
         .unwrap()
-        .insert(job.id.clone(), tokio_util::sync::CancellationToken::new());
-    assert_eq!(
-        client
-            .delete(&base)
-            .bearer_auth("background-test-token")
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        409
-    );
-    runtime.engine.cancellations.lock().unwrap().remove(&job.id);
+        .insert(job.id.clone(), cancellation.clone());
+    let engine = runtime.engine.clone();
+    let id = job.id.clone();
+    let owner = tokio::spawn(async move {
+        cancellation.cancelled().await;
+        assert!(
+            engine.get(&id).await.is_ok(),
+            "retain data until the worker stops"
+        );
+        engine.cancellations.lock().unwrap().remove(&id);
+    });
 
     assert_eq!(
         client
@@ -690,6 +690,7 @@ async fn admin_delete_rejects_live_jobs_and_removes_terminal_job_hierarchy() {
             .status(),
         204
     );
+    owner.await.unwrap();
     assert_eq!(
         client
             .get(&base)
@@ -727,7 +728,7 @@ async fn admin_delete_rejects_live_jobs_and_removes_terminal_job_hierarchy() {
 }
 
 #[tokio::test]
-async fn admin_delete_blocks_retry_parent_until_descendant_removed() {
+async fn admin_delete_preserves_retry_when_parent_is_removed() {
     let (db, config, runtime) = harness().await;
     let original = runtime
         .engine
@@ -765,8 +766,11 @@ async fn admin_delete_blocks_retry_parent_until_descendant_removed() {
             .await
             .unwrap()
             .status(),
-        409
+        204
     );
+    let retained = runtime.engine.get(&retry.id).await.unwrap();
+    assert_eq!(retained.status, "queued");
+    assert_eq!(retained.retry_of_job_id, None);
     runtime.engine.cancel(&retry.id).await.unwrap();
     assert_eq!(
         client
@@ -786,7 +790,7 @@ async fn admin_delete_blocks_retry_parent_until_descendant_removed() {
             .await
             .unwrap()
             .status(),
-        204
+        404
     );
     server.abort();
     let _ = server.await;

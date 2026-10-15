@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 mod admission;
 mod delegation;
+mod deletion;
 mod execution;
 mod http;
 mod locking;
@@ -32,7 +33,6 @@ base_url="https://example.test/v1"
 model="fixture"
 api_key="BACKGROUND_SECRET_SENTINEL"
 supports_structured_outputs=true
-supports_function_calling=true
 [database]
 url="sqlite://{}"
 [api]

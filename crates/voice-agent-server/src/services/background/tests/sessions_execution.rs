@@ -354,7 +354,7 @@ async fn root_bad_url_evidence_gets_matched_guidance_then_finishes_without_artif
     assert_eq!(repairs.len(), 1);
     assert_eq!(repairs[0]["error_code"], "finish_job_server_owned_evidence");
     assert!(repairs[0]["guidance"].as_str().unwrap().contains("Remove evidence_refs"));
-    let events = db.job_events(&job.id, 0, 200).await.unwrap();
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
     assert!(events.iter().any(|event| event.event_type == "agent_decision_rejected"
         && event.payload["validation_code"] == "finish_job_server_owned_evidence"));
 }
@@ -377,7 +377,7 @@ async fn root_unresolved_article_facts_do_not_fail_completed_job() {
         "Khả năng lùi thời gian hoặc đổi nước chủ nhà vẫn chưa có quyết định chính thức."
     ]));
     assert!(result["summary"].as_str().unwrap().contains("chưa đưa ra quyết định"));
-    let events = db.job_events(&job.id, 0, 200).await.unwrap();
+    let events = db.job_events(&job.id, 0, 100).await.unwrap();
     assert!(events.iter().any(|event| event.event_type == "job_finished"
         && event.payload["status"] == "succeeded"));
     assert!(!events.iter().any(|event| event.event_type == "agent_decision_rejected"));

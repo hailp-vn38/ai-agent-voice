@@ -18,16 +18,6 @@ const FIELDS: &[ProviderConfigField] = &[
         None,
     ),
     field(
-        "supports_function_calling",
-        "Supports Function Calling (Agent Job)",
-        ConfigFieldType::Boolean,
-        false,
-        None,
-        None,
-        None,
-        None,
-    ),
-    field(
         "supports_responses",
         "Supports Responses (Agent Job only)",
         ConfigFieldType::Boolean,

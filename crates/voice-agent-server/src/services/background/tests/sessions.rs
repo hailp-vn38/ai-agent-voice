@@ -321,7 +321,6 @@ async fn submission_needs_no_release_attestation_or_hierarchical_capability_flag
     let provider = config.providers.llm.instances.get_mut("planner").unwrap();
     let mut value = serde_json::to_value(&*provider).unwrap();
     value["supports_structured_outputs"] = json!(false);
-    value["supports_function_calling"] = json!(false);
     *provider = serde_json::from_value(value).unwrap();
     let receipt = db
         .submit_job(

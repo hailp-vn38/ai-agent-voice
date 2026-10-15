@@ -29,7 +29,6 @@ impl Prepared {
         })
     }
     async fn call(
-        &self,
         config: &BackgroundConfig,
         value: serde_json::Value,
     ) -> Result<serde_json::Value, PluginError> {
@@ -51,27 +50,25 @@ impl Prepared {
         Fut: std::future::Future<Output = Result<(), PluginError>>,
     {
         let text = std::str::from_utf8(request).map_err(|_| PluginError::WorkerProtocolError)?;
-        let result = self
-            .call(
-                config,
-                json!({
-                    "action":"Execute","attempt_id":self.attempt,"job_id":self.job,
-                    "installation_digest":self.installation,"jsonl_request":text
-                }),
-            )
-            .await?;
+        let result = Self::call(
+            config,
+            json!({
+                "action":"Execute","attempt_id":self.attempt,"job_id":self.job,
+                "installation_digest":self.installation,"jsonl_request":text
+            }),
+        )
+        .await?;
         if result["state"] != "running" {
             return Err(PluginError::PluginRuntimeError);
         }
         after_start().await?;
         let output = timeout(limit, async {
             loop {
-                let response = self
-                    .call(
-                        config,
-                        json!({"action":"GetAttempt","attempt_id":self.attempt}),
-                    )
-                    .await?;
+                let response = Self::call(
+                    config,
+                    json!({"action":"GetAttempt","attempt_id":self.attempt}),
+                )
+                .await?;
                 match response["state"].as_str() {
                     Some("running") | Some("cancelling") => sleep(Duration::from_millis(100)).await,
                     Some("terminal") => {
@@ -95,10 +92,11 @@ impl Prepared {
         .await;
         output.map_err(|_| PluginError::WorkerTimeout)?
     }
-    pub(super) async fn remove(&self, config: &BackgroundConfig) -> Result<(), PluginError> {
-        let result = self
-            .call(config, json!({"action":"Cancel","attempt_id":self.attempt}))
-            .await?;
+    pub(super) async fn remove(
+        config: &BackgroundConfig,
+        attempt: &str,
+    ) -> Result<(), PluginError> {
+        let result = Self::call(config, json!({"action":"Cancel","attempt_id":attempt})).await?;
         match result["state"].as_str() {
             Some("not_found") | Some("terminal") => return Ok(()),
             Some("cancelling") => {}
@@ -106,12 +104,8 @@ impl Prepared {
         }
         timeout(Duration::from_secs(10), async {
             loop {
-                let status = self
-                    .call(
-                        config,
-                        json!({"action":"GetAttempt","attempt_id":self.attempt}),
-                    )
-                    .await?;
+                let status =
+                    Self::call(config, json!({"action":"GetAttempt","attempt_id":attempt})).await?;
                 if status["state"] == "terminal" || status["state"] == "not_found" {
                     return Ok(());
                 }

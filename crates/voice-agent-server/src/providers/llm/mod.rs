@@ -166,7 +166,6 @@ pub(crate) struct ConfiguredOpenAiLlm {
     timeout_seconds: u64,
     supports_responses: bool,
     supports_structured_outputs: bool,
-    supports_function_calling: bool,
 }
 
 impl ConfiguredOpenAiLlm {
@@ -187,12 +186,10 @@ impl ConfiguredOpenAiLlm {
             timeout_seconds,
             supports_responses,
             supports_structured_outputs: false,
-            supports_function_calling: false,
         })
     }
-    pub(crate) fn with_background_capabilities(mut self, structured: bool, tools: bool) -> Self {
+    pub(crate) fn with_structured_outputs(mut self, structured: bool) -> Self {
         self.supports_structured_outputs = structured;
-        self.supports_function_calling = tools;
         self
     }
 }
@@ -204,13 +201,7 @@ impl LlmProvider for ConfiguredOpenAiLlm {
         request: LlmRequest,
         mode: BackgroundMode,
     ) -> Result<BackgroundTurnResult, LlmError> {
-        let allowed = match &mode {
-            BackgroundMode::Structured { .. } => self.supports_structured_outputs,
-            BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
-                self.supports_function_calling
-            }
-        };
-        if !allowed {
+        if matches!(&mode, BackgroundMode::Structured { .. }) && !self.supports_structured_outputs {
             return Err(LlmError::Rejected);
         }
         if self.supports_responses {

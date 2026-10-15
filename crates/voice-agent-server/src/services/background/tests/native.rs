@@ -109,7 +109,7 @@ async fn native_root_chat_child_responses_roundtrips_keep_routes_and_history_iso
         config: config.clone(),
         root: ConfiguredOpenAiLlm::build_with_responses("fixture", &base, "root-fixture", 5, false)
             .unwrap()
-            .with_background_capabilities(true, true),
+            .with_structured_outputs(true),
         child: ConfiguredOpenAiLlm::build_with_responses(
             "fixture",
             &base,
@@ -118,7 +118,7 @@ async fn native_root_chat_child_responses_roundtrips_keep_routes_and_history_iso
             true,
         )
         .unwrap()
-        .with_background_capabilities(true, true),
+        .with_structured_outputs(true),
     });
     let runtime = BackgroundRuntime::execution_harness(db.clone(), config, models)
         .await

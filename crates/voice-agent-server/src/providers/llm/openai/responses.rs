@@ -286,9 +286,8 @@ mod tests {
         let task = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let p = ConfiguredOpenAiLlm::build_with_responses("test", &base, "gpt-test", 5, true)
-            .unwrap()
-            .with_background_capabilities(false, true);
+        let p =
+            ConfiguredOpenAiLlm::build_with_responses("test", &base, "gpt-test", 5, true).unwrap();
         let answer = p
             .background_turn(request(), BackgroundMode::ToolsAuto)
             .await

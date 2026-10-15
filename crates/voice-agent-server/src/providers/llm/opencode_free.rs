@@ -39,8 +39,6 @@ pub struct OpenCodeFreeConfig {
     pub supports_responses: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub supports_structured_outputs: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub supports_function_calling: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -65,7 +63,6 @@ pub(crate) struct OpenCodeFreeProvider {
     timeout_seconds: u64,
     supports_responses: bool,
     supports_structured_outputs: bool,
-    supports_function_calling: bool,
 }
 
 impl OpenCodeFreeProvider {
@@ -78,7 +75,6 @@ impl OpenCodeFreeProvider {
             timeout_seconds: config.timeout_ms.div_ceil(1_000),
             supports_responses: config.supports_responses,
             supports_structured_outputs: config.supports_structured_outputs,
-            supports_function_calling: config.supports_function_calling,
         })
     }
 
@@ -121,13 +117,9 @@ impl LlmProvider for OpenCodeFreeProvider {
         request: LlmRequest,
         mode: super::BackgroundMode,
     ) -> Result<super::BackgroundTurnResult, LlmError> {
-        let qualified = match &mode {
-            super::BackgroundMode::Structured { .. } => self.supports_structured_outputs,
-            super::BackgroundMode::Tools
-            | super::BackgroundMode::ToolsAuto
-            | super::BackgroundMode::ToolsParallel => self.supports_function_calling,
-        };
-        if !qualified {
+        if matches!(&mode, super::BackgroundMode::Structured { .. })
+            && !self.supports_structured_outputs
+        {
             return Err(LlmError::Rejected);
         }
         if self.supports_responses {
@@ -234,16 +226,6 @@ const FIELDS: &[ProviderConfigField] = &[
     field(
         "supports_structured_outputs",
         "Supports Structured Outputs (Agent Job)",
-        ConfigFieldType::Boolean,
-        false,
-        None,
-        None,
-        None,
-        None,
-    ),
-    field(
-        "supports_function_calling",
-        "Supports Function Calling (Agent Job)",
         ConfigFieldType::Boolean,
         false,
         None,

@@ -1,4 +1,53 @@
 use super::*;
+
+#[tokio::test]
+async fn native_chat_tools_need_no_capability_opt_in() {
+    use crate::providers::llm::{ConfiguredOpenAiLlm, LlmProvider, ToolDefinition};
+    use axum::{Json, Router, routing::post};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let app = Router::new().route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
+        assert_eq!(body["tools"][0]["function"]["name"], "finish_job");
+        assert_eq!(body["tools"][0]["function"]["strict"], true);
+        Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[
+            {"id":"done","type":"function","function":{"name":"finish_job","arguments":"{}"}}
+        ]}}]}))
+    }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider =
+        ConfiguredOpenAiLlm::build_with_responses("test", &base, "fixture", 5, false).unwrap();
+    for mode in [
+        BackgroundMode::Tools,
+        BackgroundMode::ToolsAuto,
+        BackgroundMode::ToolsParallel,
+    ] {
+        let result = provider.background_turn(LlmRequest {
+            messages: LlmRequest::from("Finish the job").messages,
+            tools: vec![ToolDefinition {
+                name: "finish_job".into(), description: "Finish".into(),
+                parameters: json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+            }],
+        }, mode).await.unwrap();
+        assert!(
+            matches!(result.turn, BackgroundTurn::ToolCalls(calls) if calls.len() == 1 && calls[0].name == "finish_job")
+        );
+    }
+    assert!(matches!(
+        provider
+            .background_turn(
+                LlmRequest::from("JSON"),
+                BackgroundMode::Structured {
+                    name: "result".into(),
+                    schema: json!({"type":"object"}),
+                }
+            )
+            .await,
+        Err(LlmError::Rejected)
+    ));
+    server.abort();
+}
+
 #[test]
 fn strict_chat_tool_roundtrip() {
     let tool = crate::providers::llm::ToolDefinition {

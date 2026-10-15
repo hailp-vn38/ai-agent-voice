@@ -220,7 +220,7 @@ impl PluginStore {
         }
         .await;
         let reap_started = std::time::Instant::now();
-        let reaped = prepared.remove(&self.config).await;
+        let reaped = runner::Prepared::remove(&self.config, attempt_id).await;
         if cancellation.is_cancelled() {
             tracing::info!(
                 event = "background_container_cancel_reaped",

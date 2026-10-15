@@ -37,6 +37,34 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers() })
 
+it.each([
+  { result: { summary: 'Completed report' }, expected: 'Completed report' },
+  { result: { count: 2 }, expected: JSON.stringify({ count: 2 }, null, 2) },
+  { result: null, expected: '—' },
+])('shows a standalone Result card for $result and artifacts below coverage', async ({ result, expected }) => {
+  const job = await api.job()
+  api.job.mockClear().mockResolvedValue({ ...job, result, artifacts: [
+    { id: 'report.txt', media_type: 'text/plain', size_bytes: 12, sha256: 'digest' },
+  ] })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    expect(wrapper.find('details').exists()).toBe(false)
+    const heading = wrapper.findAll('h2').find(node => node.text() === translate('jobUi.result'))!
+    const card = heading.element.parentElement!
+    expect(card.parentElement).toBe(wrapper.element)
+    expect(card.textContent).toContain(expected)
+    const coverage = wrapper.findAll('h3').find(node => node.text() === translate('jobUi.sourceCoverage'))!
+    const artifacts = coverage.element.parentElement!.nextElementSibling!
+    expect(artifacts.parentElement?.tagName).toBe('ASIDE')
+    expect(artifacts.textContent).toContain(translate('jobUi.artifacts'))
+    expect(artifacts.textContent).toContain('report.txt')
+    expect(artifacts.querySelector('button')?.textContent).toContain(translate('jobUi.download'))
+  } finally {
+    wrapper.unmount()
+  }
+})
+
 it.each(['queued', 'planning', 'running', 'cancelling'])('hides deletion for a %s Job', async status => {
   const job = await api.job()
   api.job.mockClear().mockResolvedValue({ ...job, status })
@@ -124,7 +152,6 @@ it('refreshes the Jobs detail on user request and relevant SSE hints, then stops
     await flushPromises()
     expect(api.job).toHaveBeenCalledTimes(1)
     expect(listenJobChanges).toHaveBeenCalledTimes(1)
-    expect(wrapper.text()).toContain('1 events')
     const [callbacks, signal] = listenJobChanges.mock.calls[0] as [JobChangeCallbacks, AbortSignal]
 
     callbacks.onChanged('another-job')
@@ -139,14 +166,12 @@ it('refreshes the Jobs detail on user request and relevant SSE hints, then stops
     expect(api.job).toHaveBeenCalledTimes(2)
     expect(api.events).toHaveBeenCalledTimes(2)
     expect(api.events).toHaveBeenLastCalledWith('job-1', 1, expect.any(AbortSignal))
-    expect(wrapper.text()).toContain('2 events')
 
     await wrapper.findAll('button').find(button => button.text() === translate('jobUi.refresh'))!.trigger('click')
     await flushPromises()
     expect(api.job).toHaveBeenCalledTimes(3)
     expect(api.events).toHaveBeenCalledTimes(3)
     expect(api.events).toHaveBeenLastCalledWith('job-1', 2, expect.any(AbortSignal))
-    expect(wrapper.text()).toContain('2 events')
 
     callbacks.onChanged('job-1')
     wrapper.unmount()
@@ -188,13 +213,11 @@ it('loads the full event history and keeps the event cursor during fallback refr
   try {
     await flushPromises()
     expect(api.events).toHaveBeenCalledTimes(33)
-    expect(wrapper.text()).toContain('3200 events')
     await vi.advanceTimersByTimeAsync(60_200)
     await flushPromises()
     expect(api.job).toHaveBeenCalledTimes(2)
     expect(api.events).toHaveBeenCalledTimes(34)
     expect(api.events).toHaveBeenLastCalledWith('job-1', 3200, expect.any(AbortSignal))
-    expect(wrapper.text()).toContain('3200 events')
   } finally {
     wrapper.unmount()
   }

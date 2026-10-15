@@ -49,6 +49,12 @@ flowchart TD
     E --> G["Activity Inspector: safe metadata"]
 ```
 
+## Nested execution display
+
+The projection retains committed sequence order. The timeline groups each Child's activities under its durable `parent_agent_run_id`, indented 36px with a teal branch beside the violet Root axis. Each branch can collapse independently; LLM Runs, Plugin Operations and `agent_run_finished` stay inside their owning Child. Concurrent Child groups appear in first-activity order, with chronological activity and original timestamps inside each group; the visual list is therefore not a globally chronological ordering across concurrent Children. Fork and Join remain on the Root axis.
+
+Delegate events use `fork_group_id`, or native `turn_id`/`run_id`, to correlate with Child `fork_group_id`. Fork and Join share a member count from Join metadata when present, otherwise durable Child identities, then legacy count metadata. Fork cards show available Child roles and goal excerpts. Creation events supply parent/role relationships when the read view has not yet caught up; missing relationships remain ungrouped rather than fabricated. Filters and Inspector selection retain activity IDs.
+
 ## Invariants
 
 - Keep the existing Job Detail B layout, Agent/role filters, selection and activity inspector. Hybrid native function calls **do not** create a separate browser-side tool executor.

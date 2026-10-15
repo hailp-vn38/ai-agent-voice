@@ -1,6 +1,23 @@
 use super::*;
 
 impl PluginStore {
+    pub(crate) async fn stop_job_workers(
+        &self,
+        job_id: &str,
+    ) -> Result<(), super::super::JobError> {
+        use super::super::JobError;
+        let attempts = self.database.job_uncertain_plugin_attempts(job_id).await?;
+        for (step, attempt) in attempts {
+            runner::Prepared::remove(&self.config, &attempt)
+                .await
+                .map_err(|_| JobError::DeleteConflict)?;
+            self.database
+                .clear_plugin_worker(job_id, &step, &attempt)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// The Runner owns process groups. A server restart must never blindly reap
     /// them or delete output from an attempt that could still be running.
     pub(crate) async fn reap_owned(&self) -> Result<(), PluginError> {

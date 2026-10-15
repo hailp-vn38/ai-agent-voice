@@ -166,7 +166,9 @@ async fn run_case(
         )
         .await
         .map_err(error);
-    prepared.remove(config).await.map_err(error)?;
+    runner::Prepared::remove(config, &attempt)
+        .await
+        .map_err(error)?;
     let operation = &package.manifest.operations[&case.operation];
     let response = protocol::parse_response(
         &outcome?,
