@@ -1,7 +1,7 @@
 //! Root completion admission, coverage and durable Job finalization.
 use super::{
     super::{JobEngine, JobError, model::LlmRunContext},
-    results::{RootResult, bounded_result, grounded_single_child_summary, verified_coverage_with_sources},
+    results::{RootResult, bounded_result, grounded_single_child_summary, server_evidence_refs, verified_coverage_with_sources},
 };
 use crate::providers::llm::{ChatMessage, ToolCall};
 use serde_json::json;
@@ -31,12 +31,6 @@ pub(super) async fn finish_root(
         .any(|r| r.parent_agent_run_id.is_some())
     {
         Some("missing_child_outcome")
-    } else if result
-        .evidence_refs
-        .iter()
-        .any(|id| !current.artifacts.iter().any(|a| &a.id == id))
-    {
-        Some("invalid_evidence_refs")
     } else {
         None
     };
@@ -84,9 +78,17 @@ pub(super) async fn finish_root(
                     },
                     ChatMessage::ToolResult {
                         tool_call_id: calls[0].id.clone(),
-                        content: json!({"status":"failed","error_code":error_code,
-                "coverage":coverage})
-                        .to_string(),
+                        content: json!({
+                            "status":"failed",
+                            "error_code":error_code,
+                            "coverage":coverage,
+                            "guidance": match error_code {
+                                "source_not_fully_verified" => "Resume the owning Child Session and complete core.web.extract; preserve matched URL/provenance and pagination. Do not invent evidence_refs.",
+                                "requirements_unsatisfied" => "Review missing_sources and missing_capabilities; delegate or resume a Child using authorized tools.",
+                                "children_still_running" => "Wait for the required Child runs to complete before calling finish_job.",
+                                _ => "Correct the finish_job summary/findings/unresolved arguments using the tool schema.",
+                            },
+                        }).to_string(),
                     },
                 ],
             )
@@ -103,8 +105,11 @@ pub(super) async fn finish_root(
     let preserved = grounded_single_child_summary(&current, &coverage);
     let summary_source = if preserved.is_some() { "verified_child" } else { "root" };
     let final_summary = preserved.unwrap_or(result.summary);
+    // Root supplies semantic output only; these IDs are server-issued and
+    // verified against this Job, not copied from LLM tool arguments.
+    let evidence_refs = server_evidence_refs(&current);
     let value = json!({"summary":final_summary,"summary_source":summary_source,
-    "findings":result.findings,"evidence_refs":result.evidence_refs,
+    "findings":result.findings,"evidence_refs":evidence_refs,
     "unresolved":result.unresolved,"coverage":coverage});
     engine
         .database
