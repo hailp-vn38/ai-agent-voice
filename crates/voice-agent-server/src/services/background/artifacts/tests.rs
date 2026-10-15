@@ -24,12 +24,25 @@ async fn artifact_copy_streams_binary_and_checks_declared_hash() {
     let bytes = vec![0xa5; 3 * 1024 * 1024];
     std::fs::write(&source, &bytes).unwrap();
     let target = dir.join(".staging");
-    let (size, digest) = super::stage_output(source.clone(), target.clone(), 4 * 1024 * 1024, None, None).await.unwrap();
+    let (size, digest) =
+        super::stage_output(source.clone(), target.clone(), 4 * 1024 * 1024, None, None)
+            .await
+            .unwrap();
     assert_eq!(size, bytes.len() as u64);
     assert_eq!(std::fs::read(&target).unwrap(), bytes);
     assert_eq!(digest.len(), 64);
     std::fs::remove_file(&target).unwrap();
-    assert!(super::stage_output(source.clone(), target, 4 * 1024 * 1024, Some(size), Some("0".repeat(64))).await.is_err());
+    assert!(
+        super::stage_output(
+            source.clone(),
+            target,
+            4 * 1024 * 1024,
+            Some(size),
+            Some("0".repeat(64))
+        )
+        .await
+        .is_err()
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -39,7 +52,11 @@ async fn artifact_copy_respects_byte_budget() {
     std::fs::create_dir(&dir).unwrap();
     let source = dir.join("video.mp4");
     std::fs::write(&source, vec![7u8; 1024]).unwrap();
-    assert!(super::stage_output(source, dir.join(".staging"), 100, None, None).await.is_err());
+    assert!(
+        super::stage_output(source, dir.join(".staging"), 100, None, None)
+            .await
+            .is_err()
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
