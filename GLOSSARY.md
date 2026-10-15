@@ -231,3 +231,18 @@ _Avoid_: operator boolean alone, model marketing description
 **Root Tool Result**:
 Canonical tool observation paired with the original native Root `subagent` call ID, carrying only validated ChildOutcome rather than provider-native Child tool blocks.
 _Avoid_: joined_children synthetic user prompt
+
+
+## Agent Job Artifacts
+
+**Job Artifact**:
+Tệp bất biến do một Job Tool Step đã được chấp nhận xuất bản, thuộc đúng một Job.
+_Avoid_: Worker Output, Tool Result
+
+**Worker Output**:
+Tệp tạm thời do Plugin Worker Attempt tạo ra trước khi Step xuất bản thành Job Artifact.
+_Avoid_: Job Artifact
+
+**Display Filename**:
+Tên tệp hiển thị cho người dùng của Job Artifact, không phải định danh hay khóa sở hữu.
+_Avoid_: Artifact ID, đường dẫn lưu trữ

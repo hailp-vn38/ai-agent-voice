@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, BrainCircuit, Cpu, Download, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, BrainCircuit, Cpu, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -10,6 +10,7 @@ import type { AdminJob, JobEvent, JobStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import JobUnifiedTimeline from '@/components/jobs/JobUnifiedTimeline.vue'
 import JobActivityInspector from '@/components/jobs/JobActivityInspector.vue'
+import JobArtifactGallery from '@/components/jobs/artifacts/JobArtifactGallery.vue'
 import { llmTokenSummary, projectLlmRuns } from '@/domain/jobs/llm-activity'
 import { projectUnifiedActivity, visibleActivities, type ActivityFilter } from '@/domain/jobs/unified-activity'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
@@ -123,21 +124,6 @@ async function load(resetEvents = false) {
     }
   } finally {
     if (controller === pending) { loading.value = false; refreshing.value = false }
-  }
-}
-async function downloadArtifact(artifactId: string) {
-  if (!job.value) return
-  error.value = ''
-  try {
-    const blob = await agentJobsApi.artifact(job.value.id, artifactId)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = artifactId
-    link.click()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch (cause) {
-    error.value = formatApiError(cause)
   }
 }
 async function cancel() {
@@ -354,14 +340,7 @@ onBeforeUnmount(() => {
           </section>
           <section class="studio-panel p-5">
             <h2 class="mb-4 flex items-center gap-2 font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.artifacts') }}</h2>
-            <p v-if="!job.artifacts.length" class="text-sm text-muted-foreground">{{ t('jobUi.noArtifacts') }}</p>
-            <div v-for="artifact in job.artifacts" :key="artifact.id" class="flex items-center justify-between gap-3 border-t py-3">
-              <div class="min-w-0">
-                <p class="truncate font-mono text-xs">{{ artifact.id }}</p>
-                <p class="mt-1 text-xs text-muted-foreground">{{ artifact.media_type }} · {{ artifact.size_bytes }} B</p>
-              </div>
-              <Button variant="outline" size="sm" @click="downloadArtifact(artifact.id)"><Download class="size-4" />{{ t('jobUi.download') }}</Button>
-            </div>
+            <JobArtifactGallery :job="job" />
           </section>
         </aside>
       </div>

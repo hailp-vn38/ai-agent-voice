@@ -199,3 +199,10 @@ Root and Child remain separate native tool-calling Sessions. A nonempty
 source provenance, missing mandatory capabilities or a failed required Child
 still prevent success. This rule deliberately separates uncertainty **in
 knowledge** from an unsatisfied **execution requirement**.
+
+
+## V3 Job Artifact publication and presentation
+
+A Child's authorized Plugin Operation may write up to 16 files inside the worker `/work/out` directory. Its unchanged stdout schema v1 includes each output basename, MIME and optional size/SHA-256. After the worker is reaped, Rust validates files, copies them in bounded chunks to `data/job-artifacts/<job-id>/.<uuid>.staging`, verifies checksums, atomically renames them and commits artifact rows with the accepted Tool Step. The temporary worker workspace is removed only after that publication attempt. Failed publication leaves no visible artifact descriptor; startup reconciliation removes interrupted orphan files.
+
+The Job Detail read view exposes `id`, `step_key`, `filename`, MIME, size, SHA-256 and creation timestamp, while the existing Step data identifies the Agent Run. Admin downloads still use `GET /api/admin/jobs/{job_id}/artifacts/{artifact_id}`, authenticated with the existing Admin Bearer token. The web Gallery previews bounded images, audio, video and escaped text; large or unsupported files remain downloadable. This does not alter the Root/Child canonical ToolCall/ToolResult matching, Child evidence rules or server-owned `finish_job` evidence generation.

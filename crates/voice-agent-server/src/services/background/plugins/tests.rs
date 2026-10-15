@@ -205,3 +205,18 @@ async fn installation_publication_failure_preserves_previous_revision() {
     assert_eq!(activated.revision, 2);
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn worker_outputs_accept_binary_media_without_loading_into_memory() {
+    let out = std::env::temp_dir().join(format!("worker-artifacts-{}", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(&out).await.unwrap();
+    tokio::fs::write(out.join("movie.mp4"), vec![7u8; 2048]).await.unwrap();
+    let artifacts = super::dispatch::read_artifacts(&out, vec![super::protocol::ArtifactRef {
+        path: "movie.mp4".into(), media_type: "video/mp4".into(),
+        size_bytes: Some(2048), sha256: None,
+    }], 4096).await.unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].filename, "movie.mp4");
+    assert_eq!(artifacts[0].source_path, out.join("movie.mp4"));
+    tokio::fs::remove_dir_all(out).await.unwrap();
+}

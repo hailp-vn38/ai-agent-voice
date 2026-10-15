@@ -779,3 +779,10 @@ _Avoid_: definite failure, safe retry proof
 **Manual Job Retry**:
 An explicit Admin request creating a new Job linked to an earlier terminal one, without altering the earlier result.
 _Avoid_: auto restart, Step replay
+
+
+### Agent Job V3 Artifacts (2026-10-15)
+
+A successful V3 Tool Step may publish multiple immutable files. Rust supplies the artifact UUID and Step/Job ownership; the plugin supplies only an output basename, declared MIME, and optional checksum/size. Published files are in the local `data/job-artifacts/<job-id>/<artifact-id>` directory and are correlated by the SQLite `job_artifacts` ledger. Root `finish_job` still derives evidence IDs from persisted rows; URLs are separate source coverage.
+
+Publication uses bounded file copy and an atomic same-directory rename, followed by the Step-success transaction. Startup reconciliation removes orphaned files after interruption. Admin downloads use existing Bearer authorization and the saved display filename; Job Detail previews approved small files using authenticated Blob requests. Automatic 30-day retirement is disabled; explicit Job deletion removes its file directory. Persist both SQLite and the job-artifacts directory in production.

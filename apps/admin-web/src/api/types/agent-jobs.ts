@@ -94,9 +94,12 @@ export interface JobStep {
 }
 export interface JobArtifact {
   id: string
+  step_key: string | null
+  filename: string
   media_type: string
   size_bytes: number
   sha256: string
+  created_at: string
 }
 export interface AdminJob {
   execution_mode?: 'dag_v1' | 'hierarchical_v2' | 'hierarchical_v3'
