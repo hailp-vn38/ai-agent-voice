@@ -61,3 +61,12 @@ The evidence guard is scoped to one-URL summary tasks; arbitrary multi-URL resea
 source credibility scoring, citation ranking and document fact-checking are NOT
 implicitly claimed by this amendment. Existing native provider/tool contracts,
 permissions, acceptance gates, and deferred Background Inbox remain unchanged.
+
+
+## Amendment: server-owned Root finish evidence (2026-10-15)
+
+An observed URL-summary Job completed one core.web.extract Step and Child but failed after three `invalid_evidence_refs` attempts: Root used an HTTP source URL where the server expected an artifact ID.
+
+**Decision:** remove `evidence_refs` from the Root `finish_job` tool schema and `RootResult`. Root is responsible only for `summary`, `findings` and `unresolved`. Rust derives terminal artifact refs exclusively from immutable Job artifact records and source coverage separately from session-owned Steps. This does **not** alter the Child `submit_result` contract or weaken artifact authorization.
+
+Legacy native Root calls containing `evidence_refs` are rejected without dispatch and receive exactly one matched Tool Result `finish_job_server_owned_evidence` with explicit repair guidance. A Root can retry using the new schema within its existing repair budget. No URL/Step key is converted into an artifact ID. This preserves Root Tool Call -> Rust-owned authority -> matched Tool Result semantics.
