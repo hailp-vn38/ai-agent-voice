@@ -1,500 +1,324 @@
 # Agent Job V3 - Unified Artifacts: Implementation Specification
 
-**Status:** Implementation-ready design (not implemented)  
+**Status:** Implementation-ready design; not implemented. Updated after Ponytail Review (2026-10-15).  
 **Repository:** `hailp-vn38/ai-agent-voice`  
-**Reference branch:** `feat/agent-job-v3-opencode-session-runtime` (reviewed 2026-10-15)  
-**Scope:** Agent Job `hierarchical_v3` ONLY.  
-**Related decisions:** `docs/adr/0114-opencode-agent-session-tool-delegation.md`, `docs/flows/10-agent-job-opencode-v3.md`.
+**Reference branch:** `feat/agent-job-v3-opencode-session-runtime`  
+**Scope:** `hierarchical_v3` only.  
+**Related:** `docs/adr/0114-opencode-agent-session-tool-delegation.md`, `docs/flows/10-agent-job-opencode-v3.md`.
 
-## 1. Goal, scope, and explicit decisions
+## 1. Goal and decisions
 
-An Agent Job can produce zero or more durable files, and the admin Job Detail page must display them in a unified gallery. Support audio (MP3/WAV/OGG/FLAC), video (MP4/WebM), images (PNG/JPEG/WebP/GIF), source code (Rust, Python, JS/TS, HTML/CSS, SQL, etc.), TXT/Markdown/JSON/CSV, PDF and arbitrary downloadable binary files. Unsupported previews fall back to Download. The files are products of successful Tool Steps, not fabricated model response fields.
+An Agent Job can produce **zero or more immutable downloadable files** created by accepted Tool Steps. Admin Job Detail shows an Artifact Gallery with bounded previews for MP3/WAV/OGG/FLAC, MP4/WebM, PNG/JPEG/WebP/GIF, source code, TXT/Markdown/JSON/CSV; PDF, ZIP and unsupported binary files are downloadable. The Artifact subsystem **does not** synthesize audio or video: the selected Plugin/Core Operation must actually generate the bytes.
 
-Locked scope decisions:
+1. **V3 only:** do not introduce V1/V2 runtime dispatch, a second agent runtime, or a new ToolCall/ToolResult protocol. Keep existing schema migrations and preserve stored V3 artifacts when moving the disk root.
+2. **Reuse the existing Rust module:** extend `services/background/artifacts.rs`, `plugins/dispatch.rs`, `background/execution.rs`, and `database/jobs/*`. No new `ArtifactManager` class or hypothetical storage adapter.
+3. **Local disk + SQLite:** one directory per Job, named artifact bytes by Rust-generated UUID; display name and metadata live in `job_artifacts`.
+4. **Keep Worker stdout schema v1 unchanged:** `ArtifactRef.path` already identifies an output basename; the server uses that basename to derive the display filename. No additional `filename` field in the Worker Protocol.
+5. **Simple security:** keep existing Admin Bearer auth, Job-scoped lookup, safe output paths, no-follow/regular-file checks and escaped text rendering. Do not build signed URLs, preview sessions, antivirus or separate media permissions.
+6. **Retain completed Jobs by default:** disable the current automatic 30-day expiry for Job rows and their artifacts. Explicit Job deletion removes owned files. Do **not** add configurable retention until required.
+7. **Browser preview uses authorized `requestBlob`:** Blob URL for approved types up to **64 MiB**, text rendering up to **1 MiB**; larger/unsupported media has Download only. This intentionally does not provide seeking of large remote video.
+8. `JobRequest.output_format` still describes the textual final answer, not artifact types. Do not add media values to it.
+9. Preserve the approved **Timeline B**. Only extend its existing Artifacts area.
 
-1. **V3 only.** Do not introduce a new engine, mode discriminator, or V1/V2 compatibility branch. Preserve existing migrations and stored V3 data as needed; this does not imply a runtime dispatcher by version.
-2. **Local filesystem + SQLite.** Use one Job-owned folder, no directory partitions for root vs subagent or media type, no S3/MinIO or storage interface for hypothetical providers.
-3. **Simple security.** Reuse existing admin Bearer authentication and Job ownership. Keep essential path containment, file-type safety, size limits and escaping. No separate signed URLs, per-artifact permissions, malware scanner, or preview authorization system.
-4. **Keep V3 OpenCode contracts.** Root `subagent`/`finish_job`, Child `submit_result`, canonical assistant ToolCall/ToolResult replay, source-URL coverage, pinned provider/tool authority and matched tool-call IDs are not redesigned.
-5. **Files remain after Job completes.** Default retention for completed Job files is **disabled**; deleting a Job removes its files. Optional retention may be configured explicitly. Ensure disk quotas are enforced.
-6. **No user upload flow.** Artifacts are created by approved Core/External Plugin Operations, not by a browser upload form.
-7. **Job Request output format stays textual.** The current `JobRequest.output_format` (`summary`, `text`, `json`, `markdown`) describes the final textual answer, NOT the types of files a Step can publish. Do not add one enum variant per media type to that field.
-8. **Browser previews are bounded in the first delivery.** Preview media with authorized `fetch` and Blob URLs. Videos larger than `preview_blob_max_bytes` are Download-only until an explicitly approved native streaming authentication solution exists. This avoids pretending an HTML `<video>` element can send the app's Bearer header. Backend file storage itself MUST stream large files without accumulating them in memory.
+**Out of scope:** browser uploads, transcoding, generated thumbnails, public links, object storage, running generated code/HTML, a new source-evidence mechanism, and changes to Root/Child agent orchestration.
 
-### Non-goals
+## 2. Confirmed branch baseline
 
-- Specialized content-generation logic in Artifact Manager (TTS, video encoding, code generation are separate tools/plugins).
-- A generic cross-service media/attachment platform.
-- In-browser execution of generated HTML/JS/Python, SVG inline preview, PDF scripting or archive extraction.
-- Public artifact URLs; notifications; image/video transcoding; thumbnails stored on disk; browser uploads; separate object storage; an all-provider media-transcoding pipeline.
-- Rewriting the current Timeline B view or Agent Session persistence.
-
-## 2. Codebase baseline (confirmed source)
-
-| Path | Current behavior / change trigger |
+| Existing location | Relevant behavior |
 | --- | --- |
-| `crates/voice-agent-server/src/services/background/artifacts.rs` | Artifact root appends `.job-artifacts` to the **database filename**; validates hash/size and reconciles orphan files; terminal Job retention currently 30 days. |
-| `crates/voice-agent-server/src/services/background/plugins/protocol.rs` | `ArtifactRef` has `path`, `media_type`, optional `size_bytes` and `sha256`; at most 16 entries per Worker response. |
-| `crates/voice-agent-server/src/services/background/plugins/dispatch.rs` | Reads files from per-attempt `/work/out` and only accepts `text/plain`, `text/markdown`, `application/json`; `ArtifactData.bytes` loads all bytes into RAM. |
-| `crates/voice-agent-server/src/services/background/execution.rs` | Copies bytes from `Vec<u8>` into `.{uuid}.staging`, renames, commits job-step/artifact metadata. |
-| `crates/voice-agent-server/src/database/jobs/execution.rs` | `finish_plugin_success` enforces per-Job limit plus hardcoded 256 MiB global cap, commits Step and artifact rows. |
-| `crates/voice-agent-server/src/database/jobs/artifacts.rs` | Checks artifact metadata and Job ownership; read model only exposes a minimal subset. |
-| `crates/voice-agent-server/src/database/jobs/mod.rs` | Job view selects only `id, media_type, size_bytes, sha256` for each artifact. |
-| `crates/voice-agent-server/migrations/0105_background_jobs.sql` | Existing `job_artifacts` table: `id, job_id, step_key, relative_path, media_type, size_bytes, sha256, created_at, retention_until`. |
-| `crates/voice-agent-server/src/app/admin/background.rs` | Authenticated GET artifact streams as octet-stream with attachment disposition and UUID filename, no inline preview protocol. |
-| `apps/admin-web/src/api/agent-jobs.ts` | Fetches artifact as Blob using existing Bearer-aware client. |
-| `apps/admin-web/src/api/types/agent-jobs.ts` | `JobArtifact` has only four fields. |
-| `apps/admin-web/src/pages/jobs/JobDetailPage.vue` | Artifacts list shows UUID/MIME/size and Download only. |
-| `crates/voice-agent-server/src/config/background.rs` | Default + maximum `artifact_bytes_per_job` is 20 MiB. |
-| `compose.prod.yaml` | Host mount `/mnt/storage/ai-agent-voice/docker/prod/data` -> `/app/data`. |
+| `crates/voice-agent-server/src/services/background/artifacts.rs` | Computes `<database-file>.job-artifacts` root; contains checked open, orphan reconciliation, deletion and terminal-Job 30-day expiry. |
+| `services/background/plugins/protocol.rs` | Worker `ArtifactRef { path, media_type, size_bytes?, sha256? }`; maximum 16 references. |
+| `services/background/plugins/dispatch.rs` | Worker outputs from `/work/out`; only 3 text MIME types accepted; reads each file entirely into `Vec<u8>` before removing its attempt workspace. |
+| `services/background/execution.rs` | Writes staged file, renames, then calls existing Step + artifact publication path. |
+| `database/jobs/execution.rs` | Job budget and a hardcoded global **256 MiB** budget; Step success and artifact rows committed transactionally. |
+| `database/jobs/artifacts.rs`, `database/jobs/mod.rs` | Job ownership and metadata lookup; Job view currently exposes only ID, MIME, size, hash. |
+| `migrations/0105_background_jobs.sql` | `job_artifacts(id,job_id,step_key,relative_path,media_type,size_bytes,sha256,created_at,retention_until)`. |
+| `app/admin/background.rs` | Authenticated artifact download streams as `application/octet-stream`, UUID filename, `attachment`; no Range. |
+| `apps/admin-web/src/api/agent-jobs.ts` | Existing Bearer-aware Blob download. |
+| `apps/admin-web/src/pages/jobs/JobDetailPage.vue` | Artifact table with Download, no preview. |
+| `config/background.rs` | `artifact_bytes_per_job` defaults to **20 MiB**; config validation rejects larger values. |
+| `compose.prod.yaml` | Host bind mount `/mnt/storage/ai-agent-voice/docker/prod/data` to `/app/data`. |
 
-**Important exact current path:** with default `database.url = "sqlite://data/voice-agent.db"` and container `WORKDIR /app`, current persisted artifacts are at `/app/data/voice-agent.db.job-artifacts/<job_id>/<artifact_id>`, not `/app/data/.job-artifacts/`. The new root below is a requested change, not a statement about the currently deployed files.
+The default SQLite URL is `sqlite://data/voice-agent.db` with container working directory `/app`. **Current** artifacts are stored in `/app/data/voice-agent.db.job-artifacts/<job-id>/<artifact-id>`. The new folder below is a **proposed change**, not the current implementation. Base `compose.yaml` alone does not persist the complete `/app/data`; production requires the existing bind mount or equivalent durable volume.
 
-## 3. Domain model and ownership
+## 3. Domain model and invariants
 
-### 3.1 Terms
+Use only these new glossary terms, in addition to the existing `Agent Run`, `Job Step`, `Child Evidence Reference` and V3 session vocabulary:
 
-- **Job Artifact**: an immutable file published by a successfully accepted Job Tool Step, owned by exactly one Agent Job and referenced by a server-issued Artifact ID.
-- **Artifact ID**: server-created UUID identifying an artifact within its Job; never a filesystem path, filename, source URL, Step Key or model-generated ID.
-- **Artifact File**: physical bytes associated with an Artifact ID; stored under a server-owned Job directory using the ID as disk filename.
-- **Display Filename**: sanitized human-facing name (for example `narration.mp3`); NOT an on-disk path or identity.
-- **Artifact Descriptor**: the immutable recorded metadata for a published artifact: Job/Step ownership, filename, media type, bytes, digest and creation time.
-- **Artifact Evidence Reference**: an Artifact ID obtained from the persisted Job ledger and delivered to an Agent through an authorized Tool Result / ChildOutcome. A URL is never an Artifact Evidence Reference.
-- **Artifact Preview**: browser-only representation of an artifact's bytes; it is not the file's authoritative representation and cannot change artifact ownership or state.
-- **Worker Output**: a temporary file created inside the Plugin attempt's output directory before publication; it is NOT yet a Job Artifact.
+- **Job Artifact:** immutable file published by an accepted Job Tool Step and owned by exactly one Job.
+- **Worker Output:** temporary file produced by an executing Plugin before its Step publication is accepted.
+- **Display Filename:** human-readable name of a Job Artifact, never an ownership key or a disk path.
 
-### 3.2 Relationships and invariants
-
-```mermaid
-flowchart TD
-    J[Job] --> R[Agent Runs / Sessions]
-    R --> S[Accepted Tool Step]
-    S --> W[Worker Outputs]
-    W --> P[Artifact Manager publish]
-    P --> M[(SQLite Artifact Descriptors)]
-    P --> F[(Job-owned File Storage)]
-    M --> E[Step Tool Result: Artifact IDs]
-    E --> R
-    R --> C[ChildOutcome]
-    C --> J
-    M --> V[Job Detail Artifacts]
-    F --> B[Authenticated Content Download]
-    B --> V
-```
+The **Artifact ID** is the existing Rust-issued UUID. The existing **Child Evidence Reference** continues to mean the Artifact IDs that a Child may cite from its own accepted Steps. Do not add another evidence-reference concept or confuse verified source URLs with artifact IDs.
 
 Invariants:
 
-1. `Job -> 0..N Artifact`; `Artifact -> exactly 1 Job`; each published Artifact belongs to exactly one successful Tool Step. A step may publish up to the current 16-output protocol cap. Empty artifacts are allowed if useful, subject to limits.
-2. A Step is associated with its owning Agent Run via existing Step/Run references; **do not duplicate `agent_run_id` as an independently supplied plugin field**. Resolve `agent_run_id` by joining existing database records where present.
-3. Artifact ID is created only by Rust; Worker may propose a path/name/type but not artifact ownership, ID, or Step ownership.
-4. Publication is all-or-nothing for the Step's output set; no Step `succeeded` row may reference missing/uncommitted artifacts.
-5. Artifact bytes and published metadata are immutable. A changed file name/content is a NEW artifact, not an overwrite.
-6. A Child can cite only Artifact IDs attributable to its owned successful Steps; Root `finish_job` continues to derive final evidence from the Job ledger without taking evidence IDs from the model.
-7. File count, quota, and valid paths are checked before admission; filename or MIME never grants execution permission.
-8. Job SSE stays a metadata-only invalidation. Content and model transcripts do not go into SSE events.
+1. A Job has 0..N Artifacts. Each Artifact has one owning Job and one successful Step; one Step may publish up to the existing 16-output limit. Root and Child share the Job storage directory.
+2. Rust issues UUIDs and owns Job, Step and Agent Run attribution. A Worker provides only output path/MIME/check declarations, never IDs or authority.
+3. A Step's artifacts commit **as one set**; if any declared output fails validation, quota or persistence, the Step does not become successful and no new artifact descriptors become visible.
+4. Published bytes and metadata are immutable. Two Steps can both produce `report.md` without collision because disk filenames are UUIDs.
+5. The existing Step record already identifies its Agent Run/Session. The UI associates an artifact's `step_key` with the Job Detail Step/Timeline data; **do not add `agent_run_id` to the artifact descriptor or add a new SQL JOIN only for the gallery**.
+6. Root `finish_job` accepts only `summary`, `findings`, `unresolved`; Rust derives final `evidence_refs` from persisted owned artifacts. Child ownership checks and URL-source coverage remain unchanged.
+7. Job SSE continues to signal changes only; full content is fetched through the authenticated artifact endpoint.
 
-### 3.3 Scenarios to validate the model
+Concrete cases: two Children can produce same-named files; one Worker can produce MP3 + cover PNG; a Step may yield no artifacts; retry creates a distinct Job directory; a failed attempt cannot expose half-published outputs. See the acceptance matrix for executable checks.
 
-- Child A creates `report.md`, Child B creates another `report.md` in the same Job: different IDs, no overwrite, both visible with provenance.
-- Child produces `output.mp3` and `cover.png` in one Worker attempt: both committed, or neither committed if one fails checksum/quota.
-- A worker claims an artifact path `../private.txt` or a symlink: reject the attempt. No arbitrary filesystem read.
-- A Step returns text-only data and no file: valid Step, empty artifact list; no fake evidence.
-- A Root tries to cite an HTTP URL as an Artifact ID: invalid; source URLs follow independent verified-source coverage.
-- A browser refreshes while a Job is running: committed artifacts appear in the authoritative Job read view even before Job reaches terminal status.
-- Job is deleted: SQLite rows and Job folder are removed; retry jobs have their OWN folders and remain unaffected.
-- Server crashes after publishing file but before SQLite commit: startup reconciliation deletes orphan published bytes; no false published artifact is exposed.
+## 4. Storage layout and one-time move
 
-## 4. Module design and seams
-
-Use existing `services/background/artifacts.rs` as the external seam of one **deep module** (it may have private internal files). Do **not** create a hypothetical `StorageBackend` interface with only one adapter. Keep SQL owned by `database/jobs`, not spread through HTTP handlers or Vue.
-
-Suggested internal Rust interface (illustrative, not literal source drop-in):
-
-```rust
-struct ArtifactInput {
-    source_path: PathBuf,         // confined to server-issued worker output dir
-    filename: String,            // display only
-    media_type: String,          // validated/normalized
-    declared_size: Option<u64>,
-    declared_sha256: Option<String>,
-}
-
-struct ArtifactContext<'a> {
-    job_id: &'a str,
-    step_key: &'a str,
-    attempt_id: &'a str,
-}
-
-impl ArtifactManager {
-    async fn publish_step_outputs(
-        &self,
-        context: ArtifactContext<'_>,
-        inputs: Vec<ArtifactInput>,
-    ) -> Result<Vec<JobArtifactView>, JobError>;
-
-    async fn open_checked(
-        &self,
-        job_id: &str,
-        artifact_id: &str,
-    ) -> Result<(tokio::fs::File, ArtifactDescriptor), JobError>;
-
-    async fn purge_job(&self, job_id: &str) -> Result<(), JobError>;
-}
-```
-
-`publish_step_outputs` owns validation, bounded streaming copy, SHA-256, sibling-directory staging, atomic rename, directory fsync, DB publication call and rollback/orphan recovery. Keep the DB method responsible for the transaction that finishes the Step and inserts artifacts; do not introduce a second transaction in Artifact Manager.
-
-`open_checked` must keep Job-scoped lookup and safe file opening; replace large-file full read/hash-on-every-request with a documented integrity policy (see section 8). Existing no-follow and regular-file checks remain.
-
-## 5. Physical storage layout
-
-### 5.1 New layout
-
-With the default SQLite location:
+**Target directory:**
 
 ```text
 /app/data/
   voice-agent.db
-  plugins/workspaces/<job-id>/<attempt-id>/out/    # temporary Worker outputs
+  plugins/workspaces/<job-id>/<attempt-id>/out/  # temporary Worker output
   job-artifacts/
     <job-id>/
-      <artifact-id>                                  # binary/text, no extension
-      <artifact-id>
-      .<artifact-id>.staging                         # transient publish file only
+      <artifact-uuid>                               # immutable bytes, any media
+      .<artifact-uuid>.staging                      # transient during commit
 ```
 
-Production host bind mount from the reviewed `compose.prod.yaml`:
+Production host equivalent, if the reviewed Compose mount is used:
 
 ```text
-/mnt/storage/ai-agent-voice/docker/prod/data/job-artifacts/<job-id>/<artifact-id>
+/mnt/storage/ai-agent-voice/docker/prod/data/job-artifacts/<job-id>/<artifact-uuid>
 ```
 
-This host path is from Compose configuration, not a verified live-host observation. **Base `compose.yaml` alone has no full `/app/data` persistent mount.** Deployment must include a data bind mount or durable volume before running media workloads.
+This is a configured host path, not a direct observation of the running host. No `audio/`, `video/`, `root/` or `subagent/` directory partitions; filename, MIME and Step provenance are stored in SQLite.
 
-Do not create `audio/`, `video/`, `root/`, `subagent/` subfolders. The `filename` and `media_type` live in SQLite. Example disk name `49f...-uuid` may display as `narration.mp3`.
+**Move old V3 files without introducing a version branch:**
 
-### 5.2 Migration from the existing root
+1. Under the existing exclusive deployment lock, **before worker dispatch and orphan reconciliation**, compute old root (`<resolved-db-file>.job-artifacts`) and new root (`<db-parent>/job-artifacts`).
+2. If only the old root exists, rename it to the new root on the same filesystem and sync the parent directory; `relative_path = <job-id>/<artifact-id>` remains valid.
+3. If only the new root exists, use it. If neither exists, create lazily. If both contain published content, **fail startup** with diagnostics rather than merging. Empty extra roots may be removed after checking they contain no files.
+4. Reconcile orphan/staging entries from the new root after relocation. Keep this idempotent across restart/crash; verify with an actual preexisting V3 artifact fixture.
 
-Present code creates `<resolved-db-file>.job-artifacts`; new code chooses `<db-parent>/job-artifacts`. Migration must preserve already stored V3 artifacts, without any V1/V2 runtime path branching:
+Do not rewrite migration `0105` and do not add a persistent runtime switch for old and new layouts.
 
-1. At startup, after exclusive deployment ownership is acquired and before Job worker dispatch/reconciliation, compute `old_root` and `new_root` from the resolved durable SQLite file path.
-2. If `old_root` exists and `new_root` does not, atomically rename old root to new root **on the same filesystem**, then fsync parent. Existing DB `relative_path = "<job-id>/<artifact-id>"` remains correct.
-3. If both roots exist and either has nonempty published contents, fail startup with a clear diagnostic; never silently merge or discard.
-4. If neither exists, create the new root lazily/at startup. If the old root is empty, its removal is safe after verification.
-5. Run the existing orphan reconciliation against the **new** root. Migration should be idempotent across crash/restart.
-6. Provide a focused migration test with a real preexisting V3 artifact and a restart; verify bytes/hash and the existing descriptor still resolve.
+## 5. Database descriptor and admin read view
 
-Do NOT change migration `0105` or invent an additional old-version runtime mode. This path migration is a one-time physical location change only.
-
-## 6. SQLite descriptor and Job read view
-
-Create forward-only `crates/voice-agent-server/migrations/0118_job_artifact_media.sql` (0117 is the latest reviewed DB migration). Preserve existing table and foreign keys. Minimum additions:
+Create the next available forward-only migration (reviewed candidate `0118_job_artifact_media.sql`; **confirm the latest migration number on the implementing branch before creation**):
 
 ```sql
-ALTER TABLE job_artifacts
-  ADD COLUMN filename TEXT NOT NULL DEFAULT '';
-
-CREATE INDEX IF NOT EXISTS job_artifacts_job_created
-  ON job_artifacts(job_id, created_at, id);
+ALTER TABLE job_artifacts ADD COLUMN filename TEXT NOT NULL DEFAULT '';
 ```
 
-`filename` is display-only, sanitized server-side to at most 128 UTF-8 bytes and never contains `/`, `\\`, control characters or `.` / `..` special names. Existing rows with empty `filename` display their Artifact UUID as fallback. Do not backfill a fictional extension. Preserve `media_type`, `size_bytes`, `sha256`, `relative_path`, `step_key`, `created_at`, `retention_until`.
+No new media kind table, per-type status enum, duplicate `agent_run_id`, or speculative index. Keep the existing table, FKs and identity semantics. Derive `filename` from the accepted `ArtifactRef.path` basename at publication; sanitize it to a bounded UTF-8 display string without separators/control characters. Existing records with `filename = ''` display their UUID. Never use `filename` for file path lookup.
 
-Minimal HTTP read view (avoid storing derived `kind` or `previewable` in DB):
+Extend the existing Job detail artifact read view, without changing its ownership model:
 
 ```json
 {
-  "id": "<server-uuid>",
-  "job_id": "<job-uuid>",
-  "step_key": "s-001",
-  "agent_run_id": "<child-agent-run-uuid>",
+  "id": "<artifact-uuid>",
+  "step_key": "step-001",
   "filename": "narration.mp3",
   "media_type": "audio/mpeg",
   "size_bytes": 5242880,
-  "sha256": "<64 lowercase hex chars>",
+  "sha256": "<sha256>",
   "created_at": "2026-10-15T10:00:00Z"
 }
 ```
 
-`agent_run_id` is NULL if existing Step provenance cannot resolve it; derive it from authoritative Step/Run rows instead of adding a redundant column. The frontend derives viewer kind from media type and allowed filename extensions. Update `JobArtifactView`, `database/jobs/mod.rs` query, `apps/admin-web/src/api/types/agent-jobs.ts` and REST tests together.
+Use existing Job/Step and Timeline data to display which Child created the file. Preserve the current fields and response shape other than the needed metadata additions. Web derives viewer kind from MIME + filename extension; no persisted preview flag. Update `JobArtifactView`, `database/jobs/mod.rs`, Rust read tests and `apps/admin-web/src/api/types/agent-jobs.ts` together.
 
-## 7. Plugin output protocol and admission
+## 6. Plugin outputs: no protocol expansion
 
-Continue using the existing protocol: Worker writes files into `/work/out` and returns one newline-terminated JSON response on stdout (bounded by existing protocol limit). No base64 binary payloads in tool result JSON.
-
-Keep original fields; add one optional display field to `ArtifactRef`:
+Keep Worker stdout `schema_version=1` and existing `ArtifactRef` fields. Example:
 
 ```json
 {
   "schema_version": 1,
   "request_id": "<attempt-uuid>",
   "ok": true,
-  "result": { "summary": "Audio synthesized" },
+  "result": { "summary": "Audio generated" },
   "artifacts": [
     {
       "path": "narration.mp3",
-      "filename": "narration.mp3",
       "media_type": "audio/mpeg",
       "size_bytes": 5242880,
-      "sha256": "<64 lowercase hex chars>"
+      "sha256": "<sha256>"
     }
   ],
   "error": null
 }
 ```
 
-- `path`: still the local output basename in the Worker directory, no traversal, path separator or NUL; keep the current single-file basename constraint. Supporting multiple files does NOT require accepting nested paths.
-- `filename`: optional; default to `path`, canonicalized for display only; not used as physical path.
-- `media_type`: normalized from an explicit, small set of supported media families; unknown types may be accepted as `application/octet-stream` and Download-only, according to a published mapping.
-- `size_bytes`, `sha256`: optional client declarations checked against streamed actual data; server always computes and stores its own digest and size.
-- Keep existing limit of 16 files per Worker attempt unless a concrete use case justifies changing it.
-- Simple binary classification: allow common listed MIME types; verify media extension compatibility, file regularity and bounded content. Do NOT add antivirus/scanning/transcoding, but never render active HTML/SVG/JS as live page content.
-- Keep `result` bounded by existing output schema/JSON protocol. Never stuff file contents into `result` or Agent Session messages.
+`path` is an output **basename** inside `/work/out` (no path traversal, nested paths, symlinks or NUL). Validate regular files; compare optional declared size and digest with actual bytes and use the computed values in SQLite. Maintain 16 outputs maximum and the existing JSON result/output-schema limits. The Worker never supplies artifact IDs. No base64 media in JSON responses or canonical Agent transcripts.
 
-Example MIME/viewer table:
+Accept these media families, falling back to `application/octet-stream` + Download for unknown binary (without a new media type taxonomy):
 
-| Media family | Accepted examples | Browser viewer |
+| Media | Examples | Browser behavior |
 | --- | --- | --- |
-| Audio | `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/flac` | `<audio>` if browser supports codec |
-| Video | `video/mp4`, `video/webm` | `<video>` via authenticated Blob URL within preview cap |
-| Image | `image/png`, `image/jpeg`, `image/webp`, `image/gif` | `<img>` via Blob URL |
-| Source | `text/plain`, `text/x-python`, `text/x-rust`, `text/javascript`, `text/css`, `text/html`, `application/sql` | Escaped, read-only code viewer; NEVER execute/embed HTML |
-| Text/data | `text/markdown`, `application/json`, `text/csv` | Escaped Markdown, JSON tree, bounded table |
-| PDF/ZIP/Other | `application/pdf`, `application/zip`, `application/octet-stream` | Download first; optional future viewer |
+| Audio | `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/flac` | Native `<audio>` if codec supported, under preview cap. |
+| Video | `video/mp4`, `video/webm` | Native `<video>` if codec supported, under preview cap. |
+| Images | `image/png`, `image/jpeg`, `image/webp`, `image/gif` | `<img>` preview. |
+| Code | `.rs`, `.py`, `.ts`, `.js`, `.html`, `.css`, `.sql` | Escaped, read-only `<pre>`; **never execute or embed generated HTML**. |
+| Text/data | TXT, MD, JSON, CSV | Escaped, bounded text preview; no new Markdown/CSV rendering framework. |
+| Other | PDF, ZIP, unknown/octet-stream | Download only. |
 
-## 8. Streaming publication, limits, and integrity
+Recognize common MIME types and compatible extensions in the server's existing validation path. MIME/extension is only an input and viewer hint, not evidence of safe executable content. Keep `application/octet-stream` as safe download fallback. A Core Operation that already produces files should use the same Step publication implementation, **not** a separate store or protocol; do not claim a new Core TTS/video producer exists as part of this work.
 
-### 8.1 Replace `Vec<u8>` across the artifact path
+## 7. Bounded streaming publication and quotas
 
-Current path `read_artifacts -> Vec<ArtifactData.bytes> -> finish_plugin -> Vec<u8> staging` must be changed so the plugin worker's output is copied using **bounded chunks**, not read into memory. A possible internal value is `ArtifactInput { source_path, media_type, filename, declared_size, declared_sha256 }`; the file must be consumed before the Worker attempt workspace is deleted. Reorder the existing cleanup accordingly, but only after the worker process has been reaped, so there is no concurrent writer.
+**Critical change:** replace `read_artifacts -> Vec<ArtifactData.bytes> -> Step publication` with bounded file copy **without introducing a new public ArtifactManager interface**. Extend the existing module/functions at the current seam. The current Worker attempt directory is removed before the later Step publication; change the execution/cleanup order so output files remain available until the Step's artifact publication succeeds or fails. Worker process must be reaped before reading outputs. A small internal owned path/cleanup guard is acceptable only if necessary for lifetime management; no parallel orchestration module.
 
-Copy across the Plugin attempts volume and destination volume (they may be different filesystems): create `job-artifacts/<job-id>/.<artifact-uuid>.staging` via `create_new`; stream copy while computing hash and checking size/quota; `sync_all` the file; rename staging to `<artifact-uuid>` within the destination directory; sync destination directory; perform existing transactional Step success + artifact descriptor insertion; expose IDs only after commit. On failure remove all outputs of this Step (both staging and published-but-uncommitted files), record Step failure, and do not claim artifact success. On restart orphan reconciliation cleans files not present in SQLite.
+Publication sequence:
 
-To avoid a failed attempt contaminating another Step, use only files tied to the relevant Worker attempt; no directory-wide import/globbing. Validate every declared output before publishing any. Any transient copies must be bounded and cleaned.
+1. Validate the Worker artifact references, path containment, regular-file status, declared digest/size, file count and budgets; do not glob/import undeclared files.
+2. For each file, create a UUID staging file with `create_new` under `<job-id>` and **stream copy** in bounded chunks, verifying checksum and counting bytes.
+3. Flush/sync staged files, rename within the destination folder and sync the directory.
+4. Use the **existing** `database/jobs/execution.rs` transaction to record Step success and insert **all** Artifact rows. Only after commit return the Rust-issued Artifact IDs in the Step Tool Result.
+5. On any failure, clean this Step's new staging/published-but-uncommitted files; on crash, `artifacts::reconcile` removes orphan files not referenced in SQLite. Avoid deleting previously committed files.
 
-### 8.2 Proposed deployment quotas (editable defaults, not settled operational sizing)
+Source attempt volume and published file volume may be different; **do not rename directly across them**. Any staging bytes count toward bounded temporary-disk usage. Keep integer overflow checks and existing no-follow/regular-file validation. Never allocate a `Vec<u8>` proportional to output size.
 
-| Setting | Initial proposal | Notes |
-| --- | ---: | --- |
-| `artifact_max_file_bytes` | 512 MiB | One published artifact |
-| `artifact_bytes_per_job` | 1 GiB | Sum of all published artifacts in one Job |
-| `artifact_global_bytes` | 10 GiB | Aggregate retained files across Jobs |
-| `artifact_max_files_per_step` | 16 | Already enforced by Worker protocol |
-| `artifact_preview_blob_max_bytes` | 64 MiB | Browser preview cap; larger video Download only |
-| `artifact_preview_text_max_bytes` | 1 MiB | Safe code/text rendering cap |
-| `artifact_retention_days` | `null` (disabled) | No automatic expiration by default |
+**Minimal config in existing `[background.limits]`:**
 
-Expose these under the existing `[background.limits]` and/or a compact `[background.artifacts]` config (choose one canonical nesting; avoid duplicate sources of truth). Existing `BackgroundLimits::valid()` rejects values >20 MiB: change both default and permitted upper bound. Replace hardcoded global `256 * 1024 * 1024` with the configured quota. Re-evaluate budget bounds for actual disk capacity. Keep Job-scoped budget semantics consistent with immutable Job snapshots, and global quota as deployment-controlled runtime cap.
-
-Prevent integer overflow (`checked_add`), negative sizes and unbounded allocation. Validate total disk usage in a DB transaction before commit; temporary disk usage also needs a per-attempt cap and bounded concurrency. Return stable error codes such as `artifact_quota_exceeded`, `artifact_invalid_type`, `artifact_checksum_mismatch`, `artifact_storage_unavailable`.
-
-### 8.3 Integrity/read policy
-
-Preserve the current invariant that a published Artifact ID refers to exactly one Job and file. Validate SHA-256 during publish. Do not compute a 500 MiB file hash afresh on **each** browser Range request; for the first implementation, since the preview/download endpoint remains full-file fetch, it may stream with the existing checked file path, but avoid a full `Vec<u8>`. A later native Range implementation must define a safe integrity policy (for example immutable storage plus file metadata/snapshot verification with validated files and no outside writes) before claiming it is production-ready. Do not weaken the existing `O_NOFOLLOW`/regular-file checks.
-
-## 9. Admin HTTP contract and browser previews
-
-### 9.1 Required first-delivery HTTP changes
-
-Keep existing authenticated endpoints:
-
-- `GET /api/admin/jobs/{job_id}`: includes expanded artifact descriptors.
-- `GET /api/admin/jobs/{job_id}/artifacts/{artifact_id}`: authorized Download, returns the stored file as `application/octet-stream`, `Content-Disposition: attachment` with sanitized UTF-8 display filename, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. If metadata filename missing, use UUID fallback. Never trust arbitrary file paths supplied by clients.
-
-No new content endpoint is needed for the first phase. The current `agentJobsApi.artifact` already uses an Authorization-aware `requestBlob` call. Frontend reads the bytes as Blob and constructs `URL.createObjectURL(new Blob([blob], { type: artifact.media_type }))` **only for approved preview types and limited sizes**. Revoke Blob URLs on close/unmount/change of Job. For files above the preview cap use Download, not a fake nonworking `<video src="/api/admin/...">`.
-
-**Explicit limitation:** native seek/partial transfer for very large audio/video is **not** in the first-phase UI. Browser Blob preview downloads the entire file first; large video previews are postponed. A future extension can add HTTP Range/`206` + an authenticated delivery mechanism, but this design intentionally does not add tokens, signed URLs, new cookies or a custom MediaSource player to the first implementation.
-
-### 9.2 Viewer registry
-
-Use a private registry of lightweight Vue viewers; no plugin system for viewers:
-
-```ts
-type ViewerKind =
-  | 'audio' | 'video' | 'image'
-  | 'code' | 'markdown' | 'json' | 'csv'
-  | 'download'
-
-function viewerFor(artifact: JobArtifact): ViewerKind;
+```toml
+[background.limits]
+artifact_bytes_per_job = 1073741824  # 1 GiB (initial proposal)
+artifact_global_bytes = 10737418240  # 10 GiB (initial proposal)
 ```
 
-Proposed location: `apps/admin-web/src/components/jobs/artifacts/`:
+These are proposal defaults, not measured storage sizing. Change `BackgroundLimits::valid()` to permit the proposed per-Job quota, and replace the hardcoded 256 MiB aggregate cap with `artifact_global_bytes`. Preserve immutable Job-snapshot budgets and make the aggregate cap deployment-controlled. A single file cannot exceed its remaining Job budget, so **do not add a separate per-file configuration**. Keep the current 16-files-per-Step protocol limit. Validate the global usage and new descriptor sizes transactionally before recording Step success; bound concurrent staging by the existing job/worker concurrency policy. Errors must be stable and distinguish quota, invalid output and storage failure.
 
-- `JobArtifactGallery.vue`: grid/list, file icon, display filename, size, MIME, created date, optional Agent Run/Step label.
-- `ArtifactPreviewDialog.vue`: preview shell with Close/Download and loading/error state.
-- `ArtifactAudioPreview.vue`, `ArtifactVideoPreview.vue`, `ArtifactImagePreview.vue`.
-- `ArtifactCodePreview.vue`: HTML-escaped source view, line numbers, copy, client-only syntax highlighting if existing dependencies suffice; no code execution.
-- `ArtifactDataPreview.vue`: bounded escaped Markdown/JSON/CSV; CSV parsed into capped row/column count to prevent browser freezes.
+**Integrity:** hash on publication, record `sha256`/size, and retain existing checked-open semantics for download. The current reader verifies before streaming; be aware this involves full-file hashing per download. Do not replace it with a speculative cache, new integrity interface or HTTP Range support in this release.
 
-Continue to use Timeline B unchanged. Add gallery to the existing Artifact section of Job Detail. Every artifact has Download, whether or not it has a viewer. Gallery derives group type from MIME/extension without duplicating a new DB enum.
+## 8. HTTP download and minimal web gallery
 
-### 9.3 UX acceptance
+Continue to use the authenticated endpoints already present:
 
-- MP3: show filename, size, Play/Pause, progress and Download for valid <=64 MiB artifact.
-- MP4/WebM: show usable video player for supported codec and <=64 MiB; for >64 MiB show Download + clear size notice, not a broken media player.
-- PNG/JPEG: show image zoom/fit; no uncontrolled giant image lists.
-- `.rs`, `.py`, `.ts`, `.js`, `.html`: show escaped code with line numbers; HTML is NOT executed.
-- JSON/CSV/MD: bounded readable preview; invalid UTF-8 or oversize -> Download.
-- ZIP/PDF/unknown: Download, no speculative viewer.
-- Slow/failing download: spinner and error state; no frozen UI; all object URLs are revoked when no longer needed.
-- Accessibility: keyboard-operable buttons/dialog, media controls, descriptive file icon and filename.
+- `GET /api/admin/jobs/{job_id}` supplies the extended Artifact descriptors.
+- `GET /api/admin/jobs/{job_id}/artifacts/{artifact_id}` remains the Download endpoint (`application/octet-stream`, `attachment`, `nosniff`, `no-store`) and uses the sanitized display filename in Content-Disposition, UUID fallback for older records.
 
-## 10. V3 flow compatibility
+The current `agentJobsApi.artifact` uses a Bearer-aware `requestBlob`. Reuse it for authorized preview: after checking **64 MiB** media cap and **1 MiB** text/code cap, fetch file, create a Blob URL for approved audio/video/image and revoke it on close, route change or Job change. For text/code read bounded content and interpolate as escaped text (`<pre>`); do not run generated HTML/JS. Oversize, unsupported media/codec or invalid text -> Download. HTML media tags cannot pass the admin Bearer header themselves; do not point `<video src>` directly to the authorized backend endpoint. No Range/206, extra auth cookies, MediaSource player or signed URL in this release.
+
+Only two new Vue files, under `apps/admin-web/src/components/jobs/artifacts/`:
+
+- `JobArtifactGallery.vue`: card/list presentation, filename, MIME, size, Download and Preview actions; optional Step/Child label resolved from existing Timeline/Step data.
+- `ArtifactPreviewDialog.vue`: native `<audio controls>`, `<video controls>`, `<img>`, escaped `<pre>` and fallback Download, with loading/error state and Blob URL cleanup. Keep any tiny `viewerFor(artifact)` decision function private to this file or a directly reused existing utility; **no viewer registry or specialized viewer modules**.
+
+Reuse `apps/admin-web/src/pages/jobs/JobDetailPage.vue` Artifact section and existing download request helper. Preserve Timeline B layout and Job SSE invalidation. Do not add syntax-highlighter, CSV parser, Markdown renderer or media-player dependency for this feature. Preview cap constants live in the frontend (not a separate server configuration), and Download works for any accepted binary size.
+
+## 9. V3 flow (unchanged orchestration)
 
 ```mermaid
 sequenceDiagram
     participant Root as Root Agent Session
     participant Child as Child Agent Session
-    participant Runtime as Plugin/Core Operation
-    participant Art as Artifact Manager
+    participant Tool as Plugin/Core Operation
+    participant Store as Existing Artifact Storage Module
     participant DB as SQLite Job Ledger
-    participant UI as Job Detail
+    participant Web as Job Detail
     Root->>Child: subagent(prompt)
-    Child->>Runtime: canonical native ToolCall (validated)
-    Runtime-->>Art: output references + files in attempt workspace
-    Art->>Art: verify + bounded stream copy + publish
-    Art->>DB: finish Step + insert artifact rows (atomic DB transaction)
-    DB-->>Child: successful Step + server-issued artifact IDs
+    Child->>Tool: authorized native ToolCall
+    Tool-->>Store: declared Worker Outputs
+    Store->>Store: validate, chunk-copy, hash, stage/rename
+    Store->>DB: existing transaction: Step success + Artifact rows
+    DB-->>Child: matched Tool Result + server-owned Artifact IDs
     Child-->>Root: ChildOutcome(summary, artifact_refs)
     Root->>DB: finish_job(summary, findings, unresolved)
-    DB->>DB: determine server-owned evidence_refs and coverage
-    UI->>DB: GET Job metadata
-    UI->>Art: GET authorized file by Job ID + Artifact ID
-    Art-->>UI: verified file bytes
+    DB->>DB: derive evidence_refs from owned persisted artifacts
+    Web->>DB: GET Job detail metadata
+    Web->>Store: authenticated download by Job ID + Artifact ID
+    Store-->>Web: file bytes
 ```
 
-No new Root tool. No new `subagent` params. An existing Job can keep `output_format: "text"` while publishing MP3/MP4/source-code artifacts from authorized Steps. Child evidence eligibility must remain scoped to its own successful Steps and persisted Runs. Source URLs remain `coverage.verified_source_urls`, not artifacts. Root final evidence remains server-derived. New user-visible artifact filename, kind or caption must not give the model authority to claim execution success.
+The actual Tool/Child/Root call IDs and provider-neutral Session records remain managed by V3, not by artifact presentation. `coverage.verified_source_urls` is independent from artifact IDs. A text-output Job may publish binary files through its Steps.
 
-## 11. Lifecycle and retention
+## 10. Retention and recovery
 
-- **Running Job:** Step-success artifacts appear immediately after commit; a later Job failure does not destroy already committed artifacts, unless the Job itself is deleted. UI may show partial outputs with accurate Step/Job status.
-- **Successful Job:** artifacts retained indefinitely by default, bounded by quotas.
-- **Failed/cancelled Job:** already committed artifacts remain if Job record remains; failed attempts with no committed Step cannot publish half a set.
-- **Explicit Job delete:** reuse existing endpoint; delete the Job folder only after worker/process termination is enforced and DB delete is committed. Retried Jobs own separate folders.
-- **Automatic retirement:** disabled by default. If configured, job-level expiration deletes Job rows and corresponding folder; do not expire individual files while they remain referenced by a readable Job unless explicitly designed later.
-- **Crash repair:** startup reconciliation handles orphan bytes, staging files and directories; bound scans and log anomalies. Never delete files of a live running attempt (single-process ownership and worker reaping invariant).
-- **Backups:** include both SQLite and `/app/data/job-artifacts/`; copying SQLite alone does NOT restore artifacts. Keep data directory persistent across container recreation.
+- **Running/failed/cancelled Job:** a previously committed Step's artifacts remain readable as long as the Job exists. An uncommitted attempt cannot expose new files.
+- **Completed Job:** disable the current automatic **30-day Job retirement** by default. No retention config, alternate expiration algorithm or periodic file sweeper is added. Existing `expire_terminal` call sites must no longer retire Jobs automatically.
+- **Explicit Job delete:** reuse current deletion path; after worker exit and database removal, remove only the deleted Job's folder. A retry Job owns a separate folder.
+- **Crash restart:** run existing reconciliation after the one-time root move; remove orphan staged/published files, never files backed by committed descriptors.
+- **Disk capacity:** quota exhaustion rejects new publications without deleting existing Jobs automatically. Operator can delete Jobs to free space.
+- **Deployment/backup:** production must persist `/app/data`. Backup both the SQLite database and `/app/data/job-artifacts`; SQLite alone cannot restore file bytes.
 
-## 12. Implementation work packages, in dependency order
+## 11. Implementation plan (files and exit conditions)
 
-### P0 - DB descriptor and storage root
+### P0 — Data and root relocation
 
-1. Add `0118_job_artifact_media.sql` and DB tests for `filename`; implement deterministic V3 startup path migration under deployment lock.
-2. Change artifact `root()` to parent-of-DB `job-artifacts/`; keep current UUID storage names.
-3. Extend database Job view (`step_key`, `agent_run_id` via join, `filename`, `created_at`) and Rust/TypeScript contract tests.
-4. Update config with proposed quota and retention controls. Do not delete old migrations.
+- In `migrations/`, add the `filename` column with a forward-only migration; update `database/jobs/mod.rs` and the Job detail Rust/TypeScript types to return `filename`, `step_key` and `created_at`, not a redundant `agent_run_id`.
+- In `services/background/artifacts.rs` and startup code, switch to `<db-parent>/job-artifacts` with the idempotent one-time V3 root migration and reconciliation before dispatch.
+- In `config/background.rs` and `database/jobs/execution.rs`, add only the two quota settings from section 7; disable automatic terminal Job retirement at its existing call site.
 
-**Exit:** existing V3 artifact survives path migration/restart; GET Job exposes correct metadata.
+**Exit:** a preexisting V3 file survives restart/move; metadata is readable; quota config parses.
 
-### P1 - Worker binary publication (critical path)
+### P1 — Binary output publication (critical path)
 
-1. Add optional `filename` to `ArtifactRef` without breaking current Worker response format.
-2. Extend accepted media families; maintain paths, file count, checksum and output-schema validation.
-3. Replace `Vec<ArtifactData.bytes>` with owned bounded file descriptors/paths and stream-copy pipeline; reorder workspace cleanup only after publishing completes.
-4. Preserve all-or-nothing Step and artifact publication on quota/hash/crash failures; adjust transactional SQL and error codes.
-5. Add fixture Plugin outputs for MP3, MP4, PNG, `.py`, JSON and ZIP (files may be small valid samples; no external model credentials).
+- In `plugins/dispatch.rs`, retain the protocol from `plugins/protocol.rs`; accept approved MIME families and preserve Worker output files until publication.
+- In `services/background/execution.rs` and `services/background/artifacts.rs`, replace whole-file buffering with bounded chunked staging/copy, SHA-256 and idempotent cleanup.
+- In `database/jobs/execution.rs`, keep atomic Step success and descriptor insert, with configurable global quota; add Rust fixtures for MP3/MP4/PNG/code/ZIP, no external model credentials.
 
-**Exit:** supported binary artifact published and retrieved without whole-file RAM buffering; no partial Step success.
+**Exit:** one Step publishes multiple binary/text files, no partial commit and no memory usage proportional to file size.
 
-### P2 - HTTP download and web gallery
+### P2 — Download and preview UI
 
-1. Return extended metadata with job detail and use safe filenames for downloads.
-2. Add `JobArtifactGallery` and viewer registry, specialized bounded previews, Blob URL lifecycle.
-3. Keep Timeline B and SSE invalidation contract untouched.
-4. Implement Web unit/UI tests for viewer routing, preview size limits, HTML escaping, failure recovery, download filename, blob cleanup.
+- In `app/admin/background.rs`, use the saved display filename for authenticated download without changing route/auth semantics.
+- In `apps/admin-web/src/api/types/agent-jobs.ts`, reuse `api/agent-jobs.ts` Blob request; add `JobArtifactGallery.vue` and `ArtifactPreviewDialog.vue` to the current `JobDetailPage.vue` artifact section.
+- Test type/size routing, safe escaped code display, media controls, Blob cleanup, failed network requests and Download fallback.
 
-**Exit:** user can view supported small MP3/MP4/images/source text and download all types; oversized preview falls back to Download.
+**Exit:** bounded MP3/MP4/image/code preview works and arbitrary files download; Timeline B unchanged.
 
-### P3 - Operational hardening and acceptance
+### P3 — End-to-end verification and docs
 
-1. Add integration tests for restart/orphan cleanup, multiple Worker output files, competing Jobs, global quota, disabled retention and explicit deletion.
-2. Confirm Compose production data mount persists files across container rebuild/recreation; document disk monitoring.
-3. Run Rust formatting/Clippy/integration tests and web typecheck/build/tests; record exact commands/results in implementation PR.
-4. Update `CONTEXT.md`, Job V3 flow document and glossary; add one concise ADR for Job-owned immutable local file storage.
+- Run DB migration/restart/orphan/global quota/delete checks and the V3 Root→Child→Plugin→Artifact→`finish_job` fixture. Verify existing Child evidence, session resume and source-URL coverage behavior.
+- Verify production Compose storage persistence across container recreation; run Rust fmt/Clippy/tests and frontend typecheck/build/tests; record exact results in the implementation PR.
+- Update `CONTEXT.md`, `docs/flows/10-agent-job-opencode-v3.md` and the root `GLOSSARY.md`; add a concise ADR documenting immutable Job-owned local storage and the SQLite/filesystem crash recovery trade-off.
 
-**Exit:** complete end-to-end V3 Root -> Child -> Plugin -> Artifact -> finish_job -> Job Detail flow passes tests.
+**Exit:** regression suite passes for V3 and the Job Detail can view/download committed artifacts.
 
-### Deferred follow-up (not required for implementation acceptance)
+## 12. Acceptance matrix
 
-- Browser seeking large videos via authenticated Range transfer, without a complex token architecture.
-- Persistent thumbnail generation, optional media transcoding, embedded PDF viewer, ZIP content browsing, object storage adapters.
-
-## 13. Acceptance test matrix
-
-| ID | Case | Expected |
+| ID | Scenario | Required result |
 | --- | --- | --- |
-| A01 | V3 Child calls approved Plugin producing MP3 and PNG | Both files stored, IDs delivered as matched Tool Result and visible in Job detail. |
-| A02 | Plugin produces MP4 (small), Python source, JSON | All downloadable; MP4/code/JSON rendered by correct viewer. |
-| A03 | Unknown binary/ZIP | Saved and downloadable; fallback viewer. |
-| A04 | Same filename emitted in two Steps | Distinct artifact IDs; no overwrite; correct Step/Agent provenance. |
-| A05 | Worker emits wrong digest or declared size | Step fails; zero new committed artifacts; no retained orphan after reconcile. |
-| A06 | Worker output path escapes or is symlink | Rejected; no arbitrary host file is read. |
-| A07 | Job/file/global quota exceeded | Stable failure code; other existing artifacts unaffected. |
-| A08 | 256+ MiB output in bounded runtime | Streaming copy; no material `Vec<u8>` proportional to file size. |
-| A09 | Kill process between renamed file and DB commit | Restart reaps/reconciles orphan; no ghost descriptor. |
-| A10 | Legacy filesystem root contains a V3 artifact | One-time move preserves Job artifact lookup and digest. |
-| A11 | Root sends URL as Artifact Evidence Reference | Rejected per current V3 contract; no invented artifact. |
-| A12 | Child resumes same Session and produces a new file | New Step/Run ownership correct; old files unaffected. |
-| A13 | Job is running but Step completed | New artifact visible in authoritative read; SSE only signals resync. |
-| A14 | Delete Job with artifacts | Job folder removed; retry/other Job folders untouched. |
-| A15 | Job older than 30 days with default retention disabled | Job and artifacts remain until explicit deletion. |
-| A16 | Browser opens HTML source artifact | HTML displayed as text, never executed; Blob URL cleaned. |
-| A17 | Browser attempts oversized MP4 preview | Explicit Download fallback, no unauthorized direct-video URL. |
-| A18 | Browser unauthenticated download/wrong Job ID | Existing `401`/`404` semantics preserved. |
-| A19 | Source-only summary Job without files | No phantom artifacts; V3 completion/coverage unchanged. |
-| A20 | Plugin binary files and Root `finish_job` | Server-issued evidence refs, matched ToolResults and final coverage unchanged. |
+| A01 | V3 Child produces MP3 + PNG in one Plugin Step | Two distinct persisted files; matched Tool Result carries Rust-issued refs; Job Detail lists both. |
+| A02 | MP4 + `.py` + JSON from a Step | Correct small-media preview, escaped source/text preview and Download. |
+| A03 | ZIP or unknown binary | Persisted and downloadable, no unsafe embedded preview. |
+| A04 | Two Children produce identical `report.md` filename | Distinct UUIDs; Step ownership shown from existing Timeline/Step data. |
+| A05 | Wrong checksum/declared size on one of two outputs | Step fails; neither output committed; cleanup on failure/restart. |
+| A06 | `../` path, symlink or non-regular Worker output | Rejected without reading arbitrary host files. |
+| A07 | Per-Job/global quota exceeded | Stable failure; previous artifacts unchanged. |
+| A08 | File hundreds of MiB | Streaming publication, bounded RAM; downloaded without whole-file buffer. |
+| A09 | Crash after rename but before DB transaction commit | Restart reconciliation removes orphan, no visible phantom artifact. |
+| A10 | Existing V3 artifact in old disk root | One-time move preserves ID, bytes, digest and download across restart. |
+| A11 | Root attempts to use a source URL as an artifact ref | No fabricated artifact; original `finish_job`/coverage contract remains authoritative. |
+| A12 | Child Session resumes and generates another file | New artifact linked through its successful Step, old artifacts intact. |
+| A13 | Job still running after a Step succeeds | Committed artifact appears on the Job read view; SSE remains metadata-only. |
+| A14 | Explicit deletion of Job containing files | Own folder removed; retry/other Job folders untouched. |
+| A15 | Completed Job older than 30 days | Job/artifacts persist by default until explicit deletion. |
+| A16 | HTML/JS source preview | Escaped text only, no execution/iframe/embedded webpage. |
+| A17 | MP4 exceeds 64 MiB cap | Download offered; no broken direct `<video>` URL or unauthorized fetch. |
+| A18 | Unauthenticated/wrong Job artifact request | Existing `401`/`404` ownership behavior retained. |
+| A19 | V3 source-only summary with no files | No phantom artifacts; source-URL verification unaffected. |
+| A20 | Binary-producing Child and Root completion | Server-derived final evidence refs, matched Tool Results and provider Session history unchanged. |
 
-## 14. Concrete file-change map
+## 13. Domain Modeling changes to apply during implementation
 
-| Change | Files |
-| --- | --- |
-| Forward-only migration | `crates/voice-agent-server/migrations/0118_job_artifact_media.sql` |
-| Storage and startup relocation | `crates/voice-agent-server/src/services/background/artifacts.rs`, `runtime.rs` |
-| Streaming step publication | `services/background/execution.rs`, `services/background/plugins/dispatch.rs`, `services/background/plugins/protocol.rs` |
-| Metadata SQL and atomic Step completion | `database/jobs/artifacts.rs`, `database/jobs/execution.rs`, `database/jobs/mod.rs` |
-| Limits/retention | `config/background.rs`, `services/background/artifacts.rs` and scheduler/runtime call sites |
-| Download semantics | `app/admin/background.rs` and its existing router mapping |
-| Web types and requests | `apps/admin-web/src/api/types/agent-jobs.ts`, `apps/admin-web/src/api/agent-jobs.ts` |
-| Artifact Gallery | `apps/admin-web/src/components/jobs/artifacts/*`, `apps/admin-web/src/pages/jobs/JobDetailPage.vue` |
-| V3 regression checks | Existing `services/background/tests/*`, `services/background/agent_loop/*` fixtures, `apps/admin-web` tests |
-| Documentation | `GLOSSARY.md`, `CONTEXT.md`, `docs/flows/10-agent-job-opencode-v3.md`, new ADR |
-
-## 15. Domain Modeling deliverables to apply when implementing
-
-### 15.1 Suggested `GLOSSARY.md` patch
-
-Append a section to the existing root `GLOSSARY.md` (domain definitions only, no storage paths or implementation details):
+Append only these terms to the existing root `GLOSSARY.md`:
 
 ```md
 ## Agent Job Artifacts
 
 **Job Artifact**:
 An immutable file published by an accepted Job Tool Step and owned by exactly one Job.
-_Avoid_: Worker Output, Tool Result, attachment link
-
-**Artifact ID**:
-Server-issued identity of one Job Artifact, distinct from a display filename, URL or Step Key.
-_Avoid_: filename, file path, source URL
-
-**Display Filename**:
-Human-facing file name attached to a Job Artifact; not its identity or ownership key.
-_Avoid_: Artifact ID, storage path
+_Avoid_: Worker Output, Tool Result
 
 **Worker Output**:
-Temporary file produced by a Plugin Worker Attempt before the Job accepts it as an Artifact.
-_Avoid_: published Job Artifact, Tool Result
+A temporary file produced by a Plugin Worker Attempt, before publication as a Job Artifact.
+_Avoid_: Job Artifact
 
-**Artifact Evidence Reference**:
-A Job-owned Artifact ID authorized from the persisted Step ledger for use as Agent evidence.
-_Avoid_: source URL, model-generated file reference
-
-**Artifact Preview**:
-Read-only UI representation of a Job Artifact; it is not a new artifact or execution result.
-_Avoid_: generated output, live HTML execution
+**Display Filename**:
+A human-readable name for a Job Artifact, distinct from its identity and ownership.
+_Avoid_: Artifact ID, file path
 ```
 
-Maintain the glossary's existing `Child Evidence Reference` term as the narrower **Child-owned subset** of Artifact Evidence References; do not replace or conflate it.
+Do not add `Artifact Evidence Reference`: existing **Child Evidence Reference** already captures the necessary domain meaning for Child provenance, and Rust-owned Root evidence remains a separate V3 rule.
 
-### 15.2 Suggested ADR (create at `docs/adr/0115-job-owned-local-artifacts.md` only when implementing)
+When implementation changes are committed, add one brief ADR (confirm the next free ADR number on that branch; **do not reuse an occupied number**) recording the decision to reuse SQLite + Job-owned local immutable files instead of a second storage system, and why transactional DB writes plus crash reconciliation are necessary.
 
-```md
+---
+
+**Source anchors:** `services/background/{artifacts,execution}.rs`, `services/background/plugins/{dispatch,protocol}.rs`, `database/jobs/{artifacts,execution,mod}.rs`, `app/admin/background.rs`, `config/background.rs`, `apps/admin-web/src/{api,pages/jobs}`, `GLOSSARY.md`, ADR 0114.
+
+**Implementation status:** specification only; this edit changes the Markdown document, **not** repository code, migrations, glossary or ADR files.
