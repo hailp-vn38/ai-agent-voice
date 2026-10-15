@@ -476,3 +476,100 @@ async fn retry_of_old_job_uses_native_executor_and_preserves_history() {
         "hierarchical_v2"
     );
 }
+
+#[tokio::test]
+async fn resumed_child_does_not_gain_core_tools_enabled_after_job_admission() {
+    let (db, config, runtime) = harness().await;
+    runtime.shutdown().await;
+    db.set_core_plugin_enabled("core.web", 1, false)
+        .await
+        .unwrap();
+    let (job, root_run, _) = root(&db, &config).await;
+    let original = job.plugin_choices.clone();
+    assert!(
+        !original
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["operation"] == "web.fetch")
+    );
+
+    let child = db
+        .create_children_for_decision(&job.id, &root_run.agent_run_id, "first", &[task("first")])
+        .await
+        .unwrap();
+    let sid = db
+        .attach_child_session(
+            &job.id,
+            &root_run.agent_run_id,
+            &child[0].agent_run_id,
+            SessionTask {
+                agent_key: "research",
+                resume_session_id: None,
+                pin: &job.snapshot.worker,
+                system: "Original child system",
+                prompt: "First task",
+            },
+        )
+        .await
+        .unwrap();
+    db.start_child_run(&job.id, &child[0].agent_run_id)
+        .await
+        .unwrap();
+    db.finish_child_run(&job.id, &child[0].agent_run_id, "succeeded", None, None)
+        .await
+        .unwrap();
+    db.join_children(&job.id, &root_run.agent_run_id, "first")
+        .await
+        .unwrap();
+
+    // Admin can enable Web for new Jobs, but the prior Child Session must
+    // resume under the original Job snapshot, not a newly generated catalog.
+    db.set_core_plugin_enabled("core.web", 2, true)
+        .await
+        .unwrap();
+    let follow_up = [task("follow-up")];
+    let tasks = [SessionTask {
+        agent_key: "research",
+        resume_session_id: Some(&sid),
+        pin: &job.snapshot.worker,
+        system: "Must not replace original system",
+        prompt: "Follow-up task",
+    }];
+    let calls = [ToolCall {
+        id: "resume-call".into(),
+        name: "subagent".into(),
+        arguments: json!({}),
+    }];
+    let resumed = db
+        .create_session_children(
+            &job.id,
+            &root_run.agent_run_id,
+            "follow-up",
+            &follow_up,
+            &tasks,
+            &calls,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        db.session_for_run(&job.id, &resumed[0].agent_run_id)
+            .await
+            .unwrap(),
+        sid
+    );
+    let messages = db.read_messages(&job.id, &sid).await.unwrap();
+    assert!(
+        matches!(messages.first(), Some(ChatMessage::System { content })
+        if content == "Original child system")
+    );
+    let still_frozen = db.job_view(&job.id).await.unwrap().plugin_choices;
+    assert_eq!(still_frozen, original);
+    assert!(
+        !still_frozen
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["operation"] == "web.extract")
+    );
+}

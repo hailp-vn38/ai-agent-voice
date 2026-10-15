@@ -128,11 +128,21 @@ impl Database {
         if validated_pair.is_some_and(|pair| pair[0] != orchestrator || pair[1] != worker) {
             return Err(JobError::ConfigurationChanged);
         }
+        // Admission freezes only currently enabled Core operations. This read
+        // shares the Job publication transaction with External installation pins.
+        let core_settings: Vec<crate::tools::core::CorePluginSetting> = sqlx::query_as(
+            "SELECT plugin_id,enabled,revision FROM core_plugin_settings ORDER BY plugin_id",
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        let enabled_core = crate::tools::core::enabled_groups(&core_settings)
+            .map_err(|_| JobError::DatabaseUnavailable)?;
         let plugin_choices = crate::services::background::plugins::frozen_choices(
             crate::database::plugins::ready_installations(&mut tx)
                 .await
                 .map_err(|_| JobError::DatabaseUnavailable)?,
             &request,
+            &enabled_core,
         )?;
         let used: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'")
             .fetch_one(&mut *tx)

@@ -37,6 +37,24 @@ export interface InstalledPlugin {
   last_error_code?: string | null
   installation_digest?: string
 }
+/** Compile-time Rust operations: not Store installations and not uninstallable. */
+export interface CorePluginView {
+  id: string
+  name: string
+  kind: 'built_in'
+  tags: string[]
+  status: 'ready' | 'disabled'
+  enabled: boolean
+  revision: number
+  runtime: { kind: 'in_process'; language: 'rust' }
+  operations: (PluginOperation & { contract_revision: string })[]
+}
+export interface CorePluginPage {
+  items: CorePluginView[]
+  total: number
+  operation_total: number
+}
+
 export interface PluginTestResult {
   ok: boolean
   message?: string

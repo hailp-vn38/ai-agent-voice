@@ -423,12 +423,19 @@ impl PluginStore {
 pub(crate) fn frozen_choices(
     rows: Vec<Installation>,
     request: &crate::services::background::JobRequest,
+    enabled_core_groups: &[String],
 ) -> Result<String, crate::services::background::JobError> {
     use crate::services::background::JobError;
     if rows.len() > 32 {
         return Err(JobError::CapacityUnavailable);
     }
-    let mut choices = crate::tools::core::frozen_choices();
+    let mut choices: Vec<_> = crate::tools::core::frozen_choices()
+        .into_iter()
+        .filter(|choice| {
+            crate::tools::core::group_for(choice["operation"].as_str().unwrap_or(""))
+                .is_some_and(|group| enabled_core_groups.iter().any(|enabled| enabled == group))
+        })
+        .collect();
     for row in rows {
         // Core is a reserved namespace, never an External Store installation.
         if row.plugin_id == "core" {

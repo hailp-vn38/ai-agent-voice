@@ -31,6 +31,7 @@ fn finish() -> ToolCall {
     )
 }
 struct Scenario {
+    db: Arc<Database>,
     chain: bool,
     invalid: bool,
     semantic: Option<&'static str>,
@@ -149,6 +150,51 @@ impl JobModels for Scenario {
                 return Err(JobError::ModelFailed);
             }
             let round = self.child_round.fetch_add(1, Ordering::SeqCst);
+            if self.semantic == Some("core_disabled") {
+                if round == 0 {
+                    // Submission already froze the Core tool. Revoking it
+                    // before Step start must produce a paired, known denial.
+                    self.db
+                        .set_core_plugin_enabled("core.data", 1, false)
+                        .await
+                        .unwrap();
+                    assert!(
+                        request
+                            .tools
+                            .iter()
+                            .any(|tool| tool.name == "p_core_data_json_query")
+                    );
+                    return Ok(BackgroundTurnResult {
+                        turn: BackgroundTurn::ToolCalls(vec![call(
+                            "revoked_tool",
+                            "p_core_data_json_query",
+                            json!({"json_text":"{\"name\":\"Ada\"}","pointer":"/name"}),
+                        )]),
+                        usage: None,
+                    });
+                }
+                let paired: Vec<_> = request
+                    .messages
+                    .iter()
+                    .filter_map(|message| match message {
+                        ChatMessage::ToolResult {
+                            tool_call_id,
+                            content,
+                        } if tool_call_id == "revoked_tool" => Some(content.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    paired.len(),
+                    1,
+                    "disabled Core call must have exactly one Tool Result"
+                );
+                assert!(paired[0].contains("core_plugin_disabled"), "{paired:?}");
+                return Ok(BackgroundTurnResult {
+                    turn: BackgroundTurn::Text("PRIVATE_CHILD_OUTPUT: denied Core call".into()),
+                    usage: None,
+                });
+            }
             if self.chain && round < 2 {
                 let (name, args) = if round == 0 {
                     (
@@ -200,6 +246,7 @@ async fn execute_scenario_with_legacy(
         db.clone(),
         config,
         Arc::new(Scenario {
+            db: db.clone(),
             chain,
             invalid,
             semantic,
@@ -416,5 +463,48 @@ async fn root_unresolved_article_facts_do_not_fail_completed_job() {
         !events
             .iter()
             .any(|event| event.event_type == "agent_decision_rejected")
+    );
+}
+
+#[tokio::test]
+async fn disabled_core_tool_call_is_paired_in_child_session_v3() {
+    let (db, job) = execute_scenario(true, false, Some("core_disabled")).await;
+    let disabled = job
+        .steps
+        .iter()
+        .find(|step| step.operation.as_deref() == Some("data.json_query"))
+        .expect("child attempted frozen Core operation");
+    assert_eq!(disabled.status, "failed");
+    assert_eq!(disabled.error_code.as_deref(), Some("core_plugin_disabled"));
+    assert_ne!(disabled.attempt_state.as_deref(), Some("unknown_outcome"));
+    let child = job
+        .agent_runs
+        .iter()
+        .find(|run| run.parent_agent_run_id.is_some())
+        .unwrap();
+    let sid = db
+        .session_for_run(&job.id, &child.agent_run_id)
+        .await
+        .unwrap();
+    let transcript = db.read_messages(&job.id, &sid).await.unwrap();
+    assert_eq!(
+        transcript
+            .iter()
+            .filter(|message| matches!(message,
+                ChatMessage::AssistantToolCalls { calls }
+                if calls.iter().any(|call| call.id == "revoked_tool")
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        transcript
+            .iter()
+            .filter(|message| matches!(message,
+                ChatMessage::ToolResult { tool_call_id, content }
+                if tool_call_id == "revoked_tool" && content.contains("core_plugin_disabled")
+            ))
+            .count(),
+        1
     );
 }

@@ -1,5 +1,5 @@
 import { jsonRequest, request, requestJson, withQuery } from './client'
-import type { InstalledPlugin, PluginPage, PluginTestResult } from './types/agent-jobs'
+import type { CorePluginPage, CorePluginView, InstalledPlugin, PluginPage, PluginTestResult } from './types/agent-jobs'
 
 const base = '/api/admin/plugins'
 
@@ -9,6 +9,16 @@ function pluginPath(id: string) {
 
 /** Executable plugin packages; intentionally independent of MCP server binding APIs. */
 export const agentPluginsApi = {
+  builtinList(signal?: AbortSignal) {
+    return requestJson<CorePluginPage>(base + '/builtin', {}, { signal })
+  },
+  builtinSetEnabled(id: string, enabled: boolean, revision: number) {
+    return requestJson<CorePluginView>(
+      base + '/builtin/' + encodeURIComponent(id),
+      jsonRequest('PATCH', { enabled }),
+      { revision },
+    )
+  },
   list(query: { page?: number; q?: string; status?: string } = {}, signal?: AbortSignal) {
     return requestJson<PluginPage>(withQuery(base, {
       page: query.page ?? 1, page_size: 30, q: query.q, status: query.status,

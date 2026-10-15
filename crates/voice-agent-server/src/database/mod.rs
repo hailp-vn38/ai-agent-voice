@@ -8,6 +8,7 @@ use std::{str::FromStr, time::Duration};
 use thiserror::Error;
 
 pub(crate) mod background;
+pub(crate) mod core_plugins;
 pub mod history;
 mod identity;
 pub(crate) mod jobs;

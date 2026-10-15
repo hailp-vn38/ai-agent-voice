@@ -35,6 +35,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         .route("/plugins", get(plugins::list))
         .route("/plugins/builtin", get(plugins::builtin_catalog))
         .route(
+            "/plugins/builtin/{id}",
+            axum::routing::patch(plugins::builtin_set_enabled),
+        )
+        .route(
             "/plugins/install",
             axum::routing::post(plugins::install).layer(axum::extract::DefaultBodyLimit::max(
                 plugins::MAX_UPLOAD_BODY,

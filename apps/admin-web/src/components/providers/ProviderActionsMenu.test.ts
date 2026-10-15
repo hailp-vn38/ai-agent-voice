@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { FlaskConical } from '@lucide/vue'
 import { expect, it } from 'vitest'
 import { MenuItem } from '@/components/ui/action-menu'
 import ProviderActionsMenu from './ProviderActionsMenu.vue'
@@ -35,6 +36,7 @@ it('pipeline locks edit but preserves unlink', async () => {
 
 it('shared detail modal cannot emit a config edit', async () => {
   const wrapper = mount(ProviderDetailModal, { props: { provider, modelValue: false }, global })
+  expect(wrapper.findComponent(FlaskConical).exists()).toBe(true)
   const edit = wrapper.findAll('button').find((button) => /Edit/.test(button.text()))!
   expect(edit.attributes('disabled')).toBeDefined()
   await edit.trigger('click')

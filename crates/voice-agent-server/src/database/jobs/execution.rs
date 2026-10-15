@@ -130,6 +130,27 @@ impl Database {
         }
         if crate::tools::core::is_core(choice) {
             crate::tools::core::contract(choice).map_err(JobError::from_plugin)?;
+            // BEGIN IMMEDIATE is the authority linearization point: disable
+            // committed before this Step start wins, but an accepted Step is
+            // allowed to finish even if disable commits while it executes.
+            let group = crate::tools::core::group_for(&choice.operation)
+                .ok_or(JobError::CapabilityUnavailable)?;
+            let core_enabled: Option<i64> =
+                sqlx::query_scalar("SELECT enabled FROM core_plugin_settings WHERE plugin_id=?")
+                    .bind(group)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            match core_enabled {
+                Some(1) => {}
+                Some(0) => {
+                    tx.rollback().await?;
+                    return Err(JobError::CorePluginDisabled);
+                }
+                _ => {
+                    tx.rollback().await?;
+                    return Err(JobError::DatabaseUnavailable);
+                }
+            }
         } else {
             let live: Option<i64> = sqlx::query_scalar(
                 "SELECT 1 FROM plugin_installations WHERE plugin_id=? AND version=? AND package_digest=? AND installation_digest=? AND status='ready'",

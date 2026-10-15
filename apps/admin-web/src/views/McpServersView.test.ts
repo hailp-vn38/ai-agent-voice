@@ -8,7 +8,7 @@ it('links the card to details while edit controls remain outside its link', asyn
   const server = { key: 'weather', name: 'Weather', url: 'https://example.test/mcp', auth: { type: 'none' }, enabled: true, revision: 1 }
   api.list.mockResolvedValue({ items: [server], page_size: 50 })
   api.get.mockResolvedValue(server)
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/mcp', component: McpServersView }, { path: '/mcp/:key', component: { template: '<p>Details</p>' } }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/mcp', component: McpServersView }, { path: '/mcp/:key', component: { template: '<p>Details</p>' } }, { path: '/agents', component: { template: '<p>Agents</p>' } }] })
   await router.push('/mcp'); await router.isReady()
   const wrapper = mount(McpServersView, { global: { plugins: [router], stubs: { McpServerFormModal: true, ConfirmDialog: true } } })
   await flushPromises()

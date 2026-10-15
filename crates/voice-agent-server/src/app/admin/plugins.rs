@@ -4,10 +4,87 @@ use axum::extract::Multipart;
 
 pub(super) const MAX_UPLOAD_BODY: usize = 21 * 1024 * 1024;
 
-/// Bundled Core plugins exist with the Rust binary, even when no External
-/// package is installed. They cannot be updated through the Plugin Store.
-pub(super) async fn builtin_catalog() -> Response {
-    Json(crate::tools::core::bundled_catalog()).into_response()
+/// Core is compiled into the binary. Only its activation policy lives in DB.
+pub(super) async fn builtin_catalog(State(state): State<AppState>, request: Request) -> Response {
+    let db = match database(&state) {
+        Ok(db) => db,
+        Err(response) => return response,
+    };
+    let settings = match db.core_plugin_settings().await {
+        Ok(rows) => rows,
+        Err(error) => return core_policy_error(&request, error),
+    };
+    match crate::tools::core::bundled_catalog(&settings) {
+        Ok(catalog) => Json(catalog).into_response(),
+        Err(_) => error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        ),
+    }
+}
+
+fn core_policy_error(
+    request: &Request,
+    cause: crate::database::core_plugins::CorePluginPolicyError,
+) -> Response {
+    use crate::database::core_plugins::CorePluginPolicyError;
+    match cause {
+        CorePluginPolicyError::NotFound => error(request, StatusCode::NOT_FOUND, "not_found"),
+        CorePluginPolicyError::RevisionConflict => {
+            error(request, StatusCode::CONFLICT, "revision_conflict")
+        }
+        CorePluginPolicyError::Unavailable => error(
+            request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        ),
+        CorePluginPolicyError::Sql(cause) => sql_error(request, &cause),
+    }
+}
+
+pub(super) async fn builtin_set_enabled(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    let expected_revision = match expected(request.headers()) {
+        Ok(revision) => revision,
+        Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+    };
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Change {
+        enabled: bool,
+    }
+    let (request, change): (_, Change) = match json(request).await {
+        Ok(decoded) => decoded,
+        Err(response) => return response,
+    };
+    if !crate::tools::core::known_group(&id) {
+        return error(&request, StatusCode::NOT_FOUND, "not_found");
+    }
+    let db = match database(&state) {
+        Ok(db) => db,
+        Err(response) => return response,
+    };
+    let updated = match db
+        .set_core_plugin_enabled(&id, expected_revision, change.enabled)
+        .await
+    {
+        Ok(row) => row,
+        Err(cause) => return core_policy_error(&request, cause),
+    };
+    // Response is fully derived from the committed CAS result; a subsequent
+    // read failure must not disguise a successful mutation as HTTP 503.
+    match crate::tools::core::bundled_item(&updated) {
+        Some(item) => Json(item).into_response(),
+        None => error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_unavailable",
+        ),
+    }
 }
 
 fn store(state: &AppState) -> Option<&PluginStore> {

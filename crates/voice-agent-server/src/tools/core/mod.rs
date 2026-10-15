@@ -7,7 +7,9 @@ mod contracts;
 mod execution;
 mod expanded;
 
-pub(crate) use catalog::bundled_catalog;
+pub(crate) use catalog::{
+    CorePluginSetting, bundled_catalog, bundled_item, enabled_groups, group_for, known_group,
+};
 pub(crate) use contracts::{contract, decode, frozen_choices, is_core, matches_frozen};
 pub(crate) use execution::invoke;
 use execution::take_chars;

@@ -88,8 +88,12 @@ Một lần thực thi Operation có danh tính riêng và checkpoint bền vữ
 _Avoid_: Plugin Installation, Agent Job
 
 **Core Plugin**:
-Nhóm các Core Operation cùng chức năng do Rust Server cung cấp sẵn từ bản build, không có vòng đời cài đặt, kích hoạt hay gỡ bỏ riêng.
+Nhóm các Core Operation cùng chức năng được Rust Server cung cấp sẵn, không có vòng đời cài đặt hoặc gỡ bỏ; khả năng bắt đầu operation có thể được bật/tắt bằng Core Plugin Policy.
 _Avoid_: Plugin Installation, Plugin Package, External Plugin
+
+**Core Plugin Policy**:
+Quyết định quản trị đối với việc có cho phép bắt đầu Core Operation thuộc một Core Plugin hay không; độc lập với sự tồn tại của implementation trong Rust Server.
+_Avoid_: Plugin Installation, Plugin Activation, Core Operation contract
 
 **Core Operation**:
 Operation được sở hữu và cung cấp sẵn bởi hệ thống, không phụ thuộc Plugin Package hoặc Plugin Installation.
@@ -100,7 +104,7 @@ Operation đến từ một Plugin Installation có thể được quản trị 
 _Avoid_: Core Operation, MCP Tool
 
 **Frozen Operation Choice**:
-Quyền lựa chọn một Operation được cố định cho một Job; tham chiếu tới bản hợp đồng Core hoặc tới đúng Plugin Installation.
+Giới hạn tối đa của các Operation mà một Job đã được quyền lựa chọn, tham chiếu tới bản hợp đồng Core hoặc đúng Plugin Installation; không tự động vượt qua quyết định tạm ngừng khả năng bắt đầu operation sau đó.
 _Avoid_: live catalog entry, mutable latest, Tool Call
 
 **Plugin Activation**:

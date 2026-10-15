@@ -26,7 +26,7 @@ const store = reactive({
   getTemplatesForAgent: () => [],
   getTemplateAgentCount: () => 0,
   searchProviders: () => [],
-  createProvider: vi.fn(),
+  createProviderFromSetup: vi.fn(),
 })
 vi.mock('@/stores/admin', () => ({ useAdminStore: () => store }))
 

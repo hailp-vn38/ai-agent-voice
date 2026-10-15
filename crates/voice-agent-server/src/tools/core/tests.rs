@@ -21,7 +21,15 @@ fn json_pointer_contract_is_projectable_and_artifact_is_job_scoped() {
 #[test]
 fn web_is_registered_and_persisted_choices_remain_supported() {
     let choices = frozen_choices();
-    let catalog = bundled_catalog();
+    let policy = ["core.web", "core.document", "core.data", "core.artifact"]
+        .iter()
+        .map(|id| crate::tools::core::CorePluginSetting {
+            plugin_id: (*id).into(),
+            enabled: 1,
+            revision: 1,
+        })
+        .collect::<Vec<_>>();
+    let catalog = bundled_catalog(&policy).unwrap();
     assert_eq!(catalog["total"], 4);
     assert_eq!(catalog["operation_total"], 8);
     assert!(

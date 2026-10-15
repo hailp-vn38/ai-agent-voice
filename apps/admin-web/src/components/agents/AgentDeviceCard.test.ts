@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { mount, RouterLinkStub } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/composables/useI18n'
@@ -25,6 +25,7 @@ function render(item: Device = device) {
     props: { device: item, effectiveTemplate: template },
     global: {
       stubs: {
+        RouterLink: RouterLinkStub,
         ActionMenu: { template: '<div><slot /></div>' },
         MenuItem: {
           emits: ['select'],
