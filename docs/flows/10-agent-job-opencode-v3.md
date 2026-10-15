@@ -172,3 +172,30 @@ sequenceDiagram
 ```
 
 Legacy extra fields are **not silently ignored**: the original tool schema rejects them and the normal Root repair budget applies. `ChildResult.evidence_refs` remains separately controlled by the Child's optional completion function and per-Run artifact ownership checks.
+
+
+## Completing a source-verified Job with unresolved facts
+
+`unresolved` means an **unresolved fact in the article**, not an unfinished
+Agent action. For example: "AFC has not yet officially decided whether to
+postpone the tournament." This caveat belongs in the user-facing answer even
+when the article has been read and summarized successfully.
+
+```mermaid
+sequenceDiagram
+    participant R as Root Session
+    participant C as Research Child
+    participant G as Rust completion gate
+    R->>C: subagent(prompt=Read and summarize article)
+    C-->>R: ChildOutcome(completed, verified_source_urls=[URL])
+    R->>G: finish_job(summary,findings,unresolved=[not officially decided])
+    G->>G: Verify Child succeeded and URL source_complete=true
+    G->>G: Evaluate required sources, capabilities and artifacts
+    G-->>R: Terminal succeeded; unresolved preserved as information
+```
+
+Root and Child remain separate native tool-calling Sessions. A nonempty
+`unresolved` does not override verified completion, whereas incomplete
+source provenance, missing mandatory capabilities or a failed required Child
+still prevent success. This rule deliberately separates uncertainty **in
+knowledge** from an unsatisfied **execution requirement**.
