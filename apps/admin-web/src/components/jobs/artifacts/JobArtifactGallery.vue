@@ -58,14 +58,14 @@ async function download(item: JobArtifact) {
         </div>
       </div>
       <div class="flex shrink-0 gap-2">
-        <Button v-if="canPreview(item)" variant="outline" size="sm" @click="selected = item"><Eye class="size-4" />Preview</Button>
         <Button variant="outline" size="sm" :disabled="downloading !== null" @click="download(item)">
           <Download class="size-4" />Download
         </Button>
+        <Button v-if="canPreview(item)" variant="outline" size="sm" @click="selected = item"><Eye class="size-4" />Preview</Button>
       </div>
     </div>
   </div>
   <p v-if="error" role="alert" class="mt-2 text-sm text-danger">{{ error }}</p>
   <ArtifactPreviewDialog v-if="selected" :key="selected.id" :job-id="job.id" :artifact="selected"
-    @close="selected = null" @download="download(selected)" />
+    @close="selected = null" @download="selected && download(selected)" />
 </template>
