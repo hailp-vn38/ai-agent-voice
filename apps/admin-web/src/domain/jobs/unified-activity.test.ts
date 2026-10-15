@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AdminJob, JobEvent } from '@/api/types/agent-jobs'
-import { projectUnifiedActivity, visibleActivities } from './unified-activity'
+import { groupTimelineActivities, projectUnifiedActivity, visibleActivities } from './unified-activity'
 
 const job = { id: 'job', status: 'running', steps: [
   { step_key: 'fetch-a', plugin_id: 'web-extractor', operation: 'fetch_url', status: 'succeeded', attempt_state: 'finished' },
@@ -135,6 +135,32 @@ describe('unified Job activity', () => {
       event(1, 'step_started', {}, 'fetch-a'),
       event(2, 'step_finished', { status: 'succeeded' }, 'fetch-a'),
     ])[0]?.status).toBe('cancelled')
+  })
+
+  it('correlates native turn IDs, deduplicates child creation and shares Join counts', () => {
+    const native = [
+      event(1, 'agent_decision_accepted', { agent_run_id: 'root', action: 'delegate', turn_id: 'turn' }),
+      event(2, 'agent_run_created', { agent_run_id: 'child', parent_agent_run_id: 'root', role: 'research', fork_group_id: 'turn' }),
+      event(3, 'agent_run_finished', { agent_run_id: 'child', status: 'succeeded' }),
+      event(4, 'join_completed', { root_agent_run_id: 'root', fork_group_id: 'turn', member_count: 1 }),
+    ]
+    for (const events of [native.slice(0, 3), native, [...native, native[1]!]]) {
+      const rows = projectUnifiedActivity(job, events)
+      expect(rows[0]).toMatchObject({ id: 'fork:turn', memberCount: 1, note: 'Sub-agents: 1' })
+      expect(groupTimelineActivities(rows)[1]).toMatchObject({ id: 'child', child: true, activities: [{ title: 'Agent finished' }] })
+      if (events.length >= 4) expect(rows.at(-1)).toMatchObject({ memberCount: 1, note: 'Children: 1' })
+    }
+  })
+
+  it('uses available Join membership for both checkpoints without inventing children', () => {
+    const rows = projectUnifiedActivity(job, [
+      event(1, 'agent_decision_accepted', { agent_run_id: 'root', action: 'delegate', fork_group_id: 'fork', task_count: 5 }),
+      event(2, 'join_completed', { root_agent_run_id: 'root', fork_group_id: 'fork', member_count: 1 }),
+    ])
+    expect(rows.map(row => row.memberCount)).toEqual([1, 1])
+    expect(rows.every(row => row.childRuns?.length === 0)).toBe(true)
+    expect(projectUnifiedActivity(job, [event(1, 'agent_decision_accepted', { action: 'delegate' })])[0]?.memberCount).toBeNull()
+    expect(projectUnifiedActivity(job, [event(1, 'agent_decision_accepted', { action: 'delegate', task_count: 2 })])[0]?.memberCount).toBe(2)
   })
 
 })

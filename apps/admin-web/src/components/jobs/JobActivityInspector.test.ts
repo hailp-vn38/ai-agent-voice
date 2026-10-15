@@ -67,4 +67,24 @@ describe('Job activity presentation', () => {
       expect(timeline.text()).toContain('worker · failed · unknown_outcome')
     } finally { inspector.unmount(); timeline.unmount() }
   })
+  it('exposes Plugin arguments and result in expandable sections', () => {
+    const pluginJob = { ...view, steps: [{
+      step_key: 'extract', plugin_id: 'core.web', operation: 'extract', status: 'succeeded',
+      arguments: { url: 'https://example.org/article' }, result: { text: 'Article text' },
+      instruction: 'Read article', required: true, dependencies: [], input_refs: [], output_schema: {},
+    }] } as AdminJob
+    const activity = projectUnifiedActivity(pluginJob, [{
+      sequence: 1, event_type: 'step_finished', step_key: 'extract', created_at: '2026-10-15T00:00:00Z', payload: { status: 'succeeded' },
+    }])[0]!
+    const wrapper = mount(JobActivityInspector, { props: { activity } })
+    try {
+      expect(wrapper.text()).toContain('core.web')
+      expect(wrapper.text()).toContain('extract')
+      const sections = wrapper.findAll('details details')
+      expect(sections).toHaveLength(2)
+      expect(sections[0]!.get('pre').text()).toContain('https://example.org/article')
+      expect(sections[1]!.get('pre').text()).toContain('Article text')
+    } finally { wrapper.unmount() }
+  })
+
 })

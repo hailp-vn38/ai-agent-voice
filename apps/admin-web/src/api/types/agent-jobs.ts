@@ -53,6 +53,7 @@ export type AgentRole = 'orchestrator' | 'research' | 'document' | 'general'
 export interface AgentRunView {
   agent_run_id: string
   parent_agent_run_id: string | null
+  fork_group_id?: string | null
   role: AgentRole
   goal_excerpt: string
   result?: Record<string, unknown> | null

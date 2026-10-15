@@ -76,6 +76,7 @@ function stageNote(event: JobEvent): string {
           <div v-if="run.events[0]?.payload.turn_id" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.agentTurnId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ run.events[0]?.payload.turn_id }}</dd></div>
           <div v-if="activity.agentRunId" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.agentRunId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ activity.agentRunId }}</dd></div>
         </dl>
+        <p class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.llmContentUnavailable') }}</p>
         <div class="mt-4 border-t pt-3">
           <h4 class="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{{ t('jobUi.llmTimeline') }}</h4>
           <div v-for="stage in run.events" :key="stage.sequence" class="flex items-start justify-between gap-2 border-l-2 border-primary/30 py-1 pl-2 text-[11px]">
@@ -96,6 +97,16 @@ function stageNote(event: JobEvent): string {
           <div class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.stepKey') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ step.step_key }}</dd></div>
           <div v-if="step.error_code" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.executionWarning') }}</dt><dd class="mt-1 break-all font-mono text-danger">{{ step.error_code }}</dd></div>
         </dl>
+        <template v-if="step.plugin_id">
+          <details class="mt-3 text-xs">
+            <summary class="cursor-pointer">{{ t('jobUi.toolArguments') }}</summary>
+            <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(step.arguments, null, 2) ?? '—' }}</pre>
+          </details>
+          <details class="mt-3 text-xs">
+            <summary class="cursor-pointer">{{ t('jobUi.result') }}</summary>
+            <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(step.result, null, 2) ?? '—' }}</pre>
+          </details>
+        </template>
         <p v-if="step.attempt_state === 'unknown_outcome'" role="alert" class="mt-3 text-xs text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
       </section>
       <template v-if="!run && !step">
