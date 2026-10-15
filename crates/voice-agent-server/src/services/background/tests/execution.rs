@@ -143,7 +143,11 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
     assert_eq!(completed.artifacts.len(), 1);
     assert_eq!(completed.artifacts[0].filename, "narration.mp3");
     assert_eq!(completed.artifacts[0].step_key.as_deref(), Some("collect"));
-    let downloaded = runtime.engine.read_artifact(&job.id, &artifact_id).await.unwrap();
+    let downloaded = runtime
+        .engine
+        .read_artifact(&job.id, &artifact_id)
+        .await
+        .unwrap();
     assert_eq!(downloaded, bytes);
     assert_eq!(
         db.finish_plugin_failure(&job.id, "collect", "attempt-1", "late", true, true)
