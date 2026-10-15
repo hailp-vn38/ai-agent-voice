@@ -9,9 +9,18 @@ use std::collections::HashMap;
 pub(super) struct RootResult {
     pub(super) summary: String,
     pub(super) findings: Vec<String>,
-    pub(super) evidence_refs: Vec<String>,
     pub(super) unresolved: Vec<String>,
 }
+/// Artifact IDs belong to the Job ledger, never to a Root model proposal.
+/// This list is built only from server-issued JobArtifact records, so a URL
+/// extracted via core.web.extract does not become a fabricated artifact ID.
+pub(super) fn server_evidence_refs(job: &JobView) -> Vec<String> {
+    let mut ids: Vec<String> = job.artifacts.iter().map(|artifact| artifact.id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ChildResult {
