@@ -292,3 +292,36 @@ fn verified_sources_are_scoped_to_the_owned_child_runs() {
     assert_eq!(crate::services::background::coverage::completed_web_sources(
         &job,Some(&owned)),vec!["https://news.example/asian-cup.html".to_owned()]);
 }
+
+
+#[test]
+fn finish_job_schema_excludes_llm_authored_evidence_refs() {
+    use crate::providers::llm::ToolCall;
+    let tools = root_tools();
+    let definition = tools.iter().find(|t| t.name == "finish_job").unwrap();
+    assert!(definition.parameters["properties"].get("evidence_refs").is_none());
+    let valid = ToolCall {
+        id: "finish_clean".into(), name: "finish_job".into(),
+        arguments: json!({"summary":"AFC has not decided to postpone the cup.",
+            "findings":[], "unresolved":[]}),
+    };
+    assert!(root_call_batch_valid(&[valid.clone()], &Default::default()));
+    let mut legacy = valid;
+    legacy.arguments["evidence_refs"] = json!(["https://news.example/asian-cup.html"]);
+    assert!(!root_call_batch_valid(&[legacy], &Default::default()));
+}
+
+#[test]
+fn finish_job_artifact_references_are_resolved_by_rust_only() {
+    let mut job = news_summary_fixture(false);
+    assert_eq!(super::results::server_evidence_refs(&job), Vec::<String>::new());
+    // Verified source URLs are NOT artifacts.
+    assert_eq!(super::results::verified_coverage(&job).unwrap().1["source_complete"], true);
+    job.artifacts.push(crate::services::background::model::JobArtifactView {
+        id: "owned-artifact".into(),
+        media_type: "text/plain".into(),
+        size_bytes: 5,
+        sha256: "0123456789".into(),
+    });
+    assert_eq!(super::results::server_evidence_refs(&job), vec!["owned-artifact"]);
+}
