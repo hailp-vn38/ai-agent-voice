@@ -75,16 +75,24 @@ pub(crate) async fn stage_output(
         if !metadata.is_file() || !single_link || metadata.len() > limit {
             return Err(io::Error::other("artifact_invalid_source"));
         }
-        let mut output = OpenOptions::new().write(true).create_new(true).open(staged)?;
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(staged)?;
         let mut hash = Sha256::new();
         let mut bytes = 0u64;
         let mut chunk = [0u8; 65536];
         loop {
             let read = input.read(&mut chunk)?;
-            if read == 0 { break; }
-            bytes = bytes.checked_add(read as u64)
+            if read == 0 {
+                break;
+            }
+            bytes = bytes
+                .checked_add(read as u64)
                 .ok_or_else(|| io::Error::other("artifact_too_large"))?;
-            if bytes > limit { return Err(io::Error::other("artifact_too_large")); }
+            if bytes > limit {
+                return Err(io::Error::other("artifact_too_large"));
+            }
             output.write_all(&chunk[..read])?;
             hash.update(&chunk[..read]);
         }
@@ -97,8 +105,10 @@ pub(crate) async fn stage_output(
         }
         output.sync_all()?;
         Ok((bytes, digest))
-    }).await.map_err(|_| JobError::DatabaseUnavailable)?
-      .map_err(|_| JobError::DatabaseUnavailable)
+    })
+    .await
+    .map_err(|_| JobError::DatabaseUnavailable)?
+    .map_err(|_| JobError::DatabaseUnavailable)
 }
 
 /// Verify the immutable artifact through one descriptor, then stream that same inode.

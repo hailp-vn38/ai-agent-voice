@@ -156,8 +156,17 @@ pub(super) async fn artifact(
     {
         return failure(&request, JobError::NotFound);
     }
-    let display = job.artifacts.iter().find(|artifact| artifact.id == artifact_id)
-        .map(|artifact| if artifact.filename.is_empty() { artifact.id.as_str() } else { artifact.filename.as_str() })
+    let display = job
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.id == artifact_id)
+        .map(|artifact| {
+            if artifact.filename.is_empty() {
+                artifact.id.as_str()
+            } else {
+                artifact.filename.as_str()
+            }
+        })
         .unwrap_or(&artifact_id);
     // Worker filenames only contain safe ASCII basename bytes. Never use a path from a request.
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{display}\""))
@@ -191,10 +200,7 @@ pub(super) async fn artifact(
                         HeaderValue::from_static("nosniff"),
                     ),
                     (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
-                    (
-                        header::CONTENT_DISPOSITION,
-                        disposition,
-                    ),
+                    (header::CONTENT_DISPOSITION, disposition),
                 ],
                 Body::from_stream(stream),
             )

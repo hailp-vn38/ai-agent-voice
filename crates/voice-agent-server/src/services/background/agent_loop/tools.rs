@@ -1,7 +1,7 @@
 //! Native tool definitions and Root call validation.
 use super::{super::JobView, results::RootResult};
 use crate::providers::llm::{ToolCall, ToolDefinition};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(super) fn child_completion_tool() -> ToolDefinition {
     ToolDefinition {

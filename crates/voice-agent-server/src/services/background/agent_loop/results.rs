@@ -15,7 +15,11 @@ pub(super) struct RootResult {
 /// This list is built only from server-issued JobArtifact records, so a URL
 /// extracted via core.web.extract does not become a fabricated artifact ID.
 pub(super) fn server_evidence_refs(job: &JobView) -> Vec<String> {
-    let mut ids: Vec<String> = job.artifacts.iter().map(|artifact| artifact.id.clone()).collect();
+    let mut ids: Vec<String> = job
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.id.clone())
+        .collect();
     ids.sort();
     ids.dedup();
     ids
@@ -90,9 +94,15 @@ pub(super) fn verified_coverage_with_sources(
         status = "failed";
     }
     let coverage_basis = if requested.is_some() {
-        if verified_goal { "goal_url_verified" } else { "goal_url_unverified" }
+        if verified_goal {
+            "goal_url_verified"
+        } else {
+            "goal_url_unverified"
+        }
     } else {
-        coverage["coverage_basis"].as_str().unwrap_or("goal_only_unverified")
+        coverage["coverage_basis"]
+            .as_str()
+            .unwrap_or("goal_only_unverified")
     };
     Ok((
         status,
@@ -129,7 +139,10 @@ pub(super) fn plugin_tool_result(
         && value["status"].is_number()
     {
         let full_text = value["text"].as_str().unwrap_or("");
-        let observed: String = full_text.chars().take(super::super::coverage::MAX_VISIBLE_WEB_CHARS).collect();
+        let observed: String = full_text
+            .chars()
+            .take(super::super::coverage::MAX_VISIBLE_WEB_CHARS)
+            .collect();
         return json!({
             "status":status,"error_code":error,"step_key":step_key,
             "evidence_refs":evidence_refs,
@@ -165,7 +178,11 @@ pub(super) struct ChildOutcome<'a> {
     pub(super) error_code: Option<&'a str>,
 }
 impl<'a> ChildOutcome<'a> {
-    pub(super) fn from_run(session_id: &'a str, child: &'a AgentRunView, verified_source_urls: Vec<String>) -> Result<Self, JobError> {
+    pub(super) fn from_run(
+        session_id: &'a str,
+        child: &'a AgentRunView,
+        verified_source_urls: Vec<String>,
+    ) -> Result<Self, JobError> {
         let result: Option<ChildResult> = child
             .result
             .clone()
@@ -196,7 +213,6 @@ impl<'a> ChildOutcome<'a> {
     }
 }
 
-
 /// For a single-URL summary, the one Child's complete source-grounded answer
 /// is the user-facing summary. Avoid a second LLM rewrite that drops crucial
 /// negations (e.g. "no official decision to postpone") or adds new claims.
@@ -204,11 +220,16 @@ impl<'a> ChildOutcome<'a> {
 pub(super) fn grounded_single_child_summary(job: &JobView, coverage: &Value) -> Option<String> {
     let url = super::super::coverage::requested_summary_url(&job.request)?;
     if coverage["source_complete"] != true
-        || !coverage["verified_source_urls"].as_array()?.iter().any(|s| s.as_str() == Some(url.as_str()))
+        || !coverage["verified_source_urls"]
+            .as_array()?
+            .iter()
+            .any(|s| s.as_str() == Some(url.as_str()))
     {
         return None;
     }
-    let children: Vec<_> = job.agent_runs.iter()
+    let children: Vec<_> = job
+        .agent_runs
+        .iter()
         .filter(|run| run.parent_agent_run_id.is_some())
         .collect();
     if children.len() != 1 || children[0].status != "succeeded" {

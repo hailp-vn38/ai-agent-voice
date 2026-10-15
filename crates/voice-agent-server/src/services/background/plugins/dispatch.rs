@@ -280,11 +280,18 @@ pub(super) async fn read_artifacts(
         if artifact.path.is_empty()
             || !seen.insert(artifact.path.clone())
             || artifact.path.len() > 80
-            || !artifact.path.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            || !artifact
+                .path
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
             || artifact.media_type.len() > 100
             || !["text/", "image/", "audio/", "video/", "application/"]
-                .iter().any(|prefix| artifact.media_type.starts_with(prefix))
-            || !artifact.media_type.bytes().all(|b| b.is_ascii_alphanumeric() || b"/.+-_".contains(&b))
+                .iter()
+                .any(|prefix| artifact.media_type.starts_with(prefix))
+            || !artifact
+                .media_type
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"/.+-_".contains(&b))
         {
             return Err(PluginError::WorkerProtocolError);
         }
@@ -295,8 +302,14 @@ pub(super) async fn read_artifacts(
         if !metadata.file_type().is_file() {
             return Err(PluginError::WorkerProtocolError);
         }
-        total = total.checked_add(metadata.len()).ok_or(PluginError::WorkerProtocolError)?;
-        if total > limit || artifact.size_bytes.is_some_and(|size| size != metadata.len()) {
+        total = total
+            .checked_add(metadata.len())
+            .ok_or(PluginError::WorkerProtocolError)?;
+        if total > limit
+            || artifact
+                .size_bytes
+                .is_some_and(|size| size != metadata.len())
+        {
             return Err(PluginError::WorkerProtocolError);
         }
         artifacts.push(ArtifactData {

@@ -110,8 +110,8 @@ impl JobModels for Scenario {
                     );
                 }
                 if self.legacy_finish_refs && round == 2 {
-                    assert!(request.messages.iter().any(|msg|
-                        matches!(msg, ChatMessage::ToolResult{tool_call_id, content}
+                    assert!(request.messages.iter().any(
+                        |msg| matches!(msg, ChatMessage::ToolResult{tool_call_id, content}
                             if tool_call_id == "finish_1"
                             && content.contains("finish_job_server_owned_evidence")
                             && content.contains("Remove evidence_refs"))
@@ -120,9 +120,8 @@ impl JobModels for Scenario {
                 let mut final_call = finish();
                 final_call.id = format!("finish_{round}");
                 if self.semantic == Some("article_uncertainty") {
-                    final_call.arguments["summary"] = json!(
-                        "AFC chưa đưa ra quyết định chính thức về việc hoãn Asian Cup 2027."
-                    );
+                    final_call.arguments["summary"] =
+                        json!("AFC chưa đưa ra quyết định chính thức về việc hoãn Asian Cup 2027.");
                     final_call.arguments["unresolved"] = json!([
                         "Khả năng lùi thời gian hoặc đổi nước chủ nhà vẫn chưa có quyết định chính thức."
                     ]);
@@ -343,20 +342,43 @@ async fn root_bad_url_evidence_gets_matched_guidance_then_finishes_without_artif
     assert_eq!(job.status, "succeeded", "{:?}", job.error_code);
     assert!(job.artifacts.is_empty());
     assert_eq!(job.result.as_ref().unwrap()["evidence_refs"], json!([]));
-    let root = job.agent_runs.iter().find(|run| run.parent_agent_run_id.is_none()).unwrap();
-    let root_session = db.session_for_run(&job.id, &root.agent_run_id).await.unwrap();
+    let root = job
+        .agent_runs
+        .iter()
+        .find(|run| run.parent_agent_run_id.is_none())
+        .unwrap();
+    let root_session = db
+        .session_for_run(&job.id, &root.agent_run_id)
+        .await
+        .unwrap();
     let messages = db.read_messages(&job.id, &root_session).await.unwrap();
-    let repairs: Vec<_> = messages.iter().filter_map(|message| match message {
-        ChatMessage::ToolResult { tool_call_id, content } if tool_call_id == "finish_1" =>
-            Some(serde_json::from_str::<Value>(content).unwrap()),
-        _ => None,
-    }).collect();
+    let repairs: Vec<_> = messages
+        .iter()
+        .filter_map(|message| match message {
+            ChatMessage::ToolResult {
+                tool_call_id,
+                content,
+            } if tool_call_id == "finish_1" => {
+                Some(serde_json::from_str::<Value>(content).unwrap())
+            }
+            _ => None,
+        })
+        .collect();
     assert_eq!(repairs.len(), 1);
     assert_eq!(repairs[0]["error_code"], "finish_job_server_owned_evidence");
-    assert!(repairs[0]["guidance"].as_str().unwrap().contains("Remove evidence_refs"));
+    assert!(
+        repairs[0]["guidance"]
+            .as_str()
+            .unwrap()
+            .contains("Remove evidence_refs")
+    );
     let events = db.job_events(&job.id, 0, 100).await.unwrap();
-    assert!(events.iter().any(|event| event.event_type == "agent_decision_rejected"
-        && event.payload["validation_code"] == "finish_job_server_owned_evidence"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "agent_decision_rejected"
+                && event.payload["validation_code"] == "finish_job_server_owned_evidence")
+    );
 }
 
 #[tokio::test]
@@ -373,12 +395,26 @@ async fn root_unresolved_article_facts_do_not_fail_completed_job() {
     assert!(job.steps.iter().all(|step| step.status == "succeeded"));
     let result = job.result.as_ref().expect("terminal Job result");
     assert_eq!(result["evidence_refs"], json!([]));
-    assert_eq!(result["unresolved"], json!([
-        "Khả năng lùi thời gian hoặc đổi nước chủ nhà vẫn chưa có quyết định chính thức."
-    ]));
-    assert!(result["summary"].as_str().unwrap().contains("chưa đưa ra quyết định"));
+    assert_eq!(
+        result["unresolved"],
+        json!(["Khả năng lùi thời gian hoặc đổi nước chủ nhà vẫn chưa có quyết định chính thức."])
+    );
+    assert!(
+        result["summary"]
+            .as_str()
+            .unwrap()
+            .contains("chưa đưa ra quyết định")
+    );
     let events = db.job_events(&job.id, 0, 100).await.unwrap();
-    assert!(events.iter().any(|event| event.event_type == "job_finished"
-        && event.payload["status"] == "succeeded"));
-    assert!(!events.iter().any(|event| event.event_type == "agent_decision_rejected"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "job_finished"
+                && event.payload["status"] == "succeeded")
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "agent_decision_rejected")
+    );
 }

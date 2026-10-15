@@ -76,12 +76,7 @@ impl BackgroundRuntime {
         super::artifacts::reconcile(&engine.database).await?;
         scheduler::scan(&engine).await?;
         let stop = CancellationToken::new();
-        let task = tokio::spawn(scheduler::run(
-            engine.clone(),
-            stop.clone(),
-            stopping,
-            lock,
-        ));
+        let task = tokio::spawn(scheduler::run(engine.clone(), stop.clone(), stopping, lock));
         Ok(Arc::new(Self {
             engine,
             stop,

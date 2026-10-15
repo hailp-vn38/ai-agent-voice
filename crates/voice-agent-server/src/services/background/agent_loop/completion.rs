@@ -1,7 +1,10 @@
 //! Root completion admission, coverage and durable Job finalization.
 use super::{
     super::{JobEngine, JobError, model::LlmRunContext},
-    results::{RootResult, bounded_result, grounded_single_child_summary, server_evidence_refs, verified_coverage_with_sources},
+    results::{
+        RootResult, bounded_result, grounded_single_child_summary, server_evidence_refs,
+        verified_coverage_with_sources,
+    },
 };
 use crate::providers::llm::{ChatMessage, ToolCall};
 use serde_json::json;
@@ -48,8 +51,7 @@ pub(super) async fn finish_root(
         verified_coverage_with_sources(&current, verified.into_iter().collect())?;
     // A Job with an explicit single article URL cannot succeed on empty
     // required_sources merely because some partial HTML fragments were fetched.
-    if failure.is_none()
-        && coverage["source_complete"] == false {
+    if failure.is_none() && coverage["source_complete"] == false {
         failure = Some("source_not_fully_verified");
     }
     if failure.is_none()
@@ -100,7 +102,11 @@ pub(super) async fn finish_root(
         return Ok(false);
     }
     let preserved = grounded_single_child_summary(&current, &coverage);
-    let summary_source = if preserved.is_some() { "verified_child" } else { "root" };
+    let summary_source = if preserved.is_some() {
+        "verified_child"
+    } else {
+        "root"
+    };
     let final_summary = preserved.unwrap_or(result.summary);
     // Root supplies semantic output only; these IDs are server-issued and
     // verified against this Job, not copied from LLM tool arguments.

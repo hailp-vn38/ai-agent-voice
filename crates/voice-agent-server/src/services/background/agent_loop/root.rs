@@ -143,7 +143,8 @@ pub(in super::super) async fn run_root(
         };
         if !root_call_batch_valid(&calls, &seen) {
             let detailed = calls.first().map(root_call_validation_feedback);
-            let validation_code = detailed.as_ref()
+            let validation_code = detailed
+                .as_ref()
                 .and_then(|value| value["error_code"].as_str())
                 .unwrap_or("agent_tool_protocol_error");
             engine.database.record_agent_decision(&context,false,json!({

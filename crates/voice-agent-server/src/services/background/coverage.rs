@@ -103,10 +103,12 @@ pub(super) fn terminal_result<'a>(
     Ok((status, output))
 }
 
-
 /// Narrow requirement for a single-URL text/article summary.
 pub(super) fn requested_summary_url(request: &super::model::JobRequest) -> Option<String> {
-    if !matches!(request.output_format.as_str(), "summary" | "text" | "markdown") {
+    if !matches!(
+        request.output_format.as_str(),
+        "summary" | "text" | "markdown"
+    ) {
         return None;
     }
     let lower = request.goal.to_lowercase();
@@ -116,9 +118,13 @@ pub(super) fn requested_summary_url(request: &super::model::JobRequest) -> Optio
     let re = regex::Regex::new(r#"https?://[^\s"'<>]+"#).ok()?;
     let urls: Vec<String> = re
         .find_iter(&request.goal)
-        .filter_map(|found| canonical_source_url(
-            found.as_str().trim_end_matches(&['.', ',', ';', '!', '?', ')', ']'][..])
-        ))
+        .filter_map(|found| {
+            canonical_source_url(
+                found
+                    .as_str()
+                    .trim_end_matches(&['.', ',', ';', '!', '?', ')', ']'][..]),
+            )
+        })
         .collect();
     // Do not invent completeness rules for multi-source research prompts.
     (urls.len() == 1).then(|| urls[0].clone())
@@ -136,19 +142,28 @@ fn canonical_source_url(raw: &str) -> Option<String> {
 /// Prove the entire extracted text was read from persisted successful core
 /// Steps: offsets must cover 0..end without gaps, the server-issued
 /// provenance must match the requested URL, and no body cap may be reached.
-pub(super) fn completed_web_sources(job: &JobView, session_run_ids: Option<&[String]>) -> Vec<String> {
+pub(super) fn completed_web_sources(
+    job: &JobView,
+    session_run_ids: Option<&[String]>,
+) -> Vec<String> {
     let mut urls = std::collections::BTreeSet::new();
     for step in job.steps.iter().filter(|step| {
         step.status == "succeeded"
             && step.plugin_id.as_deref() == Some("core")
             && step.operation.as_deref() == Some("web.extract")
-            && session_run_ids.is_none_or(|ids| step.agent_run_id.as_deref().is_some_and(|id| ids.iter().any(|run| run == id)))
+            && session_run_ids.is_none_or(|ids| {
+                step.agent_run_id
+                    .as_deref()
+                    .is_some_and(|id| ids.iter().any(|run| run == id))
+            })
     }) {
         // When there is no explicit Session scope (e.g. unit tests), do not
         // stitch adjacent chunks fetched by unrelated Child Runs.
         let own_run: Vec<String> = step.agent_run_id.iter().cloned().collect();
         let scope = session_run_ids.unwrap_or(&own_run);
-        if let Some(url) = step.arguments["url"].as_str().and_then(canonical_source_url)
+        if let Some(url) = step.arguments["url"]
+            .as_str()
+            .and_then(canonical_source_url)
             && extraction_is_complete(&job.steps, step, &url, Some(scope))
         {
             urls.insert(url);
@@ -171,11 +186,18 @@ fn extraction_is_complete(
             step.status == "succeeded"
                 && step.plugin_id.as_deref() == Some("core")
                 && step.operation.as_deref() == Some("web.extract")
-                && session_run_ids.is_none_or(|ids| step.agent_run_id.as_deref().is_some_and(|id| ids.iter().any(|run| run == id)))
+                && session_run_ids.is_none_or(|ids| {
+                    step.agent_run_id
+                        .as_deref()
+                        .is_some_and(|id| ids.iter().any(|run| run == id))
+                })
                 && step.arguments["mode"].as_str().unwrap_or("article") == mode
                 && step.arguments["offset"].as_u64().unwrap_or(0) == offset
-                && step.arguments["url"].as_str()
-                    .and_then(canonical_source_url).as_deref() == Some(canonical_url)
+                && step.arguments["url"]
+                    .as_str()
+                    .and_then(canonical_source_url)
+                    .as_deref()
+                    == Some(canonical_url)
                 && verified_extract_result(step, canonical_url)
         }) else {
             return false;
@@ -190,7 +212,9 @@ fn extraction_is_complete(
         let Some(next) = result["next_offset"].as_u64() else {
             return false;
         };
-        let length = result["text"].as_str().map(|text| text.chars().count() as u64)
+        let length = result["text"]
+            .as_str()
+            .map(|text| text.chars().count() as u64)
             .unwrap_or(0);
         if next != offset.saturating_add(length) || next <= offset {
             return false;
@@ -217,19 +241,26 @@ fn verified_extract_result(step: &super::model::JobStepView, url: &str) -> bool 
     result["provenance"].as_array().is_some_and(|records| {
         records.iter().any(|entry| {
             entry["source"] == "web"
-                && entry["capabilities"].as_array().is_some_and(|capabilities|
-                    capabilities.iter().any(|capability| capability == "web_extract"))
-                && entry["urls"].as_array().is_some_and(|urls|
-                    urls.iter().any(|candidate|
-                        candidate.as_str().and_then(canonical_source_url).as_deref() == Some(url)))
+                && entry["capabilities"]
+                    .as_array()
+                    .is_some_and(|capabilities| {
+                        capabilities
+                            .iter()
+                            .any(|capability| capability == "web_extract")
+                    })
+                && entry["urls"].as_array().is_some_and(|urls| {
+                    urls.iter().any(|candidate| {
+                        candidate.as_str().and_then(canonical_source_url).as_deref() == Some(url)
+                    })
+                })
         })
     })
 }
 
 #[cfg(test)]
 mod source_tests {
-    use super::*;
     use super::super::model::{JobRequest, JobStepView};
+    use super::*;
 
     fn step(offset: u64, text: &str, truncated: bool, next: Option<u64>) -> JobStepView {
         let url = "https://news.example/article";
@@ -265,8 +296,10 @@ mod source_tests {
             required_sources: vec![],
             required_capabilities: vec![],
         };
-        assert_eq!(requested_summary_url(&request).as_deref(),
-            Some("https://news.example/article.html"));
+        assert_eq!(
+            requested_summary_url(&request).as_deref(),
+            Some("https://news.example/article.html")
+        );
     }
 
     #[test]
@@ -275,7 +308,12 @@ mod source_tests {
             step(0, "menu", true, Some(4)),
             step(1000, "article fragment", true, Some(1016)),
         ];
-        assert!(!extraction_is_complete(&steps, &steps[0], "https://news.example/article", None));
+        assert!(!extraction_is_complete(
+            &steps,
+            &steps[0],
+            "https://news.example/article",
+            None
+        ));
     }
 
     #[test]
@@ -287,22 +325,40 @@ mod source_tests {
         let only_first = vec!["child_1".to_owned()];
         let same_session = vec!["child_1".to_owned(), "child_followup".to_owned()];
         assert!(!extraction_is_complete(
-            &steps, &steps[0], "https://news.example/article", Some(&only_first)));
+            &steps,
+            &steps[0],
+            "https://news.example/article",
+            Some(&only_first)
+        ));
         assert!(extraction_is_complete(
-            &steps, &steps[0], "https://news.example/article", Some(&same_session)));
+            &steps,
+            &steps[0],
+            "https://news.example/article",
+            Some(&same_session)
+        ));
     }
 
     #[test]
     fn unseen_overlong_or_capped_or_wrong_http_text_is_not_source_proof() {
         let huge = step(0, &"x".repeat(6001), false, None);
-        assert!(!verified_extract_result(&huge, "https://news.example/article"));
+        assert!(!verified_extract_result(
+            &huge,
+            "https://news.example/article"
+        ));
         let mut capped = step(0, "article", false, None);
         capped.result.as_mut().unwrap()["body_limit_reached"] = json!(true);
         assert!(!extraction_is_complete(
-            std::slice::from_ref(&capped), &capped, "https://news.example/article", None));
+            std::slice::from_ref(&capped),
+            &capped,
+            "https://news.example/article",
+            None
+        ));
         let mut wrong_status = step(0, "article", false, None);
         wrong_status.result.as_mut().unwrap()["status"] = json!(403);
-        assert!(!verified_extract_result(&wrong_status, "https://news.example/article"));
+        assert!(!verified_extract_result(
+            &wrong_status,
+            "https://news.example/article"
+        ));
     }
 
     #[test]
@@ -311,9 +367,19 @@ mod source_tests {
             step(0, "INTRO", true, Some(5)),
             step(5, "ARTICLE", false, None),
         ];
-        assert!(extraction_is_complete(&steps, &steps[0], "https://news.example/article", None));
+        assert!(extraction_is_complete(
+            &steps,
+            &steps[0],
+            "https://news.example/article",
+            None
+        ));
         let mut bad = steps.clone();
         bad[1].result.as_mut().unwrap()["provenance"] = json!([]);
-        assert!(!extraction_is_complete(&bad, &bad[0], "https://news.example/article", None));
+        assert!(!extraction_is_complete(
+            &bad,
+            &bad[0],
+            "https://news.example/article",
+            None
+        ));
     }
 }

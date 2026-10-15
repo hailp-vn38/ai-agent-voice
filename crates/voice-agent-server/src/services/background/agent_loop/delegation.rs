@@ -175,8 +175,12 @@ pub(super) async fn delegate_children(
             super::super::coverage::completed_web_sources(&latest, Some(&run_ids));
         feedback.push(ChatMessage::ToolResult {
             tool_call_id: call.id.clone(),
-            content: serde_json::to_string(&ChildOutcome::from_run(session, child, verified_sources)?)
-                .map_err(|_| JobError::InvalidPlan)?,
+            content: serde_json::to_string(&ChildOutcome::from_run(
+                session,
+                child,
+                verified_sources,
+            )?)
+            .map_err(|_| JobError::InvalidPlan)?,
         });
     }
     engine

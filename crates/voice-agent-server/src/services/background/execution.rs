@@ -186,35 +186,72 @@ impl JobEngine {
                         // Always record the staging pathname before copying so partial
                         // copies are removed if checksum, quota or IO validation fails.
                         staged_files.push(staged.clone());
-                        let remaining = self.config.background.limits.artifact_bytes_per_job
-                            .checked_sub(total).ok_or(JobError::CapacityUnavailable)?;
+                        let remaining = self
+                            .config
+                            .background
+                            .limits
+                            .artifact_bytes_per_job
+                            .checked_sub(total)
+                            .ok_or(JobError::CapacityUnavailable)?;
                         let (size, sha) = super::artifacts::stage_output(
-                            artifact.source_path, staged.clone(), remaining,
-                            artifact.declared_size, artifact.declared_sha256,
-                        ).await?;
-                        total = total.checked_add(size).ok_or(JobError::CapacityUnavailable)?;
+                            artifact.source_path,
+                            staged.clone(),
+                            remaining,
+                            artifact.declared_size,
+                            artifact.declared_sha256,
+                        )
+                        .await?;
+                        total = total
+                            .checked_add(size)
+                            .ok_or(JobError::CapacityUnavailable)?;
                         tokio::fs::rename(&staged, &target)
-                            .await.map_err(|_| JobError::DatabaseUnavailable)?;
+                            .await
+                            .map_err(|_| JobError::DatabaseUnavailable)?;
                         published.push(target);
-                        records.push((id, artifact.media_type, size as i64, sha, artifact.filename));
+                        records.push((
+                            id,
+                            artifact.media_type,
+                            size as i64,
+                            sha,
+                            artifact.filename,
+                        ));
                     }
                     super::artifacts::sync_directory(root.clone())
-                        .await.map_err(|_| JobError::DatabaseUnavailable)?;
-                    self.database.finish_plugin_success(
-                        job_id, step_key, &attempt, &output.result, &records,
-                        (
-                            self.config.background.limits.artifact_bytes_per_job,
-                            self.config.background.limits.artifact_global_bytes,
-                            self.foundation_harness,
-                        ),
-                    ).await
-                }.await;
+                        .await
+                        .map_err(|_| JobError::DatabaseUnavailable)?;
+                    self.database
+                        .finish_plugin_success(
+                            job_id,
+                            step_key,
+                            &attempt,
+                            &output.result,
+                            &records,
+                            (
+                                self.config.background.limits.artifact_bytes_per_job,
+                                self.config.background.limits.artifact_global_bytes,
+                                self.foundation_harness,
+                            ),
+                        )
+                        .await
+                }
+                .await;
                 if let Err(error) = publication {
-                    for path in staged_files { let _ = tokio::fs::remove_file(path).await; }
-                    for path in published { let _ = tokio::fs::remove_file(path).await; }
-                    self.database.finish_plugin_failure(
-                        job_id, step_key, &attempt, error.code(), false, self.foundation_harness,
-                    ).await?;
+                    for path in staged_files {
+                        let _ = tokio::fs::remove_file(path).await;
+                    }
+                    for path in published {
+                        let _ = tokio::fs::remove_file(path).await;
+                    }
+                    self.database
+                        .finish_plugin_failure(
+                            job_id,
+                            step_key,
+                            &attempt,
+                            error.code(),
+                            false,
+                            self.foundation_harness,
+                        )
+                        .await?;
                 }
                 if let Some(workspace) = workspace {
                     if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
