@@ -131,7 +131,7 @@ sequenceDiagram
         Web-->>Child: next article text
     end
     Child-->>Root: ChildOutcome(output,verified_source_urls from own Session)
-    Root->>Finish: finish_job(summary,artifact references)
+    Root->>Finish: finish_job(summary,findings,unresolved)
     alt URL unverified/incomplete
         Finish-->>Root: Matched ToolResult source_not_fully_verified
         Root->>Child: subagent(sessionID=old,prompt="Continue the article")
@@ -152,3 +152,23 @@ remains one matched ToolResult in its own transcript.
 This is source-completeness verification, not semantic truth verification. The
 user's text may still contain incorrect claims; content trust and citation
 credibility checks are independent policies.
+
+
+## `finish_job` source and artifact contract
+
+`finish_job` is not an artifact authoring tool. Root sends only `summary`, `findings` and `unresolved`. Rust derives `result.evidence_refs` from persisted Job-owned artifact IDs. Verified URL evidence belongs to `result.coverage.verified_source_urls` and **cannot** masquerade as an artifact or Step key.
+
+```mermaid
+sequenceDiagram
+    participant R as Root Agent
+    participant F as Rust finish_job gate
+    participant DB as Job ledger
+    R->>F: finish_job(summary,findings,unresolved,evidence_refs=URL)
+    F-->>R: Matched ToolResult finish_job_server_owned_evidence + guidance
+    R->>F: finish_job(summary,findings,unresolved)
+    F->>DB: Resolve server-owned artifact IDs + source coverage
+    DB-->>F: No artifact; URL verified from Step provenance
+    F->>DB: Finish Job, evidence_refs=[], coverage.verified_source_urls=[URL]
+```
+
+Legacy extra fields are **not silently ignored**: the original tool schema rejects them and the normal Root repair budget applies. `ChildResult.evidence_refs` remains separately controlled by the Child's optional completion function and per-Run artifact ownership checks.
