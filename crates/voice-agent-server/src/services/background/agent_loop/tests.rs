@@ -66,7 +66,7 @@ fn invalid_root_batches_cannot_execute_any_children() {
     let finish = ToolCall {
         id: "call_2".into(),
         name: "finish_job".into(),
-        arguments: json!({"summary":"Done","findings":[],"evidence_refs":[],"unresolved":[]}),
+        arguments: json!({"summary":"Done","findings":[],"unresolved":[]}),
     };
     let seen = std::collections::HashSet::new();
     assert!(root_call_batch_valid(std::slice::from_ref(&sub), &seen));
