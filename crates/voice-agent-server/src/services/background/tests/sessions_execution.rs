@@ -119,6 +119,14 @@ impl JobModels for Scenario {
                 }
                 let mut final_call = finish();
                 final_call.id = format!("finish_{round}");
+                if self.semantic == Some("article_uncertainty") {
+                    final_call.arguments["summary"] = json!(
+                        "AFC chưa đưa ra quyết định chính thức về việc hoãn Asian Cup 2027."
+                    );
+                    final_call.arguments["unresolved"] = json!([
+                        "Khả năng lùi thời gian hoặc đổi nước chủ nhà vẫn chưa có quyết định chính thức."
+                    ]);
+                }
                 if self.legacy_finish_refs && round == 1 {
                     // Replays the real regression: Root cites the source URL as
                     // an artifact, although a URL extract created no artifact.
@@ -349,4 +357,28 @@ async fn root_bad_url_evidence_gets_matched_guidance_then_finishes_without_artif
     let events = db.job_events(&job.id, 0, 200).await.unwrap();
     assert!(events.iter().any(|event| event.event_type == "agent_decision_rejected"
         && event.payload["validation_code"] == "finish_job_server_owned_evidence"));
+}
+
+#[tokio::test]
+async fn root_unresolved_article_facts_do_not_fail_completed_job() {
+    // Regression from a real single-article Job: Child and required source
+    // succeeded, but Root used unresolved to report that AFC has not yet
+    // decided whether to postpone the tournament. This is not unfinished work.
+    let (db, job) = execute_scenario(true, false, Some("article_uncertainty")).await;
+    assert_eq!(job.status, "succeeded", "{:?}", job.error_code);
+    assert!(job.error_code.is_none());
+    assert!(job.artifacts.is_empty(), "text-only jobs need no artifact");
+    assert!(job.agent_runs.iter().all(|run| run.status == "succeeded"));
+    assert_eq!(job.steps.len(), 2);
+    assert!(job.steps.iter().all(|step| step.status == "succeeded"));
+    let result = job.result.as_ref().expect("terminal Job result");
+    assert_eq!(result["evidence_refs"], json!([]));
+    assert_eq!(result["unresolved"], json!([
+        "Khả năng lùi thời gian hoặc đổi nước chủ nhà vẫn chưa có quyết định chính thức."
+    ]));
+    assert!(result["summary"].as_str().unwrap().contains("chưa đưa ra quyết định"));
+    let events = db.job_events(&job.id, 0, 200).await.unwrap();
+    assert!(events.iter().any(|event| event.event_type == "job_finished"
+        && event.payload["status"] == "succeeded"));
+    assert!(!events.iter().any(|event| event.event_type == "agent_decision_rejected"));
 }
