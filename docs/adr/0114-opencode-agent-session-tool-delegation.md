@@ -95,3 +95,8 @@ The native Root Tool Call / Tool Result and the independent Child Session
 protocol are unchanged. Regression tests cover both cases, plus the full
 Root -> Child -> finish_job path with `allow_partial=false`, no artifacts and
 an unresolved factual question.
+
+
+## Amendment: V3 binary Job Artifacts (2026-10-15)
+
+Successful V3 Child Tool Steps may publish immutable text or binary Job Artifacts. Their identity, ownership and final Root evidence are still issued and verified by Rust; this adds no model-authored `finish_job` fields and does not alter the canonical Root/Child tool transcript or matched Tool Results. The Job-owned local file layout, atomic publication with SQLite reconciliation and admin gallery are governed by [ADR 0115](0115-job-owned-local-artifacts-v3.md).
