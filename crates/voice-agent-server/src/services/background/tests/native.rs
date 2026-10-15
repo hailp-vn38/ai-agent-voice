@@ -64,7 +64,7 @@ async fn native_root_chat_child_responses_roundtrips_keep_routes_and_history_iso
                     assert!(!raw.contains("child_native_call"));let observation=messages.iter().find(|m|m["role"]=="tool"&&m["tool_call_id"]=="root_delegate").unwrap()["content"].as_str().unwrap();
                     assert!(!observation.contains("PRIVATE_CHILD_TASK"));
                     assert!(!raw.contains("private-child-reasoning"));
-                    ("root_finish","finish_job",json!({"summary":"Verified Ada","findings":["Ada"],"evidence_refs":[],"unresolved":[]}))
+                    ("root_finish","finish_job",json!({"summary":"Verified Ada","findings":["Ada"],"unresolved":[]}))
                 };
             Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{
                 "id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]}}]}))
