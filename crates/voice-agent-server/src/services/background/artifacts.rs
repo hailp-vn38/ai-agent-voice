@@ -286,8 +286,9 @@ pub(crate) async fn remove_deleted_job(database: &Database, id: &str) -> Result<
     }
 }
 
-/// Retire bounded batches of terminal Jobs after 30 days. Retry parents remain
-/// until their descendants have expired. Startup repairs orphan filesystem data.
+/// Historical retirement helper retained for explicit regression tests only.
+/// Production V3 Jobs remain until Admin deletion.
+#[cfg(test)]
 pub(crate) async fn expire_terminal(database: &Database, now: i64) -> Result<u64, JobError> {
     let cutoff = now
         .checked_sub(30 * 24 * 60 * 60)
