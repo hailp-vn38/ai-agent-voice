@@ -202,3 +202,33 @@ A real hierarchical_v3 Job called `web.extract(mode=article,max_chars=6000)` onc
 A legacy Root tool call still sending `evidence_refs` is rejected as a whole batch. With a usable native call ID, Rust returns a paired `ToolResult` containing `finish_job_server_owned_evidence` and instructions to remove the field. Bounded repair lets Root issue a new call. The source-completeness gate still rejects incomplete articles with actionable guidance; permissions, model pins and evidence checks are unchanged.
 
 Regression tests cover the strict Root schema, server-derived references, and the full fake-provider path: Root delegation -> completed Child without artifact -> legacy invalid finish -> matched correction -> clean finish -> succeeded Job. This branch has not yet passed Cargo tests in the current execution environment.
+
+
+### Fix: informational uncertainty must not fail a completed Job (2026-10-15)
+
+A subsequent real hierarchical_v3 Job successfully extracted the article in
+one `core.web.extract(mode=article,max_chars=6000)` call with
+`truncated=false`, `source_complete=true`,
+`coverage_basis=goal_url_verified`, no missing sources/capabilities and
+one succeeded Child. Root called `finish_job` with `unresolved` describing
+that the AFC had **not yet announced a decision**. The old completion policy
+downgraded an otherwise successful Job to `failed` with
+`requirements_unsatisfied` because `unresolved` was nonempty.
+
+**Updated contract:** `finish_job.unresolved` contains informational open
+questions and qualifications in the *source material*. It is returned
+unchanged, without changing Job status. Only Rust evidence/requirement gates
+may select the terminal status: verified source completeness, required sources
+and capabilities, Child/Step outcomes, pending Child work and artifact
+ownership. `allow_partial=false` still forbids accepting incomplete work,
+but no longer implies that merely reporting uncertainty fails the Job.
+
+The dedicated E2E regression `root_unresolved_article_facts_do_not_fail_completed_job`
+uses a fake model to run Root delegation, a successful Child tool chain and
+Root `finish_job` with nonempty `unresolved`. It asserts `succeeded`,
+no error, no artifacts and preserved uncertainty. Fixture tests confirm
+`goal_url_verified` can coexist with uncertain source facts and incomplete
+URL extraction is still rejected.
+
+Implementation is committed on the V3 branch; Cargo fmt/check/test and
+live provider qualification remain explicit prerequisites before production.
