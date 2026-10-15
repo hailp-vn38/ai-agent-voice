@@ -4,7 +4,7 @@ use super::{
     completion::finish_root,
     context::run_context,
     delegation::delegate_children,
-    tools::{ROOT_INSTRUCTION, root_call_batch_valid, root_tools},
+    tools::{ROOT_INSTRUCTION, root_call_batch_valid, root_call_validation_feedback, root_tools},
 };
 use crate::providers::llm::{BackgroundMode, BackgroundTurn, ChatMessage, LlmRequest};
 use serde_json::{Value, json};
@@ -142,8 +142,12 @@ pub(in super::super) async fn run_root(
             }
         };
         if !root_call_batch_valid(&calls, &seen) {
+            let detailed = calls.first().map(root_call_validation_feedback);
+            let validation_code = detailed.as_ref()
+                .and_then(|value| value["error_code"].as_str())
+                .unwrap_or("agent_tool_protocol_error");
             engine.database.record_agent_decision(&context,false,json!({
-                "validation_code":"agent_tool_protocol_error","validation_path":"$.tool_calls","attempt_no":round
+                "validation_code":validation_code,"validation_path":"$.tool_calls","attempt_no":round
             })).await?;
             let mut ids = std::collections::HashSet::new();
             let matchable = !calls.is_empty()
@@ -160,9 +164,7 @@ pub(in super::super) async fn run_root(
                 for call in &calls {
                     messages.push(ChatMessage::ToolResult {
                         tool_call_id: call.id.clone(),
-                        content:
-                            json!({"status":"failed","error_code":"agent_tool_protocol_error"})
-                                .to_string(),
+                        content: root_call_validation_feedback(call).to_string(),
                     });
                     seen.insert(call.id.clone());
                 }
