@@ -4,7 +4,6 @@ use super::{
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 
 impl JobEngine {
     pub(crate) async fn open_artifact(
@@ -177,77 +176,50 @@ impl JobEngine {
                 let mut published = Vec::new();
                 let mut staged_files = Vec::new();
                 let mut records = Vec::new();
+                let workspace = output.workspace.clone();
                 let publication = async {
                     let mut total = 0u64;
                     for artifact in output.artifacts {
-                        total = total
-                            .checked_add(artifact.bytes.len() as u64)
-                            .ok_or(JobError::CapacityUnavailable)?;
-                        if total > self.config.background.limits.artifact_bytes_per_job {
-                            return Err(JobError::CapacityUnavailable);
-                        }
                         let id = uuid::Uuid::new_v4().to_string();
                         let target = root.join(&id);
                         let staged = root.join(format!(".{id}.staging"));
-                        let sha: String = Sha256::digest(&artifact.bytes)
-                            .iter()
-                            .map(|byte| format!("{byte:02x}"))
-                            .collect();
-                        let mut file = tokio::fs::OpenOptions::new()
-                            .write(true)
-                            .create_new(true)
-                            .open(&staged)
-                            .await
-                            .map_err(|_| JobError::DatabaseUnavailable)?;
+                        // Always record the staging pathname before copying so partial
+                        // copies are removed if checksum, quota or IO validation fails.
                         staged_files.push(staged.clone());
-                        file.write_all(&artifact.bytes)
-                            .await
-                            .map_err(|_| JobError::DatabaseUnavailable)?;
-                        file.sync_all()
-                            .await
-                            .map_err(|_| JobError::DatabaseUnavailable)?;
-                        drop(file);
+                        let remaining = self.config.background.limits.artifact_bytes_per_job
+                            .checked_sub(total).ok_or(JobError::CapacityUnavailable)?;
+                        let (size, sha) = super::artifacts::stage_output(
+                            artifact.source_path, staged.clone(), remaining,
+                            artifact.declared_size, artifact.declared_sha256,
+                        ).await?;
+                        total = total.checked_add(size).ok_or(JobError::CapacityUnavailable)?;
                         tokio::fs::rename(&staged, &target)
-                            .await
-                            .map_err(|_| JobError::DatabaseUnavailable)?;
+                            .await.map_err(|_| JobError::DatabaseUnavailable)?;
                         published.push(target);
-                        records.push((id, artifact.media_type, artifact.bytes.len() as i64, sha));
+                        records.push((id, artifact.media_type, size as i64, sha, artifact.filename));
                     }
                     super::artifacts::sync_directory(root.clone())
-                        .await
-                        .map_err(|_| JobError::DatabaseUnavailable)?;
-                    self.database
-                        .finish_plugin_success(
-                            job_id,
-                            step_key,
-                            &attempt,
-                            &output.result,
-                            &records,
-                            (
-                                self.config.background.limits.artifact_bytes_per_job,
-                                self.foundation_harness,
-                            ),
-                        )
-                        .await
-                }
-                .await;
-                if let Err(error) = publication {
-                    for path in staged_files {
-                        let _ = tokio::fs::remove_file(path).await;
-                    }
-                    for path in published {
-                        let _ = tokio::fs::remove_file(path).await;
-                    }
-                    self.database
-                        .finish_plugin_failure(
-                            job_id,
-                            step_key,
-                            &attempt,
-                            error.code(),
-                            false,
+                        .await.map_err(|_| JobError::DatabaseUnavailable)?;
+                    self.database.finish_plugin_success(
+                        job_id, step_key, &attempt, &output.result, &records,
+                        (
+                            self.config.background.limits.artifact_bytes_per_job,
+                            self.config.background.limits.artifact_global_bytes,
                             self.foundation_harness,
-                        )
-                        .await?;
+                        ),
+                    ).await
+                }.await;
+                if let Err(error) = publication {
+                    for path in staged_files { let _ = tokio::fs::remove_file(path).await; }
+                    for path in published { let _ = tokio::fs::remove_file(path).await; }
+                    self.database.finish_plugin_failure(
+                        job_id, step_key, &attempt, error.code(), false, self.foundation_harness,
+                    ).await?;
+                }
+                if let Some(workspace) = workspace {
+                    if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
+                        tracing::warn!(job_id, step_key, %cleanup, "Artifact workspace cleanup failed");
+                    }
                 }
             }
             Err(error) => {

@@ -69,6 +69,7 @@ pub(crate) async fn invoke(
     Ok(InvokeResult {
         result,
         artifacts: Vec::new(),
+        workspace: None,
     })
 }
 

@@ -163,9 +163,12 @@ pub struct AgentRunView {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, sqlx::FromRow)]
 pub struct JobArtifactView {
     pub id: String,
+    pub step_key: Option<String>,
+    pub filename: String,
     pub media_type: String,
     pub size_bytes: i64,
     pub sha256: String,
+    pub created_at: String,
 }
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct JobStepView {

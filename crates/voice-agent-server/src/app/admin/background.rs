@@ -156,6 +156,12 @@ pub(super) async fn artifact(
     {
         return failure(&request, JobError::NotFound);
     }
+    let display = job.artifacts.iter().find(|artifact| artifact.id == artifact_id)
+        .map(|artifact| if artifact.filename.is_empty() { artifact.id.as_str() } else { artifact.filename.as_str() })
+        .unwrap_or(&artifact_id);
+    // Worker filenames only contain safe ASCII basename bytes. Never use a path from a request.
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{display}\""))
+        .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
     match engine.open_artifact(&id, &artifact_id).await {
         Ok((file, size)) => {
             let stream = futures_util::stream::try_unfold(
@@ -187,8 +193,7 @@ pub(super) async fn artifact(
                     (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
                     (
                         header::CONTENT_DISPOSITION,
-                        HeaderValue::from_str(&format!("attachment; filename=\"{artifact_id}\""))
-                            .expect("UUID header"),
+                        disposition,
                     ),
                 ],
                 Body::from_stream(stream),

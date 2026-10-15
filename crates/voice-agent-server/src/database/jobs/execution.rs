@@ -226,11 +226,11 @@ impl Database {
         step_key: &str,
         attempt_id: &str,
         result: &Value,
-        artifacts: &[(String, String, i64, String)],
-        policy: (u64, bool),
+        artifacts: &[(String, String, i64, String, String)],
+        policy: (u64, u64, bool),
     ) -> Result<(), JobError> {
         let now = crate::database::unix_seconds().ok_or(JobError::ClockUnavailable)?;
-        let (max_artifact_bytes, finish_job) = policy;
+        let (max_artifact_bytes, max_global_bytes, finish_job) = policy;
         let encoded = serde_json::to_string(result).map_err(|_| JobError::InvalidArguments)?;
         if encoded.len() > 65536 {
             return Err(JobError::InvalidArguments);
@@ -248,14 +248,14 @@ impl Database {
                 .await?;
         let incoming = artifacts
             .iter()
-            .try_fold(0u64, |sum, (_, _, size, _)| {
+            .try_fold(0u64, |sum, (_, _, size, _, _)| {
                 u64::try_from(*size)
                     .ok()
                     .and_then(|value| sum.checked_add(value))
             })
             .ok_or(JobError::CapacityUnavailable)?;
         if (existing_job as u64).saturating_add(incoming) > max_artifact_bytes
-            || (existing_global as u64).saturating_add(incoming) > 256 * 1024 * 1024
+            || (existing_global as u64).saturating_add(incoming) > max_global_bytes
         {
             return Err(JobError::CapacityUnavailable);
         }
@@ -265,10 +265,10 @@ impl Database {
         if updated.rows_affected() != 1 {
             return Err(JobError::DeadlineExceeded);
         }
-        for (id, media_type, size, sha) in artifacts {
-            sqlx::query("INSERT INTO job_artifacts(id,job_id,step_key,relative_path,media_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,?,?)")
+        for (id, media_type, size, sha, filename) in artifacts {
+            sqlx::query("INSERT INTO job_artifacts(id,job_id,step_key,relative_path,media_type,size_bytes,sha256,filename,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
                 .bind(id).bind(job_id).bind(step_key).bind(format!("{job_id}/{id}"))
-                .bind(media_type).bind(size).bind(sha).bind(now).execute(&mut *tx).await?;
+                .bind(media_type).bind(size).bind(sha).bind(filename).bind(now).execute(&mut *tx).await?;
         }
         if finish_job {
             let final_job = sqlx::query("UPDATE jobs SET status='succeeded',result_json=?,updated_at=? WHERE id=? AND status='running' AND deadline_at>?")

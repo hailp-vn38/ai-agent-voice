@@ -51,14 +51,19 @@ pub(crate) struct FrozenChoice {
 
 #[allow(dead_code)]
 pub(crate) struct ArtifactData {
-    pub bytes: Vec<u8>,
+    pub source_path: std::path::PathBuf,
+    pub filename: String,
     pub media_type: String,
+    pub declared_size: Option<u64>,
+    pub declared_sha256: Option<String>,
 }
 
 #[allow(dead_code)]
 pub(crate) struct InvokeResult {
     pub result: serde_json::Value,
     pub artifacts: Vec<ArtifactData>,
+    // Worker outputs remain available until the owning Step publishes them.
+    pub workspace: Option<std::path::PathBuf>,
 }
 
 #[allow(dead_code)]
@@ -247,10 +252,18 @@ impl PluginStore {
             })
         }
         .await;
-        if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
-            tracing::warn!(job_id, attempt_id, %cleanup, "Plugin workspace cleanup failed");
+        match result {
+            Ok(mut output) => {
+                output.workspace = Some(workspace);
+                Ok(output)
+            }
+            Err(error) => {
+                if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
+                    tracing::warn!(job_id, attempt_id, %cleanup, "Plugin workspace cleanup failed");
+                }
+                Err(error)
+            }
         }
-        result
     }
 }
 
@@ -261,52 +274,36 @@ pub(super) async fn read_artifacts(
 ) -> Result<Vec<ArtifactData>, PluginError> {
     let mut artifacts = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let mut total = 0usize;
+    let mut total = 0u64;
     for artifact in refs {
         if artifact.path.is_empty()
             || !seen.insert(artifact.path.clone())
             || artifact.path.len() > 80
-            || !artifact
-                .path
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            || !matches!(
-                artifact.media_type.as_str(),
-                "text/plain" | "application/json" | "text/markdown"
-            )
+            || !artifact.path.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            || artifact.media_type.len() > 100
+            || !["text/", "image/", "audio/", "video/", "application/"]
+                .iter().any(|prefix| artifact.media_type.starts_with(prefix))
+            || !artifact.media_type.bytes().all(|b| b.is_ascii_alphanumeric() || b"/.+-_".contains(&b))
         {
             return Err(PluginError::WorkerProtocolError);
         }
         let path = out.join(&artifact.path);
-        let bytes = crate::services::background::artifacts::read_regular(path, limit)
+        let metadata = tokio::fs::symlink_metadata(&path)
             .await
             .map_err(|_| PluginError::WorkerProtocolError)?;
-        total = total
-            .checked_add(bytes.len())
-            .ok_or(PluginError::WorkerProtocolError)?;
-        if total as u64 > limit {
+        if !metadata.file_type().is_file() {
             return Err(PluginError::WorkerProtocolError);
         }
-        let sha: String = {
-            use sha2::{Digest, Sha256};
-            Sha256::digest(&bytes)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect()
-        };
-        if artifact
-            .size_bytes
-            .is_some_and(|size| size != bytes.len() as u64)
-            || artifact
-                .sha256
-                .as_ref()
-                .is_some_and(|digest| digest != &sha)
-        {
+        total = total.checked_add(metadata.len()).ok_or(PluginError::WorkerProtocolError)?;
+        if total > limit || artifact.size_bytes.is_some_and(|size| size != metadata.len()) {
             return Err(PluginError::WorkerProtocolError);
         }
         artifacts.push(ArtifactData {
-            bytes,
+            source_path: path,
+            filename: artifact.path,
             media_type: artifact.media_type,
+            declared_size: artifact.size_bytes,
+            declared_sha256: artifact.sha256,
         });
     }
     Ok(artifacts)

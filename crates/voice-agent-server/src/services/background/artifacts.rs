@@ -6,16 +6,90 @@ use std::{
 };
 
 pub(crate) fn root(database: &Database) -> Result<PathBuf, JobError> {
-    let mut path = database
+    Ok(database
         .durable_path()
+        .and_then(std::path::Path::parent)
         .ok_or(JobError::DatabaseUnavailable)?
-        .as_os_str()
-        .to_owned();
-    path.push(".job-artifacts");
-    Ok(PathBuf::from(path))
+        .join("job-artifacts"))
 }
 #[cfg(test)]
 mod tests;
+
+/// One-time physical relocation, under the existing deployment lock and before reconciliation.
+pub(crate) async fn relocate(database: &Database) -> Result<(), JobError> {
+    let path = database.durable_path().ok_or(JobError::DatabaseUnavailable)?;
+    let old = PathBuf::from(format!("{}.job-artifacts", path.display()));
+    let new = root(database)?;
+    let old_exists = tokio::fs::try_exists(&old).await.map_err(|_| JobError::DatabaseUnavailable)?;
+    let new_exists = tokio::fs::try_exists(&new).await.map_err(|_| JobError::DatabaseUnavailable)?;
+    if !old_exists { return Ok(()); }
+    if !new_exists {
+        tokio::fs::rename(&old, &new).await.map_err(|_| JobError::DatabaseUnavailable)?;
+        sync_directory(new.parent().ok_or(JobError::DatabaseUnavailable)?.to_path_buf())
+            .await.map_err(|_| JobError::DatabaseUnavailable)?;
+        return Ok(());
+    }
+    let mut entries = tokio::fs::read_dir(&old).await.map_err(|_| JobError::DatabaseUnavailable)?;
+    if entries.next_entry().await.map_err(|_| JobError::DatabaseUnavailable)?.is_some() {
+        // Never merge two stores automatically.
+        return Err(JobError::DatabaseUnavailable);
+    }
+    tokio::fs::remove_dir(&old).await.map_err(|_| JobError::DatabaseUnavailable)?;
+    Ok(())
+}
+
+/// Copy a worker output in bounded chunks, without following a symlink or
+/// trusting the worker's declared hash. The caller owns atomic rename and rollback.
+pub(crate) async fn stage_output(
+    source: PathBuf,
+    staged: PathBuf,
+    limit: u64,
+    declared_size: Option<u64>,
+    declared_sha256: Option<String>,
+) -> Result<(u64, String), JobError> {
+    tokio::task::spawn_blocking(move || -> io::Result<(u64, String)> {
+        use sha2::{Digest, Sha256};
+        use std::io::Write;
+        #[cfg(unix)]
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let mut opts = OpenOptions::new();
+        opts.read(true);
+        #[cfg(unix)]
+        opts.custom_flags(libc::O_NOFOLLOW);
+        let mut input = opts.open(source)?;
+        let metadata = input.metadata()?;
+        #[cfg(unix)]
+        let single_link = metadata.nlink() == 1;
+        #[cfg(not(unix))]
+        let single_link = true;
+        if !metadata.is_file() || !single_link || metadata.len() > limit {
+            return Err(io::Error::other("artifact_invalid_source"));
+        }
+        let mut output = OpenOptions::new().write(true).create_new(true).open(staged)?;
+        let mut hash = Sha256::new();
+        let mut bytes = 0u64;
+        let mut chunk = [0u8; 65536];
+        loop {
+            let read = input.read(&mut chunk)?;
+            if read == 0 { break; }
+            bytes = bytes.checked_add(read as u64)
+                .ok_or_else(|| io::Error::other("artifact_too_large"))?;
+            if bytes > limit { return Err(io::Error::other("artifact_too_large")); }
+            output.write_all(&chunk[..read])?;
+            hash.update(&chunk[..read]);
+        }
+        let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if bytes != metadata.len()
+            || declared_size.is_some_and(|size| size != bytes)
+            || declared_sha256.as_ref().is_some_and(|sha| sha != &digest)
+        {
+            return Err(io::Error::other("artifact_checksum_mismatch"));
+        }
+        output.sync_all()?;
+        Ok((bytes, digest))
+    }).await.map_err(|_| JobError::DatabaseUnavailable)?
+      .map_err(|_| JobError::DatabaseUnavailable)
+}
 
 /// Verify the immutable artifact through one descriptor, then stream that same inode.
 pub(crate) async fn open_checked(

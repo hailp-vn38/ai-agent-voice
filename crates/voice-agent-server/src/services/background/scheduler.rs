@@ -12,18 +12,11 @@ pub(super) async fn run(
     stop: CancellationToken,
     stopping: CancellationToken,
     _deployment_lock: File,
-    retention_backlog: bool,
 ) {
     let mut tick = tokio::time::interval(Duration::from_millis(
         engine.config.background.limits.scheduler_scan_ms,
     ));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let maintenance = tokio::time::sleep(Duration::from_secs(if retention_backlog {
-        1
-    } else {
-        3600
-    }));
-    tokio::pin!(maintenance);
     let mut jobs = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
@@ -31,17 +24,6 @@ pub(super) async fn run(
             _=stop.cancelled()=>break,
             _=stopping.cancelled()=>break,
             _=tick.tick()=>{},
-            _=&mut maintenance=>{
-                let delay = match now() {
-                    Ok(timestamp) => match super::artifacts::expire_terminal(&engine.database, timestamp).await {
-                        Ok(100) => 1,
-                        Ok(_) => 3600,
-                        Err(error) => { tracing::warn!(code=%error, "Background retention failed"); 60 }
-                    },
-                    Err(error) => { tracing::warn!(code=%error, "Background retention clock failed"); 60 }
-                };
-                maintenance.as_mut().reset(tokio::time::Instant::now()+Duration::from_secs(delay));
-            },
             _=engine.wake.notified()=>{},
             Some(result)=jobs.join_next()=>{if let Err(error)=result { tracing::warn!(event="background_task_failed",%error); }},
         }

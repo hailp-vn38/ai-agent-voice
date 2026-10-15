@@ -128,7 +128,7 @@ impl Database {
             .ok_or(JobError::NotFound)?;
         let steps = steps::read(&mut tx, id).await?;
         let artifacts = sqlx::query_as(
-            "SELECT id,media_type,size_bytes,sha256 FROM job_artifacts WHERE job_id=? ORDER BY id",
+            "SELECT id,step_key,filename,media_type,size_bytes,sha256,strftime('%Y-%m-%dT%H:%M:%SZ', created_at, 'unixepoch') AS created_at FROM job_artifacts WHERE job_id=? ORDER BY created_at,id",
         )
         .bind(id)
         .fetch_all(&mut *tx)

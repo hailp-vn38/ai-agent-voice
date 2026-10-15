@@ -72,9 +72,8 @@ impl BackgroundRuntime {
             .reap_owned()
             .await
             .map_err(|_| JobError::RuntimeUnavailable)?;
+        super::artifacts::relocate(&engine.database).await?;
         super::artifacts::reconcile(&engine.database).await?;
-        let retention_backlog =
-            super::artifacts::expire_terminal(&engine.database, now()?).await? == 100;
         scheduler::scan(&engine).await?;
         let stop = CancellationToken::new();
         let task = tokio::spawn(scheduler::run(
@@ -82,7 +81,6 @@ impl BackgroundRuntime {
             stop.clone(),
             stopping,
             lock,
-            retention_backlog,
         ));
         Ok(Arc::new(Self {
             engine,

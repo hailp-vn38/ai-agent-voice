@@ -34,6 +34,7 @@ pub struct BackgroundLimits {
     pub job_deadline_seconds: u32,
     pub step_timeout_seconds: u32,
     pub artifact_bytes_per_job: u64,
+    pub artifact_global_bytes: u64,
     pub scheduler_scan_ms: u64,
 }
 impl Default for BackgroundLimits {
@@ -50,7 +51,8 @@ impl Default for BackgroundLimits {
             max_total_llm_calls: 32,
             job_deadline_seconds: 1800,
             step_timeout_seconds: 300,
-            artifact_bytes_per_job: 20 * 1024 * 1024,
+            artifact_bytes_per_job: 512 * 1024 * 1024,
+            artifact_global_bytes: 4 * 1024 * 1024 * 1024,
             scheduler_scan_ms: 1000,
         }
     }
@@ -68,7 +70,9 @@ impl BackgroundLimits {
             && (1..=1800).contains(&self.job_deadline_seconds)
             && (1..=300).contains(&self.step_timeout_seconds)
             && self.step_timeout_seconds <= self.job_deadline_seconds
-            && (1..=20 * 1024 * 1024).contains(&self.artifact_bytes_per_job)
+            && (1..=2 * 1024 * 1024 * 1024).contains(&self.artifact_bytes_per_job)
+            && self.artifact_global_bytes >= self.artifact_bytes_per_job
+            && self.artifact_global_bytes <= 1024 * 1024 * 1024 * 1024
             && (10..=5000).contains(&self.scheduler_scan_ms)
     }
 }
