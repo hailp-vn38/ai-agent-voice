@@ -70,3 +70,28 @@ An observed URL-summary Job completed one core.web.extract Step and Child but fa
 **Decision:** remove `evidence_refs` from the Root `finish_job` tool schema and `RootResult`. Root is responsible only for `summary`, `findings` and `unresolved`. Rust derives terminal artifact refs exclusively from immutable Job artifact records and source coverage separately from session-owned Steps. This does **not** alter the Child `submit_result` contract or weaken artifact authorization.
 
 Legacy native Root calls containing `evidence_refs` are rejected without dispatch and receive exactly one matched Tool Result `finish_job_server_owned_evidence` with explicit repair guidance. A Root can retry using the new schema within its existing repair budget. No URL/Step key is converted into an artifact ID. This preserves Root Tool Call -> Rust-owned authority -> matched Tool Result semantics.
+
+
+## Amendment: `unresolved` is informational, not a completion gate (2026-10-15)
+
+A real single-URL news-summary Job had a successful Child, complete source provenance,
+`coverage_basis=goal_url_verified`, no missing requirements and no artifacts.
+Its Root nevertheless produced `unresolved` explaining that AFC had not issued an
+official scheduling decision. The old `finish_root` logic treated every nonempty
+`unresolved` array as incomplete work, changing an otherwise successful Job to
+`failed`/`requirements_unsatisfied`.
+
+**Decision:** `RootResult.unresolved` records uncertainty, caveats and unanswered
+questions in the **answer's subject matter**, not the execution status. It is
+preserved verbatim in the final Job result and does **not** downgrade
+`succeeded`. Rust alone decides `succeeded`, `partial_success` or `failed`
+using source/coverage requirements, actual Child/Step outcomes, artifact and
+permission checks, and active-child finalization constraints. This does not
+waive any evidence rule or transform unsuccessful execution into success.
+
+A source-incomplete URL remains unverified even if `unresolved` is empty;
+a fully verified article may succeed with explanatory `unresolved` entries.
+The native Root Tool Call / Tool Result and the independent Child Session
+protocol are unchanged. Regression tests cover both cases, plus the full
+Root -> Child -> finish_job path with `allow_partial=false`, no artifacts and
+an unresolved factual question.
