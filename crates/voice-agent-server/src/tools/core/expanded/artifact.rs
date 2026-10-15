@@ -18,8 +18,11 @@ pub(super) async fn owned_artifact(
         .map_err(|_| PluginError::DatabaseUnavailable)?;
     let (media_type, digest) = metadata.ok_or(PluginError::ApplicationError)?;
     // Core text tools only need bounded input; media bytes are downloaded via Admin streaming.
-    let (_, size, _) = engine.database.job_artifact_record(job_id, artifact_id)
-        .await.map_err(|_| PluginError::DatabaseUnavailable)?
+    let (_, size, _) = engine
+        .database
+        .job_artifact_record(job_id, artifact_id)
+        .await
+        .map_err(|_| PluginError::DatabaseUnavailable)?
         .ok_or(PluginError::ApplicationError)?;
     if size < 0 || size > 1024 * 1024 {
         return Err(PluginError::ApplicationError);
@@ -59,12 +62,17 @@ pub(super) async fn inspect(
     if uuid::Uuid::parse_str(id).is_err() {
         return Err(PluginError::ApplicationError);
     }
-    let (media_type, sha) = engine.database.job_artifact_metadata(job_id, id)
-        .await.map_err(|_| PluginError::DatabaseUnavailable)?
+    let (media_type, sha) = engine
+        .database
+        .job_artifact_metadata(job_id, id)
+        .await
+        .map_err(|_| PluginError::DatabaseUnavailable)?
         .ok_or(PluginError::ApplicationError)?;
     // open_artifact verifies the immutable file via bounded streaming, not Vec<u8>.
-    let (file, size) = engine.open_artifact(job_id, id)
-        .await.map_err(|_| PluginError::ApplicationError)?;
+    let (file, size) = engine
+        .open_artifact(job_id, id)
+        .await
+        .map_err(|_| PluginError::ApplicationError)?;
     drop(file);
     Ok(json!({"artifact_id":id,"media_type":media_type,
         "size_bytes":size,"sha256":sha}))
