@@ -29,7 +29,7 @@ Do **not** add `AgentRuntime` facade, `AgentSessionStore` repository trait, `Age
 
 Native Root tools are `subagent` and `finish_job`. Each native call proposal is checked before dispatch; reject malformed/duplicate IDs, unknown names, arguments not matching source schema, >2 calls, mixed delegate/finish and unauthorized session/model **as a whole batch**. For usable call IDs return matched tool errors. No agent receives a full sibling transcript.
 
-`finish_job` arguments: `summary,findings,evidence_refs,unresolved`. Rust checks no active required children, verifies artifact ownership and coverage, then commits terminal result; model text alone is not evidence of success.
+`finish_job` arguments: `summary,findings,unresolved` only; Rust derives `evidence_refs` from owned Job artifacts, validates coverage separately, and commits the terminal result. No model-authored artifact IDs.
 
 ## Child session and continuation
 A new session stores Root task prompt as a user message following specialist and runtime-owned system instructions. The Child only sees granted frozen tools. A resumed session retains the original system instructions, provider pin and prior assistant/tool/result history and appends the new Root task prompt as a new user message. Every resume is a new Run under the same Session; concurrent resume must return `session_busy` rather than interleave transcript writes. For ordinary textual tasks, Child may finish with bounded assistant text; do not hard-require `submit_result`. For artifact/business-schema work, keep schema-specific validation and server-owned artifact ID checks.
@@ -191,3 +191,14 @@ cross-Session evidence isolation. Not yet claimed: external provider
 qualification, factual verification, multiple-source aggregation, or a
 real-user DB deployment acceptance. Cargo build/test must be rerun against
 the latest branch HEAD after these changes.
+
+
+### Repair: Root `finish_job` validation loop for URL-only text Jobs (2026-10-15)
+
+A real hierarchical_v3 Job called `web.extract(mode=article,max_chars=6000)` once, completed the Child successfully with full URL provenance, but Root repeatedly supplied a URL as an artifact reference. The event stream recorded three `invalid_evidence_refs` rejections before `invalid_plan`.
+
+**Decision:** the Root `finish_job` tool schema now contains **only** `summary`, `findings` and `unresolved`. Rust obtains output `evidence_refs` from server-owned Job artifact rows at finalization, while URL completeness is recorded independently under `coverage.verified_source_urls`. No artifacts means `evidence_refs=[]`, not a failure or a fabricated ID.
+
+A legacy Root tool call still sending `evidence_refs` is rejected as a whole batch. With a usable native call ID, Rust returns a paired `ToolResult` containing `finish_job_server_owned_evidence` and instructions to remove the field. Bounded repair lets Root issue a new call. The source-completeness gate still rejects incomplete articles with actionable guidance; permissions, model pins and evidence checks are unchanged.
+
+Regression tests cover the strict Root schema, server-derived references, and the full fake-provider path: Root delegation -> completed Child without artifact -> legacy invalid finish -> matched correction -> clean finish -> succeeded Job. This branch has not yet passed Cargo tests in the current execution environment.
