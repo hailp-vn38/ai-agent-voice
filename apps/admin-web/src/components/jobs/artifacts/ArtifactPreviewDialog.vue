@@ -1,9 +1,22 @@
+<script lang="ts">
+import type { JobArtifact } from '@/api/types/agent-jobs'
+
+export function artifactPreview(artifact: JobArtifact) {
+  const mime = artifact.media_type.toLowerCase()
+  if (['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mime)) return { kind: 'image', limit: 64 * 1024 * 1024 } as const
+  if (['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/x-wav'].includes(mime)) return { kind: 'audio', limit: 64 * 1024 * 1024 } as const
+  if (['video/mp4', 'video/webm'].includes(mime)) return { kind: 'video', limit: 64 * 1024 * 1024 } as const
+  if (mime.startsWith('text/') || ['application/json', 'application/sql', 'application/javascript'].includes(mime)
+    || /\.(rs|py|js|ts|tsx|jsx|html|css|sql|json|csv|md|txt)$/i.test(artifact.filename)) return { kind: 'text', limit: 1024 * 1024 } as const
+  return { kind: 'download', limit: 0 } as const
+}
+</script>
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Download, X } from '@lucide/vue'
 import { agentJobsApi } from '@/api/agent-jobs'
 import { formatApiError } from '@/api/errors'
-import type { JobArtifact } from '@/api/types/agent-jobs'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
@@ -15,20 +28,13 @@ const error = ref('')
 const url = ref('')
 const text = ref('')
 let active = true
-const kind = computed(() => {
-  const mime = props.artifact.media_type.toLowerCase()
-  if (['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mime)) return 'image'
-  if (['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/x-wav'].includes(mime)) return 'audio'
-  if (['video/mp4', 'video/webm'].includes(mime)) return 'video'
-  if (mime.startsWith('text/') || ['application/json', 'application/sql', 'application/javascript'].includes(mime)
-    || /\.(rs|py|js|ts|tsx|jsx|html|css|sql|json|csv|md|txt)$/i.test(props.artifact.filename)) return 'text'
-  return 'download'
-})
+const preview = computed(() => artifactPreview(props.artifact))
+const kind = computed(() => preview.value.kind)
 onMounted(async () => {
   try {
     const file = await agentJobsApi.artifact(props.jobId, props.artifact.id)
     if (!active) return
-    const cap = kind.value === 'text' ? 1024 * 1024 : 64 * 1024 * 1024
+    const cap = preview.value.limit
     if (file.size > cap) { error.value = 'File exceeds preview limit. Use Download.'; return }
     if (kind.value === 'text') text.value = await file.text()
     else if (kind.value !== 'download') url.value = URL.createObjectURL(new Blob([file], { type: props.artifact.media_type }))

@@ -200,17 +200,36 @@ async fn run_case(
                     "result mismatch at {pointer}"
                 );
             }
-            dispatch::read_artifacts(
+            verify_artifacts(
                 &out,
                 response.artifacts,
                 config.limits.artifact_bytes_per_job,
             )
-            .await
-            .map_err(error)?;
+            .await?;
         }
     }
     tokio::fs::remove_dir_all(workspace).await?;
     Ok(artifact_count)
+}
+
+/// Qualification has no publication transaction; verify bytes before reporting PASS.
+async fn verify_artifacts(out: &Path, refs: Vec<protocol::ArtifactRef>, limit: u64) -> Result<()> {
+    let artifacts = dispatch::read_artifacts(out, refs, limit)
+        .await
+        .map_err(error)?;
+    for artifact in artifacts {
+        let size = tokio::fs::symlink_metadata(&artifact.source_path)
+            .await?
+            .len();
+        crate::services::background::artifacts::open_checked(
+            artifact.source_path,
+            limit,
+            artifact.declared_size.unwrap_or(size),
+            artifact.declared_sha256,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
 # Agent Job V3 - Unified Artifacts: Implementation Specification
 
-**Status:** Implementation-ready design; not implemented. Updated after Ponytail Review (2026-10-15).  
-**Repository:** `hailp-vn38/ai-agent-voice`  
-**Reference branch:** `feat/agent-job-v3-opencode-session-runtime`  
-**Scope:** `hierarchical_v3` only.  
+**Status:** Implementation-ready design; not implemented. Updated after Ponytail Review (2026-10-15).\
+**Repository:** `hailp-vn38/ai-agent-voice`\
+**Reference branch:** `feat/agent-job-v3-opencode-session-runtime`\
+**Scope:** `hierarchical_v3` only.\
 **Related:** `docs/adr/0114-opencode-agent-session-tool-delegation.md`, `docs/flows/10-agent-job-opencode-v3.md`.
 
 ## 1. Goal and decisions

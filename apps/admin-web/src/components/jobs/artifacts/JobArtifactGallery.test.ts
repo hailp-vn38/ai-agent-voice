@@ -14,6 +14,14 @@ function jobWith(artifact: Partial<JobArtifact>): AdminJob {
 }
 
 describe('V3 job artifact gallery', () => {
+  it('uses the media MIME cap even when the filename has a text extension', () => {
+    const wrapper = mount(JobArtifactGallery, {
+      props: { job: jobWith({ filename: 'report.txt', media_type: 'image/png', size_bytes: 2 * 1024 * 1024 }) },
+    })
+    expect(wrapper.text()).toContain('Preview')
+    wrapper.unmount()
+  })
+
   it('shows a bounded audio preview and keeps download first', () => {
     const wrapper = mount(JobArtifactGallery, { props: { job: jobWith({}) } })
     expect(wrapper.text()).toContain('output.mp3')

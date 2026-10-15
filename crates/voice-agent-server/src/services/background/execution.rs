@@ -26,7 +26,7 @@ impl JobEngine {
             super::artifacts::root(&self.database)?.join(relative),
             self.config.background.limits.artifact_bytes_per_job,
             size as u64,
-            sha,
+            Some(sha),
         )
         .await
         .map_err(|_| JobError::DatabaseUnavailable)?;
@@ -253,10 +253,10 @@ impl JobEngine {
                         )
                         .await?;
                 }
-                if let Some(workspace) = workspace {
-                    if let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await {
-                        tracing::warn!(job_id, step_key, %cleanup, "Artifact workspace cleanup failed");
-                    }
+                if let Some(workspace) = workspace
+                    && let Err(cleanup) = tokio::fs::remove_dir_all(&workspace).await
+                {
+                    tracing::warn!(job_id, step_key, %cleanup, "Artifact workspace cleanup failed");
                 }
             }
             Err(error) => {

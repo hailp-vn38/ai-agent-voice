@@ -1,6 +1,34 @@
 use super::*;
 
 #[tokio::test]
+async fn artifact_store_rejects_another_database_before_reconciliation() {
+    let (db, _, runtime) = harness().await;
+    let root = super::super::artifacts::root(&db).unwrap();
+    let artifact = root
+        .join(uuid::Uuid::new_v4().to_string())
+        .join("committed");
+    tokio::fs::create_dir_all(artifact.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&artifact, b"owned bytes").await.unwrap();
+    runtime.shutdown().await;
+    let mut other_config = config();
+    other_config.database.url = format!(
+        "sqlite://{}",
+        db.durable_path()
+            .unwrap()
+            .with_file_name("other.db")
+            .display()
+    );
+    let other_db = Arc::new(Database::connect(&other_config.database).await.unwrap());
+    assert!(matches!(
+        BackgroundRuntime::foundation_harness(other_db, Arc::new(other_config)).await,
+        Err(JobError::DeploymentLock)
+    ));
+    assert_eq!(tokio::fs::read(&artifact).await.unwrap(), b"owned bytes");
+}
+
+#[tokio::test]
 async fn shutdown_drains_blocked_submission_before_releasing_deployment_ownership() {
     let (db, config, runtime) = harness().await;
     let publication = db.tool_security.publication.clone().write_owned().await;

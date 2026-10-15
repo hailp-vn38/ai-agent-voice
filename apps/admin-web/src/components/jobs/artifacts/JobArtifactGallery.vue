@@ -6,7 +6,7 @@ import { formatApiError } from '@/api/errors'
 import type { AdminJob, JobArtifact } from '@/api/types/agent-jobs'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import ArtifactPreviewDialog from './ArtifactPreviewDialog.vue'
+import ArtifactPreviewDialog, { artifactPreview } from './ArtifactPreviewDialog.vue'
 
 const { t } = useI18n()
 const props = defineProps<{ job: AdminJob }>()
@@ -16,15 +16,8 @@ const downloading = ref<string | null>(null)
 watch(() => props.job.id, () => { selected.value = null; error.value = '' })
 
 function canPreview(item: JobArtifact) {
-  const mime = item.media_type.toLowerCase()
-  const text = mime.startsWith('text/') || ['application/json', 'application/sql', 'application/javascript'].includes(mime)
-    || /\.(rs|py|js|ts|tsx|jsx|html|css|sql|json|csv|md|txt)$/i.test(item.filename)
-  const media = [
-    'image/png', 'image/jpeg', 'image/webp', 'image/gif',
-    'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/flac',
-    'video/mp4', 'video/webm',
-  ].includes(mime)
-  return item.size_bytes >= 0 && item.size_bytes <= (text ? 1024 * 1024 : 64 * 1024 * 1024) && (text || media)
+  const preview = artifactPreview(item)
+  return preview.kind !== 'download' && item.size_bytes >= 0 && item.size_bytes <= preview.limit
 }
 function origin(item: JobArtifact) {
   const step = props.job.steps.find(row => row.step_key === item.step_key)

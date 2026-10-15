@@ -49,6 +49,7 @@ impl BackgroundRuntime {
             return Err(JobError::InvalidArguments);
         }
         let lock = deployment_lock(database.durable_path().ok_or(JobError::DeploymentLock)?)?;
+        super::artifacts::claim_store(&database)?;
         database.recover_jobs(now()?).await?;
         if !foundation_harness && models.is_none() {
             // An old enable bit must never activate an incomplete P0 deployment.

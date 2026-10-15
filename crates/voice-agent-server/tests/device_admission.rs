@@ -27,7 +27,8 @@ fn database_url() -> String {
     format!(
         "sqlite://{}",
         std::env::temp_dir()
-            .join(format!("voice-agent-admission-{}.db", uuid::Uuid::new_v4()))
+            .join(format!("voice-agent-admission-{}", uuid::Uuid::new_v4()))
+            .join("voice-agent.db")
             .display()
     )
 }

@@ -306,14 +306,14 @@ pub(super) fn decode_html_entities(value: &str) -> String {
             continue;
         }
         // rest bắt đầu bằng '&': thử dạng `&...;`
-        if let Some(semi) = rest.bytes().take(33).position(|byte| byte == b';') {
-            if (2..=32).contains(&semi) {
-                let entity = &rest[1..semi];
-                if let Some(ch) = decode_entity(entity) {
-                    out.push(ch);
-                    i += semi + 1;
-                    continue;
-                }
+        if let Some(semi) = rest.bytes().take(33).position(|byte| byte == b';')
+            && (2..=32).contains(&semi)
+        {
+            let entity = &rest[1..semi];
+            if let Some(ch) = decode_entity(entity) {
+                out.push(ch);
+                i += semi + 1;
+                continue;
             }
         }
         // Dạng không có `;` (HTML cho phép vài cái). Chỉ decode khi ký tự
@@ -323,13 +323,12 @@ pub(super) fn decode_html_entities(value: &str) -> String {
             if rest.len() > name.len() + 1
                 && rest[1..].starts_with(name)
                 && !rest.as_bytes()[1 + name.len()].is_ascii_alphanumeric()
+                && let Some(ch) = lookup_named_entity(name)
             {
-                if let Some(ch) = lookup_named_entity(name) {
-                    out.push(ch);
-                    i += 1 + name.len();
-                    matched = true;
-                    break;
-                }
+                out.push(ch);
+                i += 1 + name.len();
+                matched = true;
+                break;
             }
         }
         if !matched {

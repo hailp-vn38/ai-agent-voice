@@ -24,7 +24,7 @@ pub(super) async fn owned_artifact(
         .await
         .map_err(|_| PluginError::DatabaseUnavailable)?
         .ok_or(PluginError::ApplicationError)?;
-    if size < 0 || size > 1024 * 1024 {
+    if !(0..=1024 * 1024).contains(&size) {
         return Err(PluginError::ApplicationError);
     }
     let bytes = engine

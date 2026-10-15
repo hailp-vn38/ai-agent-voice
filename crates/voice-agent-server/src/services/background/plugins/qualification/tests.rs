@@ -111,7 +111,21 @@ async fn shared_artifact_check_rejects_wrong_size_and_hash() {
             size_bytes: size,
             sha256: hash,
         }];
-        assert!(dispatch::read_artifacts(&root, refs, 1024).await.is_err());
+        assert!(verify_artifacts(&root, refs, 1024).await.is_err());
+    }
+    use sha2::{Digest, Sha256};
+    let digest: String = Sha256::digest(b"data")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    for hash in [None, Some(digest)] {
+        let refs = vec![protocol::ArtifactRef {
+            path: "result.txt".into(),
+            media_type: "text/plain".into(),
+            size_bytes: Some(4),
+            sha256: hash,
+        }];
+        verify_artifacts(&root, refs, 1024).await.unwrap();
     }
     tokio::fs::remove_dir_all(root).await.unwrap();
 }

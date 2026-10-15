@@ -24,7 +24,8 @@ enabled = true
 admin_token = "background-test-token"
 "#,
         std::env::temp_dir()
-            .join(format!("background-http-{}.db", uuid::Uuid::new_v4()))
+            .join(format!("background-http-{}", uuid::Uuid::new_v4()))
+            .join("voice-agent.db")
             .display()
     ))
     .unwrap();

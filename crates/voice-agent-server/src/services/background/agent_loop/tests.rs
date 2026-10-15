@@ -370,7 +370,10 @@ fn finish_job_schema_excludes_llm_authored_evidence_refs() {
         arguments: json!({"summary":"AFC has not decided to postpone the cup.",
             "findings":[], "unresolved":[]}),
     };
-    assert!(root_call_batch_valid(&[valid.clone()], &Default::default()));
+    assert!(root_call_batch_valid(
+        std::slice::from_ref(&valid),
+        &Default::default()
+    ));
     let mut legacy = valid;
     legacy.arguments["evidence_refs"] = json!(["https://news.example/asian-cup.html"]);
     assert!(!root_call_batch_valid(&[legacy], &Default::default()));

@@ -12,6 +12,45 @@ pub(crate) fn root(database: &Database) -> Result<PathBuf, JobError> {
         .ok_or(JobError::DatabaseUnavailable)?
         .join("job-artifacts"))
 }
+
+/// A sibling store belongs to one database, including across runtime restarts.
+/// Keep this marker outside the reconciled tree and retain it after shutdown.
+pub(crate) fn claim_store(database: &Database) -> Result<(), JobError> {
+    use std::io::Write;
+    let database_path = database.durable_path().ok_or(JobError::DeploymentLock)?;
+    let owner = database_path
+        .file_name()
+        .ok_or(JobError::DeploymentLock)?
+        .as_encoded_bytes();
+    let parent = database_path.parent().ok_or(JobError::DeploymentLock)?;
+    let path = parent.join(".job-artifacts-owner");
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|_| JobError::DeploymentLock)?;
+    file.try_lock().map_err(|_| JobError::DeploymentLock)?;
+    let length = file.metadata().map_err(|_| JobError::DeploymentLock)?.len();
+    if length == 0 {
+        file.write_all(owner)
+            .and_then(|()| file.sync_all())
+            .and_then(|()| std::fs::File::open(parent)?.sync_all())
+            .map_err(|_| JobError::DeploymentLock)?;
+    } else {
+        if length != owner.len() as u64 {
+            return Err(JobError::DeploymentLock);
+        }
+        let mut saved = vec![0; owner.len()];
+        file.read_exact(&mut saved)
+            .map_err(|_| JobError::DeploymentLock)?;
+        if saved != owner {
+            return Err(JobError::DeploymentLock);
+        }
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests;
 
@@ -154,7 +193,7 @@ pub(crate) async fn open_checked(
     path: PathBuf,
     max_bytes: u64,
     expected_size: u64,
-    expected_sha: String,
+    expected_sha: Option<String>,
 ) -> io::Result<std::fs::File> {
     tokio::task::spawn_blocking(move || {
         use sha2::{Digest, Sha256};
@@ -200,7 +239,7 @@ pub(crate) async fn open_checked(
             .map(|byte| format!("{byte:02x}"))
             .collect();
         if size != expected_size
-            || actual != expected_sha
+            || expected_sha.is_some_and(|sha| actual != sha)
             || file.metadata()?.len() != expected_size
         {
             return Err(io::Error::other("artifact_hash_invalid"));

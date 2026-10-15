@@ -43,7 +43,8 @@ max_queued_jobs=2
 scheduler_scan_ms=20
 "#,
         std::env::temp_dir()
-            .join(format!("background-{}.db", uuid::Uuid::new_v4()))
+            .join(format!("background-{}", uuid::Uuid::new_v4()))
+            .join("voice-agent.db")
             .display()
     ))
     .unwrap()
