@@ -249,6 +249,7 @@ impl PluginStore {
             Ok(InvokeResult {
                 result: response.result.ok_or(PluginError::WorkerProtocolError)?,
                 artifacts,
+                workspace: None,
             })
         }
         .await;
