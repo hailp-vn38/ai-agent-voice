@@ -34,7 +34,7 @@ async fn expired_attempt_cannot_publish_success_or_artifacts() {
             "attempt-1",
             &json!({"ok":true}),
             &[],
-            (1024, true)
+            (1024, 4096, true)
         )
         .await
         .unwrap_err(),
@@ -114,7 +114,7 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
         "attempt-1",
         &json!({"summary":"done"}),
         &[],
-        (1024, true),
+        (1024, 4096, true),
     )
     .await
     .unwrap();
