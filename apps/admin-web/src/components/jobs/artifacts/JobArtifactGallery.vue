@@ -17,7 +17,11 @@ function canPreview(item: JobArtifact) {
   const mime = item.media_type.toLowerCase()
   const text = mime.startsWith('text/') || ['application/json', 'application/sql', 'application/javascript'].includes(mime)
     || /\.(rs|py|js|ts|tsx|jsx|html|css|sql|json|csv|md|txt)$/i.test(item.filename)
-  const media = /^(audio|video|image)\//.test(mime)
+  const media = [
+    'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+    'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/flac',
+    'video/mp4', 'video/webm',
+  ].includes(mime)
   return item.size_bytes >= 0 && item.size_bytes <= (text ? 1024 * 1024 : 64 * 1024 * 1024) && (text || media)
 }
 function origin(item: JobArtifact) {
