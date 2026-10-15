@@ -47,6 +47,7 @@ impl Database {
     }
 
     /// Returns deleted Job IDs for scoped filesystem cleanup after the DB commit.
+    #[cfg(test)]
     pub(crate) async fn expire_terminal_jobs(&self, cutoff: i64) -> Result<Vec<String>, JobError> {
         let mut tx = self.pool().begin_with("BEGIN IMMEDIATE").await?;
         let ids: Vec<String> = sqlx::query_scalar(
