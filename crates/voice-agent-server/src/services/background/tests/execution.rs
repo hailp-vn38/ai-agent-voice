@@ -108,20 +108,43 @@ async fn one_persisted_plugin_attempt_cannot_replay_after_terminal_checkpoint() 
     db.mark_plugin_started(&job.id, "collect", "attempt-1")
         .await
         .unwrap();
+    // The binary file is keyed by a Rust-issued UUID; its display basename is metadata.
+    use sha2::{Digest, Sha256};
+    let artifact_id = uuid::Uuid::new_v4().to_string();
+    let bytes = b"ID3-example-audio";
+    let directory = super::super::artifacts::root(&db).unwrap().join(&job.id);
+    tokio::fs::create_dir_all(&directory).await.unwrap();
+    tokio::fs::write(directory.join(&artifact_id), bytes)
+        .await
+        .unwrap();
+    let digest = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let records = vec![(
+        artifact_id.clone(),
+        "audio/mpeg".to_owned(),
+        bytes.len() as i64,
+        digest,
+        "narration.mp3".to_owned(),
+    )];
     db.finish_plugin_success(
         &job.id,
         "collect",
         "attempt-1",
         &json!({"summary":"done"}),
-        &[],
+        &records,
         (1024, 4096, true),
     )
     .await
     .unwrap();
-    assert_eq!(
-        runtime.engine.get(&job.id).await.unwrap().status,
-        "succeeded"
-    );
+    let completed = runtime.engine.get(&job.id).await.unwrap();
+    assert_eq!(completed.status, "succeeded");
+    assert_eq!(completed.artifacts.len(), 1);
+    assert_eq!(completed.artifacts[0].filename, "narration.mp3");
+    assert_eq!(completed.artifacts[0].step_key.as_deref(), Some("collect"));
+    let downloaded = runtime.engine.read_artifact(&job.id, &artifact_id).await.unwrap();
+    assert_eq!(downloaded, bytes);
     assert_eq!(
         db.finish_plugin_failure(&job.id, "collect", "attempt-1", "late", true, true)
             .await
