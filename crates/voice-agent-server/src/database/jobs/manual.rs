@@ -160,6 +160,10 @@ impl Database {
                 return Err(JobError::CapabilityUnavailable);
             }
         }
+        let tts_pin = if key == "core.tts" {
+            Some(tts_provider::configured_pin(&mut tx,config).await?
+                .ok_or(JobError::CapabilityUnavailable)?)
+        } else { None };
         let config_revision: Option<i64> =
             sqlx::query_scalar("SELECT current_revision FROM plugin_configs WHERE plugin_key=?")
                 .bind(key)
@@ -261,6 +265,9 @@ impl Database {
             .bind(revision)
             .execute(&mut *tx)
             .await?;
+        }
+        if let Some(pin) = &tts_pin {
+            tts_provider::insert_pin(&mut tx,id,pin).await?;
         }
         let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
             .bind(id)
