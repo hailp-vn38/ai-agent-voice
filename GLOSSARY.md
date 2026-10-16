@@ -269,6 +269,10 @@ _Avoid_: Core activation revision, package version, live config pointer
 Quyền tham chiếu của một Job tới một Plugin Config Revision cụ thể; không cho phép lấy ngầm cấu hình mới hoặc secrets mới sau admission.
 _Avoid_: Provider Pin, live Settings, credential reference
 
+**Job TTS Provider Pin**:
+Danh tính và phiên bản cấu hình chính xác của một TTS Provider được đóng băng khi Job được chấp nhận để thực hiện Core TTS Operation; khác với Plugin Config Pin và provider hiện thời.
+_Avoid_: Plugin Config Pin, current provider, runtime pointer
+
 **Plugin Operation Job**:
 Job được Admin yêu cầu để chạy chính xác một Plugin Operation đã công bố mà không cần Root/Sub-Agent, Agent Session hoặc LLM.
 _Avoid_: Agent Job, subagent call, Plugin Runtime Check
