@@ -7,7 +7,7 @@ async fn core_policy_defaults_and_persists_without_installations() {
     let rows = db.core_plugin_settings().await.unwrap();
     assert_eq!(rows.len(), 5);
     assert!(rows.iter().all(|row| row.revision == 1));
-    assert!(rows.iter().all(|row| row.enabled == if row.plugin_id == "core.tts" { 0 } else { 1 }));
+    assert!(rows.iter().all(|row| row.enabled == i64::from(row.plugin_id != "core.tts")));
     let catalog = crate::tools::core::bundled_catalog(&rows).unwrap();
     assert_eq!(catalog["total"], 5);
     assert_eq!(catalog["operation_total"], 9);
