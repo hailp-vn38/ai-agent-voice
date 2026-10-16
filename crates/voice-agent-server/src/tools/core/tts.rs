@@ -181,8 +181,15 @@ pub(crate) async fn synthesize(
                 native.active=None;
                 break;
             }
-            Ok(Some(TtsWorkerEvent::Failed | TtsWorkerEvent::Cancelled)) | Err(_) => {
+            Ok(Some(TtsWorkerEvent::Failed | TtsWorkerEvent::Cancelled)) => {
+                // poll() has already removed the native Slot on a terminal event.
+                native.active=None;
                 failure=Some(PluginError::PluginRuntimeError);
+                break;
+            }
+            Err(_) => {
+                // The exact native lease state is unknown, not acknowledged.
+                failure=Some(PluginError::WorkerUnreaped);
                 break;
             }
             Ok(Some(TtsWorkerEvent::CleanupTimedOut)) => {
