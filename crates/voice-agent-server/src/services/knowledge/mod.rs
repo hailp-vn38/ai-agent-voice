@@ -265,7 +265,7 @@ impl MemoryCore {
         let previous = old_record(&self.vault, &id).await?;
         if previous
             .as_ref()
-            .is_some_and(|r| r.kind != "memory" || r.scope.as_deref() != Some("owner"))
+            .is_some_and(|r| r.kind != "memory" || r.scope.as_deref() != Some("owner") || r.status == "forgotten")
         {
             return Err(Error::InvalidInput);
         }
@@ -296,7 +296,7 @@ impl MemoryCore {
     pub async fn forget(&self, id: &str, expected_revision: i64) -> Result<Record, Error> {
         let _guard = self.vault.writer.lock().await;
         let previous = self.vault.get(id).await?;
-        if previous.kind != "memory" || previous.scope.as_deref() != Some("owner") {
+        if previous.kind != "memory" || previous.scope.as_deref() != Some("owner") || previous.status == "forgotten" {
             return Err(Error::InvalidInput);
         }
         let revision = next_revision(Some(&previous), Some(expected_revision))?;
@@ -498,6 +498,17 @@ mod tests {
         );
         assert!(core.memory.summary().await.unwrap().contains("Vietnamese"));
         core.memory.forget(&fact.id, fact.revision).await.unwrap();
+        assert!(matches!(
+            core.memory.put_fact(FactInput {
+                id: Some(fact.id.clone()),
+                title: "Resurrected".into(),
+                body: "Must not revive forgotten memory".into(),
+                expected_revision: Some(fact.revision + 1),
+                source_ref: Some("admin".into()),
+                confirmed: true,
+            }).await,
+            Err(Error::InvalidInput)
+        ));
         assert!(
             core.memory
                 .recall("Vietnamese", 5)
