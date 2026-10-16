@@ -214,7 +214,13 @@ impl KnowledgeCore {
         let _guard = self.vault.writer.lock().await;
         let mut hits = self.index.search(q, limit).await?;
         for hit in &mut hits {
-            let page = self.vault.get(&hit.id).await?;
+            let page = match self.vault.get(&hit.id).await {
+                Ok(page) => page,
+                Err(_) => {
+                    self.index.mark_stale().await?;
+                    return Err(Error::IndexStale);
+                }
+            };
             if page.status != "verified"
                 || page.kind != "wiki"
                 || !self.verify_reference(page.source_ref.as_deref()).await
@@ -259,6 +265,9 @@ impl KnowledgeCore {
     }
     pub async fn rebuild(&self) -> Result<usize, Error> {
         let _guard = self.vault.writer.lock().await;
+        // Mark stale *before* the preflight scan: losing the entire Wiki root
+        // must not leave the previous ready marker visible to Agent searches.
+        self.index.mark_stale().await?;
         for scanned in self.vault.scan().await? {
             if scanned.record.status == "verified"
                 && !self
