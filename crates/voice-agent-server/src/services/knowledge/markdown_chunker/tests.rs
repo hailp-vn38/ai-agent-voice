@@ -61,3 +61,20 @@ fn empty_and_unicode_only_body() {
     assert_eq!(chunk[0].start_line, 1);
     assert_eq!(chunk[0].end_line, 1);
 }
+
+#[test]
+fn long_single_line_has_bounded_utf8_passages_with_exact_line_positions() {
+    let body = "😀TiếngViệt-".repeat(2500);
+    let parts = split_markdown(&body);
+    assert!(parts.len() >= 5);
+    let mut offset = 0usize;
+    for part in parts {
+        assert_eq!(part.start_byte, offset);
+        assert_eq!(part.start_line, 1);
+        assert_eq!(part.end_line, 1);
+        assert!(part.text.chars().count() <= TARGET_CHARS);
+        assert_eq!(&body[part.start_byte..part.end_byte], part.text);
+        offset = part.end_byte;
+    }
+    assert_eq!(offset, body.len());
+}
