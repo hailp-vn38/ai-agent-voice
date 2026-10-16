@@ -134,12 +134,29 @@ impl JobEngine {
                 let limit = std::time::Duration::from_secs(
                     self.config.background.limits.step_timeout_seconds.into()
                 ).min(std::time::Duration::from_secs(remaining as u64));
-                tokio::select! {
-                    _ = cancellation.cancelled() => Err(PluginError::JobRejected(JobError::Cancelled)),
-                    outcome = tokio::time::timeout(
-                        limit,
-                        crate::tools::core::invoke(self, choice, arguments, job_id)
-                    ) => outcome.map_err(|_| PluginError::WorkerTimeout)?,
+                let invocation = Invocation {
+                    inputs: serde_json::json!({}),
+                    settings,
+                    choice,
+                    arguments,
+                    job_id,
+                    attempt_id: &attempt,
+                    timeout: limit,
+                    deadline_at,
+                    cancellation: cancellation.clone(),
+                };
+                if choice.operation == "tts.synthesize" {
+                    // Native work owns terminal acknowledgement; do not drop this
+                    // Future on cancel/timeout while the worker is still running.
+                    crate::tools::core::invoke(self, invocation).await
+                } else {
+                    tokio::select! {
+                        _ = cancellation.cancelled() => Err(PluginError::JobRejected(JobError::Cancelled)),
+                        outcome = tokio::time::timeout(
+                            limit,
+                            crate::tools::core::invoke(self, invocation)
+                        ) => outcome.map_err(|_| PluginError::WorkerTimeout)?,
+                    }
                 }
             }.await
         } else {
