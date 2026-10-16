@@ -148,8 +148,7 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
             let mut choice: Option<(usize, i64)> = None;
             let mut fallback: Option<usize> = None;
             let mut next_safe: Option<usize> = None;
-            for idx in (start + 1)..lines.len() {
-                let candidate = &lines[idx];
+            for (idx, candidate) in lines.iter().enumerate().skip(start + 1) {
                 if !candidate.safe {
                     continue;
                 }
@@ -206,8 +205,8 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
             break;
         }
         let mut new_start = end;
-        for idx in ((start + 1)..end).rev() {
-            if lines[idx].safe && lines[end].char_pos - lines[idx].char_pos <= OVERLAP_CHARS {
+        for (idx, candidate) in lines.iter().enumerate().take(end).skip(start + 1).rev() {
+            if candidate.safe && lines[end].char_pos - candidate.char_pos <= OVERLAP_CHARS {
                 new_start = idx;
             }
         }
