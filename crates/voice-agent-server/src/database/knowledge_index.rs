@@ -151,13 +151,13 @@ impl SearchIndex {
             sqlx::query(&sql).execute(&mut *tx).await?;
         }
         let existing_sql = format!(
-            "SELECT {},content_sha256,relative_path,revision FROM {}",
+            "SELECT {},content_sha256,relative_path,revision,indexer_version FROM {}",
             self.domain.id_col(),
             self.domain.doc_table()
         );
         let rows = sqlx::query(&existing_sql).fetch_all(&mut *tx).await?;
         use sqlx::Row;
-        let mut existing = HashMap::<String, (String, String, i64)>::new();
+        let mut existing = HashMap::<String, (String, String, i64, i64)>::new();
         for row in rows {
             existing.insert(
                 row.try_get::<String, _>(self.domain.id_col())?,
@@ -165,6 +165,7 @@ impl SearchIndex {
                     row.try_get("content_sha256")?,
                     row.try_get("relative_path")?,
                     row.try_get("revision")?,
+                    row.try_get("indexer_version")?,
                 ),
             );
         }
@@ -175,10 +176,11 @@ impl SearchIndex {
             }
             let unchanged = existing
                 .get(&doc.record.id)
-                .is_some_and(|(hash, path, rev)| {
+                .is_some_and(|(hash, path, rev, version)| {
                     hash == &doc.content_sha256
                         && path == &doc.relative_path
                         && *rev == doc.record.revision
+                        && *version == INDEXER_VERSION
                 });
             if unchanged && !force {
                 continue;
