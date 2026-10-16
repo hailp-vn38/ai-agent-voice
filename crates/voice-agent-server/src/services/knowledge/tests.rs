@@ -271,6 +271,94 @@
     }
 
     #[tokio::test]
+    async fn published_wiki_can_be_revised_without_exposing_pending_draft() {
+        let root=std::env::temp_dir().join(format!("wiki_edit_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        let evidence=core.knowledge.import_source(SourceInput{
+            name:"proof.md".into(),content:"# Source".into(),provenance:"admin:test".into()
+        }).await.unwrap();
+        let reference=format!("{}:1",evidence.id);
+        let first=core.knowledge.put_draft(WikiInput{
+            id:None,title:"Article".into(),body:"originalworld".into(),
+            expected_revision:Some(0),source_ref:Some(reference.clone())
+        }).await.unwrap();
+        let accepted=core.knowledge.publish(&first.id,first.revision,&reference).await.unwrap();
+        let pending=core.knowledge.put_draft(WikiInput{
+            id:Some(first.id.clone()),title:"Article revised".into(),body:"newworld".into(),
+            expected_revision:Some(accepted.revision),source_ref:Some(reference.clone())
+        }).await.unwrap();
+        assert_eq!(pending.status,"draft");
+        assert_eq!(pending.draft_base_revision,Some(accepted.revision));
+        assert_eq!(core.knowledge.read_full(&first.id).await.unwrap().body,"newworld");
+        assert_eq!(core.knowledge.read_verified(&first.id,1,100).await.unwrap().body,"originalworld");
+        assert_eq!(core.knowledge.search("originalworld",5).await.unwrap().len(),1);
+        assert!(core.knowledge.search("newworld",5).await.unwrap().is_empty());
+        assert!(matches!(
+            core.knowledge.publish(&first.id,accepted.revision,&reference).await,
+            Err(Error::RevisionConflict)
+        ));
+        let accepted2=core.knowledge.publish(&first.id,pending.revision,&reference).await.unwrap();
+        assert_eq!(accepted2.revision,accepted.revision+1);
+        assert_eq!(core.knowledge.read_verified(&first.id,1,100).await.unwrap().body,"newworld");
+        assert!(core.knowledge.search("originalworld",5).await.unwrap().is_empty());
+        assert_eq!(core.knowledge.search("newworld",5).await.unwrap().len(),1);
+        assert!(tokio::fs::metadata(root.join("knowledge/revisions")
+          .join(&first.id).join(format!("{}.md",accepted.revision))).await.is_ok());
+        drop(core);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn staged_revision_survives_restart_while_agent_uses_canonical() {
+        let root=std::env::temp_dir().join(format!("wiki_stage_restart_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        let proof=core.knowledge.import_source(SourceInput{
+            name:"proof.md".into(),content:"Evidence".into(),provenance:"admin".into()
+        }).await.unwrap();
+        let reference=format!("{}:1",proof.id);
+        let draft=core.knowledge.put_draft(WikiInput{
+            id:None,title:"Old".into(),body:"theorig".into(),
+            expected_revision:Some(0),source_ref:Some(reference.clone())
+        }).await.unwrap();
+        let accepted=core.knowledge.publish(&draft.id,draft.revision,&reference).await.unwrap();
+        let pending=core.knowledge.put_draft(WikiInput{
+            id:Some(accepted.id.clone()),title:"New".into(),body:"thepending".into(),
+            expected_revision:Some(accepted.revision),source_ref:Some(reference)
+        }).await.unwrap();
+        drop(core);
+        let reopened=Runtime::open(root.clone()).await.unwrap();
+        assert_eq!(reopened.knowledge.read_full(&accepted.id).await.unwrap().revision,pending.revision);
+        assert_eq!(reopened.knowledge.read_verified(&accepted.id,1,10).await.unwrap().body,"theorig");
+        assert!(reopened.knowledge.search("thepending",10).await.unwrap().is_empty());
+        drop(reopened);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn tampered_evidence_invalidates_verified_index_and_rebuild() {
+        let root=std::env::temp_dir().join(format!("wiki_provenance_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        let proof=core.knowledge.import_source(SourceInput{
+            name:"proof.md".into(),content:"trusted source".into(),provenance:"admin".into()
+        }).await.unwrap();
+        let reference=format!("{}:1",proof.id);
+        let draft=core.knowledge.put_draft(WikiInput{
+            id:None,title:"Article".into(),body:"citedphrase".into(),
+            expected_revision:Some(0),source_ref:Some(reference.clone())
+        }).await.unwrap();
+        core.knowledge.publish(&draft.id,draft.revision,&reference).await.unwrap();
+        let hits=core.knowledge.search("citedphrase",5).await.unwrap();
+        assert_eq!(hits[0].source_ref.as_deref(),Some(reference.as_str()));
+        tokio::fs::write(root.join("knowledge/raw").join(&proof.id).join("1/original.md"),
+            b"tampered source").await.unwrap();
+        assert!(matches!(core.knowledge.read_verified(&draft.id,1,10).await,Err(Error::IndexStale)));
+        assert_eq!(core.knowledge.health().await.unwrap().health,"stale");
+        assert!(matches!(core.knowledge.rebuild().await,Err(Error::IndexStale)));
+        drop(core);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn admin_full_read_never_truncates_long_wiki() {
         let root=std::env::temp_dir().join(format!("wiki_fullread_{}",Uuid::new_v4()));
         let runtime=Runtime::open(root.clone()).await.unwrap();

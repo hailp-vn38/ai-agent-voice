@@ -179,8 +179,7 @@ impl KnowledgeCore {
         }
         if canonical.status=="verified" &&
             draft.draft_base_revision.is_some_and(|base|base<canonical.revision) &&
-            draft.title==canonical.title && draft.body==canonical.body &&
-            draft.source_ref==canonical.source_ref {
+            draft.title==canonical.title && draft.body==canonical.body {
             return Ok(None);
         }
         Err(Error::RevisionConflict)
@@ -260,7 +259,11 @@ impl KnowledgeCore {
         self.vault.commit(&rec,Some(&canonical)).await?;
         self.index.reconcile(&self.vault).await?;
         // A crash between canonical commit and cleanup is detected by staged_for.
-        if staged.is_some() { self.drafts.remove_draft(id).await?; }
+        if staged.is_some() {
+            if let Err(error)=self.drafts.remove_draft(id).await {
+                tracing::warn!(wiki_id=%id,%error,"accepted Wiki revision has pending draft cleanup");
+            }
+        }
         Ok(rec)
     }
     /// Updating published Wiki creates a *staged* draft; the accepted revision

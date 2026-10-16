@@ -227,7 +227,7 @@ onMounted(() => { void refreshHealth(); void refreshSources(); void listPages() 
           <textarea v-model="body" class="admin-input min-h-80 w-full font-mono text-sm" required />
         </label>
         <div class="flex flex-wrap gap-2">
-          <Button type="submit" :disabled="busy || !title.trim() || !body.trim() || selected?.status === 'verified'">{{ t('knowledgeV3.save') }}</Button>
+          <Button type="submit" :disabled="busy || !title.trim() || !body.trim() ">{{ t('knowledgeV3.save') }}</Button>
           <Button v-if="selected && selected.status === 'draft'" type="button" variant="outline"
             :disabled="busy || !sourceRef.trim()" @click="publish">{{ t('knowledgeV3.publish') }}</Button>
         </div>
