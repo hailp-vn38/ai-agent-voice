@@ -753,3 +753,85 @@ fn memory_summary_only_confirmed_active() {
     };
     assert_eq!(MemoryCore::generate(&[scanned]).unwrap(), "# Memory\n\n");
 }
+
+#[tokio::test]
+async fn qmd_markdown_passages_are_relevant_and_have_body_relative_line_citations() {
+    let root = std::env::temp_dir().join(format!("qmd_passages_{}", Uuid::new_v4()));
+    let core = Runtime::open(root.clone()).await.unwrap();
+    let evidence = core
+        .knowledge
+        .import_source(SourceInput {
+            name: "support.md".into(),
+            content: "Immutable Markdown evidence".into(),
+            provenance: "admin:test".into(),
+        })
+        .await
+        .unwrap();
+    let source_ref = format!("{}:1", evidence.id);
+    let body = format!(
+        "# Giới thiệu\n{}\n## Agent Runtime\n\
+         The target tokenUnmistakable is recorded for DEC-0054 and gpt-4.\n\
+         ## Phụ lục\n{}",
+        "Long Vietnamese explanation without the target.\n".repeat(250),
+        "An additional paragraph about safe indexing.\n".repeat(100),
+    );
+    let draft = core
+        .knowledge
+        .put_draft(WikiInput {
+            id: None,
+            title: "Agent Session Runtime".into(),
+            body: body.clone(),
+            expected_revision: Some(0),
+            source_ref: Some(source_ref.clone()),
+        })
+        .await
+        .unwrap();
+    assert!(core.knowledge.search("tokenUnmistakable", 5).await.unwrap().is_empty());
+    core.knowledge.publish(&draft.id, draft.revision, &source_ref).await.unwrap();
+    let hits = core.knowledge.search("tokenUnmistakable", 5).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    let hit = &hits[0];
+    assert_eq!(hit.id, draft.id);
+    assert_eq!(hit.source_ref.as_deref(), Some(source_ref.as_str()));
+    assert!(hit.excerpt.contains("tokenUnmistakable"));
+    let expected = body.lines().position(|line| line.contains("tokenUnmistakable")).unwrap() as i64 + 1;
+    assert!(hit.start_line.unwrap() > 1);
+    assert!(hit.start_line.unwrap() <= expected);
+    assert!(hit.end_line.unwrap() >= expected);
+    assert!(hit.heading_path.as_deref().is_some());
+    assert_eq!(core.knowledge.search("DEC-0054 gpt-4", 5).await.unwrap().len(), 1);
+    assert_eq!(core.knowledge.search("Agent Runtime", 5).await.unwrap().len(), 1);
+    assert_eq!(core.knowledge.rebuild().await.unwrap(), 1);
+    assert_eq!(core.knowledge.search("tokenUnmistakable", 5).await.unwrap().len(), 1);
+    drop(core);
+    let reopened = Runtime::open(root.clone()).await.unwrap();
+    assert_eq!(reopened.knowledge.search("tokenUnmistakable", 5).await.unwrap().len(), 1);
+    drop(reopened);
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn qmd_lexical_fallback_never_exposes_drafts_or_unconfirmed_facts() {
+    let root = std::env::temp_dir().join(format!("qmd_policy_{}", Uuid::new_v4()));
+    let core = Runtime::open(root.clone()).await.unwrap();
+    core.knowledge.put_draft(WikiInput {
+        id: None,
+        title: "Private Wiki".into(),
+        body: "privateLexicalMark".into(),
+        expected_revision: Some(0),
+        source_ref: None,
+    }).await.unwrap();
+    core.memory.put_fact(FactInput {
+        id: None,
+        title: "Unconfirmed memory".into(),
+        body: "privateLexicalMark".into(),
+        expected_revision: Some(0),
+        source_ref: Some("admin".into()),
+        confirmed: false,
+    }).await.unwrap();
+    assert!(core.knowledge.search("privateLexicalMark unrelated", 5).await.unwrap().is_empty());
+    assert!(core.memory.recall("privateLexicalMark unrelated", 5).await.unwrap().is_empty());
+    assert_eq!(core.knowledge.admin_search("privateLexicalMark", 5).await.unwrap().len(), 1);
+    drop(core);
+    let _ = tokio::fs::remove_dir_all(root).await;
+}
