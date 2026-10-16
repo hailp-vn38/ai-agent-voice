@@ -81,7 +81,9 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
         let mut priority = 1;
         if let Some((symbol, width)) = open_fence {
             if let Some((found, count, suffix)) = fence(line)
-                && found == symbol && count >= width && suffix.trim().is_empty()
+                && found == symbol
+                && count >= width
+                && suffix.trim().is_empty()
             {
                 open_fence = None;
             }
@@ -94,7 +96,10 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
             priority = 120 - (depth as i32 * 10);
         } else if line.trim().is_empty() {
             priority = 20;
-        } else if ["- ", "* ", "+ "].iter().any(|marker| line.trim_start().starts_with(*marker)) {
+        } else if ["- ", "* ", "+ "]
+            .iter()
+            .any(|marker| line.trim_start().starts_with(*marker))
+        {
             priority = 5;
         }
 
@@ -139,13 +144,21 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
                     break;
                 }
             }
-            end = choice.map(|(idx, _)| idx).or(fallback).or(next_safe).unwrap_or(lines.len());
+            end = choice
+                .map(|(idx, _)| idx)
+                .or(fallback)
+                .or(next_safe)
+                .unwrap_or(lines.len());
         }
         if end <= start {
             end = lines.len();
         }
         let start_byte = lines[start].byte;
-        let end_byte = if end == lines.len() { body.len() } else { lines[end].byte };
+        let end_byte = if end == lines.len() {
+            body.len()
+        } else {
+            lines[end].byte
+        };
         let text = body[start_byte..end_byte].to_owned();
         let digest = Sha256::digest(text.as_bytes());
         let sha256 = digest.iter().map(|b| format!("{b:02x}")).collect();

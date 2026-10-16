@@ -3,8 +3,14 @@ use super::*;
 #[test]
 fn terms_are_safe_with_a_loose_fallback() {
     let c = compile("how does Agent Session recover?").unwrap();
-    assert_eq!(c.strict, "\"how\"* AND \"does\"* AND \"Agent\"* AND \"Session\"* AND \"recover\"*");
-    assert_eq!(c.broad.unwrap(), "\"how\"* OR \"does\"* OR \"Agent\"* OR \"Session\"* OR \"recover\"*");
+    assert_eq!(
+        c.strict,
+        "\"how\"* AND \"does\"* AND \"Agent\"* AND \"Session\"* AND \"recover\"*"
+    );
+    assert_eq!(
+        c.broad.unwrap(),
+        "\"how\"* OR \"does\"* OR \"Agent\"* OR \"Session\"* OR \"recover\"*"
+    );
 }
 
 #[test]
@@ -19,7 +25,10 @@ fn compound_identifiers_and_quotes_have_literal_semantics() {
 #[test]
 fn vietnamese_and_control_syntax_cannot_inject_fts() {
     let c = compile("tìm kiếm thông tin").unwrap();
-    assert_eq!(c.strict, "\"tìm\"* AND \"kiếm\"* AND \"thông\"* AND \"tin\"*");
+    assert_eq!(
+        c.strict,
+        "\"tìm\"* AND \"kiếm\"* AND \"thông\"* AND \"tin\"*"
+    );
     let injected = compile("auth OR title:secret").unwrap();
     assert!(!injected.strict.contains("title:"));
     assert!(compile("!@#$%^").is_err());

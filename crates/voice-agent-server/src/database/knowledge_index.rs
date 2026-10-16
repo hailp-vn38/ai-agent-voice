@@ -164,8 +164,12 @@ impl SearchIndex {
             let sql = format!("DELETE FROM {}", self.domain.fts_table());
             sqlx::query(&sql).execute(&mut *tx).await?;
             if self.domain == Domain::Knowledge {
-                sqlx::query("DELETE FROM kb_chunks_fts").execute(&mut *tx).await?;
-                sqlx::query("DELETE FROM kb_chunks").execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM kb_chunks_fts")
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("DELETE FROM kb_chunks")
+                    .execute(&mut *tx)
+                    .await?;
             }
         }
         let existing_sql = format!(
@@ -211,7 +215,9 @@ impl SearchIndex {
                 sqlx::query("DELETE FROM kb_chunks_fts WHERE CAST(chunk_id AS INTEGER) IN (SELECT chunk_id FROM kb_chunks WHERE stable_id=?)")
                     .bind(id).execute(&mut *tx).await?;
                 sqlx::query("DELETE FROM kb_chunks WHERE stable_id=?")
-                    .bind(id).execute(&mut *tx).await?;
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
             }
             let sql = format!(
                 "DELETE FROM {} WHERE {}=?",
@@ -262,7 +268,9 @@ impl SearchIndex {
                 sqlx::query("DELETE FROM kb_chunks_fts WHERE CAST(chunk_id AS INTEGER) IN (SELECT chunk_id FROM kb_chunks WHERE stable_id=?)")
                     .bind(&record.id).execute(&mut **tx).await?;
                 sqlx::query("DELETE FROM kb_chunks WHERE stable_id=?")
-                    .bind(&record.id).execute(&mut **tx).await?;
+                    .bind(&record.id)
+                    .execute(&mut **tx)
+                    .await?;
                 if record.status == "verified" {
                     for chunk in split_markdown(&record.body) {
                         let row = sqlx::query("INSERT INTO kb_chunks
@@ -277,11 +285,16 @@ impl SearchIndex {
                             .bind(&chunk.sha256).bind(&chunk.text)
                             .fetch_one(&mut **tx).await?;
                         let chunk_id: i64 = row.try_get("chunk_id")?;
-                        sqlx::query("INSERT INTO kb_chunks_fts(chunk_id,title,heading_path,body)
-                            VALUES(?,?,?,?)")
-                            .bind(chunk_id.to_string()).bind(&record.title)
-                            .bind(&chunk.heading_path).bind(&chunk.text)
-                            .execute(&mut **tx).await?;
+                        sqlx::query(
+                            "INSERT INTO kb_chunks_fts(chunk_id,title,heading_path,body)
+                            VALUES(?,?,?,?)",
+                        )
+                        .bind(chunk_id.to_string())
+                        .bind(&record.title)
+                        .bind(&chunk.heading_path)
+                        .bind(&chunk.text)
+                        .execute(&mut **tx)
+                        .await?;
                     }
                 }
             }
@@ -328,14 +341,17 @@ impl SearchIndex {
         // MATERIALIZED ensures the FTS match and BM25 score precede the
         // per-document best passage selection and verified-state filtering.
         let sql = match self.domain {
-            Domain::Knowledge if include_drafts => r#"
+            Domain::Knowledge if include_drafts => {
+                r#"
                 SELECT d.stable_id AS id,d.title,d.revision,
                     snippet(kb_fts,2,'','',' … ',48) AS excerpt,
                     NULL AS start_line,NULL AS end_line,NULL AS heading_path
                 FROM kb_fts JOIN kb_documents d ON d.stable_id=kb_fts.stable_id
                 WHERE kb_fts MATCH ? AND d.kind='wiki' AND d.state IN ('draft','verified')
-                ORDER BY bm25(kb_fts,0.0,4.0,1.0),d.stable_id LIMIT ?"#,
-            Domain::Knowledge => r#"
+                ORDER BY bm25(kb_fts,0.0,4.0,1.0),d.stable_id LIMIT ?"#
+            }
+            Domain::Knowledge => {
+                r#"
                 WITH matched AS MATERIALIZED (
                     SELECT CAST(chunk_id AS INTEGER) AS cid,
                         bm25(kb_chunks_fts,0.0,4.0,1.5,1.0) AS weight,
@@ -354,18 +370,24 @@ impl SearchIndex {
                       AND d.revision=c.revision
                 )
                 SELECT id,title,revision,excerpt,start_line,end_line,heading_path
-                FROM ranked WHERE passage_rank=1 ORDER BY weight,id LIMIT ?"#,
-            Domain::Memory => r#"
+                FROM ranked WHERE passage_rank=1 ORDER BY weight,id LIMIT ?"#
+            }
+            Domain::Memory => {
+                r#"
                 SELECT d.fact_id AS id,d.title,d.revision,
                     snippet(mem_fts,2,'','',' … ',48) AS excerpt,
                     NULL AS start_line,NULL AS end_line,NULL AS heading_path
                 FROM mem_fts JOIN mem_documents d ON d.fact_id=mem_fts.fact_id
                 WHERE mem_fts MATCH ? AND d.owner_scope='owner'
                     AND d.status='active' AND d.confirmed=1
-                ORDER BY bm25(mem_fts,0.0,4.0,1.0),d.fact_id LIMIT ?"#,
+                ORDER BY bm25(mem_fts,0.0,4.0,1.0),d.fact_id LIMIT ?"#
+            }
         };
         let rows = sqlx::query(sql)
-            .bind(fts_query).bind(limit).fetch_all(&self.pool).await?;
+            .bind(fts_query)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         let mut hits = Vec::with_capacity(rows.len());
         for row in rows {
             hits.push(SearchHit {
@@ -394,12 +416,14 @@ impl SearchIndex {
             return Err(Error::IndexStale);
         }
         let queries = knowledge_lex::compile(query)?;
-        let strict = self.search_rows(&queries.strict,limit,include_drafts).await?;
+        let strict = self
+            .search_rows(&queries.strict, limit, include_drafts)
+            .await?;
         if !strict.is_empty() {
             return Ok(strict);
         }
         if let Some(broad) = queries.broad {
-            return self.search_rows(&broad,limit,include_drafts).await;
+            return self.search_rows(&broad, limit, include_drafts).await;
         }
         Ok(Vec::new())
     }
