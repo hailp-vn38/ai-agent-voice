@@ -162,8 +162,8 @@ fn metadata(operation: &str) -> (Vec<&'static str>, Vec<&'static str>) {
         "web.fetch" => (vec!["web_fetch"], vec!["web"]),
         "data.json_query" => (vec!["json_query"], vec![]),
         "artifact.read_text" => (vec!["artifact_read"], vec![]),
-        "knowledge.search"|"knowledge.read" => (vec!["knowledge_read"],vec!["knowledge"]),
-        "memory.recall"|"memory.summary" => (vec!["memory_read"],vec!["memory"]),
+        "knowledge.search" | "knowledge.read" => (vec!["knowledge_read"], vec!["knowledge"]),
+        "memory.recall" | "memory.summary" => (vec!["memory_read"], vec!["memory"]),
         other => super::expanded::coverage(other),
     }
 }

@@ -258,12 +258,17 @@ impl SearchIndex {
         Ok(())
     }
     pub async fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
-        self.search_with(query,limit,false).await
+        self.search_with(query, limit, false).await
     }
-    pub async fn admin_search(&self,query:&str,limit:i64)->Result<Vec<SearchHit>,Error>{
-        self.search_with(query,limit,true).await
+    pub async fn admin_search(&self, query: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
+        self.search_with(query, limit, true).await
     }
-    async fn search_with(&self,query:&str,limit:i64,include_drafts:bool)->Result<Vec<SearchHit>,Error>{
+    async fn search_with(
+        &self,
+        query: &str,
+        limit: i64,
+        include_drafts: bool,
+    ) -> Result<Vec<SearchHit>, Error> {
         use sqlx::Row;
         if query.trim().is_empty() || query.len() > 256 || !(1..=50).contains(&limit) {
             return Err(Error::InvalidInput);

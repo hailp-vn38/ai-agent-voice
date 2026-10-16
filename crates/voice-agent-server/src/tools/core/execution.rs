@@ -5,13 +5,23 @@ use crate::services::background::{
 };
 use serde_json::{Value, json};
 
-async fn knowledge_runtime(engine: &JobEngine) -> Result<&crate::services::knowledge::Runtime, PluginError> {
-    let data_root = engine.database.durable_path().and_then(|path|path.parent())
-        .ok_or(PluginError::StorageUnavailable)?.to_path_buf();
-    let core = engine.knowledge_runtime.get_or_try_init(||async {
-        crate::services::knowledge::Runtime::open(data_root).await
-            .map_err(|_|PluginError::StorageUnavailable)
-    }).await?;
+async fn knowledge_runtime(
+    engine: &JobEngine,
+) -> Result<&crate::services::knowledge::Runtime, PluginError> {
+    let data_root = engine
+        .database
+        .durable_path()
+        .and_then(|path| path.parent())
+        .ok_or(PluginError::StorageUnavailable)?
+        .to_path_buf();
+    let core = engine
+        .knowledge_runtime
+        .get_or_try_init(|| async {
+            crate::services::knowledge::Runtime::open(data_root)
+                .await
+                .map_err(|_| PluginError::StorageUnavailable)
+        })
+        .await?;
     Ok(core.as_ref())
 }
 
@@ -64,31 +74,53 @@ pub(crate) async fn invoke(
             json!({"text":text,"truncated":truncated,"size_bytes":size})
         }
         "knowledge.search" => {
-            let query=arguments["query"].as_str().ok_or(PluginError::ApplicationError)?;
-            let limit=arguments["limit"].as_i64().unwrap_or(10);
-            let core=knowledge_runtime(engine).await?;
-            let items=core.knowledge.search(query,limit).await.map_err(|_|PluginError::ApplicationError)?;
+            let query = arguments["query"]
+                .as_str()
+                .ok_or(PluginError::ApplicationError)?;
+            let limit = arguments["limit"].as_i64().unwrap_or(10);
+            let core = knowledge_runtime(engine).await?;
+            let items = core
+                .knowledge
+                .search(query, limit)
+                .await
+                .map_err(|_| PluginError::ApplicationError)?;
             json!({"items":items})
         }
         "knowledge.read" => {
-            let id=arguments["id"].as_str().ok_or(PluginError::ApplicationError)?;
-            let from_line=arguments["from_line"].as_u64().unwrap_or(1) as usize;
-            let max_lines=arguments["max_lines"].as_u64().unwrap_or(100) as usize;
-            let core=knowledge_runtime(engine).await?;
-            let page=core.knowledge.read_verified(id,from_line,max_lines).await.map_err(|_|PluginError::ApplicationError)?;
-            let (text,truncated)=take_chars(&page.body,16000);
+            let id = arguments["id"]
+                .as_str()
+                .ok_or(PluginError::ApplicationError)?;
+            let from_line = arguments["from_line"].as_u64().unwrap_or(1) as usize;
+            let max_lines = arguments["max_lines"].as_u64().unwrap_or(100) as usize;
+            let core = knowledge_runtime(engine).await?;
+            let page = core
+                .knowledge
+                .read_verified(id, from_line, max_lines)
+                .await
+                .map_err(|_| PluginError::ApplicationError)?;
+            let (text, truncated) = take_chars(&page.body, 16000);
             json!({"id":page.id,"title":page.title,"revision":page.revision,"text":text,"truncated":truncated})
         }
         "memory.recall" => {
-            let query=arguments["query"].as_str().ok_or(PluginError::ApplicationError)?;
-            let limit=arguments["limit"].as_i64().unwrap_or(10);
-            let core=knowledge_runtime(engine).await?;
-            let items=core.memory.recall(query,limit).await.map_err(|_|PluginError::ApplicationError)?;
+            let query = arguments["query"]
+                .as_str()
+                .ok_or(PluginError::ApplicationError)?;
+            let limit = arguments["limit"].as_i64().unwrap_or(10);
+            let core = knowledge_runtime(engine).await?;
+            let items = core
+                .memory
+                .recall(query, limit)
+                .await
+                .map_err(|_| PluginError::ApplicationError)?;
             json!({"items":items})
         }
         "memory.summary" => {
-            let core=knowledge_runtime(engine).await?;
-            let text=core.memory.summary().await.map_err(|_|PluginError::ApplicationError)?;
+            let core = knowledge_runtime(engine).await?;
+            let text = core
+                .memory
+                .summary()
+                .await
+                .map_err(|_| PluginError::ApplicationError)?;
             json!({"text":text})
         }
         "web.fetch" => super::expanded::fetch(&arguments).await?,
