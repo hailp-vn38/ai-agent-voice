@@ -42,6 +42,9 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/knowledge/pages/{id}",
             get(knowledge::knowledge_read).put(knowledge::knowledge_update),
         )
+        .route("/knowledge/pages/{id}/publish",axum::routing::post(knowledge::knowledge_publish))
+        .route("/knowledge/sources",get(knowledge::knowledge_sources).post(knowledge::knowledge_import_source))
+        .route("/knowledge/sources/{id}",get(knowledge::knowledge_read_source))
         .route("/knowledge/index", get(knowledge::knowledge_health))
         .route(
             "/knowledge/index/rebuild",

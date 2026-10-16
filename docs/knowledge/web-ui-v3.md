@@ -7,3 +7,5 @@ No new Quality/Activity/Review dashboards or vector/graph visualization in MVP. 
 ## Implemented minimal workspaces on this branch
 
 Two separate Vue Admin pages at `/knowledge` and `/memory` reuse the authenticated API client and existing sidebar. Knowledge supports searching, reading and draft CAS creation/update; Memory supports confirmed-fact search, editing, forget and generated summary. Both display independent index health/rebuild controls. They do not implement immutable original Source ingest, verified publication, speculative Quality/Activity/Review dashboards, or graph/vector UI. Missing source-backed publication remains a deliberate admission gate, not an implicit verified checkbox.
+
+The Knowledge workspace supports small text-Markdown Source imports, Source listing and explicit source-verified draft publication; raw binary media ingestion is not part of this slice. Agent tools must not list/read unverified drafts.

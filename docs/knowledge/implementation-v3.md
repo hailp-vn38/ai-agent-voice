@@ -86,3 +86,7 @@ Only label a stage complete when its acceptance is exercised, rather than inferr
 ## Job V3 read-only adapter (branch implementation)
 
 The Rust static Core catalog adds two disabled-by-default groups `core.knowledge` and `core.memory` via main DB migration `0122_core_knowledge_memory_policy.sql`. Four read-only tools (`knowledge.search`, `knowledge.read`, `memory.recall`, `memory.summary`) use frozen choices, inherited Step budgets and schema validation; operations are scoped by server, never model-selected file paths or owner scopes. The main Job DB records execution; no new ingest ledger. No write tools are exposed until provenance/approval and publication integration are implemented.
+
+## Source-verified publication slice
+
+Authenticated Admin can import bounded UTF-8 Markdown as immutable v1 Source (`raw/src_UUID/1/{original.md,extracted.md,manifest.json}`) and publish a draft only after Rust verifies `source_ref` (`src_UUID:1`), original SHA256, provenance and expected revision. Agent Job V3 `knowledge.search` and `knowledge.read` refuse drafts, while Admin can search/read drafts. PDF/image/video extraction, semantic chunking and Job-driven publication remain separate work.

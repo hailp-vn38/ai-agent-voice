@@ -1,6 +1,6 @@
 //! Authenticated Admin adapter: never writes filesystem or index tables directly.
 use super::*;
-use crate::services::knowledge::{Error as KnowledgeError, FactInput, Runtime, WikiInput};
+use crate::services::knowledge::{Error as KnowledgeError, FactInput, Runtime, WikiInput, SourceInput};
 use std::sync::Arc;
 
 async fn runtime(state: &AppState) -> Result<Arc<Runtime>, KnowledgeError> {
@@ -63,7 +63,7 @@ pub(super) async fn knowledge_search(
     req: Request,
 ) -> Response {
     match runtime(&state).await {
-        Ok(core) => match core.knowledge.search(&q.q, q.limit.unwrap_or(20)).await {
+        Ok(core) => match core.knowledge.admin_search(&q.q, q.limit.unwrap_or(20)).await {
             Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
             Err(e) => failure(&req, e),
         },
@@ -241,5 +241,42 @@ pub(super) async fn memory_forget(
             Err(e) => failure(&req, e),
         },
         Err(e) => failure(&req, e),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PublishInput { expected_revision:i64,source_ref:String }
+pub(super) async fn knowledge_publish(State(state):State<AppState>,Path(id):Path<String>,req:Request)->Response{
+    let (req,input):(_,PublishInput)=match json(req).await{Ok(x)=>x,Err(e)=>return e};
+    match runtime(&state).await{
+        Ok(core)=>match core.knowledge.publish(&id,input.expected_revision,&input.source_ref).await{
+            Ok(page)=>Json(page).into_response(),Err(e)=>failure(&req,e)
+        },Err(e)=>failure(&req,e)
+    }
+}
+pub(super) async fn knowledge_sources(State(state):State<AppState>,req:Request)->Response{
+    match runtime(&state).await{
+        Ok(core)=>match core.knowledge.list_sources().await{
+            Ok(items)=>Json(serde_json::json!({"items":items})).into_response(),
+            Err(e)=>failure(&req,e)
+        },Err(e)=>failure(&req,e)
+    }
+}
+pub(super) async fn knowledge_import_source(State(state):State<AppState>,req:Request)->Response{
+    let (req,input):(_,SourceInput)=match json(req).await{Ok(x)=>x,Err(e)=>return e};
+    match runtime(&state).await{
+        Ok(core)=>match core.knowledge.import_source(input).await{
+            Ok(source)=>(StatusCode::CREATED,Json(source)).into_response(),
+            Err(e)=>failure(&req,e)
+        },Err(e)=>failure(&req,e)
+    }
+}
+pub(super) async fn knowledge_read_source(State(state):State<AppState>,Path(id):Path<String>,req:Request)->Response{
+    match runtime(&state).await{
+        Ok(core)=>match core.knowledge.read_source(&id).await{
+            Ok(text)=>Json(serde_json::json!({"text":text})).into_response(),
+            Err(e)=>failure(&req,e)
+        },Err(e)=>failure(&req,e)
     }
 }

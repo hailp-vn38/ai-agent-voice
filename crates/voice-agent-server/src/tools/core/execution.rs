@@ -75,7 +75,7 @@ pub(crate) async fn invoke(
             let from_line=arguments["from_line"].as_u64().unwrap_or(1) as usize;
             let max_lines=arguments["max_lines"].as_u64().unwrap_or(100) as usize;
             let core=knowledge_runtime(engine).await?;
-            let page=core.knowledge.read(id,from_line,max_lines).await.map_err(|_|PluginError::ApplicationError)?;
+            let page=core.knowledge.read_verified(id,from_line,max_lines).await.map_err(|_|PluginError::ApplicationError)?;
             let (text,truncated)=take_chars(&page.body,16000);
             json!({"id":page.id,"title":page.title,"revision":page.revision,"text":text,"truncated":truncated})
         }
