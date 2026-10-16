@@ -74,6 +74,8 @@ impl Database {
         Ok((jobs, total))
     }
 
+    // Existing SQLx admission interface is intentionally kept stable for Job V3.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn submit_plugin_operation(
         &self,
         config: &AppConfig,
@@ -268,7 +270,7 @@ impl Database {
             .await?;
         let view = row.view(Vec::new(), Vec::new())?;
         tx.commit().await?;
-        self.job_changes.publish_committed(&id);
+        self.job_changes.publish_committed(id);
         Ok(JobReceipt {
             job: view,
             replayed: false,

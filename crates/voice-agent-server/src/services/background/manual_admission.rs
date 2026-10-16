@@ -220,11 +220,11 @@ impl JobEngine {
                 .await
         }
         .await;
-        if (result.is_err() || result.as_ref().is_ok_and(|receipt| receipt.replayed)) && created_dir
+        if (result.is_err() || result.as_ref().is_ok_and(|receipt| receipt.replayed))
+            && created_dir
+            && let Err(error) = tokio::fs::remove_dir_all(&artifact_root).await
         {
-            if let Err(error) = tokio::fs::remove_dir_all(&artifact_root).await {
-                tracing::warn!(job_id=%job_id,%error,"Manual artifact stage cleanup failed");
-            }
+            tracing::warn!(job_id=%job_id,%error,"Manual artifact stage cleanup failed");
         }
         let receipt = result?;
         self.wake.notify_one();
