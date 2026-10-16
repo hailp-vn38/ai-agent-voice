@@ -9,10 +9,15 @@ import { useI18n } from '@/composables/useI18n'
 type Hit = { id: string; title: string; revision: number; excerpt: string }
 type Page = { id: string; title: string; body: string; revision: number; status: string; source_ref: string | null }
 type Health = { health: string; document_count: number; last_complete_scan_at: number | null }
+type Source = { id: string; version: number; name: string; provenance: string; sha256: string }
 
 const { t } = useI18n()
 const q = ref('')
 const hits = ref<Hit[]>([])
+const sources = ref<Source[]>([])
+const sourceName = ref('')
+const sourceProvenance = ref('')
+const sourceContent = ref('')
 const health = ref<Health | null>(null)
 const selected = ref<Page | null>(null)
 const title = ref('')
@@ -29,6 +34,46 @@ function newDraft() {
   sourceRef.value = ''
   error.value = ''
   notice.value = ''
+}
+async function refreshSources() {
+  try {
+    const response = await requestJson<{ items: Source[] }>('/api/admin/knowledge/sources')
+    sources.value = response.items
+  } catch (cause) { error.value = formatApiError(cause) }
+}
+async function importSource() {
+  if (!sourceName.value.trim() || !sourceContent.value.trim() || !sourceProvenance.value.trim() || busy.value) return
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const source = await requestJson<Source>('/api/admin/knowledge/sources',
+      jsonRequest('POST', { name: sourceName.value, provenance: sourceProvenance.value,
+        content: sourceContent.value }))
+    sourceRef.value = `${source.id}:${source.version}`
+    sourceName.value = ''
+    sourceContent.value = ''
+    sourceProvenance.value = ''
+    notice.value = t('knowledgeV3.sourceImported')
+    await refreshSources()
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally { busy.value = false }
+}
+async function publish() {
+  if (!selected.value || selected.value.status !== 'draft' || !sourceRef.value.trim() || busy.value) return
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const record = await requestJson<Page>(
+      `/api/admin/knowledge/pages/${encodeURIComponent(selected.value.id)}/publish`,
+      jsonRequest('POST', { expected_revision: selected.value.revision, source_ref: sourceRef.value.trim() }))
+    selected.value = record
+    notice.value = t('knowledgeV3.published')
+    await refreshHealth()
+    if (q.value.trim()) await search()
+  } catch (cause) { error.value = formatApiError(cause) }
+  finally { busy.value = false }
 }
 async function refreshHealth() {
   try { health.value = await requestJson<Health>('/api/admin/knowledge/index') }
@@ -94,7 +139,7 @@ async function rebuild() {
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
-onMounted(() => void refreshHealth())
+onMounted(() => { void refreshHealth(); void refreshSources() })
 </script>
 
 <template>
@@ -113,6 +158,33 @@ onMounted(() => void refreshHealth())
     <p v-if="error" role="alert" class="rounded-lg border border-danger/30 p-3 text-sm text-danger">{{ error }}</p>
     <p v-if="notice" role="status" class="rounded-lg border border-success/30 p-3 text-sm text-success">{{ notice }}</p>
 
+    <section class="studio-panel space-y-4 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="font-semibold">{{ t('knowledgeV3.sources') }}</h2>
+        <span class="text-xs text-muted-foreground">{{ t('knowledgeV3.markdownOnly') }}</span>
+      </div>
+      <form class="grid gap-3 md:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)]" @submit.prevent="importSource">
+        <label class="space-y-1 text-sm"><span>{{ t('knowledgeV3.sourceName') }}</span>
+          <input v-model="sourceName" class="admin-input w-full" maxlength="255" required placeholder="document.md" />
+        </label>
+        <label class="space-y-1 text-sm"><span>{{ t('knowledgeV3.sourceProvenance') }}</span>
+          <input v-model="sourceProvenance" class="admin-input w-full" maxlength="1024" required placeholder="admin:manual" />
+        </label>
+        <label class="space-y-1 text-sm md:col-span-2"><span>{{ t('knowledgeV3.sourceContent') }}</span>
+          <textarea v-model="sourceContent" class="admin-input min-h-28 w-full font-mono text-sm" required />
+        </label>
+        <div class="md:col-span-2"><Button :disabled="busy || !sourceName.trim() || !sourceContent.trim() || !sourceProvenance.trim()" type="submit">
+          {{ t('knowledgeV3.importSource') }}
+        </Button></div>
+      </form>
+      <div class="flex flex-wrap gap-2">
+        <button v-for="source in sources" :key="source.id" type="button"
+          class="rounded-lg border px-3 py-2 text-xs hover:bg-accent"
+          @click="sourceRef = `${source.id}:${source.version}`">
+          <strong>{{ source.name }}</strong> · {{ source.id }}:{{ source.version }}
+        </button>
+      </div>
+    </section>
     <div class="grid gap-4 lg:grid-cols-[minmax(250px,1fr)_minmax(0,2fr)]">
       <section class="studio-panel space-y-4 p-5">
         <h2 class="font-semibold">{{ t('knowledgeV3.search') }}</h2>
@@ -146,7 +218,11 @@ onMounted(() => void refreshHealth())
           <span>{{ t('knowledgeV3.markdown') }}</span>
           <textarea v-model="body" class="admin-input min-h-80 w-full font-mono text-sm" required />
         </label>
-        <Button type="submit" :disabled="busy || !title.trim() || !body.trim()">{{ t('knowledgeV3.save') }}</Button>
+        <div class="flex flex-wrap gap-2">
+          <Button type="submit" :disabled="busy || !title.trim() || !body.trim() || selected?.status === 'verified'">{{ t('knowledgeV3.save') }}</Button>
+          <Button v-if="selected && selected.status === 'draft'" type="button" variant="outline"
+            :disabled="busy || !sourceRef.trim()" @click="publish">{{ t('knowledgeV3.publish') }}</Button>
+        </div>
       </form>
     </div>
   </section>
