@@ -32,7 +32,8 @@ use std::{
 #[derive(Clone)]
 pub struct AppState {
     /// Lazily loaded and shared across authenticated Admin calls; no extra Voice hot-path work.
-    pub(crate) knowledge_runtime: Arc<tokio::sync::OnceCell<Arc<crate::services::knowledge::Runtime>>>,
+    pub(crate) knowledge_runtime:
+        Arc<tokio::sync::OnceCell<Arc<crate::services::knowledge::Runtime>>>,
     pub background: Option<Arc<crate::services::background::BackgroundRuntime>>,
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
