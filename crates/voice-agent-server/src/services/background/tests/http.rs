@@ -842,7 +842,7 @@ async fn builtin_core_catalog_is_authenticated_and_independent_of_installed_pack
     for group in groups {
         assert_eq!(group["kind"], "built_in");
         let private = group["id"] == "core.knowledge" || group["id"] == "core.memory";
-        assert_eq!(group["status"], if private {"disabled"} else {"ready"});
+        assert_eq!(group["status"], if private { "disabled" } else { "ready" });
         assert_eq!(group["runtime"]["kind"], "in_process");
         assert_eq!(group["operations"].as_array().unwrap().len(), 2);
     }

@@ -8,8 +8,16 @@ async fn core_policy_defaults_and_persists_without_installations() {
     assert_eq!(rows.len(), 6);
     assert!(rows.iter().all(|row| row.revision == 1));
     for row in &rows {
-        let expected = if row.plugin_id == "core.knowledge" || row.plugin_id == "core.memory" {0} else {1};
-        assert_eq!(row.enabled, expected, "unexpected default for {}", row.plugin_id);
+        let expected = if row.plugin_id == "core.knowledge" || row.plugin_id == "core.memory" {
+            0
+        } else {
+            1
+        };
+        assert_eq!(
+            row.enabled, expected,
+            "unexpected default for {}",
+            row.plugin_id
+        );
     }
     let catalog = crate::tools::core::bundled_catalog(&rows).unwrap();
     assert_eq!(catalog["total"], 6);
