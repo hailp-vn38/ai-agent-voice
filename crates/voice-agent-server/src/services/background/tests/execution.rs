@@ -2,6 +2,33 @@ use super::*;
 use crate::services::background::plugins::FrozenChoice;
 use std::io::Read;
 
+/// Test adapter for the new production Core Invocation seam.
+async fn invoke_core(
+    engine: &JobEngine,
+    choice: &FrozenChoice,
+    arguments: serde_json::Value,
+    job_id: &str,
+) -> Result<
+    crate::services::background::plugins::InvokeResult,
+    crate::services::background::plugins::PluginError,
+> {
+    crate::tools::core::invoke(
+        engine,
+        crate::services::background::plugins::Invocation {
+            inputs: json!({}),
+            settings: None,
+            choice,
+            arguments,
+            job_id,
+            attempt_id: "core-test-only",
+            timeout: std::time::Duration::from_secs(30),
+            deadline_at: crate::database::unix_seconds().unwrap_or(0) + 30,
+            cancellation: tokio_util::sync::CancellationToken::new(),
+        },
+    )
+    .await
+}
+
 #[tokio::test]
 async fn expired_attempt_cannot_publish_success_or_artifacts() {
     let mut config = config();
@@ -403,7 +430,7 @@ async fn core_artifact_read_rejects_foreign_job_and_binary_media_type() {
             .bind(media_type).execute(db.pool()).await.unwrap();
     }
     for artifact_id in [&foreign_id, &binary_id] {
-        match crate::tools::core::invoke(
+        match invoke_core(
             &runtime.engine,
             &choice,
             json!({"artifact_id":artifact_id}),
@@ -463,7 +490,7 @@ async fn bundled_document_and_artifact_operations_use_verified_owned_files() {
         crate::services::background::plugins::decode_choice(raw).unwrap()
     };
     let arguments = json!({"artifact_id":artifact_id});
-    let document = crate::tools::core::invoke(
+    let document = invoke_core(
         &runtime.engine,
         &run("document.extract"),
         arguments.clone(),
@@ -475,7 +502,7 @@ async fn bundled_document_and_artifact_operations_use_verified_owned_files() {
     assert_eq!(document.result["format"], "text/markdown");
     assert_eq!(document.result["provenance"][0]["records"][0], artifact_id);
 
-    let document_info = crate::tools::core::invoke(
+    let document_info = invoke_core(
         &runtime.engine,
         &run("document.inspect"),
         arguments.clone(),
@@ -486,7 +513,7 @@ async fn bundled_document_and_artifact_operations_use_verified_owned_files() {
     assert_eq!(document_info.result["lines"], 2);
     assert!(document_info.result["words"].as_u64().unwrap() >= 3);
 
-    let artifact_info = crate::tools::core::invoke(
+    let artifact_info = invoke_core(
         &runtime.engine,
         &run("artifact.inspect"),
         arguments,
@@ -498,7 +525,7 @@ async fn bundled_document_and_artifact_operations_use_verified_owned_files() {
     assert_eq!(artifact_info.result["size_bytes"], bytes.len());
     assert_eq!(artifact_info.result["media_type"], "text/markdown");
 
-    let transformed = crate::tools::core::invoke(
+    let transformed = invoke_core(
         &runtime.engine,
         &run("data.transform"),
         json!({"json_text":r#"{"name":"Ada","role":"research"}"#,
