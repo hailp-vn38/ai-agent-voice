@@ -1,4 +1,3 @@
-
 use super::*;
 #[test]
 fn expected_revision_is_fail_closed() {
@@ -608,21 +607,38 @@ async fn missing_vault_root_fails_closed_without_mass_delete() {
 }
 #[tokio::test]
 async fn entire_knowledge_vault_missing_at_restart_fails_closed() {
-    let root=std::env::temp_dir().join(format!("entire_vault_missing_{}",Uuid::new_v4()));
-    let runtime=Runtime::open(root.clone()).await.unwrap();
-    let wiki=runtime.knowledge.put_draft(WikiInput{
-        id:None,title:"Preserve".into(),body:"durable content".into(),
-        expected_revision:Some(0),source_ref:None
-    }).await.unwrap();
+    let root = std::env::temp_dir().join(format!("entire_vault_missing_{}", Uuid::new_v4()));
+    let runtime = Runtime::open(root.clone()).await.unwrap();
+    let wiki = runtime
+        .knowledge
+        .put_draft(WikiInput {
+            id: None,
+            title: "Preserve".into(),
+            body: "durable content".into(),
+            expected_revision: Some(0),
+            source_ref: None,
+        })
+        .await
+        .unwrap();
     drop(runtime);
-    tokio::fs::rename(root.join("knowledge"),root.join("knowledge-offline")).await.unwrap();
-    assert!(matches!(Runtime::open(root.clone()).await,Err(Error::Unavailable)));
+    tokio::fs::rename(root.join("knowledge"), root.join("knowledge-offline"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        Runtime::open(root.clone()).await,
+        Err(Error::Unavailable)
+    ));
     assert!(tokio::fs::metadata(root.join("knowledge")).await.is_err());
-    tokio::fs::rename(root.join("knowledge-offline"),root.join("knowledge")).await.unwrap();
-    let recovered=Runtime::open(root.clone()).await.unwrap();
-    assert_eq!(recovered.knowledge.read_full(&wiki.id).await.unwrap().body,"durable content");
+    tokio::fs::rename(root.join("knowledge-offline"), root.join("knowledge"))
+        .await
+        .unwrap();
+    let recovered = Runtime::open(root.clone()).await.unwrap();
+    assert_eq!(
+        recovered.knowledge.read_full(&wiki.id).await.unwrap().body,
+        "durable content"
+    );
     drop(recovered);
-    let _=tokio::fs::remove_dir_all(root).await;
+    let _ = tokio::fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
