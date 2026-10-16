@@ -266,22 +266,27 @@ impl MemoryCore {
     /// Admin-only overview, intentionally independent of FTS and containing
     /// unpublished/forgotten facts for management. Job tools cannot call it.
     pub async fn admin_list(&self, limit: usize) -> Result<Vec<FactOverview>, Error> {
-        if !(1..=200).contains(&limit) { return Err(Error::InvalidInput); }
+        if !(1..=200).contains(&limit) {
+            return Err(Error::InvalidInput);
+        }
         let _guard = self.vault.writer.lock().await;
         let mut items = Vec::new();
         for item in self.vault.scan().await? {
-            let record=item.record;
-            if record.kind!="memory" || record.scope.as_deref()!=Some("owner") {
+            let record = item.record;
+            if record.kind != "memory" || record.scope.as_deref() != Some("owner") {
                 return Err(Error::InvalidInput);
             }
             items.push(FactOverview {
-                id:record.id,
-                title:record.title,
-                revision:record.revision,
-                status:record.status.clone(),
-                confirmed:record.confirmed,
-                excerpt:if record.status=="forgotten" {String::new()}
-                    else {record.body.chars().take(600).collect()},
+                id: record.id,
+                title: record.title,
+                revision: record.revision,
+                status: record.status.clone(),
+                confirmed: record.confirmed,
+                excerpt: if record.status == "forgotten" {
+                    String::new()
+                } else {
+                    record.body.chars().take(600).collect()
+                },
             });
         }
         items.truncate(limit);
@@ -563,25 +568,38 @@ mod tests {
 
     #[tokio::test]
     async fn admin_listing_includes_unconfirmed_but_job_recall_does_not() {
-        let root = std::env::temp_dir().join(format!("memory_v3_list_{}",Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("memory_v3_list_{}", Uuid::new_v4()));
         let core = Runtime::open(root.clone()).await.unwrap();
-        let draft=core.memory.put_fact(FactInput {
-            id:None,title:"Pending preference".into(),
-            body:"Private unconfirmed phrase".into(),
-            expected_revision:Some(0),source_ref:Some("admin:test".into()),confirmed:false
-        }).await.unwrap();
-        let items=core.memory.admin_list(25).await.unwrap();
-        assert_eq!(items.len(),1);
-        assert_eq!(items[0].status,"needs_review");
-        assert_eq!(items[0].id,draft.id);
-        assert!(core.memory.recall("unconfirmed",10).await.unwrap().is_empty());
-        core.memory.forget(&draft.id,draft.revision).await.unwrap();
-        let items=core.memory.admin_list(25).await.unwrap();
-        assert_eq!(items.len(),1);
-        assert_eq!(items[0].status,"forgotten");
+        let draft = core
+            .memory
+            .put_fact(FactInput {
+                id: None,
+                title: "Pending preference".into(),
+                body: "Private unconfirmed phrase".into(),
+                expected_revision: Some(0),
+                source_ref: Some("admin:test".into()),
+                confirmed: false,
+            })
+            .await
+            .unwrap();
+        let items = core.memory.admin_list(25).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, "needs_review");
+        assert_eq!(items[0].id, draft.id);
+        assert!(
+            core.memory
+                .recall("unconfirmed", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        core.memory.forget(&draft.id, draft.revision).await.unwrap();
+        let items = core.memory.admin_list(25).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, "forgotten");
         assert!(items[0].excerpt.is_empty());
         drop(core);
-        let _=tokio::fs::remove_dir_all(root).await;
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]

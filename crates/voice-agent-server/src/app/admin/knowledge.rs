@@ -169,20 +169,20 @@ pub(super) async fn memory_recall(
             if let Some(query) = q.q.as_deref().filter(|q| !q.trim().is_empty()) {
                 match core.memory.recall(query, q.limit.unwrap_or(20)).await {
                     Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
-                    Err(e) => failure(&req,e),
+                    Err(e) => failure(&req, e),
                 }
             } else {
-                let limit=q.limit.unwrap_or(100);
-                let Ok(limit)=usize::try_from(limit) else {
-                    return error(&req, StatusCode::BAD_REQUEST,"invalid_arguments");
+                let limit = q.limit.unwrap_or(100);
+                let Ok(limit) = usize::try_from(limit) else {
+                    return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments");
                 };
                 match core.memory.admin_list(limit).await {
-                    Ok(items)=>Json(serde_json::json!({"items":items})).into_response(),
-                    Err(e)=>failure(&req,e)
+                    Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
+                    Err(e) => failure(&req, e),
                 }
             }
-        },
-        Err(e) => failure(&req,e)
+        }
+        Err(e) => failure(&req, e),
     }
 }
 pub(super) async fn memory_summary(State(state): State<AppState>, req: Request) -> Response {
