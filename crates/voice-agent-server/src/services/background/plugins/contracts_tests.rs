@@ -101,7 +101,7 @@ fn legacy_external_and_core_frozen_choices_share_one_tool_compiler() {
 }
 
 #[test]
-fn all_eight_bundled_operations_project_into_distinct_native_functions() {
+fn all_nine_bundled_operations_project_into_distinct_native_functions() {
     let pinned: Vec<(FrozenChoice, serde_json::Value)> = crate::tools::core::frozen_choices()
         .iter()
         .map(|raw| {
@@ -111,8 +111,8 @@ fn all_eight_bundled_operations_project_into_distinct_native_functions() {
         })
         .collect();
     let (tools, bindings) = compile_child_tools(&pinned).unwrap();
-    assert_eq!(tools.len(), 8);
-    assert_eq!(bindings.len(), 8);
+    assert_eq!(tools.len(), 9);
+    assert_eq!(bindings.len(), 9);
     let mut names = std::collections::HashSet::new();
     for tool in &tools {
         assert!(names.insert(tool.name.as_str()));
@@ -127,6 +127,7 @@ fn all_eight_bundled_operations_project_into_distinct_native_functions() {
         "p_core_data_transform",
         "p_core_artifact_read_text",
         "p_core_artifact_inspect",
+        "p_core_tts_synthesize",
     ] {
         assert!(names.contains(name), "missing: {name}");
     }
