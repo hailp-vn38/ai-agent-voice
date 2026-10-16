@@ -53,7 +53,7 @@ fn heading(line: &str) -> Option<(usize, &str)> {
         return None;
     }
     let rest = &trimmed[depth..];
-    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+    if !rest.is_empty() && !rest.chars().next().is_some_and(char::is_whitespace) {
         return None;
     }
     let label = rest.trim();
@@ -94,7 +94,7 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
             priority = 120 - (depth as i32 * 10);
         } else if line.trim().is_empty() {
             priority = 20;
-        } else if line.trim_start().starts_with(["- ", "* ", "+ "]) {
+        } else if ["- ", "* ", "+ "].iter().any(|marker| line.trim_start().starts_with(marker)) {
             priority = 5;
         }
 

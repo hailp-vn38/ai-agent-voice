@@ -9,7 +9,7 @@ use crate::services::knowledge::{
 };
 use serde::Serialize;
 use sqlx::{
-    SqlitePool,
+    Row, SqlitePool,
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };

@@ -125,7 +125,10 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
             json!({"type":"object","properties":{
                 "items":{"type":"array","maxItems":10,"items":{"type":"object","properties":{
                     "id":{"type":"string"},"title":{"type":"string"},"revision":{"type":"integer"},
-                    "excerpt":{"type":"string"},"source_ref":{"type":["string","null"]}
+                    "excerpt":{"type":"string"},"source_ref":{"type":["string","null"]},
+                    "start_line":{"type":"integer","minimum":1},
+                    "end_line":{"type":"integer","minimum":1},
+                    "heading_path":{"type":"string"}
                 },"required":["id","title","revision","excerpt","source_ref"],"additionalProperties":false}}
             },"required":["items"],"additionalProperties":false}),
         ),
