@@ -78,7 +78,9 @@ impl SourceVault {
         let meta=fs::symlink_metadata(&dir).await.map_err(|_|Error::NotFound)?;
         if !meta.is_dir() || meta.file_type().is_symlink(){return Err(Error::InvalidPath);}
         let manifest_path=dir.join("manifest.json");
-        let meta=fs::symlink_metadata(&manifest_path).await?;
+        let meta=fs::symlink_metadata(&manifest_path).await.map_err(|e|{
+            if e.kind()==std::io::ErrorKind::NotFound{Error::NotFound}else{Error::Io(e)}
+        })?;
         if !meta.is_file() || meta.file_type().is_symlink() || meta.len()>4096{return Err(Error::InvalidPath);}
         let manifest:Source=serde_json::from_slice(&fs::read(&manifest_path).await?)
             .map_err(|_|Error::InvalidInput)?;
@@ -125,6 +127,9 @@ impl SourceVault {
         self.verify(&format!("{id}:1")).await?;
         let bytes=fs::read(self.source_dir(id)?.join("extracted.md")).await?;
         if bytes.len()>MAX_SOURCE_BYTES{return Err(Error::InvalidInput);}
+        let expected=self.manifest(id).await?;
+        let checksum=Sha256::digest(&bytes).iter().map(|byte|format!("{byte:02x}")).collect::<String>();
+        if checksum!=expected.sha256{return Err(Error::InvalidInput);}
         String::from_utf8(bytes).map_err(|_|Error::InvalidInput)
     }
 }
