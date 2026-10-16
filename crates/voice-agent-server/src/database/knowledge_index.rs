@@ -245,6 +245,7 @@ impl SearchIndex {
         Ok(())
     }
     pub async fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
+        use sqlx::Row;
         if query.trim().is_empty() || query.len() > 256 || !(1..=50).contains(&limit) {
             return Err(Error::InvalidInput);
         }

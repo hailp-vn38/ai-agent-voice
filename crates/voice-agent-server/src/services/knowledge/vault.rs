@@ -182,7 +182,10 @@ impl MarkdownVault {
                 .as_nanos();
             let mtime_ns = i64::try_from(mtime_ns).map_err(|_| Error::InvalidInput)?;
             let size_bytes = i64::try_from(content.len()).map_err(|_| Error::InvalidInput)?;
-            let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+            let hash = Sha256::digest(content.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
             documents.push(Scanned {
                 relative_path: format!("{}/{}.md", self.folder, record.id),
                 record,
