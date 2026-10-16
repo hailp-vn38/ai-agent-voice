@@ -24,6 +24,8 @@ struct Line {
     safe: bool,
     priority: i32,
     heading_path: String,
+    line_number: usize,
+    is_line_start: bool,
 }
 
 fn fence(line: &str) -> Option<(char, usize, &str)> {
@@ -75,7 +77,9 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
     let mut char_pos = 0usize;
     let mut open_fence: Option<(char, usize)> = None;
     let mut headings: Vec<String> = Vec::new();
+    let mut physical_line = 0usize;
     for full_line in body.split_inclusive('\n') {
+        physical_line += 1;
         let line = full_line.trim_end_matches(['\r', '\n']);
         let safe = open_fence.is_none();
         let mut priority = 1;
@@ -109,7 +113,27 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
             safe,
             priority,
             heading_path: headings.join(" / "),
+            line_number: physical_line,
+            is_line_start: true,
         });
+        // Long ordinary Markdown lines have no natural line-break cut.
+        // Like QMD's target-position fallback, add Unicode-safe synthetic
+        // boundaries without splitting fenced code or inventing line numbers.
+        if safe && open_fence.is_none() {
+            for (n, (relative_byte, _)) in full_line.char_indices().enumerate() {
+                if n != 0 && n % TARGET_CHARS == 0 {
+                    lines.push(Line {
+                        byte: byte_pos + relative_byte,
+                        char_pos: char_pos + n,
+                        safe: true,
+                        priority: 1,
+                        heading_path: headings.join(" / "),
+                        line_number: physical_line,
+                        is_line_start: false,
+                    });
+                }
+            }
+        }
         byte_pos += full_line.len();
         char_pos += full_line.chars().count();
     }
@@ -167,8 +191,14 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
             heading_path: lines[start].heading_path.clone(),
             start_byte,
             end_byte,
-            start_line: start + 1,
-            end_line: end,
+            start_line: lines[start].line_number,
+            end_line: if end == lines.len() {
+                physical_line
+            } else if lines[end].is_line_start {
+                lines[end].line_number.saturating_sub(1)
+            } else {
+                lines[end].line_number
+            },
             sha256,
             text,
         });
