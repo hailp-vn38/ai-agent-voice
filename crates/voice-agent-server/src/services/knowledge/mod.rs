@@ -83,7 +83,7 @@ impl Runtime {
 }
 fn check_text(title:&str,body:&str)->Result<(),Error>{
     if title.trim().is_empty() || title.len()>512 || body.len()>256*1024
-        || title.contains(['\n','\r']) {return Err(Error::InvalidInput);}
+        || title.chars().any(|c|matches!(c,'\n'|'\r')) {return Err(Error::InvalidInput);}
     Ok(())
 }
 async fn old_record(vault:&MarkdownVault,id:&str)->Result<Option<Record>,Error>{

@@ -147,7 +147,7 @@ pub fn valid_id(id: &str) -> bool {
 fn scalar(value: &str) -> Result<String, Error> {
     if value.starts_with('"') {
         serde_json::from_str::<String>(value).map_err(|_| Error::InvalidInput)
-    } else if value.trim() == value && !value.contains(['#','[',']','{','}','\r','\n']) {
+    } else if value.trim() == value && !value.chars().any(|c| matches!(c,'#'|'['|']'|'{'|'}'|'\r'|'\n')) {
         Ok(value.to_owned())
     } else { Err(Error::InvalidInput) }
 }
@@ -169,8 +169,9 @@ pub fn encode(rec: &Record) -> Result<String, Error> {
 pub fn parse(text: &str) -> Result<Record, Error> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     if text.len() > MAX_PAGE_BYTES { return Err(Error::InvalidInput); }
-    let (header, body) = text.strip_prefix("---\n")
-        .or_else(|| text.strip_prefix("---\r\n"))
+    // Accept CRLF from imported Markdown while keeping canonically written LF.
+    let normalized = text.replace("\r\n","\n");
+    let (header, body) = normalized.strip_prefix("---\n")
         .and_then(|rest| rest.split_once("\n---\n"))
         .ok_or(Error::InvalidInput)?;
     if header.len() > MAX_HEADER_BYTES { return Err(Error::InvalidInput); }
