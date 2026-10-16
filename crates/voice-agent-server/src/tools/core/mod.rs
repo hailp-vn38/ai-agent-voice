@@ -26,5 +26,7 @@ pub(crate) fn tts_settings_schema() -> serde_json::Value {
 pub(crate) fn tts_settings_digest() -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(serde_json::to_vec(&tts_settings_schema()).expect("static schema"))
-        .iter().map(|byte| format!("{byte:02x}")).collect()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
