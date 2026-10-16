@@ -138,8 +138,10 @@ impl Database {
         let mut enabled_core = crate::tools::core::enabled_groups(&core_settings)
             .map_err(|_| JobError::DatabaseUnavailable)?;
         let tts_pin = if enabled_core.iter().any(|group| group == "core.tts") {
-            tts_provider::configured_pin(&mut tx,config).await?
-        } else { None };
+            tts_provider::configured_pin(&mut tx, config).await?
+        } else {
+            None
+        };
         if tts_pin.is_none() {
             enabled_core.retain(|group| group != "core.tts");
         }
