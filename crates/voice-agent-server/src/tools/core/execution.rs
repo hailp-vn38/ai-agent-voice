@@ -15,16 +15,26 @@ pub(crate) async fn invoke(
     engine: &JobEngine,
     invocation: Invocation<'_>,
 ) -> Result<InvokeResult, PluginError> {
-    if invocation.choice.operation == "tts.synthesize" {
-        return super::tts::synthesize(engine, invocation).await;
-    }
-    let Invocation {choice,arguments,job_id,..} = invocation;
-    let definition = contract(choice)?;
+    let definition = contract(invocation.choice)?;
     let input_validator = jsonschema::validator_for(&definition["input_schema"])
         .map_err(|_| PluginError::WorkerProtocolError)?;
-    if !input_validator.is_valid(&arguments) {
+    if !input_validator.is_valid(&invocation.arguments) {
         return Err(PluginError::ApplicationError);
     }
+    if invocation.choice.operation == "tts.synthesize" {
+        let result = super::tts::synthesize(engine, invocation).await?;
+        let valid = jsonschema::validator_for(&definition["output_schema"])
+            .map_err(|_| PluginError::WorkerProtocolError)?
+            .is_valid(&result.result);
+        if !valid {
+            if let Some(workspace) = &result.workspace {
+                let _ = tokio::fs::remove_dir_all(workspace).await;
+            }
+            return Err(PluginError::WorkerProtocolError);
+        }
+        return Ok(result);
+    }
+    let Invocation {choice,arguments,job_id,..} = invocation;
     let maximum = arguments["max_chars"].as_u64().unwrap_or(16000).min(16000) as usize;
     let mut result = match choice.operation.as_str() {
         "data.json_query" => {
