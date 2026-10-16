@@ -24,10 +24,22 @@ pub(crate) async fn sync_dir(path: PathBuf) -> Result<(), Error> {
     Ok(())
 }
 async fn create_init_marker(root: &Path, folder: &str) -> Result<(), Error> {
-    let marker = root.join(if folder == "drafts" {".drafts_initialized"} else {".vault_initialized"});
-    match fs::OpenOptions::new().write(true).create_new(true).open(&marker).await {
-        Ok(file) => { file.sync_all().await?; sync_dir(root.to_path_buf()).await?; },
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {},
+    let marker = root.join(if folder == "drafts" {
+        ".drafts_initialized"
+    } else {
+        ".vault_initialized"
+    });
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+        .await
+    {
+        Ok(file) => {
+            file.sync_all().await?;
+            sync_dir(root.to_path_buf()).await?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(e) => return Err(e.into()),
     }
     Ok(())
@@ -64,27 +76,47 @@ pub struct MarkdownVault {
 }
 impl MarkdownVault {
     pub async fn new(root: PathBuf, folder: &'static str) -> Result<Self, Error> {
-        if !matches!(folder,"wiki"|"facts"|"drafts") { return Err(Error::InvalidInput); }
+        if !matches!(folder, "wiki" | "facts" | "drafts") {
+            return Err(Error::InvalidInput);
+        }
         let canonical_folder = root.join(folder);
         // A missing canonical root during restart is NOT an empty collection.
         // Pre-marker deployments are detected by their existing derived index.
-        let index_file = if folder == "facts" {"memory_index.db"} else {"knowledge_index.db"};
-        let marker = if folder == "drafts" {".drafts_initialized"} else {".vault_initialized"};
+        let index_file = if folder == "facts" {
+            "memory_index.db"
+        } else {
+            "knowledge_index.db"
+        };
+        let marker = if folder == "drafts" {
+            ".drafts_initialized"
+        } else {
+            ".vault_initialized"
+        };
         if fs::symlink_metadata(&canonical_folder).await.is_err() {
             let established = fs::symlink_metadata(root.join(marker)).await.is_ok()
-                || (folder != "drafts" && fs::symlink_metadata(root.join(index_file)).await.is_ok())
-                || (folder == "facts" && fs::symlink_metadata(root.join("MEMORY.md")).await.is_ok());
-            if established { return Err(Error::Unavailable); }
+                || (folder != "drafts"
+                    && fs::symlink_metadata(root.join(index_file)).await.is_ok())
+                || (folder == "facts"
+                    && fs::symlink_metadata(root.join("MEMORY.md")).await.is_ok());
+            if established {
+                return Err(Error::Unavailable);
+            }
             // If the vault root itself already contains unrelated content,
             // do not auto-heal a possibly missing mounted collection.
             if folder != "drafts" {
                 if let Ok(mut contents) = fs::read_dir(&root).await {
-                    if contents.next_entry().await?.is_some() { return Err(Error::Unavailable); }
+                    if contents.next_entry().await?.is_some() {
+                        return Err(Error::Unavailable);
+                    }
                 }
             }
         }
         fs::create_dir_all(&canonical_folder).await?;
-        let history_name = if folder=="drafts" {"draft_revisions"} else {"revisions"};
+        let history_name = if folder == "drafts" {
+            "draft_revisions"
+        } else {
+            "revisions"
+        };
         fs::create_dir_all(root.join(history_name)).await?;
         for directory in [&root, &root.join(folder), &root.join(history_name)] {
             let stat = fs::symlink_metadata(directory).await?;
@@ -102,9 +134,11 @@ impl MarkdownVault {
     pub fn root(&self) -> &Path {
         &self.root
     }
-    pub async fn remove_draft(&self,id:&str)->Result<(),Error>{
-        if self.folder!="drafts" {return Err(Error::InvalidInput);}
-        let path=self.item_path(id)?;
+    pub async fn remove_draft(&self, id: &str) -> Result<(), Error> {
+        if self.folder != "drafts" {
+            return Err(Error::InvalidInput);
+        }
+        let path = self.item_path(id)?;
         fs::remove_file(&path).await?;
         sync_dir(path.parent().ok_or(Error::InvalidPath)?.to_path_buf()).await
     }
@@ -144,7 +178,14 @@ impl MarkdownVault {
         if let Some(previous) = previous {
             let old_path = self.item_path(&previous.id)?;
             let old = fs::read(&old_path).await?;
-            let revision_dir = self.root.join(if self.folder=="drafts" {"draft_revisions"} else {"revisions"}).join(&record.id);
+            let revision_dir = self
+                .root
+                .join(if self.folder == "drafts" {
+                    "draft_revisions"
+                } else {
+                    "revisions"
+                })
+                .join(&record.id);
             fs::create_dir_all(&revision_dir).await?;
             let info = fs::symlink_metadata(&revision_dir).await?;
             if info.file_type().is_symlink() || !info.is_dir() {
@@ -155,21 +196,32 @@ impl MarkdownVault {
             // Create and sync a staging file, then publish it via rename.
             match fs::symlink_metadata(&history).await {
                 Ok(info) => {
-                    if info.file_type().is_symlink() || !info.is_file() || fs::read(&history).await? != old {
+                    if info.file_type().is_symlink()
+                        || !info.is_file()
+                        || fs::read(&history).await? != old
+                    {
                         return Err(Error::RevisionConflict);
                     }
                 }
-                Err(err) if err.kind()==std::io::ErrorKind::NotFound => {
-                    let tmp_history = revision_dir.join(format!("{}.{}.tmp",previous.revision,Uuid::new_v4()));
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    let tmp_history =
+                        revision_dir.join(format!("{}.{}.tmp", previous.revision, Uuid::new_v4()));
                     let result = async {
-                        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp_history).await?;
+                        let mut f = fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&tmp_history)
+                            .await?;
                         f.write_all(&old).await?;
                         f.sync_all().await?;
                         drop(f);
-                        fs::rename(&tmp_history,&history).await?;
-                        Ok::<(),std::io::Error>(())
-                    }.await;
-                    if result.is_err() { let _ = fs::remove_file(&tmp_history).await; }
+                        fs::rename(&tmp_history, &history).await?;
+                        Ok::<(), std::io::Error>(())
+                    }
+                    .await;
+                    if result.is_err() {
+                        let _ = fs::remove_file(&tmp_history).await;
+                    }
                     result?;
                     sync_dir(revision_dir.clone()).await?;
                 }
@@ -311,8 +363,10 @@ pub fn encode(rec: &Record) -> Result<String, Error> {
         s.push_str(&format!("source_ref: {}\n", string(source)?));
     }
     if let Some(revision) = rec.draft_base_revision {
-        if revision < 1 || rec.kind != "wiki" || rec.status != "draft" {return Err(Error::InvalidInput);}
-        s.push_str(&format!("draft_base_revision: {}\n",revision));
+        if revision < 1 || rec.kind != "wiki" || rec.status != "draft" {
+            return Err(Error::InvalidInput);
+        }
+        s.push_str(&format!("draft_base_revision: {}\n", revision));
     }
     s.push_str("---\n");
     s.push_str(&rec.body);
@@ -340,7 +394,14 @@ pub fn parse(text: &str) -> Result<Record, Error> {
             .ok_or(Error::InvalidInput)?;
         if !matches!(
             key,
-            "id" | "kind" | "title" | "revision" | "status" | "scope" | "confirmed" | "source_ref" | "draft_base_revision"
+            "id" | "kind"
+                | "title"
+                | "revision"
+                | "status"
+                | "scope"
+                | "confirmed"
+                | "source_ref"
+                | "draft_base_revision"
         ) || attrs.insert(key, scalar(value)?).is_some()
         {
             return Err(Error::InvalidInput);
@@ -366,10 +427,17 @@ pub fn parse(text: &str) -> Result<Record, Error> {
         confirmed,
         scope: attrs.get("scope").cloned(),
         source_ref: attrs.get("source_ref").cloned(),
-        draft_base_revision: attrs.get("draft_base_revision").map(|s|s.parse::<i64>().map_err(|_|Error::InvalidInput)).transpose()?,
+        draft_base_revision: attrs
+            .get("draft_base_revision")
+            .map(|s| s.parse::<i64>().map_err(|_| Error::InvalidInput))
+            .transpose()?,
         body: body.to_owned(),
     };
-    if !valid_id(&rec.id) || rec.draft_base_revision.is_some_and(|rev|rev<1 || rec.kind!="wiki" || rec.status!="draft") {
+    if !valid_id(&rec.id)
+        || rec
+            .draft_base_revision
+            .is_some_and(|rev| rev < 1 || rec.kind != "wiki" || rec.status != "draft")
+    {
         return Err(Error::InvalidInput);
     }
     Ok(rec)

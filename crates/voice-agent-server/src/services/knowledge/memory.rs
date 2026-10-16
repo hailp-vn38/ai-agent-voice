@@ -1,7 +1,7 @@
 //! Owner-scoped canonical Memory facts, summary and forgetting.
 use super::*;
 use std::path::Path;
-use tokio::{fs,io::AsyncWriteExt};
+use tokio::{fs, io::AsyncWriteExt};
 
 impl MemoryCore {
     /// Admin-only overview, intentionally independent of FTS and containing
@@ -181,4 +181,3 @@ async fn atomic_summary_write(path: &Path, content: &str) -> Result<(), Error> {
     }
     Ok(())
 }
-

@@ -448,7 +448,7 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
             .await?,
         );
     }
-    if let Some(background)=state.background.as_ref() {
+    if let Some(background) = state.background.as_ref() {
         // The Admin and Job adapters must share the same pools, reconciliation
         // lifecycle and cache for this application-owned Knowledge/Memory vault.
         state.knowledge_runtime = Arc::clone(&background.engine.knowledge_runtime);

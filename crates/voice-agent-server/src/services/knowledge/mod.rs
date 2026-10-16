@@ -9,7 +9,7 @@ pub use sources::{Source, SourceInput};
 use index::{Domain, SearchIndex};
 pub use index::{Health, SearchHit};
 use serde::Deserialize;
-use std::{path::PathBuf,sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use uuid::Uuid;
 use vault::MarkdownVault;
 pub use vault::Record;
@@ -119,7 +119,10 @@ impl Runtime {
                     Some(reference) => source_vault.verify(reference).await.is_ok(),
                     None => false,
                 };
-                if !verified { knowledge_index.mark_stale().await?; break; }
+                if !verified {
+                    knowledge_index.mark_stale().await?;
+                    break;
+                }
             }
         }
         memory_index.reconcile(&memory_vault).await?;
@@ -164,8 +167,8 @@ fn next_revision(old: Option<&Record>, expected: Option<i64>) -> Result<i64, Err
     current.checked_add(1).ok_or(Error::InvalidInput)
 }
 
-mod wiki;
 mod memory;
+mod wiki;
 
 #[cfg(test)]
 mod tests;
