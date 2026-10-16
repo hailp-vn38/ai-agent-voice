@@ -1,5 +1,5 @@
 name: Knowledge V3 One-time Rust Format
-# Final format sweep for Knowledge V3 including verified Source support.
+# Final format sweep after Core catalog regression and Memory CAS fixes.
 on:
   push:
     branches:
