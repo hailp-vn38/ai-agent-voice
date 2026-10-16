@@ -6,7 +6,7 @@ import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
-type Hit = { id: string; title: string; revision: number; excerpt: string }
+type Hit = { id: string; title: string; revision: number; excerpt: string; status?: string }
 type Page = { id: string; title: string; body: string; revision: number; status: string; source_ref: string | null }
 type Health = { health: string; document_count: number; last_complete_scan_at: number | null }
 type Source = { id: string; version: number; name: string; provenance: string; sha256: string }
@@ -72,6 +72,7 @@ async function publish() {
     notice.value = t('knowledgeV3.published')
     await refreshHealth()
     if (q.value.trim()) await search()
+    else await listPages()
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -79,8 +80,14 @@ async function refreshHealth() {
   try { health.value = await requestJson<Health>('/api/admin/knowledge/index') }
   catch (cause) { error.value = formatApiError(cause) }
 }
+async function listPages() {
+  try {
+    const response = await requestJson<{ items: Hit[] }>('/api/admin/knowledge/pages?limit=100')
+    hits.value = response.items
+  } catch (cause) { error.value = formatApiError(cause) }
+}
 async function search() {
-  if (!q.value.trim()) { hits.value = []; return }
+  if (!q.value.trim()) { await listPages(); return }
   busy.value = true
   error.value = ''
   try {
@@ -139,7 +146,7 @@ async function rebuild() {
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
-onMounted(() => { void refreshHealth(); void refreshSources() })
+onMounted(() => { void refreshHealth(); void refreshSources(); void listPages() })
 </script>
 
 <template>
@@ -190,7 +197,7 @@ onMounted(() => { void refreshHealth(); void refreshSources() })
         <h2 class="font-semibold">{{ t('knowledgeV3.search') }}</h2>
         <form class="flex gap-2" @submit.prevent="search">
           <input v-model="q" class="admin-input min-w-0 flex-1" :placeholder="t('knowledgeV3.searchHint')" />
-          <Button type="submit" variant="outline" :disabled="busy || !q.trim()">{{ t('knowledgeV3.search') }}</Button>
+          <Button type="submit" variant="outline" :disabled="busy">{{ t('knowledgeV3.search') }}</Button>
         </form>
         <p v-if="!hits.length" class="text-sm text-muted-foreground">{{ t('knowledgeV3.empty') }}</p>
         <div v-for="item in hits" :key="item.id" class="space-y-1 border-b pb-3">
@@ -198,7 +205,7 @@ onMounted(() => { void refreshHealth(); void refreshSources() })
             {{ item.title }}
           </button>
           <p class="line-clamp-3 break-words text-xs text-muted-foreground">{{ item.excerpt }}</p>
-          <span class="text-xs text-muted-foreground">r{{ item.revision }}</span>
+          <span class="text-xs text-muted-foreground">r{{ item.revision }} · {{ item.status ?? "verified" }}</span>
         </div>
       </section>
       <form class="studio-panel space-y-4 p-5" @submit.prevent="save">
