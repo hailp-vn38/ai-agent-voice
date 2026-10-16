@@ -96,8 +96,12 @@ impl SourceVault {
     async fn manifest(&self, id: &str) -> Result<Source, Error> {
         let dir = self.source_dir(id)?;
         let parent = self.root.join(id);
-        let parent_meta = fs::symlink_metadata(&parent).await.map_err(|_|Error::NotFound)?;
-        if parent_meta.file_type().is_symlink() || !parent_meta.is_dir(){return Err(Error::InvalidPath);}
+        let parent_meta = fs::symlink_metadata(&parent)
+            .await
+            .map_err(|_| Error::NotFound)?;
+        if parent_meta.file_type().is_symlink() || !parent_meta.is_dir() {
+            return Err(Error::InvalidPath);
+        }
         let meta = fs::symlink_metadata(&dir)
             .await
             .map_err(|_| Error::NotFound)?;

@@ -101,8 +101,10 @@ impl MarkdownVault {
             let old = fs::read(&old_path).await?;
             let revision_dir = self.root.join("revisions").join(&record.id);
             fs::create_dir_all(&revision_dir).await?;
-            let info=fs::symlink_metadata(&revision_dir).await?;
-            if info.file_type().is_symlink() || !info.is_dir(){return Err(Error::InvalidPath);}
+            let info = fs::symlink_metadata(&revision_dir).await?;
+            if info.file_type().is_symlink() || !info.is_dir() {
+                return Err(Error::InvalidPath);
+            }
             let history = revision_dir.join(format!("{}.md", previous.revision));
             // A replay must never destroy a previously retained revision.
             match fs::OpenOptions::new()

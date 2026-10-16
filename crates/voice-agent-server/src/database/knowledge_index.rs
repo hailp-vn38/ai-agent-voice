@@ -174,14 +174,15 @@ impl SearchIndex {
             if !seen.insert(doc.record.id.clone()) {
                 return Err(Error::InvalidInput);
             }
-            let unchanged = existing
-                .get(&doc.record.id)
-                .is_some_and(|(hash, path, rev, version)| {
-                    hash == &doc.content_sha256
-                        && path == &doc.relative_path
-                        && *rev == doc.record.revision
-                        && *version == INDEXER_VERSION
-                });
+            let unchanged =
+                existing
+                    .get(&doc.record.id)
+                    .is_some_and(|(hash, path, rev, version)| {
+                        hash == &doc.content_sha256
+                            && path == &doc.relative_path
+                            && *rev == doc.record.revision
+                            && *version == INDEXER_VERSION
+                    });
             if unchanged && !force {
                 continue;
             }

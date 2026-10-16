@@ -91,7 +91,7 @@ impl Runtime {
         let memory_vault = MarkdownVault::new(memory_root.clone(), "facts").await?;
         let knowledge_index = SearchIndex::open(&knowledge_root, Domain::Knowledge).await?;
         let memory_index = SearchIndex::open(&memory_root, Domain::Memory).await?;
-        let _startup_guard=vault::WRITE_LOCK.lock().await;
+        let _startup_guard = vault::WRITE_LOCK.lock().await;
         // Startup reconciliation makes prior crash/power-loss repairs explicit.
         knowledge_index.reconcile(&knowledge_vault).await?;
         memory_index.reconcile(&memory_vault).await?;
@@ -263,10 +263,9 @@ impl MemoryCore {
             .unwrap_or_else(|| format!("mem_{}", Uuid::new_v4().simple()));
         let _guard = self.vault.writer.lock().await;
         let previous = old_record(&self.vault, &id).await?;
-        if previous
-            .as_ref()
-            .is_some_and(|r| r.kind != "memory" || r.scope.as_deref() != Some("owner") || r.status == "forgotten")
-        {
+        if previous.as_ref().is_some_and(|r| {
+            r.kind != "memory" || r.scope.as_deref() != Some("owner") || r.status == "forgotten"
+        }) {
             return Err(Error::InvalidInput);
         }
         let revision = next_revision(previous.as_ref(), input.expected_revision)?;
@@ -296,7 +295,10 @@ impl MemoryCore {
     pub async fn forget(&self, id: &str, expected_revision: i64) -> Result<Record, Error> {
         let _guard = self.vault.writer.lock().await;
         let previous = self.vault.get(id).await?;
-        if previous.kind != "memory" || previous.scope.as_deref() != Some("owner") || previous.status == "forgotten" {
+        if previous.kind != "memory"
+            || previous.scope.as_deref() != Some("owner")
+            || previous.status == "forgotten"
+        {
             return Err(Error::InvalidInput);
         }
         let revision = next_revision(Some(&previous), Some(expected_revision))?;
@@ -499,14 +501,16 @@ mod tests {
         assert!(core.memory.summary().await.unwrap().contains("Vietnamese"));
         core.memory.forget(&fact.id, fact.revision).await.unwrap();
         assert!(matches!(
-            core.memory.put_fact(FactInput {
-                id: Some(fact.id.clone()),
-                title: "Resurrected".into(),
-                body: "Must not revive forgotten memory".into(),
-                expected_revision: Some(fact.revision + 1),
-                source_ref: Some("admin".into()),
-                confirmed: true,
-            }).await,
+            core.memory
+                .put_fact(FactInput {
+                    id: Some(fact.id.clone()),
+                    title: "Resurrected".into(),
+                    body: "Must not revive forgotten memory".into(),
+                    expected_revision: Some(fact.revision + 1),
+                    source_ref: Some("admin".into()),
+                    confirmed: true,
+                })
+                .await,
             Err(Error::InvalidInput)
         ));
         assert!(
