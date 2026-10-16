@@ -1,4 +1,5 @@
 name: Knowledge V3 Review Rustfmt (temporary)
+# Final run after whole-vault guard and regression test additions.
 on:
   push:
     branches: [feat/knowledge-memory-v3-file-first-index]
