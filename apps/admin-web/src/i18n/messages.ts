@@ -10,6 +10,15 @@ export interface PluralMessage {
 export type MessageValue = string | PluralMessage
 
 export const en = {
+  'knowledgeV3.sources': "Sources",
+  'knowledgeV3.markdownOnly': "Immutable Markdown text sources only",
+  'knowledgeV3.sourceName': "Source filename",
+  'knowledgeV3.sourceProvenance': "Source provenance",
+  'knowledgeV3.sourceContent': "Original Markdown text",
+  'knowledgeV3.importSource': "Import source",
+  'knowledgeV3.sourceImported': "Immutable Source imported. You can select it for Wiki publication.",
+  'knowledgeV3.publish': "Publish verified Wiki",
+  'knowledgeV3.published': "Wiki page published with verified source.",
   'nav.knowledge': "Knowledge",
   'nav.memory': "Memory",
   'knowledgeV3.subtitle': "Wiki drafts, evidence references, and a rebuildable Markdown search index.",
@@ -1263,6 +1272,15 @@ export const en = {
 export type MessageKey = keyof typeof en
 
 export const vi: Record<MessageKey, MessageValue> = {
+  'knowledgeV3.sources': "Nguồn tài liệu",
+  'knowledgeV3.markdownOnly': "Chỉ hỗ trợ nguồn Markdown dạng văn bản bất biến",
+  'knowledgeV3.sourceName': "Tên tệp nguồn",
+  'knowledgeV3.sourceProvenance': "Xuất xứ nguồn",
+  'knowledgeV3.sourceContent': "Nội dung Markdown gốc",
+  'knowledgeV3.importSource': "Nhập nguồn",
+  'knowledgeV3.sourceImported': "Đã lưu Source bất biến. Có thể chọn Source để xuất bản Wiki.",
+  'knowledgeV3.publish': "Xuất bản Wiki đã xác minh",
+  'knowledgeV3.published': "Đã xuất bản Wiki sau khi xác minh Source.",
   'nav.knowledge': "Tri thức",
   'nav.memory': "Bộ nhớ",
   'knowledgeV3.subtitle': "Bản nháp Wiki, tham chiếu nguồn và chỉ mục Markdown có thể tái tạo.",
