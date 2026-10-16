@@ -163,13 +163,6 @@ pub(crate) async fn synthesize(
     if !runtime.has_background_capacity() {
         return Err(PluginError::WorkerCapacityUnavailable);
     }
-    // Recheck the immutable job pin after waiting for a model to become ready.
-    engine
-        .database
-        .pinned_tts_provider(&engine.config, request.job_id)
-        .await
-        .map_err(PluginError::JobRejected)?;
-
     let data_root = engine
         .database
         .durable_path()
@@ -198,9 +191,18 @@ pub(crate) async fn synthesize(
         .await
         .map_err(|_| PluginError::StorageUnavailable)?;
 
+    // Serialize the final provider identity check with catalog publication.
+    // No asynchronous work is permitted between this check and native dispatch.
+    let publication = engine.database.tool_security.publication.read().await;
+    engine
+        .database
+        .pinned_tts_provider(&engine.config, request.job_id)
+        .await
+        .map_err(PluginError::JobRejected)?;
     let id = runtime
         .start_background(text.to_owned())
         .map_err(|_| PluginError::WorkerCapacityUnavailable)?;
+    drop(publication);
     let mut native = NativeAttempt {
         runtime,
         resource: Some(resource),
