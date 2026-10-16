@@ -69,6 +69,15 @@ pub struct FactInput {
     pub source_ref: Option<String>,
     pub confirmed: bool,
 }
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct PageOverview {
+    pub id: String,
+    pub title: String,
+    pub revision: i64,
+    pub status: String,
+    pub source_ref: Option<String>,
+    pub excerpt: String,
+}
 pub struct KnowledgeCore {
     vault: MarkdownVault,
     index: SearchIndex,
@@ -145,6 +154,24 @@ fn next_revision(old: Option<&Record>, expected: Option<i64>) -> Result<i64, Err
     current.checked_add(1).ok_or(Error::InvalidInput)
 }
 impl KnowledgeCore {
+    /// Admin-only list of canonical Wiki drafts and published pages. Job tools
+    /// only receive verified documents through search/read_verified.
+    pub async fn admin_list(&self,limit:usize)->Result<Vec<PageOverview>,Error> {
+        if !(1..=200).contains(&limit) {return Err(Error::InvalidInput);}
+        let _guard=self.vault.writer.lock().await;
+        let mut pages=Vec::new();
+        for scanned in self.vault.scan().await? {
+            let record=scanned.record;
+            if record.kind!="wiki" {return Err(Error::InvalidInput);}
+            pages.push(PageOverview {
+                id:record.id,title:record.title,revision:record.revision,
+                status:record.status,source_ref:record.source_ref,
+                excerpt:record.body.chars().take(600).collect()
+            });
+        }
+        pages.truncate(limit);
+        Ok(pages)
+    }
     pub async fn import_source(&self, input: SourceInput) -> Result<Source, Error> {
         self.sources.import_markdown(input).await
     }
@@ -564,6 +591,24 @@ mod tests {
         assert_eq!(core.memory.health().await.unwrap().document_count, 1);
         drop(core);
         let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn admin_lists_draft_wiki_while_job_read_and_search_refuse_it() {
+        let root=std::env::temp_dir().join(format!("wiki_v3_list_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        let draft=core.knowledge.put_draft(WikiInput {
+            id:None,title:"Unpublished".into(),body:"do not disclose draft".into(),
+            expected_revision:Some(0),source_ref:None
+        }).await.unwrap();
+        let pages=core.knowledge.admin_list(25).await.unwrap();
+        assert_eq!(pages.len(),1);
+        assert_eq!(pages[0].id,draft.id);
+        assert_eq!(pages[0].status,"draft");
+        assert!(core.knowledge.search("disclose",5).await.unwrap().is_empty());
+        assert!(matches!(core.knowledge.read_verified(&draft.id,1,10).await,Err(Error::NotFound)));
+        drop(core);
+        let _=tokio::fs::remove_dir_all(root).await;
     }
 
     #[tokio::test]
