@@ -56,7 +56,7 @@ impl BackgroundRuntime {
             database.disable_background_execution().await?;
         }
         let engine = Arc::new(JobEngine {
-            knowledge_runtime: tokio::sync::OnceCell::new(),
+            knowledge_runtime: Arc::new(tokio::sync::OnceCell::new()),
             plugins: super::plugins::PluginStore::new(database.clone(), config.background.clone()),
             submission_gate: Default::default(),
             active_submissions: Default::default(),

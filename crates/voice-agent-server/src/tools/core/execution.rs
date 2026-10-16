@@ -99,7 +99,8 @@ pub(crate) async fn invoke(
                 .await
                 .map_err(|_| PluginError::ApplicationError)?;
             let (text, truncated) = take_chars(&page.body, 16000);
-            json!({"id":page.id,"title":page.title,"revision":page.revision,"text":text,"truncated":truncated})
+            json!({"id":page.id,"title":page.title,"revision":page.revision,
+                "text":text,"truncated":truncated,"source_ref":page.source_ref,"from_line":from_line})
         }
         "memory.recall" => {
             let query = arguments["query"]

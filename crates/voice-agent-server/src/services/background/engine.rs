@@ -11,7 +11,7 @@ pub use super::manual_admission::ArtifactInputBinding;
 pub struct JobEngine {
     pub plugins: super::plugins::PluginStore,
     /// Lazy read-only Knowledge/Memory tool runtime. Does not affect the voice hot path.
-    pub(crate) knowledge_runtime: tokio::sync::OnceCell<Arc<crate::services::knowledge::Runtime>>,
+    pub(crate) knowledge_runtime: Arc<tokio::sync::OnceCell<Arc<crate::services::knowledge::Runtime>>>,
     pub(crate) submission_gate: tokio::sync::RwLock<()>,
     pub(crate) active_submissions: AtomicUsize,
     pub(crate) database: Arc<Database>,

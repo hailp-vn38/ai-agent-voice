@@ -125,8 +125,8 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
             json!({"type":"object","properties":{
                 "items":{"type":"array","maxItems":10,"items":{"type":"object","properties":{
                     "id":{"type":"string"},"title":{"type":"string"},"revision":{"type":"integer"},
-                    "excerpt":{"type":"string"}
-                },"required":["id","title","revision","excerpt"],"additionalProperties":false}}
+                    "excerpt":{"type":"string"},"source_ref":{"type":["string","null"]}
+                },"required":["id","title","revision","excerpt","source_ref"],"additionalProperties":false}}
             },"required":["items"],"additionalProperties":false}),
         ),
         "knowledge.read" => (
@@ -138,8 +138,9 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
             },"required":["id"],"additionalProperties":false}),
             json!({"type":"object","properties":{
                 "id":{"type":"string"},"title":{"type":"string"},"revision":{"type":"integer"},
-                "text":{"type":"string"},"truncated":{"type":"boolean"}
-            },"required":["id","title","revision","text","truncated"],"additionalProperties":false}),
+                "text":{"type":"string"},"truncated":{"type":"boolean"},
+                "source_ref":{"type":"string"},"from_line":{"type":"integer"}
+            },"required":["id","title","revision","text","truncated","source_ref","from_line"],"additionalProperties":false}),
         ),
         "memory.summary" => (
             "Read the generated bounded summary of owner-confirmed Memory facts; never write memory.",

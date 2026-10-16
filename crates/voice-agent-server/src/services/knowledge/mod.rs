@@ -113,6 +113,17 @@ impl Runtime {
         let _startup_guard = vault::WRITE_LOCK.lock().await;
         // Startup reconciliation makes prior crash/power-loss repairs explicit.
         knowledge_index.reconcile(&knowledge_vault).await?;
+        // Derived rows are not authoritative if immutable published evidence is
+        // unavailable (e.g. Source volume detached while Wiki Markdown remained).
+        for scanned in knowledge_vault.scan().await? {
+            if scanned.record.status == "verified" {
+                let verified = match scanned.record.source_ref.as_deref() {
+                    Some(reference) => source_vault.verify(reference).await.is_ok(),
+                    None => false,
+                };
+                if !verified { knowledge_index.mark_stale().await?; break; }
+            }
+        }
         memory_index.reconcile(&memory_vault).await?;
         let runtime = Arc::new(Self {
             knowledge: KnowledgeCore {
@@ -278,7 +289,23 @@ impl KnowledgeCore {
     }
     pub async fn search(&self, q: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
         let _guard = self.vault.writer.lock().await;
-        self.index.search(q, limit).await
+        let mut hits=self.index.search(q,limit).await?;
+        for hit in &mut hits {
+            let page=self.vault.get(&hit.id).await?;
+            if page.status!="verified" || page.kind!="wiki" ||
+                !self.verify_reference(page.source_ref.as_deref()).await {
+                self.index.mark_stale().await?;
+                return Err(Error::IndexStale);
+            }
+            hit.source_ref=page.source_ref;
+        }
+        Ok(hits)
+    }
+    async fn verify_reference(&self,source_ref:Option<&str>)->bool {
+        match source_ref {
+            Some(reference)=>self.sources.verify(reference).await.is_ok(),
+            None=>false
+        }
     }
     pub async fn admin_search(&self, q: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
         let _guard = self.vault.writer.lock().await;
@@ -291,8 +318,10 @@ impl KnowledgeCore {
         max_lines: usize,
     ) -> Result<Record, Error> {
         let page = self.read(id, from_line, max_lines).await?;
-        if page.status != "verified" {
-            return Err(Error::NotFound);
+        if page.status != "verified" { return Err(Error::NotFound); }
+        if !self.verify_reference(page.source_ref.as_deref()).await {
+            self.index.mark_stale().await?;
+            return Err(Error::IndexStale);
         }
         Ok(page)
     }
@@ -301,6 +330,13 @@ impl KnowledgeCore {
     }
     pub async fn rebuild(&self) -> Result<usize, Error> {
         let _guard = self.vault.writer.lock().await;
+        for scanned in self.vault.scan().await? {
+            if scanned.record.status == "verified" &&
+                !self.verify_reference(scanned.record.source_ref.as_deref()).await {
+                self.index.mark_stale().await?;
+                return Err(Error::IndexStale);
+            }
+        }
         self.index.rebuild(&self.vault).await
     }
 }

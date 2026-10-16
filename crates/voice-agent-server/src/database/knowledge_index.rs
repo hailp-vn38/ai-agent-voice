@@ -64,6 +64,7 @@ pub struct SearchHit {
     pub title: String,
     pub revision: i64,
     pub excerpt: String,
+    pub source_ref: Option<String>,
 }
 #[derive(Clone, Serialize)]
 pub struct Health {
@@ -308,6 +309,7 @@ impl SearchIndex {
                 title: row.try_get("title")?,
                 revision: row.try_get("revision")?,
                 excerpt: row.try_get("excerpt")?,
+                source_ref: None, // KnowledgeCore enriches verified hits from canonical Markdown.
             });
         }
         Ok(hits)
