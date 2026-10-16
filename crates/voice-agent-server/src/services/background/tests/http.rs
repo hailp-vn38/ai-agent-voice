@@ -841,9 +841,10 @@ async fn builtin_core_catalog_is_authenticated_and_independent_of_installed_pack
     assert!(groups.iter().any(|group| group["id"] == "core.web"));
     for group in groups {
         assert_eq!(group["kind"], "built_in");
-        assert_eq!(group["status"], if group["id"] == "core.tts" { "disabled" } else { "ready" });
+        let is_tts = group["id"] == "core.tts";
+        assert_eq!(group["status"], if is_tts { "disabled" } else { "ready" });
         assert_eq!(group["runtime"]["kind"], "in_process");
-        assert_eq!(group["operations"].as_array().unwrap().len(), if group["id"] == "core.tts" { 1 } else { 2 });
+        assert_eq!(group["operations"].as_array().unwrap().len(), if is_tts { 1 } else { 2 });
     }
     assert_eq!(
         client
