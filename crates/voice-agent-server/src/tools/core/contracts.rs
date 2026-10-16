@@ -80,7 +80,7 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
     let (description, input_schema, output_schema) = match choice.operation.as_str() {
         "tts.synthesize" => (
             "Synthesize bounded Vietnamese speech to one Job-owned WAV artifact using the configured TTS provider.",
-            json!({"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":12000}},"required":["text"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"text":{"type":"string","minLength":1,"maxLength":3000}},"required":["text"],"additionalProperties":false}),
             json!({"type":"object","properties":{
                 "filename":{"type":"string"},"media_type":{"type":"string"},
                 "duration_ms":{"type":"integer","minimum":1},
