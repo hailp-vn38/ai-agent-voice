@@ -16,3 +16,14 @@ use execution::take_chars;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn tts_settings_schema() -> serde_json::Value {
+    serde_json::json!({"type":"object","properties":{
+        "provider_ref":{"type":"string","minLength":1,"maxLength":256}
+    },"required":["provider_ref"],"additionalProperties":false})
+}
+pub(crate) fn tts_settings_digest() -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(serde_json::to_vec(&tts_settings_schema()).expect("static schema"))
+        .iter().map(|byte| format!("{byte:02x}")).collect()
+}
