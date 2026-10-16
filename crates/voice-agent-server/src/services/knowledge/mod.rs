@@ -1,6 +1,9 @@
 //! File-first Knowledge and Memory domains, sharing private vault/index machinery.
 //! Neither Agent Job nor Admin may mutate canonical Markdown outside these cores.
 pub(crate) mod vault;
+mod sources;
+pub use sources::{Source, SourceInput};
+use sources::SourceVault;
 use crate::database::knowledge_index as index;
 
 use index::{Domain, SearchIndex};
@@ -69,6 +72,7 @@ pub struct FactInput {
 pub struct KnowledgeCore {
     vault: MarkdownVault,
     index: SearchIndex,
+    sources: SourceVault,
 }
 pub struct MemoryCore {
     vault: MarkdownVault,
@@ -83,6 +87,7 @@ impl Runtime {
         let knowledge_root = data_root.join("knowledge");
         let memory_root = data_root.join("memory");
         let knowledge_vault = MarkdownVault::new(knowledge_root.clone(), "wiki").await?;
+        let source_vault=SourceVault::open(&knowledge_root).await?;
         let memory_vault = MarkdownVault::new(memory_root.clone(), "facts").await?;
         let knowledge_index = SearchIndex::open(&knowledge_root, Domain::Knowledge).await?;
         let memory_index = SearchIndex::open(&memory_root, Domain::Memory).await?;
@@ -93,6 +98,7 @@ impl Runtime {
             knowledge: KnowledgeCore {
                 vault: knowledge_vault,
                 index: knowledge_index,
+                sources: source_vault,
             },
             memory: MemoryCore {
                 vault: memory_vault,
@@ -128,6 +134,31 @@ fn next_revision(old: Option<&Record>, expected: Option<i64>) -> Result<i64, Err
     current.checked_add(1).ok_or(Error::InvalidInput)
 }
 impl KnowledgeCore {
+    pub async fn import_source(&self,input:SourceInput)->Result<Source,Error>{
+        self.sources.import_markdown(input).await
+    }
+    pub async fn list_sources(&self)->Result<Vec<Source>,Error>{
+        self.sources.list().await
+    }
+    pub async fn read_source(&self,id:&str)->Result<String,Error>{
+        self.sources.read_text(id).await
+    }
+    /// Only a verified immutable Source allows a draft to become published.
+    pub async fn publish(&self,id:&str,expected_revision:i64,source_ref:&str)->Result<Record,Error>{
+        let _guard=self.vault.writer.lock().await;
+        let prior=self.vault.get(id).await?;
+        if prior.kind!="wiki" || prior.status!="draft"{return Err(Error::InvalidInput);}
+        let revision=next_revision(Some(&prior),Some(expected_revision))?;
+        self.sources.verify(source_ref).await?;
+        let mut rec=prior.clone();
+        rec.revision=revision;
+        rec.status="verified".into();
+        rec.source_ref=Some(source_ref.to_owned());
+        self.index.mark_stale().await?;
+        self.vault.commit(&rec,Some(&prior)).await?;
+        self.index.reconcile(&self.vault).await?;
+        Ok(rec)
+    }
     /// Admin drafts only. Verified publication requires a validated immutable
     /// Source/version and is intentionally not smuggled into this endpoint.
     pub async fn put_draft(&self, input: WikiInput) -> Result<Record, Error> {
@@ -137,7 +168,7 @@ impl KnowledgeCore {
             .unwrap_or_else(|| format!("wiki_{}", Uuid::new_v4().simple()));
         let _guard = self.vault.writer.lock().await;
         let previous = old_record(&self.vault, &id).await?;
-        if previous.as_ref().is_some_and(|r| r.kind != "wiki") {
+        if previous.as_ref().is_some_and(|r| r.kind != "wiki" || r.status == "verified") {
             return Err(Error::InvalidInput);
         }
         let revision = next_revision(previous.as_ref(), input.expected_revision)?;
@@ -184,6 +215,15 @@ impl KnowledgeCore {
     pub async fn search(&self, q: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
         let _guard = self.vault.writer.lock().await;
         self.index.search(q, limit).await
+    }
+    pub async fn admin_search(&self,q:&str,limit:i64)->Result<Vec<SearchHit>,Error>{
+        let _guard=self.vault.writer.lock().await;
+        self.index.admin_search(q,limit).await
+    }
+    pub async fn read_verified(&self,id:&str,from_line:usize,max_lines:usize)->Result<Record,Error>{
+        let page=self.read(id,from_line,max_lines).await?;
+        if page.status!="verified"{return Err(Error::NotFound);}
+        Ok(page)
     }
     pub async fn health(&self) -> Result<Health, Error> {
         self.index.health().await
@@ -372,7 +412,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(wiki.revision, 1);
-        assert_eq!(core.knowledge.search("durable", 10).await.unwrap().len(), 1);
+        assert_eq!(core.knowledge.admin_search("durable", 10).await.unwrap().len(), 1);
+        assert!(core.knowledge.search("durable", 10).await.unwrap().is_empty());
         assert!(matches!(
             core.knowledge
                 .put_draft(WikiInput {
@@ -386,6 +427,12 @@ mod tests {
             Err(Error::RevisionConflict)
         ));
 
+        let evidence=core.knowledge.import_source(SourceInput{
+            name:"evidence.md".into(),content:"# Original durable fact".into(),provenance:"admin:test".into()
+        }).await.unwrap();
+        let published=core.knowledge.publish(&wiki.id,wiki.revision,&format!("{}:1",evidence.id)).await.unwrap();
+        assert_eq!(published.status,"verified");
+        assert_eq!(core.knowledge.search("durable",10).await.unwrap().len(),1);
         let fact = core
             .memory
             .put_fact(FactInput {
