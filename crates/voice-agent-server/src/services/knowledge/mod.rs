@@ -190,7 +190,7 @@ impl KnowledgeCore {
     }
     pub async fn rebuild(&self) -> Result<usize, Error> {
         let _guard = self.vault.writer.lock().await;
-        self.index.reconcile(&self.vault).await
+        self.index.rebuild(&self.vault).await
     }
 }
 impl MemoryCore {
@@ -311,7 +311,7 @@ impl MemoryCore {
     }
     pub async fn rebuild(&self) -> Result<usize, Error> {
         let _guard = self.vault.writer.lock().await;
-        let count = self.index.reconcile(&self.vault).await?;
+        let count = self.index.rebuild(&self.vault).await?;
         self.regenerate_summary().await?;
         Ok(count)
     }

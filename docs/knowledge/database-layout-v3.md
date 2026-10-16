@@ -35,3 +35,7 @@ Canonical atomic Markdown rename may succeed before FTS update: publication stan
 - [Memory index initialization](../../crates/voice-agent-server/migrations/memory/0001_index.sql)
 
 Avoid independent `knowledge_ingest_runs` status transitions. Job V3 alone owns run/retry/cancel outcomes; published Wiki and immutable Source version own canonical publication/provenance.
+
+## Explicit rebuild versus incremental reconciliation
+
+Ordinary managed writes reconcile changed canonical records by stable ID/content hash. Admin `index/rebuild` performs a **forced FTS rebuild** in one SQLite transaction, including orphan cleanup and repair of missing FTS matches even when Markdown hashes are unchanged. It never deletes canonical Markdown. A missing root or partial scan prevents commit and leaves search health stale. This is intentional, rather than assuming a hash-equal document guarantees its derived FTS row is intact.

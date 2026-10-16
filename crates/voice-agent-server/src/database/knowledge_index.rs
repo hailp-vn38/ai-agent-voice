@@ -125,6 +125,13 @@ impl SearchIndex {
     /// Each scan is staged in memory first. One SQLite transaction publishes all
     /// changed rows AND the ready marker; failure never mass-retires documents.
     pub async fn reconcile(&self, vault: &MarkdownVault) -> Result<usize, Error> {
+        self.reconcile_with(vault, false).await
+    }
+    /// Force-repair the complete FTS projection even if the file hashes have not changed.
+    pub async fn rebuild(&self, vault: &MarkdownVault) -> Result<usize, Error> {
+        self.reconcile_with(vault, true).await
+    }
+    async fn reconcile_with(&self, vault: &MarkdownVault, force: bool) -> Result<usize, Error> {
         self.mark_stale().await?;
         let scanned = vault.scan().await?;
         for doc in &scanned {
@@ -137,6 +144,12 @@ impl SearchIndex {
             }
         }
         let mut tx = self.pool.begin().await?;
+        if force {
+            // Explicit rebuild removes orphaned FTS rows as well as repairing missing
+            // matching rows. A rollback restores the old index atomically.
+            let sql = format!("DELETE FROM {}", self.domain.fts_table());
+            sqlx::query(&sql).execute(&mut *tx).await?;
+        }
         let existing_sql = format!(
             "SELECT {},content_sha256,relative_path,revision FROM {}",
             self.domain.id_col(),
@@ -167,7 +180,7 @@ impl SearchIndex {
                         && path == &doc.relative_path
                         && *rev == doc.record.revision
                 });
-            if unchanged {
+            if unchanged && !force {
                 continue;
             }
             self.upsert(&mut tx, doc).await?;
