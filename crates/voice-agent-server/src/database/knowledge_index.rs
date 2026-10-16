@@ -258,6 +258,12 @@ impl SearchIndex {
         Ok(())
     }
     pub async fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
+        self.search_with(query,limit,false).await
+    }
+    pub async fn admin_search(&self,query:&str,limit:i64)->Result<Vec<SearchHit>,Error>{
+        self.search_with(query,limit,true).await
+    }
+    async fn search_with(&self,query:&str,limit:i64,include_drafts:bool)->Result<Vec<SearchHit>,Error>{
         use sqlx::Row;
         if query.trim().is_empty() || query.len() > 256 || !(1..=50).contains(&limit) {
             return Err(Error::InvalidInput);
@@ -269,9 +275,13 @@ impl SearchIndex {
         // or allow model input to create SQL expressions.
         let phrase = format!("\"{}\"", query.trim().replace('"', "\"\""));
         let sql=match self.domain {
-            Domain::Knowledge=>"SELECT d.stable_id AS id,d.title,d.revision,substr(f.body,1,600) AS excerpt
+            Domain::Knowledge if include_drafts => "SELECT d.stable_id AS id,d.title,d.revision,substr(f.body,1,600) AS excerpt
                 FROM kb_fts f JOIN kb_documents d ON d.stable_id=f.stable_id
                 WHERE kb_fts MATCH ? AND d.kind='wiki' AND d.state IN ('draft','verified')
+                ORDER BY bm25(kb_fts) LIMIT ?",
+            Domain::Knowledge => "SELECT d.stable_id AS id,d.title,d.revision,substr(f.body,1,600) AS excerpt
+                FROM kb_fts f JOIN kb_documents d ON d.stable_id=f.stable_id
+                WHERE kb_fts MATCH ? AND d.kind='wiki' AND d.state='verified'
                 ORDER BY bm25(kb_fts) LIMIT ?",
             Domain::Memory=>"SELECT d.fact_id AS id,d.title,d.revision,substr(f.body,1,600) AS excerpt
                 FROM mem_fts f JOIN mem_documents d ON d.fact_id=f.fact_id
