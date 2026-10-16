@@ -1,4 +1,5 @@
 name: Knowledge V3 One-time Rust Format
+# Run again after Core Job adapter integration.
 on:
   push:
     branches:
