@@ -252,13 +252,9 @@ async fn voice_scope_is_non_reusable_and_reminder_permission_is_independent() {
         .await
         .unwrap()
         .job;
-    assert_eq!(
-        job.plugin_choices,
-        json!(crate::tools::core::frozen_choices()
-            .into_iter()
-            .filter(|choice| choice["operation"] != "tts.synthesize")
-            .collect::<Vec<_>>())
-    );
+    let mut expected = crate::tools::core::frozen_choices();
+    expected.retain(|choice| choice["operation"] != "tts.synthesize");
+    assert_eq!(job.plugin_choices, json!(expected));
     // Recreate the same public identities within the same timestamp: row incarnations change.
     sqlx::query("DELETE FROM devices WHERE device_id='voice-device'")
         .execute(db.pool())
