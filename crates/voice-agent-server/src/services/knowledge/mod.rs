@@ -163,7 +163,7 @@ impl KnowledgeCore {
         from_line: usize,
         max_lines: usize,
     ) -> Result<Record, Error> {
-        if from_line == 0 || !(1..=200).contains(&max_lines) {
+        if from_line == 0 || !(1..=10000).contains(&max_lines) {
             return Err(Error::InvalidInput);
         }
         let _guard = self.vault.writer.lock().await;
@@ -171,13 +171,14 @@ impl KnowledgeCore {
         if rec.kind != "wiki" {
             return Err(Error::NotFound);
         }
-        rec.body = rec
-            .body
-            .lines()
-            .skip(from_line - 1)
-            .take(max_lines)
-            .collect::<Vec<_>>()
-            .join("\n");
+        if from_line != 1 || rec.body.lines().count() > max_lines {
+            rec.body = rec.body
+                .lines()
+                .skip(from_line - 1)
+                .take(max_lines)
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
         Ok(rec)
     }
     pub async fn search(&self, q: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
