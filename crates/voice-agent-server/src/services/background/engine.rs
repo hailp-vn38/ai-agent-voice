@@ -161,8 +161,13 @@ impl JobEngine {
             return Err(JobError::InvalidArguments);
         }
         let old = self.get(id).await?;
-        if old.execution_mode == "plugin_operation_v3" {
-            // "Run again" is a fresh admission, never an implicit Agent retry.
+        if old.execution_mode == "plugin_operation_v3"
+            || old.plugin_choices.as_array().is_some_and(|choices| {
+                choices.iter().any(|choice| choice["operation"] == "tts.synthesize")
+            })
+        {
+            // Generative TTS is not a safe_read operation, even on an Agent Job.
+            // Explicit new admission is required; never replay an uncertain attempt.
             return Err(JobError::InvalidArguments);
         }
         if !matches!(old.status.as_str(), "failed" | "cancelled") {
