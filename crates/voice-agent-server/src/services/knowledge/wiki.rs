@@ -130,10 +130,8 @@ impl KnowledgeCore {
         self.vault.commit(&rec, Some(&canonical)).await?;
         self.index.reconcile(&self.vault).await?;
         // A crash between canonical commit and cleanup is detected by staged_for.
-        if staged.is_some() {
-            if let Err(error) = self.drafts.remove_draft(id).await {
-                tracing::warn!(wiki_id=%id,%error,"accepted Wiki revision has pending draft cleanup");
-            }
+        if staged.is_some() && let Err(error) = self.drafts.remove_draft(id).await {
+            tracing::warn!(wiki_id=%id,%error,"accepted Wiki revision has pending draft cleanup");
         }
         Ok(rec)
     }

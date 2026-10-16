@@ -103,12 +103,11 @@ impl MarkdownVault {
             }
             // If the vault root itself already contains unrelated content,
             // do not auto-heal a possibly missing mounted collection.
-            if folder != "drafts" {
-                if let Ok(mut contents) = fs::read_dir(&root).await {
-                    if contents.next_entry().await?.is_some() {
-                        return Err(Error::Unavailable);
-                    }
-                }
+            if folder != "drafts"
+                && let Ok(mut contents) = fs::read_dir(&root).await
+                && contents.next_entry().await?.is_some()
+            {
+                return Err(Error::Unavailable);
             }
         }
         fs::create_dir_all(&canonical_folder).await?;
