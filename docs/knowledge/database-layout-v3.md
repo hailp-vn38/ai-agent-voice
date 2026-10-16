@@ -1,0 +1,37 @@
+# Three SQLite lifecycles — normative storage specification
+
+## Ownership
+
+| Database | Canonical authority | Content | Migrator |
+|---|---|---|---|
+| Existing application `database.url` | SQLite | existing Agents, Providers, Plugins, Jobs, Job Events | existing `crates/voice-agent-server/migrations` |
+| `data/knowledge/knowledge_index.db` | Wiki Markdown and immutable Sources | `kb_documents`, `kb_fts`, `kb_index_state` | `migrations/knowledge` |
+| `data/memory/memory_index.db` | Memory Fact Markdown | `mem_documents`, `mem_fts`, `mem_index_state` | `migrations/memory` |
+
+Use **one initial SQL migration per index database**, not one file per table. Later migrations only when needed; the existing main SQLx migrator is never applied to either index. WAL, busy timeout, foreign keys and schema version checks belong to each pool. Main database path and migration history must not change.
+
+## Lean indexes
+
+The search files are **rebuildable**. `kb_documents` tracks stable ID, kind, title, relative path, revision, SHA256 and scanner fingerprint. `kb_fts` contains the only SQLite search-text copy. `mem_documents` additionally records `owner_scope`, `status` and `confirmed`; every memory result filters by all three. Both track independent health. No `kb_content`, `mem_content`, `kb_links`, `kb_citations`, `mem_relations` or second ingest-run ledger in MVP.
+
+Never derive persistent identity from the first six characters of SHA256; content changes. No cross-index SQL JOIN or cross-file atomic transaction. SQLite search rows are never the source of accepted knowledge or user facts.
+
+## Incremental scanner
+
+- Enumerate only canonical `.md` files within an allowed root; never follow symlinks outside that root.
+- A trusted unchanged `mtime + size + indexer_version` fingerprint may skip rehash; recent writes must be rescanned (racy-mtime window). On change, recompute SHA256 and parse bounded frontmatter.
+- Index both metadata and FTS body in **one local DB transaction**. Use stable ID for rename/move, reject duplicated IDs, and remove stale rows only at the end of a fully successful scan.
+- Missing root, parse error, I/O error or interrupted scan must preserve indexed rows and mark unhealthy; do not represent an unavailable mount as an empty collection.
+- `indexer_version` bump forces reprocessing. Any index-DB corruption can be repaired by discarding **only that index** and rebuilding canonical files; never destroy files as part of rebuild.
+- FTS5/BM25 with bounded line reads in MVP; chunk vectors and rerank are deferred. Owner scope must be trusted request context, not a model-selected string.
+
+## Crash and backup
+
+Canonical atomic Markdown rename may succeed before FTS update: publication stands, search becomes stale until reconciliation. `MEMORY.md` is generated from confirmed active facts with a generation marker; old summary is withheld on failure. Existing application DB backup uses SQLite Online Backup API/coordinated snapshot (not a live `.db` file-only copy under WAL). Vault originals, Markdown and revision files must be backed up consistently; the two indexes may be regenerated. Git does not back up binary originals.
+
+## SQL migrations
+
+- [Knowledge index initialization](../../crates/voice-agent-server/migrations/knowledge/0001_index.sql)
+- [Memory index initialization](../../crates/voice-agent-server/migrations/memory/0001_index.sql)
+
+Avoid independent `knowledge_ingest_runs` status transitions. Job V3 alone owns run/retry/cancel outcomes; published Wiki and immutable Source version own canonical publication/provenance.
