@@ -17,3 +17,12 @@ Reference patterns: Javis OS (distinct Wiki/Memory), QMD (incremental filesystem
 This branch introduces a bounded Rust core and Admin HTTP foundation first. Core Job tool integration, binary ingest, Vue pages, embeddings/reranking and advanced graph are separate acceptance items; do not mark them shipped on the strength of database migrations.
 
 Job Core Plugin read-only integration is available as `core.knowledge` (`knowledge.search`, `knowledge.read`) and `core.memory` (`memory.recall`, `memory.summary`). Both groups start **disabled** by admin policy; enable explicitly after validation. Agent write/publish/forget is not exposed through this adapter.
+
+## Branch implementation status (2026-10-16)
+
+- Implemented: two distinct Rust Core modules, common canonical Markdown vault with CAS/revisions, process-wide lock, two SQLx/FTS5 derived indexes (with explicit forced rebuild), Admin endpoints and separate Vue workspaces.
+- Implemented: immutable UTF-8 Markdown Source v1 import, SHA256/provenance verification, source-verified draft publication, Admin draft visibility and Agent-only verified Wiki reads/search.
+- Implemented: two additional Core Job V3 groups disabled by default, with `knowledge.search`, `knowledge.read`, `memory.recall`, `memory.summary` read-only operations.
+- Implemented: owner-scoped confirmed Memory Facts, correction/forget via explicit Admin interface and automatically generated `MEMORY.md`.
+- Not implemented: full PDF/DOCX/photo/video/audio source ingestion and extraction, Job-generated Wiki publication/approval, Agent-triggered Memory writes, semantic embeddings/reranking, multi-owner Memory, background filesystem watcher, Git-based sync and advanced graph/quality dashboards. No hidden scope expansion into Job V3 scheduler.
+- Verification: GitHub Actions is the executable Rust/TypeScript validation source. See branch CI check before merging; no local Rust toolchain available in this workspace.
