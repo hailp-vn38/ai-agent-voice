@@ -20,7 +20,7 @@ impl BackgroundRuntime {
         config: Arc<AppConfig>,
         stopping: CancellationToken,
     ) -> Result<Arc<Self>, JobError> {
-        Self::start(database, config, stopping, false, None).await
+        Self::start(database, config, stopping, false, None, None).await
     }
     pub async fn open_with_manager(
         database: Arc<Database>,
@@ -28,7 +28,7 @@ impl BackgroundRuntime {
         stopping: CancellationToken,
         manager: Option<Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
     ) -> Result<Arc<Self>, JobError> {
-        let models = manager.map(|manager| {
+        let models = manager.clone().map(|manager| {
             Arc::new(super::models::ManagedModels {
                 database: database.clone(),
                 config: config.clone(),
@@ -36,7 +36,7 @@ impl BackgroundRuntime {
                 quarantine: Default::default(),
             }) as Arc<dyn super::models::JobModels>
         });
-        Self::start(database, config, stopping, false, models).await
+        Self::start(database, config, stopping, false, models, manager).await
     }
     async fn start(
         database: Arc<Database>,
@@ -44,6 +44,7 @@ impl BackgroundRuntime {
         stopping: CancellationToken,
         foundation_harness: bool,
         models: Option<Arc<dyn super::models::JobModels>>,
+        manager: Option<Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
     ) -> Result<Arc<Self>, JobError> {
         if !config.background.limits.valid() {
             return Err(JobError::InvalidArguments);
@@ -65,6 +66,8 @@ impl BackgroundRuntime {
             running: AtomicBool::new(true),
             foundation_harness,
             models,
+            provider_manager: manager,
+            tts_quarantine: Default::default(),
             cancellations: Default::default(),
             voice_submissions: Arc::new(tokio::sync::Semaphore::new(16)),
         });
@@ -99,7 +102,7 @@ impl BackgroundRuntime {
         database: Arc<Database>,
         config: Arc<AppConfig>,
     ) -> Result<Arc<Self>, JobError> {
-        Self::start(database, config, CancellationToken::new(), true, None).await
+        Self::start(database, config, CancellationToken::new(), true, None, None).await
     }
     #[cfg(test)]
     pub(super) async fn execution_harness(
@@ -113,6 +116,7 @@ impl BackgroundRuntime {
             CancellationToken::new(),
             false,
             Some(models),
+            None,
         )
         .await
     }
