@@ -82,3 +82,7 @@ Never return a stale `MEMORY.md` after a forget; if summary regeneration fails, 
 - P3: formats, optional FTS chunking, embeddings/reranking, optional Git sync, graph/quality flows.
 
 Only label a stage complete when its acceptance is exercised, rather than inferring that migrations imply full product integration. See [database-layout-v3.md](database-layout-v3.md).
+
+## Job V3 read-only adapter (branch implementation)
+
+The Rust static Core catalog adds two disabled-by-default groups `core.knowledge` and `core.memory` via main DB migration `0122_core_knowledge_memory_policy.sql`. Four read-only tools (`knowledge.search`, `knowledge.read`, `memory.recall`, `memory.summary`) use frozen choices, inherited Step budgets and schema validation; operations are scoped by server, never model-selected file paths or owner scopes. The main Job DB records execution; no new ingest ledger. No write tools are exposed until provenance/approval and publication integration are implemented.

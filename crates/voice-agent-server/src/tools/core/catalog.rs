@@ -18,11 +18,13 @@ pub(crate) struct InvalidCorePolicy;
 
 // Only operation membership lives in contracts::OPERATIONS. Group prefixes
 // are fixed here; no database or model input can supply executable operations.
-const GROUPS: [(&str, &str, &str); 4] = [
+const GROUPS: [(&str, &str, &str); 6] = [
     ("core.web", "Core Web", "web."),
     ("core.document", "Core Document", "document."),
     ("core.data", "Core Data", "data."),
     ("core.artifact", "Core Artifact", "artifact."),
+    ("core.knowledge", "Core Knowledge", "knowledge."),
+    ("core.memory", "Core Memory", "memory."),
 ];
 
 pub(crate) fn known_group(id: &str) -> bool {

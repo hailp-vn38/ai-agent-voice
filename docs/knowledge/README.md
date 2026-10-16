@@ -15,3 +15,5 @@ Architecture is **file-first hybrid**. Knowledge and Memory are separate domain 
 Reference patterns: Javis OS (distinct Wiki/Memory), QMD (incremental filesystem scan, FTS5/BM25, metadata and range reads). We do **not** embed QMD's JavaScript runtime and do not treat QMD's content-hash docid as a stable page ID.
 
 This branch introduces a bounded Rust core and Admin HTTP foundation first. Core Job tool integration, binary ingest, Vue pages, embeddings/reranking and advanced graph are separate acceptance items; do not mark them shipped on the strength of database migrations.
+
+Job Core Plugin read-only integration is available as `core.knowledge` (`knowledge.search`, `knowledge.read`) and `core.memory` (`memory.recall`, `memory.summary`). Both groups start **disabled** by admin policy; enable explicitly after validation. Agent write/publish/forget is not exposed through this adapter.

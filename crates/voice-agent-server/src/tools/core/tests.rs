@@ -21,7 +21,8 @@ fn json_pointer_contract_is_projectable_and_artifact_is_job_scoped() {
 #[test]
 fn web_is_registered_and_persisted_choices_remain_supported() {
     let choices = frozen_choices();
-    let policy = ["core.web", "core.document", "core.data", "core.artifact"]
+    let policy = ["core.web", "core.document", "core.data", "core.artifact",
+        "core.knowledge", "core.memory"]
         .iter()
         .map(|id| crate::tools::core::CorePluginSetting {
             plugin_id: (*id).into(),
@@ -30,8 +31,8 @@ fn web_is_registered_and_persisted_choices_remain_supported() {
         })
         .collect::<Vec<_>>();
     let catalog = bundled_catalog(&policy).unwrap();
-    assert_eq!(catalog["total"], 4);
-    assert_eq!(catalog["operation_total"], 8);
+    assert_eq!(catalog["total"], 6);
+    assert_eq!(catalog["operation_total"], 12);
     assert!(
         catalog["items"]
             .as_array()
@@ -74,6 +75,20 @@ fn web_is_registered_and_persisted_choices_remain_supported() {
     }
 }
 
+#[test]
+fn read_only_knowledge_tools_have_bounded_contracts() {
+    for operation in ["knowledge.search","knowledge.read","memory.recall","memory.summary"] {
+        let raw=frozen_choices().into_iter().find(|x|x["operation"]==operation).unwrap();
+        let contract=contract(&decode(&raw).unwrap()).unwrap();
+        assert!(jsonschema::validator_for(&contract["input_schema"]).is_ok());
+        assert!(jsonschema::validator_for(&contract["output_schema"]).is_ok());
+    }
+    let search=frozen_choices().into_iter().find(|x|x["operation"]=="memory.recall").unwrap();
+    let contract=contract(&decode(&search).unwrap()).unwrap();
+    let input=jsonschema::validator_for(&contract["input_schema"]).unwrap();
+    assert!(input.is_valid(&serde_json::json!({"query":"Vietnamese","limit":3})));
+    assert!(!input.is_valid(&serde_json::json!({"query":"x","scope":"everyone"})));
+}
 #[test]
 fn json_pointer_rejects_invalid_escapes_and_accepts_literal_tildes() {
     use super::execution::valid_pointer;

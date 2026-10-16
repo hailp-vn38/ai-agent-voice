@@ -2,7 +2,7 @@ use crate::services::background::plugins::{FrozenChoice, PluginError};
 use serde_json::{Value, json};
 
 pub(crate) const REVISION: &str = "1";
-pub(super) const OPERATIONS: [&str; 8] = [
+pub(super) const OPERATIONS: [&str; 12] = [
     "data.json_query",
     "artifact.read_text",
     "document.extract",
@@ -11,6 +11,10 @@ pub(super) const OPERATIONS: [&str; 8] = [
     "artifact.inspect",
     "web.fetch",
     "web.extract",
+    "knowledge.search",
+    "knowledge.read",
+    "memory.recall",
+    "memory.summary",
 ];
 
 pub(crate) fn is_core(choice: &FrozenChoice) -> bool {
@@ -112,6 +116,37 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
                 "size_bytes":{"type":"integer"}
             },"required":["text","truncated","size_bytes"],"additionalProperties":false}),
         ),
+        "knowledge.search" | "memory.recall" => (
+            "Search published Wiki pages or owner-confirmed Memory facts with bounded FTS5/BM25.",
+            json!({"type":"object","properties":{
+                "query":{"type":"string","minLength":1,"maxLength":256},
+                "limit":{"type":"integer","minimum":1,"maximum":10}
+            },"required":["query"],"additionalProperties":false}),
+            json!({"type":"object","properties":{
+                "items":{"type":"array","maxItems":10,"items":{"type":"object","properties":{
+                    "id":{"type":"string"},"title":{"type":"string"},"revision":{"type":"integer"},
+                    "excerpt":{"type":"string"}
+                },"required":["id","title","revision","excerpt"],"additionalProperties":false}}
+            },"required":["items"],"additionalProperties":false}),
+        ),
+        "knowledge.read" => (
+            "Read a bounded line range of one Wiki page by stable ID.",
+            json!({"type":"object","properties":{
+                "id":{"type":"string","minLength":4,"maxLength":100},
+                "from_line":{"type":"integer","minimum":1,"maximum":1000000},
+                "max_lines":{"type":"integer","minimum":1,"maximum":100}
+            },"required":["id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{
+                "id":{"type":"string"},"title":{"type":"string"},"revision":{"type":"integer"},
+                "text":{"type":"string"},"truncated":{"type":"boolean"}
+            },"required":["id","title","revision","text","truncated"],"additionalProperties":false}),
+        ),
+        "memory.summary" => (
+            "Read the generated bounded summary of owner-confirmed Memory facts; never write memory.",
+            json!({"type":"object","properties":{},"additionalProperties":false}),
+            json!({"type":"object","properties":{"text":{"type":"string"}},
+                "required":["text"],"additionalProperties":false}),
+        ),
         _ => return super::expanded::contract(&choice.operation),
     };
     let (provides, sources) = metadata(&choice.operation);
@@ -127,6 +162,8 @@ fn metadata(operation: &str) -> (Vec<&'static str>, Vec<&'static str>) {
         "web.fetch" => (vec!["web_fetch"], vec!["web"]),
         "data.json_query" => (vec!["json_query"], vec![]),
         "artifact.read_text" => (vec!["artifact_read"], vec![]),
+        "knowledge.search"|"knowledge.read" => (vec!["knowledge_read"],vec!["knowledge"]),
+        "memory.recall"|"memory.summary" => (vec!["memory_read"],vec!["memory"]),
         other => super::expanded::coverage(other),
     }
 }
