@@ -9,3 +9,7 @@ A canonical filesystem rename and a SQLite transaction cannot be atomically comm
 ## Implemented first source format
 
 Only UTF-8 Markdown Source v1 is initially imported. The raw Source original, extracted text copy and SHA256 manifest live under `raw/src_UUID/1`. A Source must be successfully verified before it can back a Wiki publication. Formats requiring extraction (PDF/DOCX/images/audio/video) are future adapters, not a reason to weaken original/provenance immutability.
+
+## Corrected Wiki revision workflow (2026-10-16)
+
+Accepted Wiki Markdown remains canonical and searchable while a replacement draft is edited under `knowledge/drafts/`. The draft records its canonical base revision and has its own draft revision history. Explicit publish validates the draft CAS, unchanged base and immutable Source checksum before advancing the canonical revision and rebuilding the derived index. Crashes after canonical publication may leave a redundant staged copy; recovery ignores only a copy with matching accepted content. Original immutable revision snapshots are first staged and fsynced before atomic publication. Vault initialization markers prevent treating a lost data directory as an empty corpus after restart.

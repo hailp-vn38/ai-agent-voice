@@ -13,7 +13,7 @@
 
 | Module | Interface | Implementation |
 |---|---|---|
-| KnowledgeCore | publish/read/search/rebuild | trusted Wiki vault, source checks, revision history and Knowledge search index |
+| KnowledgeCore | publish/read/search/rebuild | canonical accepted Wiki vault, separate staged draft vault, Source verification, revision history and Knowledge search index |
 | MemoryCore | confirm/correct/forget/recall/summary/rebuild | owner-scoped canonical facts, generated summary and Memory search index |
 | MarkdownVault (internal) | read/write(expected_revision)/scan | frontmatter validation, stable identity, lock, snapshot, atomic replacement |
 | SearchIndex (internal) | rebuild/search/health | domain-specific SQL schema, filesystem/hash reconciliation and FTS5 |
@@ -26,7 +26,11 @@
 data/
   <main SQLite database path selected by database.url>
   knowledge/
-    wiki/<stable-id>.md
+    wiki/<stable-id>.md                 # last accepted revision
+    drafts/<stable-id>.md               # staged edit of verified Wiki
+    draft_revisions/<stable-id>/<revision>.md
+    .vault_initialized                  # restart root-loss guard
+    .drafts_initialized                 # staged root-loss guard
     raw/<source-id>/<version>/original.<ext>   # immutable
     raw/<source-id>/<version>/extracted.md
     revisions/<stable-id>/<revision>.md
@@ -66,7 +70,7 @@ source_ref: conversation:turn-ref
 User prefers Vietnamese for voice responses.
 ```
 
-Content hash lives in the derived index, never as a self-referential field inside Markdown. Stable IDs survive title and path changes. Unknown frontmatter must not be silently overwritten when editing imported documents. Citations reference immutable Source version/section, not only a Job Artifact.
+Content hash lives in the derived index, never as a self-referential field inside Markdown. Stable IDs survive title and path changes. Unknown frontmatter must not be silently overwritten when editing imported documents. Citations reference immutable Source versions, not only a Job Artifact. The `knowledge.search` and `knowledge.read` Job contracts now include `source_ref`; `knowledge.read` also returns `from_line`. Search excerpts do not yet guarantee an exact matching line offset.
 
 ## Safe write and recovery sequence
 
@@ -98,3 +102,13 @@ Authenticated Admin can import bounded UTF-8 Markdown as immutable v1 Source (`r
 ## Admin browsing versus Agent retrieval
 
 An authenticated Admin can list bounded canonical Wiki metadata without a search term (`GET /api/admin/knowledge/pages?limit=100`) and similarly list all owner Fact metadata (`GET /api/admin/memory/facts?limit=100`). Both return file-backed descriptions, including drafts and unconfirmed records, for management only. Agent Job's `knowledge.search`/`knowledge.read` are restricted to `verified` Wiki; `memory.recall`/`memory.summary` are restricted to confirmed active owner facts. These admin-only list interfaces are deliberately absent from the Core Job operation catalog.
+
+## Remediation — staged Wiki edits, restart and provenance
+
+- Edits of an accepted `verified` Wiki Page are stored under `knowledge/drafts/`, with `draft_base_revision` referencing the canonical base. The canonical `knowledge/wiki/` page and Agent FTS index remain at the last accepted revision until Admin explicitly publishes a Source-verified replacement. Draft history uses `draft_revisions/`, distinct from canonical `revisions/`; no additional SQLite DB is introduced. Admin full-page reads prefer a valid staged draft; Agent operations always read only the canonical verified page.
+- Publishing requires the staged revision CAS and unchanged canonical base; accepted canonical revision advances once, then the staged file is removed. If a crash occurs after commit but before deletion, a matching stale staged copy is ignored and may be cleaned before the next draft. A mismatched stale draft fails closed.
+- A persisted vault-initialization marker prevents automatic recreation of a missing canonical/draft folder on restart. Legacy vaults with existing indexes are also detected. Indexes are not pruned when the root vanishes. Revision archives now write temporary files, fsync, rename, and fsync their parent directory before canonical publication.
+- Admin editor uses a separate complete (size-bounded) Markdown read; line-range reads are only for browsing and Agent tools. Source SHA-256 is verified at publish, Agent read/search and Knowledge rebuild/recovery; missing/tampered verified evidence marks only the Knowledge index stale, leaving Memory independently available.
+- Admin and Background Job adapters share one application-owned `Arc<OnceCell<Arc<Runtime>>>`; no duplicate SQL index pools are constructed for the same server instance. Blocking directory fsync is offloaded from Tokio runtime workers.
+
+These are corrections within the existing KnowledgeCore/MemoryCore interfaces and three-database decision, not a second publishing engine.

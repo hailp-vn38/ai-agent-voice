@@ -33,3 +33,19 @@ Each index has its own SQLx migrator and health. Full scanner failure preserves 
 ## Implementation reality / admission policy
 
 On this branch, authenticated Admin imports original **text Markdown** and explicitly publishes a verified Wiki revision. Background Job V3 can only search/read published Wiki pages and recall confirmed Memory after its Core group is enabled by Admin; no Agent-driven Source ingestion or Wiki publication tool is exposed. The diagrams above describe the future Job-driven proposal path, not a shipped automatic write capability.
+
+## Corrected published Wiki edit flow
+
+```mermaid
+flowchart LR
+  A[Canonical verified Wiki rev N] --> B[Admin edits staged Wiki draft]
+  B --> C[Draft CAS and base rev N]
+  C --> D{Verify Source and publish CAS}
+  D -->|Reject| C
+  D -->|Accept| E[Canonical Wiki rev N plus 1]
+  E --> F[Reconcile Knowledge FTS]
+  F --> G[Agent reads verified rev N plus 1]
+  A --> H[Agent continues reading rev N until publish]
+```
+
+Admin and Job reuse one Rust Runtime; the Job tools cannot read staged drafts. The Knowledge index is marked stale when immutable Source evidence disappears or fails SHA256 validation. Memory index health is independent.

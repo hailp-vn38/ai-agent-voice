@@ -13,3 +13,7 @@ The Knowledge workspace supports small text-Markdown Source imports, Source list
 ## Memory inventory and safety
 
 Empty-query `GET /api/admin/memory/facts?limit=100` returns a bounded list of canonical facts for authenticated Admin review; full-text search with `q` continues to expose only confirmed, active facts. The Admin UI can open a pending fact by ID and set `confirmed=true`; it cannot reactivate a forgotten ID. Agent `memory.recall` and `memory.summary` never receive this inventory. This is not a physical-erasure or multi-tenant ownership system.
+
+## Editing a published Wiki
+
+Selecting a verified Wiki lets Admin save an edited **draft revision**, which stays separate from the accepted Wiki. The next Save sends the staged `expected_revision`; Publish verifies a Source reference and advances the canonical revision once. The Agent continues reading the last accepted revision until publication. Admin editor GET without line-range query reads the full, bounded Markdown document; partial line-range responses are not used in the save form.
