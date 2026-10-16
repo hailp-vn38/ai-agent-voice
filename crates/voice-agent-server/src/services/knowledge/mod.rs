@@ -99,9 +99,35 @@ pub struct Runtime {
     pub memory: MemoryCore,
 }
 impl Runtime {
+    async fn check_root(root:&PathBuf,guard:&PathBuf)->Result<(),Error>{
+        if tokio::fs::symlink_metadata(guard).await.is_ok() {
+            match tokio::fs::symlink_metadata(root).await {
+                Ok(info) if info.is_dir() && !info.file_type().is_symlink()=>{},
+                _=>return Err(Error::Unavailable)
+            }
+        }
+        Ok(())
+    }
+    async fn mark_root(guard:&PathBuf,data_root:&PathBuf)->Result<(),Error>{
+        match tokio::fs::OpenOptions::new().write(true).create_new(true).open(guard).await {
+            Ok(file)=>{
+                file.sync_all().await?;
+                vault::sync_dir(data_root.clone()).await?;
+            }
+            Err(err) if err.kind()==std::io::ErrorKind::AlreadyExists=>{},
+            Err(err)=>return Err(err.into())
+        }
+        Ok(())
+    }
     pub async fn open(data_root: PathBuf) -> Result<Arc<Self>, Error> {
         let knowledge_root = data_root.join("knowledge");
         let memory_root = data_root.join("memory");
+        let knowledge_guard=data_root.join(".knowledge_v3_initialized");
+        let memory_guard=data_root.join(".memory_v3_initialized");
+        // The guard is outside the vault: a missing whole mount must not be
+        // mistaken for first bootstrap and allowed to prune indexed documents.
+        Self::check_root(&knowledge_root,&knowledge_guard).await?;
+        Self::check_root(&memory_root,&memory_guard).await?;
         let knowledge_vault = MarkdownVault::new(knowledge_root.clone(), "wiki").await?;
         let draft_vault = MarkdownVault::new(knowledge_root.clone(), "drafts").await?;
         let source_vault = SourceVault::open(&knowledge_root).await?;
@@ -139,6 +165,8 @@ impl Runtime {
             },
         });
         runtime.memory.regenerate_summary().await?;
+        Self::mark_root(&knowledge_guard,&data_root).await?;
+        Self::mark_root(&memory_guard,&data_root).await?;
         Ok(runtime)
     }
 }
