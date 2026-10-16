@@ -18,11 +18,12 @@ pub(crate) struct InvalidCorePolicy;
 
 // Only operation membership lives in contracts::OPERATIONS. Group prefixes
 // are fixed here; no database or model input can supply executable operations.
-const GROUPS: [(&str, &str, &str); 4] = [
+const GROUPS: [(&str, &str, &str); 5] = [
     ("core.web", "Core Web", "web."),
     ("core.document", "Core Document", "document."),
     ("core.data", "Core Data", "data."),
     ("core.artifact", "Core Artifact", "artifact."),
+    ("core.tts", "Core TTS", "tts."),
 ];
 
 pub(crate) fn known_group(id: &str) -> bool {
@@ -98,7 +99,7 @@ pub(crate) fn bundled_item(setting: &CorePluginSetting) -> Option<Value> {
                 .and_then(|schema| schema["description"].as_str().map(str::to_owned))
                 .unwrap_or_default();
             json!({"name":operation,"description":description,
-                "contract_revision":REVISION,"replay":"safe_read"})
+                "contract_revision":REVISION,"replay":if *operation == "tts.synthesize" {"not_replayable"} else {"safe_read"}})
         })
         .collect();
     Some(json!({
