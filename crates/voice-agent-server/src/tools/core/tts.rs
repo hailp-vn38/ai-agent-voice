@@ -51,6 +51,23 @@ impl NativeAttempt<'_> {
         }
         false
     }
+
+    async fn await_reset(&mut self) -> bool {
+        let deadline = Instant::now() + self.runtime.cleanup_grace();
+        while self.runtime.reset_pending() {
+            if Instant::now() >= deadline {
+                if let Some(resource) = self.resource.take() {
+                    self.quarantine
+                        .lock()
+                        .expect("TTS quarantine poisoned")
+                        .push(resource);
+                }
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        true
+    }
 }
 impl Drop for NativeAttempt<'_> {
     fn drop(&mut self) {
@@ -260,7 +277,13 @@ pub(crate) async fn synthesize(
         if native.active.is_some() && !native.stop_and_ack().await {
             return Err(PluginError::WorkerUnreaped);
         }
+        if !native.await_reset().await {
+            return Err(PluginError::WorkerUnreaped);
+        }
         return Err(error);
+    }
+    if !native.await_reset().await {
+        return Err(PluginError::WorkerUnreaped);
     }
     let rate = sample_rate.ok_or(PluginError::ApplicationError)?;
     let size = samples
