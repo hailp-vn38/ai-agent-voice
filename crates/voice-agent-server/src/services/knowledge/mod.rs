@@ -203,6 +203,7 @@ fn next_revision(old: Option<&Record>, expected: Option<i64>) -> Result<i64, Err
     current.checked_add(1).ok_or(Error::InvalidInput)
 }
 
+pub(crate) mod markdown_chunker;
 mod memory;
 mod wiki;
 
