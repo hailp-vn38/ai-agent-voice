@@ -142,6 +142,9 @@ async fn queued_voice_pcm_does_not_charge_backpressure_as_a_stall() {
 fn core_background_tts_must_not_borrow_reserved_voice_slot() {
     let (runtime, _chunks, _emitted) = fixture();
     assert!(!runtime.has_background_capacity());
-    assert!(matches!(runtime.start_background("job".into()), Err(TtsWorkerError::Capacity)));
+    assert!(matches!(
+        runtime.start_background("job".into()),
+        Err(TtsWorkerError::Capacity)
+    ));
     assert!(runtime.start("voice".into()).is_ok());
 }
