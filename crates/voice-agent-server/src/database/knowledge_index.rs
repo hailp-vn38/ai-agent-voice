@@ -4,7 +4,7 @@
 use std::{collections::{HashMap, HashSet},path::Path,time::Duration};
 use serde::Serialize;
 use sqlx::{SqlitePool,migrate::Migrator,sqlite::{SqliteConnectOptions,SqliteJournalMode,SqlitePoolOptions,SqliteSynchronous}};
-use super::{Error,vault::{MarkdownVault,Scanned}};
+use crate::services::knowledge::{Error,vault::{MarkdownVault,Scanned}};
 static KNOWLEDGE_MIGRATOR: Migrator = sqlx::migrate!("./migrations/knowledge");
 static MEMORY_MIGRATOR: Migrator = sqlx::migrate!("./migrations/memory");
 const INDEXER_VERSION: i64 = 1;

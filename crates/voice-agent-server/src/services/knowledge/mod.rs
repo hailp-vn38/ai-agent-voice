@@ -1,7 +1,7 @@
 //! File-first Knowledge and Memory domains, sharing private vault/index machinery.
 //! Neither Agent Job nor Admin may mutate canonical Markdown outside these cores.
-mod index;
-mod vault;
+pub(crate) mod vault;
+use crate::database::knowledge_index as index;
 
 use serde::{Deserialize,Serialize};
 use std::{path::{Path,PathBuf},sync::Arc};

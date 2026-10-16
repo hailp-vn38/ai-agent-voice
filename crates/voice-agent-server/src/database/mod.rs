@@ -9,6 +9,7 @@ use thiserror::Error;
 
 pub(crate) mod background;
 pub(crate) mod core_plugins;
+pub(crate) mod knowledge_index;
 pub mod history;
 mod identity;
 pub(crate) mod jobs;
