@@ -154,17 +154,35 @@ pub(super) async fn memory_rebuild(State(state): State<AppState>, req: Request) 
         Err(e) => failure(&req, e),
     }
 }
+#[derive(Deserialize)]
+pub(super) struct MemoryQuery {
+    q: Option<String>,
+    limit: Option<i64>,
+}
 pub(super) async fn memory_recall(
     State(state): State<AppState>,
-    Query(q): Query<SearchQuery>,
+    Query(q): Query<MemoryQuery>,
     req: Request,
 ) -> Response {
     match runtime(&state).await {
-        Ok(core) => match core.memory.recall(&q.q, q.limit.unwrap_or(20)).await {
-            Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
-            Err(e) => failure(&req, e),
+        Ok(core) => {
+            if let Some(query) = q.q.as_deref().filter(|q| !q.trim().is_empty()) {
+                match core.memory.recall(query, q.limit.unwrap_or(20)).await {
+                    Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
+                    Err(e) => failure(&req,e),
+                }
+            } else {
+                let limit=q.limit.unwrap_or(100);
+                let Ok(limit)=usize::try_from(limit) else {
+                    return error(&req, StatusCode::BAD_REQUEST,"invalid_arguments");
+                };
+                match core.memory.admin_list(limit).await {
+                    Ok(items)=>Json(serde_json::json!({"items":items})).into_response(),
+                    Err(e)=>failure(&req,e)
+                }
+            }
         },
-        Err(e) => failure(&req, e),
+        Err(e) => failure(&req,e)
     }
 }
 pub(super) async fn memory_summary(State(state): State<AppState>, req: Request) -> Response {
