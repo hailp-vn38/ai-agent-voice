@@ -32,7 +32,7 @@ fn failure(req: &Request, e: KnowledgeError) -> Response {
 }
 #[derive(Deserialize)]
 pub(super) struct SearchQuery {
-    q: String,
+    q: Option<String>,
     limit: Option<i64>,
 }
 #[derive(Deserialize)]
@@ -65,15 +65,24 @@ pub(super) async fn knowledge_search(
     req: Request,
 ) -> Response {
     match runtime(&state).await {
-        Ok(core) => match core
-            .knowledge
-            .admin_search(&q.q, q.limit.unwrap_or(20))
-            .await
-        {
-            Ok(items) => Json(serde_json::json!({"items":items})).into_response(),
-            Err(e) => failure(&req, e),
+        Ok(core) => {
+            if let Some(query)=q.q.as_deref().filter(|query|!query.trim().is_empty()) {
+                match core.knowledge.admin_search(query,q.limit.unwrap_or(20)).await {
+                    Ok(items)=>Json(serde_json::json!({"items":items})).into_response(),
+                    Err(e)=>failure(&req,e)
+                }
+            } else {
+                let limit=q.limit.unwrap_or(100);
+                let Ok(limit)=usize::try_from(limit) else {
+                    return error(&req,StatusCode::BAD_REQUEST,"invalid_arguments");
+                };
+                match core.knowledge.admin_list(limit).await {
+                    Ok(items)=>Json(serde_json::json!({"items":items})).into_response(),
+                    Err(e)=>failure(&req,e)
+                }
+            }
         },
-        Err(e) => failure(&req, e),
+        Err(e)=>failure(&req,e)
     }
 }
 pub(super) async fn knowledge_read(
