@@ -34,7 +34,12 @@ pub(crate) async fn invoke(
         }
         return Ok(result);
     }
-    let Invocation {choice,arguments,job_id,..} = invocation;
+    let Invocation {
+        choice,
+        arguments,
+        job_id,
+        ..
+    } = invocation;
     let maximum = arguments["max_chars"].as_u64().unwrap_or(16000).min(16000) as usize;
     let mut result = match choice.operation.as_str() {
         "data.json_query" => {
