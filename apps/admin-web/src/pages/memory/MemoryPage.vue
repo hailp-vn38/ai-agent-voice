@@ -179,7 +179,7 @@ onMounted(() => void refresh())
         </label>
         <div class="flex flex-wrap gap-2">
           <Button type="submit" :disabled="busy || !title.trim() || !body.trim() || !sourceRef.trim()">{{ t('memoryV3.save') }}</Button>
-          <Button v-if="selected && selected.status !== 'forgotten'" type="button" variant="destructive" :disabled="busy" @click="forget">
+          <Button v-if="selected && selected.status !== 'forgotten'" type="button" variant="outline" class="border-danger/40 text-danger" :disabled="busy" @click="forget">
             {{ t('memoryV3.forget') }}
           </Button>
         </div>
