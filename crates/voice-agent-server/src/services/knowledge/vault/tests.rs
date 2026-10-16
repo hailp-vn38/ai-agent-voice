@@ -6,7 +6,7 @@
         let first=Record {
             id:"wiki_revision".into(),kind:"wiki".into(),title:"T".into(),
             body:"previous bytes".into(),revision:1,status:"draft".into(),
-            scope:None,confirmed:false,source_ref:None
+            scope:None,confirmed:false,source_ref:None,draft_base_revision:None
         };
         vault.commit(&first,None).await.unwrap();
         let history=root.join("revisions").join(&first.id);
@@ -32,6 +32,7 @@
             scope: None,
             confirmed: false,
             source_ref: Some("src_1:1".into()),
+            draft_base_revision: None,
         };
         let encoded = encode(&p).unwrap();
         let decoded = parse(&encoded).unwrap();

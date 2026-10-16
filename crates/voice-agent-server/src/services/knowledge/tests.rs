@@ -336,6 +336,7 @@
             scope: Some("owner".into()),
             confirmed: false,
             source_ref: Some("admin".into()),
+            draft_base_revision: None,
         };
         let scanned = vault::Scanned {
             record: rec,

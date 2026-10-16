@@ -82,6 +82,7 @@ pub struct KnowledgeCore {
     vault: MarkdownVault,
     index: SearchIndex,
     sources: SourceVault,
+    drafts: MarkdownVault,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -106,6 +107,7 @@ impl Runtime {
         let knowledge_root = data_root.join("knowledge");
         let memory_root = data_root.join("memory");
         let knowledge_vault = MarkdownVault::new(knowledge_root.clone(), "wiki").await?;
+        let draft_vault = MarkdownVault::new(knowledge_root.clone(), "drafts").await?;
         let source_vault = SourceVault::open(&knowledge_root).await?;
         let memory_vault = MarkdownVault::new(memory_root.clone(), "facts").await?;
         let knowledge_index = SearchIndex::open(&knowledge_root, Domain::Knowledge).await?;
@@ -130,6 +132,7 @@ impl Runtime {
                 vault: knowledge_vault,
                 index: knowledge_index,
                 sources: source_vault,
+                drafts: draft_vault,
             },
             memory: MemoryCore {
                 vault: memory_vault,
@@ -248,6 +251,7 @@ impl KnowledgeCore {
             scope: None,
             confirmed: false,
             source_ref: input.source_ref,
+            draft_base_revision: None,
         };
         self.index.mark_stale().await?;
         self.vault.commit(&rec, previous.as_ref()).await?;
@@ -400,6 +404,7 @@ impl MemoryCore {
             scope: Some("owner".into()),
             confirmed: input.confirmed,
             source_ref: input.source_ref,
+            draft_base_revision: None,
         };
         self.index.mark_stale().await?;
         self.vault.commit(&rec, previous.as_ref()).await?;
