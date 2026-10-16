@@ -91,6 +91,7 @@ impl Runtime {
         let memory_vault = MarkdownVault::new(memory_root.clone(), "facts").await?;
         let knowledge_index = SearchIndex::open(&knowledge_root, Domain::Knowledge).await?;
         let memory_index = SearchIndex::open(&memory_root, Domain::Memory).await?;
+        let _startup_guard=vault::WRITE_LOCK.lock().await;
         // Startup reconciliation makes prior crash/power-loss repairs explicit.
         knowledge_index.reconcile(&knowledge_vault).await?;
         memory_index.reconcile(&memory_vault).await?;

@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 const MAX_PAGE_BYTES: usize = 512 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
+// Process-wide lock shared across Admin and Job runtime instances.
+pub(crate) static WRITE_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Record {
@@ -40,7 +42,7 @@ pub struct Scanned {
 pub struct MarkdownVault {
     root: PathBuf,
     folder: &'static str,
-    pub(crate) writer: Mutex<()>,
+    pub(crate) writer: &'static Mutex<()>,
 }
 impl MarkdownVault {
     pub async fn new(root: PathBuf, folder: &'static str) -> Result<Self, Error> {
@@ -55,7 +57,7 @@ impl MarkdownVault {
         Ok(Self {
             root,
             folder,
-            writer: Mutex::new(()),
+            writer: &WRITE_LOCK,
         })
     }
     pub fn root(&self) -> &Path {
@@ -99,6 +101,8 @@ impl MarkdownVault {
             let old = fs::read(&old_path).await?;
             let revision_dir = self.root.join("revisions").join(&record.id);
             fs::create_dir_all(&revision_dir).await?;
+            let info=fs::symlink_metadata(&revision_dir).await?;
+            if info.file_type().is_symlink() || !info.is_dir(){return Err(Error::InvalidPath);}
             let history = revision_dir.join(format!("{}.md", previous.revision));
             // A replay must never destroy a previously retained revision.
             match fs::OpenOptions::new()
