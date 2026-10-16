@@ -116,3 +116,15 @@ An authenticated Admin can list bounded canonical Wiki metadata without a search
 These are corrections within the existing KnowledgeCore/MemoryCore interfaces and three-database decision, not a second publishing engine.
 
 The top-level `.knowledge_v3_initialized` and `.memory_v3_initialized` guards are written in the durable application SQLite's parent directory after successful initialization. They detect the **entire** vault root disappearing, while the in-vault markers detect missing canonical collections or staged draft directories. Neither marker replaces backups. A vault missing at restart is rejected rather than silently re-created.
+
+## QMD-inspired lexical retrieval and passage projection
+
+P1/P2 are implemented in the existing Rust modules, without a QMD runtime:
+
+- `database/knowledge_lex.rs`: a bounded and Unicode-normalized FTS5 query compiler converts ordinary terms and quoted/compound phrases into SQL-parameterized MATCH expressions. Conjunctive matching is preferred; a disjunctive fallback executes only if no permitted strict match exists. Title is weighted above body using BM25; excerpts are drawn from FTS5 snippets near the query, not the first 600 characters.
+- `services/knowledge/markdown_chunker.rs`: a pure Markdown analyzer makes passages with heading path, UTF-8 byte offsets, 1-based inclusive body line interval, deterministic ordinal/hash, and bounded overlap. Heading/blank paragraph/list cuts score above arbitrary line breaks; fenced code is not split. A very large code fence can exceed the nominal chunk size; whole Markdown pages remain size-bounded by the existing vault.
+- `database/knowledge_index.rs`: SQLx migration `knowledge/0002_markdown_passages.sql` stores chunk records and chunk FTS in the **existing** `knowledge_index.db`. Publish/rebuild updates page, all derived passages and index health in one SQLite transaction. Query returns one best passage per verified canonical Wiki ID before applying the result limit.
+- The `knowledge.search` output retains stable `id/title/revision/excerpt/source_ref` and adds optional `start_line/end_line/heading_path`; existing frozen operation names/contracts and the separate verified line-read flow stay supported. Staged drafts do not enter the Agent passage index; Memory remains scoped, confirmed, and unchunked.
+- Per-domain indexer versions: Knowledge 2, Memory 1. On migration from Knowledge 1, the version mismatch causes automatic rebuild of derived passages while preserving canonical Wiki and Source files. The index remains rebuildable, and failure closes reads as stale.
+
+QMD inspired this algorithmic approach, not a code copy. See [comparison](qmd-markdown-implementation-review.md) and [ADR 0121](../adr/0121-qmd-inspired-markdown-passages.md). Embedding, sqlite-vec, RRF and LLM reranking remain explicitly unimplemented pending evaluation.

@@ -51,3 +51,9 @@ The filesystem now distinguishes accepted Wiki `wiki/<id>.md` from unaccepted re
 The editor uses complete, size-bounded Markdown reads. Limited line-range reads are never fed into a full-document save operation. A canonical vault that existed in the previous process carries `.vault_initialized` and must fail closed on restart if its document folder is missing. A separate `.drafts_initialized` protects the staged drafts directory. Crash-safe immutable history uses temporary-file fsync plus atomic rename and directory fsync. These markers are not an authorization or backup mechanism.
 
 An outer pair of initialization markers in the main database directory (`.knowledge_v3_initialized` and `.memory_v3_initialized`) additionally protects against **whole vault** removal, where an in-vault marker would disappear with the data. Initialization writes these markers only after a successful open/reconciliation. This does not require a fourth database or cross-index transaction.
+
+## Passage index migration (Knowledge-only)
+
+`knowledge/0002_markdown_passages.sql` adds `kb_chunks` (stable Wiki ID, accepted revision, ordinal, heading path, byte/line ranges, content hash and passage body) and `kb_chunks_fts` (FTS5 for title, heading and passage text). These remain *derived* rows and live in `knowledge_index.db`, not the main app or `memory_index.db`. The Knowledge indexer version increments to 2; the Memory indexer stays 1.
+
+A complete canonical scan plus SQL transaction replaces each changed Wiki's old passage/FTS rows and commits `ready` together with the new revision. Force rebuild first clears derived passage tables inside that same transaction. Deletion on successful complete scan retires both documents and their passages. Rollback keeps the prior projection and the search health marker stale. Staged Wiki draft files are excluded from the Agent chunk index; Memory facts are intentionally not chunked.

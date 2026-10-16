@@ -47,3 +47,17 @@ Binary PDF/DOCX/image/audio/video ingest, source extraction adapters, automatic 
 10. Confirm both Admin and Background Job use the same Knowledge Runtime cell/pools in a running server; concurrent searches and updates must not create competing runtimes.
 
 11. After a successful server initialization, stop the server and temporarily rename the **entire** `knowledge/` folder while leaving the main SQLite database intact. Restart must reject the missing vault because the top-level `.knowledge_v3_initialized` guard remains. Restore the folder and confirm the existing Wiki is still present.
+
+## QMD-inspired Markdown query/passage regression
+
+Run the repository's test wrapper (rather than bare `cargo test`) for the pure modules and Core regression tests:
+
+```bash
+scripts/agent-test.sh targeted markdown_chunker
+scripts/agent-test.sh targeted knowledge_lex
+scripts/agent-test.sh targeted qmd_markdown_passages
+scripts/agent-test.sh targeted qmd_lexical_fallback
+scripts/agent-test.sh full
+```
+
+Cover safe FTS5 syntax with Unicode Vietnamese, quoted phrases, `DEC-0054` / `gpt-4`, token-prefix semantics, and invalid input. Verify relevant passage is selected when the match is far beyond the first 600 characters, body-relative `start_line/end_line` span the evidence, valid `source_ref` is attached, and an index rebuild/restart reproduces the result. Check that a draft Wiki, a staged edit, or an unconfirmed/forgotten Memory fact is never exposed through Agent search (including fallback OR). Confirm the migration uses only `knowledge_index.db` and that a complete forced rebuild recreates chunk FTS.

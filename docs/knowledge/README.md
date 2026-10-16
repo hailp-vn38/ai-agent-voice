@@ -12,6 +12,7 @@ Architecture is **file-first hybrid**. Knowledge and Memory are separate domain 
 - [ADRs 0117–0120](../adr/0117-knowledge-core-plugin-adapter.md)
 - [Ponytail simplifications](ponytail-remediation.md)
 - [Verification and remaining gates](verification-v3.md)
+- [ADR 0121: QMD-style Markdown passages](../adr/0121-qmd-inspired-markdown-passages.md)
 - [QMD Markdown indexing and retrieval comparison](qmd-markdown-implementation-review.md)
 
 Reference patterns: Javis OS (distinct Wiki/Memory), QMD (incremental filesystem scan, FTS5/BM25, metadata and range reads). We do **not** embed QMD's JavaScript runtime and do not treat QMD's content-hash docid as a stable page ID.
@@ -30,3 +31,7 @@ Job Core Plugin read-only integration is available as `core.knowledge` (`knowled
 - Verification: GitHub Actions is the executable Rust/TypeScript validation source. See branch CI check before merging; no local Rust toolchain available in this workspace.
 
 Remediation after the two-axis code review: accepted Wiki revision editing uses a distinct staged Markdown folder and no new database; canonical roots are protected against restart-time mass-pruning, and Agent read results carry source provenance. The Core implementations and tests now live in separate modules/files, preserving existing public interface paths.
+
+## QMD-inspired Markdown retrieval implementation
+
+The Rust Knowledge index now has safe lexical FTS5 query compilation, title-weighted BM25, relevant passages and body-relative line citations. Verified canonical Wiki documents are split by headings/paragraphs with fenced-code awareness into `kb_chunks` / `kb_chunks_fts` in `knowledge_index.db` (migration `0002_markdown_passages.sql`, indexer version 2). The memory index remains document-level (version 1). Job operation names, plugin registry, source verification and the three-database file-first lifecycle remain unchanged. See [ADR 0121](../adr/0121-qmd-inspired-markdown-passages.md). Embedding/hybrid search remains deferred.

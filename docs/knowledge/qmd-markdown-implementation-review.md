@@ -1,6 +1,6 @@
 # Đối chiếu QMD với Knowledge + Memory V3: xử lý Markdown
 
-> Ngày kiểm tra: 2026-10-16. Nguồn QMD được khóa tại commit [`86d2365d`](https://github.com/tobi/qmd/commit/86d2365d17fc682e491c2c53d1e4a884aee8682a). Đối chiếu Rust tại commit [`63473a0b`](https://github.com/hailp-vn38/ai-agent-voice/commit/63473a0bb5ded790ce8b420132b80587e6928909) của branch `feat/knowledge-memory-v3-file-first-index`. Đây là **báo cáo thiết kế, chưa triển khai thay đổi search/chunking**.
+> Ngày kiểm tra: 2026-10-16. Nguồn QMD được khóa tại commit [`86d2365d`](https://github.com/tobi/qmd/commit/86d2365d17fc682e491c2c53d1e4a884aee8682a). Đối chiếu Rust tại commit [`63473a0b`](https://github.com/hailp-vn38/ai-agent-voice/commit/63473a0bb5ded790ce8b420132b80587e6928909) của branch `feat/knowledge-memory-v3-file-first-index`. Đây là **báo cáo đánh giá trước triển khai**. P1 lexical retrieval và P2 Markdown passages đã được hiện thực tiếp theo trên branch này; xem [ADR 0121](../adr/0121-qmd-inspired-markdown-passages.md) để biết thay đổi thực tế. P3 semantic retrieval vẫn chưa triển khai.
 
 ## Kết luận
 
@@ -89,3 +89,10 @@ Chỉ khi bộ đánh giá chỉ ra keyword search bỏ sót đáng kể (paraph
 
 - QMD upstream: [README](https://github.com/tobi/qmd/blob/86d2365d17fc682e491c2c53d1e4a884aee8682a/README.md), [src/store.ts](https://github.com/tobi/qmd/blob/86d2365d17fc682e491c2c53d1e4a884aee8682a/src/store.ts), [src/collections.ts](https://github.com/tobi/qmd/blob/86d2365d17fc682e491c2c53d1e4a884aee8682a/src/collections.ts), [src/metadata.ts](https://github.com/tobi/qmd/blob/86d2365d17fc682e491c2c53d1e4a884aee8682a/src/metadata.ts), [LICENSE](https://github.com/tobi/qmd/blob/86d2365d17fc682e491c2c53d1e4a884aee8682a/LICENSE).
 - QMD công bố MIT License. Nếu sao chép/điều chỉnh mã nguồn thay vì tự viết lại thuật toán, phải giữ copyright và license notice theo điều khoản MIT. Báo cáo này chỉ tham chiếu phương pháp; chưa chép mã nguồn vào server.
+
+## Trạng thái sau triển khai (2026-10-16)
+
+- Đã triển khai trong Rust: bounded LexQuery compiler với AND/OR fallback, BM25 ưu tiên title, FTS5 snippets theo query.
+- Đã triển khai: pure Markdown chunker (UTF-8 byte/line offsets, heading path, overlap, fenced code); `kb_chunks` + `kb_chunks_fts` là projection trong Knowledge SQLite, publication/rebuild có transaction và đổi indexer version.
+- Đã cập nhật output `knowledge.search` thêm các trường optional `start_line`, `end_line`, `heading_path`; Memory vẫn không được chunk.
+- Chưa triển khai: embeddings, hybrid RRF, rerank/query expansion. Những mục đề xuất P3 và các yêu cầu benchmark vẫn còn hiệu lực.

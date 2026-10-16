@@ -49,3 +49,20 @@ flowchart LR
 ```
 
 Admin and Job reuse one Rust Runtime; the Job tools cannot read staged drafts. The Knowledge index is marked stale when immutable Source evidence disappears or fails SHA256 validation. Memory index health is independent.
+
+## QMD-inspired Markdown passage indexing (Knowledge-only)
+
+```mermaid
+flowchart LR
+    A[Verified canonical Wiki Markdown] --> B[MarkdownChunker]
+    B --> C[UTF-8 passage offsets + headings]
+    C --> D[SQLx transaction: kb_chunks + kb_chunks_fts]
+    D --> E[Knowledge Index ready]
+    F[Agent knowledge.search] --> G[Safe LexQuery compiler]
+    G --> H[BM25 passage retrieval, one per Wiki]
+    E --> H
+    H --> I[Canonical Wiki + Source verification]
+    I --> J[Excerpt + source_ref + line span]
+```
+
+The existing source-confirmation policy remains authoritative; no Agent can retrieve staged drafts. `memory.recall` uses the same safe lexical compilation but stays at confirmed active owner-Fact granularity. No new database, wire protocol, or background Agent runtime is introduced.
