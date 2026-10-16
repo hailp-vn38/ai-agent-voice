@@ -1,5 +1,5 @@
 name: Knowledge V3 One-time Rust Format
-# Final format sweep after Core catalog regression and Memory CAS fixes.
+# Final format sweep after adding Admin-only Memory Fact inventory.
 on:
   push:
     branches:
