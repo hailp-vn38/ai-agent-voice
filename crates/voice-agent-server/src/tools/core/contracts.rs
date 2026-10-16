@@ -86,7 +86,7 @@ pub(crate) fn contract(choice: &FrozenChoice) -> Result<Value, PluginError> {
                 "duration_ms":{"type":"integer","minimum":1},
                 "sample_rate_hz":{"type":"integer","minimum":1},
                 "size_bytes":{"type":"integer","minimum":45}
-            },"required":["filename","media_type","duration_ms","sample_rate_hz","size_bytes"],"additionalProperties":false})
+            },"required":["filename","media_type","duration_ms","sample_rate_hz","size_bytes"],"additionalProperties":false}),
         ),
         "web.fetch" => (
             "Fetch HTTP(S) text in pages of at most max_chars characters; continue with next_offset until null.",
