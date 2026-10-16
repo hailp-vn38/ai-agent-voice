@@ -49,6 +49,7 @@ impl TtsWorkerRuntime {
         )
     }
     /// One-shot Job synthesis; reserved Voice capacity is never consumed.
+    pub fn cleanup_grace(&self) -> std::time::Duration { self.config.cleanup_grace }
     pub fn has_background_capacity(&self) -> bool {
         self.admission.has_background_capacity()
     }
