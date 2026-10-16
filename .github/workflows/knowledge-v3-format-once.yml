@@ -1,5 +1,5 @@
 name: Knowledge V3 One-time Rust Format
-# Final format sweep after adding Admin-only Memory Fact inventory.
+# Final format sweep after adding Admin-only Wiki Page inventory and review tests.
 on:
   push:
     branches:
