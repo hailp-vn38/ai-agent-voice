@@ -1,7 +1,7 @@
 use super::contract;
 use crate::services::background::{
     JobEngine,
-    plugins::{FrozenChoice, InvokeResult, PluginError},
+    plugins::{Invocation, InvokeResult, PluginError},
 };
 use serde_json::{Value, json};
 
@@ -13,10 +13,12 @@ pub(super) fn take_chars(input: &str, cap: usize) -> (String, bool) {
 
 pub(crate) async fn invoke(
     engine: &JobEngine,
-    choice: &FrozenChoice,
-    arguments: Value,
-    job_id: &str,
+    invocation: Invocation<'_>,
 ) -> Result<InvokeResult, PluginError> {
+    if invocation.choice.operation == "tts.synthesize" {
+        return super::tts::synthesize(engine, invocation).await;
+    }
+    let Invocation {choice,arguments,job_id,..} = invocation;
     let definition = contract(choice)?;
     let input_validator = jsonschema::validator_for(&definition["input_schema"])
         .map_err(|_| PluginError::WorkerProtocolError)?;
