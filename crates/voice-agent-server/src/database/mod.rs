@@ -13,6 +13,7 @@ pub mod history;
 mod identity;
 pub(crate) mod jobs;
 pub(crate) mod knowledge_index;
+mod knowledge_lex;
 mod mcp;
 mod mutations;
 pub mod notifications;
