@@ -14,3 +14,5 @@
 12. [Plugin Settings & Manual Operation V3](12-plugin-settings-and-manual-operation-v3.md)
 
 Mỗi flow mô tả boundary, sequence, invariants và test contract. Khi hành vi runtime thay đổi, tài liệu flow tương ứng phải được cập nhật cùng PR.
+
+13. [Core TTS Provider → WAV Job Artifact V3](13-core-tts-v3.md)
