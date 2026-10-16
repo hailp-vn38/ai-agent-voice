@@ -18,7 +18,7 @@
 | MarkdownVault (internal) | read/write(expected_revision)/scan | frontmatter validation, stable identity, lock, snapshot, atomic replacement |
 | SearchIndex (internal) | rebuild/search/health | domain-specific SQL schema, filesystem/hash reconciliation and FTS5 |
 | Admin adapter | authenticated Knowledge/Memory endpoints | delegates to the cores; no independent SQL/FS mutations |
-| Job Core Plugin adapter (later) | frozen typed operations | delegates to same cores; no new runtime or tool registry |
+| Job Core Plugin read adapter | frozen typed safe-read operations (disabled by default) | delegates to same cores; no new runtime or tool registry |
 
 ## On-disk shape
 
@@ -78,7 +78,7 @@ Never return a stale `MEMORY.md` after a forget; if summary regeneration fails, 
 
 - P0: distinct Rust cores, canonical markdown writes/revision CAS, independent SQLx migrations, FTS search/recall, rebuild and tests.
 - P1: hardened original Source import and provenance, Admin UI Pages/Sources/Facts/Summary with index diagnostics.
-- P2: `core.knowledge` / `core.memory` as frozen operations in current Job V3 catalog, write permission gate, voice summary wiring and root/child ingest.
+- P2: read-only `core.knowledge` / `core.memory` frozen operations in current Job V3 catalog (implemented); Agent write proposal/approval gate, Voice summary wiring and Root/Child ingest (not implemented).
 - P3: formats, optional FTS chunking, embeddings/reranking, optional Git sync, graph/quality flows.
 
 Only label a stage complete when its acceptance is exercised, rather than inferring that migrations imply full product integration. See [database-layout-v3.md](database-layout-v3.md).
@@ -90,3 +90,7 @@ The Rust static Core catalog adds two disabled-by-default groups `core.knowledge
 ## Source-verified publication slice
 
 Authenticated Admin can import bounded UTF-8 Markdown as immutable v1 Source (`raw/src_UUID/1/{original.md,extracted.md,manifest.json}`) and publish a draft only after Rust verifies `source_ref` (`src_UUID:1`), original SHA256, provenance and expected revision. Agent Job V3 `knowledge.search` and `knowledge.read` refuse drafts, while Admin can search/read drafts. PDF/image/video extraction, semantic chunking and Job-driven publication remain separate work.
+
+## Admin-only Memory fact inventory
+
+`GET /api/admin/memory/facts` without `q` lists bounded canonical fact metadata from Markdown, including `needs_review` and `forgotten`, so pending entries can be confirmed after a restart. With `q`, the endpoint uses the confirmed/active search projection. This Admin listing is **not** a Core Job operation. Forgotten entries are omitted from `memory.recall` and the derived `MEMORY.md`, and cannot be reactivated by editing the same ID. A new fact requires a new ID and explicit confirmation. All historical revision files remain retained unless an independent purge policy is implemented.
