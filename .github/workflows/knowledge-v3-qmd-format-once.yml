@@ -1,0 +1,31 @@
+name: Knowledge V3 QMD Rustfmt (temporary)
+on:
+  push:
+    branches: [feat/knowledge-memory-v3-file-first-index]
+    paths: ['.github/workflows/knowledge-v3-qmd-format-once.yml']
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/knowledge-memory-v3-file-first-index
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt
+      - name: Format tracked Rust source then push
+        run: |
+          cargo fmt --all
+          git diff --name-only
+          if git diff --name-only | grep -v '\.rs$'; then
+            echo 'Unexpected non-Rust formatting change' >&2
+            exit 1
+          fi
+          git add -u
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'style(knowledge): format QMD-inspired Markdown indexing modules'
+            git push origin HEAD:feat/knowledge-memory-v3-file-first-index
+          fi
