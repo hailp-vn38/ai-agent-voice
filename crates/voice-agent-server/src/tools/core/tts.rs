@@ -30,7 +30,7 @@ impl NativeAttempt<'_> {
     async fn stop_and_ack(&mut self) -> bool {
         let Some(id) = self.active else { return true };
         if self.runtime.cancel(id).is_err() { return false }
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + self.runtime.cleanup_grace();
         while Instant::now() < deadline {
             match self.runtime.poll(id) {
                 Ok(Some(TtsWorkerEvent::Finished | TtsWorkerEvent::Failed | TtsWorkerEvent::Cancelled)) => {
@@ -182,7 +182,6 @@ pub(crate) async fn synthesize(
                 break;
             }
             Ok(Some(TtsWorkerEvent::Failed | TtsWorkerEvent::Cancelled)) | Err(_) => {
-                native.active=None;
                 failure=Some(PluginError::PluginRuntimeError);
                 break;
             }
@@ -218,7 +217,7 @@ pub(crate) async fn synthesize(
     Ok(InvokeResult{
         result:serde_json::json!({
             "filename":"speech.wav","media_type":"audio/wav",
-            "duration_ms":samples*1000/rate as u64,
+            "duration_ms":(samples*1000/rate as u64).max(1),
             "sample_rate_hz":rate,"size_bytes":size
         }),
         artifacts:vec![ArtifactData{
