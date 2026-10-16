@@ -133,6 +133,7 @@ async function save() {
     notice.value = t('knowledgeV3.saved')
     await refreshHealth()
     if (q.value.trim()) await search()
+    else await listPages()
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
