@@ -15,9 +15,13 @@ pub(super) async fn configured_pin(
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT v.public_json,v.schema_digest FROM plugin_configs c
          JOIN plugin_config_versions v ON c.plugin_key=v.plugin_key
-           AND c.current_revision=v.revision WHERE c.plugin_key='core.tts'"
-    ).fetch_optional(&mut *tx).await?;
-    let Some((settings, digest)) = row else { return Ok(None) };
+           AND c.current_revision=v.revision WHERE c.plugin_key='core.tts'",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((settings, digest)) = row else {
+        return Ok(None);
+    };
     if digest != crate::tools::core::tts_settings_digest() {
         return Ok(None);
     }
@@ -26,7 +30,7 @@ pub(super) async fn configured_pin(
     let Some(reference) = values.get("provider_ref").and_then(|value| value.as_str()) else {
         return Ok(None);
     };
-    match pin(tx,config,reference).await {
+    match pin(tx, config, reference).await {
         Ok(provider) => Ok(Some(provider)),
         Err(JobError::DatabaseUnavailable) => Err(JobError::DatabaseUnavailable),
         Err(_) => Ok(None),
@@ -39,20 +43,23 @@ pub(super) async fn pin(
     config: &AppConfig,
     reference: &str,
 ) -> Result<ProviderPin, JobError> {
-    let parsed = ProviderRef::parse(reference, Some("tts"))
-        .map_err(|_| JobError::InvalidArguments)?;
+    let parsed =
+        ProviderRef::parse(reference, Some("tts")).map_err(|_| JobError::InvalidArguments)?;
     let (incarnation, revision, adapter, configuration) = match parsed.origin {
         ProviderOrigin::Config => {
-            let row = parsed.snapshot(config).map_err(|_| JobError::CapabilityUnavailable)?;
+            let row = parsed
+                .snapshot(config)
+                .map_err(|_| JobError::CapabilityUnavailable)?;
             (0, row.revision, row.adapter, row.config_json)
         }
-        ProviderOrigin::Database => {
-            sqlx::query_as::<_, (i64,i64,String,String)>(
-                "SELECT id,revision,adapter,config_json FROM providers
-                 WHERE key=? AND type='tts' AND enabled=1"
-            ).bind(&parsed.key).fetch_optional(&mut *tx).await?
-                .ok_or(JobError::CapabilityUnavailable)?
-        }
+        ProviderOrigin::Database => sqlx::query_as::<_, (i64, i64, String, String)>(
+            "SELECT id,revision,adapter,config_json FROM providers
+                 WHERE key=? AND type='tts' AND enabled=1",
+        )
+        .bind(&parsed.key)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(JobError::CapabilityUnavailable)?,
     };
     Ok(ProviderPin {
         reference: parsed.public_key(),
@@ -67,10 +74,17 @@ pub(super) async fn insert_pin(
     job_id: &str,
     pin: &ProviderPin,
 ) -> Result<(), JobError> {
-    sqlx::query("INSERT INTO job_tts_provider_pins
-      (job_id,provider_ref,incarnation,revision,digest) VALUES(?,?,?,?,?)")
-        .bind(job_id).bind(&pin.reference).bind(pin.incarnation)
-        .bind(pin.revision).bind(&pin.digest).execute(&mut *tx).await?;
+    sqlx::query(
+        "INSERT INTO job_tts_provider_pins
+      (job_id,provider_ref,incarnation,revision,digest) VALUES(?,?,?,?,?)",
+    )
+    .bind(job_id)
+    .bind(&pin.reference)
+    .bind(pin.incarnation)
+    .bind(pin.revision)
+    .bind(&pin.digest)
+    .execute(&mut *tx)
+    .await?;
     Ok(())
 }
 
@@ -82,39 +96,63 @@ impl Database {
         job_id: &str,
     ) -> Result<(crate::database::DesiredProvider, ProviderOrigin, String), JobError> {
         let mut tx = self.pool().acquire().await?;
-        let pinned_row: Option<(String,i64,i64,String)> = sqlx::query_as(
+        let pinned_row: Option<(String, i64, i64, String)> = sqlx::query_as(
             "SELECT provider_ref,incarnation,revision,digest
-             FROM job_tts_provider_pins WHERE job_id=?"
-        ).bind(job_id).fetch_optional(&mut *tx).await?;
-        let (reference,incarnation,revision,old_digest) =
+             FROM job_tts_provider_pins WHERE job_id=?",
+        )
+        .bind(job_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let (reference, incarnation, revision, old_digest) =
             pinned_row.ok_or(JobError::CapabilityUnavailable)?;
-        let current = pin(&mut tx, config, &reference).await
+        let current = pin(&mut tx, config, &reference)
+            .await
             .map_err(|_| JobError::ConfigurationChanged)?;
-        if current.incarnation != incarnation || current.revision != revision
-            || current.digest != old_digest {
+        if current.incarnation != incarnation
+            || current.revision != revision
+            || current.digest != old_digest
+        {
             return Err(JobError::ConfigurationChanged);
         }
-        let parsed = ProviderRef::parse(&reference,Some("tts"))
+        let parsed = ProviderRef::parse(&reference, Some("tts"))
             .map_err(|_| JobError::CapabilityUnavailable)?;
         let snapshot = match parsed.origin {
-            ProviderOrigin::Config => parsed.snapshot(config)
+            ProviderOrigin::Config => parsed
+                .snapshot(config)
                 .map_err(|_| JobError::ConfigurationChanged)?,
             ProviderOrigin::Database => {
-                let (id,key,kind,adapter,config_json,revision,credential):
-                    (i64,String,String,String,String,i64,Option<String>) =
-                    sqlx::query_as("SELECT id,key,type,adapter,config_json,revision,credential_json
-                                   FROM providers WHERE key=? AND type='tts' AND enabled=1")
-                    .bind(&parsed.key).fetch_optional(&mut *tx).await?
-                    .ok_or(JobError::ConfigurationChanged)?;
-                let secret_ref=crate::database::credentials::reference(
-                    &format!("provider:{key}"),credential.as_deref(),
-                    crate::database::secrets::provider_secret_env(&key,&adapter)
+                let (id, key, kind, adapter, config_json, revision, credential): (
+                    i64,
+                    String,
+                    String,
+                    String,
+                    String,
+                    i64,
+                    Option<String>,
+                ) = sqlx::query_as(
+                    "SELECT id,key,type,adapter,config_json,revision,credential_json
+                                   FROM providers WHERE key=? AND type='tts' AND enabled=1",
+                )
+                .bind(&parsed.key)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(JobError::ConfigurationChanged)?;
+                let secret_ref = crate::database::credentials::reference(
+                    &format!("provider:{key}"),
+                    credential.as_deref(),
+                    crate::database::secrets::provider_secret_env(&key, &adapter),
                 );
-                crate::database::DesiredProvider{
-                    id,key,kind,adapter,config_json,revision,secret_ref
+                crate::database::DesiredProvider {
+                    id,
+                    key,
+                    kind,
+                    adapter,
+                    config_json,
+                    revision,
+                    secret_ref,
                 }
             }
         };
-        Ok((snapshot,parsed.origin,parsed.key))
+        Ok((snapshot, parsed.origin, parsed.key))
     }
 }
