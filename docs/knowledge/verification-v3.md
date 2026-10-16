@@ -5,14 +5,14 @@ Current scope: file-first Markdown Wiki/Memory, two independently migrated/rebui
 ## Rust checks
 
 ```bash
-cargo fmt --check
-python3 -m unittest discover -s scripts/tests -p test_sqlx_placement.py
-python3 scripts/check-sqlx-placement.py
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test -p voice-agent-server --lib services::knowledge
-cargo test -p voice-agent-server --lib tools::core
-cargo test -p voice-agent-server --lib services::background::tests::core_policy
-cargo test --workspace
+scripts/agent-test.sh run -- cargo fmt --check
+scripts/agent-test.sh run -- python3 -m unittest discover -s scripts/tests -p test_sqlx_placement.py
+scripts/agent-test.sh run -- python3 scripts/check-sqlx-placement.py
+scripts/agent-test.sh run -- cargo clippy --all-targets --all-features -- -D warnings
+scripts/agent-test.sh targeted services::knowledge
+scripts/agent-test.sh targeted tools::core
+scripts/agent-test.sh targeted services::background::tests::core_policy
+scripts/agent-test.sh full
 ```
 
 The production SQLx queries must remain in `src/database/knowledge_index.rs`, not under `services/`. The application SQLx migrations apply only to the main DB; Knowledge and Memory indices have separate `sqlx::migrate!` roots.
@@ -20,11 +20,10 @@ The production SQLx queries must remain in `src/database/knowledge_index.rs`, no
 ## Admin Web checks
 
 ```bash
-cd apps/admin-web
-npm ci
-npm run typecheck
-npm test
-npm run build
+npm --prefix apps/admin-web ci
+scripts/agent-test.sh web typecheck
+scripts/agent-test.sh web test
+scripts/agent-test.sh web build
 ```
 
 ## Manual acceptance

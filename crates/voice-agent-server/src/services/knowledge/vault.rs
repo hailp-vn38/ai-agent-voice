@@ -359,27 +359,4 @@ pub fn parse(text: &str) -> Result<Record, Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn round_trip_and_no_path_escape() {
-        let p = Record {
-            id: "wiki_1".into(),
-            kind: "wiki".into(),
-            title: "Vietnamese: Trí nhớ".into(),
-            body: "# Welcome\nText".into(),
-            revision: 1,
-            status: "draft".into(),
-            scope: None,
-            confirmed: false,
-            source_ref: Some("src_1:1".into()),
-        };
-        let encoded = encode(&p).unwrap();
-        let decoded = parse(&encoded).unwrap();
-        assert_eq!(p.id, decoded.id);
-        assert_eq!(p.title, decoded.title);
-        assert_eq!(p.source_ref, decoded.source_ref);
-        assert!(!valid_id("../secret"));
-        assert!(parse("---\nid: x\n---\n").is_err());
-    }
-}
+mod tests;
