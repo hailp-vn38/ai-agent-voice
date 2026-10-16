@@ -21,14 +21,20 @@ fn json_pointer_contract_is_projectable_and_artifact_is_job_scoped() {
 #[test]
 fn web_is_registered_and_persisted_choices_remain_supported() {
     let choices = frozen_choices();
-    let policy = ["core.web", "core.document", "core.data", "core.artifact", "core.tts"]
-        .iter()
-        .map(|id| crate::tools::core::CorePluginSetting {
-            plugin_id: (*id).into(),
-            enabled: 1,
-            revision: 1,
-        })
-        .collect::<Vec<_>>();
+    let policy = [
+        "core.web",
+        "core.document",
+        "core.data",
+        "core.artifact",
+        "core.tts",
+    ]
+    .iter()
+    .map(|id| crate::tools::core::CorePluginSetting {
+        plugin_id: (*id).into(),
+        enabled: 1,
+        revision: 1,
+    })
+    .collect::<Vec<_>>();
     let catalog = bundled_catalog(&policy).unwrap();
     assert_eq!(catalog["total"], 5);
     assert_eq!(catalog["operation_total"], 9);
@@ -120,8 +126,10 @@ fn text_result_preserves_unicode_and_fits_serialized_step_budget() {
 
 #[test]
 fn tts_contract_and_provider_settings_are_bounded() {
-    let raw = frozen_choices().into_iter()
-        .find(|v| v["operation"]=="tts.synthesize").unwrap();
+    let raw = frozen_choices()
+        .into_iter()
+        .find(|v| v["operation"] == "tts.synthesize")
+        .unwrap();
     let contract = contract(&decode(&raw).unwrap()).unwrap();
     let validate = jsonschema::validator_for(&contract["input_schema"]).unwrap();
     assert!(validate.is_valid(&serde_json::json!({"text":"Xin chao"})));
@@ -131,5 +139,5 @@ fn tts_contract_and_provider_settings_are_bounded() {
     let check = jsonschema::validator_for(&schema).unwrap();
     assert!(check.is_valid(&serde_json::json!({"provider_ref":"config:tts:local"})));
     assert!(!check.is_valid(&serde_json::json!({"provider_ref":"tts","voice":"fake"})));
-    assert_eq!(tts_settings_digest().len(),64);
+    assert_eq!(tts_settings_digest().len(), 64);
 }
