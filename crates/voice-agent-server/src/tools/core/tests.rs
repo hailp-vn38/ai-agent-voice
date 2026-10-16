@@ -1,5 +1,6 @@
 use super::execution::take_chars;
 use super::*;
+use serde_json::json;
 #[test]
 fn wiki_core_outputs_include_source_provenance_and_line_origin() {
     let choices = frozen_choices();
