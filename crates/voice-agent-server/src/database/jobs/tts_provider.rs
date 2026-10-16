@@ -26,7 +26,11 @@ pub(super) async fn configured_pin(
     let Some(reference) = values.get("provider_ref").and_then(|value| value.as_str()) else {
         return Ok(None);
     };
-    Ok(pin(tx,config,reference).await.ok())
+    match pin(tx,config,reference).await {
+        Ok(provider) => Ok(Some(provider)),
+        Err(JobError::DatabaseUnavailable) => Err(JobError::DatabaseUnavailable),
+        Err(_) => Ok(None),
+    }
 }
 
 /// Same exact-incarnation semantics as Background LLM, qualified to TTS.
@@ -78,12 +82,12 @@ impl Database {
         job_id: &str,
     ) -> Result<(crate::database::DesiredProvider, ProviderOrigin, String), JobError> {
         let mut tx = self.pool().acquire().await?;
-        let pin: Option<(String,i64,i64,String)> = sqlx::query_as(
+        let pinned_row: Option<(String,i64,i64,String)> = sqlx::query_as(
             "SELECT provider_ref,incarnation,revision,digest
              FROM job_tts_provider_pins WHERE job_id=?"
         ).bind(job_id).fetch_optional(&mut *tx).await?;
         let (reference,incarnation,revision,old_digest) =
-            pin.ok_or(JobError::CapabilityUnavailable)?;
+            pinned_row.ok_or(JobError::CapabilityUnavailable)?;
         let current = pin(&mut tx, config, &reference).await
             .map_err(|_| JobError::ConfigurationChanged)?;
         if current.incarnation != incarnation || current.revision != revision
