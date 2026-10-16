@@ -6,7 +6,7 @@ import PageHeader from '@/components/admin/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
-type Hit = { id: string; title: string; revision: number; excerpt: string }
+type Hit = { id: string; title: string; revision: number; excerpt: string; status?: string; confirmed?: boolean }
 type Fact = { id: string; title: string; body: string; revision: number; status: string; confirmed: boolean; source_ref: string | null }
 type Health = { health: string; document_count: number; last_complete_scan_at: number | null }
 
@@ -44,7 +44,7 @@ async function refresh() {
   } catch (cause) { error.value = formatApiError(cause) }
 }
 async function recall() {
-  if (!q.value.trim()) { hits.value = []; return }
+  if (!q.value.trim()) { await loadAllFacts(); return }
   busy.value = true
   error.value = ''
   try {
@@ -54,6 +54,12 @@ async function recall() {
     hits.value = result.items
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
+}
+async function loadAllFacts() {
+  try {
+    const response = await requestJson<{ items: Hit[] }>('/api/admin/memory/facts?limit=100')
+    hits.value = response.items
+  } catch (cause) { error.value = formatApiError(cause) }
 }
 async function openFact(id: string) {
   busy.value = true
@@ -90,6 +96,7 @@ async function save() {
     notice.value = t('memoryV3.saved')
     await refresh()
     if (q.value.trim()) await recall()
+    else await loadAllFacts()
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -117,7 +124,7 @@ async function rebuild() {
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
-onMounted(() => void refresh())
+onMounted(() => { void refresh(); void loadAllFacts() })
 </script>
 
 <template>
@@ -142,10 +149,10 @@ onMounted(() => void refresh())
     </section>
     <div class="grid gap-4 lg:grid-cols-[minmax(250px,1fr)_minmax(0,2fr)]">
       <section class="studio-panel space-y-4 p-5">
-        <h2 class="font-semibold">{{ t('memoryV3.recall') }}</h2>
+        <h2 class="font-semibold">{{ t('memoryV3.facts') }}</h2>
         <form class="flex gap-2" @submit.prevent="recall">
           <input v-model="q" class="admin-input min-w-0 flex-1" :placeholder="t('memoryV3.recallHint')" />
-          <Button type="submit" variant="outline" :disabled="busy || !q.trim()">{{ t('memoryV3.recall') }}</Button>
+          <Button type="submit" variant="outline" :disabled="busy">{{ t('memoryV3.recall') }}</Button>
         </form>
         <p v-if="!hits.length" class="text-sm text-muted-foreground">{{ t('memoryV3.empty') }}</p>
         <div v-for="hit in hits" :key="hit.id" class="space-y-1 border-b pb-3">
@@ -153,7 +160,7 @@ onMounted(() => void refresh())
             {{ hit.title }}
           </button>
           <p class="line-clamp-3 text-xs text-muted-foreground">{{ hit.excerpt }}</p>
-          <span class="text-xs text-muted-foreground">r{{ hit.revision }}</span>
+          <span class="text-xs text-muted-foreground">r{{ hit.revision }} · {{ hit.status ?? 'active' }}</span>
         </div>
       </section>
       <form class="studio-panel space-y-4 p-5" @submit.prevent="save">
@@ -178,7 +185,7 @@ onMounted(() => void refresh())
           {{ t('memoryV3.confirmed') }}
         </label>
         <div class="flex flex-wrap gap-2">
-          <Button type="submit" :disabled="busy || !title.trim() || !body.trim() || !sourceRef.trim()">{{ t('memoryV3.save') }}</Button>
+          <Button type="submit" :disabled="busy || selected?.status === 'forgotten' || !title.trim() || !body.trim() || !sourceRef.trim()">{{ t('memoryV3.save') }}</Button>
           <Button v-if="selected && selected.status !== 'forgotten'" type="button" variant="outline" class="border-danger/40 text-danger" :disabled="busy" @click="forget">
             {{ t('memoryV3.forget') }}
           </Button>
