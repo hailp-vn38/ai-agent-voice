@@ -9,7 +9,7 @@ pub use sources::{Source, SourceInput};
 use index::{Domain, SearchIndex};
 pub use index::{Health, SearchHit};
 use serde::Deserialize;
-use std::{path::PathBuf, sync::Arc};
+use std::{path::{Path, PathBuf}, sync::Arc};
 use uuid::Uuid;
 use vault::MarkdownVault;
 pub use vault::Record;
@@ -99,7 +99,7 @@ pub struct Runtime {
     pub memory: MemoryCore,
 }
 impl Runtime {
-    async fn check_root(root: &PathBuf, guard: &PathBuf) -> Result<(), Error> {
+    async fn check_root(root: &Path, guard: &Path) -> Result<(), Error> {
         if tokio::fs::symlink_metadata(guard).await.is_ok() {
             match tokio::fs::symlink_metadata(root).await {
                 Ok(info) if info.is_dir() && !info.file_type().is_symlink() => {}
@@ -108,7 +108,7 @@ impl Runtime {
         }
         Ok(())
     }
-    async fn mark_root(guard: &PathBuf, data_root: &PathBuf) -> Result<(), Error> {
+    async fn mark_root(guard: &Path, data_root: &Path) -> Result<(), Error> {
         match tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -117,7 +117,7 @@ impl Runtime {
         {
             Ok(file) => {
                 file.sync_all().await?;
-                vault::sync_dir(data_root.clone()).await?;
+                vault::sync_dir(data_root.to_path_buf()).await?;
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(err) => return Err(err.into()),
