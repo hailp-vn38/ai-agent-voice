@@ -94,3 +94,7 @@ Authenticated Admin can import bounded UTF-8 Markdown as immutable v1 Source (`r
 ## Admin-only Memory fact inventory
 
 `GET /api/admin/memory/facts` without `q` lists bounded canonical fact metadata from Markdown, including `needs_review` and `forgotten`, so pending entries can be confirmed after a restart. With `q`, the endpoint uses the confirmed/active search projection. This Admin listing is **not** a Core Job operation. Forgotten entries are omitted from `memory.recall` and the derived `MEMORY.md`, and cannot be reactivated by editing the same ID. A new fact requires a new ID and explicit confirmation. All historical revision files remain retained unless an independent purge policy is implemented.
+
+## Admin browsing versus Agent retrieval
+
+An authenticated Admin can list bounded canonical Wiki metadata without a search term (`GET /api/admin/knowledge/pages?limit=100`) and similarly list all owner Fact metadata (`GET /api/admin/memory/facts?limit=100`). Both return file-backed descriptions, including drafts and unconfirmed records, for management only. Agent Job's `knowledge.search`/`knowledge.read` are restricted to `verified` Wiki; `memory.recall`/`memory.summary` are restricted to confirmed active owner facts. These admin-only list interfaces are deliberately absent from the Core Job operation catalog.

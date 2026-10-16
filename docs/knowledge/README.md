@@ -11,6 +11,7 @@ Architecture is **file-first hybrid**. Knowledge and Memory are separate domain 
 - [Domain vocabulary](glossary-additions.md)
 - [ADRs 0117–0120](../adr/0117-knowledge-core-plugin-adapter.md)
 - [Ponytail simplifications](ponytail-remediation.md)
+- [Verification and remaining gates](verification-v3.md)
 
 Reference patterns: Javis OS (distinct Wiki/Memory), QMD (incremental filesystem scan, FTS5/BM25, metadata and range reads). We do **not** embed QMD's JavaScript runtime and do not treat QMD's content-hash docid as a stable page ID.
 
