@@ -9,7 +9,10 @@ pub use sources::{Source, SourceInput};
 use index::{Domain, SearchIndex};
 pub use index::{Health, SearchHit};
 use serde::Deserialize;
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use uuid::Uuid;
 use vault::MarkdownVault;
 pub use vault::Record;
