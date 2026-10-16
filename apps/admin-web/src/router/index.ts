@@ -49,6 +49,18 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'templates.title' },
   },
   {
+    path: '/knowledge',
+    name: 'knowledge',
+    component: () => import('@/pages/knowledge/KnowledgePage.vue'),
+    meta: { titleKey: 'nav.knowledge' },
+  },
+  {
+    path: '/memory',
+    name: 'memory',
+    component: () => import('@/pages/memory/MemoryPage.vue'),
+    meta: { titleKey: 'nav.memory' },
+  },
+  {
     path: '/background',
     name: 'background',
     component: () => import('@/pages/background/BackgroundPage.vue'),
