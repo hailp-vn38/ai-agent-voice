@@ -163,7 +163,9 @@ impl JobEngine {
         let old = self.get(id).await?;
         if old.execution_mode == "plugin_operation_v3"
             || old.plugin_choices.as_array().is_some_and(|choices| {
-                choices.iter().any(|choice| choice["operation"] == "tts.synthesize")
+                choices
+                    .iter()
+                    .any(|choice| choice["operation"] == "tts.synthesize")
             })
         {
             // Generative TTS is not a safe_read operation, even on an Agent Job.
