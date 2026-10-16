@@ -414,6 +414,7 @@ mod tests {
         assert_eq!(wiki.revision, 1);
         assert_eq!(core.knowledge.admin_search("durable", 10).await.unwrap().len(), 1);
         assert!(core.knowledge.search("durable", 10).await.unwrap().is_empty());
+        assert!(matches!(core.knowledge.read_verified(&wiki.id,1,20).await,Err(Error::NotFound)));
         assert!(matches!(
             core.knowledge
                 .put_draft(WikiInput {
@@ -483,9 +484,9 @@ mod tests {
         let index = sqlx::SqlitePool::connect(&uri).await.unwrap();
         sqlx::query("DELETE FROM kb_fts WHERE stable_id=?")
             .bind(&page.id).execute(&index).await.unwrap();
-        assert!(core.knowledge.search("uniqueindexprobe",10).await.unwrap().is_empty());
+        assert!(core.knowledge.admin_search("uniqueindexprobe",10).await.unwrap().is_empty());
         core.knowledge.rebuild().await.unwrap();
-        assert_eq!(core.knowledge.search("uniqueindexprobe",10).await.unwrap().len(),1);
+        assert_eq!(core.knowledge.admin_search("uniqueindexprobe",10).await.unwrap().len(),1);
         assert_eq!(canonical,tokio::fs::read(root.join("knowledge/wiki")
             .join(format!("{}.md",page.id))).await.unwrap());
         drop(index);
