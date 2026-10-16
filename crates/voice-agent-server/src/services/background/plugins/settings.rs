@@ -23,7 +23,11 @@ impl PluginStore {
     ) -> Result<ValueSettingsContract, PluginError> {
         let (schema, package_digest) = if crate::tools::core::known_group(key) {
             (
-                if key == "core.tts" { crate::tools::core::tts_settings_schema() } else { json!({"type":"object","properties":{},"additionalProperties":false}) },
+                if key == "core.tts" {
+                    crate::tools::core::tts_settings_schema()
+                } else {
+                    json!({"type":"object","properties":{},"additionalProperties":false})
+                },
                 None,
             )
         } else {
