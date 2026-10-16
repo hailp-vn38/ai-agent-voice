@@ -49,16 +49,25 @@ impl TtsWorkerRuntime {
         )
     }
     /// One-shot Job synthesis; reserved Voice capacity is never consumed.
-    pub fn cleanup_grace(&self) -> std::time::Duration { self.config.cleanup_grace }
+    pub fn cleanup_grace(&self) -> std::time::Duration {
+        self.config.cleanup_grace
+    }
     pub fn has_background_capacity(&self) -> bool {
         self.admission.has_background_capacity()
     }
     pub fn start_background(&self, text: String) -> Result<TtsLease, TtsWorkerError> {
-        let permit = self.admission.try_admit(ProviderWorkloadClass::Background)
+        let permit = self
+            .admission
+            .try_admit(ProviderWorkloadClass::Background)
             .map_err(|_| TtsWorkerError::Capacity)?;
-        self.start_with_permit(None, TtsWorkRequest::Voice(TtsSynthesisRequest {
-            text, selection: self.binding.clone(),
-        }), Some(permit))
+        self.start_with_permit(
+            None,
+            TtsWorkRequest::Voice(TtsSynthesisRequest {
+                text,
+                selection: self.binding.clone(),
+            }),
+            Some(permit),
+        )
     }
     pub fn start_in_stream(
         &self,
