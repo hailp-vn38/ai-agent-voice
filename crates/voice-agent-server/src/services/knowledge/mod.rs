@@ -166,3 +166,6 @@ fn next_revision(old: Option<&Record>, expected: Option<i64>) -> Result<i64, Err
 
 mod wiki;
 mod memory;
+
+#[cfg(test)]
+mod tests;

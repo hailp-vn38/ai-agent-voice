@@ -182,5 +182,3 @@ async fn atomic_summary_write(path: &Path, content: &str) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
