@@ -111,6 +111,7 @@ async function forget() {
     notice.value = t('memoryV3.forgotten')
     await refresh()
     if (q.value.trim()) await recall()
+    else await loadAllFacts()
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
