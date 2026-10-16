@@ -94,7 +94,7 @@ pub(crate) fn split_markdown(body: &str) -> Vec<MarkdownChunk> {
             priority = 120 - (depth as i32 * 10);
         } else if line.trim().is_empty() {
             priority = 20;
-        } else if ["- ", "* ", "+ "].iter().any(|marker| line.trim_start().starts_with(marker)) {
+        } else if ["- ", "* ", "+ "].iter().any(|marker| line.trim_start().starts_with(*marker)) {
             priority = 5;
         }
 

@@ -11,12 +11,15 @@ fn wiki_core_outputs_include_source_provenance_and_line_origin() {
     let search_def = contract(&decode(search).unwrap()).unwrap();
     let hit = &search_def["output_schema"]["properties"]["items"]["items"]["properties"];
     assert!(hit["source_ref"].is_object());
+    assert!(hit["start_line"].is_object());
+    assert!(hit["end_line"].is_object());
+    assert!(hit["heading_path"].is_object());
     assert!(
         jsonschema::validator_for(&search_def["output_schema"])
             .unwrap()
             .is_valid(
                 &json!({"items":[{"id":"wiki_a","title":"Topic","revision":2,
-            "excerpt":"Text","source_ref":"src_evidence:1"}]})
+            "excerpt":"Text","source_ref":"src_evidence:1","start_line":5,"end_line":9,"heading_path":"Topic / Details"}]})
             )
     );
     let read = choices
