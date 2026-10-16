@@ -5,7 +5,7 @@ use crate::database::knowledge_index as index;
 
 use index::{Domain, SearchIndex};
 pub use index::{Health, SearchHit};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -475,7 +475,6 @@ mod tests {
         };
         let scanned = vault::Scanned {
             record: rec,
-            content: String::new(),
             relative_path: String::new(),
             content_sha256: String::new(),
             mtime_ns: 0,

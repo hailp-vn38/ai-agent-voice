@@ -31,7 +31,6 @@ pub struct Record {
 #[derive(Clone)]
 pub struct Scanned {
     pub record: Record,
-    pub content: String,
     pub relative_path: String,
     pub content_sha256: String,
     pub mtime_ns: i64,
@@ -189,7 +188,6 @@ impl MarkdownVault {
             documents.push(Scanned {
                 relative_path: format!("{}/{}.md", self.folder, record.id),
                 record,
-                content,
                 content_sha256: hash,
                 mtime_ns,
                 size_bytes,
