@@ -22,6 +22,7 @@ mod events;
 mod execution;
 mod orchestration;
 mod providers;
+mod tts_provider;
 mod steps;
 mod submission;
 pub(crate) use submission::SubmissionIdentity;
