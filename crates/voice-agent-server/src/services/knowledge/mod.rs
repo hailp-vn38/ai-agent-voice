@@ -236,6 +236,58 @@ mod tests {
         assert_eq!(next_revision(None,Some(0)).unwrap(),1);
         assert!(matches!(next_revision(None,Some(1)),Err(Error::RevisionConflict)));
     }
+
+    #[tokio::test]
+    async fn isolated_indexes_and_canonical_revision_cas() {
+        let root=std::env::temp_dir().join(format!("knowledge_v3_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        let wiki=core.knowledge.put_draft(WikiInput {
+            id:None,title:"Agent Session".into(),body:"A durable agent session".into(),
+            expected_revision:Some(0),source_ref:Some("src_1:1".into())
+        }).await.unwrap();
+        assert_eq!(wiki.revision,1);
+        assert_eq!(core.knowledge.search("durable",10).await.unwrap().len(),1);
+        assert!(matches!(core.knowledge.put_draft(WikiInput {
+            id:Some(wiki.id.clone()),title:"conflict".into(),body:"bad update".into(),
+            expected_revision:Some(0),source_ref:None
+        }).await,Err(Error::RevisionConflict)));
+
+        let fact=core.memory.put_fact(FactInput {
+            id:None,title:"Language".into(),body:"The user prefers Vietnamese".into(),
+            expected_revision:Some(0),source_ref:Some("admin".into()),confirmed:true
+        }).await.unwrap();
+        assert_eq!(core.memory.recall("Vietnamese",5).await.unwrap().len(),1);
+        assert_eq!(core.knowledge.search("Vietnamese",5).await.unwrap().len(),0);
+        assert!(core.memory.summary().await.unwrap().contains("Vietnamese"));
+        core.memory.forget(&fact.id,fact.revision).await.unwrap();
+        assert!(core.memory.recall("Vietnamese",5).await.unwrap().is_empty());
+        assert!(!core.memory.summary().await.unwrap().contains("Vietnamese"));
+        assert_eq!(core.knowledge.health().await.unwrap().document_count,1);
+        assert_eq!(core.memory.health().await.unwrap().document_count,1);
+        drop(core);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn missing_vault_root_fails_closed_without_mass_delete() {
+        let root=std::env::temp_dir().join(format!("knowledge_v3_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        let page=core.knowledge.put_draft(WikiInput {
+            id:None,title:"Record".into(),body:"nonempty".into(),
+            expected_revision:Some(0),source_ref:None
+        }).await.unwrap();
+        tokio::fs::rename(root.join("knowledge/wiki"),root.join("knowledge/wiki-offline"))
+            .await.unwrap();
+        assert!(core.knowledge.rebuild().await.is_err());
+        assert!(matches!(core.knowledge.search("nonempty",10).await,Err(Error::IndexStale)));
+        assert_eq!(core.knowledge.health().await.unwrap().document_count,1);
+        tokio::fs::rename(root.join("knowledge/wiki-offline"),root.join("knowledge/wiki"))
+            .await.unwrap();
+        core.knowledge.rebuild().await.unwrap();
+        assert_eq!(core.knowledge.read(&page.id,1,10).await.unwrap().body,"nonempty");
+        drop(core);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
     #[test] fn memory_summary_only_confirmed_active() {
         let rec=Record{id:"mem_1".into(),kind:"memory".into(),title:"Pref".into(),
             body:"Vietnamese".into(),revision:1,status:"forgotten".into(),
