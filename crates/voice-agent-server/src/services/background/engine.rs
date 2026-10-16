@@ -19,6 +19,9 @@ pub struct JobEngine {
     // Only the P0/P2 cfg(test) persistence harness bypasses model execution.
     pub(crate) foundation_harness: bool,
     pub(crate) models: Option<Arc<dyn super::models::JobModels>>,
+    pub(crate) provider_manager: Option<Arc<crate::services::provider_runtime::ProviderRuntimeManager>>,
+    // Retain exact native runtime leases if a task is dropped before acknowledgement.
+    pub(crate) tts_quarantine: std::sync::Mutex<Vec<crate::services::provider_runtime::ResourceLease>>,
     pub(crate) cancellations:
         std::sync::Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>,
     pub(crate) voice_submissions: Arc<tokio::sync::Semaphore>,
