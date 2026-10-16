@@ -83,8 +83,8 @@ impl SourceVault {
         let data = serde_json::to_vec_pretty(&source).map_err(|_| Error::InvalidInput)?;
         write_new(&staged.join("manifest.json"), &data).await?;
         fs::rename(&staged, source_root.join("1")).await?;
-        std::fs::File::open(&source_root)?.sync_all()?;
-        std::fs::File::open(&self.root)?.sync_all()?;
+        super::vault::sync_dir(source_root.clone()).await?;
+        super::vault::sync_dir(self.root.clone()).await?;
         Ok(source)
     }
     fn source_dir(&self, id: &str) -> Result<PathBuf, Error> {

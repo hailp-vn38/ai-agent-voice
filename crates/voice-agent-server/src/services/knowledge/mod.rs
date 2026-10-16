@@ -268,6 +268,14 @@ impl KnowledgeCore {
         }
         Ok(rec)
     }
+    /// Admin editing always reads an entire bounded Markdown document, never a
+    /// line-truncated view which a subsequent PUT could accidentally overwrite.
+    pub async fn read_full(&self,id:&str)->Result<Record,Error>{
+        let _guard=self.vault.writer.lock().await;
+        let record=self.vault.get(id).await?;
+        if record.kind!="wiki"{ return Err(Error::NotFound); }
+        Ok(record)
+    }
     pub async fn search(&self, q: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
         let _guard = self.vault.writer.lock().await;
         self.index.search(q, limit).await
@@ -469,7 +477,7 @@ async fn atomic_summary_write(path: &Path, content: &str) -> Result<(), Error> {
     }
     result?;
     if let Some(parent) = path.parent() {
-        std::fs::File::open(parent)?.sync_all()?;
+        vault::sync_dir(parent.to_path_buf()).await?;
     }
     Ok(())
 }

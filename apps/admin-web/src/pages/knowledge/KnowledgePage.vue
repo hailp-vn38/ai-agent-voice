@@ -103,7 +103,7 @@ async function openPage(id: string) {
   error.value = ''
   try {
     const page = await requestJson<Page>(
-      withQuery(`/api/admin/knowledge/pages/${encodeURIComponent(id)}`, { from_line: 1, max_lines: 10000 }),
+      `/api/admin/knowledge/pages/${encodeURIComponent(id)}`,
     )
     selected.value = page
     title.value = page.title

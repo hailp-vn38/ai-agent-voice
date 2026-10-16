@@ -96,15 +96,15 @@ pub(super) async fn knowledge_read(
     req: Request,
 ) -> Response {
     match runtime(&state).await {
-        Ok(core) => match core
-            .knowledge
-            .read(
+        Ok(core) => match if lines.from_line.is_none() && lines.max_lines.is_none() {
+            core.knowledge.read_full(&id).await
+        } else {
+            core.knowledge.read(
                 &id,
                 lines.from_line.unwrap_or(1),
                 lines.max_lines.unwrap_or(200),
-            )
-            .await
-        {
+            ).await
+        } {
             Ok(page) => Json(page).into_response(),
             Err(e) => failure(&req, e),
         },

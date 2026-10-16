@@ -16,6 +16,22 @@ const MAX_PAGE_BYTES: usize = 512 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 // Process-wide lock shared across Admin and Job runtime instances.
 pub(crate) static WRITE_LOCK: Mutex<()> = Mutex::const_new(());
+/// Directory fsync is blocking; keep it off the Tokio worker.
+pub(crate) async fn sync_dir(path: PathBuf) -> Result<(), Error> {
+    tokio::task::spawn_blocking(move || std::fs::File::open(path)?.sync_all())
+        .await
+        .map_err(|_| Error::Unavailable)??;
+    Ok(())
+}
+async fn create_init_marker(root: &Path) -> Result<(), Error> {
+    let marker = root.join(".vault_initialized");
+    match fs::OpenOptions::new().write(true).create_new(true).open(&marker).await {
+        Ok(file) => { file.sync_all().await?; sync_dir(root.to_path_buf()).await?; },
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {},
+        Err(e) => return Err(e.into()),
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Record {
@@ -46,7 +62,23 @@ pub struct MarkdownVault {
 }
 impl MarkdownVault {
     pub async fn new(root: PathBuf, folder: &'static str) -> Result<Self, Error> {
-        fs::create_dir_all(root.join(folder)).await?;
+        if !matches!(folder,"wiki"|"facts") { return Err(Error::InvalidInput); }
+        let canonical_folder = root.join(folder);
+        // A missing canonical root during restart is NOT an empty collection.
+        // Pre-marker deployments are detected by their existing derived index.
+        let index_file = if folder == "wiki" {"knowledge_index.db"} else {"memory_index.db"};
+        if fs::symlink_metadata(&canonical_folder).await.is_err() {
+            let established = fs::symlink_metadata(root.join(".vault_initialized")).await.is_ok()
+                || fs::symlink_metadata(root.join(index_file)).await.is_ok()
+                || (folder == "facts" && fs::symlink_metadata(root.join("MEMORY.md")).await.is_ok());
+            if established { return Err(Error::Unavailable); }
+            // If the vault root itself already contains unrelated content,
+            // do not auto-heal a possibly missing mounted collection.
+            if let Ok(mut contents) = fs::read_dir(&root).await {
+                if contents.next_entry().await?.is_some() { return Err(Error::Unavailable); }
+            }
+        }
+        fs::create_dir_all(&canonical_folder).await?;
         fs::create_dir_all(root.join("revisions")).await?;
         for directory in [&root, &root.join(folder), &root.join("revisions")] {
             let stat = fs::symlink_metadata(directory).await?;
@@ -54,6 +86,7 @@ impl MarkdownVault {
                 return Err(Error::InvalidPath);
             }
         }
+        create_init_marker(&root).await?;
         Ok(Self {
             root,
             folder,
@@ -106,21 +139,27 @@ impl MarkdownVault {
                 return Err(Error::InvalidPath);
             }
             let history = revision_dir.join(format!("{}.md", previous.revision));
-            // A replay must never destroy a previously retained revision.
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&history)
-                .await
-            {
-                Ok(mut f) => {
-                    f.write_all(&old).await?;
-                    f.sync_all().await?;
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if fs::read(&history).await? != old {
+            // A crash must never leave a partially written retained revision.
+            // Create and sync a staging file, then publish it via rename.
+            match fs::symlink_metadata(&history).await {
+                Ok(info) => {
+                    if info.file_type().is_symlink() || !info.is_file() || fs::read(&history).await? != old {
                         return Err(Error::RevisionConflict);
                     }
+                }
+                Err(err) if err.kind()==std::io::ErrorKind::NotFound => {
+                    let tmp_history = revision_dir.join(format!("{}.{}.tmp",previous.revision,Uuid::new_v4()));
+                    let result = async {
+                        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp_history).await?;
+                        f.write_all(&old).await?;
+                        f.sync_all().await?;
+                        drop(f);
+                        fs::rename(&tmp_history,&history).await?;
+                        Ok::<(),std::io::Error>(())
+                    }.await;
+                    if result.is_err() { let _ = fs::remove_file(&tmp_history).await; }
+                    result?;
+                    sync_dir(revision_dir.clone()).await?;
                 }
                 Err(err) => return Err(Error::Io(err)),
             }
@@ -145,7 +184,7 @@ impl MarkdownVault {
         result?;
         // Atomic rename requires a directory fsync for crash-durable publication.
         let parent = path.parent().ok_or(Error::InvalidPath)?;
-        std::fs::File::open(parent)?.sync_all()?;
+        sync_dir(parent.to_path_buf()).await?;
         Ok(())
     }
 
