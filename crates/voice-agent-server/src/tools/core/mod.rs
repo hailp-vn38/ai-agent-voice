@@ -6,6 +6,7 @@ mod catalog;
 mod contracts;
 mod execution;
 mod expanded;
+mod tts;
 
 pub(crate) use catalog::{
     CorePluginSetting, bundled_catalog, bundled_item, enabled_groups, group_for, known_group,
