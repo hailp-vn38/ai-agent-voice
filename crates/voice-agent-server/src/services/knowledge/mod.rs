@@ -1,0 +1,247 @@
+//! File-first Knowledge and Memory domains, sharing private vault/index machinery.
+//! Neither Agent Job nor Admin may mutate canonical Markdown outside these cores.
+mod index;
+mod vault;
+
+use serde::{Deserialize,Serialize};
+use std::{path::{Path,PathBuf},sync::Arc};
+use tokio::{fs,io::AsyncWriteExt};
+use uuid::Uuid;
+pub use index::{Health,SearchHit};
+use index::{Domain,SearchIndex};
+pub use vault::Record;
+use vault::MarkdownVault;
+
+#[derive(Debug,thiserror::Error)]
+pub enum Error {
+    #[error("invalid_arguments")] InvalidInput,
+    #[error("not_found")] NotFound,
+    #[error("revision_conflict")] RevisionConflict,
+    #[error("invalid_path")] InvalidPath,
+    #[error("index_stale")] IndexStale,
+    #[error("knowledge_unavailable")] Unavailable,
+    #[error("storage_failure: {0}")] Io(#[from] std::io::Error),
+    #[error("database_failure: {0}")] Sql(#[from] sqlx::Error),
+}
+impl Error {
+    pub fn code(&self)->&'static str {
+        match self {
+            Self::InvalidInput=>"invalid_arguments",
+            Self::NotFound=>"not_found",
+            Self::RevisionConflict=>"revision_conflict",
+            Self::InvalidPath=>"invalid_path",
+            Self::IndexStale=>"index_stale",
+            Self::Unavailable|Self::Io(_)|Self::Sql(_)=>"knowledge_unavailable",
+        }
+    }
+}
+
+#[derive(Debug,Clone,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WikiInput {
+    pub id: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub expected_revision: Option<i64>,
+    pub source_ref: Option<String>,
+}
+#[derive(Debug,Clone,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactInput {
+    pub id: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub expected_revision: Option<i64>,
+    pub source_ref: Option<String>,
+    pub confirmed: bool,
+}
+pub struct KnowledgeCore {
+    vault:MarkdownVault, index:SearchIndex
+}
+pub struct MemoryCore {
+    vault:MarkdownVault, index:SearchIndex
+}
+pub struct Runtime {pub knowledge:KnowledgeCore,pub memory:MemoryCore}
+impl Runtime {
+    pub async fn open(data_root:PathBuf)->Result<Arc<Self>,Error>{
+        let knowledge_root=data_root.join("knowledge");
+        let memory_root=data_root.join("memory");
+        let knowledge_vault=MarkdownVault::new(knowledge_root.clone(),"wiki").await?;
+        let memory_vault=MarkdownVault::new(memory_root.clone(),"facts").await?;
+        let knowledge_index=SearchIndex::open(&knowledge_root,Domain::Knowledge).await?;
+        let memory_index=SearchIndex::open(&memory_root,Domain::Memory).await?;
+        // Startup reconciliation makes prior crash/power-loss repairs explicit.
+        knowledge_index.reconcile(&knowledge_vault).await?;
+        memory_index.reconcile(&memory_vault).await?;
+        let runtime=Arc::new(Self{
+            knowledge:KnowledgeCore{vault:knowledge_vault,index:knowledge_index},
+            memory:MemoryCore{vault:memory_vault,index:memory_index}
+        });
+        runtime.memory.regenerate_summary().await?;
+        Ok(runtime)
+    }
+}
+fn check_text(title:&str,body:&str)->Result<(),Error>{
+    if title.trim().is_empty() || title.len()>512 || body.len()>256*1024
+        || title.contains(['\n','\r']) {return Err(Error::InvalidInput);}
+    Ok(())
+}
+async fn old_record(vault:&MarkdownVault,id:&str)->Result<Option<Record>,Error>{
+    match vault.get(id).await {Ok(r)=>Ok(Some(r)),Err(Error::NotFound)=>Ok(None),Err(err)=>Err(err)}
+}
+fn next_revision(old:Option<&Record>,expected:Option<i64>)->Result<i64,Error>{
+    let current=old.map_or(0,|r|r.revision);
+    if current!=expected.unwrap_or(-1) {return Err(Error::RevisionConflict);}
+    current.checked_add(1).ok_or(Error::InvalidInput)
+}
+impl KnowledgeCore {
+    /// Admin drafts only. Verified publication requires a validated immutable
+    /// Source/version and is intentionally not smuggled into this endpoint.
+    pub async fn put_draft(&self,input:WikiInput)->Result<Record,Error>{
+        check_text(&input.title,&input.body)?;
+        let id=input.id.unwrap_or_else(||format!("wiki_{}",Uuid::new_v4().simple()));
+        let _guard=self.vault.writer.lock().await;
+        let previous=old_record(&self.vault,&id).await?;
+        if previous.as_ref().is_some_and(|r|r.kind!="wiki") {return Err(Error::InvalidInput);}
+        let revision=next_revision(previous.as_ref(),input.expected_revision)?;
+        let rec=Record {id,kind:"wiki".into(),title:input.title,body:input.body,revision,
+            status:"draft".into(),scope:None,confirmed:false,source_ref:input.source_ref};
+        self.index.mark_stale().await?;
+        self.vault.commit(&rec,previous.as_ref()).await?;
+        self.index.reconcile(&self.vault).await?;
+        Ok(rec)
+    }
+    pub async fn read(&self,id:&str,from_line:usize,max_lines:usize)->Result<Record,Error>{
+        if from_line==0 || !(1..=200).contains(&max_lines) {return Err(Error::InvalidInput);}
+        let _guard=self.vault.writer.lock().await;
+        let mut rec=self.vault.get(id).await?;
+        if rec.kind!="wiki" {return Err(Error::NotFound);}
+        rec.body=rec.body.lines().skip(from_line-1).take(max_lines).collect::<Vec<_>>().join("\n");
+        Ok(rec)
+    }
+    pub async fn search(&self,q:&str,limit:i64)->Result<Vec<SearchHit>,Error>{
+        let _guard=self.vault.writer.lock().await;
+        self.index.search(q,limit).await
+    }
+    pub async fn health(&self)->Result<Health,Error>{self.index.health().await}
+    pub async fn rebuild(&self)->Result<usize,Error>{
+        let _guard=self.vault.writer.lock().await;
+        self.index.reconcile(&self.vault).await
+    }
+}
+impl MemoryCore {
+    pub async fn put_fact(&self,input:FactInput)->Result<Record,Error>{
+        check_text(&input.title,&input.body)?;
+        if input.source_ref.as_deref().unwrap_or("").trim().is_empty() {return Err(Error::InvalidInput);}
+        let id=input.id.unwrap_or_else(||format!("mem_{}",Uuid::new_v4().simple()));
+        let _guard=self.vault.writer.lock().await;
+        let previous=old_record(&self.vault,&id).await?;
+        if previous.as_ref().is_some_and(|r|r.kind!="memory" || r.scope.as_deref()!=Some("owner")) {
+            return Err(Error::InvalidInput);
+        }
+        let revision=next_revision(previous.as_ref(),input.expected_revision)?;
+        let rec=Record{id,kind:"memory".into(),title:input.title,body:input.body,revision,
+            status:if input.confirmed {"active".into()} else {"needs_review".into()},
+            scope:Some("owner".into()),confirmed:input.confirmed,source_ref:input.source_ref};
+        self.index.mark_stale().await?;
+        self.vault.commit(&rec,previous.as_ref()).await?;
+        // Publish the derived summary BEFORE reporting success, even if indexing
+        // later fails. A stale summary must never be served by summary().
+        self.regenerate_summary().await?;
+        self.index.reconcile(&self.vault).await?;
+        Ok(rec)
+    }
+    pub async fn forget(&self,id:&str,expected_revision:i64)->Result<Record,Error>{
+        let _guard=self.vault.writer.lock().await;
+        let previous=self.vault.get(id).await?;
+        if previous.kind!="memory" || previous.scope.as_deref()!=Some("owner") {return Err(Error::InvalidInput);}
+        let revision=next_revision(Some(&previous),Some(expected_revision))?;
+        let mut rec=previous.clone();
+        rec.revision=revision;
+        rec.status="forgotten".into();
+        rec.confirmed=false;
+        self.index.mark_stale().await?;
+        self.vault.commit(&rec,Some(&previous)).await?;
+        self.regenerate_summary().await?;
+        self.index.reconcile(&self.vault).await?;
+        Ok(rec)
+    }
+    fn generate(docs:&[vault::Scanned])->Result<String,Error>{
+        let mut text=String::from("# Memory\n\n");
+        for doc in docs {
+            let fact=&doc.record;
+            if fact.scope.as_deref()!=Some("owner") || fact.kind!="memory" {return Err(Error::InvalidInput);}
+            if fact.status!="active" || !fact.confirmed {continue;}
+            let line=format!("- {}: {}\n",fact.title,fact.body.split_whitespace().collect::<Vec<_>>().join(" "));
+            if text.len()+line.len()>4096 {break;}
+            text.push_str(&line);
+        }
+        Ok(text)
+    }
+    /// Must be called under writer lock, except during Runtime::open before sharing.
+    async fn regenerate_summary(&self)->Result<(),Error>{
+        let docs=self.vault.scan().await?;
+        let text=Self::generate(&docs)?;
+        let path=self.vault.root().join("MEMORY.md");
+        atomic_summary_write(&path,&text).await?;
+        Ok(())
+    }
+    pub async fn summary(&self)->Result<String,Error>{
+        let _guard=self.vault.writer.lock().await;
+        // A stale generated file after a crash is never treated as current.
+        let docs=self.vault.scan().await?;
+        let expected=Self::generate(&docs)?;
+        let actual=fs::read_to_string(self.vault.root().join("MEMORY.md")).await.map_err(|_|Error::IndexStale)?;
+        if actual!=expected {return Err(Error::IndexStale);}
+        Ok(actual)
+    }
+    pub async fn read(&self,id:&str)->Result<Record,Error>{
+        let _guard=self.vault.writer.lock().await;
+        let rec=self.vault.get(id).await?;
+        if rec.kind!="memory" || rec.scope.as_deref()!=Some("owner") {return Err(Error::NotFound);}
+        Ok(rec)
+    }
+    pub async fn recall(&self,q:&str,limit:i64)->Result<Vec<SearchHit>,Error>{
+        let _guard=self.vault.writer.lock().await;
+        self.index.search(q,limit).await
+    }
+    pub async fn health(&self)->Result<Health,Error>{self.index.health().await}
+    pub async fn rebuild(&self)->Result<usize,Error>{
+        let _guard=self.vault.writer.lock().await;
+        let count=self.index.reconcile(&self.vault).await?;
+        self.regenerate_summary().await?;
+        Ok(count)
+    }
+}
+async fn atomic_summary_write(path:&Path,content:&str)->Result<(),Error>{
+    let temp=path.with_extension(format!("{}.tmp",Uuid::new_v4()));
+    let result=async {
+        let mut f=fs::OpenOptions::new().write(true).create_new(true).open(&temp).await?;
+        f.write_all(content.as_bytes()).await?;
+        f.sync_all().await?;
+        drop(f);
+        fs::rename(&temp,path).await
+    }.await;
+    if result.is_err(){let _=fs::remove_file(&temp).await;}
+    result?;
+    if let Some(parent)=path.parent(){std::fs::File::open(parent)?.sync_all()?;}
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test] fn expected_revision_is_fail_closed() {
+        assert!(matches!(next_revision(None,None),Err(Error::RevisionConflict)));
+        assert_eq!(next_revision(None,Some(0)).unwrap(),1);
+        assert!(matches!(next_revision(None,Some(1)),Err(Error::RevisionConflict)));
+    }
+    #[test] fn memory_summary_only_confirmed_active() {
+        let rec=Record{id:"mem_1".into(),kind:"memory".into(),title:"Pref".into(),
+            body:"Vietnamese".into(),revision:1,status:"forgotten".into(),
+            scope:Some("owner".into()),confirmed:false,source_ref:Some("admin".into())};
+        let scanned=vault::Scanned{record:rec,content:String::new(),relative_path:String::new(),
+            content_sha256:String::new(),mtime_ns:0,size_bytes:0};
+        assert_eq!(MemoryCore::generate(&[scanned]).unwrap(),"# Memory\n\n");
+    }
+}
