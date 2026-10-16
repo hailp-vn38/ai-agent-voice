@@ -48,6 +48,17 @@ impl TtsWorkerRuntime {
             true,
         )
     }
+    /// One-shot Job synthesis; reserved Voice capacity is never consumed.
+    pub fn has_background_capacity(&self) -> bool {
+        self.admission.has_background_capacity()
+    }
+    pub fn start_background(&self, text: String) -> Result<TtsLease, TtsWorkerError> {
+        let permit = self.admission.try_admit(ProviderWorkloadClass::Background)
+            .map_err(|_| TtsWorkerError::Capacity)?;
+        self.start_with_permit(None, TtsWorkRequest::Voice(TtsSynthesisRequest {
+            text, selection: self.binding.clone(),
+        }), Some(permit))
+    }
     pub fn start_in_stream(
         &self,
         stream: TtsStreamId,
@@ -72,6 +83,14 @@ impl TtsWorkerRuntime {
             .then(|| self.admission.try_admit(ProviderWorkloadClass::Voice))
             .transpose()
             .map_err(|_| TtsWorkerError::Capacity)?;
+        self.start_with_permit(stream, request, permit)
+    }
+    fn start_with_permit(
+        &self,
+        stream: Option<TtsStreamId>,
+        request: TtsWorkRequest,
+        permit: Option<ProviderCapacityPermit>,
+    ) -> Result<TtsLease, TtsWorkerError> {
         let mut state = self.state.lock().expect("TTS worker state poisoned");
         if state.closed {
             return Err(TtsWorkerError::Capacity);
