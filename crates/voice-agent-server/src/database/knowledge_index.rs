@@ -1,8 +1,10 @@
 //! Two physically separate SQLx/SQLite FTS5 projections using one implementation.
 //! Canonical Markdown always outranks derived rows. A failed scan preserves old
 //! rows but marks search unavailable, never silently claims freshness.
+use crate::database::knowledge_lex;
 use crate::services::knowledge::{
     Error,
+    markdown_chunker::split_markdown,
     vault::{MarkdownVault, Scanned},
 };
 use serde::Serialize;
@@ -18,7 +20,6 @@ use std::{
 };
 static KNOWLEDGE_MIGRATOR: Migrator = sqlx::migrate!("./migrations/knowledge");
 static MEMORY_MIGRATOR: Migrator = sqlx::migrate!("./migrations/memory");
-const INDEXER_VERSION: i64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Domain {
@@ -26,6 +27,12 @@ pub enum Domain {
     Memory,
 }
 impl Domain {
+    fn indexer_version(self) -> i64 {
+        match self {
+            Self::Knowledge => 2, // Markdown passages require rebuilding the Wiki projection.
+            Self::Memory => 1,    // Memory intentionally stays document-level.
+        }
+    }
     fn file(self) -> &'static str {
         match self {
             Self::Knowledge => "knowledge_index.db",
@@ -65,6 +72,12 @@ pub struct SearchHit {
     pub revision: i64,
     pub excerpt: String,
     pub source_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<String>,
 }
 #[derive(Clone, Serialize)]
 pub struct Health {
@@ -150,6 +163,10 @@ impl SearchIndex {
             // matching rows. A rollback restores the old index atomically.
             let sql = format!("DELETE FROM {}", self.domain.fts_table());
             sqlx::query(&sql).execute(&mut *tx).await?;
+            if self.domain == Domain::Knowledge {
+                sqlx::query("DELETE FROM kb_chunks_fts").execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM kb_chunks").execute(&mut *tx).await?;
+            }
         }
         let existing_sql = format!(
             "SELECT {},content_sha256,relative_path,revision,indexer_version FROM {}",
@@ -182,7 +199,7 @@ impl SearchIndex {
                         hash == &doc.content_sha256
                             && path == &doc.relative_path
                             && *rev == doc.record.revision
-                            && *version == INDEXER_VERSION
+                            && *version == self.domain.indexer_version()
                     });
             if unchanged && !force {
                 continue;
@@ -190,6 +207,12 @@ impl SearchIndex {
             self.upsert(&mut tx, doc).await?;
         }
         for id in existing.keys().filter(|id| !seen.contains(*id)) {
+            if self.domain == Domain::Knowledge {
+                sqlx::query("DELETE FROM kb_chunks_fts WHERE CAST(chunk_id AS INTEGER) IN (SELECT chunk_id FROM kb_chunks WHERE stable_id=?)")
+                    .bind(id).execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM kb_chunks WHERE stable_id=?")
+                    .bind(id).execute(&mut *tx).await?;
+            }
             let sql = format!(
                 "DELETE FROM {} WHERE {}=?",
                 self.domain.fts_table(),
@@ -204,7 +227,7 @@ impl SearchIndex {
             sqlx::query(&sql).bind(id).execute(&mut *tx).await?;
         }
         sqlx::query(&format!("UPDATE {} SET health='ready',indexer_version=?,last_complete_scan_at=strftime('%s','now'),last_error=NULL WHERE singleton=1",
-            self.domain.health_table())).bind(INDEXER_VERSION).execute(&mut *tx).await?;
+            self.domain.health_table())).bind(self.domain.indexer_version()).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(scanned.len())
     }
@@ -222,7 +245,7 @@ impl SearchIndex {
                       title=excluded.title,revision=excluded.revision,content_sha256=excluded.content_sha256,
                       mtime_ns=excluded.mtime_ns,size_bytes=excluded.size_bytes,state=excluded.state,indexer_version=excluded.indexer_version")
                     .bind(&record.id).bind(&record.kind).bind(&doc.relative_path).bind(&record.title).bind(record.revision)
-                    .bind(&doc.content_sha256).bind(doc.mtime_ns).bind(doc.size_bytes).bind(&record.status).bind(INDEXER_VERSION)
+                    .bind(&doc.content_sha256).bind(doc.mtime_ns).bind(doc.size_bytes).bind(&record.status).bind(self.domain.indexer_version())
                     .execute(&mut **tx).await?;
                 sqlx::query("DELETE FROM kb_fts WHERE stable_id=?")
                     .bind(&record.id)
@@ -234,6 +257,33 @@ impl SearchIndex {
                     .bind(&record.body)
                     .execute(&mut **tx)
                     .await?;
+                // Replace passages inside the same SQL transaction as the
+                // accepted canonical page row and full-document FTS projection.
+                sqlx::query("DELETE FROM kb_chunks_fts WHERE CAST(chunk_id AS INTEGER) IN (SELECT chunk_id FROM kb_chunks WHERE stable_id=?)")
+                    .bind(&record.id).execute(&mut **tx).await?;
+                sqlx::query("DELETE FROM kb_chunks WHERE stable_id=?")
+                    .bind(&record.id).execute(&mut **tx).await?;
+                if record.status == "verified" {
+                    for chunk in split_markdown(&record.body) {
+                        let row = sqlx::query("INSERT INTO kb_chunks
+                            (stable_id,revision,ordinal,heading_path,start_byte,end_byte,start_line,end_line,chunk_sha256,body)
+                            VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING chunk_id")
+                            .bind(&record.id).bind(record.revision).bind(chunk.ordinal)
+                            .bind(&chunk.heading_path)
+                            .bind(i64::try_from(chunk.start_byte).map_err(|_| Error::InvalidInput)?)
+                            .bind(i64::try_from(chunk.end_byte).map_err(|_| Error::InvalidInput)?)
+                            .bind(i64::try_from(chunk.start_line).map_err(|_| Error::InvalidInput)?)
+                            .bind(i64::try_from(chunk.end_line).map_err(|_| Error::InvalidInput)?)
+                            .bind(&chunk.sha256).bind(&chunk.text)
+                            .fetch_one(&mut **tx).await?;
+                        let chunk_id: i64 = row.try_get("chunk_id")?;
+                        sqlx::query("INSERT INTO kb_chunks_fts(chunk_id,title,heading_path,body)
+                            VALUES(?,?,?,?)")
+                            .bind(chunk_id.to_string()).bind(&record.title)
+                            .bind(&chunk.heading_path).bind(&chunk.text)
+                            .execute(&mut **tx).await?;
+                    }
+                }
             }
             Domain::Memory => {
                 sqlx::query("INSERT INTO mem_documents (fact_id,relative_path,title,owner_scope,revision,status,confirmed,content_sha256,mtime_ns,size_bytes,indexer_version)
@@ -245,7 +295,7 @@ impl SearchIndex {
                     .bind(&record.id).bind(&doc.relative_path).bind(&record.title)
                     .bind(record.scope.as_deref().unwrap_or("owner")).bind(record.revision).bind(&record.status)
                     .bind(i64::from(record.confirmed)).bind(&doc.content_sha256)
-                    .bind(doc.mtime_ns).bind(doc.size_bytes).bind(INDEXER_VERSION)
+                    .bind(doc.mtime_ns).bind(doc.size_bytes).bind(self.domain.indexer_version())
                     .execute(&mut **tx).await?;
                 sqlx::query("DELETE FROM mem_fts WHERE fact_id=?")
                     .bind(&record.id)
@@ -267,51 +317,90 @@ impl SearchIndex {
     pub async fn admin_search(&self, query: &str, limit: i64) -> Result<Vec<SearchHit>, Error> {
         self.search_with(query, limit, true).await
     }
-    async fn search_with(
+    /// Purely derived index output; callers perform canonical/source policy checks.
+    async fn search_rows(
         &self,
-        query: &str,
+        fts_query: &str,
         limit: i64,
         include_drafts: bool,
     ) -> Result<Vec<SearchHit>, Error> {
         use sqlx::Row;
-        if query.trim().is_empty() || query.len() > 256 || !(1..=50).contains(&limit) {
-            return Err(Error::InvalidInput);
-        }
-        if self.health().await?.health != "ready" {
-            return Err(Error::IndexStale);
-        }
-        // Entire user query is a literal FTS5 phrase: never evaluate query syntax
-        // or allow model input to create SQL expressions.
-        let phrase = format!("\"{}\"", query.trim().replace('"', "\"\""));
-        let sql=match self.domain {
-            Domain::Knowledge if include_drafts => "SELECT d.stable_id AS id,d.title,d.revision,substr(f.body,1,600) AS excerpt
-                FROM kb_fts f JOIN kb_documents d ON d.stable_id=f.stable_id
+        // MATERIALIZED ensures the FTS match and BM25 score precede the
+        // per-document best passage selection and verified-state filtering.
+        let sql = match self.domain {
+            Domain::Knowledge if include_drafts => r#"
+                SELECT d.stable_id AS id,d.title,d.revision,
+                    snippet(kb_fts,2,'','',' … ',48) AS excerpt,
+                    NULL AS start_line,NULL AS end_line,NULL AS heading_path
+                FROM kb_fts JOIN kb_documents d ON d.stable_id=kb_fts.stable_id
                 WHERE kb_fts MATCH ? AND d.kind='wiki' AND d.state IN ('draft','verified')
-                ORDER BY bm25(kb_fts) LIMIT ?",
-            Domain::Knowledge => "SELECT d.stable_id AS id,d.title,d.revision,substr(f.body,1,600) AS excerpt
-                FROM kb_fts f JOIN kb_documents d ON d.stable_id=f.stable_id
-                WHERE kb_fts MATCH ? AND d.kind='wiki' AND d.state='verified'
-                ORDER BY bm25(kb_fts) LIMIT ?",
-            Domain::Memory=>"SELECT d.fact_id AS id,d.title,d.revision,substr(f.body,1,600) AS excerpt
-                FROM mem_fts f JOIN mem_documents d ON d.fact_id=f.fact_id
-                WHERE mem_fts MATCH ? AND d.owner_scope='owner' AND d.status='active' AND d.confirmed=1
-                ORDER BY bm25(mem_fts) LIMIT ?"
+                ORDER BY bm25(kb_fts,0.0,4.0,1.0),d.stable_id LIMIT ?"#,
+            Domain::Knowledge => r#"
+                WITH matched AS MATERIALIZED (
+                    SELECT CAST(chunk_id AS INTEGER) AS cid,
+                        bm25(kb_chunks_fts,0.0,4.0,1.5,1.0) AS weight,
+                        snippet(kb_chunks_fts,3,'','',' … ',48) AS excerpt
+                    FROM kb_chunks_fts WHERE kb_chunks_fts MATCH ?
+                ), ranked AS (
+                    SELECT d.stable_id AS id,d.title,d.revision,
+                        m.excerpt,c.start_line,c.end_line,c.heading_path,m.weight,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY d.stable_id ORDER BY m.weight,c.ordinal
+                        ) AS passage_rank
+                    FROM matched m
+                    JOIN kb_chunks c ON c.chunk_id=m.cid
+                    JOIN kb_documents d ON d.stable_id=c.stable_id
+                    WHERE d.kind='wiki' AND d.state='verified'
+                      AND d.revision=c.revision
+                )
+                SELECT id,title,revision,excerpt,start_line,end_line,heading_path
+                FROM ranked WHERE passage_rank=1 ORDER BY weight,id LIMIT ?"#,
+            Domain::Memory => r#"
+                SELECT d.fact_id AS id,d.title,d.revision,
+                    snippet(mem_fts,2,'','',' … ',48) AS excerpt,
+                    NULL AS start_line,NULL AS end_line,NULL AS heading_path
+                FROM mem_fts JOIN mem_documents d ON d.fact_id=mem_fts.fact_id
+                WHERE mem_fts MATCH ? AND d.owner_scope='owner'
+                    AND d.status='active' AND d.confirmed=1
+                ORDER BY bm25(mem_fts,0.0,4.0,1.0),d.fact_id LIMIT ?"#,
         };
         let rows = sqlx::query(sql)
-            .bind(phrase)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
-        let mut hits = Vec::new();
+            .bind(fts_query).bind(limit).fetch_all(&self.pool).await?;
+        let mut hits = Vec::with_capacity(rows.len());
         for row in rows {
             hits.push(SearchHit {
                 id: row.try_get("id")?,
                 title: row.try_get("title")?,
                 revision: row.try_get("revision")?,
                 excerpt: row.try_get("excerpt")?,
-                source_ref: None, // KnowledgeCore enriches verified hits from canonical Markdown.
+                source_ref: None,
+                start_line: row.try_get("start_line")?,
+                end_line: row.try_get("end_line")?,
+                heading_path: row.try_get("heading_path")?,
             });
         }
         Ok(hits)
+    }
+    async fn search_with(
+        &self,
+        query: &str,
+        limit: i64,
+        include_drafts: bool,
+    ) -> Result<Vec<SearchHit>, Error> {
+        if !(1..=50).contains(&limit) {
+            return Err(Error::InvalidInput);
+        }
+        if self.health().await?.health != "ready" {
+            return Err(Error::IndexStale);
+        }
+        let queries = knowledge_lex::compile(query)?;
+        let strict = self.search_rows(&queries.strict,limit,include_drafts).await?;
+        if !strict.is_empty() {
+            return Ok(strict);
+        }
+        if let Some(broad) = queries.broad {
+            return self.search_rows(&broad,limit,include_drafts).await;
+        }
+        Ok(Vec::new())
     }
 }
