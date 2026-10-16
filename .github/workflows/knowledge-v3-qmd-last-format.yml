@@ -1,0 +1,26 @@
+name: Knowledge V3 QMD Final Format (temporary)
+on:
+  push:
+    branches: [feat/knowledge-memory-v3-file-first-index]
+    paths: ['.github/workflows/knowledge-v3-qmd-last-format.yml']
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/knowledge-memory-v3-file-first-index
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt
+      - name: Normalize tracked Rust sources
+        run: |
+          cargo fmt --all
+          git add -u
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'style(knowledge): finish QMD passage and lexical changes'
+            git push origin HEAD:feat/knowledge-memory-v3-file-first-index
+          fi
