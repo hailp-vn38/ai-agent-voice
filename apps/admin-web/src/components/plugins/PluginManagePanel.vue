@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentPluginsApi } from '@/api/agent-plugins'
+import { providersApi } from '@/api/providers'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { PluginOperationContract, PluginValueSettings, PluginArtifactBinding } from '@/api/types/agent-jobs'
 import { Button } from '@/components/ui/button'
@@ -18,6 +19,7 @@ const loading = ref(false)
 const error = ref('')
 const notice = ref('')
 const settings = ref<PluginValueSettings | null>(null)
+const ttsProviders = ref<Array<{ key: string; name: string }>>([])
 const edited = ref<Record<string, unknown>>({})
 const selected = ref('')
 const argumentsJson = ref('{}')
@@ -55,6 +57,14 @@ async function loadSettings() {
     if (pending.signal.aborted) return
     settings.value = loaded
     edited.value = { ...loaded.values }
+    ttsProviders.value = []
+    if (props.pluginKey === 'core.tts') {
+      try {
+        const catalog = await providersApi.list({ type: 'tts', pageSize: 100 }, pending.signal)
+        if (!pending.signal.aborted) ttsProviders.value = catalog.items.filter(item => item.enabled === 1)
+          .map(item => ({ key: item.key, name: item.name }))
+      } catch { /* Existing string field remains available when catalog is offline. */ }
+    }
   } catch (cause) {
     if (!pending.signal.aborted) error.value = formatApiError(cause)
   } finally {
@@ -189,6 +199,10 @@ onBeforeUnmount(() => controller?.abort())
       <p v-if="fields.length === 0" class="text-sm text-muted-foreground">
         This plugin has no configurable values.
       </p>
+      <p v-if="props.pluginKey === 'core.tts'" class="text-xs text-muted-foreground">
+        Generates one mono PCM16 WAV file (speech.wav). Maximum 3,000 characters and 180 seconds;
+        the provider's configured voice and language are used.
+      </p>
       <div v-for="field in fields" :key="field.name" class="space-y-1">
         <label :for="'config-' + field.name" class="block text-sm font-medium">
           {{ field.name }}{{ field.required ? ' *' : '' }}
@@ -199,6 +213,16 @@ onBeforeUnmount(() => controller?.abort())
             :disabled="busy" @change="changeValue(field.name, field.type, $event)" />
           Enabled
         </label>
+        <select v-else-if="props.pluginKey === 'core.tts' && field.name === 'provider_ref' && ttsProviders.length"
+          :id="'config-' + field.name" class="admin-input w-full" :disabled="busy"
+          :value="String(edited[field.name] ?? '')" @change="changeValue(field.name, 'string', $event)">
+          <option value="">Select an enabled TTS provider</option>
+          <option v-if="edited[field.name] && !ttsProviders.some(item => item.key === edited[field.name])"
+            :value="String(edited[field.name])">{{ String(edited[field.name]) }} (previous selection)</option>
+          <option v-for="provider in ttsProviders" :key="provider.key" :value="provider.key">
+            {{ provider.name }} · {{ provider.key }}
+          </option>
+        </select>
         <input v-else :id="'config-' + field.name" class="admin-input w-full" autocomplete="off"
           :type="field['x-secret'] ? 'password' : field.type === 'integer' || field.type === 'number' ? 'number' : 'text'"
           :step="field.type === 'integer' ? 1 : 'any'"
