@@ -835,13 +835,14 @@ async fn builtin_core_catalog_is_authenticated_and_independent_of_installed_pack
         .json()
         .await
         .unwrap();
-    assert_eq!(catalog["total"], 4);
-    assert_eq!(catalog["operation_total"], 8);
+    assert_eq!(catalog["total"], 6);
+    assert_eq!(catalog["operation_total"], 12);
     let groups = catalog["items"].as_array().unwrap();
     assert!(groups.iter().any(|group| group["id"] == "core.web"));
     for group in groups {
         assert_eq!(group["kind"], "built_in");
-        assert_eq!(group["status"], "ready");
+        let private = group["id"] == "core.knowledge" || group["id"] == "core.memory";
+        assert_eq!(group["status"], if private {"disabled"} else {"ready"});
         assert_eq!(group["runtime"]["kind"], "in_process");
         assert_eq!(group["operations"].as_array().unwrap().len(), 2);
     }

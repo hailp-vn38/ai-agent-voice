@@ -5,11 +5,15 @@ use crate::services::background::plugins::decode_choice;
 async fn core_policy_defaults_and_persists_without_installations() {
     let (db, config, runtime) = harness().await;
     let rows = db.core_plugin_settings().await.unwrap();
-    assert_eq!(rows.len(), 4);
-    assert!(rows.iter().all(|row| row.enabled == 1 && row.revision == 1));
+    assert_eq!(rows.len(), 6);
+    assert!(rows.iter().all(|row| row.revision == 1));
+    for row in &rows {
+        let expected = if row.plugin_id == "core.knowledge" || row.plugin_id == "core.memory" {0} else {1};
+        assert_eq!(row.enabled, expected, "unexpected default for {}", row.plugin_id);
+    }
     let catalog = crate::tools::core::bundled_catalog(&rows).unwrap();
-    assert_eq!(catalog["total"], 4);
-    assert_eq!(catalog["operation_total"], 8);
+    assert_eq!(catalog["total"], 6);
+    assert_eq!(catalog["operation_total"], 12);
     assert!(
         catalog["items"]
             .as_array()
@@ -228,7 +232,7 @@ async fn builtin_http_uses_auth_revision_and_static_core_tag() {
         .json()
         .await
         .unwrap();
-    assert_eq!(catalog["operation_total"], 8);
+    assert_eq!(catalog["operation_total"], 12);
     assert_eq!(catalog["items"][0]["tags"], json!(["core"]));
     let patch = || {
         client
