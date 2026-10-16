@@ -1,6 +1,22 @@
 use super::execution::take_chars;
 use super::*;
 #[test]
+fn wiki_core_outputs_include_source_provenance_and_line_origin() {
+    let choices=frozen_choices();
+    let search=choices.iter().find(|x|x["operation"]=="knowledge.search").unwrap();
+    let search_def=contract(&decode(search).unwrap()).unwrap();
+    let hit=&search_def["output_schema"]["properties"]["items"]["items"]["properties"];
+    assert!(hit["source_ref"].is_object());
+    assert!(jsonschema::validator_for(&search_def["output_schema"]).unwrap()
+        .is_valid(&json!({"items":[{"id":"wiki_a","title":"Topic","revision":2,
+            "excerpt":"Text","source_ref":"src_evidence:1"}]})));
+    let read=choices.iter().find(|x|x["operation"]=="knowledge.read").unwrap();
+    let def=contract(&decode(read).unwrap()).unwrap();
+    assert!(jsonschema::validator_for(&def["output_schema"]).unwrap()
+        .is_valid(&json!({"id":"wiki_a","title":"Topic","revision":2,"text":"Text",
+            "truncated":false,"source_ref":"src_evidence:1","from_line":3})));
+}
+#[test]
 fn frozen_roundtrip_and_revision_fail_closed() {
     for value in frozen_choices() {
         let choice = decode(&value).unwrap();

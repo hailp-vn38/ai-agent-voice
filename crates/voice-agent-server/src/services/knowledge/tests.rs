@@ -412,6 +412,48 @@
         drop(core);
         let _ = tokio::fs::remove_dir_all(root).await;
     }
+    #[tokio::test]
+    async fn memory_root_missing_at_restart_never_erases_existing_index() {
+        let root=std::env::temp_dir().join(format!("memory_restart_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        core.memory.put_fact(FactInput{
+            id:None,title:"Language".into(),body:"use Vietnamese".into(),
+            expected_revision:Some(0),source_ref:Some("admin".into()),confirmed:true
+        }).await.unwrap();
+        drop(core);
+        tokio::fs::rename(root.join("memory/facts"),root.join("memory/facts-offline")).await.unwrap();
+        assert!(matches!(Runtime::open(root.clone()).await,Err(Error::Unavailable)));
+        tokio::fs::rename(root.join("memory/facts-offline"),root.join("memory/facts")).await.unwrap();
+        let recovered=Runtime::open(root.clone()).await.unwrap();
+        assert_eq!(recovered.memory.recall("Vietnamese",5).await.unwrap().len(),1);
+        drop(recovered);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn source_tamper_is_detected_when_reopening_indexes() {
+        let root=std::env::temp_dir().join(format!("provenance_restart_{}",Uuid::new_v4()));
+        let core=Runtime::open(root.clone()).await.unwrap();
+        let source=core.knowledge.import_source(SourceInput{
+            name:"evidence.md".into(),content:"unmodified".into(),provenance:"admin".into()
+        }).await.unwrap();
+        let reference=format!("{}:1",source.id);
+        let draft=core.knowledge.put_draft(WikiInput{
+            id:None,title:"Source".into(),body:"trustedmaterial".into(),
+            expected_revision:Some(0),source_ref:Some(reference.clone())
+        }).await.unwrap();
+        core.knowledge.publish(&draft.id,draft.revision,&reference).await.unwrap();
+        drop(core);
+        tokio::fs::write(root.join("knowledge/raw").join(&source.id).join("1/original.md"),
+            "tampered").await.unwrap();
+        let reopened=Runtime::open(root.clone()).await.unwrap();
+        assert_eq!(reopened.knowledge.health().await.unwrap().health,"stale");
+        assert!(matches!(reopened.knowledge.search("trustedmaterial",5).await,Err(Error::IndexStale)));
+        assert_eq!(reopened.memory.health().await.unwrap().health,"ready");
+        drop(reopened);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
+
     #[test]
     fn memory_summary_only_confirmed_active() {
         let rec = Record {
