@@ -135,8 +135,14 @@ impl Database {
         )
         .fetch_all(&mut *tx)
         .await?;
-        let enabled_core = crate::tools::core::enabled_groups(&core_settings)
+        let mut enabled_core = crate::tools::core::enabled_groups(&core_settings)
             .map_err(|_| JobError::DatabaseUnavailable)?;
+        let tts_pin = if enabled_core.iter().any(|group| group == "core.tts") {
+            tts_provider::configured_pin(&mut tx,config).await?
+        } else { None };
+        if tts_pin.is_none() {
+            enabled_core.retain(|group| group != "core.tts");
+        }
         let plugin_choices = crate::services::background::plugins::frozen_choices(
             crate::database::plugins::ready_installations(&mut tx)
                 .await
@@ -198,6 +204,9 @@ impl Database {
             .bind(&key)
             .execute(&mut *tx)
             .await?;
+        }
+        if let Some(pin) = &tts_pin {
+            tts_provider::insert_pin(&mut tx, &id, pin).await?;
         }
         let row: JobRow = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
             .bind(&id)
