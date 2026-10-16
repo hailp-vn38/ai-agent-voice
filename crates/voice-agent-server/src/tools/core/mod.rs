@@ -1,4 +1,4 @@
-//! Statically linked, safe-read Agent Job operations. Not Plugin Store installations.
+//! Statically linked Agent Job operations (safe reads and Core TTS). Not installations.
 //! Risk 2 (network target/SSRF policy) is explicitly deferred; do not expose web.fetch
 //! or web.extract to untrusted tenants until a separate policy is implemented.
 
