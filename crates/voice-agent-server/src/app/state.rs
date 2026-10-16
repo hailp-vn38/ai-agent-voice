@@ -31,6 +31,8 @@ use std::{
 /// Application-owned state. Production sessions resolve a fixed runtime snapshot from catalogs.
 #[derive(Clone)]
 pub struct AppState {
+    /// Lazily loaded and shared across authenticated Admin calls; no extra Voice hot-path work.
+    pub(crate) knowledge_runtime: Arc<tokio::sync::OnceCell<Arc<crate::services::knowledge::Runtime>>>,
     pub background: Option<Arc<crate::services::background::BackgroundRuntime>>,
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
@@ -663,6 +665,7 @@ impl AppState {
             .with_pilot_admission(pilot_admission.clone()),
         );
         let state = Self {
+            knowledge_runtime: Arc::new(tokio::sync::OnceCell::new()),
             background: None,
             started_at: Instant::now(),
             active_device_sessions: Arc::new(Default::default()),

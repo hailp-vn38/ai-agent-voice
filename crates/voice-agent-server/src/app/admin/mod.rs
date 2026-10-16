@@ -1,6 +1,7 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
 mod background;
+mod knowledge;
 mod notifications;
 mod plugins;
 mod system_mcp;
@@ -32,6 +33,17 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
+        // Knowledge and Memory are two authenticated Admin workspaces, not Plugin Store data.
+        .route("/knowledge/pages", get(knowledge::knowledge_search).post(knowledge::knowledge_create))
+        .route("/knowledge/pages/{id}", get(knowledge::knowledge_read).put(knowledge::knowledge_update))
+        .route("/knowledge/index", get(knowledge::knowledge_health))
+        .route("/knowledge/index/rebuild", axum::routing::post(knowledge::knowledge_rebuild))
+        .route("/memory/facts", get(knowledge::memory_recall).post(knowledge::memory_create))
+        .route("/memory/facts/{id}", get(knowledge::memory_read).put(knowledge::memory_update))
+        .route("/memory/facts/{id}/forget", axum::routing::post(knowledge::memory_forget))
+        .route("/memory/summary", get(knowledge::memory_summary))
+        .route("/memory/index", get(knowledge::memory_health))
+        .route("/memory/index/rebuild", axum::routing::post(knowledge::memory_rebuild))
         .route("/plugins", get(plugins::list))
         .route("/plugins/builtin", get(plugins::builtin_catalog))
         .route(

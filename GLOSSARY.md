@@ -276,3 +276,33 @@ _Avoid_: Agent Job, subagent call, Plugin Runtime Check
 **Operation Contract**:
 Mô tả được Plugin công bố cho một operation gồm tên, đầu vào và đầu ra hợp lệ; là căn cứ Rust xác thực trước khi gọi thực thi.
 _Avoid_: arbitrary function, LLM-generated tool implementation
+
+## Knowledge and Memory V3
+
+**Wiki Page**:
+Reusable sourced knowledge document with stable identity independent of its title, path and revision.
+_Avoid_: Memory Fact, Job Artifact
+
+**Source**:
+Preserved version of original evidence which a Wiki Page may cite.
+_Avoid_: temporary attachment, Wiki Page
+
+**Knowledge Revision**:
+One accepted immutable version of a Wiki Page.
+_Avoid_: Job Step, search-index row
+
+**Memory Fact**:
+An owner-scoped durable assertion, independently confirmed, corrected, superseded or forgotten.
+_Avoid_: Wiki Page, inference, Memory Summary
+
+**Memory Summary**:
+Bounded generated view of active confirmed Memory Facts, never the canonical representation of the facts.
+_Avoid_: canonical memory page, index row
+
+**Publication Proposal**:
+Candidate Wiki content awaiting trusted Rust validation and revision checking.
+_Avoid_: accepted Wiki Page, direct filesystem instruction
+
+**Search Projection**:
+Derived index of canonical Markdown whose loss does not delete the underlying documents.
+_Avoid_: authoritative database, document source of truth

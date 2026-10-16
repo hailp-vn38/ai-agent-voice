@@ -1,4 +1,5 @@
 pub mod background;
+pub mod knowledge;
 pub mod device;
 pub mod notifications;
 pub mod provider;
