@@ -12,7 +12,7 @@ mod settings;
 #[cfg(test)]
 mod tests;
 pub(crate) use contracts::{compile_child_tools, normalize_tool_arguments};
-pub(crate) use dispatch::{FrozenChoice, Invocation, InvokeResult};
+pub(crate) use dispatch::{ArtifactData, FrozenChoice, Invocation, InvokeResult};
 
 /// Decode either a previously persisted External choice or a frozen Core choice.
 /// External JSON is unchanged; Core never receives a Plugin Store installation.
