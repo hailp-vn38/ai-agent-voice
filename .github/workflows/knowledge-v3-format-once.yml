@@ -1,5 +1,5 @@
 name: Knowledge V3 One-time Rust Format
-# Run again after Core Job adapter integration.
+# Final format sweep for Knowledge V3 including verified Source support.
 on:
   push:
     branches:
@@ -28,7 +28,15 @@ jobs:
             crates/voice-agent-server/src/app/admin/mod.rs \
             crates/voice-agent-server/src/app/state.rs \
             crates/voice-agent-server/src/database/mod.rs \
-            crates/voice-agent-server/src/services/mod.rs
+            crates/voice-agent-server/src/services/mod.rs \
+            crates/voice-agent-server/src/services/background/engine.rs \
+            crates/voice-agent-server/src/services/background/runtime.rs \
+            crates/voice-agent-server/src/services/background/manual_admission.rs \
+            crates/voice-agent-server/src/database/jobs/manual.rs \
+            crates/voice-agent-server/src/tools/core/catalog.rs \
+            crates/voice-agent-server/src/tools/core/contracts.rs \
+            crates/voice-agent-server/src/tools/core/execution.rs \
+            crates/voice-agent-server/src/tools/core/tests.rs
           if ! git diff --cached --quiet; then
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'style(knowledge): apply rustfmt to Rust implementation'
             git push origin HEAD:feat/knowledge-memory-v3-file-first-index
