@@ -25,6 +25,8 @@
 ```text
 data/
   <main SQLite database path selected by database.url>
+  .knowledge_v3_initialized             # outside Knowledge vault
+  .memory_v3_initialized                # outside Memory vault
   knowledge/
     wiki/<stable-id>.md                 # last accepted revision
     drafts/<stable-id>.md               # staged edit of verified Wiki
@@ -112,3 +114,5 @@ An authenticated Admin can list bounded canonical Wiki metadata without a search
 - Admin and Background Job adapters share one application-owned `Arc<OnceCell<Arc<Runtime>>>`; no duplicate SQL index pools are constructed for the same server instance. Blocking directory fsync is offloaded from Tokio runtime workers.
 
 These are corrections within the existing KnowledgeCore/MemoryCore interfaces and three-database decision, not a second publishing engine.
+
+The top-level `.knowledge_v3_initialized` and `.memory_v3_initialized` guards are written in the durable application SQLite's parent directory after successful initialization. They detect the **entire** vault root disappearing, while the in-vault markers detect missing canonical collections or staged draft directories. Neither marker replaces backups. A vault missing at restart is rejected rather than silently re-created.

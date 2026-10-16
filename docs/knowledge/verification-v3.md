@@ -45,3 +45,5 @@ Binary PDF/DOCX/image/audio/video ingest, source extraction adapters, automatic 
 8. Publish one Wiki, then edit it. Admin must show a staged draft; Agent `knowledge.read` and `knowledge.search` must continue returning the original verified text. Restart and repeat. Publish the staged revision using expected staging CAS; Agent must now see only the new version, with original evidence archived.
 9. Confirm `knowledge.search` and `knowledge.read` tool results include `source_ref`, and bounded reads include `from_line`. Check a stale/tampered Source does not return an apparently valid citation.
 10. Confirm both Admin and Background Job use the same Knowledge Runtime cell/pools in a running server; concurrent searches and updates must not create competing runtimes.
+
+11. After a successful server initialization, stop the server and temporarily rename the **entire** `knowledge/` folder while leaving the main SQLite database intact. Restart must reject the missing vault because the top-level `.knowledge_v3_initialized` guard remains. Restore the folder and confirm the existing Wiki is still present.

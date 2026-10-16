@@ -13,3 +13,5 @@ Only UTF-8 Markdown Source v1 is initially imported. The raw Source original, ex
 ## Corrected Wiki revision workflow (2026-10-16)
 
 Accepted Wiki Markdown remains canonical and searchable while a replacement draft is edited under `knowledge/drafts/`. The draft records its canonical base revision and has its own draft revision history. Explicit publish validates the draft CAS, unchanged base and immutable Source checksum before advancing the canonical revision and rebuilding the derived index. Crashes after canonical publication may leave a redundant staged copy; recovery ignores only a copy with matching accepted content. Original immutable revision snapshots are first staged and fsynced before atomic publication. Vault initialization markers prevent treating a lost data directory as an empty corpus after restart.
+
+A second pair of initialization markers lives in the parent directory of the application SQLite database. They survive whole-vault directory removal and prevent a restart from silently installing an empty derived index after data loss. This is additive to the in-vault document-root guard.
