@@ -314,15 +314,18 @@ impl JobEngine {
                         step_key,
                         &attempt,
                         code,
-                        !crate::tools::core::is_core(choice)
-                            && matches!(
-                                error,
-                                PluginError::WorkerTimeout
-                                    | PluginError::WorkerDeadlineExceeded
-                                    | PluginError::SandboxUnavailable
-                                    | PluginError::WorkerUnreaped
-                                    | PluginError::JobRejected(JobError::Cancelled)
-                            ),
+                        (crate::tools::core::is_core(choice)
+                            && choice.operation == "tts.synthesize"
+                            && error == PluginError::WorkerUnreaped)
+                            || (!crate::tools::core::is_core(choice)
+                                && matches!(
+                                    error,
+                                    PluginError::WorkerTimeout
+                                        | PluginError::WorkerDeadlineExceeded
+                                        | PluginError::SandboxUnavailable
+                                        | PluginError::WorkerUnreaped
+                                        | PluginError::JobRejected(JobError::Cancelled)
+                                )),
                         finish_step_job,
                     )
                     .await?;
