@@ -420,6 +420,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forced_rebuild_repairs_missing_fts_row_without_rewriting_markdown() {
+        let root = std::env::temp_dir().join(format!("knowledge_v3_{}", Uuid::new_v4()));
+        let core = Runtime::open(root.clone()).await.unwrap();
+        let page = core.knowledge.put_draft(WikiInput {
+            id: None,
+            title: "Recovery".into(),
+            body: "uniqueindexprobe".into(),
+            expected_revision: Some(0),
+            source_ref: None,
+        }).await.unwrap();
+        let canonical = tokio::fs::read(root.join("knowledge/wiki").join(format!("{}.md",page.id)))
+            .await.unwrap();
+        let uri = format!("sqlite://{}",root.join("knowledge/knowledge_index.db").display());
+        let index = sqlx::SqlitePool::connect(&uri).await.unwrap();
+        sqlx::query("DELETE FROM kb_fts WHERE stable_id=?")
+            .bind(&page.id).execute(&index).await.unwrap();
+        assert!(core.knowledge.search("uniqueindexprobe",10).await.unwrap().is_empty());
+        core.knowledge.rebuild().await.unwrap();
+        assert_eq!(core.knowledge.search("uniqueindexprobe",10).await.unwrap().len(),1);
+        assert_eq!(canonical,tokio::fs::read(root.join("knowledge/wiki")
+            .join(format!("{}.md",page.id))).await.unwrap());
+        drop(index);
+        drop(core);
+        let _=tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
     async fn missing_vault_root_fails_closed_without_mass_delete() {
         let root = std::env::temp_dir().join(format!("knowledge_v3_{}", Uuid::new_v4()));
         let core = Runtime::open(root.clone()).await.unwrap();
