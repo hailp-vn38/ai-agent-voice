@@ -1,4 +1,4 @@
-//! Adapter metadata with local bootstrap and explicit remote voice discovery.
+//! Read-only adapter descriptor and metadata-only bootstrap discovery endpoints.
 
 use super::*;
 use crate::providers::{
@@ -165,7 +165,6 @@ pub(super) async fn get_provider_capabilities(
 }
 
 pub(super) async fn discover_provider_capabilities(
-    State(state): State<AppState>,
     Path(adapter): Path<String>,
     request: Request,
 ) -> Response {
@@ -176,42 +175,6 @@ pub(super) async fn discover_provider_capabilities(
     let registry = compiled_provider_adapter_registry();
     if registry.get(&adapter).is_none() {
         return error(&request, StatusCode::NOT_FOUND, "not_found");
-    }
-    if adapter == "vieneu_http" {
-        let mut draft = crate::services::provider_test::ProviderTestDraft {
-            kind: "tts".into(),
-            adapter,
-            config_json: body.selection,
-            api_key: body.api_key,
-            saved_credential: body.saved_credential,
-        };
-        let runner = crate::services::provider_test::ProviderTestRunner {
-            diagnostics: &state.provider_diagnostics,
-            database: state.database.as_deref(),
-            secrets: state.secret_resolver.clone(),
-        };
-        let credential = match runner.credential(&mut draft).await {
-            Ok(value) => value,
-            Err(cause) => return provider_test_drafts::failure(&request, cause),
-        };
-        return match crate::providers::tts::vieneu::voices::discover(
-            &draft.config_json,
-            credential.as_ref(),
-        )
-        .await
-        {
-            Ok(capabilities) => Json(capabilities).into_response(),
-            Err(ProviderInspectError::InvalidSelection) => error(
-                &request,
-                StatusCode::BAD_REQUEST,
-                "capability_discovery_invalid",
-            ),
-            Err(_) => error(
-                &request,
-                StatusCode::BAD_GATEWAY,
-                "capability_discovery_unavailable",
-            ),
-        };
     }
     if body.api_key.is_some() || body.saved_credential.is_some() {
         return error(&request, StatusCode::BAD_REQUEST, "credential_invalid");

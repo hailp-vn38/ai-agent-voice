@@ -5,6 +5,7 @@ fn config(model: &str) -> OpenCodeFreeConfig {
         model: model.into(),
         timeout_ms: 60_000,
         supports_responses: false,
+        supports_structured_outputs: false,
     }
 }
 
@@ -124,109 +125,4 @@ fn fingerprint_tools_preserve_callers_and_never_dispatch_placeholders() {
         LlmEvent::TextDelta("OK".into())
     );
     assert!(reject_placeholder_call(Err(LlmError::Failed), &placeholders).is_err());
-}
-
-#[tokio::test]
-#[ignore = "calls the live OpenCode Zen free tier"]
-async fn live_space_bunny_streams_through_provider() {
-    use futures_util::StreamExt;
-    let provider = OpenCodeFreeProvider::build(&config("space-bunny-free")).unwrap();
-    let mut stream = provider
-        .stream(LlmRequest::from("Do not use tools. Reply with OK only."))
-        .await
-        .unwrap();
-    let mut text = String::new();
-    let mut finished = false;
-    while let Some(event) = stream.next().await {
-        match event.unwrap() {
-            LlmEvent::TextDelta(delta) => text.push_str(&delta),
-            LlmEvent::Finished => finished = true,
-            LlmEvent::ToolCall(_) => panic!("unexpected tool call"),
-        }
-    }
-    assert!(!text.trim().is_empty(), "provider returned no text");
-    assert!(finished, "provider did not finish its stream");
-    println!("space-bunny-free response: {text}");
-}
-
-#[test]
-fn responses_is_opt_in_and_round_trips_through_admin_config() {
-    let default = config("nemotron-3-ultra-free");
-    assert!(!default.supports_responses);
-    assert!(
-        serde_json::to_value(&default)
-            .unwrap()
-            .get("supports_responses")
-            .is_none()
-    );
-    let configured: OpenCodeFreeConfig =
-        toml::from_str("model = 'muse-spark-1.3-contributor-free'\nsupports_responses = true")
-            .unwrap();
-    assert!(configured.valid());
-    assert!(configured.supports_responses);
-    let provider = OpenCodeFreeProvider::build(&configured).unwrap();
-    assert!(provider.supports_responses);
-    assert!(
-        !OpenCodeFreeProvider::build(&default)
-            .unwrap()
-            .supports_responses
-    );
-
-    let admin = crate::database::provider_config::validate(
-        "opencode_free",
-        &serde_json::json!({
-            "model": "muse-spark-1.3-contributor-free",
-            "timeout_ms": 60000,
-            "supports_responses": true
-        }),
-    )
-    .unwrap();
-    let mut value: serde_json::Value = serde_json::from_str(&admin).unwrap();
-    value.as_object_mut().unwrap().remove("max_tokens");
-    value["adapter"] = serde_json::json!("opencode_free");
-    let instance: crate::config::LlmInstanceConfig = serde_json::from_value(value).unwrap();
-    assert!(matches!(
-        instance,
-        crate::config::LlmInstanceConfig::OpenCodeFree(OpenCodeFreeConfig {
-            supports_responses: true,
-            ..
-        })
-    ));
-}
-
-#[test]
-fn tool_choice_matches_requested_tools() {
-    let provider = OpenCodeFreeProvider::build(&config("space-bunny-free")).unwrap();
-    let mut request = LlmRequest::from("Return a JSON plan without invoking tools.");
-    let client = provider.chat_client(&request);
-    assert!(matches!(
-        client.config.tool_choice,
-        Some(llm::chat::ToolChoice::None)
-    ));
-    request.tools.push(ToolDefinition {
-        name: "calendar".into(),
-        description: "Read today's calendar".into(),
-        parameters: serde_json::json!({"type": "object"}),
-    });
-    assert!(provider.chat_client(&request).config.tool_choice.is_none());
-}
-
-#[tokio::test]
-#[ignore = "calls the live OpenCode Zen free tier"]
-async fn live_space_bunny_background_returns_json_without_tools() {
-    let provider = OpenCodeFreeProvider::build(&config("space-bunny-free")).unwrap();
-    let request = LlmRequest {
-        messages: vec![
-            super::super::ChatMessage::System {
-                content: "Return only JSON. Do not invoke tools.".into(),
-            },
-            super::super::ChatMessage::User {
-                content: r#"Return {"summary":"OK"}."#.into(),
-            },
-        ],
-        tools: vec![],
-    };
-    let text = provider.background_complete(request, None).await.unwrap();
-    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(value["summary"], "OK");
 }

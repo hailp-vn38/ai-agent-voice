@@ -29,14 +29,16 @@ fn database_url() -> String {
     format!(
         "sqlite://{}",
         std::env::temp_dir()
-            .join(format!("voice-agent-load-plan-{}.db", uuid::Uuid::new_v4()))
+            .join(format!("voice-agent-load-plan-{}", uuid::Uuid::new_v4()))
+            .join("voice-agent.db")
             .display()
     )
 }
 
 fn config(url: String) -> AppConfig {
     AppConfig {
-        background: Default::default(),
+        orchestrator: Default::default(),
+        wiki: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),

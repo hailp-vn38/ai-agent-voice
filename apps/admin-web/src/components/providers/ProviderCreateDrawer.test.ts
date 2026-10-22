@@ -13,41 +13,6 @@ const BaseModalStub = { template: '<div><slot /><slot name="footer" /></div>' }
 const ButtonStub = { props: ['disabled', 'type'], template: '<button :disabled="disabled" :type="type || \'button\'"><slot /></button>' }
 
 describe('ProviderCreateDrawer', () => {
-  it('submits a VieNeu bearer credential separately from desired config', async () => {
-    adaptersApi.list.mockResolvedValue([{ adapter: 'vieneu_http', type: 'tts' }])
-    adaptersApi.get.mockResolvedValue({ adapter: 'vieneu_http', type: 'tts', discovery: { voices: 'remote' }, config_schema: { fields: [
-      { key: 'base_url', type: 'string', required: true },
-      { key: 'voice', type: 'string', required: true, enum_source: 'voices' },
-    ] } })
-    const create = vi.fn().mockResolvedValue({ key: 'tts_vieneu' })
-    const wrapper = mount(ProviderCreateDrawer, {
-      props: { modelValue: false, initialType: 'tts', create },
-      global: { stubs: { BaseModal: BaseModalStub, Button: ButtonStub } },
-    })
-    await wrapper.setProps({ modelValue: true })
-    await flushPromises()
-    await wrapper.get('select').setValue('vieneu_http')
-    await flushPromises()
-    await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
-    await wrapper.get('input[placeholder="Giọng Mai Chi"]').setValue('VieNeu')
-    const fields = wrapper.findAll('input[type="text"]')
-    await fields[0]!.setValue('http://vieneu:8000/v1')
-    await fields[1]!.setValue('Mai Anh')
-    await wrapper.get('input[type="password"]').setValue('private-bearer')
-    adaptersApi.discoverCapabilities.mockResolvedValue({ voices: [{ id: 'Trúc Ly', name: 'Trúc Ly' }] })
-    await wrapper.findAll('button').find((button) => button.text() === 'Tải danh sách giọng')!.trigger('click')
-    await flushPromises()
-    expect(adaptersApi.discoverCapabilities).toHaveBeenCalledWith('vieneu_http', {
-      selection: { base_url: 'http://vieneu:8000/v1', voice: 'Mai Anh' }, api_key: 'private-bearer',
-    }, expect.any(AbortSignal))
-    await wrapper.get('select').setValue('Trúc Ly')
-    await wrapper.findAll('button').find((button) => button.text() === 'Tiếp tục')!.trigger('click')
-    await wrapper.findAll('button').find((button) => button.text() === 'Tạo provider')!.trigger('click')
-    await flushPromises()
-    expect(create).toHaveBeenCalledWith({ name: 'VieNeu', type: 'tts', adapter: 'vieneu_http',
-      config_json: { base_url: 'http://vieneu:8000/v1', voice: 'Trúc Ly' }, api_key: 'private-bearer' })
-  })
-
   it('omits cleared optional fields so the API can apply defaults', async () => {
     adaptersApi.list.mockResolvedValue([{ adapter: 'zerotts_onnx', type: 'tts' }])
     adaptersApi.get.mockResolvedValue({ adapter: 'zerotts_onnx', type: 'tts', config_schema: { fields: [

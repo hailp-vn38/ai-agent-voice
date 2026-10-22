@@ -51,6 +51,28 @@ queue_capacity = 256
 enabled = false
 admin_token = ""
 
+[orchestrator]
+enabled = true
+endpoint = "https://openrouter.ai/api/v1"
+api_key = ""
+model = "openai/gpt-oss-120b"
+store_dir = "data/orchestrator/store"
+tasks_store_dir = "data/orchestrator/tasks"
+reports_dir = "data/orchestrator/reports"
+work_dir = "data/orchestrator/work"
+skills_dir = "skills"
+prompts_dir = "data/orchestrator/prompts"
+default_timezone = "Asia/Ho_Chi_Minh"
+context_limit_tokens = 128000
+max_output_tokens = 16000
+request_timeout_ms = 120000
+max_concurrent_root_runs = 4
+
+[wiki]
+enabled = true
+vault_dir = "data/wiki"
+template = "research"
+
 [shutdown]
 grace_ms = 15000
 
@@ -125,6 +147,10 @@ adapter = "openai"
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
+# Agent Jobs use native Function Calling without a capability opt-in.
+# Legacy structured decisions still require Structured Outputs support.
+# supports_structured_outputs = true
+# supports_responses = true  # Optional Agent Job /responses route; Voice still uses Chat.
 
 [providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"
@@ -139,18 +165,10 @@ adapter = "chillaudio_ws"
 token = "set-deployment-token-here"
 # voice = "BV421_vivn_streaming"
 
-# Optional VieNeu service: compose.vieneu.yaml and docs/vieneu.md.
-# [providers.tts.instances.vieneu_default]
-# adapter = "vieneu_http"
-# base_url = "http://vieneu:8000/v1"
-# voice = "Mai Anh"
-# timeout_ms = 30000
-# api_key = ""
-
 # Native VieNeu v3 Turbo (CPU FP32). Model Preparation installs the pinned assets.
-# To select it, set [provider_defaults].tts = "vieneu_native_default".
-# [providers.tts.instances.vieneu_native_default]
-# adapter = "vieneu_native"
+# To select it, set [provider_defaults].tts = "vieneu_default".
+# [providers.tts.instances.vieneu_default]
+# adapter = "vieneu"
 # voice = "hai_dang"
 # language = "vi-VN"
 # preload = false
@@ -190,6 +208,7 @@ final_timeout_ms = 15000
 cleanup_grace_ms = 5000
 
 [workers.tts]
+# Native VieNeu and ZeroTTS create this many resident workers; at least 2 enables Background TTS.
 max_workers = 2
 command_queue_capacity = 32
 cleanup_grace_ms = 5000
@@ -235,7 +254,7 @@ silero_onnx = 1
 zipformer_sherpa = 2
 gipformer_sherpa_offline = 4
 zerotts_onnx = 2
-vieneu_native = 2
+vieneu = 2
 kokoro_vi_onnx = 2
 
 [runtime.chillaudio]
@@ -298,14 +317,15 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # silero_onnx = 134217728
 # gipformer_sherpa_offline = 536870912
 # kokoro_vi_onnx = 3221225472
+# ZeroTTS: 2 streaming workers peaked at 2729220 KiB RSS in a short development smoke test.
+# Reservation covers the whole configured pool; requalify when widening it.
 # zerotts_onnx = 4294967296
-# Native VieNeu: local smoke peak RSS was 1230424 KiB with one replica / 2 threads.
-# Requalify this reservation for your machine and workload.
-# vieneu_native = 2147483648
+# Native VieNeu: allow 2 GiB per workers.tts.max_workers (4 GiB for the 2 above).
+# Requalify this whole-pool reservation for your machine and workload.
+# vieneu = 4294967296
 # openai = 67108864
 # opencode_free = 67108864
 # chillaudio_ws = 67108864
-# vieneu_http = 67108864
 
 [mcp]
 enabled = true
@@ -344,13 +364,3 @@ allowed_hosts = []
 
 [system_mcp]
 enabled = false # Read-only tools for authenticated Studio Assistant sessions.
-
-# Shared plugin runtime; sockets and directories must be mounted by compose.yaml.
-# Background enablement and LLM choices remain Admin settings.
-[background]
-plugin_installer_socket = "/run/plugin-installer/installer.sock"
-plugin_runner_socket = "/run/plugin-runner/runner.sock"
-plugin_installations_dir = "data/plugins/installations"
-plugin_staging_dir = "data/plugins/staging"
-plugin_attempts_dir = "data/plugins/workspaces"
-plugin_curated_dir = "data/curated-plugins"

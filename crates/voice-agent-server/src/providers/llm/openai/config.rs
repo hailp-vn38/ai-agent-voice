@@ -19,6 +19,8 @@ pub struct OpenAiConfig {
     /// Explicit provider capability; Chat Completions stays the Voice default.
     #[serde(default, skip_serializing_if = "is_false")]
     pub supports_responses: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_structured_outputs: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -32,6 +34,7 @@ impl Default for OpenAiConfig {
             model: default_openai_model(),
             timeout_ms: default_llm_timeout_ms(),
             supports_responses: false,
+            supports_structured_outputs: false,
         }
     }
 }

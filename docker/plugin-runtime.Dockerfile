@@ -3,8 +3,8 @@
 FROM rust:1.98.1-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+ENV CARGO_TARGET_DIR=/app/target
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY .cargo .cargo
 COPY crates crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --locked --release -p voice-agent-server --bin plugin-runtime && \

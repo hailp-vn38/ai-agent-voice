@@ -142,15 +142,19 @@ mod real_model_tests {
     use super::{ConfiguredKokoroVi, KokoroViArtifacts};
 
     #[test]
-    #[ignore = "requires models/tts/kokoro-vi and runtime/kokoro-vi local assets"]
+    #[ignore = "requires models/TTS/kokoro_vi and runtime/kokoro-vi local assets"]
     fn loads_local_contextbox_model_and_synthesizes_24khz_pcm() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/tts/kokoro-vi");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models/TTS/kokoro_vi");
         let runtime_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
         let provider = ConfiguredKokoroVi::load(
             &KokoroViOnnxConfig::default(),
             &RuntimeConfig {
                 onnx: OnnxRuntimeConfig {
-                    library: runtime_root.join("onnxruntime/libonnxruntime.dylib"),
+                    library: runtime_root.join(if cfg!(target_os = "macos") {
+                        "onnxruntime/libonnxruntime.dylib"
+                    } else {
+                        "onnxruntime/libonnxruntime.so"
+                    }),
                     ..Default::default()
                 },
                 kokoro_vi: KokoroViRuntimeConfig {

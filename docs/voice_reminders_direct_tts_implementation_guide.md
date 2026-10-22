@@ -92,7 +92,7 @@ Migration mới nhất thấy ở thời điểm viết: `0103_system_mcp_author
 
 **Lưu ý:** Repository Rust đã kiểm tra **không chứa firmware ESP32 hoàn chỉnh**. Phần firmware ở tài liệu là hợp đồng triển khai cho repository firmware thực tế; **không** tạo giả một cây mã firmware trong Rust repo. Ghi rõ repo/commit firmware khi bắt đầu phase đó.
 
-Tài liệu nền cần đọc: `docs/flows/01-websocket.md`, `docs/flows/05-tts.md`, `docs/flows/06-interrupt-cancellation.md`, `docs/adr/0002-session-actor.md`, `docs/adr/0084-per-turn-structured-system-prompt.md`, `docs/studio-assistant-virtual-device-ws-implementation-guide.md`, `docs/structured-voice-system-prompt.md`.
+Tài liệu nền cần đọc: `docs/flows/01-websocket.md`, `docs/flows/05-tts.md`, `docs/flows/06-interrupt-cancellation.md`, `docs/adr/0002-session-actor.md`, `docs/adr/0084-per-turn-structured-system-prompt.md`.
 
 ---
 

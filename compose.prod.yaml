@@ -23,12 +23,12 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: /mnt/storage/ai-agent-voice/docker/prod/data
+        source: ${VOICE_PROD_DATA_DIR:-/mnt/storage/ai-agent-voice/docker/prod/data}
         target: /app/data
         bind:
           create_host_path: false
       - type: bind
-        source: /mnt/storage/ai-agent-voice/docker/prod/models
+        source: ${VOICE_PROD_MODELS_DIR:-/mnt/storage/ai-agent-voice/docker/prod/models}
         target: /app/models
         bind:
           create_host_path: false

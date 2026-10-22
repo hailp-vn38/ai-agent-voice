@@ -361,11 +361,8 @@ pub(crate) async fn handler(
                 socket,
                 config,
                 SocketRuntimes {
-                    job_submit: crate::services::background::VoiceJobSubmit::admitted(
-                        state
-                            .background
-                            .as_ref()
-                            .map(|runtime| runtime.engine.clone()),
+                    job_submit: crate::services::task_flow::VoiceTaskSubmit::admitted(
+                        state.task_manager.as_ref(),
                         profile.device_db_id,
                         profile.agent_id,
                     ),
@@ -541,7 +538,7 @@ fn valid_device_identity(value: &str) -> bool {
 }
 
 struct SocketRuntimes {
-    job_submit: Option<crate::services::background::VoiceJobSubmit>,
+    job_submit: Option<crate::services::task_flow::VoiceTaskSubmit>,
     active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     database: Option<Arc<crate::database::Database>>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,

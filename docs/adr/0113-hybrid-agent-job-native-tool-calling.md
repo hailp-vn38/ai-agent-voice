@@ -1,0 +1,16 @@
+# ADR 0113 — Strict Root decisions and native Child function calls
+
+Status: Accepted for implementation, 2026-10-14.
+
+For new `hierarchical_v2` Agent Jobs, Root Orchestrator uses server-owned strict JSON Schema (`delegate|finish`), while each Sub-Agent uses provider-native strict Function Calling for frozen, permitted safe-read Plugin Operations plus server-owned `submit_result`. Rust alone validates, persists Steps, executes plugins, joins Children and finalizes the Job. This is deliberately different from a generic vendor Agent Framework: it preserves immutable provider/plugin pins, Voice capacity, SQLite Job ledger, bounded repair and non-replayable `unknown_outcome`.
+
+Previously the Child generated ad-hoc JSON `call_plugin|finish`, leading to arguments-format errors. Existing Voice adapters already had `ToolDefinition` and `ToolCall`, but Background collectors rejected function calls. The design adds only a Background one-shot turn interface with Chat/Responses codecs; no new execution bus, MCP bridge or DB tables. The small tool projection helper exposes a strict-compatible superset of a plugin's JSON Schema and uses the original frozen source schema for Rust-side validation. Each accepted Child LLM Turn carries exactly one function call. The function `submit_result` completes a Child Run, not an entire Job.
+
+Provider declares `supports_structured_outputs` separately from existing `supports_responses`. Structured output remains an opt-in assertion for the pinned model/transport and does not imply qualification. Native Function Calling is always available for the OpenAI-compatible and OpenCode Free adapters; it requires no configuration flag (amended 2026-10-15). Provider errors still fail closed; never silently switch endpoints or drop strict validation. Legacy `dag_v1` and Voice streaming behavior remain unchanged.
+
+Alternatives rejected: JSON actions for both Root and Child (fragile dynamic plugin arguments), tool calling for Root (unnecessary dispatch semantics), and vendor-side tool execution (bypasses Rust-owned authority). See [operational flow](../flows/08-agent-job-hybrid.md). ADR 0099's original Background tool-free rule still applies to **legacy** completions; this decision governs hierarchical native turns. ADR 0103's hierarchical model remains authoritative.
+
+
+## Supersession for V3 (ADR 0114)
+
+Root strict-JSON decisions, mandatory Child `submit_result`, and rejection of Root native tools are **V2-only**. ADR 0114 adopts native `subagent` and `finish_job` Root tools with matched tool results and durable Root/Child transcripts for new `hierarchical_v3` jobs. V3 Child may finish with assistant text or an explicit completion function; Rust still validates evidence/permissions. Existing strict schema projection, frozen plugin binding, provider admission and one-shot attempt rules continue to apply.

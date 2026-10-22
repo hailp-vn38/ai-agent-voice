@@ -5,16 +5,18 @@ use std::{
 };
 use url::Url;
 
-mod background;
+mod orchestrator_wiki;
 mod validation;
-pub use background::{BackgroundConfig, BackgroundLimits};
+pub use orchestrator_wiki::{OrchestratorSectionConfig, WikiSectionConfig};
 
 pub use validation::{BenchmarkTarget, ConfigError};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
-    pub background: BackgroundConfig,
+    pub orchestrator: OrchestratorSectionConfig,
+    #[serde(default)]
+    pub wiki: WikiSectionConfig,
     pub server: ServerConfig,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -1232,7 +1234,7 @@ fn default_runtime_threads() -> std::collections::BTreeMap<String, i32> {
         ("zipformer_sherpa", 2),
         ("gipformer_sherpa_offline", 4),
         ("zerotts_onnx", 2),
-        ("vieneu_native", 2),
+        ("vieneu", 2),
         ("kokoro_vi_onnx", 2),
     ]
     .into_iter()

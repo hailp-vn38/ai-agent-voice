@@ -6,10 +6,9 @@ import type { JobChangeCallbacks } from '@/api/job-updates'
 import { ApiError } from '@/api/errors'
 import JobsPage from './JobsPage.vue'
 import JobDetailPage from './JobDetailPage.vue'
-import JobUnifiedTimeline from '@/components/jobs/JobUnifiedTimeline.vue'
 
 const { api, listenJobChanges, push } = vi.hoisted(() => ({
-  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn(), artifact: vi.fn() },
+  api: { listJobs: vi.fn(), job: vi.fn(), events: vi.fn(), deleteJob: vi.fn() },
   listenJobChanges: vi.fn(),
   push: vi.fn(),
 }))
@@ -38,62 +37,91 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers() })
 
-it.each([false, true])('shows the standalone Job artifacts card (has files: %s)', async hasFiles => {
+it('shows the selected timeline item input and extracted source in Source coverage', async () => {
   const job = await api.job()
-  const artifact = { id: 'report.md', media_type: 'text/markdown', size_bytes: 2048, sha256: 'hash' }
-  api.job.mockClear().mockResolvedValue({ ...job, artifacts: hasFiles ? [artifact] : [] })
-  api.artifact.mockRejectedValue(new ApiError('Download failed', 500, 'artifact_download_failed'))
+  const steps = ['first', 'second'].map(name => ({
+    step_key: name, agent_run_id: 'child', plugin_id: 'core', operation: 'web.extract',
+    status: 'succeeded', attempt_state: 'finished', instruction: 'Extract ' + name,
+    arguments: { url: 'https://example.com/' + name, max_chars: 6000 },
+    result: { title: 'Article ' + name, text: 'Extracted news ' + name,
+      provenance: [{ source: 'web', urls: ['https://example.com/' + name], capabilities: ['web_extract'] }] },
+    required: true, dependencies: [], input_refs: [], output_schema: {},
+  }))
+  api.job.mockClear().mockResolvedValue({ ...job, steps, agent_runs: [
+    { agent_run_id: 'root', role: 'orchestrator', goal_excerpt: 'Coordinate extraction', result: null },
+    { agent_run_id: 'child', role: 'general', goal_excerpt: 'Fetch news highlights', result: { summary: 'News summary' } },
+  ] })
+  api.events.mockResolvedValue({ items: [...steps.map((step, index) => ({
+    sequence: index + 1, event_type: 'step_finished', step_key: step.step_key,
+    created_at: '2026-10-15T01:16:25Z', payload: { status: 'succeeded', agent_run_id: 'child' },
+  })), ...['child', 'root'].map((id, index) => ({
+    sequence: index + 3, event_type: 'agent_run_finished', step_key: null,
+    created_at: '2026-10-15T01:16:26Z', payload: { status: 'succeeded', agent_run_id: id },
+  }))] })
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    expect(wrapper.find('details').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain(translate('jobUi.technicalDetails'))
-    const heading = wrapper.findAll('h3').find(item => item.text() === translate('jobUi.jobArtifacts'))!
-    const card = heading.element.closest('section')!
-    expect(card.textContent).toContain(hasFiles ? '1' : '0')
-    if (hasFiles) {
-      expect(card.textContent).toContain(artifact.id)
-      expect(card.textContent).toContain('text/markdown · ' + (2048).toLocaleString() + ' B')
-      await wrapper.get('button[aria-label="' + translate('jobUi.download') + ' report.md"]').trigger('click')
-      await flushPromises()
-      expect(api.artifact).toHaveBeenCalledExactlyOnceWith('job-1', 'report.md')
-      expect(wrapper.get('[role="alert"]').text()).toBe('artifact_download_failed')
-    } else {
-      expect(card.textContent).toContain(translate('jobUi.noArtifacts'))
-      expect(card.querySelector('button')).toBeNull()
-    }
+    const coverageHeading = wrapper.findAll('h3').find(node => node.text() === translate('jobUi.sourceCoverage'))!
+    const coverageCard = coverageHeading.element.parentElement!
+    const items = wrapper.findAll('ol button')
+    await items[1]!.trigger('click')
+    expect(coverageCard.querySelectorAll('details').length).toBe(3)
+    expect(coverageCard.querySelector('details[open]')).toBeNull()
+    const stepDetails = coverageCard.querySelectorAll('details')[1]!
+    stepDetails.querySelector('summary')!.click()
+    expect(stepDetails.open).toBe(true)
+    stepDetails.querySelector('summary')!.click()
+    expect(stepDetails.open).toBe(false)
+    stepDetails.querySelector('summary')!.click()
+    expect(coverageCard.textContent).toContain('Extract second')
+    expect(coverageCard.textContent).toContain('https://example.com/second')
+    expect(coverageCard.textContent).toContain('Article second')
+    expect(coverageCard.textContent).toContain('Extracted news second')
+    expect(coverageCard.textContent).toContain('web_extract')
+    expect(coverageCard.textContent).not.toContain('Extracted news first')
+    await items[0]!.trigger('click')
+    expect(coverageCard.querySelector('details[open]')).toBeNull()
+    expect(coverageCard.textContent).toContain('Extracted news first')
+    expect(coverageCard.textContent).not.toContain('Extracted news second')
+    await items[2]!.trigger('click')
+    expect(coverageCard.textContent).toContain('Fetch news highlights')
+    expect(coverageCard.textContent).toContain('News summary')
+    expect(coverageCard.textContent).toContain('Extracted news first')
+    expect(coverageCard.textContent).toContain('Extracted news second')
+    await items[3]!.trigger('click')
+    expect(coverageCard.textContent).toContain('Coordinate extraction')
+    expect(coverageCard.textContent).toContain(translate('jobUi.noSourceDetails'))
+    expect(coverageCard.textContent).not.toContain('Extracted news')
+    expect(coverageCard.textContent).not.toContain('News summary')
   } finally { wrapper.unmount() }
 })
 
-it('shows prototype agent rows with token totals, honest status and timeline filtering', async () => {
+it.each([
+  { result: { summary: 'Completed report' }, expected: 'Completed report' },
+  { result: { count: 2 }, expected: JSON.stringify({ count: 2 }, null, 2) },
+  { result: null, expected: '—' },
+])('shows a standalone Result card for $result and artifacts below coverage', async ({ result, expected }) => {
   const job = await api.job()
-  const run = {
-    agent_run_id: 'research-1', parent_agent_run_id: null, role: 'research',
-    goal_excerpt: 'Research', status: 'running', run_index: 1, llm_rounds: 4,
-    tool_calls: 2, input_tokens: 4000, output_tokens: 1921, started_at: null, finished_at: null,
-  }
-  api.job.mockClear().mockResolvedValue({ ...job, execution_mode: 'hierarchical_v2', agent_runs: [
-    run, { ...run, agent_run_id: 'document-1', role: 'document', run_index: 2, status: 'succeeded', input_tokens: null },
-    { ...run, agent_run_id: 'general-1', role: 'general', run_index: 3, status: 'queued' },
+  api.job.mockClear().mockResolvedValue({ ...job, result, artifacts: [
+    { id: 'report.txt', media_type: 'text/plain', size_bytes: 12, sha256: 'digest' },
   ] })
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    const heading = wrapper.findAll('h3').find(item => item.text() === translate('jobUi.activeAgents'))!
-    const panel = heading.element.closest('section')!
-    const rows = wrapper.findAll('button[aria-pressed]').filter(row => panel.contains(row.element))
-    expect(rows).toHaveLength(3)
-    expect(rows[0]!.get('[aria-hidden="true"]').text()).toBe('R')
-    expect(rows[0]!.text()).toContain('4 ' + translate('jobUi.timelineRounds') + ' · ' + (5921).toLocaleString() + ' ' + translate('jobUi.llmTokens'))
-    expect(rows[1]!.text()).toContain('— ' + translate('jobUi.llmTokens'))
-    expect(rows[1]!.text()).toContain('succeeded')
-    expect(rows[2]!.text()).toContain('queued')
-    expect(rows[2]!.text()).not.toContain('running')
-    await rows[0]!.trigger('click')
-    expect(rows[0]!.attributes('aria-pressed')).toBe('true')
-    expect(rows[1]!.attributes('aria-pressed')).toBe('false')
-    expect(wrapper.text()).toContain(translate('jobUi.agentRunFilter'))
-  } finally { wrapper.unmount() }
+    const heading = wrapper.findAll('h2').find(node => node.text() === translate('jobUi.result'))!
+    const card = heading.element.parentElement!
+    expect(card.closest('details')).toBeNull()
+    expect(card.parentElement).toBe(wrapper.element)
+    expect(card.textContent).toContain(expected)
+    const coverage = wrapper.findAll('h3').find(node => node.text() === translate('jobUi.sourceCoverage'))!
+    const artifacts = coverage.element.parentElement!.nextElementSibling!
+    expect(artifacts.parentElement?.tagName).toBe('ASIDE')
+    expect(artifacts.textContent).toContain(translate('jobUi.artifacts'))
+    expect(artifacts.textContent).toContain('report.txt')
+    expect(artifacts.querySelector('button')?.textContent).toContain(translate('jobUi.download'))
+  } finally {
+    wrapper.unmount()
+  }
 })
 
 it.each(['queued', 'planning', 'running', 'cancelling'])('hides deletion for a %s Job', async status => {
@@ -150,6 +178,20 @@ it('shows deletion conflicts and keeps the Job detail available', async () => {
     wrapper.unmount()
   }
 })
+it('opens Jobs settings from the settings icon', async () => {
+  const wrapper = mount(JobsPage, { global: { stubs: { teleport: true } } })
+  try {
+    await flushPromises()
+    const settings = wrapper.get('button[aria-label="Settings Jobs"]')
+    expect(settings.attributes('title')).toBe('Settings Jobs')
+    expect(settings.find('svg').exists()).toBe(true)
+    await settings.trigger('click')
+    expect(push).toHaveBeenCalledWith({ name: 'background' })
+  } finally {
+    wrapper.unmount()
+  }
+})
+
 it('refreshes the Jobs list only on user request after the initial load', async () => {
   const wrapper = mount(JobsPage, { global: { stubs: { teleport: true } } })
   try {
@@ -173,7 +215,7 @@ it('refreshes the Jobs list only on user request after the initial load', async 
 it('refreshes the Jobs detail on user request and relevant SSE hints, then stops on unmount', async () => {
   const event = (sequence: number) => ({
     sequence, event_type: 'step_finished',
-    created_at: '2026-10-14T00:00:00Z', step_key: 'step-' + sequence, payload: {},
+    created_at: '2026-10-14T00:00:00Z', step_key: null, payload: {},
   })
   api.events
     .mockResolvedValueOnce({ items: [event(1)] })
@@ -183,7 +225,6 @@ it('refreshes the Jobs detail on user request and relevant SSE hints, then stops
     await flushPromises()
     expect(api.job).toHaveBeenCalledTimes(1)
     expect(listenJobChanges).toHaveBeenCalledTimes(1)
-    expect(wrapper.getComponent(JobUnifiedTimeline).props('activities')).toHaveLength(1)
     const [callbacks, signal] = listenJobChanges.mock.calls[0] as [JobChangeCallbacks, AbortSignal]
 
     callbacks.onChanged('another-job')
@@ -198,14 +239,12 @@ it('refreshes the Jobs detail on user request and relevant SSE hints, then stops
     expect(api.job).toHaveBeenCalledTimes(2)
     expect(api.events).toHaveBeenCalledTimes(2)
     expect(api.events).toHaveBeenLastCalledWith('job-1', 1, expect.any(AbortSignal))
-    expect(wrapper.getComponent(JobUnifiedTimeline).props('activities')).toHaveLength(2)
 
     await wrapper.findAll('button').find(button => button.text() === translate('jobUi.refresh'))!.trigger('click')
     await flushPromises()
     expect(api.job).toHaveBeenCalledTimes(3)
     expect(api.events).toHaveBeenCalledTimes(3)
     expect(api.events).toHaveBeenLastCalledWith('job-1', 2, expect.any(AbortSignal))
-    expect(wrapper.getComponent(JobUnifiedTimeline).props('activities')).toHaveLength(2)
 
     callbacks.onChanged('job-1')
     wrapper.unmount()
@@ -240,20 +279,18 @@ it('loads the full event history and keeps the event cursor during fallback refr
   api.events.mockImplementation(async () => ({
     items: sequence < 3200 ? Array.from({ length: 100 }, () => ({
       sequence: ++sequence, event_type: 'step_finished',
-      created_at: '2026-10-14T00:00:00Z', step_key: 'step-' + sequence, payload: {},
+      created_at: '2026-10-14T00:00:00Z', step_key: null, payload: {},
     })) : [],
   }))
-  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true, JobUnifiedTimeline: true } } })
+  const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
     expect(api.events).toHaveBeenCalledTimes(33)
-    expect(wrapper.getComponent(JobUnifiedTimeline).props('activities')).toHaveLength(3200)
     await vi.advanceTimersByTimeAsync(60_200)
     await flushPromises()
     expect(api.job).toHaveBeenCalledTimes(2)
     expect(api.events).toHaveBeenCalledTimes(34)
     expect(api.events).toHaveBeenLastCalledWith('job-1', 3200, expect.any(AbortSignal))
-    expect(wrapper.getComponent(JobUnifiedTimeline).props('activities')).toHaveLength(3200)
   } finally {
     wrapper.unmount()
   }

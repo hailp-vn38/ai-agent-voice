@@ -9,10 +9,11 @@ use std::{
 };
 
 const MAX_REQUEST: u64 = 65_535;
-const MAX_RESPONSE: usize = 65_536;
+const MAX_RESPONSE: usize = 8 * 1024 * 1024;
+const MAX_FILE_ARTIFACT: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARTIFACT: usize = 1024 * 1024;
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema_version: u32,
@@ -22,6 +23,25 @@ pub struct Request {
     pub artifact_dir: String,
     #[serde(default)]
     pub inputs: Option<Value>,
+    /// Added only for packages that opt into [settings] in manifest v2.
+    /// Absent for legacy jsonl-v1 plugins; never merge with user arguments.
+    #[serde(default)]
+    pub settings: Option<Value>,
+}
+
+// Plugin value-settings may contain credentials. A derived Debug would print
+// them into stderr, which the shared runner can retain as diagnostic output.
+impl std::fmt::Debug for Request {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Request")
+            .field("schema_version", &self.schema_version)
+            .field("request_id", &self.request_id)
+            .field("operation", &self.operation)
+            .field("arguments", &"[REDACTED]")
+            .field("inputs", &"[REDACTED]")
+            .field("settings", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +78,73 @@ impl Outcome {
             artifacts: vec![],
         }
     }
+    /// Attach a large, pre-existing regular file without buffering its bytes.
+    /// The SDK copies to the server-supplied attempt output directory while
+    /// computing a SHA-256; the Job Artifact publisher remains authoritative.
+    pub fn attach_file(
+        &mut self,
+        dir: &str,
+        name: &str,
+        media_type: &str,
+        source: impl AsRef<Path>,
+    ) -> Result<(), Failure> {
+        if !artifact_directory(dir)
+            || self.artifacts.len() >= 16
+            || name.is_empty() || name.len() > 80
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            || media_type.is_empty() || media_type.len() > 100
+            || !["text/", "image/", "audio/", "video/", "application/"]
+                .iter().any(|prefix| media_type.starts_with(prefix))
+            || !media_type.bytes().all(|b| b.is_ascii_alphanumeric() || b"/.+-_".contains(&b))
+        {
+            return Err(Failure::new("invalid_artifact", "Invalid attachment metadata"));
+        }
+        let directory = Path::new(dir);
+        let root = fs::symlink_metadata(directory)
+            .map_err(|_| Failure::new("artifact_dir_unavailable", "Missing output directory"))?;
+        if !root.file_type().is_dir() || root.file_type().is_symlink() {
+            return Err(Failure::new("invalid_artifact_dir", "Output directory must be real"));
+        }
+        let info = fs::symlink_metadata(source.as_ref())
+            .map_err(|_| Failure::new("invalid_artifact", "Missing source file"))?;
+        if !info.file_type().is_file() || info.len() > MAX_FILE_ARTIFACT {
+            return Err(Failure::new("invalid_artifact", "Source must be a bounded regular file"));
+        }
+        let mut input = fs::File::open(source)
+            .map_err(|_| Failure::new("artifact_read_failed", "Cannot read source"))?;
+        let target = directory.join(name);
+        let mut output = OpenOptions::new().write(true).create_new(true).open(&target)
+            .map_err(|_| Failure::new("artifact_write_failed", "Cannot create attachment"))?;
+        let copied = (|| -> io::Result<(u64, String)> {
+            let mut hash = Sha256::new();
+            let mut count = 0u64;
+            let mut block = [0u8; 65536];
+            loop {
+                let read = input.read(&mut block)?;
+                if read == 0 { break; }
+                count = count.checked_add(read as u64)
+                    .filter(|size| *size <= MAX_FILE_ARTIFACT)
+                    .ok_or_else(|| io::Error::other("artifact too large"))?;
+                hash.update(&block[..read]);
+                output.write_all(&block[..read])?;
+            }
+            output.sync_all()?;
+            Ok((count, hash.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()))
+        })();
+        drop(output);
+        let (size_bytes, sha256) = match copied {
+            Ok(info) => info,
+            Err(_) => {
+                let _ = fs::remove_file(target);
+                return Err(Failure::new("artifact_write_failed", "Could not attach file"));
+            }
+        };
+        self.artifacts.push(Artifact {
+            path: name.into(), media_type: media_type.into(), size_bytes, sha256,
+        });
+        Ok(())
+    }
+
     pub fn attach(
         &mut self,
         dir: &str,
@@ -178,7 +265,7 @@ fn emit(response: &Response<'_>) {
             artifacts: vec![],
             error: Some(ErrorInfo {
                 code: "response_too_large",
-                message: "Result exceeds 64 KiB stdout limit",
+                message: "Result exceeds SDK 8 MiB envelope limit",
             }),
         };
         payload = serde_json::to_vec(&fallback).unwrap_or_default();

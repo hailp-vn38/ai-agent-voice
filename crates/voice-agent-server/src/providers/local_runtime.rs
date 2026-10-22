@@ -131,11 +131,6 @@ struct ZeroTtsPhysicalSpec {
     delivery_mode: crate::config::ZeroTtsDeliveryMode,
 }
 
-/// A ZeroTTS replica owns four resident ONNX sessions. Replicating it multiplies both resident
-/// memory and per-runtime warmup, so one physical replica serves every logical voice and template
-/// while `workers.tts.max_workers` continues to bound application-level TTS concurrency.
-const ZEROTTS_PHYSICAL_REPLICAS: usize = 1;
-
 impl LocalRuntimeAdapter for ZeroTtsOnnxPlanner {
     fn adapter_id(&self) -> &'static str {
         "zerotts_onnx"
@@ -163,11 +158,11 @@ impl LocalRuntimeAdapter for ZeroTtsOnnxPlanner {
             delivery_mode: config.delivery_mode,
         })
         .map_err(|_| ProviderLoadError::Configuration("invalid ZeroTTS physical spec".into()))?;
-        Ok(LocalRuntimePlan::onnx_with_replicas(
+        // A second configured worker leaves capacity beyond the Voice reservation.
+        Ok(LocalRuntimePlan::onnx(
             self.adapter_id(),
             config.model,
             spec,
-            ZEROTTS_PHYSICAL_REPLICAS,
         ))
     }
 }
@@ -205,7 +200,7 @@ impl LocalRuntimeAdapter for KokoroViOnnxPlanner {
 
 impl LocalRuntimeAdapter for VieneuNativePlanner {
     fn adapter_id(&self) -> &'static str {
-        "vieneu_native"
+        "vieneu"
     }
 
     fn physical_plan(
@@ -219,12 +214,11 @@ impl LocalRuntimeAdapter for VieneuNativePlanner {
                 "invalid native VieNeu selection".into(),
             ));
         }
-        // One resident replica serves all preset voices through request-level selection.
-        Ok(LocalRuntimePlan::onnx_with_replicas(
+        // Voices share the configured pool; a second worker leaves capacity beyond Voice.
+        Ok(LocalRuntimePlan::onnx(
             self.adapter_id(),
             config.model,
             serde_json::json!({}),
-            1,
         ))
     }
 }

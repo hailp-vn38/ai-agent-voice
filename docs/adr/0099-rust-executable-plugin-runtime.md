@@ -27,4 +27,3 @@ Rust plugins require a compatible pinned Linux builder/runtime pair and an opera
 - ADR 0093 — Executable Python packages, not MCP-bound plugins.
 - ADR 0095 — Single-process durable Job recovery.
 - `crates/voice-agent-server/src/services/background/plugins/{archive,builder,dispatch,runner,protocol}.rs`.
-- `docs/agent-job-platform-v1.5.1-integration/` for full functional and deployment gates.

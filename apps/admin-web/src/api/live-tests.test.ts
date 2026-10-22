@@ -35,11 +35,11 @@ it('allows Provider credentials over LAN HTTP for create, edit, draft tests and 
   await providersApi.testDraftLlm(provider, { text: 'hi' })
   await providersApi.testDraftTts({ ...provider, type: 'tts' }, { text: 'hi' })
   await providersApi.testDraftAsr({ ...provider, type: 'asr' }, new Blob(['RIFF']))
-  await providerAdaptersApi.discoverCapabilities('vieneu_http', { selection: {}, api_key: provider.api_key })
+  await providerAdaptersApi.discoverCapabilities('vieneu', { selection: {}, api_key: provider.api_key })
   expect(fetch.mock.calls.map(([url]) => url)).toEqual([
     '/api/admin/providers', '/api/admin/providers/demo',
     '/api/admin/provider-tests/llm', '/api/admin/provider-tests/tts',
-    '/api/admin/provider-tests/asr', '/api/admin/provider-adapters/vieneu_http/capabilities/discover',
+    '/api/admin/provider-tests/asr', '/api/admin/provider-adapters/vieneu/capabilities/discover',
   ])
   const requests = fetch.mock.calls.map(([, init]) => init)
   expect(JSON.parse(requests[0].body).api_key).toBe(provider.api_key)

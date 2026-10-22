@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, ArrowRight, ClipboardList, Plus, RefreshCw, Search, Workflow } from '@lucide/vue'
+import { Activity, ArrowRight, ClipboardList, Plus, RefreshCw, Search, Settings2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -98,6 +98,7 @@ onBeforeUnmount(() => { controller?.abort() })
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}</Button>
         <Button @click="createOpen = true"><Plus class="size-4" />{{ t('jobUi.newJob') }}</Button>
+        <Button variant="outline" size="icon" :aria-label="t('jobUi.background')" :title="t('jobUi.background')" @click="router.push({ name: 'background' })"><Settings2 class="size-4" aria-hidden="true" /></Button>
       </template>
     </PageHeader>
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
@@ -141,6 +142,7 @@ onBeforeUnmount(() => { controller?.abort() })
             <tr v-for="job in jobs" :key="job.id" class="hover:bg-muted/25">
               <td class="max-w-sm px-4 py-4">
                 <button class="block w-full cursor-pointer truncate text-left font-medium hover:text-studio-violet" type="button" @click="openDetail(job.id)">{{ job.goal }}</button>
+                <span v-if="job.execution_mode === 'knowledge_ingest_v3'" class="text-xs text-muted-foreground">{{ t('jobUi.knowledge') }}</span>
                 <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ job.id }}</p>
               </td>
               <td class="max-w-48 break-all px-4 py-4 text-muted-foreground">{{ job.requester_scope }}</td>

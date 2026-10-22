@@ -46,14 +46,6 @@ delivery_mode = "stream"
 # Keep ZeroTTS resident even when another provider is the TTS default.
 preload = true
 
-# Optional remote VieNeu; start compose.vieneu.yaml before selecting it.
-# [providers.tts.instances.vieneu_default]
-# adapter = "vieneu_http"
-# base_url = "http://vieneu:8000/v1"
-# voice = "Mai Anh"
-# timeout_ms = 30000
-# api_key = ""
-
 [mcp.external]
 # Keep optional discovery within 500 ms; slow servers contribute no tools to this session.
 per_server_resolution_timeout_ms = 400

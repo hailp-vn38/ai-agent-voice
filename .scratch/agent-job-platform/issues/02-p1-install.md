@@ -4,7 +4,7 @@ Type: task
 Status: claimed
 Baseline: 74aaf19
 
-Implement P1 from `docs/agent-job-platform-v1.5.1-integration/IMPLEMENTATION-PHASES.md`.
+Implement P1.
 
 ## Acceptance
 

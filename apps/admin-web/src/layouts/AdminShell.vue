@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AudioWaveform, Menu } from '@lucide/vue'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import AssistantWidget from '@/components/assistant/AssistantWidget.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
@@ -12,6 +13,23 @@ import { useI18n } from '@/composables/useI18n'
 const { t } = useI18n()
 
 const drawerOpen = ref(false)
+const route = useRoute()
+const isKnowledge = computed(() => route.path === '/knowledge')
+const ADMIN_SIDEBAR_KEY = 'voice-agent-admin-sidebar-collapsed'
+function restoreSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(ADMIN_SIDEBAR_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+const sidebarCollapsed = ref(restoreSidebarCollapsed())
+function toggleAdminSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try {
+    window.localStorage.setItem(ADMIN_SIDEBAR_KEY, String(sidebarCollapsed.value))
+  } catch { /* Private browsing may deny storage; keep the current UI state. */ }
+}
 
 watch(drawerOpen, (open) => {
   document.body.style.overflow = open ? 'hidden' : ''
@@ -39,10 +57,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-screen bg-background text-foreground">
-    <AppSidebar />
+    <AppSidebar :collapsed="sidebarCollapsed" @toggle="toggleAdminSidebar" />
     <AssistantWidget />
 
-    <div class="lg:pl-64">
+    <div class="transition-[padding-left] duration-300 ease-in-out motion-reduce:transition-none"
+      :class="sidebarCollapsed ? 'lg:pl-[72px]' : 'lg:pl-64'">
       <header class="sticky top-0 z-20 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:hidden">
         <div class="flex h-14 items-center gap-2 px-4 sm:px-6">
           <Button variant="ghost" size="icon" class="-ml-2" :aria-label="t('nav.open')" @click="drawerOpen = true">
@@ -54,7 +73,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <main class="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
+      <main :class="isKnowledge ? 'h-[calc(100dvh-3.5rem)] w-full overflow-hidden p-0 lg:h-dvh' : 'mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8'">
         <slot />
       </main>
     </div>

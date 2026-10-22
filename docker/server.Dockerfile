@@ -3,8 +3,8 @@ FROM rust:1.98.1-bookworm AS source
 RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+ENV CARGO_TARGET_DIR=/mnt/storage/ai-agent-voice/target
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY .cargo .cargo
 COPY crates crates
 COPY prompts prompts
 COPY assets assets
@@ -29,7 +29,7 @@ RUN --mount=type=cache,id=voice-agent-cargo,target=/usr/local/cargo/registry,sha
     && cp /mnt/storage/ai-agent-voice/target/debug/voice-agent-server /voice-agent-server
 
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 libgomp1 xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY assets/enrollment assets/enrollment

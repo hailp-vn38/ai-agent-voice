@@ -38,7 +38,8 @@ impl TtsProvider for FakeTts {
 
 fn valid_config() -> AppConfig {
     AppConfig {
-        background: Default::default(),
+        orchestrator: Default::default(),
+        wiki: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:8000".parse::<SocketAddr>().unwrap(),

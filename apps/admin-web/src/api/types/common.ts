@@ -2,6 +2,7 @@ export interface ApiErrorBody {
   error: {
     code: string
     request_id?: string
+    affected_links?: Array<{ source_id: string; source_path: string; source_line: number; raw_target: string }>
   }
 }
 

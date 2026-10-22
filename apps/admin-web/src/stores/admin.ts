@@ -6,6 +6,7 @@ import { devicesApi } from '@/api/devices'
 import { formatApiError, isApiError } from '@/api/errors'
 import { providersApi } from '@/api/providers'
 import { templatesApi } from '@/api/templates'
+import { useAuthStore } from '@/stores/auth'
 import type { AdminAgent } from '@/api/types/agents'
 import type { AdminDevice, ClaimDeviceEnrollmentInput } from '@/api/types/devices'
 import type { AdminProvider, CreateProviderInput } from '@/api/types/providers'
@@ -215,6 +216,12 @@ export const useAdminStore = defineStore('admin', () => {
     error.value = null
   }
 
+  function handleAuthFailure(cause: unknown) {
+    if (isApiError(cause) && (cause.status === 401 || cause.code === 'unauthorized')) {
+      useAuthStore().setAdminToken(null)
+    }
+  }
+
   /** Runs a mutation, surfacing any failure as a message instead of an unhandled rejection. */
   async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
     error.value = null
@@ -222,6 +229,7 @@ export const useAdminStore = defineStore('admin', () => {
       return await action()
     } catch (cause) {
       error.value = formatApiError(cause)
+      handleAuthFailure(cause)
       // A stale If-Match means the cache no longer matches the server, so re-read it.
       if (isApiError(cause) && cause.code === 'revision_conflict') await loadAll()
       return undefined
@@ -374,6 +382,7 @@ export const useAdminStore = defineStore('admin', () => {
     } catch (cause) {
       if (signal?.aborted) return
       error.value = formatApiError(cause)
+      handleAuthFailure(cause)
     } finally {
       if (!signal?.aborted) loading.value = false
     }

@@ -130,7 +130,7 @@ pub struct SessionActor {
     trust_client_aec_feature: bool,
     mcp: DeviceMcpState,
     tool_batch: Option<ToolBatchState>,
-    job_submit: Option<crate::services::background::VoiceJobSubmit>,
+    job_submit: Option<crate::services::task_flow::VoiceTaskSubmit>,
     job_mailbox: Option<mpsc::WeakSender<SessionEvent>>,
     job_pending: Option<tools::job::PendingJobSubmit>,
     llm_messages: Vec<ChatMessage>,
@@ -489,7 +489,7 @@ pub enum WriterEvent {
 
 /// Application-owned runtimes shared by every voice session.
 pub struct SessionRuntimes {
-    pub job_submit: Option<crate::services::background::VoiceJobSubmit>,
+    pub job_submit: Option<crate::services::task_flow::VoiceTaskSubmit>,
     pub asr: std::sync::Arc<AsrWorkerRuntime>,
     pub vad: std::sync::Arc<VadWorkerRuntime>,
     pub llm: std::sync::Arc<LlmRuntime>,

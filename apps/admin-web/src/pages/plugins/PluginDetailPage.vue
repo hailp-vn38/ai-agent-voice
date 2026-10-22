@@ -3,6 +3,7 @@ import { Archive, Code2, Cpu, FlaskConical, FileCode2, RefreshCw, ShieldAlert, T
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentPluginsApi } from '@/api/agent-plugins'
+import PluginManagePanel from '@/components/plugins/PluginManagePanel.vue'
 import { formatApiError, isApiError } from '@/api/errors'
 import type { InstalledPlugin, PluginStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
@@ -11,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 
-type DetailTab = 'overview' | 'code' | 'logs'
+type DetailTab = 'overview' | 'settings' | 'functions' | 'runs' | 'code' | 'logs'
 type GuardedAction = 'uninstall'
 const route = useRoute()
 const router = useRouter()
@@ -33,6 +34,9 @@ const statusLabel = (status: PluginStatus) =>
   t(('jobUi.pluginStatus.' + status) as 'jobUi.pluginStatus.ready')
 const tabs = computed(() => [
   { key: 'overview' as DetailTab, label: t('jobUi.detailOverview') },
+  { key: 'settings' as DetailTab, label: 'Settings' },
+  { key: 'functions' as DetailTab, label: 'Functions' },
+  { key: 'runs' as DetailTab, label: 'Runs' },
   { key: 'code' as DetailTab, label: t('jobUi.detailCode') },
   { key: 'logs' as DetailTab, label: t('jobUi.detailLogs') },
 ])
@@ -145,6 +149,11 @@ onBeforeUnmount(() => controller?.abort())
               <Badge variant="outline">{{ operation.replay || '—' }}</Badge>
             </div>
           </section>
+          <PluginManagePanel v-else-if="tab === 'settings' || tab === 'functions' || tab === 'runs'"
+            :key="plugin.id + tab" :plugin-key="plugin.id"
+            :operations="plugin.operations.map(operation => operation.name)"
+            :enabled="plugin.status === 'ready'"
+            :mode="tab === 'settings' ? 'settings' : tab === 'runs' ? 'runs' : 'functions'" />
           <section v-else-if="tab === 'code'" class="studio-panel space-y-4 p-5">
             <h2 class="flex items-center gap-2 font-semibold"><Code2 class="size-4 text-studio-violet" />{{ t('jobUi.detailCode') }}</h2>
             <div class="grid gap-3 sm:grid-cols-2">

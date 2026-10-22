@@ -252,7 +252,8 @@ fn config(url: String, history: DatabaseHistoryConfig) -> AppConfig {
         }),
     );
     let mut config = AppConfig {
-        background: Default::default(),
+        orchestrator: Default::default(),
+        wiki: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),

@@ -10,7 +10,8 @@ pub async fn provision(mut config: AppConfig) -> (AppConfig, Database) {
     config.database.url = format!(
         "sqlite://{}",
         std::env::temp_dir()
-            .join(format!("voice-agent-protocol-{}.db", uuid::Uuid::new_v4()))
+            .join(format!("voice-agent-protocol-{}", uuid::Uuid::new_v4()))
+            .join("voice-agent.db")
             .display()
     );
     let database = Database::connect(&config.database).await.unwrap();

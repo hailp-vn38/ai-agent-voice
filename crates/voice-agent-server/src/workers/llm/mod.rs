@@ -81,20 +81,20 @@ pub struct LlmDiagnosticOperation {
     provider: Arc<dyn LlmProvider>,
     request: LlmRequest,
     max_text_bytes: usize,
+    mode: Option<crate::providers::llm::BackgroundMode>,
     cancellation: Option<CancellationToken>,
     terminal_acknowledged: bool,
 }
 
 impl LlmRuntime {
-    /// Caller retains its Background capacity permit until this stream terminalizes.
-    pub(crate) async fn background_complete_with_usage(
+    /// Caller retains its Background capacity permit until this turn terminalizes.
+    #[allow(dead_code)]
+    pub(crate) async fn background_turn(
         &self,
         request: LlmRequest,
-        schema: Option<serde_json::Value>,
-    ) -> Result<crate::providers::llm::BackgroundCompletion, crate::providers::LlmError> {
-        self.provider
-            .background_complete_with_usage(request, schema)
-            .await
+        mode: crate::providers::llm::BackgroundMode,
+    ) -> Result<crate::providers::llm::BackgroundTurnResult, crate::providers::LlmError> {
+        self.provider.background_turn(request, mode).await
     }
     pub fn supports_tools(&self) -> bool {
         self.provider.supports_tools()
@@ -255,7 +255,6 @@ impl LlmRuntime {
         self.admission.try_admit(ProviderWorkloadClass::Diagnostic)
     }
 
-    /// Background has no single-slot diagnostic exception and cannot borrow Voice reservation.
     pub fn admit_background(&self) -> Result<ProviderCapacityPermit, ProviderAdmissionError> {
         let _state = self.cancellations.lock().expect("LLM cancellations lock");
         if self.closed.load(Ordering::Acquire) {
@@ -274,6 +273,24 @@ impl LlmRuntime {
             provider: Arc::clone(&self.provider),
             request,
             max_text_bytes,
+            mode: None,
+            cancellation: None,
+            terminal_acknowledged: false,
+        }
+    }
+
+    pub(crate) fn diagnostic_strict(
+        &self,
+        request: LlmRequest,
+        mode: crate::providers::llm::BackgroundMode,
+        max_text_bytes: usize,
+    ) -> LlmDiagnosticOperation {
+        assert!(max_text_bytes > 0);
+        LlmDiagnosticOperation {
+            provider: Arc::clone(&self.provider),
+            request,
+            max_text_bytes,
+            mode: Some(mode),
             cancellation: None,
             terminal_acknowledged: false,
         }
@@ -289,6 +306,51 @@ impl ProviderDiagnosticOperation for LlmDiagnosticOperation {
         cancellation: CancellationToken,
     ) -> Result<Self::Output, ProviderDiagnosticOperationError> {
         self.cancellation = Some(cancellation.clone());
+        if let Some(mode) = &self.mode {
+            let outcome = tokio::select! {
+                _ = cancellation.cancelled() => return Err(ProviderDiagnosticOperationError::Failed),
+                result = self.provider.background_turn(self.request.clone(), mode.clone()) => result,
+            };
+            let result = outcome.map_err(|error| {
+                self.terminal_acknowledged = matches!(error, crate::providers::LlmError::Rejected);
+                ProviderDiagnosticOperationError::Failed
+            })?;
+            self.terminal_acknowledged = true;
+            let text = match (mode, result.turn) {
+                (
+                    crate::providers::llm::BackgroundMode::Structured { .. },
+                    crate::providers::llm::BackgroundTurn::Text(text),
+                ) => {
+                    let object: serde_json::Value = serde_json::from_str(&text)
+                        .map_err(|_| ProviderDiagnosticOperationError::InvalidResponse)?;
+                    let Some(fields) = object.as_object() else {
+                        return Err(ProviderDiagnosticOperationError::InvalidResponse);
+                    };
+                    if fields.len() != 1
+                        || !fields
+                            .get("summary")
+                            .is_some_and(serde_json::Value::is_string)
+                    {
+                        return Err(ProviderDiagnosticOperationError::InvalidResponse);
+                    }
+                    text
+                }
+                (
+                    crate::providers::llm::BackgroundMode::Tools,
+                    crate::providers::llm::BackgroundTurn::ToolCalls(calls),
+                ) if calls.len() == 1
+                    && calls[0].name == "submit_result"
+                    && calls[0].arguments["summary"].is_string() =>
+                {
+                    "Native function submit_result accepted".into()
+                }
+                _ => return Err(ProviderDiagnosticOperationError::InvalidResponse),
+            };
+            if text.len() > self.max_text_bytes {
+                return Err(ProviderDiagnosticOperationError::InvalidResponse);
+            }
+            return Ok(text);
+        }
         let mut stream = self
             .provider
             .stream(self.request.clone())

@@ -1,8 +1,9 @@
 //! Bounded, separately authenticated Admin HTTP surface.  It deliberately exposes only
 //! Agent and Device desired configuration in this rollout.
 mod background;
+mod knowledge;
+mod knowledge_processing;
 mod notifications;
-mod plugins;
 mod system_mcp;
 use super::AppState;
 use crate::database::{external_mcp_policy, provider_config};
@@ -32,29 +33,95 @@ const PAGE_MAX: u32 = 200;
 
 pub(super) fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/plugins", get(plugins::list))
+        // Knowledge and Memory are two authenticated Admin workspaces, not Plugin Store data.
         .route(
-            "/plugins/install",
-            axum::routing::post(plugins::install).layer(axum::extract::DefaultBodyLimit::max(
-                plugins::MAX_UPLOAD_BODY,
-            )),
+            "/knowledge/pages/{id}/draft-resolution",
+            axum::routing::post(knowledge_processing::resolve_draft),
         )
         .route(
-            "/plugins/curated/{id}/install",
-            axum::routing::post(plugins::install_curated),
+            "/knowledge/settings",
+            get(knowledge_processing::settings).put(knowledge_processing::save_settings),
         )
         .route(
-            "/plugins/{id}",
-            get(plugins::get).delete(plugins::uninstall),
+            "/knowledge/sources/{id}/analyze",
+            axum::routing::post(knowledge_processing::analyze),
         )
-        .route("/plugins/{id}/test", axum::routing::post(plugins::test))
+        .route("/knowledge/reviews", get(knowledge_processing::reviews))
+        .route("/knowledge/reviews/{id}", get(knowledge_processing::review))
         .route(
-            "/plugins/{id}/activate",
-            axum::routing::post(plugins::activate),
+            "/knowledge/reviews/{id}/approve",
+            axum::routing::post(knowledge_processing::approve),
         )
         .route(
-            "/plugins/{id}/disable",
-            axum::routing::post(plugins::disable),
+            "/knowledge/reviews/{id}/reject",
+            axum::routing::post(knowledge_processing::reject),
+        )
+        .route("/knowledge/tree", get(knowledge::knowledge_tree))
+        .route("/knowledge/graph", get(knowledge::knowledge_graph))
+        .route(
+            "/knowledge/folders",
+            axum::routing::post(knowledge::knowledge_folder_create),
+        )
+        .route(
+            "/knowledge/raw/files",
+            get(knowledge::knowledge_raw_read)
+                .post(knowledge::knowledge_raw_create)
+                .put(knowledge::knowledge_raw_update),
+        )
+        .route(
+            "/knowledge/raw/import-source",
+            axum::routing::post(knowledge::knowledge_raw_import),
+        )
+        .route(
+            "/knowledge/raw/move",
+            axum::routing::post(knowledge::knowledge_raw_move),
+        )
+        .route(
+            "/knowledge/pages/{id}/move",
+            axum::routing::post(knowledge::knowledge_page_move),
+        )
+        .route(
+            "/knowledge/pages",
+            get(knowledge::knowledge_search).post(knowledge::knowledge_create),
+        )
+        .route(
+            "/knowledge/pages/{id}",
+            get(knowledge::knowledge_read).put(knowledge::knowledge_update),
+        )
+        .route(
+            "/knowledge/pages/{id}/publish",
+            axum::routing::post(knowledge::knowledge_publish),
+        )
+        .route(
+            "/knowledge/sources",
+            get(knowledge::knowledge_sources).post(knowledge::knowledge_import_source),
+        )
+        .route(
+            "/knowledge/sources/{id}",
+            get(knowledge::knowledge_read_source),
+        )
+        .route("/knowledge/index", get(knowledge::knowledge_health))
+        .route(
+            "/knowledge/index/rebuild",
+            axum::routing::post(knowledge::knowledge_rebuild),
+        )
+        .route(
+            "/memory/facts",
+            get(knowledge::memory_recall).post(knowledge::memory_create),
+        )
+        .route(
+            "/memory/facts/{id}",
+            get(knowledge::memory_read).put(knowledge::memory_update),
+        )
+        .route(
+            "/memory/facts/{id}/forget",
+            axum::routing::post(knowledge::memory_forget),
+        )
+        .route("/memory/summary", get(knowledge::memory_summary))
+        .route("/memory/index", get(knowledge::memory_health))
+        .route(
+            "/memory/index/rebuild",
+            axum::routing::post(knowledge::memory_rebuild),
         )
         .route(
             "/background/settings",
@@ -62,8 +129,13 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/jobs", get(background::list).post(background::create))
         .route("/jobs/stream", get(background::stream))
-        .route("/jobs/{id}", get(background::get).delete(background::delete))
+        .route(
+            "/jobs/{id}",
+            get(background::get).delete(background::delete),
+        )
         .route("/jobs/{id}/events", get(background::events))
+        .route("/jobs/{id}/history", get(background::history))
+        .route("/jobs/{id}/followup", axum::routing::post(background::followup))
         .route(
             "/jobs/{id}/artifacts/{artifact_id}",
             get(background::artifact),
@@ -364,9 +436,7 @@ async fn transport(request: Request, next: Next) -> Response {
         &http::Method::POST | &http::Method::PATCH | &http::Method::PUT
     );
     if is_mutation {
-        let max_body = if request.uri().path().ends_with("/plugins/install") {
-            plugins::MAX_UPLOAD_BODY
-        } else if request.uri().path().ends_with("/test/asr")
+        let max_body = if request.uri().path().ends_with("/test/asr")
             || request.uri().path().ends_with("/provider-tests/asr")
         {
             MAX_ASR_TEST_BODY + 80 * 1024

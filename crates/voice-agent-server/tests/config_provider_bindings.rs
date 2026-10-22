@@ -145,9 +145,8 @@ base_url="https://example.test/v1"
 model="fixture"
 api_key="SECRET_SENTINEL_SHOULD_NOT_APPEAR"
 [providers.tts.instances.primary]
-adapter="vieneu_http"
-base_url="https://example.test/v1"
-voice="Mai Anh"
+adapter="zerotts_onnx"
+voice="maichi"
 "#,
     )
     .unwrap();

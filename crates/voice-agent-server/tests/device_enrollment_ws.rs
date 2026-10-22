@@ -58,7 +58,8 @@ async fn start() -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = AppConfig {
-        background: Default::default(),
+        orchestrator: Default::default(),
+        wiki: Default::default(),
         speaker_recognition: Default::default(),
         server: ServerConfig {
             bind: address,
@@ -416,7 +417,10 @@ async fn abort_cancels_audio_without_consuming_enrollment_and_replay_has_cooldow
 async fn missing_assets_fail_bootstrap_before_router_publication() {
     let server = start().await;
     let mut config = server.state.config.as_ref().clone();
-    config.database.url = format!("sqlite://{}", server.directory.join("second.db").display());
+    config.database.url = format!(
+        "sqlite://{}",
+        server.directory.join("second/voice-agent.db").display()
+    );
     config.database.devices.enrollment.prompt_assets_dir = server.directory.join("missing-assets");
     let result = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable())).await;
     assert!(matches!(

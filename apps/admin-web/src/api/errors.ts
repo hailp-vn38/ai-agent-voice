@@ -6,6 +6,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     readonly requestId?: string,
+    readonly affectedLinks?: Array<{ source_id: string; source_path: string; source_line: number; raw_target: string }>,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -24,7 +25,7 @@ export async function toApiError(response: Response): Promise<ApiError> {
     // Some proxy or transport failures do not have a JSON error envelope.
   }
   const code = body?.error?.code ?? `http_${response.status}`
-  return new ApiError(`API request failed: ${code}`, response.status, code, body?.error?.request_id)
+  return new ApiError(`API request failed: ${code}`, response.status, code, body?.error?.request_id, body?.error?.affected_links)
 }
 
 export function formatApiError(error: unknown): string {

@@ -227,7 +227,11 @@ pub(crate) fn default_gipformer_max_active_paths() -> i32 {
     4
 }
 pub(super) fn default_onnx_runtime_library() -> std::path::PathBuf {
-    "runtime/onnxruntime/libonnxruntime.dylib".into()
+    if cfg!(target_os = "macos") {
+        "runtime/onnxruntime/libonnxruntime.dylib".into()
+    } else {
+        "runtime/onnxruntime/libonnxruntime.so".into()
+    }
 }
 pub(super) fn default_worker_queue_capacity() -> usize {
     32

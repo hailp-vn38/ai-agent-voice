@@ -13,7 +13,10 @@ pub use admission::{
     ProviderAdmissionError, ProviderCapacityPermit, ProviderRuntimeAdmission, ProviderWorkloadClass,
 };
 pub use asr::AsrDiagnosticOperation;
-pub use asr::{AsrCommand, AsrStreamLease, AsrWorkerEvent, AsrWorkerRuntime};
+pub use asr::{
+    AsrBackgroundOperation, AsrCommand, AsrStreamLease, AsrWorkerError, AsrWorkerEvent,
+    AsrWorkerRuntime,
+};
 pub use llm::{LlmDiagnosticOperation, LlmFailureReason, LlmRuntime, LlmRuntimeEvent};
 pub use supervision::WorkerSupervisor;
 pub use tts::{

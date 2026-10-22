@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check application storage without restricting Docker's data root."""
 from pathlib import Path
+import os
 import sys
 import tomllib
 
@@ -16,8 +17,11 @@ def check_storage(target_dir, storage=Path("/mnt/storage")):
 
 
 def main():
-    config = tomllib.loads((ROOT / ".cargo/config.toml").read_text())
-    check_storage(config["build"]["target-dir"])
+    cargo_config = ROOT / ".cargo/config.toml"
+    storage = Path(os.environ.get("VOICE_STORAGE_ROOT", "/mnt/storage"))
+    if cargo_config.is_file() and storage.is_dir():
+        config = tomllib.loads(cargo_config.read_text())
+        check_storage(config["build"]["target-dir"], storage)
     print("Application storage is under /mnt/storage; Docker may use its default data root")
 
 

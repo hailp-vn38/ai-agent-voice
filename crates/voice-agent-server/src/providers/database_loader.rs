@@ -497,7 +497,7 @@ fn tts_binding(instance: &TtsInstanceConfig) -> TtsBinding {
             voice: config.voice.clone(),
             language: config.language.clone(),
         },
-        TtsInstanceConfig::VieneuNative(config) => TtsBinding {
+        TtsInstanceConfig::Vieneu(config) => TtsBinding {
             voice: config.voice.clone(),
             language: config.language.clone(),
         },
@@ -548,9 +548,6 @@ fn typed_tts_instance(
     adapter: &str,
     secret: Option<&crate::database::secrets::SecretValue>,
 ) -> Result<TtsInstanceConfig, ()> {
-    if adapter == "vieneu_http" {
-        return typed_instance(value, adapter, secret.map(|value| value.expose()));
-    }
     if adapter != "chillaudio_ws" {
         return reject_secret_value(secret).and_then(|()| typed_instance(value, adapter, None));
     }

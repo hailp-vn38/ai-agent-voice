@@ -32,10 +32,13 @@ hound.workspace = true
 jsonschema = { version = "0.33", default-features = false }
 libc = "0.2"
 llm.workspace = true
+llm-wiki-rs.workspace = true
 ndarray.workspace = true
 ndarray-npy.workspace = true
 http.workspace = true
 opus2.workspace = true
+orchestrator-agent.workspace = true
+orchestrator-flow.workspace = true
 ort.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

@@ -47,13 +47,13 @@ async function connect() {
     </form>
 
     <div
-      v-else-if="error"
+      v-if="error"
       role="alert"
       class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
     >
       <span>{{ error }}</span>
       <span class="flex gap-2">
-        <Button size="sm" variant="outline" :disabled="loading" @click="admin.refreshAll()">
+        <Button v-if="auth.adminToken" size="sm" variant="outline" :disabled="loading" @click="admin.refreshAll()">
           {{ t('common.retry') }}
         </Button>
         <Button size="sm" variant="ghost" @click="admin.clearError()">

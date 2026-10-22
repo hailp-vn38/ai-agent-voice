@@ -168,10 +168,8 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
     let provider_key = generate_provider_key(&body.kind);
     let credential = match body.api_key {
         Some(value) => {
-            if !matches!(
-                body.adapter.as_str(),
-                "openai" | "chillaudio_ws" | "vieneu_http"
-            ) || !crate::database::credentials::valid_input(&value)
+            if !matches!(body.adapter.as_str(), "openai" | "chillaudio_ws")
+                || !crate::database::credentials::valid_input(&value)
             {
                 return error(&request, StatusCode::BAD_REQUEST, "credential_invalid");
             }
@@ -450,7 +448,7 @@ pub(super) async fn patch_provider(
     };
     let credential = match body.api_key.value() {
         Some(Some(value))
-            if matches!(adapter.as_str(), "openai" | "chillaudio_ws" | "vieneu_http")
+            if matches!(adapter.as_str(), "openai" | "chillaudio_ws")
                 && crate::database::credentials::valid_input(&value) =>
         {
             match state
@@ -468,9 +466,7 @@ pub(super) async fn patch_provider(
             }
         }
         Some(_) => return error(&request, StatusCode::BAD_REQUEST, "credential_invalid"),
-        None if matches!(adapter.as_str(), "openai" | "chillaudio_ws" | "vieneu_http") => {
-            old_credential
-        }
+        None if matches!(adapter.as_str(), "openai" | "chillaudio_ws") => old_credential,
         None => None,
     };
     let enabled = match body.enabled.value() {

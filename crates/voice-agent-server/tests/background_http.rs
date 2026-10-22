@@ -24,7 +24,8 @@ enabled = true
 admin_token = "background-test-token"
 "#,
         std::env::temp_dir()
-            .join(format!("background-http-{}.db", uuid::Uuid::new_v4()))
+            .join(format!("background-http-{}", uuid::Uuid::new_v4()))
+            .join("voice-agent.db")
             .display()
     ))
     .unwrap();
@@ -54,6 +55,42 @@ admin_token = "background-test-token"
     let settings: Value = response.json().await.unwrap();
     assert_eq!(settings["enabled"], false);
     assert_eq!(settings["revision"], 1);
+    let updated = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({"enabled": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated_json: Value = updated.json().await.unwrap();
+    assert_eq!(updated_json["enabled"], true);
+    assert_eq!(updated_json["revision"], 2);
+    let fetched = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(fetched["enabled"], true);
+    assert_eq!(fetched["revision"], 2);
+    let conflict = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({"enabled": false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        conflict.json::<Value>().await.unwrap()["error"]["code"],
+        "revision_conflict"
+    );
     let response = client
         .post(format!("{base}/jobs"))
         .bearer_auth("background-test-token")

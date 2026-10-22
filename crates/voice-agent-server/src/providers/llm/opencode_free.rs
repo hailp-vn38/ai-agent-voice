@@ -37,6 +37,8 @@ pub struct OpenCodeFreeConfig {
     /// Explicit capability for the selected free model; default preserves Chat.
     #[serde(default, skip_serializing_if = "is_false")]
     pub supports_responses: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_structured_outputs: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value
@@ -60,6 +62,7 @@ pub(crate) struct OpenCodeFreeProvider {
     model: String,
     timeout_seconds: u64,
     supports_responses: bool,
+    supports_structured_outputs: bool,
 }
 
 impl OpenCodeFreeProvider {
@@ -71,6 +74,7 @@ impl OpenCodeFreeProvider {
             model: config.model.clone(),
             timeout_seconds: config.timeout_ms.div_ceil(1_000),
             supports_responses: config.supports_responses,
+            supports_structured_outputs: config.supports_structured_outputs,
         })
     }
 
@@ -108,26 +112,38 @@ impl OpenCodeFreeProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for OpenCodeFreeProvider {
-    async fn background_complete_with_usage(
+    async fn background_turn(
         &self,
         request: LlmRequest,
-        schema: Option<serde_json::Value>,
-    ) -> Result<super::BackgroundCompletion, LlmError> {
+        mode: super::BackgroundMode,
+    ) -> Result<super::BackgroundTurnResult, LlmError> {
+        if matches!(&mode, super::BackgroundMode::Structured { .. })
+            && !self.supports_structured_outputs
+        {
+            return Err(LlmError::Rejected);
+        }
         if self.supports_responses {
-            super::openai::responses::complete_with_usage(
+            super::openai::responses::turn_with_usage(
                 BASE_URL,
                 &self.model,
                 PUBLIC_KEY,
                 self.timeout_seconds,
                 request,
-                schema,
+                mode,
             )
             .await
         } else {
-            Ok(super::BackgroundCompletion {
-                text: self.background_complete(request, schema).await?,
-                usage: None,
-            })
+            let headers = <ZenChat as OpenAIProviderConfig>::custom_headers().unwrap_or_default();
+            super::openai::chat::turn_with_usage(
+                BASE_URL,
+                &self.model,
+                PUBLIC_KEY,
+                self.timeout_seconds,
+                request,
+                mode,
+                &headers,
+            )
+            .await
         }
     }
 
@@ -136,28 +152,6 @@ impl LlmProvider for OpenCodeFreeProvider {
     }
     fn adapter(&self) -> &'static str {
         "opencode_free"
-    }
-
-    async fn background_complete(
-        &self,
-        request: LlmRequest,
-        schema: Option<serde_json::Value>,
-    ) -> Result<String, LlmError> {
-        if self.supports_responses {
-            // Only opted-in free models use Zen Responses. The public credential
-            // may be rejected upstream; never silently fall back to Chat.
-            super::openai::responses::complete_with(
-                BASE_URL,
-                &self.model,
-                PUBLIC_KEY,
-                self.timeout_seconds,
-                request,
-                schema,
-            )
-            .await
-        } else {
-            super::complete_background_chat(self.stream(request).await?).await
-        }
     }
 
     async fn stream(&self, mut request: LlmRequest) -> Result<LlmEventStream, LlmError> {
@@ -229,6 +223,16 @@ fn reject_placeholder_call(
 }
 
 const FIELDS: &[ProviderConfigField] = &[
+    field(
+        "supports_structured_outputs",
+        "Supports Structured Outputs (Agent Job)",
+        ConfigFieldType::Boolean,
+        false,
+        None,
+        None,
+        None,
+        None,
+    ),
     field(
         "supports_responses",
         "Supports Responses (Agent Job only)",

@@ -1,4 +1,4 @@
-import type { AdminJob, JobEvent, JobStep } from '@/api/types/agent-jobs'
+import type { AdminJob, AgentRunView, JobEvent, JobStep } from '@/api/types/agent-jobs'
 import { projectLlmRuns, type LlmRun } from './llm-activity'
 
 export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan'
@@ -13,12 +13,20 @@ export interface UnifiedActivity {
   status: ActivityStatus
   agentRunId: string | null
   role: string | null
+  parentAgentRunId?: string | null
+  agentRun?: AgentRunView
+  forkGroupId?: string | null
+  memberCount?: number | null
+  childRuns?: AgentRunView[]
   title: string
   note: string
   llm?: LlmRun
   step?: JobStep
   event?: JobEvent
 }
+
+const count = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 
 const text = (value: unknown): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null
@@ -54,7 +62,9 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
   for (const event of ordered) {
     const payload = event.payload ?? {}
     const agentRunId = text(payload.agent_run_id) ?? text(payload.root_agent_run_id) ??
-      (event.event_type === 'job_finished' ? (job.agent_runs ?? []).find(run => run.role === 'orchestrator')?.agent_run_id ?? null : null)
+      (event.event_type === 'job_finished'
+        ? (job.agent_runs ?? []).find(run => run.role === 'orchestrator' || run.role === 'root' || !run.parent_agent_run_id)?.agent_run_id ?? null
+        : null)
     const role = agentRunId ? roles.get(agentRunId) ?? null : null
     if (event.event_type === 'step_started' || event.event_type === 'step_finished') {
       if (!event.step_key) continue
@@ -86,7 +96,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
     const make = (kind: ActivityKind, id: string, title: string, note: string, status: ActivityStatus = 'completed') =>
       items.push({ id, sequence: event.sequence, time: event.created_at, kind, status, agentRunId, role, title, note, event })
     if (event.event_type === 'agent_decision_accepted' && payload.action === 'delegate') {
-      make('fork', 'fork:' + (text(payload.fork_group_id) ?? event.sequence), 'Delegate / Fork', 'Sub-agents: ' + (payload.task_count ?? '—'))
+      make('fork', 'fork:' + (text(payload.fork_group_id) ?? text(payload.turn_id) ?? text(payload.run_id) ?? event.sequence), 'Delegate / Fork', '')
     } else if (event.event_type === 'join_completed') {
       make('join', 'join:' + (text(payload.fork_group_id) ?? event.sequence), 'Join completed', 'Children: ' + (payload.member_count ?? '—'))
     } else if (event.event_type === 'agent_run_finished') {
@@ -100,6 +110,34 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         text(payload.code) ?? 'Legacy DAG', event.event_type === 'plan_rejected' ? 'failed' : 'completed')
     }
   }
+  const created = new Map(ordered.filter(event => event.event_type === 'agent_run_created')
+    .map(event => [text(event.payload.agent_run_id), event.payload]))
+  const agentRuns = new Map((job.agent_runs ?? []).map(run => [run.agent_run_id, run]))
+  for (const item of items) {
+    const agent = item.agentRunId ? agentRuns.get(item.agentRunId) : undefined
+    const creation = item.agentRunId ? created.get(item.agentRunId) : undefined
+    item.agentRun = agent
+    item.parentAgentRunId = agent?.parent_agent_run_id ?? text(creation?.parent_agent_run_id)
+    item.role ??= text(creation?.role)
+    const payload = item.event?.payload
+    item.forkGroupId = item.kind === 'fork'
+      ? text(payload?.fork_group_id) ?? text(payload?.turn_id) ?? text(payload?.run_id)
+      : item.kind === 'join' ? text(payload?.fork_group_id)
+        : agent?.fork_group_id ?? text(creation?.fork_group_id)
+    if (item.kind !== 'fork' && item.kind !== 'join') continue
+    const groupId = item.forkGroupId
+    const childIds = new Set<string>()
+    if (groupId) {
+      for (const run of job.agent_runs ?? []) if (run.fork_group_id === groupId) childIds.add(run.agent_run_id)
+      for (const [id, fields] of created) if (id && fields.fork_group_id === groupId) childIds.add(id)
+    }
+    const join = item.kind === 'join' ? item.event : groupId ? ordered.find(event => event.event_type === 'join_completed' && event.payload.fork_group_id === groupId) : undefined
+    const fork = item.kind === 'fork' ? item.event : groupId ? ordered.find(event => event.event_type === 'agent_decision_accepted' && event.payload.action === 'delegate' &&
+      (text(event.payload.fork_group_id) ?? text(event.payload.turn_id) ?? text(event.payload.run_id)) === groupId) : undefined
+    item.memberCount = count(join?.payload.member_count) ?? count(fork?.payload.task_count) ?? (childIds.size || null)
+    item.childRuns = [...childIds].flatMap(id => agentRuns.get(id) ? [agentRuns.get(id)!] : [])
+    item.note = (item.kind === 'fork' ? 'Sub-agents: ' : 'Children: ') + (item.memberCount ?? '—')
+  }
   return items.sort((a, b) => a.sequence - b.sequence)
 }
 
@@ -107,4 +145,29 @@ export function visibleActivities(items: UnifiedActivity[], filter: ActivityFilt
   if (filter.kind === 'all') return items
   if (filter.kind === 'agent') return items.filter(item => item.agentRunId === filter.id)
   return items.filter(item => item.role === filter.role)
+}
+
+export interface TimelineGroup {
+  id: string
+  child: boolean
+  activities: UnifiedActivity[]
+}
+
+export function groupTimelineActivities(activities: UnifiedActivity[]): TimelineGroup[] {
+  const groups: TimelineGroup[] = []
+  const children = new Map<string, TimelineGroup>()
+  for (const activity of activities) {
+    if (!activity.parentAgentRunId || !activity.agentRunId) {
+      groups.push({ id: activity.id, child: false, activities: [activity] })
+      continue
+    }
+    let group = children.get(activity.agentRunId)
+    if (!group) {
+      group = { id: activity.agentRunId, child: true, activities: [] }
+      children.set(activity.agentRunId, group)
+      groups.push(group)
+    }
+    group.activities.push(activity)
+  }
+  return groups
 }

@@ -1,0 +1,59 @@
+export interface KnowledgeProvider {
+  reference: string
+  name: string
+  runtime_ready: boolean
+  structured_qualified?: boolean
+  tool_calling?: boolean
+  availability?: string
+}
+type CommonSettings = {
+  enabled: boolean
+  analysis_provider_ref: string | null
+  trigger_mode: 'manual' | 'auto_after_import'
+}
+export type KnowledgeSettingsInput = CommonSettings & (
+  { execution_version?: 1; publication_policy: string; max_candidates_per_source: number }
+  | { execution_version: 2; max_pages_per_source: number }
+)
+export type KnowledgeSettings = KnowledgeSettingsInput & {
+  revision: number
+  runtime_ready: boolean
+  instruction_error?: string
+  llm_providers: KnowledgeProvider[]
+}
+export interface KnowledgeDraftState {
+  wiki_id: string
+  draft: null | {
+    revision: number
+    base_revision: number | null
+    content_sha256: string
+    owner: null | { job_id: string; operation_key: string }
+  }
+  resolution: null | { resolution_id: string; action: string; phase: string }
+}
+export interface KnowledgeCurrentState {
+  drafts?: KnowledgeDraftState[]
+  unavailable?: boolean
+  code?: string
+  source_ref?: string
+}
+export interface KnowledgeOutcome {
+  wiki_id: string
+  path: string
+  accepted_revision: number | null
+  draft_revision: number | null
+  base_revision: number | null
+  content_sha256: string
+  index_health: string
+}
+export interface KnowledgeJobResult extends Record<string, unknown> {
+  execution_version: 2
+  source_ref: string
+  source_coverage: { read_bytes: number; total_bytes: number; complete: boolean; missing_ranges: { start: number; end: number }[] }
+  published_pages: KnowledgeOutcome[]
+  remaining_drafts: KnowledgeOutcome[]
+  blockers: { code: string; wiki_id?: string }[]
+  outcome: 'published' | 'no_change' | 'incomplete'
+  markdown: string
+  index_health: string | null
+}

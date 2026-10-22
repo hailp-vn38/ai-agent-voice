@@ -1,7 +1,7 @@
 # ADR 0027 — Provider concrete Phase 4: OpenAI LLM qua crate `llm` và ZeroTTS local
 
 ## Status
-Accepted. ADR 0085 supersedes the prohibition on Python sidecars and speech HTTP adapters for the selected VieNeu provider.
+Accepted.
 
 V1 chọn hai adapter compile-time cho Phase 4:
 

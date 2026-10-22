@@ -7,8 +7,8 @@ use crate::{
     providers::llm::ToolDefinition,
     tools::{
         builtin::{
-            BuiltinTool, CREATE_JOB_TOOL_NAME, EXIT_TOOL_NAME, SWITCH_TEMPLATE_TOOL_NAME,
-            create_job_tool_definition, exit_tool_definition, switch_template_tool_definition,
+            BuiltinTool, EXIT_TOOL_NAME, SWITCH_TEMPLATE_TOOL_NAME, exit_tool_definition,
+            is_task_suite_tool_name, switch_template_tool_definition,
         },
         device_mcp::LlmVisibleTool,
         external_mcp::{ResolvedExternalMcp, ResolvedExternalTool},
@@ -18,7 +18,7 @@ use crate::{
 /// A builtin tool must not be shadowed by, or shadow, a Device MCP tool. Sanitized MCP names can
 /// never contain a dot, so the dotted server action is unambiguous while the exit tool is filtered.
 pub(super) fn is_builtin_tool_name(name: &str) -> bool {
-    name == EXIT_TOOL_NAME || name == SWITCH_TEMPLATE_TOOL_NAME || name == CREATE_JOB_TOOL_NAME
+    name == EXIT_TOOL_NAME || name == SWITCH_TEMPLATE_TOOL_NAME || is_task_suite_tool_name(name)
 }
 
 /// Where one ToolCall goes, decided from the name the model used and nothing else.
@@ -40,8 +40,8 @@ impl SessionActor {
     /// returns is a property of the session rather than a snapshot of anything that can change.
     pub(in super::super) fn available_llm_tools(&self) -> Vec<ToolDefinition> {
         let mut tools = vec![exit_tool_definition()];
-        if self.job_submit.is_some() {
-            tools.push(create_job_tool_definition());
+        if let Some(ref handle) = self.job_submit {
+            tools.extend(handle.tool_definitions());
         }
         if !self.switch_catalog.is_empty() {
             tools.push(switch_template_tool_definition(
@@ -94,11 +94,11 @@ impl SessionActor {
     }
 
     pub(in super::super) fn resolve_tool(&self, name: &str) -> Option<ToolTarget> {
-        if name == CREATE_JOB_TOOL_NAME {
+        if is_task_suite_tool_name(name) {
             return self
                 .job_submit
                 .as_ref()
-                .map(|_| ToolTarget::Builtin(BuiltinTool::CreateJob));
+                .map(|_| ToolTarget::Builtin(BuiltinTool::TaskSuite));
         }
         if name == EXIT_TOOL_NAME {
             return Some(ToolTarget::Builtin(BuiltinTool::EndConversation));
@@ -130,7 +130,7 @@ impl SessionActor {
         calls
             .iter()
             .fold(McpResultDelivery::Silent, |selected, call| {
-                if call.name == CREATE_JOB_TOOL_NAME {
+                if is_task_suite_tool_name(&call.name) {
                     return McpResultDelivery::LlmThenTts;
                 }
                 let delivery = self

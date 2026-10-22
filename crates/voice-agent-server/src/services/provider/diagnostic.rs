@@ -603,6 +603,82 @@ impl ProviderDiagnosticService {
         })
     }
 
+    /// Probe strict output capability against the resolved, exact provider runtime.
+    /// Uses the existing diagnostic lease, concurrency and timeout/quarantine path.
+    pub async fn execute_llm_strict(
+        &self,
+        key: &str,
+        input: String,
+        format: String,
+    ) -> Result<LlmDiagnosticResult, ProviderDiagnosticRequestError> {
+        use crate::providers::llm::{BackgroundMode, ChatMessage, ToolDefinition};
+        use serde_json::json;
+        if input.is_empty() || input.len() > 8192 {
+            return Err(ProviderDiagnosticRequestError::InvalidInput);
+        }
+        if !matches!(format.as_str(), "structured" | "tools") {
+            return Err(ProviderDiagnosticRequestError::InvalidInput);
+        }
+        if self.manager.is_some() {
+            let service = self.managed_request(key, "llm").await?;
+            let mut result = Box::pin(service.execute_llm_strict(key, input, format)).await?;
+            result.provider_key = key.to_owned();
+            return Ok(result);
+        }
+        let snapshot = self.request_snapshot(key, "llm").await?;
+        let provider_key = snapshot.key.clone();
+        let revision = snapshot.revision;
+        let (request, mode) = if format == "structured" {
+            (
+                LlmRequest::text_turn(format!(
+                    "Return a JSON object with exactly one string property named summary. Summarize: {input}"
+                )),
+                BackgroundMode::Structured {
+                    name: "provider_strict_probe".into(),
+                    schema: json!({"type":"object","properties":{
+                    "summary":{"type":"string"}
+                },"required":["summary"],"additionalProperties":false}),
+                },
+            )
+        } else {
+            (
+                LlmRequest {
+                    messages: vec![ChatMessage::User {
+                        content: format!("Call submit_result with a short summary for: {input}"),
+                    }],
+                    tools: vec![ToolDefinition {
+                        name: "submit_result".into(),
+                        description: "Return a short summary through a function call.".into(),
+                        parameters: json!({"type":"object","properties":{
+                        "summary":{"type":"string"}
+                    },"required":["summary"],"additionalProperties":false}),
+                    }],
+                },
+                BackgroundMode::Tools,
+            )
+        };
+        let operation = self
+            .registry
+            .llm_strict_diagnostic(&provider_key, request, mode, 32768)
+            .map_err(|_| ProviderDiagnosticError::RuntimeNotLoaded)?;
+        let (text, runtime) = self
+            .execute(
+                ProviderDiagnosticTarget {
+                    key: provider_key.clone(),
+                    provider_type: ProviderType::Llm,
+                    desired_revision: revision,
+                },
+                operation,
+                Duration::from_millis(100),
+            )
+            .await?;
+        Ok(LlmDiagnosticResult {
+            provider_key,
+            text,
+            runtime,
+        })
+    }
+
     pub async fn execute_tts(
         &self,
         key: &str,

@@ -92,12 +92,12 @@ case "$action" in
 esac
 
 case "$action" in
-  build) exec "${compose[@]}" build "${selection[@]}" ;;
-  up) exec "${compose[@]}" up --detach --wait --wait-timeout "$wait_seconds" "${selection[@]}" ;;
-  down) exec "${compose[@]}" down "${selection[@]}" ;;
-  restart) exec "${compose[@]}" restart "${selection[@]}" ;;
-  logs) exec "${compose[@]}" logs --follow --tail 100 "${selection[@]}" ;;
-  status) exec "${compose[@]}" ps --all "${selection[@]}" ;;
+  build) exec "${compose[@]}" build ${selection[@]+"${selection[@]}"} ;;
+  up) exec "${compose[@]}" up --detach --wait --wait-timeout "$wait_seconds" ${selection[@]+"${selection[@]}"} ;;
+  down) exec "${compose[@]}" down ${selection[@]+"${selection[@]}"} ;;
+  restart) exec "${compose[@]}" restart ${selection[@]+"${selection[@]}"} ;;
+  logs) exec "${compose[@]}" logs --follow --tail 100 ${selection[@]+"${selection[@]}"} ;;
+  status) exec "${compose[@]}" ps --all ${selection[@]+"${selection[@]}"} ;;
   config) exec "${compose[@]}" config --quiet ;;
   check) exit 0 ;;
 esac

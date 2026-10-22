@@ -20,6 +20,60 @@ fn binding(voice: &str) -> TtsBinding {
     }
 }
 
+#[test]
+#[ignore = "requires prepared ZeroTTS model files and ONNX Runtime"]
+fn zerotts_background_pool_runs_successive_jobs() {
+    use std::time::Instant;
+    use voice_agent_server::{
+        config::{AppConfig, TtsInstanceConfig},
+        providers::compiled_provider_registry,
+    };
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    std::env::set_current_dir(&root).unwrap();
+    let config = AppConfig::parse_and_resolve(root.join("config.toml")).unwrap();
+    let provider = compiled_provider_registry()
+        .tts_factory("zerotts_onnx")
+        .unwrap()
+        .build(
+            &TtsInstanceConfig::ZeroTtsOnnx(Default::default()),
+            &config.runtime,
+        )
+        .unwrap();
+    let runtime = TtsWorkerRuntime::new_with_binding(
+        provider,
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            voice_reserved_capacity: 1,
+            final_timeout: Duration::from_secs(60),
+            ..Default::default()
+        },
+        binding("maichi"),
+    );
+    assert!(runtime.has_background_capacity());
+    for _ in 0..2 {
+        let lease = runtime
+            .start_background("Xin chào Việt Nam.".into())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut samples = 0;
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "ZeroTTS background synthesis stalled"
+            );
+            match runtime.poll(lease).unwrap() {
+                Some(TtsWorkerEvent::Pcm(pcm)) => samples += pcm.samples().len(),
+                Some(TtsWorkerEvent::Finished) => break,
+                Some(event) => panic!("unexpected ZeroTTS event: {event:?}"),
+                None => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        assert!(samples > 0);
+        assert_eq!(runtime.active_leases(), 0);
+    }
+}
+
 struct BlockingTts {
     entered: mpsc::Sender<()>,
     release: std::sync::Mutex<mpsc::Receiver<()>>,

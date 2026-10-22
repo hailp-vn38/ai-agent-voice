@@ -32,7 +32,104 @@ impl AppConfig {
         let path = path.as_ref();
         let mut config: Self = toml::from_str(&fs::read_to_string(path)?)?;
         config.resolve_agent(path)?;
+        config.resolve_environment(path)?;
         Ok(config)
+    }
+
+    pub(crate) fn resolve_environment(&mut self, config_path: &Path) -> Result<(), ConfigError> {
+        if let Some(lib) = std::env::var_os("VOICE_ONNX_RUNTIME_LIB").filter(|v| !v.is_empty()) {
+            self.runtime.onnx.library = std::path::PathBuf::from(lib);
+        } else if !self.runtime.onnx.library.exists() {
+            let native_name = if cfg!(target_os = "macos") {
+                "libonnxruntime.dylib"
+            } else {
+                "libonnxruntime.so"
+            };
+            if matches!(
+                self.runtime
+                    .onnx
+                    .library
+                    .file_name()
+                    .and_then(|n| n.to_str()),
+                Some("libonnxruntime.dylib" | "libonnxruntime.so")
+            ) && self
+                .runtime
+                .onnx
+                .library
+                .file_name()
+                .and_then(|n| n.to_str())
+                != Some(native_name)
+            {
+                let candidate = self.runtime.onnx.library.with_file_name(native_name);
+                let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+                if candidate.exists()
+                    || (candidate.is_relative() && base_dir.join(&candidate).exists())
+                {
+                    self.runtime.onnx.library = candidate;
+                }
+            }
+        }
+        if let Ok(bind) = std::env::var("VOICE_SERVER_BIND")
+            && !bind.trim().is_empty()
+        {
+            self.server.bind = bind
+                .parse()
+                .map_err(|_| ConfigError::Validation("invalid VOICE_SERVER_BIND".into()))?;
+        }
+        if let Ok(ws_url) = std::env::var("VOICE_PUBLIC_WS_URL")
+            && !ws_url.trim().is_empty()
+        {
+            self.server.public_ws_url = url::Url::parse(&ws_url)
+                .map_err(|_| ConfigError::Validation("invalid VOICE_PUBLIC_WS_URL".into()))?;
+        }
+        if let Ok(token) = std::env::var("VOICE_AUTH_TOKEN")
+            && !token.is_empty()
+        {
+            self.auth.token = token;
+        }
+        if let Ok(enabled) = std::env::var("VOICE_ADMIN_ENABLED")
+            && !enabled.trim().is_empty()
+        {
+            self.api.enabled = match enabled.trim() {
+                "true" | "1" => true,
+                "false" | "0" => false,
+                _ => {
+                    return Err(ConfigError::Validation(
+                        "invalid VOICE_ADMIN_ENABLED".into(),
+                    ));
+                }
+            };
+        }
+        if let Ok(token) = std::env::var("VOICE_ADMIN_TOKEN")
+            && !token.is_empty()
+        {
+            self.api.admin_token = token;
+        }
+        if let Ok(db_url) = std::env::var("VOICE_DATABASE_URL")
+            && !db_url.trim().is_empty()
+        {
+            self.database.url = db_url;
+        }
+        for (id, instance) in &mut self.providers.llm.instances {
+            if let crate::config::LlmInstanceConfig::Openai(openai) = instance
+                && let Some(env_name) = crate::database::secrets::provider_secret_env(id, "openai")
+                && let Ok(val) = std::env::var(&env_name)
+                && !val.trim().is_empty()
+            {
+                openai.api_key = crate::config::SecretString::new(val);
+            }
+        }
+        for (id, instance) in &mut self.providers.tts.instances {
+            if let crate::config::TtsInstanceConfig::ChillAudioWs(tts) = instance
+                && let Some(env_name) =
+                    crate::database::secrets::provider_secret_env(id, "chillaudio_ws")
+                && let Ok(val) = std::env::var(&env_name)
+                && !val.trim().is_empty()
+            {
+                tts.token = crate::config::SecretString::new(val);
+            }
+        }
+        Ok(())
     }
 
     pub fn load_for_benchmark(
@@ -57,8 +154,13 @@ impl AppConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if !self.background.limits.valid() {
-            return Err(ConfigError::Validation("invalid Background limits".into()));
+        if !self.orchestrator.valid() {
+            return Err(ConfigError::Validation(
+                "invalid Orchestrator configuration".into(),
+            ));
+        }
+        if !self.wiki.valid() {
+            return Err(ConfigError::Validation("invalid Wiki configuration".into()));
         }
         validate_transport(self)?;
         validate_audio(self)?;
@@ -582,12 +684,7 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
                     "ZeroTTS instance `{id}` has invalid model, voice, or thread count"
                 )));
             }
-            TtsInstanceConfig::VieneuHttp(tts) if !tts.valid() => {
-                return Err(ConfigError::Validation(format!(
-                    "VieNeu instance `{id}` has invalid URL, voice, language, or timeout"
-                )));
-            }
-            TtsInstanceConfig::VieneuNative(tts) if !tts.valid_selection() => {
+            TtsInstanceConfig::Vieneu(tts) if !tts.valid_selection() => {
                 return Err(ConfigError::Validation(format!(
                     "Native VieNeu instance `{id}` has invalid voice, language, model, or threads"
                 )));
@@ -909,5 +1006,32 @@ join_timeout_ms = 0
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn onnx_runtime_library_adapts_to_host_os_when_sibling_exists() {
+        let dir = std::env::temp_dir().join(format!("voice-onnx-resolve-{}", uuid::Uuid::new_v4()));
+        let ort_dir = dir.join("runtime/onnxruntime");
+        fs::create_dir_all(&ort_dir).unwrap();
+        let (foreign, native) = if cfg!(target_os = "macos") {
+            ("libonnxruntime.so", "libonnxruntime.dylib")
+        } else {
+            ("libonnxruntime.dylib", "libonnxruntime.so")
+        };
+        fs::write(ort_dir.join(native), b"stub").unwrap();
+        let mut parsed = config(&format!(
+            r#"
+[runtime.onnx]
+library = "runtime/onnxruntime/{foreign}"
+"#
+        ));
+        parsed
+            .resolve_environment(&dir.join("config.toml"))
+            .unwrap();
+        assert_eq!(
+            parsed.runtime.onnx.library,
+            std::path::PathBuf::from(format!("runtime/onnxruntime/{native}"))
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 }

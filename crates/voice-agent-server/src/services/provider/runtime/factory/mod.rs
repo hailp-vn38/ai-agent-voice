@@ -421,7 +421,7 @@ fn zerotts_binding(
 }
 
 fn tts_binding(snapshot: &DesiredProvider) -> Option<crate::providers::TtsBinding> {
-    if snapshot.adapter == "vieneu_native" {
+    if snapshot.adapter == "vieneu" {
         let configuration: crate::config::VieneuNativeConfig =
             serde_json::from_str(&snapshot.config_json).ok()?;
         if !configuration.valid_selection() {

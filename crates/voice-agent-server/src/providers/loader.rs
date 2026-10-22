@@ -306,7 +306,7 @@ fn tts_binding(instance: &crate::config::TtsInstanceConfig) -> TtsBinding {
             voice: config.voice.clone(),
             language: config.language.clone(),
         },
-        crate::config::TtsInstanceConfig::VieneuNative(config) => TtsBinding {
+        crate::config::TtsInstanceConfig::Vieneu(config) => TtsBinding {
             voice: config.voice.clone(),
             language: config.language.clone(),
         },
@@ -324,8 +324,7 @@ fn deployment_tts_replicas(
     let value = match instance {
         TtsInstanceConfig::ZeroTtsOnnx(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::ChillAudioWs(config) => serde_json::to_value(config).ok()?,
-        TtsInstanceConfig::VieneuHttp(config) => serde_json::to_value(config).ok()?,
-        TtsInstanceConfig::VieneuNative(config) => serde_json::to_value(config).ok()?,
+        TtsInstanceConfig::Vieneu(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::KokoroViOnnx(config) => serde_json::to_value(config).ok()?,
         #[cfg(feature = "qualification-providers")]
         TtsInstanceConfig::QualificationTts(config) => serde_json::to_value(config).ok()?,

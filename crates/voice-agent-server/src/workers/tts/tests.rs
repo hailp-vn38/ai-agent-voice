@@ -137,3 +137,70 @@ async fn queued_voice_pcm_does_not_charge_backpressure_as_a_stall() {
         Some(TtsWorkerEvent::TimedOut)
     ));
 }
+
+#[test]
+fn core_background_tts_must_not_borrow_reserved_voice_slot() {
+    let (runtime, _chunks, _emitted) = fixture();
+    assert!(!runtime.has_background_capacity());
+    assert!(matches!(
+        runtime.start_background("job".into()),
+        Err(TtsWorkerError::Capacity)
+    ));
+    assert!(runtime.start("voice".into()).is_ok());
+}
+
+struct ShortTts;
+impl TtsProvider for ShortTts {
+    fn adapter(&self) -> &'static str {
+        "short"
+    }
+    fn synthesize_stream(
+        &self,
+        _: &str,
+        on_pcm: &mut dyn FnMut(PcmF32Mono) -> Result<(), TtsError>,
+    ) -> Result<(), TtsError> {
+        on_pcm(PcmF32Mono::new(vec![0.25; 96], 48_000))
+    }
+}
+
+#[test]
+fn background_reset_receipt_tracks_its_worker_not_the_entire_pool() {
+    let runtime = TtsWorkerRuntime::new(
+        Arc::new(ShortTts),
+        WorkerRuntimeConfig {
+            max_workers: 2,
+            voice_reserved_capacity: 1,
+            ..WorkerRuntimeConfig::default()
+        },
+    );
+    assert!(runtime.has_background_capacity());
+    for _ in 0..2 {
+        let lease = runtime.start_background("one shot".into()).unwrap();
+        let reset = runtime.reset_receipt(lease);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut completed = false;
+        while std::time::Instant::now() < deadline {
+            match runtime.poll(lease).unwrap() {
+                Some(TtsWorkerEvent::Finished) => {
+                    completed = true;
+                    break;
+                }
+                Some(
+                    TtsWorkerEvent::Failed
+                    | TtsWorkerEvent::Cancelled
+                    | TtsWorkerEvent::CleanupTimedOut,
+                ) => {
+                    panic!("Unexpected native terminal");
+                }
+                _ => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        assert!(completed);
+        while reset.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!reset.load(Ordering::Acquire));
+        assert!(!runtime.has_lease(lease));
+        assert_eq!(runtime.active_leases(), 0);
+    }
+}

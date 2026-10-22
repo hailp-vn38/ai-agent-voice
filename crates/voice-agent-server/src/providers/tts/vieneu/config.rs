@@ -1,52 +1,109 @@
-use crate::config::SecretString;
 use serde::{Deserialize, Serialize};
-use url::Url;
 
-#[derive(Clone, Deserialize, Serialize)]
+use super::assets::{DEFAULT_VOICE, VOICES};
+
+/// The desired (non-secret) configuration. Model identity and ORT threads are
+/// injected from the deployment runtime and are never user-editable fields.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct VieneuHttpConfig {
-    pub base_url: Url,
-    #[serde(default, skip_serializing)]
-    pub api_key: SecretString,
+pub struct VieneuNativeConfig {
+    #[serde(default = "default_model")]
+    #[serde(skip_serializing)]
+    pub model: String,
+    #[serde(default = "default_threads")]
+    #[serde(skip_serializing)]
+    pub num_threads: i32,
+    #[serde(default = "default_voice")]
     pub voice: String,
-    #[serde(default = "crate::config::defaults::default_vietnamese_language")]
+    #[serde(default = "default_language")]
     pub language: String,
-    #[serde(default = "default_timeout")]
-    pub timeout_ms: u64,
     #[serde(default)]
     pub preload: bool,
 }
 
-fn default_timeout() -> u64 {
-    30_000
+pub const MODEL_ID: &str = "vieneu_v3_turbo_fp32";
+
+fn default_model() -> String {
+    MODEL_ID.into()
+}
+fn default_threads() -> i32 {
+    1
+}
+fn default_voice() -> String {
+    DEFAULT_VOICE.into()
+}
+fn default_language() -> String {
+    "vi-VN".into()
 }
 
-impl VieneuHttpConfig {
-    pub(crate) fn valid(&self) -> bool {
-        matches!(self.base_url.scheme(), "http" | "https")
-            && self.base_url.host_str().is_some()
-            && self.base_url.username().is_empty()
-            && self.base_url.password().is_none()
-            && self.base_url.query().is_none()
-            && self.base_url.fragment().is_none()
-            && self.base_url.as_str().len() <= 2048
-            && !self.voice.trim().is_empty()
-            && self.voice.len() <= 128
-            && !self.voice.chars().any(char::is_control)
-            && self.language == "vi-VN"
-            && (1..=120_000).contains(&self.timeout_ms)
+impl Default for VieneuNativeConfig {
+    fn default() -> Self {
+        Self {
+            model: default_model(),
+            num_threads: default_threads(),
+            voice: default_voice(),
+            language: default_language(),
+            preload: false,
+        }
     }
 }
 
-impl std::fmt::Debug for VieneuHttpConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VieneuHttpConfig")
-            .field("base_url", &"[REDACTED]")
-            .field("api_key", &self.api_key)
-            .field("voice", &self.voice)
-            .field("language", &self.language)
-            .field("timeout_ms", &self.timeout_ms)
-            .field("preload", &self.preload)
-            .finish()
+impl VieneuNativeConfig {
+    pub fn valid_selection(&self) -> bool {
+        self.model == MODEL_ID
+            && self.language == "vi-VN"
+            && (1..=128).contains(&self.num_threads)
+            && VOICES.iter().any(|voice| voice.id == self.voice)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_selection_is_in_local_voice_catalog() {
+        let config = VieneuNativeConfig::default();
+        assert!(config.valid_selection());
+        assert_eq!(config.model, MODEL_ID);
+        assert_eq!(config.language, "vi-VN");
+    }
+
+    #[test]
+    fn rejects_unknown_options_and_credentials() {
+        for invalid in [
+            r#"{"api_key":"secret"}"#,
+            r#"{"model_path":"/tmp/other.onnx"}"#,
+            r#"{"precision":"int8"}"#,
+            r#"{"base_url":"http://localhost"}"#,
+        ] {
+            assert!(serde_json::from_str::<VieneuNativeConfig>(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_voice_language_threads_or_model() {
+        let mut value = VieneuNativeConfig {
+            voice: "not-in-catalog".into(),
+            ..Default::default()
+        };
+        assert!(!value.valid_selection());
+        value.voice = DEFAULT_VOICE.into();
+        value.language = "en-US".into();
+        assert!(!value.valid_selection());
+        value.language = "vi-VN".into();
+        value.num_threads = 0;
+        assert!(!value.valid_selection());
+        value.num_threads = 1;
+        value.model = "other-model".into();
+        assert!(!value.valid_selection());
+    }
+
+    #[test]
+    fn hides_deployment_owned_fields_when_serializing() {
+        let value = serde_json::to_value(VieneuNativeConfig::default()).unwrap();
+        assert!(value.get("model").is_none());
+        assert!(value.get("num_threads").is_none());
+        assert_eq!(value["voice"], DEFAULT_VOICE);
     }
 }

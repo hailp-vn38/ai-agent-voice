@@ -28,10 +28,38 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Mutable control-plane state for Admin Background & Knowledge Processing settings and
+/// idempotent job submission keys.
+#[derive(Debug)]
+pub(crate) struct AdminTaskControlState {
+    pub background_enabled_override: Option<bool>,
+    pub background_revision: i64,
+    pub knowledge_processing_overrides: serde_json::Map<String, serde_json::Value>,
+    pub knowledge_processing_revision: i64,
+    /// Maps `Idempotency-Key` -> `(request_fingerprint, task_id)`.
+    pub idempotency_ledger: HashMap<String, (String, String)>,
+}
+
+impl Default for AdminTaskControlState {
+    fn default() -> Self {
+        Self {
+            background_enabled_override: None,
+            background_revision: 1,
+            knowledge_processing_overrides: serde_json::Map::new(),
+            knowledge_processing_revision: 1,
+            idempotency_ledger: HashMap::new(),
+        }
+    }
+}
+
 /// Application-owned state. Production sessions resolve a fixed runtime snapshot from catalogs.
 #[derive(Clone)]
 pub struct AppState {
-    pub background: Option<Arc<crate::services::background::BackgroundRuntime>>,
+    pub wiki_engine: Option<Arc<llm_wiki::WikiEngine>>,
+    pub orchestrator: Option<Arc<orchestrator_agent_rs::Orchestrator>>,
+    pub task_manager: Option<Arc<orchestrator_flow_rs::TaskManager>>,
+    pub autoflow_notify: Option<Arc<tokio::sync::Notify>>,
+    pub(crate) admin_task_control: Arc<std::sync::Mutex<AdminTaskControlState>>,
     /// Monotonic process-local start marker used only by the safe Admin system summary.
     pub started_at: Instant,
     pub active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
@@ -663,7 +691,11 @@ impl AppState {
             .with_pilot_admission(pilot_admission.clone()),
         );
         let state = Self {
-            background: None,
+            wiki_engine: None,
+            orchestrator: None,
+            task_manager: None,
+            autoflow_notify: None,
+            admin_task_control: Arc::new(std::sync::Mutex::new(AdminTaskControlState::default())),
             started_at: Instant::now(),
             active_device_sessions: Arc::new(Default::default()),
             reminder_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),

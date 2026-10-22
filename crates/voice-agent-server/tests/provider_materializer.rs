@@ -689,19 +689,19 @@ async fn a_different_zerotts_delivery_mode_builds_a_second_physical_runtime() {
 }
 
 #[test]
-fn zerotts_physical_replica_count_is_independent_of_generic_tts_concurrency() {
+fn zerotts_physical_replica_count_follows_configured_tts_workers() {
     let builder = zerotts_factory(4);
     let row = zerotts_provider(1, "tts-maichi", "maichi", "stream");
     assert_eq!(builder.logical_capacity(&row).unwrap(), 4);
     assert_eq!(
         builder.physical_capacity(&row).unwrap(),
-        1,
-        "generic TTS concurrency must not multiply ZeroTTS engine replicas"
+        4,
+        "the configured pool must leave native capacity beyond the Voice reservation"
     );
 }
 
 #[tokio::test]
-async fn a_shared_zerotts_physical_runtime_admits_one_native_synthesis_at_a_time() {
+async fn a_shared_zerotts_pool_reserves_voice_capacity_and_releases_background_capacity() {
     use voice_agent_server::workers::ProviderWorkloadClass;
 
     let quotas = Arc::new(Mutex::new(Vec::new()));
@@ -716,15 +716,13 @@ async fn a_shared_zerotts_physical_runtime_admits_one_native_synthesis_at_a_time
         .unwrap();
     let quota = quotas.lock().unwrap()[0].clone();
 
-    let first = quota
-        .try_admit(ProviderWorkloadClass::Voice)
-        .expect("the physical engine admits one native synthesis");
-    assert!(
-        quota.try_admit(ProviderWorkloadClass::Voice).is_err(),
-        "a single ZeroTTS replica must not admit concurrent native synthesis"
-    );
-    drop(first);
-    assert!(quota.try_admit(ProviderWorkloadClass::Voice).is_ok());
+    for _ in 0..2 {
+        let background = quota.try_admit(ProviderWorkloadClass::Background).unwrap();
+        assert!(quota.try_admit(ProviderWorkloadClass::Background).is_err());
+        let voice = quota.try_admit(ProviderWorkloadClass::Voice).unwrap();
+        assert!(quota.try_admit(ProviderWorkloadClass::Voice).is_err());
+        drop((background, voice));
+    }
     drop(lease);
 }
 
@@ -746,8 +744,8 @@ fn deployment_startup_and_the_manager_agree_on_the_zerotts_replica_count() {
 
     assert_eq!(
         configured_physical_replicas("zerotts_onnx", value, &cfg.runtime),
-        Some(1),
-        "deployment startup must load the same session count the manager builds"
+        None,
+        "deployment startup must also use the configured worker count"
     );
     // A remote adapter has no resident native topology at all.
     assert_eq!(

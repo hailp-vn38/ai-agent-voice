@@ -1,3 +1,4 @@
+import type { KnowledgeCurrentState } from './knowledge-processing'
 /** Frontend contract for proposed Admin Agent Job endpoints. Not the existing Reminder API. */
 export interface BackgroundProviderOption {
   ref: string
@@ -37,6 +38,70 @@ export interface InstalledPlugin {
   last_error_code?: string | null
   installation_digest?: string
 }
+/** Compile-time Rust operations: not Store installations and not uninstallable. */
+export interface CorePluginView {
+  availability?: 'not_installed' | 'installing' | 'ready' | 'error' | 'unsupported_platform'
+  dependencies?: Array<{ name: string; installed_version: string | null; status: string }>
+  last_error_code?: string | null
+  id: string
+  name: string
+  kind: 'built_in'
+  tags: string[]
+  status: 'ready' | 'disabled'
+  enabled: boolean
+  revision: number
+  runtime: { kind: 'in_process'; language: 'rust' }
+  operations: (PluginOperation & { contract_revision: string })[]
+}
+export interface CorePluginPage {
+  items: CorePluginView[]
+  total: number
+  operation_total: number
+}
+
+/** Value-settings revisions are independent of activation/installation CAS. */
+export interface PluginValueSettings {
+  plugin_key: string
+  revision: number
+  values: Record<string, string | number | boolean>
+  secret_set: Record<string, boolean>
+  schema: {
+    type: 'object'
+    properties: Record<string, { type: 'string' | 'integer' | 'number' | 'boolean'; 'x-secret'?: boolean; description?: string }>
+    required?: string[]
+  }
+  schema_digest: string
+  package_digest: string | null
+  needs_reconfiguration: boolean
+}
+export interface PluginOperationContract {
+  description?: string
+  instructions?: string
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+}
+export interface PluginArtifactBinding {
+  argument_pointer: string
+  source_job_id: string
+  source_artifact_id: string
+}
+export interface PluginRunsPage {
+  items: Array<{
+    id: string
+    status: string
+    created_at: string
+    execution_mode: 'plugin_operation_v3'
+  }>
+  total: number
+  page: number
+  page_size: number
+}
+export interface PluginOperationRun {
+  job_id: string
+  status: 'queued'
+  execution_mode: 'plugin_operation_v3'
+}
+
 export interface PluginTestResult {
   ok: boolean
   message?: string
@@ -49,12 +114,14 @@ export interface PluginPage {
   total?: number
 }
 
-export type AgentRole = 'orchestrator' | 'research' | 'document' | 'general'
+export type AgentRole = 'orchestrator' | 'research' | 'document' | 'general' | 'root' | 'source_collector' | 'wiki_ingestor' | 'wiki_curator' | (string & {})
 export interface AgentRunView {
   agent_run_id: string
   parent_agent_run_id: string | null
+  fork_group_id?: string | null
   role: AgentRole
   goal_excerpt: string
+  result?: Record<string, unknown> | null
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   run_index: number
   llm_rounds: number
@@ -92,12 +159,16 @@ export interface JobStep {
 }
 export interface JobArtifact {
   id: string
+  step_key: string | null
+  filename: string
   media_type: string
   size_bytes: number
   sha256: string
+  created_at: string
 }
 export interface AdminJob {
-  execution_mode?: 'dag_v1' | 'hierarchical_v2'
+  knowledge_state?: KnowledgeCurrentState | null
+  execution_mode?: 'dag_v1' | 'hierarchical_v2' | 'hierarchical_v3' | 'plugin_operation_v3' | 'knowledge_ingest_v3' | 'orchestrator_agent'
   agent_runs?: AgentRunView[]
   coverage?: CoverageView | null
   id: string
@@ -120,7 +191,7 @@ export interface JobPage {
   total?: number
 }
 
-export type JobEventType = 'plan_attempt' | 'plan_rejected' | 'plan_accepted' | 'step_started' | 'step_finished' | 'job_finished' | 'llm_run_started' | 'llm_provider_acquired' | 'llm_request_started' | 'llm_response_received' | 'llm_run_finished' | 'agent_run_created' | 'agent_run_started' | 'agent_decision_accepted' | 'agent_decision_rejected' | 'agent_run_finished' | 'join_completed'
+export type JobEventType = 'plan_attempt' | 'plan_rejected' | 'plan_accepted' | 'step_started' | 'step_finished' | 'job_finished' | 'llm_run_started' | 'llm_provider_acquired' | 'llm_request_started' | 'llm_response_received' | 'llm_run_finished' | 'agent_run_created' | 'agent_run_started' | 'agent_decision_accepted' | 'agent_decision_rejected' | 'agent_run_finished' | 'join_completed' | 'knowledge_analysis_submitted' | 'knowledge_proposal_changed'
 export interface JobEvent {
   sequence: number
   event_type: JobEventType

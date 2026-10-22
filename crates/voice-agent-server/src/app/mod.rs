@@ -434,20 +434,21 @@ async fn managed_startup(
 }
 
 async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> {
-    if state.background.is_none()
-        && let Some(database) = state.database.clone()
-        && database.durable_path().is_some()
-    {
-        state.background = Some(
-            crate::services::background::BackgroundRuntime::open_with_manager(
-                database,
-                state.config.clone(),
-                state.lifecycle.stopping().clone(),
-                state.provider_runtime_manager.clone(),
-            )
-            .await?,
-        );
+    let runtime = crate::services::task_flow::init_from_app_config(&state.config)
+        .await
+        .map_err(BootstrapError::TaskFlow)?;
+    if let (Some(task_mgr), Some(orch)) = (runtime.task_manager.clone(), runtime.orchestrator.clone()) {
+        let stopping = state.lifecycle.stopping().clone();
+        tokio::spawn(async move {
+            stopping.cancelled().await;
+            let _ = task_mgr.shutdown().await;
+            let _ = orch.shutdown().await;
+        });
     }
+    state.wiki_engine = runtime.wiki_engine;
+    state.orchestrator = runtime.orchestrator;
+    state.task_manager = runtime.task_manager;
+    state.autoflow_notify = Some(runtime.autoflow_notify);
     Ok(())
 }
 
@@ -575,7 +576,7 @@ async fn ready(State(state): State<AppState>) -> Response {
 #[derive(Debug, Error)]
 pub enum BootstrapError {
     #[error(transparent)]
-    Background(#[from] crate::services::background::JobError),
+    TaskFlow(#[from] crate::services::task_flow::TaskFlowError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
     #[error("provider_startup_failed")]

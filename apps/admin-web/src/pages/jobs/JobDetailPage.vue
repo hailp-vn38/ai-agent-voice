@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, BrainCircuit, CheckCircle2, Cpu, Download, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, BrainCircuit, Cpu, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -10,12 +10,15 @@ import type { AdminJob, JobEvent, JobStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import JobUnifiedTimeline from '@/components/jobs/JobUnifiedTimeline.vue'
 import JobActivityInspector from '@/components/jobs/JobActivityInspector.vue'
+import KnowledgeJobState from '@/components/jobs/KnowledgeJobState.vue'
+import JobArtifactGallery from '@/components/jobs/artifacts/JobArtifactGallery.vue'
 import { llmTokenSummary, projectLlmRuns } from '@/domain/jobs/llm-activity'
 import { projectUnifiedActivity, visibleActivities, type ActivityFilter } from '@/domain/jobs/unified-activity'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import { jobResultReport } from '@/domain/jobs/result-report'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,7 +46,7 @@ let eventCursor = 0
 let retryRequest = { id: '', key: '' }
 
 const isTerminal = (status: JobStatus) => ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
-const canRetry = computed(() => job.value && ['failed', 'cancelled'].includes(job.value.status))
+const canRetry = computed(() => job.value && job.value.execution_mode !== 'knowledge_ingest_v3' && ['failed', 'cancelled'].includes(job.value.status))
 const unknownOutcome = computed(() => job.value?.steps.some(step => step.attempt_state === 'unknown_outcome') ?? false)
 
 const activityFilter = ref<ActivityFilter>({ kind: 'all' })
@@ -57,6 +60,12 @@ const roleFilters = computed(() => [...new Set(agentRuns.value.map(run => run.ro
 const allActivity = computed(() => job.value ? projectUnifiedActivity(job.value, events.value) : [])
 const filteredActivity = computed(() => visibleActivities(allActivity.value, activityFilter.value))
 const selectedActivity = computed(() => filteredActivity.value.find(item => item.id === selectedActivityId.value) ?? null)
+const selectedAgent = computed(() => agentRuns.value.find(run => run.agent_run_id === selectedActivity.value?.agentRunId) ?? null)
+const selectedSteps = computed(() => {
+  const activity = selectedActivity.value
+  if (activity?.step) return [activity.step]
+  return activity?.agentRunId ? job.value?.steps.filter(step => step.agent_run_id === activity.agentRunId) ?? [] : []
+})
 const coverage = computed(() => job.value?.coverage ?? null)
 const sourcePercentage = computed(() => coverage.value && coverage.value.required_sources_count > 0
   ? Math.min(100, Math.round(coverage.value.verified_sources_count * 100 / coverage.value.required_sources_count)) : 0)
@@ -65,9 +74,9 @@ watch(filteredActivity, rows => {
 }, { immediate: true })
 function filterAgent(id: string) { activityFilter.value = { kind: 'agent', id } }
 function roleName(role: string) {
-  if (role === 'orchestrator') return t('jobUi.agentOrchestrator')
-  if (role === 'research') return t('jobUi.agentResearch')
-  if (role === 'document') return t('jobUi.agentDocument')
+  if (role === 'orchestrator' || role === 'root') return t('jobUi.agentOrchestrator')
+  if (role === 'research' || role === 'wiki_curator') return t('jobUi.agentResearch')
+  if (role === 'document' || role === 'source_collector' || role === 'wiki_ingestor') return t('jobUi.agentDocument')
   return t('jobUi.agentGeneral')
 }
 
@@ -75,6 +84,7 @@ const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline'
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
     status === 'partial_success' || status === 'cancelled' ? 'outline' : 'secondary'
 const statusLabel = (status: JobStatus) => t(('jobUi.jobStatus.' + status) as 'jobUi.jobStatus.queued')
+const report = computed(() => jobResultReport(job.value?.result))
 async function load(resetEvents = false) {
   controller?.abort()
   const pending = new AbortController()
@@ -113,21 +123,6 @@ async function load(resetEvents = false) {
     }
   } finally {
     if (controller === pending) { loading.value = false; refreshing.value = false }
-  }
-}
-async function downloadArtifact(artifactId: string) {
-  if (!job.value) return
-  error.value = ''
-  try {
-    const blob = await agentJobsApi.artifact(job.value.id, artifactId)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = artifactId
-    link.click()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch (cause) {
-    error.value = formatApiError(cause)
   }
 }
 async function cancel() {
@@ -233,6 +228,7 @@ onBeforeUnmount(() => {
       <template #icon><div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet"><Workflow class="size-5" /></div></template>
       <template #details><span class="line-clamp-2">{{ job?.goal || jobId }}</span></template>
       <template #actions>
+        <Badge v-if="job?.execution_mode === 'knowledge_ingest_v3'" variant="outline">{{ t('jobUi.knowledge') }}</Badge>
         <Badge v-if="job" :variant="tone(job.status)">{{ statusLabel(job.status) }}</Badge>
         <Button variant="outline" :disabled="refreshing || loading || busy" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': refreshing }" />{{ t('jobUi.refresh') }}</Button>
         <Button v-if="job && !isTerminal(job.status) && job.status !== 'cancelling'" variant="outline" :disabled="busy" @click="cancel"><Square class="size-4" />{{ t('jobUi.cancelJob') }}</Button>
@@ -246,6 +242,7 @@ onBeforeUnmount(() => {
     <div v-if="loading" class="studio-panel p-8 text-center text-sm text-muted-foreground">{{ t('common.loading') }}</div>
 
     <template v-if="job && !loading">
+      <KnowledgeJobState v-if="job.execution_mode === 'knowledge_ingest_v3'" :job="job" @changed="load()" />
       <div v-if="job.error_code || unknownOutcome" role="alert" class="rounded-xl border border-danger/30 bg-danger/5 p-4">
         <div class="flex items-center gap-2 font-semibold text-danger"><AlertTriangle class="size-4" />{{ t('jobUi.executionWarning') }}</div>
         <p v-if="job.error_code" class="mt-2 break-all font-mono text-xs text-danger">{{ job.error_code }}</p>
@@ -291,24 +288,22 @@ onBeforeUnmount(() => {
           @filter="activityFilter = $event"
         />
         <aside class="min-w-0 space-y-4">
-          <section class="studio-panel overflow-hidden">
-            <div class="flex items-center justify-between gap-2 border-b p-4">
+          <section class="studio-panel p-4">
+            <div class="mb-3 flex items-center justify-between gap-2">
               <h3 class="flex items-center gap-2 text-sm font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.activeAgents') }}</h3>
               <span class="text-xs text-muted-foreground">{{ agentRuns.length || '—' }}</span>
             </div>
-            <p v-if="!agentRuns.length" class="p-4 text-xs text-muted-foreground">{{ job.execution_mode === 'hierarchical_v2' ? t('jobUi.noAgentRunsYet') : t('jobUi.legacyNoAgents') }}</p>
-            <button v-for="run in agentRuns" :key="run.agent_run_id" type="button" class="flex w-full cursor-pointer items-center gap-[9px] border-b px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" :class="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id ? 'bg-primary/10' : ''" :aria-pressed="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id" @click="filterAgent(run.agent_run_id)">
-              <span class="grid size-[29px] shrink-0 place-items-center rounded-[9px] bg-primary/10 text-[11px] font-extrabold text-studio-violet" aria-hidden="true">{{ run.role.charAt(0).toUpperCase() }}</span>
-              <span class="min-w-0 flex-1">
-                <strong class="block text-[11px]">{{ roleName(run.role) }}</strong>
-                <span class="block truncate text-[11px] text-muted-foreground">{{ run.llm_rounds }} {{ t('jobUi.timelineRounds') }} · {{ run.input_tokens !== null && run.output_tokens !== null ? (run.input_tokens + run.output_tokens).toLocaleString() : '—' }} {{ t('jobUi.llmTokens') }}</span>
-              </span>
-              <Badge :variant="run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'danger' : 'outline'" class="shrink-0 gap-1 whitespace-nowrap text-[10.5px] capitalize" :class="run.status === 'running' ? 'border-transparent bg-studio-cyan/10 text-studio-cyan' : ''">
-                <CheckCircle2 v-if="run.status === 'succeeded'" class="size-3.5" />
-                <span v-else-if="run.status === 'running'" class="size-1.5 rounded-full bg-current" aria-hidden="true" />
-                {{ run.status }}
-              </Badge>
-            </button>
+            <p v-if="!agentRuns.length" class="text-xs text-muted-foreground">{{ t('jobUi.noAgentRunsYet') }}</p>
+            <div v-for="run in agentRuns" :key="run.agent_run_id" class="border-t py-1">
+              <button type="button" class="flex w-full items-center gap-2 rounded-md p-2 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id ? 'bg-primary/10' : ''" :aria-pressed="activityFilter.kind === 'agent' && activityFilter.id === run.agent_run_id" @click="filterAgent(run.agent_run_id)">
+                <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-studio-violet"><Workflow class="size-4" /></span>
+                <span class="min-w-0 flex-1">
+                  <strong class="block text-xs">{{ roleName(run.role) }}</strong>
+                  <span class="block truncate text-[10px] text-muted-foreground">{{ run.llm_rounds }} {{ t('jobUi.timelineRounds') }} · {{ run.tool_calls }} {{ t('jobUi.timelineTools') }}</span>
+                </span>
+                <span class="text-[10px] capitalize" :class="run.status === 'succeeded' ? 'text-success' : run.status === 'failed' ? 'text-danger' : 'text-studio-cyan'">{{ run.status }}</span>
+              </button>
+            </div>
           </section>
           <JobActivityInspector :activity="selectedActivity" />
           <section class="studio-panel p-4">
@@ -323,27 +318,38 @@ onBeforeUnmount(() => {
             </template>
             <p v-else-if="coverage" class="text-xs text-muted-foreground">{{ t('jobUi.goalOnlyUnverified') }}</p>
             <p v-else class="text-xs text-muted-foreground">{{ t('jobUi.coverageUnavailable') }}</p>
+            <div v-if="selectedActivity" :key="selectedActivity.id" class="mt-4 space-y-3 border-t pt-3 text-xs">
+              <h4 class="break-words font-semibold">{{ selectedActivity.title }}</h4>
+              <details v-if="selectedAgent?.goal_excerpt">
+                <summary class="cursor-pointer font-semibold">{{ t('jobUi.goal') }}</summary>
+                <p class="mt-1 whitespace-pre-wrap break-words">{{ selectedAgent.goal_excerpt }}</p>
+              </details>
+              <details v-for="step in selectedSteps" :key="step.step_key" class="space-y-2 border-t pt-3">
+                <summary class="cursor-pointer break-words font-semibold">{{ step.instruction }}</summary>
+                <p class="break-all font-mono text-muted-foreground">{{ step.step_key }}</p>
+                <h5 class="text-muted-foreground">{{ t('jobUi.toolArguments') }}</h5>
+                <pre class="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3">{{ JSON.stringify(step.arguments, null, 2) }}</pre>
+                <h5 class="text-muted-foreground">{{ t('jobUi.result') }}</h5>
+                <pre class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3">{{ step.result == null ? '—' : JSON.stringify(step.result, null, 2) }}</pre>
+              </details>
+              <details v-if="selectedAgent?.result">
+                <summary class="cursor-pointer font-semibold">{{ t('jobUi.agentResult') }}</summary>
+                <pre class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3">{{ JSON.stringify(selectedAgent.result, null, 2) }}</pre>
+              </details>
+              <p v-if="!selectedSteps.length && !selectedAgent?.result" class="text-muted-foreground">{{ t('jobUi.noSourceDetails') }}</p>
+            </div>
+          </section>
+          <section class="studio-panel p-5">
+            <h2 class="mb-4 flex items-center gap-2 font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.artifacts') }}</h2>
+            <JobArtifactGallery :job="job" />
           </section>
         </aside>
       </div>
-      <section class="studio-panel">
-        <div class="flex items-center justify-between gap-2 border-b p-4">
-          <h3 class="flex items-center gap-2 text-sm font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.jobArtifacts') }}</h3>
-          <Badge variant="outline">{{ job.artifacts.length }}</Badge>
-        </div>
-        <div class="px-4 py-2">
-          <p v-if="!job.artifacts.length" class="py-2 text-xs text-muted-foreground">{{ t('jobUi.noArtifacts') }}</p>
-          <div v-for="artifact in job.artifacts" :key="artifact.id" class="flex items-center justify-between gap-3 border-b py-3 last:border-b-0">
-            <div class="flex min-w-0 items-center gap-2.5">
-              <span class="grid size-[29px] shrink-0 place-items-center rounded-lg bg-primary/10 text-studio-violet"><FileText class="size-4" /></span>
-              <div class="min-w-0">
-                <strong class="block break-all text-[11px]">{{ artifact.id }}</strong>
-                <p class="mt-1 break-all text-[11px] text-muted-foreground">{{ artifact.media_type }} · {{ artifact.size_bytes.toLocaleString() }} B</p>
-              </div>
-            </div>
-            <Button variant="outline" size="sm" class="shrink-0" :aria-label="t('jobUi.download') + ' ' + artifact.id" @click="downloadArtifact(artifact.id)"><Download class="size-3.5" />{{ t('jobUi.download') }}</Button>
-          </div>
-        </div>
+      <section class="studio-panel p-5">
+        <h2 class="mb-3 font-semibold">{{ t('jobUi.result') }}</h2>
+        <article v-if="report.kind === 'markdown'" class="job-report text-sm leading-7" v-html="report.html"></article>
+        <pre v-else-if="report.kind === 'json'" class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3 text-xs leading-relaxed">{{ report.text }}</pre>
+        <p v-else class="text-sm text-muted-foreground">—</p>
       </section>
     </template>
 
@@ -356,3 +362,20 @@ onBeforeUnmount(() => {
     </ConfirmDialog>
   </section>
 </template>
+
+<style scoped>
+.job-report { overflow-wrap: anywhere; }
+.job-report :deep(h1), .job-report :deep(h2), .job-report :deep(h3), .job-report :deep(h4) { font-weight: 650; line-height: 1.4; margin: 1.2em 0 .5em; }
+.job-report :deep(h1) { font-size: 1.6em; }
+.job-report :deep(h2) { font-size: 1.3em; }
+.job-report :deep(h3) { font-size: 1.1em; }
+.job-report :deep(p) { margin: .7em 0; }
+.job-report :deep(ul), .job-report :deep(ol) { padding-left: 1.5em; margin: .7em 0; }
+.job-report :deep(ul) { list-style: disc; }
+.job-report :deep(ol) { list-style: decimal; }
+.job-report :deep(a) { color: var(--primary); text-decoration: underline; }
+.job-report :deep(code) { font-family: monospace; font-size: .9em; background: var(--muted); border-radius: .25em; padding: .12em .3em; }
+.job-report :deep(pre) { overflow-x: auto; padding: .8em; border-radius: .5em; background: var(--muted); margin: 1em 0; }
+.job-report :deep(pre code) { padding: 0; background: transparent; }
+.job-report :deep(blockquote) { border-left: 3px solid var(--border); padding-left: 1em; color: var(--muted-foreground); }
+</style>

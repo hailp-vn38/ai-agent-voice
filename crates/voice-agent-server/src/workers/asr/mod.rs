@@ -12,7 +12,9 @@ use super::{
     ProviderWorkloadClass, WorkerIdentity, WorkerRuntimeConfig,
 };
 
+mod background;
 mod diagnostic;
+pub use background::AsrBackgroundOperation;
 mod pool;
 
 pub use diagnostic::AsrDiagnosticOperation;
@@ -88,6 +90,7 @@ struct Slot {
     command_tx: mpsc::SyncSender<AsrCommand>,
     state: SlotState,
     _permit: Arc<ProviderCapacityPermit>,
+    background: bool,
 }
 
 enum SlotState {
@@ -209,9 +212,18 @@ impl AsrWorkerRuntime {
     }
 
     pub fn open(&self, identity: WorkerIdentity) -> Result<AsrStreamLease, AsrWorkerError> {
+        self.open_class(identity, ProviderWorkloadClass::Voice, None)
+    }
+
+    fn open_class(
+        &self,
+        identity: WorkerIdentity,
+        class: ProviderWorkloadClass,
+        completed: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<AsrStreamLease, AsrWorkerError> {
         let permit = self
             .admission
-            .try_admit(ProviderWorkloadClass::Voice)
+            .try_admit(class)
             .map_err(|_| AsrWorkerError::Capacity)?;
         let mut state = self.state.lock().expect("ASR worker state poisoned");
         if state.slots.len() >= self.config.max_workers
@@ -235,6 +247,7 @@ impl AsrWorkerRuntime {
                 command_tx,
                 state: SlotState::Active,
                 _permit: permit,
+                background: class == ProviderWorkloadClass::Background,
             },
         );
         let provider = Arc::clone(&self.provider);
@@ -249,6 +262,9 @@ impl AsrWorkerRuntime {
                 drop(thread_permit);
                 if let Some(event) = terminal {
                     let _ = events_tx.send(event);
+                }
+                if let Some(completed) = completed {
+                    completed.store(true, std::sync::atomic::Ordering::Release);
                 }
             });
         match spawn {
@@ -286,29 +302,30 @@ impl AsrWorkerRuntime {
             .slots
             .get_mut(&lease)
             .ok_or(AsrWorkerError::UnknownLease)?;
-        match command {
-            AsrCommand::Finish => {
-                slot.state = SlotState::Finishing {
-                    deadline: Instant::now() + self.config.final_timeout,
-                }
-            }
-            AsrCommand::Cancel => {
-                slot.state = SlotState::Cleaning {
-                    deadline: Instant::now() + self.config.cleanup_grace,
-                }
-            }
+        let next_state = match &command {
+            AsrCommand::Finish => Some(SlotState::Finishing {
+                deadline: Instant::now() + self.config.final_timeout,
+            }),
+            AsrCommand::Cancel => Some(SlotState::Cleaning {
+                deadline: Instant::now() + self.config.cleanup_grace,
+            }),
             AsrCommand::Push(_) => {
                 if !matches!(slot.state, SlotState::Active) {
                     return Err(AsrWorkerError::UnknownLease);
                 }
+                None
             }
-        }
+        };
         slot.command_tx
             .try_send(command)
             .map_err(|error| match error {
                 mpsc::TrySendError::Full(_) => AsrWorkerError::QueueFull,
                 mpsc::TrySendError::Disconnected(_) => AsrWorkerError::UnknownLease,
-            })
+            })?;
+        if let Some(next) = next_state {
+            slot.state = next;
+        }
+        Ok(())
     }
 
     pub fn recv_timeout(&self, timeout: std::time::Duration) -> Option<AsrWorkerEvent> {
@@ -353,6 +370,9 @@ impl AsrWorkerRuntime {
         let mut state = self.state.lock().expect("ASR worker state poisoned");
         let now = Instant::now();
         for slot in state.slots.values_mut() {
+            if slot.background {
+                continue;
+            }
             let event = match &slot.state {
                 SlotState::Finishing { deadline } if *deadline <= now => {
                     Some(AsrWorkerEvent::FinalTimedOut {

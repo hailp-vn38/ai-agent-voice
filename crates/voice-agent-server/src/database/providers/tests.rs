@@ -1,6 +1,63 @@
 use super::*;
 
 #[tokio::test]
+async fn migration_removes_function_calling_flag_from_stored_providers() {
+    let database = Database::connect(&crate::config::DatabaseConfig {
+        url: "sqlite::memory:".into(),
+        max_connections: 1,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    for (key, adapter, config) in [
+        (
+            "on",
+            "openai",
+            serde_json::json!({"base_url":"https://example.test/v1","model":"test","supports_function_calling":true}),
+        ),
+        (
+            "off",
+            "opencode_free",
+            serde_json::json!({"model":"space-bunny-free","supports_function_calling":false}),
+        ),
+        (
+            "absent",
+            "openai",
+            serde_json::json!({"base_url":"https://example.test/v1","model":"test"}),
+        ),
+    ] {
+        sqlx::query("INSERT INTO providers (key,name,type,adapter,config_json,created_at,updated_at) VALUES (?,?,'llm',?,?,1,1)")
+            .bind(key).bind(key).bind(adapter).bind(config.to_string()).execute(database.pool()).await.unwrap();
+    }
+    let migration = include_str!("../../../migrations/0116_remove_function_calling_flag.sql");
+    sqlx::raw_sql(migration)
+        .execute(database.pool())
+        .await
+        .unwrap();
+    for (key, expected_revision) in [("on", 2_i64), ("off", 2), ("absent", 1)] {
+        let (adapter, raw, revision): (String, String, i64) =
+            sqlx::query_as("SELECT adapter,config_json,revision FROM providers WHERE key=?")
+                .bind(key)
+                .fetch_one(database.pool())
+                .await
+                .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(value.get("supports_function_calling").is_none());
+        assert_eq!(revision, expected_revision);
+        crate::database::provider_config::validate_raw(&adapter, &raw).unwrap();
+    }
+    sqlx::raw_sql(migration)
+        .execute(database.pool())
+        .await
+        .unwrap();
+    let revision: i64 = sqlx::query_scalar("SELECT revision FROM providers WHERE key='on'")
+        .fetch_one(database.pool())
+        .await
+        .unwrap();
+    assert_eq!(revision, 2);
+}
+
+#[tokio::test]
 async fn prewarm_selects_enabled_defaults_and_device_overrides_with_their_assignments() {
     let database = Database::connect(&crate::config::DatabaseConfig {
         url: "sqlite::memory:".into(),

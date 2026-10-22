@@ -15,6 +15,8 @@ vi.mock('@/api/templates', () => ({ templatesApi }))
 vi.mock('@/api/providers', () => ({ providersApi }))
 vi.mock('@/api/devices', () => ({ devicesApi }))
 
+import { ApiError } from '@/api/errors'
+import { useAuthStore } from '@/stores/auth'
 import { useAdminStore } from './admin'
 
 describe('admin store', () => {
@@ -161,6 +163,17 @@ describe('admin store', () => {
 
     expect(templatesApi.unlinkProvider).toHaveBeenCalledWith('first', 'tts', 2)
     expect(renderedBindings).toEqual(['', 'tts', ''])
+  })
+
+  it('clears the admin token when loadAll fails with 401 unauthorized', async () => {
+    const auth = useAuthStore()
+    auth.setAdminToken('invalid-token')
+    agentsApi.list.mockRejectedValueOnce(new ApiError('API request failed: unauthorized', 401, 'unauthorized', 'req-401'))
+    const store = useAdminStore()
+    await store.loadAll()
+
+    expect(auth.adminToken).toBeNull()
+    expect(store.error).toBe('Admin token không hợp lệ hoặc đã hết hạn. (request_id: req-401)')
   })
 })
 

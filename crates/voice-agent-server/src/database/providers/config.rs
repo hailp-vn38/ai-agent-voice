@@ -43,17 +43,13 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         "zipformer_sherpa" => canonical::<Zipformer, _>(&value, Zipformer::valid),
         "gipformer_sherpa_offline" => canonical::<Gipformer, _>(&value, Gipformer::valid),
         "zerotts_onnx" => canonical::<ZeroTts, _>(&value, ZeroTts::valid),
-        "vieneu_native" if value.get("model").is_none() && value.get("num_threads").is_none() => {
+        "vieneu" if value.get("model").is_none() && value.get("num_threads").is_none() => {
             canonical::<crate::config::VieneuNativeConfig, _>(
                 &value,
                 crate::config::VieneuNativeConfig::valid_selection,
             )
         }
         "kokoro_vi_onnx" => canonical::<Kokoro, _>(&value, Kokoro::valid),
-        "vieneu_http" => canonical::<crate::config::VieneuHttpConfig, _>(
-            &value,
-            crate::config::VieneuHttpConfig::valid,
-        ),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
         #[cfg(feature = "qualification-providers")]
         "qualification_vad" | "qualification_asr" | "qualification_llm" | "qualification_tts" => {
@@ -135,6 +131,8 @@ struct OpenAi {
     max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "is_false")]
     supports_responses: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    supports_structured_outputs: bool,
 }
 impl OpenAi {
     fn valid(&self) -> bool {
@@ -154,6 +152,8 @@ struct OpenCodeFree {
     max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "is_false")]
     supports_responses: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    supports_structured_outputs: bool,
 }
 fn is_false(value: &bool) -> bool {
     !*value

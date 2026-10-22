@@ -1,45 +1,10 @@
 //! One-shot Responses transport for Background Jobs only.
 //! Voice streaming continues through the existing Chat Completions implementation.
-use super::super::{ChatMessage, ConfiguredOpenAiLlm, LlmError, LlmRequest};
+use super::super::{LlmError, LlmRequest};
 use serde_json::{Value, json};
 use std::time::Duration;
 
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
-
-fn request_body(
-    model: &str,
-    request: &LlmRequest,
-    schema: Option<Value>,
-) -> Result<Value, LlmError> {
-    if !request.tools.is_empty() {
-        return Err(LlmError::Rejected);
-    }
-    let mut input = Vec::with_capacity(request.messages.len());
-    for message in &request.messages {
-        let (role, content) = match message {
-            ChatMessage::System { content } => ("system", content),
-            ChatMessage::User { content } => ("user", content),
-            ChatMessage::AssistantText { content } => ("assistant", content),
-            ChatMessage::AssistantToolCalls { .. } | ChatMessage::ToolResult { .. } => {
-                return Err(LlmError::Rejected);
-            }
-        };
-        input.push(json!({"role":role,"content":content}));
-    }
-    if input.is_empty() {
-        return Err(LlmError::Rejected);
-    }
-    let format = match schema {
-        Some(schema) => {
-            json!({"type":"json_schema","name":"agent_job_output","strict":true,"schema":schema})
-        }
-        None => json!({"type":"json_object"}),
-    };
-    Ok(json!({
-        "model":model,"input":input,"text":{"format":format},
-        "store":false,"background":false,"stream":false
-    }))
-}
 
 fn output_text(body: &Value) -> Result<String, LlmError> {
     if body.get("status").and_then(Value::as_str) != Some("completed") {
@@ -86,74 +51,185 @@ fn output_text(body: &Value) -> Result<String, LlmError> {
     Ok(answer)
 }
 
-pub(crate) async fn complete(
-    provider: &ConfiguredOpenAiLlm,
-    request: LlmRequest,
-    schema: Option<Value>,
-) -> Result<String, LlmError> {
-    complete_with(
-        &provider.base_url,
-        &provider.model,
-        &provider.api_key,
-        provider.timeout_seconds,
-        request,
-        schema,
-    )
-    .await
+pub(crate) fn turn_body(
+    model: &str,
+    request: &LlmRequest,
+    mode: &crate::providers::llm::BackgroundMode,
+) -> Result<Value, LlmError> {
+    use crate::providers::llm::{BackgroundMode, ChatMessage};
+    let mut input = Vec::new();
+    for message in &request.messages {
+        match message {
+            ChatMessage::System { content } => {
+                input.push(json!({"role":"system","content":content}))
+            }
+            ChatMessage::User { content } => input.push(json!({"role":"user","content":content})),
+            ChatMessage::AssistantText { content } => {
+                input.push(json!({"role":"assistant","content":content}))
+            }
+            ChatMessage::AssistantToolCalls { calls } => {
+                for call in calls {
+                    input.push(
+                        json!({"type":"function_call","call_id":call.id,"name":call.name,
+                        "arguments":call.arguments.to_string()}),
+                    );
+                }
+            }
+            ChatMessage::ToolResult {
+                tool_call_id,
+                content,
+            } => input.push(json!({
+                "type":"function_call_output","call_id":tool_call_id,"output":content
+            })),
+        }
+    }
+    if input.is_empty() {
+        return Err(LlmError::Rejected);
+    }
+    let mut body =
+        json!({"model":model,"input":input,"store":false,"background":false,"stream":false});
+    match mode {
+        BackgroundMode::Structured { name, schema } => {
+            if !request.tools.is_empty() {
+                return Err(LlmError::Rejected);
+            }
+            body["text"] =
+                json!({"format":{"type":"json_schema","name":name,"strict":true,"schema":schema}});
+        }
+        BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
+            if request.tools.is_empty() {
+                return Err(LlmError::Rejected);
+            }
+            body["tools"] = Value::Array(
+                request
+                    .tools
+                    .iter()
+                    .map(|tool| {
+                        json!({
+                            "type":"function","name":tool.name,"description":tool.description,
+                            "parameters":tool.parameters,"strict":true
+                        })
+                    })
+                    .collect(),
+            );
+            body["tool_choice"] = json!(if matches!(mode, BackgroundMode::ToolsAuto) {
+                "auto"
+            } else {
+                "required"
+            });
+            body["parallel_tool_calls"] = json!(matches!(mode, BackgroundMode::ToolsParallel));
+        }
+    }
+    Ok(body)
 }
 
-/// Shared Responses transport for explicitly opted-in providers.
-/// Never injects vendor SDK fingerprints or tool declarations.
-pub(crate) async fn complete_with(
+fn parse_turn(
+    body: &Value,
+    mode: &crate::providers::llm::BackgroundMode,
+) -> Result<crate::providers::llm::BackgroundTurnResult, LlmError> {
+    use crate::providers::llm::{BackgroundMode, BackgroundTurn, BackgroundTurnResult, ToolCall};
+    if body["status"] != "completed" {
+        return Err(LlmError::Rejected);
+    }
+    let output = body["output"].as_array().ok_or(LlmError::Rejected)?;
+    let turn = match mode {
+        BackgroundMode::Structured { .. } => BackgroundTurn::Text(output_text(body)?),
+        BackgroundMode::Tools | BackgroundMode::ToolsAuto | BackgroundMode::ToolsParallel => {
+            let mut calls = Vec::new();
+            let mut text_returned = false;
+            for item in output {
+                match item["type"].as_str() {
+                    Some("reasoning") => {
+                        // This stateless adapter cannot replay opaque continuation
+                        // blocks yet. Reject before any tool dispatch, rather than
+                        // silently dropping provider-required native state.
+                        if !item["encrypted_content"].is_null() || !item["id"].is_null() {
+                            return Err(LlmError::Rejected);
+                        }
+                    }
+                    Some("message") => {
+                        text_returned = true;
+                    }
+                    Some("function_call") => {
+                        let id = item["call_id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .ok_or(LlmError::Rejected)?;
+                        let name = item["name"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .ok_or(LlmError::Rejected)?;
+                        let args = item["arguments"].as_str().ok_or(LlmError::Rejected)?;
+                        calls.push(ToolCall {
+                            id: id.to_owned(),
+                            name: name.to_owned(),
+                            arguments: serde_json::from_str(args)
+                                .unwrap_or_else(|_| Value::String(args.to_owned())),
+                        });
+                    }
+                    _ => return Err(LlmError::Rejected),
+                }
+            }
+            if text_returned {
+                if !calls.is_empty() {
+                    return Err(LlmError::Rejected);
+                }
+                // Text-only native turns belong to the Child decision validator.
+                BackgroundTurn::Text(output_text(body)?)
+            } else {
+                BackgroundTurn::ToolCalls(calls)
+            }
+        }
+    };
+    let usage = body
+        .get("usage")
+        .map(|v| crate::providers::llm::BackgroundTokenUsage {
+            input_tokens: v["input_tokens"].as_u64(),
+            output_tokens: v["output_tokens"].as_u64(),
+            reasoning_tokens: v
+                .pointer("/output_tokens_details/reasoning_tokens")
+                .and_then(Value::as_u64),
+            cached_input_tokens: v
+                .pointer("/input_tokens_details/cached_tokens")
+                .and_then(Value::as_u64),
+        });
+    Ok(BackgroundTurnResult { turn, usage })
+}
+
+/// Strict one-shot Responses path for hierarchical Job turns. Does not reuse remote state.
+pub(crate) async fn turn_with_usage(
     base_url: &str,
     model: &str,
     api_key: &str,
     timeout_seconds: u64,
     request: LlmRequest,
-    schema: Option<Value>,
-) -> Result<String, LlmError> {
-    Ok(
-        complete_with_usage(base_url, model, api_key, timeout_seconds, request, schema)
-            .await?
-            .text,
-    )
-}
-
-pub(crate) async fn complete_with_usage(
-    base_url: &str,
-    model: &str,
-    api_key: &str,
-    timeout_seconds: u64,
-    request: LlmRequest,
-    schema: Option<Value>,
-) -> Result<crate::providers::llm::BackgroundCompletion, LlmError> {
-    let base = base_url.trim_end_matches('/');
-    let url = format!("{base}/responses");
-    let parsed = url::Url::parse(&url).map_err(|_| LlmError::Failed)?;
-    if !matches!(parsed.scheme(), "https" | "http")
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
+    mode: crate::providers::llm::BackgroundMode,
+) -> Result<crate::providers::llm::BackgroundTurnResult, LlmError> {
+    let url = url::Url::parse(&format!("{}/responses", base_url.trim_end_matches('/')))
+        .map_err(|_| LlmError::Failed)?;
+    if !matches!(url.scheme(), "https" | "http")
+        || !url.username().is_empty()
+        || url.password().is_some()
     {
         return Err(LlmError::Failed);
     }
-    let body = request_body(model, &request, schema)?;
+    let body = turn_body(model, &request, &mode)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout_seconds))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| LlmError::Failed)?;
-    let mut send = client.post(parsed).json(&body);
+    let mut send = client.post(url).json(&body);
     if !api_key.is_empty() {
         send = send.bearer_auth(api_key);
     }
     let mut response = send.send().await.map_err(|_| LlmError::Failed)?;
     if !response.status().is_success() {
-        tracing::warn!(event="background_responses_http_failure",status=%response.status(),"Responses request failed");
         return Err(LlmError::Rejected);
     }
     if response
         .content_length()
-        .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
+        .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
     {
         return Err(LlmError::Failed);
     }
@@ -162,60 +238,32 @@ pub(crate) async fn complete_with_usage(
         if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
             return Err(LlmError::Failed);
         }
-        bytes.extend_from_slice(&chunk);
+        bytes.extend(chunk);
     }
-    let document: Value = serde_json::from_slice(&bytes).map_err(|_| LlmError::Rejected)?;
-    let text = output_text(&document)?;
-    if let Some(usage) = document.get("usage") {
-        tracing::info!(
-            event = "background_responses_usage",
-            input_tokens = usage
-                .get("input_tokens")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0),
-            output_tokens = usage
-                .get("output_tokens")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0),
-            reasoning_tokens = usage
-                .pointer("/output_tokens_details/reasoning_tokens")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0),
-            cached_input_tokens = usage
-                .pointer("/input_tokens_details/cached_tokens")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0),
-        );
-    }
-    let usage = document
-        .get("usage")
-        .map(|usage| crate::providers::llm::BackgroundTokenUsage {
-            input_tokens: usage.get("input_tokens").and_then(Value::as_u64),
-            output_tokens: usage.get("output_tokens").and_then(Value::as_u64),
-            reasoning_tokens: usage
-                .pointer("/output_tokens_details/reasoning_tokens")
-                .and_then(Value::as_u64),
-            cached_input_tokens: usage
-                .pointer("/input_tokens_details/cached_tokens")
-                .and_then(Value::as_u64),
-        });
-    Ok(crate::providers::llm::BackgroundCompletion { text, usage })
+    let answer: Value = serde_json::from_slice(&bytes).map_err(|_| LlmError::Rejected)?;
+    parse_turn(&answer, &mode)
 }
+
+#[cfg(test)]
+#[path = "responses_background_tests.rs"]
+mod background_tool_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::providers::llm::ToolDefinition;
 
-    fn provider() -> ConfiguredOpenAiLlm {
-        ConfiguredOpenAiLlm::build_with_responses(
-            "",
-            "https://api.openai.com/v1",
-            "gpt-test",
-            10,
-            true,
-        )
-        .unwrap()
+    use crate::providers::llm::{BackgroundMode, BackgroundTurn, ConfiguredOpenAiLlm};
+
+    fn request() -> LlmRequest {
+        LlmRequest {
+            messages: LlmRequest::text_turn("Complete the task".into()).messages,
+            tools: vec![ToolDefinition {
+                name: "submit_result".into(),
+                description: "Complete task".into(),
+                parameters: json!({"type":"object","properties":{},"additionalProperties":false}),
+            }],
+        }
     }
     #[tokio::test]
     async fn enabled_provider_calls_responses_not_chat_completions() {
@@ -227,7 +275,7 @@ mod tests {
             "/v1/responses",
             post(|Json(body): Json<Value>| async move {
                 assert_eq!(body["model"], "gpt-test");
-                assert_eq!(body["text"]["format"]["type"], "json_object");
+                assert_eq!(body["tool_choice"], "auto");
                 assert_eq!(body["store"], false);
                 Json(
                     json!({"status":"completed","output":[{"type":"message","role":"assistant",
@@ -241,10 +289,10 @@ mod tests {
         let p =
             ConfiguredOpenAiLlm::build_with_responses("test", &base, "gpt-test", 5, true).unwrap();
         let answer = p
-            .background_complete(LlmRequest::text_turn("JSON plan".into()), None)
+            .background_turn(request(), BackgroundMode::ToolsAuto)
             .await
             .unwrap();
-        assert_eq!(answer, r#"{"steps":[]}"#);
+        assert!(matches!(answer.turn, BackgroundTurn::Text(text) if text == r#"{"steps":[]}"#));
         task.abort();
     }
     #[tokio::test]
@@ -257,11 +305,10 @@ mod tests {
             post(|headers: HeaderMap, Json(body): Json<Value>| async move {
                 assert_eq!(headers.get("authorization").unwrap(), "Bearer public");
                 assert_eq!(body["model"], "muse-spark-1.3-contributor-free");
-                assert_eq!(body["text"]["format"]["type"], "json_schema");
-                assert_eq!(body["text"]["format"]["strict"], true);
+                assert_eq!(body["tool_choice"], "auto");
                 assert_eq!(body["store"], false);
                 assert_eq!(body["background"], false);
-                assert!(body.get("tools").is_none());
+                assert_eq!(body["tools"][0]["name"], "submit_result");
                 Json(json!({
                     "status":"completed",
                     "output":[{"type":"message","role":"assistant",
@@ -272,22 +319,17 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let result = complete_with(
+        let result = turn_with_usage(
             &base,
             "muse-spark-1.3-contributor-free",
             "public",
             5,
-            LlmRequest::text_turn("Summarize in JSON".into()),
-            Some(json!({
-                "type":"object",
-                "properties":{"summary":{"type":"string"}},
-                "required":["summary"],
-                "additionalProperties":false,
-            })),
+            request(),
+            BackgroundMode::ToolsAuto,
         )
         .await
         .unwrap();
-        assert_eq!(result, r#"{"summary":"ok"}"#);
+        assert!(matches!(result.turn, BackgroundTurn::Text(text) if text == r#"{"summary":"ok"}"#));
         server.abort();
     }
 
@@ -315,82 +357,22 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let result = complete_with_usage(
+        let result = turn_with_usage(
             &base,
             "gpt-test",
             "test",
             5,
-            LlmRequest::text_turn("Return JSON".into()),
-            None,
+            request(),
+            BackgroundMode::ToolsAuto,
         )
         .await
         .unwrap();
-        assert_eq!(result.text, r#"{"summary":"ok"}"#);
+        assert!(matches!(result.turn, BackgroundTurn::Text(text) if text == r#"{"summary":"ok"}"#));
         let usage = result.usage.unwrap();
         assert_eq!(usage.input_tokens, Some(121));
         assert_eq!(usage.output_tokens, Some(37));
         assert_eq!(usage.reasoning_tokens, Some(9));
         assert_eq!(usage.cached_input_tokens, Some(20));
         server.abort();
-    }
-
-    #[test]
-    fn response_request_is_job_only_stateless_and_tool_free() {
-        let request = LlmRequest {
-            messages: vec![
-                ChatMessage::System {
-                    content: "Return JSON only".into(),
-                },
-                ChatMessage::User {
-                    content: "Summarize this".into(),
-                },
-            ],
-            tools: Vec::new(),
-        };
-        let body = request_body(
-            &provider().model,
-            &request,
-            Some(json!({
-                "type":"object","properties":{"summary":{"type":"string"}},
-                "required":["summary"],"additionalProperties":false
-            })),
-        )
-        .unwrap();
-        assert_eq!(body["store"], false);
-        assert_eq!(body["background"], false);
-        assert_eq!(body["text"]["format"]["strict"], true);
-        assert_eq!(body["input"][0]["role"], "system");
-        assert_eq!(body["input"][1]["role"], "user");
-        assert!(body.get("tools").is_none());
-    }
-    #[test]
-    fn plan_request_uses_json_mode_and_rejects_tools() {
-        let mut request = LlmRequest::text_turn("Plan JSON".into());
-        assert_eq!(
-            request_body(&provider().model, &request, None).unwrap()["text"]["format"]["type"],
-            "json_object"
-        );
-        request.tools.push(ToolDefinition {
-            name: "danger".into(),
-            description: "No".into(),
-            parameters: json!({}),
-        });
-        assert!(request_body(&provider().model, &request, None).is_err());
-    }
-    #[test]
-    fn accepts_completed_text_and_rejects_refusal_and_incomplete() {
-        let good = json!({"status":"completed","output":[
-            {"type":"reasoning"},
-            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"{\"summary\":\"done\"}"}]}
-        ]});
-        assert_eq!(output_text(&good).unwrap(), r#"{"summary":"done"}"#);
-        assert!(output_text(&json!({"status":"incomplete","output":[]})).is_err());
-        assert!(output_text(&json!({"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"No"}]}]})).is_err());
-        assert!(
-            output_text(
-                &json!({"status":"completed","output":[{"type":"function_call","name":"run"}]})
-            )
-            .is_err()
-        );
     }
 }

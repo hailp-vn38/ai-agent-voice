@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Pencil } from '@lucide/vue'
+import { FlaskConical, Pencil } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { providersApi } from '@/api/providers'

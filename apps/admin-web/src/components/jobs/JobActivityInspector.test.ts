@@ -19,24 +19,21 @@ function events(count: number): JobEvent[] {
 beforeEach(() => setLocale('en'))
 
 describe('Job activity presentation', () => {
-  it('applies the theme selection accent only to the current timeline item', async () => {
+  it('starts collapsed, toggles from the heading and collapses for another activity', async () => {
     const activity = projectUnifiedActivity(view, events(5))[0]!
-    const activities = [activity, { ...activity, id: 'second' }]
-    const timeline = mount(JobUnifiedTimeline, { props: { activities, selectedId: activity.id, filter: { kind: 'all' }, roles: [] } })
+    const wrapper = mount(JobActivityInspector, { props: { activity } })
     try {
-      const items = timeline.findAll('ol button')
-      expect(items[0]!.classes()).toContain('shadow-[inset_3px_0_0_var(--primary)]')
-      expect(items[0]!.classes()).toContain('border-primary')
-      expect(items[0]!.classes()).not.toContain('ring-1')
-      expect(items[1]!.classes()).toContain('bg-surface')
-      await items[1]!.trigger('click')
-      expect(timeline.emitted('select')).toEqual([['second']])
-      await timeline.setProps({ selectedId: 'second' })
-      expect(items[0]!.attributes('aria-current')).toBeUndefined()
-      expect(items[0]!.classes()).not.toContain('shadow-[inset_3px_0_0_var(--primary)]')
-      expect(items[1]!.attributes('aria-current')).toBe('true')
-      expect(items[1]!.classes()).toContain('shadow-[inset_3px_0_0_var(--primary)]')
-    } finally { timeline.unmount() }
+      const details = () => wrapper.get('details').element as HTMLDetailsElement
+      expect(details().open).toBe(false)
+      wrapper.get('summary').element.click()
+      expect(details().open).toBe(true)
+      expect(wrapper.text()).toContain(activity.title)
+      wrapper.get('summary').element.click()
+      expect(details().open).toBe(false)
+      wrapper.get('summary').element.click()
+      await wrapper.setProps({ activity: { ...activity, id: 'another-invocation' } })
+      expect(details().open).toBe(false)
+    } finally { wrapper.unmount() }
   })
 
   it('updates the pending message through provider, capacity, response and validation stages', async () => {
@@ -70,4 +67,24 @@ describe('Job activity presentation', () => {
       expect(timeline.text()).toContain('worker · failed · unknown_outcome')
     } finally { inspector.unmount(); timeline.unmount() }
   })
+  it('exposes Plugin arguments and result in expandable sections', () => {
+    const pluginJob = { ...view, steps: [{
+      step_key: 'extract', plugin_id: 'core.web', operation: 'extract', status: 'succeeded',
+      arguments: { url: 'https://example.org/article' }, result: { text: 'Article text' },
+      instruction: 'Read article', required: true, dependencies: [], input_refs: [], output_schema: {},
+    }] } as AdminJob
+    const activity = projectUnifiedActivity(pluginJob, [{
+      sequence: 1, event_type: 'step_finished', step_key: 'extract', created_at: '2026-10-15T00:00:00Z', payload: { status: 'succeeded' },
+    }])[0]!
+    const wrapper = mount(JobActivityInspector, { props: { activity } })
+    try {
+      expect(wrapper.text()).toContain('core.web')
+      expect(wrapper.text()).toContain('extract')
+      const sections = wrapper.findAll('details details')
+      expect(sections).toHaveLength(2)
+      expect(sections[0]!.get('pre').text()).toContain('https://example.org/article')
+      expect(sections[1]!.get('pre').text()).toContain('Article text')
+    } finally { wrapper.unmount() }
+  })
+
 })

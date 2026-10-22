@@ -38,7 +38,7 @@ services:
       target: test
     volumes:
       - type: bind
-        source: /mnt/storage/ai-agent-voice/docker/test-target
+        source: ${VOICE_TEST_TARGET_DIR:-/mnt/storage/ai-agent-voice/docker/test-target}
         target: /mnt/storage/ai-agent-voice/target
         bind:
           create_host_path: false

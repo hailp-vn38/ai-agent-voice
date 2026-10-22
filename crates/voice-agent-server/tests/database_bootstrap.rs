@@ -15,11 +15,12 @@ use voice_agent_server::{
 
 fn temp_database_url(label: &str) -> String {
     let path = std::env::temp_dir().join(format!(
-        "voice-agent-{label}-{}-{}.db",
+        "voice-agent-{label}-{}-{}",
         std::process::id(),
         uuid::Uuid::new_v4()
     ));
-    format!("sqlite://{}", path.display())
+    fs::create_dir_all(&path).unwrap();
+    format!("sqlite://{}", path.join("voice-agent.db").display())
 }
 
 fn database_config(url: String) -> DatabaseConfig {

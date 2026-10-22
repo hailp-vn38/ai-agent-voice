@@ -29,3 +29,6 @@ sources = ["web"]
 input_schema = "schemas/fetch_url.input.json"
 output_schema = "schemas/extract.output.json"
 replay = "safe_read"
+ 
+[settings]
+schema = "schemas/settings.json"

@@ -1,5 +1,5 @@
 use super::*;
-use crate::services::background::voice::rejection;
+use crate::services::task_flow::voice_rejection as rejection;
 
 pub(in super::super) struct PendingJobSubmit {
     call: ToolCall,
@@ -15,7 +15,7 @@ impl SessionActor {
         self.job_mailbox = Some(mailbox.downgrade());
         self
     }
-    pub(in super::super) fn execute_job_submit(&mut self, call: ToolCall) {
+    pub(in super::super) fn execute_task_suite(&mut self, call: ToolCall) {
         if !self.llm_runtime.supports_tools() {
             self.complete_tool_call(call, Ok(rejection("llm_tool_calls_unavailable")));
             return;
@@ -46,25 +46,36 @@ impl SessionActor {
             self.complete_tool_call(call, Ok(rejection("submission_outcome_unknown")));
             return;
         }
-        let key = crate::services::background::model::digest(&format!(
-            "{}:{}:{}",
-            self.session_id,
-            turn_id.get(),
-            call.id
-        ));
         let session_id = self.session_id.clone();
         let tool_call_id = call.id.clone();
+        let tool_name = call.name.clone();
         let arguments = call.arguments.clone();
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             self.complete_tool_call(call, Ok(rejection("runtime_unavailable")));
             return;
         };
         runtime.spawn(async move {
-            let outcome=handle.submit(arguments,&key,budget).await;
-            let durable_id=outcome["job_id"].as_str().map(str::to_owned);
-            let event=SessionEvent::JobSubmitCompleted {session_id,turn_id,generation,tool_call_id,outcome};
-            if !matches!(tokio::time::timeout(Duration::from_millis(250),mailbox.send(event)).await,Ok(Ok(()))) {
-                tracing::warn!(event="job_submit_receipt_undelivered",job_id=?durable_id,"Durable Job receipt could not enter its Voice mailbox");
+            let outcome = handle.execute(&tool_name, arguments, budget).await;
+            let durable_id = outcome["task_id"]
+                .as_str()
+                .or_else(|| outcome["job_id"].as_str())
+                .map(str::to_owned);
+            let event = SessionEvent::JobSubmitCompleted {
+                session_id,
+                turn_id,
+                generation,
+                tool_call_id,
+                outcome,
+            };
+            if !matches!(
+                tokio::time::timeout(Duration::from_millis(250), mailbox.send(event)).await,
+                Ok(Ok(()))
+            ) {
+                tracing::warn!(
+                    event = "job_submit_receipt_undelivered",
+                    job_id = ?durable_id,
+                    "Durable Task receipt could not enter its Voice mailbox"
+                );
             }
         });
         if let Some(batch) = self.tool_batch.as_mut() {

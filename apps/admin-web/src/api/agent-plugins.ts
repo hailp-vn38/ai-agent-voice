@@ -1,5 +1,5 @@
 import { jsonRequest, request, requestJson, withQuery } from './client'
-import type { InstalledPlugin, PluginPage, PluginTestResult } from './types/agent-jobs'
+import type { CorePluginPage, CorePluginView, InstalledPlugin, PluginPage, PluginTestResult, PluginValueSettings, PluginOperationContract, PluginOperationRun, PluginArtifactBinding, PluginRunsPage } from './types/agent-jobs'
 
 const base = '/api/admin/plugins'
 
@@ -9,6 +9,22 @@ function pluginPath(id: string) {
 
 /** Executable plugin packages; intentionally independent of MCP server binding APIs. */
 export const agentPluginsApi = {
+  builtinList(signal?: AbortSignal) {
+    return requestJson<CorePluginPage>(base + '/builtin', {}, { signal })
+  },
+  builtinRepairDependencies(id: string) {
+    return requestJson<{ availability: string }>(
+      base + '/builtin/' + encodeURIComponent(id) + '/dependencies/repair',
+      jsonRequest('POST', {}),
+    )
+  },
+  builtinSetEnabled(id: string, enabled: boolean, revision: number) {
+    return requestJson<CorePluginView>(
+      base + '/builtin/' + encodeURIComponent(id),
+      jsonRequest('PATCH', { enabled }),
+      { revision },
+    )
+  },
   list(query: { page?: number; q?: string; status?: string } = {}, signal?: AbortSignal) {
     return requestJson<PluginPage>(withQuery(base, {
       page: query.page ?? 1, page_size: 30, q: query.q, status: query.status,
@@ -16,6 +32,32 @@ export const agentPluginsApi = {
   },
   get(id: string, signal?: AbortSignal) {
     return requestJson<InstalledPlugin>(pluginPath(id), {}, { signal })
+  },
+  runs(id: string, operation?: string, page = 1, signal?: AbortSignal) {
+    return requestJson<PluginRunsPage>(
+      withQuery(pluginPath(id) + '/runs', { page, page_size: 20, operation }), {}, { signal },
+    )
+  },
+  settings(id: string, signal?: AbortSignal) {
+    return requestJson<PluginValueSettings>(pluginPath(id) + '/settings', {}, { signal })
+  },
+  updateSettings(id: string, values: Record<string, unknown>, revision: number) {
+    return requestJson<PluginValueSettings>(
+      pluginPath(id) + '/settings', jsonRequest('PUT', { values }), { revision },
+    )
+  },
+  operation(id: string, name: string) {
+    return requestJson<PluginOperationContract>(
+      pluginPath(id) + '/operations/' + encodeURIComponent(name),
+    )
+  },
+  run(id: string, name: string, args: Record<string, unknown>,
+    artifactBindings: PluginArtifactBinding[] = [], idempotencyKey?: string) {
+    return requestJson<PluginOperationRun>(
+      pluginPath(id) + '/operations/' + encodeURIComponent(name) + '/runs',
+      jsonRequest('POST', { arguments: args, artifact_bindings: artifactBindings }),
+      { headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined },
+    )
   },
   /** The server validates the plugin package and immutable installation before activation. */
   install(zip: File) {

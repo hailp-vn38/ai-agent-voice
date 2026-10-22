@@ -18,9 +18,9 @@ use crate::{
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
         llm::{openai::provider::ConfiguredOpenAiLlm, opencode_free::OpenCodeFreeProvider},
         tts::{
-            ChillAudioWsProvider, ConfiguredZeroTts, VieneuHttpProvider, ZeroTtsArtifacts,
+            ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts,
             kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts, assets as kokoro_assets},
-            vieneu_native::{ConfiguredVieneuNative, assets as vieneu_native_assets},
+            vieneu::{ConfiguredVieneuNative, assets as vieneu_assets},
             zerotts::assets as zerotts_assets,
         },
         vad::{LoadedSileroVad, silero::assets as silero_assets},
@@ -388,7 +388,8 @@ impl LlmFactory for OpenAiFactory {
             )
             .map_err(|_| {
                 ProviderLoadError::Provider("OpenAI provider initialization failed".into())
-            })?,
+            })?
+            .with_structured_outputs(options.supports_structured_outputs),
         ))
     }
 }
@@ -486,13 +487,11 @@ impl TtsFactory for ZeroTtsOnnxFactory {
     }
 }
 
-struct VieneuHttpFactory;
-
 struct VieneuNativeFactory;
 
 impl TtsFactory for VieneuNativeFactory {
     fn adapter(&self) -> &'static str {
-        "vieneu_native"
+        "vieneu"
     }
 
     fn model_identity<'a>(
@@ -500,9 +499,9 @@ impl TtsFactory for VieneuNativeFactory {
         config: &'a TtsInstanceConfig,
     ) -> Result<Option<&'a str>, ProviderLoadError> {
         match config {
-            TtsInstanceConfig::VieneuNative(_) => Ok(local_model_identity(self.adapter())),
+            TtsInstanceConfig::Vieneu(_) => Ok(local_model_identity(self.adapter())),
             _ => Err(ProviderLoadError::Configuration(
-                "vieneu_native factory received another adapter config".into(),
+                "vieneu factory received another adapter config".into(),
             )),
         }
     }
@@ -512,9 +511,9 @@ impl TtsFactory for VieneuNativeFactory {
         config: &TtsInstanceConfig,
         runtime: &RuntimeConfig,
     ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
-        let TtsInstanceConfig::VieneuNative(options) = config else {
+        let TtsInstanceConfig::Vieneu(options) = config else {
             return Err(ProviderLoadError::Configuration(
-                "vieneu_native factory received another adapter config".into(),
+                "vieneu factory received another adapter config".into(),
             ));
         };
         validate_threads(self.adapter(), runtime)?;
@@ -525,41 +524,12 @@ impl TtsFactory for VieneuNativeFactory {
         options.num_threads = runtime.onnx.threads_for(self.adapter());
         Ok(Arc::new(
             ConfiguredVieneuNative::load(
-                resolve(vieneu_native_assets::resolve_assets())?,
+                resolve(vieneu_assets::resolve_assets())?,
                 options,
                 &runtime.onnx.library,
             )
             .map_err(|error| ProviderLoadError::Provider(error.to_string()))?,
         ))
-    }
-}
-
-impl TtsFactory for VieneuHttpFactory {
-    fn adapter(&self) -> &'static str {
-        "vieneu_http"
-    }
-    fn model_identity<'a>(
-        &self,
-        _: &'a TtsInstanceConfig,
-    ) -> Result<Option<&'a str>, ProviderLoadError> {
-        Ok(None)
-    }
-    fn build(
-        &self,
-        config: &TtsInstanceConfig,
-        _: &RuntimeConfig,
-    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
-        let TtsInstanceConfig::VieneuHttp(options) = config else {
-            return Err(ProviderLoadError::Configuration(
-                "vieneu_http factory received another adapter config".into(),
-            ));
-        };
-        if !options.valid() {
-            return Err(ProviderLoadError::Configuration(
-                "invalid VieNeu URL, voice, language, or timeout".into(),
-            ));
-        }
-        Ok(Arc::new(VieneuHttpProvider::new(options.clone())))
     }
 }
 
@@ -786,7 +756,6 @@ static OPENAI_FACTORY: OpenAiFactory = OpenAiFactory;
 static OPENCODE_FREE_FACTORY: OpenCodeFreeFactory = OpenCodeFreeFactory;
 static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
-static VIENEU_HTTP_FACTORY: VieneuHttpFactory = VieneuHttpFactory;
 static VIENEU_NATIVE_FACTORY: VieneuNativeFactory = VieneuNativeFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
 static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
@@ -818,7 +787,6 @@ static LLM_FACTORIES: &[&dyn LlmFactory] = &[
 static TTS_FACTORIES: &[&dyn TtsFactory] = &[
     &ZEROTTS_ONNX_FACTORY,
     &CHILLAUDIO_WS_FACTORY,
-    &VIENEU_HTTP_FACTORY,
     &VIENEU_NATIVE_FACTORY,
     &KOKORO_VI_ONNX_FACTORY,
     #[cfg(feature = "qualification-providers")]
@@ -868,7 +836,7 @@ pub fn local_model_identity(adapter: &str) -> Option<&'static str> {
         "zipformer_sherpa" => Some("zipformer_vi_streaming"),
         "gipformer_sherpa_offline" => Some("gipformer15_vi_int8"),
         "zerotts_onnx" => Some("zerotts_default"),
-        "vieneu_native" => Some(super::tts::vieneu_native::config::MODEL_ID),
+        "vieneu" => Some(super::tts::vieneu::config::MODEL_ID),
         "kokoro_vi_onnx" => Some("kokoro_vi_contextbox"),
         _ => None,
     }

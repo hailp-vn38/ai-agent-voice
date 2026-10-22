@@ -7,7 +7,7 @@ const provider = { id: 'llm_test', name: 'LLM', type: 'llm' as const, adapter: '
 const stubs = { BaseModal: { template: '<div><slot /></div>' }, Button: { template: '<button><slot /></button>' } }
 
 describe('Provider credential replacement', () => {
-  it.each(['openai', 'vieneu_http'])('shows masked metadata and only submits a replacement for %s when entered', async (adapter) => {
+  it.each(['openai', 'chillaudio_ws'])('shows masked metadata and only submits a replacement for %s when entered', async (adapter) => {
     const wrapper = mount(ProviderFormModal, { props: { modelValue: true, provider: { ...provider, adapter } }, global: { stubs } })
     expect(wrapper.text()).toContain('sk-...7A91')
     expect(wrapper.get('input[type="password"]').element).toHaveProperty('value', '')
@@ -30,7 +30,7 @@ describe('Provider edit draft credential selection', () => {
     { adapter: 'zipformer', type: 'asr' as const, credentialExpected: false },
     { adapter: 'kokoro', type: 'tts' as const, credentialExpected: false },
     { adapter: 'openai', type: 'llm' as const, credentialExpected: true },
-    { adapter: 'vieneu_http', type: 'tts' as const, credentialExpected: true },
+    { adapter: 'chillaudio_ws', type: 'tts' as const, credentialExpected: true },
   ])('only reuses a saved credential for credential-bearing $adapter', ({ adapter, type, credentialExpected }) => {
     const wrapper = mount(ProviderFormModal, {
       props: { modelValue: true, provider: { ...provider, adapter, type, desiredRevision: 3, configJson: { model: 'demo' } } },

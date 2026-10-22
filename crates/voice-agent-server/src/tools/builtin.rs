@@ -10,7 +10,8 @@ pub const MAX_GOODBYE_CHARS: usize = 240;
 /// The name is namespaced with an underscore because OpenAI-compatible function tools accept only
 /// ASCII letters, digits, `_`, and `-`. Device MCP tool names are sanitized to the same alphabet.
 pub const SWITCH_TEMPLATE_TOOL_NAME: &str = "server_switch_template";
-pub const CREATE_JOB_TOOL_NAME: &str = "server_create_job";
+pub const TASK_CREATE_TOOL_NAME: &str = "task_create";
+pub use crate::services::task_flow::{TASK_SUITE_TOOL_NAMES, is_task_suite_tool_name};
 /// Matches the Resource Key bound the Admin API enforces on a stored Template key, so a
 /// model-supplied key can never be an unbounded lookup payload even before membership is checked.
 pub const MAX_TEMPLATE_KEY_CHARS: usize = 64;
@@ -19,7 +20,7 @@ pub const MAX_TEMPLATE_KEY_CHARS: usize = 64;
 pub enum BuiltinTool {
     EndConversation,
     SwitchTemplate,
-    CreateJob,
+    TaskSuite,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -60,13 +61,6 @@ pub fn exit_tool_definition() -> ToolDefinition {
             "required": ["say_goodbye"],
             "additionalProperties": false
         }),
-    }
-}
-pub fn create_job_tool_definition() -> ToolDefinition {
-    ToolDefinition {
-        name:CREATE_JOB_TOOL_NAME.into(),
-        description:"Create durable background work only when the user requests it. Confirm it is queued only when created=true; never claim it has finished, has an artifact, or will speak a future notification. Job status and results are available to Admin in Jobs.".into(),
-        parameters:serde_json::json!({"type":"object","properties":{"goal":{"type":"string","minLength":1,"maxLength":3000},"output_format":{"type":"string","enum":["summary","text","json","markdown"]},"allow_partial":{"type":"boolean"},"required_sources":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":64}},"required_capabilities":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":64}}},"required":["goal"],"additionalProperties":false}),
     }
 }
 
