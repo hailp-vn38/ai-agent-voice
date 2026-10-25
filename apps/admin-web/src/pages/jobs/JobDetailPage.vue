@@ -270,15 +270,18 @@ onBeforeUnmount(() => {
           <p class="mt-1 text-xs text-muted-foreground">{{ tokenUsage.known }} / {{ tokenUsage.total }} {{ t('jobUi.llmUsageAvailable') }}<span v-if="tokenUsage.known < tokenUsage.total"> · {{ t('jobUi.timelinePartial') }}</span></p>
         </section>
       </div>
-      <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="sectionbar flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 class="flex items-center gap-2 font-semibold"><Activity class="size-4 text-studio-violet" />{{ t('jobUi.executionJourney') }}</h2>
+          <h2 class="flex flex-wrap items-center gap-2 font-semibold">
+            <Activity class="size-4 text-studio-violet" />{{ t('jobUi.executionJourney') }}
+            <span class="view-badge">{{ t('jobUi.dagCanvasBadge') }}</span>
+          </h2>
           <p class="mt-1 text-xs text-muted-foreground">{{ t('jobUi.executionJourneyHint') }}</p>
         </div>
         <span class="rounded-md border px-2 py-1 text-xs text-muted-foreground">{{ t('jobUi.timelineReadOnly') }}</span>
       </div>
       <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>
-      <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(290px,.85fr)]">
+      <div class="layout-a grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <JobUnifiedTimeline
           :activities="filteredActivity"
           :selected-id="selectedActivityId"
@@ -288,6 +291,7 @@ onBeforeUnmount(() => {
           @filter="activityFilter = $event"
         />
         <aside class="min-w-0 space-y-4">
+          <JobActivityInspector :activity="selectedActivity" open />
           <section class="studio-panel p-4">
             <div class="mb-3 flex items-center justify-between gap-2">
               <h3 class="flex items-center gap-2 text-sm font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.activeAgents') }}</h3>
@@ -305,7 +309,6 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </section>
-          <JobActivityInspector :activity="selectedActivity" />
           <section class="studio-panel p-4">
             <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.sourceCoverage') }}</h3>
             <template v-if="coverage && coverage.required_sources_count > 0">
@@ -364,6 +367,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.view-badge {
+  background: #382a5e;
+  color: #d0c3ff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
 .job-report { overflow-wrap: anywhere; }
 .job-report :deep(h1), .job-report :deep(h2), .job-report :deep(h3), .job-report :deep(h4) { font-weight: 650; line-height: 1.4; margin: 1.2em 0 .5em; }
 .job-report :deep(h1) { font-size: 1.6em; }

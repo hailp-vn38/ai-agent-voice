@@ -2,38 +2,76 @@
 import { computed } from 'vue'
 import { Cpu } from '@lucide/vue'
 import type { JobEvent } from '@/api/types/agent-jobs'
-import type { UnifiedActivity } from '@/domain/jobs/unified-activity'
+import type { ActivityKind, UnifiedActivity } from '@/domain/jobs/unified-activity'
 import { Badge } from '@/components/ui/badge'
 import { useI18n } from '@/composables/useI18n'
 
-const props = defineProps<{ activity: UnifiedActivity | null }>()
+const props = withDefaults(
+  defineProps<{
+    activity: UnifiedActivity | null
+    open?: boolean
+  }>(),
+  { open: false },
+)
 const { t } = useI18n()
 const run = computed(() => props.activity?.llm ?? null)
 const step = computed(() => props.activity?.step ?? null)
 const pendingStage = computed(() => {
   if (run.value?.status !== 'running') return null
   switch (run.value.events.at(-1)?.event_type) {
-    case 'llm_run_started': return t('jobUi.llmAcquiringProvider')
-    case 'llm_provider_acquired': return t('jobUi.llmWaitingCapacity')
-    case 'llm_request_started': return t('jobUi.llmWaitingResponse')
-    case 'llm_response_received': return t('jobUi.llmValidating')
-    default: return null
+    case 'llm_run_started':
+      return t('jobUi.llmAcquiringProvider')
+    case 'llm_provider_acquired':
+      return t('jobUi.llmWaitingCapacity')
+    case 'llm_request_started':
+      return t('jobUi.llmWaitingResponse')
+    case 'llm_response_received':
+      return t('jobUi.llmValidating')
+    default:
+      return null
   }
 })
+function kindBadge(kind: ActivityKind): string {
+  switch (kind) {
+    case 'llm':
+      return '✳ LLM RUN'
+    case 'plugin':
+      return '⬡ PLUGIN STEP'
+    case 'fork':
+      return '⑂ DELEGATION'
+    case 'join':
+      return '⑃ JOIN'
+    case 'job':
+      return '✓ JOB'
+    case 'agent':
+      return '◉ AGENT RUN'
+    case 'plan':
+      return '◌ PLAN'
+  }
+}
 function duration(ms: number | null): string {
   return ms === null ? '—' : (ms / 1000).toFixed(2) + ' s'
 }
 function stageLabel(event: JobEvent): string {
   switch (event.event_type) {
-    case 'llm_run_started': return t('jobUi.llmStarted')
-    case 'llm_provider_acquired': return t('jobUi.llmProviderAcquired')
-    case 'llm_request_started': return t('jobUi.llmDispatched')
-    case 'llm_response_received': return t('jobUi.llmReceived')
-    case 'llm_run_finished': return t('jobUi.llmFinished')
-    case 'plan_rejected': return t('jobUi.llmValidationFailed')
-    case 'agent_decision_rejected': return t('jobUi.llmValidationFailed')
-    case 'agent_decision_accepted': return 'Decision accepted'
-    default: return event.event_type
+    case 'llm_run_started':
+      return t('jobUi.llmStarted')
+    case 'llm_provider_acquired':
+      return t('jobUi.llmProviderAcquired')
+    case 'llm_request_started':
+      return t('jobUi.llmDispatched')
+    case 'llm_response_received':
+      return t('jobUi.llmReceived')
+    case 'llm_run_finished':
+      return t('jobUi.llmFinished')
+    case 'plan_rejected':
+      return t('jobUi.llmValidationFailed')
+    case 'agent_decision_rejected':
+      return t('jobUi.llmValidationFailed')
+    case 'agent_decision_accepted':
+      return 'Decision accepted'
+    default:
+      return event.event_type
   }
 }
 function safeDetail(value: unknown): string {
@@ -51,71 +89,181 @@ function stageNote(event: JobEvent): string {
 </script>
 
 <template>
-  <details :key="activity?.id" class="studio-panel p-4">
-    <summary class="cursor-pointer">
-      <h3 class="inline-flex items-center gap-2 text-sm font-semibold"><Cpu class="size-4 text-studio-violet" />{{ t('jobUi.eventInspector') }}</h3>
-      <Badge variant="outline" class="ml-2">{{ t('jobUi.llmReadOnly') }}</Badge>
+  <details :key="activity?.id" :open="props.open || undefined" class="studio-panel inspector overflow-hidden">
+    <summary class="surface-head flex cursor-pointer list-none items-center justify-between gap-2 border-b px-4 py-3">
+      <h3 class="inline-flex items-center gap-2 text-xs font-semibold">
+        <Cpu class="size-4 text-studio-violet" />{{ t('jobUi.eventInspector') }}
+      </h3>
+      <Badge variant="outline" class="ml-2 text-[10px]">{{ t('jobUi.llmReadOnly') }}</Badge>
     </summary>
-    <p v-if="!activity" class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.selectTimelineEvent') }}</p>
-    <template v-else>
-      <div class="mb-3 mt-3 flex flex-wrap items-center justify-between gap-2">
-        <strong class="break-words text-xs">{{ activity.title }}</strong>
-        <span class="text-[10px] font-semibold capitalize" :class="activity.status === 'completed' ? 'text-success' : activity.status === 'failed' || activity.status === 'unknown' ? 'text-danger' : 'text-studio-cyan'">{{ activity.status }}</span>
-      </div>
-      <template v-if="run">
-        <dl class="grid grid-cols-2 gap-3 text-xs">
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmProvider') }}</dt><dd class="mt-1 break-all font-semibold">{{ run.provider }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmModel') }}</dt><dd class="mt-1 break-all font-semibold">{{ run.model ?? '—' }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmAdapter') }}</dt><dd class="mt-1 font-semibold">{{ run.adapter ?? '—' }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmRole') }}</dt><dd class="mt-1 font-semibold">{{ run.role }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmTransport') }}</dt><dd class="mt-1 font-semibold">{{ run.transport ?? '—' }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmSource') }}</dt><dd class="mt-1 font-semibold">{{ run.providerSource }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmDuration') }}</dt><dd class="mt-1 font-semibold">{{ duration(run.totalDurationMs ?? run.requestDurationMs) }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.llmTokens') }}</dt><dd class="mt-1 font-semibold">{{ run.inputTokens ?? '—' }} / {{ run.outputTokens ?? '—' }}</dd></div>
-          <div class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.llmRunId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ run.id }}</dd></div>
-          <div v-if="run.events[0]?.payload.turn_id" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.agentTurnId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ run.events[0]?.payload.turn_id }}</dd></div>
-          <div v-if="activity.agentRunId" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.agentRunId') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ activity.agentRunId }}</dd></div>
-        </dl>
-        <p class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.llmContentUnavailable') }}</p>
-        <div class="mt-4 border-t pt-3">
-          <h4 class="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{{ t('jobUi.llmTimeline') }}</h4>
-          <div v-for="stage in run.events" :key="stage.sequence" class="flex items-start justify-between gap-2 border-l-2 border-primary/30 py-1 pl-2 text-[11px]">
-            <span class="min-w-0 break-words">{{ stageLabel(stage) }}<span v-if="stage.payload.validation_path" class="ml-1 break-all font-mono text-danger">{{ stage.payload.validation_path }}</span></span>
-            <span class="shrink-0 text-muted-foreground">{{ stageNote(stage) }}</span>
-          </div>
-          <p v-if="pendingStage" class="mt-2 text-xs text-studio-cyan">{{ pendingStage }}</p>
-          <p v-if="run.errorCode" class="mt-2 break-all rounded-lg bg-danger/5 p-2 font-mono text-xs text-danger">{{ run.errorCode }}</p>
+    <div class="ins-body p-4">
+      <p v-if="!activity" class="text-xs text-muted-foreground">{{ t('jobUi.selectTimelineEvent') }}</p>
+      <template v-else>
+        <div class="ins-heading mb-3 flex flex-wrap items-center justify-between gap-2">
+          <span class="ins-type">{{ kindBadge(activity.kind) }}</span>
+          <span
+            class="text-[10px] font-semibold capitalize"
+            :class="
+              activity.status === 'completed'
+                ? 'text-success'
+                : activity.status === 'failed' || activity.status === 'unknown'
+                  ? 'text-danger'
+                  : 'text-studio-cyan'
+            "
+          >
+            ● {{ activity.status }}
+          </span>
         </div>
-      </template>
-      <section v-if="step" class="mt-4 border-t pt-3">
-        <h4 v-if="run" class="mb-2 text-xs font-semibold">{{ t('jobUi.llmCheckpointProgress') }}</h4>
-        <dl class="grid grid-cols-2 gap-3 text-xs">
-          <div v-if="step.plugin_id"><dt class="text-muted-foreground">{{ t('jobUi.plugin') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.plugin_id ?? '—' }}</dd></div>
-          <div v-if="step.plugin_id"><dt class="text-muted-foreground">{{ t('jobUi.operation') }}</dt><dd class="mt-1 break-all font-semibold">{{ step.operation ?? '—' }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.status') }}</dt><dd class="mt-1 font-semibold">{{ step.status }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.attemptState') }}</dt><dd class="mt-1 font-semibold">{{ step.attempt_state ?? '—' }}</dd></div>
-          <div class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.stepKey') }}</dt><dd class="mt-1 break-all font-mono text-[11px]">{{ step.step_key }}</dd></div>
-          <div v-if="step.error_code" class="col-span-2"><dt class="text-muted-foreground">{{ t('jobUi.executionWarning') }}</dt><dd class="mt-1 break-all font-mono text-danger">{{ step.error_code }}</dd></div>
-        </dl>
-        <template v-if="step.plugin_id">
-          <details class="mt-3 text-xs">
-            <summary class="cursor-pointer">{{ t('jobUi.toolArguments') }}</summary>
-            <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(step.arguments, null, 2) ?? '—' }}</pre>
-          </details>
-          <details class="mt-3 text-xs">
-            <summary class="cursor-pointer">{{ t('jobUi.result') }}</summary>
-            <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(step.result, null, 2) ?? '—' }}</pre>
-          </details>
+        <strong class="ins-name block break-words text-base font-bold">{{ activity.title }}</strong>
+        <p class="ins-sub mb-3 mt-1 break-words text-xs text-muted-foreground">{{ activity.note }}</p>
+
+        <template v-if="run">
+          <dl class="divide-y divide-border/60 text-xs">
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmProvider') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-semibold">{{ run.provider }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmModel') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-semibold">{{ run.model ?? '—' }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmAdapter') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-semibold">{{ run.adapter ?? '—' }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmRole') }}</dt>
+              <dd class="text-right font-semibold">{{ run.role }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmTransport') }}</dt>
+              <dd class="text-right font-semibold">{{ run.transport ?? '—' }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmSource') }}</dt>
+              <dd class="text-right font-semibold">{{ run.providerSource }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmDuration') }}</dt>
+              <dd class="text-right font-semibold">{{ duration(run.totalDurationMs ?? run.requestDurationMs) }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmTokens') }}</dt>
+              <dd class="text-right font-semibold">{{ run.inputTokens ?? '—' }} / {{ run.outputTokens ?? '—' }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.llmRunId') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-mono text-[11px]">{{ run.id }}</dd>
+            </div>
+            <div v-if="run.events[0]?.payload.turn_id" class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.agentTurnId') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-mono text-[11px]">{{ run.events[0]?.payload.turn_id }}</dd>
+            </div>
+            <div v-if="activity.agentRunId" class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.agentRunId') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-mono text-[11px]">{{ activity.agentRunId }}</dd>
+            </div>
+          </dl>
+          <p class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.llmContentUnavailable') }}</p>
+          <div class="mt-4 border-t pt-3">
+            <h4 class="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+              ◴ {{ t('jobUi.llmTimeline') }}
+            </h4>
+            <div
+              v-for="stage in run.events"
+              :key="stage.sequence"
+              class="event-line flex items-start justify-between gap-2 border-l-2 border-primary/40 py-1 pl-2.5 text-[11px]"
+            >
+              <span class="min-w-0 break-words">
+                {{ stageLabel(stage) }}<span v-if="stage.payload.validation_path" class="ml-1 break-all font-mono text-danger">{{ stage.payload.validation_path }}</span>
+              </span>
+              <span class="shrink-0 text-muted-foreground">{{ stageNote(stage) }}</span>
+            </div>
+            <p v-if="pendingStage" class="mt-2 text-xs text-studio-cyan">{{ pendingStage }}</p>
+            <p v-if="run.errorCode" class="mt-2 break-all rounded-lg bg-danger/5 p-2 font-mono text-xs text-danger">
+              {{ run.errorCode }}
+            </p>
+          </div>
         </template>
-        <p v-if="step.attempt_state === 'unknown_outcome'" role="alert" class="mt-3 text-xs text-danger">{{ t('jobUi.unknownOutcomeWarning') }}</p>
-      </section>
-      <template v-if="!run && !step">
-        <dl class="space-y-2 text-xs">
-          <div v-if="activity.agentRunId"><dt class="text-muted-foreground">{{ t('jobUi.agentRunId') }}</dt><dd class="break-all font-mono">{{ activity.agentRunId }}</dd></div>
-          <div v-if="activity.event?.payload.fork_group_id"><dt class="text-muted-foreground">{{ t('jobUi.forkGroup') }}</dt><dd class="break-all font-mono">{{ safeDetail(activity.event.payload.fork_group_id) }}</dd></div>
-          <div><dt class="text-muted-foreground">{{ t('jobUi.execution') }}</dt><dd>{{ activity.note }}</dd></div>
-        </dl>
+
+        <section v-if="step" class="mt-4 border-t pt-3">
+          <h4 v-if="run" class="mb-2 text-xs font-semibold">{{ t('jobUi.llmCheckpointProgress') }}</h4>
+          <dl class="divide-y divide-border/60 text-xs">
+            <div v-if="step.plugin_id" class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.plugin') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-semibold">{{ step.plugin_id ?? '—' }}</dd>
+            </div>
+            <div v-if="step.plugin_id" class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.operation') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-semibold">{{ step.operation ?? '—' }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.status') }}</dt>
+              <dd class="text-right font-semibold">{{ step.status }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.attemptState') }}</dt>
+              <dd class="text-right font-semibold">{{ step.attempt_state ?? '—' }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.stepKey') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-mono text-[11px]">{{ step.step_key }}</dd>
+            </div>
+            <div v-if="step.error_code" class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.executionWarning') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-mono text-danger">{{ step.error_code }}</dd>
+            </div>
+          </dl>
+          <template v-if="step.plugin_id">
+            <details class="mt-3 text-xs">
+              <summary class="cursor-pointer font-medium">{{ t('jobUi.toolArguments') }}</summary>
+              <pre class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(step.arguments, null, 2) ?? '—' }}</pre>
+            </details>
+            <details class="mt-3 text-xs">
+              <summary class="cursor-pointer font-medium">{{ t('jobUi.result') }}</summary>
+              <pre class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(step.result, null, 2) ?? '—' }}</pre>
+            </details>
+          </template>
+          <p v-if="step.attempt_state === 'unknown_outcome'" role="alert" class="mt-3 text-xs text-danger">
+            {{ t('jobUi.unknownOutcomeWarning') }}
+          </p>
+        </section>
+
+        <template v-if="!run && !step">
+          <dl class="divide-y divide-border/60 text-xs">
+            <div v-if="activity.agentRunId" class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.agentRunId') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-mono">{{ activity.agentRunId }}</dd>
+            </div>
+            <div v-if="activity.event?.payload.fork_group_id" class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.forkGroup') }}</dt>
+              <dd class="max-w-[65%] break-all text-right font-mono">{{ safeDetail(activity.event.payload.fork_group_id) }}</dd>
+            </div>
+            <div class="detail-row flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted-foreground">{{ t('jobUi.execution') }}</dt>
+              <dd class="max-w-[65%] break-words text-right">{{ activity.note }}</dd>
+            </div>
+          </dl>
+        </template>
       </template>
-    </template>
+    </div>
   </details>
 </template>
+
+<style scoped>
+.surface-head::-webkit-details-marker {
+  display: none;
+}
+.ins-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #25233f;
+  color: #c5b7ff;
+  border: 1px solid #51477b;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 720;
+}
+</style>

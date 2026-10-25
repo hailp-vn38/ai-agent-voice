@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { groupTimelineActivities } from '@/domain/jobs/unified-activity'
-import { BrainCircuit, CheckCircle2, ChevronRight, GitFork, GitMerge, Puzzle, Workflow } from '@lucide/vue'
-import type { ActivityFilter, UnifiedActivity } from '@/domain/jobs/unified-activity'
+import { computed, ref } from 'vue'
+import {
+  layoutDagCanvas,
+  type ActivityFilter,
+  type ActivityKind,
+  type UnifiedActivity,
+} from '@/domain/jobs/unified-activity'
 import { useI18n } from '@/composables/useI18n'
 
 const props = defineProps<{
@@ -16,10 +19,55 @@ const emit = defineEmits<{
   filter: [value: ActivityFilter]
 }>()
 const { t } = useI18n()
-const groups = computed(() => groupTimelineActivities(props.activities))
+
+const zoom = ref(0.72)
+const viewportRef = ref<HTMLElement | null>(null)
+const dragging = ref(false)
+let dragStart = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 }
+
+const layout = computed(() => layoutDagCanvas(props.activities))
+
+function setZoom(next: number) {
+  zoom.value = Math.min(1.2, Math.max(0.43, Number(next.toFixed(2))))
+}
+function stepZoom(delta: number) {
+  setZoom(zoom.value + delta)
+}
+function fitCanvas() {
+  const cw = viewportRef.value?.clientWidth || 1100
+  setZoom(Math.max(0.43, Math.min(0.95, (cw - 15) / layout.value.width)))
+  if (viewportRef.value) {
+    viewportRef.value.scrollLeft = 0
+    viewportRef.value.scrollTop = 0
+  }
+}
+
+function onPointerDown(event: PointerEvent) {
+  const target = event.target as HTMLElement | null
+  if (!viewportRef.value || target?.closest('button, summary, details')) return
+  dragging.value = true
+  dragStart = {
+    x: event.clientX,
+    y: event.clientY,
+    scrollLeft: viewportRef.value.scrollLeft,
+    scrollTop: viewportRef.value.scrollTop,
+  }
+}
+function onPointerMove(event: PointerEvent) {
+  if (!dragging.value || !viewportRef.value) return
+  viewportRef.value.scrollLeft = dragStart.scrollLeft - (event.clientX - dragStart.x)
+  viewportRef.value.scrollTop = dragStart.scrollTop - (event.clientY - dragStart.y)
+}
+function onPointerUp() {
+  dragging.value = false
+}
+
 function agentFinished(activities: UnifiedActivity[]): boolean {
-  return activities.some(activity => activity.kind === 'agent' ||
-    ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(activity.agentRun?.status ?? ''))
+  return activities.some(
+    activity =>
+      activity.kind === 'agent' ||
+      ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(activity.agentRun?.status ?? ''),
+  )
 }
 function isRootRole(role: string | null): boolean {
   return role === 'orchestrator' || role === 'root'
@@ -46,105 +94,558 @@ function clock(input: string): string {
   const value = new Date(input)
   return Number.isFinite(value.getTime()) ? value.toLocaleTimeString([], { hour12: false }) : '—'
 }
-function tone(status: UnifiedActivity['status']): string {
-  if (status === 'failed' || status === 'unknown') return 'text-danger'
-  if (status === 'completed') return 'text-success'
-  return 'text-studio-cyan'
+function nodeIcon(kind: ActivityKind): string {
+  switch (kind) {
+    case 'llm':
+      return '✳'
+    case 'plugin':
+      return '⬡'
+    case 'fork':
+      return '⑂'
+    case 'join':
+      return '⑃'
+    default:
+      return '✓'
+  }
+}
+function footerLeft(activity: UnifiedActivity): string {
+  if (activity.llm) {
+    const known = activity.llm.inputTokens !== null || activity.llm.outputTokens !== null
+    if (known) {
+      const total = (activity.llm.inputTokens ?? 0) + (activity.llm.outputTokens ?? 0)
+      return total >= 1000 ? `${(total / 1000).toFixed(1)}k tokens` : `${total} tokens`
+    }
+    return activity.llm.model ?? activity.llm.provider
+  }
+  if (activity.kind === 'plugin') return activity.step?.step_key ?? 'plugin'
+  if (activity.kind === 'fork' || activity.kind === 'join') return activity.forkGroupId ?? activity.kind
+  return activity.step?.step_key ?? activity.agentRunId ?? activity.kind
+}
+function footerRight(activity: UnifiedActivity): string {
+  if (activity.llm) {
+    const ms = activity.llm.totalDurationMs ?? activity.llm.requestDurationMs
+    return ms !== null ? `${(ms / 1000).toFixed(1)}s` : activity.status
+  }
+  if (activity.kind === 'fork' || activity.kind === 'join') {
+    return `${activity.memberCount ?? 0} children`
+  }
+  return clock(activity.time)
 }
 </script>
 
 <template>
-  <section class="studio-panel min-w-0">
-    <div class="flex flex-wrap items-center justify-between gap-2 border-b p-4">
-      <h3 class="flex items-center gap-2 text-sm font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.unifiedTimeline') }}</h3>
-      <div class="flex flex-wrap gap-1" role="group" :aria-label="t('jobUi.timelineFilter')">
-        <button type="button" class="rounded-md border px-2 py-1 text-xs transition-colors hover:border-primary/40" :class="filter.kind === 'all' ? 'border-primary/50 bg-primary/10 text-studio-violet' : 'text-muted-foreground'" :aria-pressed="filter.kind === 'all'" @click="emit('filter', { kind: 'all' })">{{ t('jobUi.timelineAll') }}</button>
-        <button v-for="role in roles" :key="role" type="button" class="rounded-md border px-2 py-1 text-xs transition-colors hover:border-primary/40" :class="filter.kind === 'role' && filter.role === role ? 'border-primary/50 bg-primary/10 text-studio-violet' : 'text-muted-foreground'" :aria-pressed="filter.kind === 'role' && filter.role === role" @click="emit('filter', { kind: 'role', role })">{{ roleName(role) }}</button>
+  <section class="studio-panel dag-surface min-w-0 overflow-hidden" :aria-label="t('jobUi.dagCanvasBadge')">
+    <div class="surface-head flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
+      <div class="mini-tools flex flex-wrap items-center gap-2">
+        <strong class="text-xs font-semibold">◎ {{ t('jobUi.executionMap') }}</strong>
+        <span class="small-badge">{{ t('jobUi.dagFlowBadge') }}</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="filterbar flex flex-wrap gap-1" role="group" :aria-label="t('jobUi.timelineFilter')">
+          <button
+            type="button"
+            class="filter"
+            :class="{ active: filter.kind === 'all' }"
+            :aria-pressed="filter.kind === 'all'"
+            @click="emit('filter', { kind: 'all' })"
+          >
+            {{ t('jobUi.timelineAll') }}
+          </button>
+          <button
+            type="button"
+            class="filter"
+            :class="{ active: filter.kind === 'llm' }"
+            :aria-pressed="filter.kind === 'llm'"
+            @click="emit('filter', { kind: 'llm' })"
+          >
+            {{ t('jobUi.filterLlm') }}
+          </button>
+          <button
+            type="button"
+            class="filter"
+            :class="{ active: filter.kind === 'plugin' }"
+            :aria-pressed="filter.kind === 'plugin'"
+            @click="emit('filter', { kind: 'plugin' })"
+          >
+            {{ t('jobUi.filterPlugin') }}
+          </button>
+          <button
+            type="button"
+            class="filter"
+            :class="{ active: filter.kind === 'root' }"
+            :aria-pressed="filter.kind === 'root'"
+            @click="emit('filter', { kind: 'root' })"
+          >
+            {{ t('jobUi.filterRoot') }}
+          </button>
+          <button
+            v-for="role in roles"
+            :key="role"
+            type="button"
+            class="filter"
+            :class="{ active: filter.kind === 'role' && filter.role === role }"
+            :aria-pressed="filter.kind === 'role' && filter.role === role"
+            @click="emit('filter', { kind: 'role', role })"
+          >
+            {{ roleName(role) }}
+          </button>
+        </div>
+        <div class="mini-tools flex items-center gap-1.5">
+          <span class="subtle tiny tabular-nums" data-zoom-readout>{{ Math.round(zoom * 100) }}%</span>
+          <button
+            type="button"
+            class="toolbutton"
+            data-zoom-out
+            :title="t('jobUi.zoomOut')"
+            :aria-label="t('jobUi.zoomOut')"
+            @click="stepZoom(-0.1)"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            class="toolbutton"
+            data-zoom-in
+            :title="t('jobUi.zoomIn')"
+            :aria-label="t('jobUi.zoomIn')"
+            @click="stepZoom(0.1)"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            class="toolbutton"
+            data-zoom-fit
+            :title="t('jobUi.zoomFit')"
+            :aria-label="t('jobUi.zoomFit')"
+            @click="fitCanvas"
+          >
+            ⤢
+          </button>
+        </div>
       </div>
     </div>
-    <div v-if="filter.kind === 'agent'" class="flex items-center justify-between gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
+
+    <div
+      v-if="filter.kind === 'agent'"
+      class="flex items-center justify-between gap-3 border-b px-4 py-2 text-xs text-muted-foreground"
+    >
       <span>{{ t('jobUi.agentRunFilter') }}</span>
-      <button type="button" class="text-studio-violet hover:underline" @click="emit('filter', { kind: 'all' })">{{ t('jobUi.clearTimelineFilter') }}</button>
+      <button type="button" class="text-studio-violet hover:underline" @click="emit('filter', { kind: 'all' })">
+        {{ t('jobUi.clearTimelineFilter') }}
+      </button>
     </div>
+
     <p v-if="!activities.length" class="p-6 text-sm text-muted-foreground">{{ t('jobUi.noTimelineActivity') }}</p>
-    <ol v-else class="execution-timeline p-4">
-      <li v-for="group in groups" :key="group.id" class="timeline-group" :class="{ 'child-group': group.child }" :data-agent-run-id="group.child ? group.id : undefined">
-        <svg v-if="group.child" class="branch-connector branch-entry" viewBox="0 0 36 24" aria-hidden="true">
-          <path d="M0 0 Q0 12 12 12 H24 Q36 12 36 24" />
-        </svg>
-        <svg v-if="group.child" class="branch-connector branch-return" viewBox="0 0 36 24" aria-hidden="true">
-          <path d="M36 0 Q36 12 24 12 H12 Q0 12 0 24" />
-        </svg>
-        <component :is="group.child ? 'details' : 'div'" :open="group.child ? !agentFinished(group.activities) : undefined">
-          <summary v-if="group.child" class="branch-heading list-none cursor-pointer rounded-md py-2 text-xs text-teal-600 dark:text-teal-400">
-            <ChevronRight class="branch-toggle mr-1 inline size-3.5" aria-hidden="true" />
-            <span class="font-semibold uppercase">{{ t('jobUi.subAgent') }} · {{ roleName(group.activities[0]?.role ?? null) }}</span>
-            <span class="ml-2 break-all font-mono text-[10px]">{{ group.id }}</span>
-            <span v-if="group.activities[0]?.agentRun?.goal_excerpt" class="mt-1 block break-words text-muted-foreground">{{ group.activities[0].agentRun.goal_excerpt }}</span>
-          </summary>
-          <ol>
-            <li v-for="activity in group.activities" :key="activity.id" class="timeline-row relative grid grid-cols-[65px_28px_minmax(0,1fr)] gap-2 pb-3 last:pb-0 sm:grid-cols-[82px_28px_minmax(0,1fr)]">
-              <time class="pt-4 text-[10px] tabular-nums text-muted-foreground" :datetime="activity.time">{{ clock(activity.time) }}</time>
-              <div class="relative flex justify-center pt-3">
-                <div class="row-rail rail-before" aria-hidden="true" /><div class="row-rail rail-after" aria-hidden="true" />
-                <div class="relative z-10 grid size-7 place-items-center rounded-lg" :class="[tone(activity.status), group.child ? 'bg-teal-500/10' : 'bg-primary/10']">
-                  <BrainCircuit v-if="activity.kind === 'llm'" class="size-4" />
-                  <Puzzle v-else-if="activity.kind === 'plugin'" class="size-4" />
-                  <GitFork v-else-if="activity.kind === 'fork'" class="size-4" />
-                  <GitMerge v-else-if="activity.kind === 'join'" class="size-4" />
-                  <CheckCircle2 v-else class="size-4" />
-                </div>
-              </div>
-              <button type="button" class="mb-2 min-w-0 rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="selectedId === activity.id ? 'border-primary/60 ring-1 ring-primary/20' : ''" :aria-current="selectedId === activity.id ? 'true' : undefined" @click="emit('select', activity.id)">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <span class="flex min-w-0 flex-wrap items-center gap-2">
-                    <span class="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase" :class="group.child ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400' : 'bg-primary/10 text-studio-violet'">{{ group.child ? t('jobUi.subAgent') : isRootRole(activity.role) ? t('jobUi.rootAgent') : '' }}{{ group.child || isRootRole(activity.role) ? ' · ' : '' }}{{ roleName(activity.role) }}</span>
-                    <strong class="break-words text-xs">{{ activity.title }}</strong>
-                  </span>
-                  <span class="text-[10px] font-semibold capitalize" :class="tone(activity.status)">{{ activity.status }}</span>
-                </div>
-                <p class="mt-1 break-words text-xs text-muted-foreground">{{ activity.note }}</p>
-                <p v-for="child in activity.childRuns" :key="child.agent_run_id" class="mt-2 break-words text-xs text-teal-600 dark:text-teal-400">{{ roleName(child.role) }} · {{ child.goal_excerpt }} <span class="font-mono text-[10px]">{{ child.agent_run_id }}</span></p>
-                <p v-if="activity.llm" class="mt-2 break-all text-[11px] text-muted-foreground">{{ activity.llm.provider }} · {{ activity.llm.model ?? '—' }} · {{ activity.llm.transport ?? '—' }}</p>
-                <p v-if="activity.llm && activity.step" class="mt-2 text-[11px]" :class="activity.step.attempt_state === 'unknown_outcome' || activity.step.status === 'failed' ? 'text-danger' : 'text-muted-foreground'">
-                  {{ t('jobUi.llmCheckpointProgress') }} · {{ activity.step.step_key }} · {{ activity.step.status }}<span v-if="activity.step.attempt_state === 'unknown_outcome'"> · unknown_outcome</span>
-                </p>
-              </button>
+
+    <div
+      v-else
+      ref="viewportRef"
+      class="canvas-viewport"
+      @pointerdown="onPointerDown"
+      @pointermove="onPointerMove"
+      @pointerup="onPointerUp"
+      @pointercancel="onPointerUp"
+      @pointerleave="onPointerUp"
+    >
+      <div
+        class="canvas-scale-box"
+        :style="{
+          width: Math.round(layout.width * zoom) + 'px',
+          height: Math.round(layout.height * zoom) + 'px',
+        }"
+      >
+        <div
+          class="canvas-stage"
+          :style="{
+            width: layout.width + 'px',
+            height: layout.height + 'px',
+            transform: 'scale(' + zoom + ')',
+          }"
+        >
+          <svg
+            class="edge-layer"
+            :viewBox="'0 0 ' + layout.width + ' ' + layout.height"
+            aria-hidden="true"
+          >
+            <defs>
+              <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+                <path d="M0 0 L6 3 L0 6 Z" fill="#687897" />
+              </marker>
+            </defs>
+            <path
+              v-for="edge in layout.edges"
+              :key="edge.id"
+              :class="edge.kind === 'default' ? undefined : edge.kind"
+              :d="edge.d"
+              marker-end="url(#arrow)"
+            />
+          </svg>
+
+          <ol class="execution-timeline">
+            <li
+              v-for="item in layout.groups"
+              :key="item.group.id"
+              class="timeline-group"
+              :class="{ 'child-group': item.group.child }"
+              :data-agent-run-id="item.group.child ? item.group.id : undefined"
+            >
+              <template v-if="item.group.child && item.lane">
+                <div
+                  class="lane-bg"
+                  :class="item.lane.theme"
+                  :style="{
+                    left: item.lane.x + 'px',
+                    top: item.lane.y + 'px',
+                    width: item.lane.width + 'px',
+                    height: item.lane.height + 'px',
+                  }"
+                />
+                <details
+                  class="lane-details"
+                  :open="!agentFinished(item.group.activities)"
+                  :style="{
+                    left: item.lane.x + 23 + 'px',
+                    top: item.lane.y + 11 + 'px',
+                    maxWidth: item.lane.width - 36 + 'px',
+                  }"
+                >
+                  <summary class="lane-title cursor-pointer list-none" :class="item.lane.theme">
+                    <span>◉ {{ t('jobUi.subAgent') }} · {{ roleName(item.lane.role) }}</span>
+                    <span class="ml-2 font-mono text-[10px] opacity-80">{{ item.group.id }}</span>
+                    <span
+                      v-if="item.group.activities[0]?.agentRun?.goal_excerpt"
+                      class="lane-goal mt-0.5 block truncate font-normal text-[#9eaac1]"
+                    >
+                      {{ item.group.activities[0].agentRun.goal_excerpt }}
+                    </span>
+                  </summary>
+                </details>
+              </template>
+
+              <ol>
+                <li v-for="node in item.nodes" :key="node.id" class="timeline-row">
+                  <button
+                    type="button"
+                    class="graph-node"
+                    :class="{
+                      selected: selectedId === node.activity.id,
+                      running: node.activity.status === 'running',
+                      pending: node.activity.status === 'cancelled' || node.activity.status === 'skipped',
+                    }"
+                    :data-step="node.activity.id"
+                    :data-kind="node.activity.kind"
+                    :style="{ left: node.x + 'px', top: node.y + 'px' }"
+                    :aria-current="selectedId === node.activity.id ? 'true' : undefined"
+                    @click="emit('select', node.activity.id)"
+                  >
+                    <div class="node-header">
+                      <span class="node-icon" aria-hidden="true">{{ nodeIcon(node.activity.kind) }}</span>
+                      <span class="node-status" :class="node.activity.status">
+                        {{ node.activity.status === 'completed' || node.activity.status === 'running' ? '● ' : '○ ' }}{{ node.activity.status }}
+                      </span>
+                    </div>
+                    <b class="truncate" :title="node.activity.title">{{ node.activity.title }}</b>
+                    <span class="desc line-clamp-2">
+                      {{
+                        isRootRole(node.activity.role) && !item.group.child
+                          ? t('jobUi.rootAgent') + ' · ' + node.activity.note
+                          : node.activity.note
+                      }}
+                    </span>
+                    <span
+                      v-for="child in node.activity.childRuns"
+                      :key="child.agent_run_id"
+                      class="desc mt-1 truncate text-[#83e0e9]"
+                    >
+                      {{ roleName(child.role) }} · {{ child.goal_excerpt }}
+                      <span class="font-mono text-[9px]">{{ child.agent_run_id }}</span>
+                    </span>
+                    <span
+                      v-if="node.activity.llm && node.activity.step"
+                      class="desc mt-1"
+                      :class="
+                        node.activity.step.attempt_state === 'unknown_outcome' ||
+                        node.activity.step.status === 'failed'
+                          ? 'text-[#fb8490]'
+                          : ''
+                      "
+                    >
+                      {{ t('jobUi.llmCheckpointProgress') }} · {{ node.activity.step.step_key }} · {{ node.activity.step.status }}<template v-if="node.activity.step.attempt_state === 'unknown_outcome'"> · unknown_outcome</template>
+                    </span>
+                    <div class="node-footer">
+                      <span class="truncate">{{ footerLeft(node.activity) }}</span>
+                      <span class="shrink-0">{{ footerRight(node.activity) }}</span>
+                    </div>
+                  </button>
+                </li>
+              </ol>
             </li>
           </ol>
-        </component>
-      </li>
-    </ol>
+        </div>
+      </div>
+      <div class="canvas-help">{{ t('jobUi.canvasHelp') }}</div>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.execution-timeline { --axis: 87px; --rail: var(--color-studio-violet, #8b5cf6); }
-.timeline-group { position: relative; }
-.row-rail { position: absolute; width: 1px; background: var(--rail); opacity: .45; }
-.rail-before { top: 0; height: 8px; }
-.rail-after { top: 44px; bottom: 0; }
-.timeline-row:not(:last-child) .rail-after { bottom: -12px; }
-.timeline-group:first-child:not(.child-group) .rail-before,
-.timeline-group:last-child:not(.child-group) .rail-after { display: none; }
-.child-group { padding: 24px 0 24px 36px; --rail: #14b8a6; }
-.child-group::before {
-  content: ''; position: absolute; left: calc(var(--axis) - .5px); top: 0; bottom: 0;
-  border-left: 1px solid var(--color-studio-violet, #8b5cf6); opacity: .45;
+.small-badge {
+  border-radius: 5px;
+  background: #202a3a;
+  color: #97a6be;
+  padding: 4px 6px;
+  font-size: 10px;
 }
-.branch-connector {
-  position: absolute; left: var(--axis); width: 36px; height: 24px;
-  fill: none; stroke: var(--rail); stroke-width: 1; opacity: .45;
-  overflow: visible; pointer-events: none;
+.tiny {
+  font-size: 10px;
 }
-.branch-entry { top: 0; }
-.branch-return { bottom: 0; }
-.branch-heading { position: relative; margin-left: calc(var(--axis) + 8px); }
-.branch-heading::-webkit-details-marker { display: none; }
-[open] > .branch-heading .branch-toggle { transform: rotate(90deg); }
-.branch-heading::after {
-  content: ''; position: absolute; left: -8.5px; top: 0; bottom: 0;
-  border-left: 1px solid var(--rail); opacity: .45;
+.subtle {
+  color: var(--muted-foreground);
 }
-@media (min-width: 640px) { .execution-timeline { --axis: 104px; } }
+.toolbutton {
+  width: 29px;
+  height: 29px;
+  border-radius: 8px;
+  background: #1d2738;
+  border: 1px solid #33425a;
+  font-size: 13px;
+  color: #a5b3ce;
+  display: inline-grid;
+  place-items: center;
+}
+.toolbutton:hover {
+  background: #29364b;
+}
+.filter {
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: #151c2a;
+  border: 1px solid #2a364c;
+  color: #899ab6;
+  font-size: 10px;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.filter:hover {
+  border-color: #4f5f82;
+}
+.filter.active {
+  border-color: #6055aa;
+  background: #2a2448;
+  color: #c5b8ff;
+}
+.canvas-viewport {
+  height: 618px;
+  overflow: auto;
+  position: relative;
+  background-color: #101725;
+  background-image: radial-gradient(#4c597647 1px, transparent 1px);
+  background-size: 20px 20px;
+  scrollbar-color: #3e4860 transparent;
+  cursor: grab;
+}
+.canvas-viewport:active {
+  cursor: grabbing;
+}
+.canvas-stage {
+  position: relative;
+  transform-origin: 0 0;
+}
+.execution-timeline,
+.execution-timeline ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.lane-bg {
+  position: absolute;
+  border-radius: 15px;
+  border: 1px dashed #2a66726b;
+  background: linear-gradient(90deg, #16414c24, #1d2e3f11);
+  pointer-events: none;
+}
+.lane-bg.document {
+  border-color: #6d6c3c59;
+  background: linear-gradient(90deg, #51451e1b, #2c30300d);
+}
+.lane-details {
+  position: absolute;
+  z-index: 2;
+}
+.lane-title {
+  font-size: 11px;
+  letter-spacing: 0.7px;
+  font-weight: 700;
+  color: #87ccd8;
+}
+.lane-title::-webkit-details-marker {
+  display: none;
+}
+.lane-title.document {
+  color: #bacb85;
+}
+.lane-goal {
+  font-size: 9.5px;
+  letter-spacing: normal;
+}
+.edge-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.edge-layer path {
+  fill: none;
+  stroke: #566482;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.edge-layer path.branch {
+  stroke: #5d9cac;
+}
+.edge-layer path.pending {
+  stroke: #4f5b71;
+  stroke-dasharray: 6 7;
+}
+.edge-layer path.animated {
+  stroke: #59c8d8;
+  stroke-dasharray: 5 8;
+  animation: dash 2.1s linear infinite;
+}
+@keyframes dash {
+  to {
+    stroke-dashoffset: -27;
+  }
+}
+.graph-node {
+  position: absolute;
+  width: 164px;
+  min-height: 108px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #3a4560;
+  background: linear-gradient(145deg, #212b3e, #161e2d);
+  color: #e9edf7;
+  text-align: left;
+  box-shadow: 0 9px 27px #0004;
+  transition: border 0.15s, box-shadow 0.15s, transform 0.15s;
+  z-index: 1;
+}
+.graph-node:hover {
+  transform: translateY(-2px);
+  border-color: #8998c5;
+}
+.graph-node.selected {
+  border-color: #baa2ff;
+  box-shadow: 0 0 0 2px #a28af525, 0 12px 30px #0005;
+}
+.graph-node.running {
+  border-color: #3a8798;
+  background: linear-gradient(145deg, #183745, #19243a);
+}
+.graph-node.pending {
+  border-style: dashed;
+  opacity: 0.77;
+}
+.node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  margin-bottom: 9px;
+}
+.node-icon {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  border-radius: 8px;
+  background: #4a3f75;
+  color: #d0c2ff;
+  font-size: 13px;
+}
+.graph-node[data-kind='plugin'] .node-icon {
+  background: #244958;
+  color: #8de4ef;
+}
+.graph-node[data-kind='fork'] .node-icon,
+.graph-node[data-kind='join'] .node-icon {
+  background: #58472a;
+  color: #fad092;
+}
+.graph-node[data-kind='job'] .node-icon,
+.graph-node[data-kind='agent'] .node-icon,
+.graph-node[data-kind='plan'] .node-icon {
+  background: #2b5549;
+  color: #a5ecd6;
+}
+.graph-node b {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 3px;
+  line-height: 1.25;
+}
+.graph-node .desc {
+  font-size: 9.5px;
+  line-height: 1.45;
+  color: #9eaac1;
+  display: block;
+}
+.node-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  color: #8a98b2;
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+}
+.node-status.completed {
+  color: #5fd9a6;
+}
+.node-status.running {
+  color: #58c9db;
+}
+.node-status.pending,
+.node-status.cancelled,
+.node-status.skipped {
+  color: #8f9bb3;
+}
+.node-status.failed,
+.node-status.unknown,
+.node-status.interrupted {
+  color: #fb8490;
+}
+.node-footer {
+  margin-top: 9px;
+  padding-top: 7px;
+  border-top: 1px solid #3d486033;
+  font-size: 9px;
+  color: #8b9db9;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+.canvas-help {
+  position: sticky;
+  bottom: 15px;
+  left: 16px;
+  display: inline-block;
+  margin: 0 0 15px 16px;
+  background: #101826e8;
+  color: #9aa9c3;
+  border: 1px solid #354159;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 10px;
+  pointer-events: none;
+  z-index: 3;
+}
+@media (max-width: 850px) {
+  .canvas-viewport {
+    height: 470px;
+  }
+}
 </style>

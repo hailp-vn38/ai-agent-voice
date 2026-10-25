@@ -3,7 +3,13 @@ import { projectLlmRuns, type LlmRun } from './llm-activity'
 
 export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan'
 export type ActivityStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'skipped' | 'unknown'
-export type ActivityFilter = { kind: 'all' } | { kind: 'role'; role: string } | { kind: 'agent'; id: string }
+export type ActivityFilter =
+  | { kind: 'all' }
+  | { kind: 'llm' }
+  | { kind: 'plugin' }
+  | { kind: 'root' }
+  | { kind: 'role'; role: string }
+  | { kind: 'agent'; id: string }
 
 export interface UnifiedActivity {
   id: string
@@ -143,6 +149,11 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
 
 export function visibleActivities(items: UnifiedActivity[], filter: ActivityFilter): UnifiedActivity[] {
   if (filter.kind === 'all') return items
+  if (filter.kind === 'llm') return items.filter(item => item.kind === 'llm')
+  if (filter.kind === 'plugin') return items.filter(item => item.kind === 'plugin')
+  if (filter.kind === 'root') {
+    return items.filter(item => !item.parentAgentRunId && (item.role === 'orchestrator' || item.role === 'root' || !item.agentRunId))
+  }
   if (filter.kind === 'agent') return items.filter(item => item.agentRunId === filter.id)
   return items.filter(item => item.role === filter.role)
 }
@@ -170,4 +181,210 @@ export function groupTimelineActivities(activities: UnifiedActivity[]): Timeline
     group.activities.push(activity)
   }
   return groups
+}
+
+export interface DagNodeLayout {
+  id: string
+  activity: UnifiedActivity
+  x: number
+  y: number
+  width: number
+  height: number
+  laneId: string | null
+}
+
+export interface DagLaneLayout {
+  id: string
+  role: string | null
+  theme: 'research' | 'document'
+  group: TimelineGroup
+  x: number
+  y: number
+  width: number
+  height: number
+  nodes: DagNodeLayout[]
+}
+
+export interface DagEdgeLayout {
+  id: string
+  fromId: string
+  toId: string
+  d: string
+  kind: 'default' | 'branch' | 'pending' | 'animated'
+}
+
+export interface DagGroupRender {
+  group: TimelineGroup
+  lane: DagLaneLayout | null
+  nodes: DagNodeLayout[]
+}
+
+export interface DagCanvasLayout {
+  width: number
+  height: number
+  rootY: number
+  groups: DagGroupRender[]
+  lanes: DagLaneLayout[]
+  nodes: DagNodeLayout[]
+  edges: DagEdgeLayout[]
+}
+
+const NODE_W = 164
+const NODE_H = 108
+const COL_STEP = 210
+const LANE_H = 178
+
+function buildEdge(u: DagNodeLayout, v: DagNodeLayout): DagEdgeLayout {
+  const sx = u.x + u.width
+  const sy = u.y + Math.round(u.height / 2)
+  const tx = v.x
+  const ty = v.y + Math.round(v.height / 2)
+  let d: string
+  if (Math.abs(sy - ty) <= 2) {
+    d = `M${sx} ${sy} L${tx} ${ty}`
+  } else {
+    const dx = tx - sx
+    const c1x = Math.round(sx + dx * 0.42)
+    const c2x = Math.round(sx + dx * 0.58)
+    d = `M${sx} ${sy} C${c1x} ${sy},${c2x} ${ty},${tx} ${ty}`
+  }
+  const status = v.activity.status
+  const kind: DagEdgeLayout['kind'] =
+    status === 'running'
+      ? 'animated'
+      : status === 'cancelled' || status === 'skipped'
+        ? 'pending'
+        : u.laneId !== null || v.laneId !== null
+          ? 'branch'
+          : 'default'
+  return { id: `${u.id}->${v.id}`, fromId: u.id, toId: v.id, d, kind }
+}
+
+export function layoutDagCanvas(activities: UnifiedActivity[]): DagCanvasLayout {
+  const timelineGroups = groupTimelineActivities(activities)
+  type Stage = { type: 'root'; group: TimelineGroup } | { type: 'branches'; groups: TimelineGroup[] }
+  const stages: Stage[] = []
+  for (const group of timelineGroups) {
+    if (!group.child) {
+      stages.push({ type: 'root', group })
+      continue
+    }
+    const last = stages.at(-1)
+    if (last?.type === 'branches') {
+      last.groups.push(group)
+    } else {
+      stages.push({ type: 'branches', groups: [group] })
+    }
+  }
+
+  const maxBranches = Math.max(0, ...stages.map(s => (s.type === 'branches' ? s.groups.length : 0)))
+  const laneGap = 42
+  const topPad = 48
+  const height = maxBranches <= 2 ? 630 : topPad * 2 + maxBranches * LANE_H + (maxBranches - 1) * laneGap
+  const rootY =
+    maxBranches <= 2
+      ? 260
+      : Math.round((topPad + 66 + (topPad + (maxBranches - 1) * (LANE_H + laneGap) + 66)) / 2)
+
+  function lanePosition(index: number, total: number) {
+    if (maxBranches <= 2 && total === 2) {
+      return index === 0
+        ? { laneY: 48, nodeY: 114, laneH: LANE_H }
+        : { laneY: 365, nodeY: 438, laneH: LANE_H }
+    }
+    if (maxBranches <= 2 && total === 1) {
+      return { laneY: 48, nodeY: 114, laneH: LANE_H }
+    }
+    const laneY = topPad + index * (LANE_H + laneGap)
+    return { laneY, nodeY: laneY + 66, laneH: LANE_H }
+  }
+
+  const groups: DagGroupRender[] = []
+  const lanes: DagLaneLayout[] = []
+  const nodes: DagNodeLayout[] = []
+  const edges: DagEdgeLayout[] = []
+  const stageBoundaries: { entry: DagNodeLayout[]; exit: DagNodeLayout[] }[] = []
+
+  let cursorX = 40
+  for (const [stageIdx, stage] of stages.entries()) {
+    const nextStage = stages[stageIdx + 1]
+    if (stage.type === 'root') {
+      const act = stage.group.activities[0]!
+      const node: DagNodeLayout = {
+        id: act.id,
+        activity: act,
+        x: cursorX,
+        y: rootY,
+        width: NODE_W,
+        height: NODE_H,
+        laneId: null,
+      }
+      nodes.push(node)
+      groups.push({ group: stage.group, lane: null, nodes: [node] })
+      stageBoundaries.push({ entry: [node], exit: [node] })
+      cursorX += nextStage?.type === 'branches' ? 205 : 225
+      continue
+    }
+
+    const branchStartX = cursorX
+    const maxCols = Math.max(1, ...stage.groups.map(g => g.activities.length))
+    const entry: DagNodeLayout[] = []
+    const exit: DagNodeLayout[] = []
+
+    for (const [laneIdx, group] of stage.groups.entries()) {
+      const { laneY, nodeY, laneH } = lanePosition(laneIdx, stage.groups.length)
+      const role = group.activities[0]?.role ?? null
+      const theme: 'research' | 'document' =
+        role === 'document' || role === 'wiki_curator' || role === 'wiki_ingestor' || laneIdx % 2 === 1
+          ? 'document'
+          : 'research'
+      const laneNodes: DagNodeLayout[] = group.activities.map((act, colIdx) => ({
+        id: act.id,
+        activity: act,
+        x: branchStartX + colIdx * COL_STEP,
+        y: nodeY,
+        width: NODE_W,
+        height: NODE_H,
+        laneId: group.id,
+      }))
+      nodes.push(...laneNodes)
+      if (laneNodes.length > 0) {
+        entry.push(laneNodes[0]!)
+        exit.push(laneNodes[laneNodes.length - 1]!)
+        for (let i = 0; i < laneNodes.length - 1; i++) {
+          edges.push(buildEdge(laneNodes[i]!, laneNodes[i + 1]!))
+        }
+      }
+      const laneX = branchStartX - 17
+      const laneW = Math.max(220, ( Math.max(1, group.activities.length) - 1) * COL_STEP + NODE_W + 68)
+      const lane: DagLaneLayout = {
+        id: group.id,
+        role,
+        theme,
+        group,
+        x: laneX,
+        y: laneY,
+        width: laneW,
+        height: laneH,
+        nodes: laneNodes,
+      }
+      lanes.push(lane)
+      groups.push({ group, lane, nodes: laneNodes })
+    }
+    stageBoundaries.push({ entry, exit })
+    cursorX = branchStartX + (maxCols - 1) * COL_STEP + NODE_W + 71
+  }
+
+  for (let i = 0; i < stageBoundaries.length - 1; i++) {
+    const current = stageBoundaries[i]!
+    const next = stageBoundaries[i + 1]!
+    for (const u of current.exit) {
+      for (const v of next.entry) {
+        edges.push(buildEdge(u, v))
+      }
+    }
+  }
+
+  const width = Math.max(1540, cursorX + 40)
+  return { width, height, rootY, groups, lanes, nodes, edges }
 }

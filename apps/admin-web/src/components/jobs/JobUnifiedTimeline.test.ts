@@ -92,4 +92,32 @@ describe('nested Job timeline', () => {
       expect(wrapper.text()).toContain('Job finished')
     } finally { wrapper.unmount() }
   })
+
+  it('renders DAG canvas swimlanes, SVG edges, zoom controls, and kind filters', async () => {
+    const activities = projectUnifiedActivity(job, events)
+    const wrapper = mount(JobUnifiedTimeline, {
+      props: { activities, selectedId: 'fork:turn', filter: { kind: 'all' }, roles: ['research'] },
+    })
+    try {
+      expect(wrapper.find('.canvas-viewport').exists()).toBe(true)
+      expect(wrapper.findAll('.lane-bg')).toHaveLength(2)
+      expect(wrapper.findAll('.edge-layer path[marker-end="url(#arrow)"]')).toHaveLength(7)
+      expect(wrapper.get('[data-zoom-readout]').text()).toBe('72%')
+
+      await wrapper.get('[data-zoom-in]').trigger('click')
+      expect(wrapper.get('[data-zoom-readout]').text()).toBe('82%')
+
+      await wrapper.get('[data-zoom-out]').trigger('click')
+      expect(wrapper.get('[data-zoom-readout]').text()).toBe('72%')
+
+      await wrapper.get('[data-zoom-fit]').trigger('click')
+      expect(wrapper.get('[data-zoom-readout]').text()).toMatch(/^\d+%$/)
+
+      const llmFilter = wrapper.findAll('.filter').find(btn => btn.text() === 'LLM')!
+      await llmFilter.trigger('click')
+      expect(wrapper.emitted('filter')).toEqual([[{ kind: 'llm' }]])
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })

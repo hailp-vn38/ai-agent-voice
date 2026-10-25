@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AdminJob, JobEvent } from '@/api/types/agent-jobs'
-import { groupTimelineActivities, projectUnifiedActivity, visibleActivities } from './unified-activity'
+import { groupTimelineActivities, layoutDagCanvas, projectUnifiedActivity, visibleActivities } from './unified-activity'
 
 const job = { id: 'job', status: 'running', steps: [
   { step_key: 'fetch-a', plugin_id: 'web-extractor', operation: 'fetch_url', status: 'succeeded', attempt_state: 'finished' },
@@ -161,6 +161,45 @@ describe('unified Job activity', () => {
     expect(rows.every(row => row.childRuns?.length === 0)).toBe(true)
     expect(projectUnifiedActivity(job, [event(1, 'agent_decision_accepted', { action: 'delegate' })])[0]?.memberCount).toBeNull()
     expect(projectUnifiedActivity(job, [event(1, 'agent_decision_accepted', { action: 'delegate', task_count: 2 })])[0]?.memberCount).toBe(2)
+  })
+
+  it('lays out Root → Fork → Parallel Child Swimlanes → Join on a 2D DAG canvas and filters by kind', () => {
+    const dagJob = {
+      ...job,
+      agent_runs: [
+        { agent_run_id: 'root', role: 'orchestrator', parent_agent_run_id: null },
+        { agent_run_id: 'child-a', role: 'research', parent_agent_run_id: 'root', fork_group_id: 'fork-1' },
+        { agent_run_id: 'child-b', role: 'document', parent_agent_run_id: 'root', fork_group_id: 'fork-1' },
+      ],
+    } as AdminJob
+    const rows = projectUnifiedActivity(dagJob, [
+      event(1, 'llm_run_started', { run_id: 'plan', role: 'planner', agent_run_id: 'root' }),
+      event(2, 'agent_decision_accepted', { run_id: 'plan', agent_run_id: 'root', action: 'delegate', fork_group_id: 'fork-1', task_count: 2 }),
+      event(3, 'llm_run_started', { run_id: 'res-llm', role: 'worker', agent_run_id: 'child-a' }),
+      event(4, 'llm_run_finished', { run_id: 'res-llm', status: 'completed' }),
+      event(5, 'step_started', { agent_run_id: 'child-a' }, 'fetch-a'),
+      event(6, 'step_finished', { status: 'succeeded', agent_run_id: 'child-a' }, 'fetch-a'),
+      event(7, 'llm_run_started', { run_id: 'doc-llm', role: 'worker', agent_run_id: 'child-b' }),
+      event(8, 'join_completed', { root_agent_run_id: 'root', fork_group_id: 'fork-1', member_count: 2 }),
+      event(9, 'job_finished', { status: 'running' }),
+    ])
+    expect(visibleActivities(rows, { kind: 'llm' }).map(r => r.id)).toEqual(['llm:plan', 'llm:res-llm', 'llm:doc-llm'])
+    expect(visibleActivities(rows, { kind: 'plugin' }).map(r => r.id)).toEqual(['step:fetch-a'])
+    expect(visibleActivities(rows, { kind: 'root' }).map(r => r.id)).toEqual(['llm:plan', 'fork:fork-1', 'join:fork-1', 'job:terminal'])
+
+    const dag = layoutDagCanvas(rows)
+    expect(dag.lanes).toHaveLength(2)
+    expect(dag.lanes[0]).toMatchObject({ id: 'child-a', theme: 'research', y: 48 })
+    expect(dag.lanes[1]).toMatchObject({ id: 'child-b', theme: 'document', y: 365 })
+    expect(dag.edges.map(e => `${e.fromId}->${e.toId}`)).toEqual([
+      'llm:res-llm->step:fetch-a',
+      'llm:plan->fork:fork-1',
+      'fork:fork-1->llm:res-llm',
+      'fork:fork-1->llm:doc-llm',
+      'step:fetch-a->join:fork-1',
+      'llm:doc-llm->join:fork-1',
+      'join:fork-1->job:terminal',
+    ])
   })
 
 })
