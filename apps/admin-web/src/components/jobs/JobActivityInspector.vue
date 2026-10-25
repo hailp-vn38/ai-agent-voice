@@ -20,6 +20,16 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const run = computed(() => props.activity?.llm ?? null)
 const step = computed(() => props.activity?.step ?? null)
+const stepAssistantMessage = computed(() => {
+  const fromStep = props.activity?.step?.assistant_message
+  if (typeof fromStep === 'string' && fromStep.trim().length > 0) return fromStep
+  const fromEvent = props.activity?.event?.payload.assistant_message
+  if (typeof fromEvent === 'string' && fromEvent.trim().length > 0) return fromEvent
+  return null
+})
+const agentMessages = computed(() =>
+  (props.activity?.agentRun?.messages ?? []).filter(m => m.text && m.text.trim().length > 0),
+)
 const pendingStage = computed(() => {
   if (run.value?.status !== 'running') return null
   switch (run.value.events.at(-1)?.event_type) {
@@ -232,6 +242,10 @@ function stageNote(event: JobEvent): string {
             </div>
           </dl>
           <template v-if="step.plugin_id">
+            <details v-if="stepAssistantMessage" class="mt-3 text-xs" open>
+              <summary class="cursor-pointer font-medium">{{ t('jobUi.agentMessage') }}</summary>
+              <p class="mt-2 whitespace-pre-wrap break-words rounded-lg bg-muted p-2">{{ stepAssistantMessage }}</p>
+            </details>
             <details class="mt-3 text-xs">
               <summary class="cursor-pointer font-medium">{{ t('jobUi.toolArguments') }}</summary>
               <pre class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(step.arguments, null, 2) ?? '—' }}</pre>
@@ -266,6 +280,22 @@ function stageNote(event: JobEvent): string {
         <details v-if="activity.agentRun?.goal_excerpt" class="mt-3 border-t pt-3 text-xs">
           <summary class="cursor-pointer font-medium">{{ t('jobUi.goal') }}</summary>
           <p class="mt-1 whitespace-pre-wrap break-words">{{ activity.agentRun.goal_excerpt }}</p>
+        </details>
+        <details v-if="agentMessages.length" class="mt-3 border-t pt-3 text-xs">
+          <summary class="cursor-pointer font-medium">{{ t('jobUi.agentMessages') }} ({{ agentMessages.length }})</summary>
+          <div class="mt-2 space-y-2">
+            <div
+              v-for="msg in agentMessages"
+              :key="msg.id"
+              class="rounded-lg bg-muted p-2"
+            >
+              <div class="mb-1 flex items-center justify-between text-[10px] font-semibold uppercase text-muted-foreground">
+                <span>{{ msg.role }}</span>
+                <span class="font-mono">#{{ msg.sequence }}</span>
+              </div>
+              <p class="whitespace-pre-wrap break-words">{{ msg.text }}</p>
+            </div>
+          </div>
         </details>
         <details v-if="activity.agentRun?.result" class="mt-3 border-t pt-3 text-xs">
           <summary class="cursor-pointer font-medium">{{ t('jobUi.agentResult') }}</summary>

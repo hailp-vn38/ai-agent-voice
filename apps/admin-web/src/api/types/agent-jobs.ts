@@ -62,6 +62,13 @@ export interface BackgroundSettingsUpdate {
 }
 
 export type AgentRole = 'orchestrator' | 'research' | 'document' | 'general' | 'root' | 'source_collector' | 'wiki_ingestor' | 'wiki_curator' | (string & {})
+export interface AgentMessageView {
+  id: string
+  sequence: number
+  role: 'user' | 'assistant' | (string & {})
+  text: string
+  tool_call_ids?: string[]
+}
 export interface AgentRunView {
   agent_run_id: string
   parent_agent_run_id: string | null
@@ -69,6 +76,7 @@ export interface AgentRunView {
   role: AgentRole
   goal_excerpt: string
   result?: Record<string, unknown> | null
+  messages?: AgentMessageView[]
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   run_index: number
   llm_rounds: number
@@ -97,6 +105,7 @@ export interface JobStep {
   error_code?: string | null
   attempt_state?: string | null
   instruction: string
+  assistant_message?: string | null
   required: boolean
   dependencies: string[]
   input_refs: string[]

@@ -35,6 +35,39 @@ fn map_step_status(status: &str) -> &'static str {
     }
 }
 
+fn find_invocation_assistant_message<'a>(
+    session: &'a orchestrator_flow_rs::TaskAgentSessionView,
+    tool_call_id: &str,
+) -> Option<&'a str> {
+    session
+        .recent_messages
+        .iter()
+        .find(|m| {
+            m.role == "assistant"
+                && !m.text.trim().is_empty()
+                && m.tool_calls.iter().any(|tc| tc.call_id == tool_call_id)
+        })
+        .map(|m| m.text.as_str())
+}
+
+fn find_last_assistant_message(session: &orchestrator_flow_rs::TaskAgentSessionView) -> Option<&str> {
+    let latest_run_id = session.latest_run.as_ref().map(|r| r.run_id.as_str());
+    session
+        .recent_messages
+        .iter()
+        .rev()
+        .find(|m| {
+            m.role == "assistant"
+                && m.tool_calls.is_empty()
+                && !m.text.trim().is_empty()
+                && match (latest_run_id, m.run_id.as_deref()) {
+                    (Some(expected), Some(actual)) => expected == actual,
+                    _ => true,
+                }
+        })
+        .map(|m| m.text.as_str())
+}
+
 /// Projects a [`TaskView`] and optional [`TaskDetailView`] into the `AdminJob` JSON contract
 /// consumed by Admin Web UI (`/api/admin/jobs` and `/api/admin/jobs/{id}`).
 pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView>) -> Value {
@@ -74,12 +107,22 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                     }
                 });
 
-            let last_assistant = session
+            let last_assistant = find_last_assistant_message(session).map(|text| json!({ "text": text }));
+
+            let messages: Vec<Value> = session
                 .recent_messages
                 .iter()
-                .rev()
-                .find(|m| m.role == "assistant" && !m.text.trim().is_empty())
-                .map(|m| json!({ "text": m.text }));
+                .filter(|m| (m.role == "user" || m.role == "assistant") && !m.text.trim().is_empty())
+                .map(|m| {
+                    json!({
+                        "id": m.id,
+                        "sequence": m.sequence,
+                        "role": m.role,
+                        "text": m.text,
+                        "tool_call_ids": m.tool_calls.iter().map(|tc| &tc.call_id).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
 
             agent_runs.push(json!({
                 "agent_run_id": session.session_id,
@@ -88,6 +131,7 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                 "role": session.agent_id,
                 "goal_excerpt": goal_excerpt,
                 "result": last_assistant,
+                "messages": messages,
                 "status": run_status,
                 "run_index": idx,
                 "llm_rounds": llm_rounds,
@@ -99,6 +143,7 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
             }));
 
             for (inv_idx, inv) in session.invocations.iter().enumerate() {
+                let assistant_message = find_invocation_assistant_message(session, &inv.tool_call_id);
                 steps.push(json!({
                     "step_key": format!("{}:{}:{}", session.agent_id, inv_idx + 1, inv.tool_name),
                     "agent_run_id": session.session_id,
@@ -108,6 +153,7 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                     "error_code": inv.error_code,
                     "attempt_state": inv.status,
                     "instruction": format!("{} -> {}", session.agent_id, inv.tool_name),
+                    "assistant_message": assistant_message,
                     "required": true,
                     "dependencies": [],
                     "input_refs": [],
@@ -257,6 +303,16 @@ fn push_session_events<'a>(
     for (inv_idx, inv) in session.invocations.iter().enumerate() {
         let step_key = format!("{}:{}:{}", session.agent_id, inv_idx + 1, inv.tool_name);
         *seq += 1;
+        let mut step_payload = json!({
+            "agent_run_id": session.session_id,
+            "tool_name": inv.tool_name,
+            "arguments": inv.arguments,
+        });
+        if let Some(msg) = find_invocation_assistant_message(session, &inv.tool_call_id)
+            && let Some(obj) = step_payload.as_object_mut()
+        {
+            obj.insert("assistant_message".to_string(), json!(msg));
+        }
         events.push((
             *seq,
             json!({
@@ -264,11 +320,7 @@ fn push_session_events<'a>(
                 "event_type": "step_started",
                 "created_at": created_at,
                 "step_key": step_key,
-                "payload": {
-                    "agent_run_id": session.session_id,
-                    "tool_name": inv.tool_name,
-                    "arguments": inv.arguments,
-                }
+                "payload": step_payload,
             }),
         ));
 
@@ -310,6 +362,20 @@ fn push_session_events<'a>(
         && run.status != "running"
     {
         *seq += 1;
+        let mut finish_payload = json!({
+            "agent_run_id": session.session_id,
+            "run_id": run.run_id,
+            "status": map_agent_run_status(&run.status),
+            "steps": run.steps,
+            "input_tokens": run.input_tokens,
+            "output_tokens": run.output_tokens,
+            "error_code": run.error_code,
+        });
+        if let Some(msg) = find_last_assistant_message(session)
+            && let Some(obj) = finish_payload.as_object_mut()
+        {
+            obj.insert("assistant_message".to_string(), json!(msg));
+        }
         events.push((
             *seq,
             json!({
@@ -317,15 +383,7 @@ fn push_session_events<'a>(
                 "event_type": "agent_run_finished",
                 "created_at": created_at,
                 "step_key": Value::Null,
-                "payload": {
-                    "agent_run_id": session.session_id,
-                    "run_id": run.run_id,
-                    "status": map_agent_run_status(&run.status),
-                    "steps": run.steps,
-                    "input_tokens": run.input_tokens,
-                    "output_tokens": run.output_tokens,
-                    "error_code": run.error_code,
-                }
+                "payload": finish_payload,
             }),
         ));
     }

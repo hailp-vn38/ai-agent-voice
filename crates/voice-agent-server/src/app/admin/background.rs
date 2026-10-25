@@ -614,6 +614,24 @@ pub(super) async fn events(
     }
 }
 
+fn is_committed_execution_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "message.committed"
+            | "tool.started"
+            | "tool.completed"
+            | "tool.failed"
+            | "tool.interrupted"
+            | "session.changed"
+            | "compaction.completed"
+            | "run.started"
+            | "run.completed"
+            | "run.failed"
+            | "run.cancelled"
+            | "run.interrupted"
+    )
+}
+
 fn task_id_from_event(event: &TaskEvent) -> Option<String> {
     match event {
         TaskEvent::TaskCreated { task } | TaskEvent::TaskTerminal { task } => Some(task.id.clone()),
@@ -623,6 +641,11 @@ fn task_id_from_event(event: &TaskEvent) -> Option<String> {
         TaskEvent::ScheduleTriggered {
             spawned_task_id, ..
         } => Some(spawned_task_id.clone()),
+        TaskEvent::TaskExecutionStream {
+            task_id,
+            event_type,
+            ..
+        } if is_committed_execution_event(event_type) => Some(task_id.clone()),
         TaskEvent::TaskExecutionStream { .. } | TaskEvent::ReminderDue { .. } => None,
     }
 }

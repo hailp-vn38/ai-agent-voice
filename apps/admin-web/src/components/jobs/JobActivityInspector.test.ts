@@ -87,4 +87,59 @@ describe('Job activity presentation', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('displays assistant tool-call message and agent run messages when present', () => {
+    const jobWithMessages = {
+      ...view,
+      agent_runs: [{
+        agent_run_id: 'sess-root-1',
+        parent_agent_run_id: null,
+        role: 'daily_root',
+        goal_excerpt: 'Search wiki for Rust',
+        status: 'running',
+        run_index: 0,
+        llm_rounds: 1,
+        tool_calls: 1,
+        input_tokens: 100,
+        output_tokens: 40,
+        started_at: '1760000001',
+        finished_at: null,
+        messages: [
+          { id: 'm1', sequence: 1, role: 'user', text: 'Search wiki for Rust' },
+          { id: 'm2', sequence: 2, role: 'assistant', text: 'I will search the Wiki for Rust now.', tool_call_ids: ['call-1'] },
+        ],
+      }],
+      steps: [{
+        step_key: 'daily_root:1:wiki_search',
+        agent_run_id: 'sess-root-1',
+        plugin_id: 'orchestrator_flow',
+        operation: 'wiki_search',
+        status: 'running',
+        instruction: 'daily_root -> wiki_search',
+        assistant_message: 'I will search the Wiki for Rust now.',
+        required: true,
+        dependencies: [],
+        input_refs: [],
+        arguments: { query: 'Rust' },
+        output_schema: {},
+        result: null,
+      }],
+    } as AdminJob
+    const activity = projectUnifiedActivity(jobWithMessages, [{
+      sequence: 1,
+      event_type: 'step_started',
+      step_key: 'daily_root:1:wiki_search',
+      created_at: '2026-10-15T00:00:00Z',
+      payload: {
+        agent_run_id: 'sess-root-1',
+        tool_name: 'wiki_search',
+        assistant_message: 'I will search the Wiki for Rust now.',
+      },
+    }])[0]!
+    const wrapper = mount(JobActivityInspector, { props: { activity, open: true } })
+    try {
+      expect(wrapper.text()).toContain('I will search the Wiki for Rust now.')
+      expect(wrapper.text()).toContain('Search wiki for Rust')
+    } finally { wrapper.unmount() }
+  })
+
 })

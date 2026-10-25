@@ -231,3 +231,144 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
         "Voice task_create must route user tasks to Flow 1 (daily_root) without exposing internal Flow 2 (wiki_root)"
     );
 }
+
+#[test]
+fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() {
+    use orchestrator_flow_rs::{
+        TaskAgentMessageView, TaskAgentRunView, TaskAgentSessionView, TaskDetailView,
+        TaskMessageToolCallView, TaskToolInvocationView,
+    };
+
+    let task = TaskView {
+        id: "task-msg-1".to_string(),
+        owner_id: "personal".to_string(),
+        workspace_id: "homelab".to_string(),
+        title: "Research AI".to_string(),
+        prompt: "Search wiki for Rust".to_string(),
+        flow_id: "daily".to_string(),
+        agent_id: "daily_root".to_string(),
+        source: TaskSource::Api,
+        schedule_id: None,
+        session_id: "sess-root-1".to_string(),
+        latest_turn_id: Some("turn-1".to_string()),
+        status: orchestrator_flow_rs::TaskStatus::Completed,
+        active_subagent: None,
+        active_tool: None,
+        progress_summary: Some("Đã tìm xong tài liệu Rust.".to_string()),
+        output_preview: Some("Đã tìm xong tài liệu Rust.".to_string()),
+        related_wiki_links: Vec::new(),
+        error_code: None,
+        error_message: None,
+        created_at: 1_760_000_000_000,
+        started_at: Some(1_760_000_001_000),
+        updated_at: 1_760_000_005_000,
+        finished_at: Some(1_760_000_005_000),
+    };
+
+    let root_session = TaskAgentSessionView {
+        session_id: "sess-root-1".to_string(),
+        parent_session_id: None,
+        agent_id: "daily_root".to_string(),
+        is_root: true,
+        archived: false,
+        state_revision: 3,
+        latest_run: Some(TaskAgentRunView {
+            run_id: "run-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            attempt: 1,
+            status: "completed".to_string(),
+            steps: 2,
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            error_code: None,
+            error_message: None,
+        }),
+        invocations: vec![TaskToolInvocationView {
+            invocation_id: "inv-1".to_string(),
+            run_id: "run-1".to_string(),
+            tool_call_id: "call-wiki-1".to_string(),
+            tool_name: "wiki_search".to_string(),
+            arguments: serde_json::json!({ "query": "Rust" }),
+            status: "completed".to_string(),
+            result: Some(serde_json::json!({ "hits": 3 })),
+            child_session_id: None,
+            error_code: None,
+        }],
+        recent_messages: vec![
+            TaskAgentMessageView {
+                id: "msg-user-1".to_string(),
+                sequence: 1,
+                role: "user".to_string(),
+                text: "Search wiki for Rust".to_string(),
+                run_id: Some("run-1".to_string()),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            },
+            TaskAgentMessageView {
+                id: "msg-asst-1".to_string(),
+                sequence: 2,
+                role: "assistant".to_string(),
+                text: "Tôi sẽ tra cứu Wiki về Rust trước.".to_string(),
+                run_id: Some("run-1".to_string()),
+                tool_call_id: None,
+                tool_calls: vec![TaskMessageToolCallView {
+                    call_id: "call-wiki-1".to_string(),
+                    name: "wiki_search".to_string(),
+                    arguments: serde_json::json!({ "query": "Rust" }),
+                }],
+            },
+            TaskAgentMessageView {
+                id: "msg-asst-2".to_string(),
+                sequence: 4,
+                role: "assistant".to_string(),
+                text: "Đã tìm xong tài liệu Rust.".to_string(),
+                run_id: Some("run-1".to_string()),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            },
+        ],
+    };
+
+    let detail = TaskDetailView {
+        task: task.clone(),
+        followups: Vec::new(),
+        artifacts: Vec::new(),
+        execution_summary: None,
+        root_agent: Some(root_session),
+        subagents: Vec::new(),
+        family_snapshot: None,
+    };
+
+    let projected = project_task_to_admin_job(&task, Some(&detail));
+    let agent_run = &projected["agent_runs"][0];
+    let msgs = agent_run["messages"].as_array().expect("agent_run.messages array");
+    assert_eq!(msgs.len(), 3);
+    assert_eq!(msgs[1]["role"], "assistant");
+    assert_eq!(msgs[1]["text"], "Tôi sẽ tra cứu Wiki về Rust trước.");
+    assert_eq!(msgs[1]["tool_call_ids"], serde_json::json!(["call-wiki-1"]));
+
+    let step = &projected["steps"][0];
+    assert_eq!(
+        step["assistant_message"],
+        "Tôi sẽ tra cứu Wiki về Rust trước."
+    );
+
+    let events = project_task_events(&detail, 0, 100);
+    let step_started = events
+        .iter()
+        .find(|e| e["event_type"] == "step_started")
+        .expect("step_started event");
+    assert_eq!(
+        step_started["payload"]["assistant_message"],
+        "Tôi sẽ tra cứu Wiki về Rust trước."
+    );
+    let run_finished = events
+        .iter()
+        .find(|e| e["event_type"] == "agent_run_finished")
+        .expect("agent_run_finished event");
+    assert_eq!(
+        run_finished["payload"]["assistant_message"],
+        "Đã tìm xong tài liệu Rust."
+    );
+}
