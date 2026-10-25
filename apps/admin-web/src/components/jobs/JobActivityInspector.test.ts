@@ -202,6 +202,9 @@ describe('Job activity presentation', () => {
       props: { jobId: 'job-art-1', activity: activities[1]!, open: true },
     })
     try {
+      const resultCard = timeline.get('[data-step="job:result"]')
+      expect(resultCard.get('[data-result-markdown]').html()).toContain('Final Summary')
+      expect(resultCard.find('[data-canvas-artifact-preview]').exists()).toBe(true)
       expect(timeline.text()).toContain('📎 summary_report.md')
       expect(timeline.text()).toContain('1 artifacts')
       expect(inspector.text()).toContain('Final Summary')

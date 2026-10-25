@@ -426,6 +426,7 @@ describe('unified Job activity', () => {
       'agent:child-sess',
       'agent:root-sess',
       'job:terminal',
+      'job:result',
     ])
     expect(rows[0]).toMatchObject({
       id: 'llm:run-root',
@@ -464,6 +465,12 @@ describe('unified Job activity', () => {
     expect(rows[6]).toMatchObject({
       id: 'job:terminal',
       title: 'Job finished',
+      note: 'succeeded',
+    })
+    expect(rows[7]).toMatchObject({
+      id: 'job:result',
+      kind: 'result',
+      title: 'Result',
       note: 'Bản tổng hợp cuối cùng từ Root Agent.',
       jobResult: {
         text: 'Bản tổng hợp cuối cùng từ Root Agent.',
@@ -476,6 +483,7 @@ describe('unified Job activity', () => {
       'step:daily_root:1:subagent',
       'agent:root-sess',
       'job:terminal',
+      'job:result',
     ])
 
     const dag = layoutDagCanvas(rows)
@@ -486,6 +494,7 @@ describe('unified Job activity', () => {
       'step:daily_root:1:subagent->llm:run-child',
       'agent:child-sess->agent:root-sess',
       'agent:root-sess->job:terminal',
+      'job:terminal->job:result',
     ])
   })
 

@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ChevronRight } from '@lucide/vue'
+import { ChevronRight, Download, Eye } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
+import { agentJobsApi } from '@/api/agent-jobs'
+import type { JobArtifact } from '@/api/types/agent-jobs'
+import { jobResultReport, type JobReport } from '@/domain/jobs/result-report'
 import {
   groupTimelineActivities,
   layoutDagCanvas,
@@ -9,6 +12,7 @@ import {
   type UnifiedActivity,
 } from '@/domain/jobs/unified-activity'
 import { useI18n } from '@/composables/useI18n'
+import ArtifactPreviewDialog, { artifactPreview } from './artifacts/ArtifactPreviewDialog.vue'
 import JobActivityInspector from './JobActivityInspector.vue'
 
 const props = defineProps<{
@@ -158,7 +162,7 @@ function onWheel(event: WheelEvent) {
 
 function onPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null
-  if (!viewportRef.value || target?.closest('button, summary, details')) return
+  if (!viewportRef.value || target?.closest('button, summary, details, .result-card-body')) return
   dragging.value = true
   dragStart = {
     x: event.clientX,
@@ -174,6 +178,34 @@ function onPointerMove(event: PointerEvent) {
 }
 function onPointerUp() {
   dragging.value = false
+}
+
+const previewedArtifact = ref<JobArtifact | null>(null)
+const downloadingArtifactId = ref<string | null>(null)
+
+function resultReport(activity: UnifiedActivity): JobReport {
+  return jobResultReport(activity.jobResult)
+}
+
+function canPreviewArtifact(item: JobArtifact): boolean {
+  const preview = artifactPreview(item)
+  return Boolean(props.jobId) && preview.kind !== 'download' && item.size_bytes >= 0 && item.size_bytes <= preview.limit
+}
+
+async function downloadArtifact(item: JobArtifact) {
+  if (!props.jobId || downloadingArtifactId.value) return
+  downloadingArtifactId.value = item.id
+  try {
+    const data = await agentJobsApi.artifact(props.jobId, item.id)
+    const url = URL.createObjectURL(data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = item.filename || item.name || item.id
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } finally {
+    downloadingArtifactId.value = null
+  }
 }
 
 function isRootRole(role: string | null): boolean {
@@ -211,6 +243,8 @@ function nodeIcon(kind: ActivityKind): string {
       return '⑂'
     case 'join':
       return '⑃'
+    case 'result':
+      return '📄'
     default:
       return '✓'
   }
@@ -226,7 +260,7 @@ function footerLeft(activity: UnifiedActivity): string {
   }
   if (activity.kind === 'plugin') return activity.step?.step_key ?? 'plugin'
   if (activity.kind === 'fork' || activity.kind === 'join') return activity.forkGroupId ?? activity.kind
-  if (activity.kind === 'job' && activity.artifacts?.length) {
+  if ((activity.kind === 'job' || activity.kind === 'result') && activity.artifacts?.length) {
     return `${activity.artifacts.length} ${t('jobUi.artifacts').toLowerCase()}`
   }
   return activity.step?.step_key ?? activity.agentRunId ?? activity.kind
@@ -445,7 +479,81 @@ function footerRight(activity: UnifiedActivity): string {
 
                   <ol v-show="!item.lane?.collapsed">
                     <li v-for="node in item.nodes" :key="node.id" class="timeline-row">
+                      <div
+                        v-if="node.activity.kind === 'result'"
+                        class="graph-node result-card"
+                        :class="{
+                          selected: activeSelectedId === node.activity.id,
+                        }"
+                        :data-step="node.activity.id"
+                        :data-kind="node.activity.kind"
+                        :style="{
+                          left: node.x + 'px',
+                          top: node.y + 'px',
+                          width: node.width + 'px',
+                          height: node.height + 'px',
+                        }"
+                        @click="onNodeClick(node.activity.id)"
+                      >
+                        <div class="node-header">
+                          <div class="flex min-w-0 items-center gap-2">
+                            <span class="node-icon" aria-hidden="true">{{ nodeIcon(node.activity.kind) }}</span>
+                            <b class="truncate text-xs" :title="t('jobUi.result')">{{ t('jobUi.result') }}</b>
+                          </div>
+                          <span class="node-status" :class="node.activity.status">
+                            ● {{ node.activity.status }}
+                          </span>
+                        </div>
+                        <div class="result-card-body" @wheel.stop>
+                          <article
+                            v-if="resultReport(node.activity).kind === 'markdown'"
+                            class="result-markdown"
+                            data-result-markdown
+                            v-html="(resultReport(node.activity) as { kind: 'markdown'; html: string }).html"
+                          />
+                          <pre
+                            v-else-if="resultReport(node.activity).kind === 'json'"
+                            class="result-json"
+                          >{{ (resultReport(node.activity) as { kind: 'json'; text: string }).text }}</pre>
+                          <p v-else class="desc">{{ node.activity.note }}</p>
+                        </div>
+                        <div v-if="node.activity.artifacts?.length" class="result-artifacts" @wheel.stop>
+                          <div
+                            v-for="art in node.activity.artifacts"
+                            :key="art.id"
+                            class="result-artifact-row"
+                          >
+                            <span class="truncate" :title="art.filename || art.name || art.id">
+                              📎 {{ art.filename || art.name || art.id }}
+                            </span>
+                            <div v-if="jobId" class="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                class="artifact-btn"
+                                :disabled="downloadingArtifactId !== null"
+                                @click.stop="downloadArtifact(art)"
+                              >
+                                <Download class="size-3" />{{ t('jobUi.download') }}
+                              </button>
+                              <button
+                                v-if="canPreviewArtifact(art)"
+                                type="button"
+                                class="artifact-btn"
+                                data-canvas-artifact-preview
+                                @click.stop="previewedArtifact = art"
+                              >
+                                <Eye class="size-3" />Preview
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="node-footer">
+                          <span class="truncate">{{ footerLeft(node.activity) }}</span>
+                          <span class="shrink-0">{{ footerRight(node.activity) }}</span>
+                        </div>
+                      </div>
                       <button
+                        v-else
                         type="button"
                         class="graph-node"
                         :class="{
@@ -534,6 +642,14 @@ function footerRight(activity: UnifiedActivity): string {
         />
       </aside>
     </div>
+    <ArtifactPreviewDialog
+      v-if="previewedArtifact && jobId"
+      :key="previewedArtifact.id"
+      :job-id="jobId"
+      :artifact="previewedArtifact"
+      @close="previewedArtifact = null"
+      @download="previewedArtifact && downloadArtifact(previewedArtifact)"
+    />
   </section>
 </template>
 
@@ -793,10 +909,126 @@ details.lane-details[open] > .lane-title .branch-toggle {
   color: #fad092;
 }
 .graph-node[data-kind='job'] .node-icon,
+.graph-node[data-kind='result'] .node-icon,
 .graph-node[data-kind='agent'] .node-icon,
 .graph-node[data-kind='plan'] .node-icon {
   background: #2b5549;
   color: #a5ecd6;
+}
+.result-card {
+  padding: 13px 14px;
+  border-color: #3c695d;
+  background: linear-gradient(155deg, #1b283b, #131c2b);
+  cursor: default;
+}
+.result-card-body {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #0f1623b8;
+  border: 1px solid #2b3850;
+  scrollbar-color: #3e4860 transparent;
+  user-select: text;
+}
+.result-markdown {
+  font-size: 11px;
+  line-height: 1.55;
+  color: #e3eaf6;
+  overflow-wrap: anywhere;
+}
+.result-markdown :deep(h1),
+.result-markdown :deep(h2),
+.result-markdown :deep(h3),
+.result-markdown :deep(h4) {
+  font-weight: 680;
+  line-height: 1.35;
+  margin: 0.7em 0 0.35em;
+  color: #ffffff;
+}
+.result-markdown :deep(h1:first-child),
+.result-markdown :deep(h2:first-child),
+.result-markdown :deep(h3:first-child),
+.result-markdown :deep(p:first-child) {
+  margin-top: 0;
+}
+.result-markdown :deep(h1) {
+  font-size: 1.25em;
+}
+.result-markdown :deep(h2) {
+  font-size: 1.14em;
+}
+.result-markdown :deep(h3) {
+  font-size: 1.05em;
+}
+.result-markdown :deep(p),
+.result-markdown :deep(ul),
+.result-markdown :deep(ol) {
+  margin: 0.4em 0;
+}
+.result-markdown :deep(ul),
+.result-markdown :deep(ol) {
+  padding-left: 1.25em;
+}
+.result-markdown :deep(li) {
+  margin: 0.2em 0;
+}
+.result-markdown :deep(code) {
+  background: #1e293d;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+.result-markdown :deep(pre) {
+  background: #141d2d;
+  padding: 6px 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 10px;
+}
+.result-json {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d7e2f4;
+}
+.result-artifacts {
+  margin-top: 7px;
+  max-height: 68px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.result-artifact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: #182336;
+  border: 1px solid #2b3b55;
+  font-size: 9.5px;
+  color: #83e0e9;
+}
+.artifact-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: #223149;
+  border: 1px solid #394e70;
+  color: #d6e2f5;
+  font-size: 9px;
+  cursor: pointer;
+}
+.artifact-btn:hover {
+  background: #2c3f5e;
 }
 .graph-node b {
   display: block;

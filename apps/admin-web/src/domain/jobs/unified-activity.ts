@@ -1,7 +1,7 @@
 import type { AdminJob, AgentRunView, JobArtifact, JobEvent, JobStep } from '@/api/types/agent-jobs'
 import { projectLlmRuns, type LlmRun } from './llm-activity'
 
-export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan'
+export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan' | 'result'
 export type ActivityStatus = 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled' | 'skipped' | 'unknown'
 export type ActivityFilter =
   | { kind: 'all' }
@@ -180,6 +180,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       const resultText =
         text(job.result?.text) ?? text(job.result?.summary) ?? text(job.result?.markdown)
       const allArtifacts = job.artifacts && job.artifacts.length > 0 ? job.artifacts : undefined
+      const hasJobResult = Boolean(job.result && Object.keys(job.result).length > 0)
       const status: ActivityStatus =
         payload.status === 'succeeded' || payload.status === 'partial_success'
           ? 'completed'
@@ -195,12 +196,29 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         agentRunId,
         role,
         title: 'Job finished',
-        note: text(payload.error_code) ?? resultText ?? text(payload.status) ?? 'Terminal checkpoint',
+        note: text(payload.error_code) ?? text(payload.status) ?? 'Terminal checkpoint',
         assistantMessage: resultText,
         jobResult: job.result ?? null,
         artifacts: allArtifacts,
         event,
       })
+      if (hasJobResult || allArtifacts) {
+        items.push({
+          id: 'job:result',
+          sequence: event.sequence + 0.5,
+          time: event.created_at,
+          kind: 'result',
+          status,
+          agentRunId,
+          role,
+          title: 'Result',
+          note: resultText ?? 'Job output',
+          assistantMessage: resultText,
+          jobResult: job.result ?? null,
+          artifacts: allArtifacts,
+          event,
+        })
+      }
     } else if (event.event_type === 'plan_accepted' || event.event_type === 'plan_rejected') {
       make('plan', 'plan:' + event.sequence, event.event_type === 'plan_accepted' ? 'Plan accepted' : 'Plan rejected',
         text(payload.code) ?? 'Legacy DAG', event.event_type === 'plan_rejected' ? 'failed' : 'completed')
@@ -330,6 +348,8 @@ export interface DagCanvasLayout {
 const NODE_W = 164
 const BASE_NODE_H = 122
 const EXTRA_NODE_H = 138
+const RESULT_NODE_W = 420
+const RESULT_NODE_H = 320
 const NODE_ROW_GAP = 32
 const LANE_HEADER_OFFSET = 62
 const LANE_BOTTOM_PAD = 22
@@ -339,7 +359,12 @@ const COLLAPSED_LANE_H = 88
 const LANE_GAP = 46
 const TOP_PAD = 48
 
+function activityNodeWidth(act: UnifiedActivity): number {
+  return act.kind === 'result' ? RESULT_NODE_W : NODE_W
+}
+
 function activityNodeHeight(act: UnifiedActivity): number {
+  if (act.kind === 'result') return RESULT_NODE_H
   if (
     (act.llm && act.step) ||
     (act.childRuns && act.childRuns.length > 0) ||
@@ -498,13 +523,14 @@ export function layoutDagCanvas(
     const nextStage = stages[stageIdx + 1]
     if (stage.type === 'root') {
       const act = stage.group.activities[0]!
+      const nodeW = activityNodeWidth(act)
       const nodeH = activityNodeHeight(act)
       const node: DagNodeLayout = {
         id: act.id,
         activity: act,
         x: cursorX,
         y: Math.max(TOP_PAD, Math.round(rootCenterY - nodeH / 2)),
-        width: NODE_W,
+        width: nodeW,
         height: nodeH,
         laneId: null,
       }
@@ -512,7 +538,7 @@ export function layoutDagCanvas(
       groups.push({ group: stage.group, lane: null, nodes: [node] })
       stageBoundaries.push({ entry: [node], exit: [node] })
       maxRight = Math.max(maxRight, node.x + node.width)
-      cursorX += nextStage?.type === 'branches' ? 248 : 225
+      cursorX += nodeW + (nextStage?.type === 'branches' ? 84 : 61)
       continue
     }
 
