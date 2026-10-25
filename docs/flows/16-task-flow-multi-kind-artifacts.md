@@ -9,15 +9,21 @@ Tài liệu này mô tả luồng thực thi Task nền hợp nhất trên `voic
 `crates/voice-agent-server/src/services/task_flow/mod.rs` khởi tạo `TaskManager` và `Orchestrator` với 2 Flow chính:
 
 ### Flow 1 (`daily_root`) — Thu thập Thông tin & Trợ lý Đa chức năng
-- **Root Agent (`daily_root`)**: Chỉ có tool `subagent`, nhận toàn bộ Job từ người dùng / Voice Agent và điều phối tới 5 Subagent chuyên biệt:
-  1. `source_collector`: Thu thập nguồn ngoài (YouTube Playlist qua `yt_list_playlist` / `yt_fetch_transcript`, tài liệu PDF qua `anydoc_inspect_pdf` / `anydoc_save_to_sources`, hoặc trang Web qua `fetch_html` / `html_extract_*`), phân loại chủ đề `<domain>/<topic>` và lưu file Markdown thô vào `sources/<domain>/<topic>/` (tự động kích hoạt Flow 2).
+- **Root Agent (`daily_root`, `user_routable: true`)**: Chỉ có tool `subagent`, là điểm vào chuẩn duy nhất (`DEFAULT_USER_ROOT_AGENT_ID`) nhận toàn bộ Job từ người dùng / Voice Agent (`task_create`, `reminder_create`) và điều phối tới 5 Subagent chuyên biệt có ranh giới công cụ ghi (write seams) tách biệt:
+  1. `source_collector`: Thu thập nguồn ngoài (`COLLECTOR_TOOL_NAMES`: YouTube Playlist qua `yt_list_playlist` / `yt_fetch_transcript`, tài liệu PDF qua `anydoc_inspect_pdf` / `anydoc_save_to_sources`, hoặc trang Web qua `fetch_html` / `html_extract_*`), phân loại chủ đề `<domain>/<topic>` và lưu file Markdown thô vào `sources/<domain>/<topic>/` (tự động kích hoạt Flow 2).
   2. `wiki_researcher`: Tra cứu chỉ-đọc kho tri thức Wiki (`wiki_query`, `wiki_get`, `wiki_tree`, `wiki_graph_neighbors`) và trích xuất trang Web (`fetch_html`, `html_extract_*`).
   3. `report_stager`: Tổng hợp nội dung thảo luận vào `sources/<domain>/<topic>/` qua `add_to_sources` hoặc xuất báo cáo độc lập qua `markdown_create` / `markdown_read`.
   4. `media_creator`: Chuyên gia tạo hình ảnh minh họa/sơ đồ (`image_create` cho `image/png` và `image/svg+xml`), tổng hợp giọng nói TTS (`tts_synthesize` cho `audio/wav`), và xuất dữ liệu cấu trúc (`artifact_create`).
   5. `reminder_planner`: Quản lý lịch hẹn và lời nhắc (`reminder_create`, `reminder_list`, `reminder_complete`, `reminder_delete`).
 
 ### Flow 2 (`wiki_root`) — Đường ống Biên soạn Tri thức Karpathy LLM Wiki Tự động
-- **Root Agent (`wiki_root`)**: Tự động kích hoạt qua `WikiAutoFlowBinding` khi phát hiện có file mới thêm vào `sources/`, điều phối tuần tự 2 Subagent (`wiki_ingestor`, `wiki_curator`) để biên soạn trang Wiki, tổng hợp Synthesis và kiểm toán `wiki_lint` (hoàn toàn không chứa tool thu thập ngoại vi).
+- **Root Agent (`wiki_root`, `user_routable: false`)**: Tự động kích hoạt qua `WikiAutoFlowBinding` khi phát hiện có file mới thêm vào `sources/`, điều phối tuần tự 2 Subagent (`wiki_ingestor`, `wiki_curator`) để biên soạn trang Wiki, tổng hợp Synthesis và kiểm toán `wiki_lint` (hoàn toàn không chứa tool thu thập ngoại vi).
+- **Bảo vệ Điều hướng (`VoiceTaskSubmit`)**:
+  - `VoiceTaskSubmit::tool_definitions()` sử dụng `is_user_routable_root_agent` để chỉ hiển thị các Root Agent có `user_routable == true` (`daily_root`) trong schema `target_agent`.
+  - `VoiceTaskSubmit::execute()` sử dụng `normalize_user_target_agent` để tự động chuyển hướng mọi lệnh gọi legacy (`task_create` hoặc `reminder_create`) có `target_agent = "wiki_root"` (hoặc `"<flow>/wiki_root"`) sang `"daily_root"`.
+- **Đồng bộ Prompts & Cấu hình Lưu trữ**:
+  - Toàn bộ hằng số System Prompt & Skill chuẩn (`DAILY_ROOT_PROMPT`, `WIKI_ROOT_PROMPT`, `MEDIA_CREATOR_PROMPT`, `DAILY_SYNTHESIS_STAGING_SKILL`, ...) được dùng chung từ `orchestrator_flow_rs::prompts`.
+  - Khi nạp `agent_settings.json`, `load_persisted_settings` tự động lọc bỏ các `allowed_tools` và `allowed_skills` không còn nằm trong `spec.available_tools` / `spec.available_skills`.
 
 ---
 

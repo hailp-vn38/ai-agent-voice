@@ -16,7 +16,10 @@ pub use catalog::{
     ResolvedLlmProvider, build_agent_definitions, default_orchestrator_provider,
     project_agents_json, resolve_llm_provider_catalog,
 };
-pub use specs::{AGENT_SPECS, AgentSpec, find_agent_spec};
+pub use specs::{
+    AGENT_SPECS, AgentSpec, DEFAULT_USER_ROOT_AGENT_ID, WIKI_AUTOFLOW_ROOT_AGENT_ID,
+    find_agent_spec, is_user_routable_root_agent, normalize_user_target_agent,
+};
 
 pub const DEFAULT_ORCHESTRATOR_PROVIDER_REF: &str = "orchestrator:default";
 const AGENT_SETTINGS_FILE: &str = "agent_settings.json";

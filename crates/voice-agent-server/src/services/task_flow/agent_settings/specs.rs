@@ -9,12 +9,21 @@ use crate::services::task_flow::workspace_seed::{
     WIKI_ROOT_PROMPT,
 };
 
+/// Default user-facing Root Agent ID for Flow 1 (`daily_root`).
+pub const DEFAULT_USER_ROOT_AGENT_ID: &str = "daily_root";
+
+/// Default automated Wiki pipeline Root Agent ID for Flow 2 (`wiki_root`).
+pub const WIKI_AUTOFLOW_ROOT_AGENT_ID: &str = "wiki_root";
+
 #[derive(Clone, Copy, Debug)]
 pub struct AgentSpec {
     pub id: &'static str,
     pub flow_id: &'static str,
     pub parent_id: Option<&'static str>,
     pub mode: AgentMode,
+    /// Whether user/Voice tools (`task_create`, `reminder_create`) may directly target this root agent.
+    /// `true` for Flow 1 (`daily_root`), `false` for internal Flow 2 (`wiki_root`) and all subagents.
+    pub user_routable: bool,
     pub default_description: &'static str,
     pub default_prompt: &'static str,
     pub default_steps: u32,
@@ -108,6 +117,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "daily",
         parent_id: None,
         mode: AgentMode::Primary,
+        user_routable: true,
         default_description: "Interactive & background multi-functional assistant: collects external sources (YouTube playlists, PDFs, Web pages) into sources/, researches the Wiki/Web, creates reports, generates images/TTS artifacts, and manages reminders.",
         default_prompt: DAILY_ROOT_PROMPT,
         default_steps: 20,
@@ -128,6 +138,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "daily",
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
+        user_routable: false,
         default_description: "Inspects external sources (YouTube playlist, PDF via anydoc, or Web via fetch_html/html_*), extracts detailed transcripts/markdown/metadata, classifies topic hierarchy (<domain>/<topic>), and saves raw Markdown files into sources/<domain>/<topic>/<slug>.md.",
         default_prompt: SOURCE_COLLECTOR_PROMPT,
         default_steps: 35,
@@ -142,6 +153,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "daily",
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
+        user_routable: false,
         default_description: "Read-only specialist for querying and reading the LLM Wiki and inspecting web pages.",
         default_prompt: WIKI_RESEARCHER_PROMPT,
         default_steps: 12,
@@ -156,6 +168,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "daily",
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
+        user_routable: false,
         default_description: "Synthesizes discussions into sources/<domain>/<topic>/ via add_to_sources or writes standalone Markdown reports via markdown_create.",
         default_prompt: REPORT_STAGER_PROMPT,
         default_steps: 12,
@@ -170,6 +183,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "daily",
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
+        user_routable: false,
         default_description: "Generates PNG/SVG images via image_create, synthesizes TTS audio via tts_synthesize, and publishes structured Task Artifacts via artifact_create.",
         default_prompt: MEDIA_CREATOR_PROMPT,
         default_steps: 12,
@@ -193,6 +207,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "daily",
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
+        user_routable: false,
         default_description: "Creates, lists, completes, and deletes user reminders and scheduled tasks.",
         default_prompt: REMINDER_PLANNER_PROMPT,
         default_steps: 10,
@@ -208,6 +223,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "wiki",
         parent_id: None,
         mode: AgentMode::Primary,
+        user_routable: false,
         default_description: "Automated background Wiki pipeline coordinator triggered when new files arrive in sources/: ingests new files from sources/, updates/patches Wiki pages, synthesizes topics, and runs wiki_lint.",
         default_prompt: WIKI_ROOT_PROMPT,
         default_steps: 40,
@@ -222,6 +238,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "wiki",
         parent_id: Some("wiki_root"),
         mode: AgentMode::Subagent,
+        user_routable: false,
         default_description: "Compiles raw sources into wiki/sources/ and creates/patches entity & concept pages.",
         default_prompt: WIKI_INGESTOR_PROMPT,
         default_steps: 35,
@@ -236,6 +253,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         flow_id: "wiki",
         parent_id: Some("wiki_root"),
         mode: AgentMode::Subagent,
+        user_routable: false,
         default_description: "Creates topic syntheses and repairs structural issues via wiki_lint.",
         default_prompt: WIKI_CURATOR_PROMPT,
         default_steps: 35,
@@ -249,4 +267,26 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
 
 pub fn find_agent_spec(id: &str) -> Option<&'static AgentSpec> {
     AGENT_SPECS.iter().find(|s| s.id == id)
+}
+
+/// Returns whether a root agent is user/Voice-routable (`spec.user_routable`).
+/// Unknown custom test agent IDs default to `true`.
+pub fn is_user_routable_root_agent(agent_id: &str) -> bool {
+    find_agent_spec(agent_id).is_none_or(|spec| spec.user_routable)
+}
+
+/// Normalizes a user/Voice `target_agent` parameter (`"agent_id"` or `"flow_id/agent_id"`).
+/// If the requested target resolves to a non-user-routable agent (such as internal Flow 2 `wiki_root`),
+/// redirects it to [`DEFAULT_USER_ROOT_AGENT_ID`] (`"daily_root"`).
+pub fn normalize_user_target_agent(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    let agent_id = trimmed
+        .rsplit_once('/')
+        .map(|(_, agent)| agent.trim())
+        .unwrap_or(trimmed);
+    if find_agent_spec(agent_id).is_some_and(|spec| !spec.user_routable) {
+        DEFAULT_USER_ROOT_AGENT_ID
+    } else {
+        trimmed
+    }
 }

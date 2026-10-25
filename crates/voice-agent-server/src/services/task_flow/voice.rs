@@ -70,7 +70,7 @@ impl VoiceTaskSubmit {
                 let user_facing_agents: Vec<AgentCatalogEntry> = suite
                     .available_agents()
                     .into_iter()
-                    .filter(|entry| entry.target.agent_id != "wiki_root")
+                    .filter(|entry| super::is_user_routable_root_agent(&entry.target.agent_id))
                     .collect();
                 if user_facing_agents.is_empty() {
                     suite.tool_specs()
@@ -100,12 +100,15 @@ impl VoiceTaskSubmit {
         };
         if matches!(tool_name, "task_create" | "reminder_create")
             && let Some(obj) = arguments.as_object_mut()
-            && obj
-                .get("target_agent")
-                .and_then(Value::as_str)
-                .is_some_and(|t| t == "wiki_root" || t.ends_with("/wiki_root"))
+            && let Some(raw_target) = obj.get("target_agent").and_then(Value::as_str)
         {
-            obj.insert("target_agent".to_owned(), Value::String("daily_root".to_owned()));
+            let normalized = super::normalize_user_target_agent(raw_target);
+            if normalized != raw_target {
+                obj.insert(
+                    "target_agent".to_owned(),
+                    Value::String(normalized.to_owned()),
+                );
+            }
         }
         match tokio::time::timeout(
             budget,
@@ -129,11 +132,12 @@ pub fn voice_rejection(code: &str) -> Value {
 }
 
 fn fallback_tool_specs() -> Vec<TaskToolSpec> {
-    let description = super::find_agent_spec("daily_root")
+    let default_root = super::DEFAULT_USER_ROOT_AGENT_ID;
+    let description = super::find_agent_spec(default_root)
         .map(|spec| spec.default_description)
         .unwrap_or("Interactive & background multi-functional assistant.");
     let default_agents = [AgentCatalogEntry {
-        target: TargetAgent::new("default", "daily_root"),
+        target: TargetAgent::new("default", default_root),
         description: description.into(),
     }];
     build_tool_specs_for_agents(&default_agents)

@@ -154,6 +154,8 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
 fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure() {
     let daily_root = find_agent_spec("daily_root").expect("daily_root spec");
     assert_eq!(daily_root.flow_id, "daily");
+    assert!(daily_root.user_routable);
+    assert!(is_user_routable_root_agent("daily_root"));
     assert_eq!(
         daily_root.default_subagents,
         &[
@@ -168,19 +170,13 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
     let collector = find_agent_spec("source_collector").expect("source_collector spec");
     assert_eq!(collector.flow_id, "daily");
     assert_eq!(collector.parent_id, Some("daily_root"));
-    for tool in [
-        "yt_list_playlist",
-        "yt_fetch_transcript",
-        "anydoc_inspect_pdf",
-        "anydoc_save_to_sources",
-        "fetch_html",
-        "add_to_sources",
-    ] {
+    for &tool in orchestrator_flow_rs::COLLECTOR_TOOL_NAMES {
         assert!(
             collector.default_allowed_tools.contains(&tool),
             "source_collector in Flow 1 (daily) must have tool '{tool}'"
         );
     }
+    assert!(collector.default_allowed_tools.contains(&"add_to_sources"));
 
     let report_stager = find_agent_spec("report_stager").expect("report_stager spec");
     assert!(report_stager.default_allowed_tools.contains(&"add_to_sources"));
@@ -202,19 +198,18 @@ fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure
 
     let wiki_root = find_agent_spec("wiki_root").expect("wiki_root spec");
     assert_eq!(wiki_root.flow_id, "wiki");
+    assert!(!wiki_root.user_routable);
+    assert!(!is_user_routable_root_agent("wiki_root"));
+    assert_eq!(normalize_user_target_agent("wiki_root"), "daily_root");
+    assert_eq!(normalize_user_target_agent("default/wiki_root"), "daily_root");
+    assert_eq!(normalize_user_target_agent("daily_root"), "daily_root");
     assert_eq!(
         wiki_root.default_subagents,
         &["wiki_ingestor", "wiki_curator"]
     );
 
     for spec in AGENT_SPECS.iter().filter(|s| s.flow_id == "wiki") {
-        for forbidden in [
-            "yt_list_playlist",
-            "yt_fetch_transcript",
-            "anydoc_inspect_pdf",
-            "anydoc_save_to_sources",
-            "fetch_html",
-        ] {
+        for &forbidden in orchestrator_flow_rs::COLLECTOR_TOOL_NAMES {
             assert!(
                 !spec.available_tools.contains(&forbidden)
                     && !spec.default_allowed_tools.contains(&forbidden),
