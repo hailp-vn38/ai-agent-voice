@@ -56,15 +56,12 @@ impl OpenCodeFreeConfig {
     pub fn valid(&self) -> bool {
         valid_free_model_id(&self.model)
             && (1_000..=600_000).contains(&self.timeout_ms)
-            && self.max_tokens.is_none_or(|v| (1..=65_536).contains(&v))
-            && self
-                .context_limit_tokens
-                .is_none_or(|v| (4_096..=2_000_000).contains(&v))
-            && self
-                .reasoning_effort
-                .as_deref()
-                .is_none_or(|v| matches!(v, "low" | "medium" | "high"))
-            && self.temperature_percent.is_none_or(|v| v <= 200)
+            && super::valid_generation_bounds(
+                self.max_tokens,
+                self.context_limit_tokens,
+                self.reasoning_effort.as_deref(),
+                self.temperature_percent,
+            )
     }
 }
 

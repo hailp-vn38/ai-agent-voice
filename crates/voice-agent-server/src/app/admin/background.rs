@@ -194,8 +194,7 @@ pub(super) async fn save_settings(State(state): State<AppState>, request: Reques
         guard.background_revision
     };
 
-    let settings_dir = crate::services::task_flow::effective_settings_dir(&state.config);
-    let _ = save_persisted_settings(&settings_dir, &next_settings);
+    let _ = save_persisted_settings(&state.config.orchestrator.store_dir, &next_settings);
     if let Err(err) = sync_orchestrator_from_state(&state).await {
         tracing::warn!(error = %err, "failed to reconfigure orchestrator after background settings update");
     }

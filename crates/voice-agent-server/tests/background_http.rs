@@ -7,6 +7,8 @@ use voice_agent_server::{
 
 #[tokio::test]
 async fn background_http_foundation_is_authenticated_and_fails_closed_without_executor() {
+    let temp_root = std::env::temp_dir().join(format!("background-http-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
     let config: AppConfig = toml::from_str(&format!(
         r#"
 [server]
@@ -22,11 +24,13 @@ url = "sqlite://{}"
 [api]
 enabled = true
 admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
 "#,
-        std::env::temp_dir()
-            .join(format!("background-http-{}", uuid::Uuid::new_v4()))
-            .join("voice-agent.db")
-            .display()
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("prompts").display(),
     ))
     .unwrap();
     let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))

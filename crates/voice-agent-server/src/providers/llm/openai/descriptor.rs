@@ -4,9 +4,9 @@ use crate::providers::{
         ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
         ProviderType, field, select_field,
     },
+    llm::REASONING_EFFORTS,
     registry::ProviderAdapterRegistration,
 };
-const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
 const FIELDS: &[ProviderConfigField] = &[
     field(
         "base_url",
@@ -34,7 +34,7 @@ const FIELDS: &[ProviderConfigField] = &[
         ConfigFieldType::Integer,
         false,
         None,
-        Some(1),
+        Some(1_000),
         Some(600_000),
         None,
     ),

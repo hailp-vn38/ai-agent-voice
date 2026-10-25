@@ -572,7 +572,7 @@ onBeforeUnmount(() => controller?.abort())
                   max_tokens: {{ effectiveProviderForAgent(agent)?.max_tokens }}
                 </Badge>
                 <Badge variant="outline">
-                  {{ t('jobUi.toolsAllowed') }}: {{ (draftAgent(agent).allowed_tools ?? agent.allowed_tools).length }}/{{ agent.available_tools.length }}
+                  {{ t('jobUi.toolsAllowed') }}: {{ (draftAgent(agent).allowed_tools ?? agent.allowed_tools).filter(t => t !== 'skill').length }}/{{ domainToolsForAgent(agent).length }}
                 </Badge>
                 <Badge variant="outline">
                   {{ t('jobUi.skillsAllowed') }}: {{ (draftAgent(agent).allowed_skills ?? agent.allowed_skills).length }}/{{ agent.available_skills.length }}

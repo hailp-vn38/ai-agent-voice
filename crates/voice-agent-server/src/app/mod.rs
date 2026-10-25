@@ -434,8 +434,9 @@ async fn managed_startup(
 }
 
 async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> {
-    let settings_dir = crate::services::task_flow::effective_settings_dir(&state.config);
-    if let Some(persisted) = crate::services::task_flow::load_persisted_settings(&settings_dir) {
+    if let Some(persisted) =
+        crate::services::task_flow::load_persisted_settings(&state.config.orchestrator.store_dir)
+    {
         let mut guard = state
             .admin_task_control
             .lock()
@@ -444,9 +445,11 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
         guard.background_revision = persisted.revision.max(1);
         guard.background_settings = persisted;
     }
-    let runtime = crate::services::task_flow::init_from_app_config(&state.config)
-        .await
-        .map_err(BootstrapError::TaskFlow)?;
+    let catalog = crate::services::task_flow::resolve_llm_provider_catalog(state).await;
+    let runtime =
+        crate::services::task_flow::init_from_app_config_with_catalog(&state.config, &catalog)
+            .await
+            .map_err(BootstrapError::TaskFlow)?;
     if let (Some(task_mgr), Some(orch)) = (runtime.task_manager.clone(), runtime.orchestrator.clone()) {
         if let Ok(mut sub) = task_mgr.subscribe_all() {
             let active_sessions = state.active_device_sessions.clone();

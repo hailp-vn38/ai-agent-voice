@@ -12,10 +12,9 @@ mod tests;
 pub use agent_settings::{
     AGENT_SPECS, AgentConfigOverride, AgentSpec, DEFAULT_ORCHESTRATOR_PROVIDER_REF,
     PersistedBackgroundSettings, ResolvedLlmProvider, build_agent_definitions,
-    default_orchestrator_provider, effective_settings_dir, find_agent_spec,
-    load_persisted_settings, project_agents_json, resolve_llm_provider_catalog,
-    save_persisted_settings, sync_orchestrator_from_state, validate_agent_overrides,
-    write_agent_prompts,
+    default_orchestrator_provider, find_agent_spec, load_persisted_settings, project_agents_json,
+    resolve_llm_provider_catalog, save_persisted_settings, sync_orchestrator_from_state,
+    validate_agent_overrides, write_agent_prompts,
 };
 pub use projections::{project_task_events, project_task_to_admin_job};
 pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};
@@ -93,6 +92,16 @@ fn open_wiki_engine(cfg: &WikiSectionConfig) -> Result<Arc<WikiEngine>, TaskFlow
 /// Initializes `WikiEngine`, `Orchestrator`, and `TaskManager` (`orchestrator_flow_rs`)
 /// from [`AppConfig`].
 pub async fn init_from_app_config(config: &AppConfig) -> Result<TaskFlowRuntime, TaskFlowError> {
+    let initial_catalog = vec![default_orchestrator_provider(&config.orchestrator)];
+    init_from_app_config_with_catalog(config, &initial_catalog).await
+}
+
+/// Initializes `WikiEngine`, `Orchestrator`, and `TaskManager` with an already-resolved
+/// LLM provider catalog so startup recovery has access to all configured and DB providers.
+pub async fn init_from_app_config_with_catalog(
+    config: &AppConfig,
+    catalog: &[ResolvedLlmProvider],
+) -> Result<TaskFlowRuntime, TaskFlowError> {
     let autoflow_notify = Arc::new(Notify::new());
     let mut wiki_engine = init_wiki_engine(&config.wiki)?;
 
@@ -119,6 +128,7 @@ pub async fn init_from_app_config(config: &AppConfig) -> Result<TaskFlowRuntime,
         &config.wiki,
         engine,
         autoflow_notify.clone(),
+        catalog,
     )
     .await?;
 
@@ -135,6 +145,7 @@ async fn init_orchestrator_and_task_manager(
     wiki_cfg: &WikiSectionConfig,
     engine: Arc<WikiEngine>,
     autoflow_notify: Arc<Notify>,
+    catalog: &[ResolvedLlmProvider],
 ) -> Result<(Arc<Orchestrator>, Arc<TaskManager>), TaskFlowError> {
     std::fs::create_dir_all(&cfg.store_dir)?;
     std::fs::create_dir_all(&cfg.tasks_store_dir)?;
@@ -185,8 +196,7 @@ async fn init_orchestrator_and_task_manager(
 
     let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
     let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
-    let initial_catalog = vec![default_orchestrator_provider(cfg)];
-    let (providers, agents) = build_agent_definitions(cfg, &persisted, &initial_catalog);
+    let (providers, agents) = build_agent_definitions(cfg, &persisted, catalog);
     let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
 

@@ -11,6 +11,20 @@ pub(crate) mod opencode_free;
 #[cfg(feature = "qualification-providers")]
 pub mod qualification;
 
+pub(crate) const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
+
+pub(crate) fn valid_generation_bounds(
+    max_tokens: Option<u32>,
+    context_limit_tokens: Option<u32>,
+    reasoning_effort: Option<&str>,
+    temperature_percent: Option<u16>,
+) -> bool {
+    max_tokens.is_none_or(|v| (1..=65_536).contains(&v))
+        && context_limit_tokens.is_none_or(|v| (4_096..=2_000_000).contains(&v))
+        && reasoning_effort.is_none_or(|v| REASONING_EFFORTS.contains(&v))
+        && temperature_percent.is_none_or(|v| v <= 200)
+}
+
 pub type LlmEventStream = Pin<Box<dyn Stream<Item = Result<LlmEvent, LlmError>> + Send>>;
 
 #[derive(Clone, Debug, PartialEq)]
