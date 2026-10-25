@@ -55,12 +55,6 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.knowledge' },
   },
   {
-    path: '/knowledge/settings',
-    name: 'knowledge-settings',
-    component: () => import('@/pages/knowledge/KnowledgeSettingsPage.vue'),
-    meta: { titleKey: 'knowledgeV3.settings.title' },
-  },
-  {
     path: '/memory',
     name: 'memory',
     component: () => import('@/pages/memory/MemoryPage.vue'),

@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { setLocale } from '@/composables/useI18n'
 import KnowledgePage from './KnowledgePage.vue'
 
-const { requestJsonMock, navigateMock, routeQuery } = vi.hoisted(() => ({ requestJsonMock: vi.fn(), navigateMock: vi.fn(), routeQuery: {} as Record<string,string> }))
+const { requestJsonMock, routeQuery } = vi.hoisted(() => ({ requestJsonMock: vi.fn(), routeQuery: {} as Record<string,string> }))
 vi.mock('@/api/client', () => ({
   requestJson: requestJsonMock,
   jsonRequest: (method: string, body: unknown) => ({ method, body }),
@@ -12,7 +12,7 @@ vi.mock('@/api/client', () => ({
       Object.entries(query).map(([key, value]) => [key, String(value)]),
     ).toString(),
 }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: navigateMock }), useRoute: () => ({ query: routeQuery }) }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: routeQuery }) }))
 vi.mock('./KnowledgeGraph.vue', () => ({ default: { template: '<div>Knowledge graph</div>' } }))
 
 beforeEach(() => {
@@ -358,15 +358,13 @@ it('restores different Explorer folders when switching between Knowledge sources
 })
 
 
-it('navigates to Knowledge settings from the gear in the vault footer', async () => {
+it('renders the vault footer without a settings button', async () => {
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
     const footer = wrapper.get('.a-vault-footer')
-    const settings = footer.get('button[aria-label="Knowledge settings"]')
     expect(footer.text()).toContain('Local Markdown vault')
-    await settings.trigger('click')
-    expect(navigateMock).toHaveBeenCalledExactlyOnceWith('/knowledge/settings')
+    expect(footer.find('button').exists()).toBe(false)
     expect(wrapper.find('.tree-holder').exists()).toBe(true)
   } finally {
     wrapper.unmount()

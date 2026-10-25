@@ -53,19 +53,6 @@
 .knowledge-a .tree-leaf.active svg { opacity: 1; }
 .knowledge-a .a-vault-footer { margin: 0 18px 24px; border-top: 1px solid var(--border); padding: 13px 0; color: var(--muted-foreground); font-size: 11px; display: flex; align-items: center; gap: 9px; }
 .knowledge-a .a-vault-footer .dot { height: 6px; width: 6px; background: var(--success); border-radius: 50%; }
-.knowledge-a .a-vault-settings {
-  width: 28px; height: 28px; flex: none; display: inline-flex;
-  align-items: center; justify-content: center;
-  margin: -5px -5px -5px 0; border: 0; border-radius: 7px;
-  color: var(--muted-foreground); background: transparent;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-.knowledge-a .a-vault-settings:hover {
-  color: var(--sidebar-foreground); background: var(--sidebar-accent);
-}
-.knowledge-a .a-vault-settings:focus-visible {
-  outline: 2px solid var(--ring); outline-offset: 2px;
-}
 .knowledge-a .a-workspace { background: var(--background); flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .knowledge-a .a-tabs { height: 44px; display: flex; align-items: flex-end; border-bottom: 1px solid var(--border); background: var(--surface); gap: 0; padding-left: 4px; flex: none; }
 .knowledge-a .a-tab { background: var(--card); display: flex; gap: 10px; align-items: center; height: 39px; padding: 0 18px; border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--card-foreground); max-width: 350px; font-size: 12px; font-weight: 570; }

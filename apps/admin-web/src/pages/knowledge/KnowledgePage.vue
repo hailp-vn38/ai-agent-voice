@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, Settings2, ChevronsUp, BookOpen, Columns2, ArrowUpRight, ChevronDown, ChevronRight } from '@lucide/vue'
+import { useRoute } from 'vue-router'
+import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, Columns2, ArrowUpRight, ChevronDown, ChevronRight } from '@lucide/vue'
 import { renderMarkdown, markdownOutline } from './markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { useTheme } from '@/composables/useTheme'
@@ -23,7 +23,6 @@ type Source = { id: string; version: number; name: string; provenance: string; s
 
 const { t } = useI18n()
 const { dark } = useTheme()
-const router = useRouter()
 const route = useRoute()
 
 const VAULT_SPACE_KEY = 'voice-agent-knowledge-vault-space'
@@ -993,10 +992,6 @@ onMounted(() => {
         <span class="dot"></span>
         <span class="min-w-0 truncate">Local Markdown vault</span>
         <span class="ml-auto shrink-0">{{ health?.document_count ?? tree.filter(node => node.type === 'file').length }} notes</span>
-        <button type="button" class="a-vault-settings" :aria-label="t('knowledgeV3.settings.title')"
-          :title="t('knowledgeV3.settings.title')" @click="router.push('/knowledge/settings')">
-          <Settings2 :size="16" aria-hidden="true" />
-        </button>
       </div>
     </aside>
 

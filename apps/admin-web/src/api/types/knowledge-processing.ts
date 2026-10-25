@@ -1,26 +1,3 @@
-export interface KnowledgeProvider {
-  reference: string
-  name: string
-  runtime_ready: boolean
-  structured_qualified?: boolean
-  tool_calling?: boolean
-  availability?: string
-}
-type CommonSettings = {
-  enabled: boolean
-  analysis_provider_ref: string | null
-  trigger_mode: 'manual' | 'auto_after_import'
-}
-export type KnowledgeSettingsInput = CommonSettings & (
-  { execution_version?: 1; publication_policy: string; max_candidates_per_source: number }
-  | { execution_version: 2; max_pages_per_source: number }
-)
-export type KnowledgeSettings = KnowledgeSettingsInput & {
-  revision: number
-  runtime_ready: boolean
-  instruction_error?: string
-  llm_providers: KnowledgeProvider[]
-}
 export interface KnowledgeDraftState {
   wiki_id: string
   draft: null | {

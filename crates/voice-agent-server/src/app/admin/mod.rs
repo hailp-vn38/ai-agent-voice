@@ -39,10 +39,6 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             axum::routing::post(knowledge_processing::resolve_draft),
         )
         .route(
-            "/knowledge/settings",
-            get(knowledge_processing::settings).put(knowledge_processing::save_settings),
-        )
-        .route(
             "/knowledge/sources/{id}/analyze",
             axum::routing::post(knowledge_processing::analyze),
         )

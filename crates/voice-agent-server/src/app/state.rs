@@ -30,15 +30,13 @@ use std::{
 
 const MAX_IDEMPOTENCY_ENTRIES: usize = 256;
 
-/// Mutable control-plane state for Admin Background & Knowledge Processing settings and
+/// Mutable control-plane state for Admin Background settings and
 /// idempotent job submission keys.
 #[derive(Debug)]
 pub(crate) struct AdminTaskControlState {
     pub background_enabled_override: Option<bool>,
     pub background_settings: crate::services::task_flow::PersistedBackgroundSettings,
     pub background_revision: i64,
-    pub knowledge_processing_overrides: serde_json::Map<String, serde_json::Value>,
-    pub knowledge_processing_revision: i64,
     /// Maps `Idempotency-Key` -> `(request_fingerprint, task_id)`.
     pub idempotency_ledger: HashMap<String, (String, String)>,
     pub idempotency_order: VecDeque<String>,
@@ -68,8 +66,6 @@ impl Default for AdminTaskControlState {
             background_enabled_override: None,
             background_settings: Default::default(),
             background_revision: 1,
-            knowledge_processing_overrides: serde_json::Map::new(),
-            knowledge_processing_revision: 1,
             idempotency_ledger: HashMap::new(),
             idempotency_order: VecDeque::new(),
         }
