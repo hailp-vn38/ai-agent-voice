@@ -224,6 +224,31 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         text(payload.code) ?? 'Legacy DAG', event.event_type === 'plan_rejected' ? 'failed' : 'completed')
     }
   }
+  const allArtifacts = job.artifacts && job.artifacts.length > 0 ? job.artifacts : undefined
+  const hasJobResult = Boolean(job.result && Object.keys(job.result).length > 0)
+  if ((hasJobResult || allArtifacts) && !items.some(item => item.id === 'job:result')) {
+    const rootRunId =
+      (job.agent_runs ?? []).find(
+        run => run.role === 'orchestrator' || run.role === 'root' || !run.parent_agent_run_id,
+      )?.agent_run_id ?? null
+    const resultText =
+      text(job.result?.text) ?? text(job.result?.summary) ?? text(job.result?.markdown)
+    const lastSeq = items.reduce((max, item) => Math.max(max, item.sequence), 0)
+    items.push({
+      id: 'job:result',
+      sequence: lastSeq + 1,
+      time: job.created_at,
+      kind: 'result',
+      status: job.status === 'failed' ? 'failed' : job.status === 'cancelled' ? 'cancelled' : 'completed',
+      agentRunId: rootRunId,
+      role: rootRunId ? roles.get(rootRunId) ?? null : null,
+      title: 'Result',
+      note: resultText ?? 'Job output',
+      assistantMessage: resultText,
+      jobResult: job.result ?? null,
+      artifacts: allArtifacts,
+    })
+  }
   const created = new Map(ordered.filter(event => event.event_type === 'agent_run_created')
     .map(event => [text(event.payload.agent_run_id), event.payload]))
   for (const item of items) {

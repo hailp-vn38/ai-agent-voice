@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, AlertTriangle, BrainCircuit, Cpu, FileText, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
+import { Activity, AlertTriangle, BrainCircuit, Cpu, Layers, Puzzle, RefreshCw, RotateCcw, Square, Trash2, Workflow } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentJobsApi } from '@/api/agent-jobs'
@@ -10,14 +10,12 @@ import type { AdminJob, JobEvent, JobStatus } from '@/api/types/agent-jobs'
 import DetailHeader from '@/components/admin/DetailHeader.vue'
 import JobUnifiedTimeline from '@/components/jobs/JobUnifiedTimeline.vue'
 import KnowledgeJobState from '@/components/jobs/KnowledgeJobState.vue'
-import JobArtifactGallery from '@/components/jobs/artifacts/JobArtifactGallery.vue'
 import { llmTokenSummary, projectLlmRuns } from '@/domain/jobs/llm-activity'
 import { projectUnifiedActivity, visibleActivities, type ActivityFilter } from '@/domain/jobs/unified-activity'
 import ConfirmDialog from '@/components/admin/ConfirmDialog.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import { jobResultReport } from '@/domain/jobs/result-report'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,7 +64,6 @@ const tone = (status: JobStatus): 'success' | 'danger' | 'secondary' | 'outline'
   status === 'succeeded' ? 'success' : status === 'failed' ? 'danger' :
     status === 'partial_success' || status === 'cancelled' ? 'outline' : 'secondary'
 const statusLabel = (status: JobStatus) => t(('jobUi.jobStatus.' + status) as 'jobUi.jobStatus.queued')
-const report = computed(() => jobResultReport(job.value?.result))
 async function load(resetEvents = false) {
   controller?.abort()
   const pending = new AbortController()
@@ -271,16 +268,6 @@ onBeforeUnmount(() => {
         @select="selectedActivityId = $event"
         @filter="activityFilter = $event"
       />
-      <section class="studio-panel p-5">
-        <h2 class="mb-4 flex items-center gap-2 font-semibold"><FileText class="size-4 text-studio-violet" />{{ t('jobUi.artifacts') }}</h2>
-        <JobArtifactGallery :job="job" />
-      </section>
-      <section class="studio-panel p-5">
-        <h2 class="mb-3 font-semibold">{{ t('jobUi.result') }}</h2>
-        <article v-if="report.kind === 'markdown'" class="job-report text-sm leading-7" v-html="report.html"></article>
-        <pre v-else-if="report.kind === 'json'" class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 p-3 text-xs leading-relaxed">{{ report.text }}</pre>
-        <p v-else class="text-sm text-muted-foreground">—</p>
-      </section>
     </template>
 
     <ConfirmDialog v-model="retryOpen" :title="t('jobUi.retryJob')" :confirm-label="t('jobUi.retryJob')" @confirm="retry">
@@ -292,20 +279,3 @@ onBeforeUnmount(() => {
     </ConfirmDialog>
   </section>
 </template>
-
-<style scoped>
-.job-report { overflow-wrap: anywhere; }
-.job-report :deep(h1), .job-report :deep(h2), .job-report :deep(h3), .job-report :deep(h4) { font-weight: 650; line-height: 1.4; margin: 1.2em 0 .5em; }
-.job-report :deep(h1) { font-size: 1.6em; }
-.job-report :deep(h2) { font-size: 1.3em; }
-.job-report :deep(h3) { font-size: 1.1em; }
-.job-report :deep(p) { margin: .7em 0; }
-.job-report :deep(ul), .job-report :deep(ol) { padding-left: 1.5em; margin: .7em 0; }
-.job-report :deep(ul) { list-style: disc; }
-.job-report :deep(ol) { list-style: decimal; }
-.job-report :deep(a) { color: var(--primary); text-decoration: underline; }
-.job-report :deep(code) { font-family: monospace; font-size: .9em; background: var(--muted); border-radius: .25em; padding: .12em .3em; }
-.job-report :deep(pre) { overflow-x: auto; padding: .8em; border-radius: .5em; background: var(--muted); margin: 1em 0; }
-.job-report :deep(pre code) { padding: 0; background: transparent; }
-.job-report :deep(blockquote) { border-left: 3px solid var(--border); padding-left: 1em; color: var(--muted-foreground); }
-</style>

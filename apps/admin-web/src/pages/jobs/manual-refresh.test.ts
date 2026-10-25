@@ -87,8 +87,8 @@ it('shows the selected timeline item details in the Canvas right-side inspector 
 it.each([
   { result: { summary: 'Completed report' }, expected: 'Completed report' },
   { result: { count: 2 }, expected: JSON.stringify({ count: 2 }, null, 2) },
-  { result: null, expected: '—' },
-])('shows a standalone Result card for $result and artifacts below the canvas', async ({ result, expected }) => {
+  { result: null, expected: 'Job output' },
+])('renders Result and artifacts directly inside the DAG canvas instead of standalone panels below', async ({ result, expected }) => {
   const job = await api.job()
   api.job.mockClear().mockResolvedValue({ ...job, result, artifacts: [
     { id: 'report.txt', media_type: 'text/plain', size_bytes: 12, sha256: 'digest' },
@@ -96,17 +96,12 @@ it.each([
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    const heading = wrapper.findAll('h2').find(node => node.text() === translate('jobUi.result'))!
-    const card = heading.element.parentElement!
-    expect(card.closest('details')).toBeNull()
-    expect(card.parentElement).toBe(wrapper.element)
-    expect(card.textContent).toContain(expected)
-    const artifactsHeading = wrapper.findAll('h2').find(node => node.text() === translate('jobUi.artifacts'))!
-    const artifacts = artifactsHeading.element.parentElement!
-    expect(artifacts.parentElement).toBe(wrapper.element)
-    expect(artifacts.textContent).toContain(translate('jobUi.artifacts'))
-    expect(artifacts.textContent).toContain('report.txt')
-    expect(artifacts.querySelector('button')?.textContent).toContain(translate('jobUi.download'))
+    expect(wrapper.findAll('h2').some(node => node.text() === translate('jobUi.result'))).toBe(false)
+    expect(wrapper.findAll('h2').some(node => node.text() === translate('jobUi.artifacts'))).toBe(false)
+    const resultCard = wrapper.get('[data-step="job:result"]')
+    expect(resultCard.text()).toContain(expected)
+    expect(resultCard.text()).toContain('report.txt')
+    expect(resultCard.text()).toContain(translate('jobUi.download'))
   } finally {
     wrapper.unmount()
   }
