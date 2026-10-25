@@ -234,9 +234,22 @@ describe('unified Job activity', () => {
       requester_scope: 'api:personal:homelab',
       plan_revision: 1,
       retry_of_job_id: null,
-      result: { text: 'Bản tổng hợp cuối cùng từ Root Agent.' },
+      result: { text: 'Bản tổng hợp cuối cùng từ Root Agent.', summary: 'Bản tổng hợp cuối cùng từ Root Agent.' },
       budget_used: {},
-      artifacts: [],
+      artifacts: [
+        {
+          id: 'art-yt-1',
+          step_key: 'youtube_brief:1:yt_fetch_transcript',
+          filename: 'transcript_brief.md',
+          media_type: 'text/markdown',
+          size_bytes: 4096,
+          sha256: 'a'.repeat(64),
+          created_at: '1700000005',
+          producer_session_id: 'child-sess',
+          producer_agent_id: 'youtube_brief',
+          producer_tool_name: 'yt_fetch_transcript',
+        },
+      ],
       agent_runs: [
         {
           agent_run_id: 'root-sess',
@@ -431,17 +444,32 @@ describe('unified Job activity', () => {
       note: 'Đang gọi công cụ yt_fetch_transcript.',
       assistantMessage: 'Đang gọi công cụ yt_fetch_transcript.',
     })
+    expect(rows[3]).toMatchObject({
+      id: 'step:youtube_brief:1:yt_fetch_transcript',
+      artifacts: [{ id: 'art-yt-1', filename: 'transcript_brief.md' }],
+    })
     expect(rows[4]).toMatchObject({
       id: 'agent:child-sess',
       title: 'Agent finished',
       note: 'Transcript đã được tóm tắt bởi Subagent.',
       assistantMessage: 'Transcript đã được tóm tắt bởi Subagent.',
+      artifacts: [{ id: 'art-yt-1', filename: 'transcript_brief.md' }],
     })
     expect(rows[5]).toMatchObject({
       id: 'agent:root-sess',
       title: 'Agent finished',
       note: 'Bản tổng hợp cuối cùng từ Root Agent.',
       assistantMessage: 'Bản tổng hợp cuối cùng từ Root Agent.',
+    })
+    expect(rows[6]).toMatchObject({
+      id: 'job:terminal',
+      title: 'Job finished',
+      note: 'Bản tổng hợp cuối cùng từ Root Agent.',
+      jobResult: {
+        text: 'Bản tổng hợp cuối cùng từ Root Agent.',
+        summary: 'Bản tổng hợp cuối cùng từ Root Agent.',
+      },
+      artifacts: [{ id: 'art-yt-1', filename: 'transcript_brief.md' }],
     })
     expect(visibleActivities(rows, { kind: 'root' }).map(r => r.id)).toEqual([
       'llm:run-root',

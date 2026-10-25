@@ -53,6 +53,8 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
 
     let mut agent_runs = Vec::new();
     let mut steps = Vec::new();
+    let mut invocation_step_keys = std::collections::HashMap::new();
+    let mut session_tool_step_keys = std::collections::HashMap::new();
 
     if let Some(detail) = detail {
         for (idx, session) in detail.all_agents().into_iter().enumerate() {
@@ -120,9 +122,15 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
             }));
 
             for (inv_idx, inv) in session.invocations.iter().enumerate() {
+                let step_key = format!("{}:{}:{}", session.agent_id, inv_idx + 1, inv.tool_name);
+                invocation_step_keys.insert(inv.invocation_id.as_str(), step_key.clone());
+                session_tool_step_keys.insert(
+                    (session.session_id.as_str(), inv.tool_name.as_str()),
+                    step_key.clone(),
+                );
                 let assistant_message = session.invocation_assistant_text(&inv.tool_call_id);
                 steps.push(json!({
-                    "step_key": format!("{}:{}:{}", session.agent_id, inv_idx + 1, inv.tool_name),
+                    "step_key": step_key,
                     "agent_run_id": session.session_id,
                     "plugin_id": "orchestrator_flow",
                     "operation": inv.tool_name,
@@ -169,11 +177,24 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
             d.artifacts
                 .iter()
                 .map(|art| {
+                    let step_key = art
+                        .producer_invocation_id
+                        .as_deref()
+                        .and_then(|inv_id| invocation_step_keys.get(inv_id).cloned())
+                        .or_else(|| {
+                            let tool_name = art.producer_tool_name.as_deref()?;
+                            session_tool_step_keys
+                                .get(&(art.producer_session_id.as_str(), tool_name))
+                                .cloned()
+                        });
                     json!({
                         "id": art.id,
                         "artifact_id": art.id,
                         "task_id": art.task_id,
+                        "step_key": step_key,
+                        "filename": art.name,
                         "name": art.name,
+                        "media_type": art.mime_type,
                         "mime_type": art.mime_type,
                         "kind": art.kind,
                         "role": art.role,

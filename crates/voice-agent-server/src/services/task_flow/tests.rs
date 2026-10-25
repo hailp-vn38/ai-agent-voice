@@ -333,7 +333,23 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
     let detail = TaskDetailView {
         task: task.clone(),
         followups: Vec::new(),
-        artifacts: Vec::new(),
+        artifacts: vec![orchestrator_flow_rs::TaskArtifactView {
+            id: "art-1".to_string(),
+            task_id: "task-msg-1".to_string(),
+            root_session_id: "sess-root-1".to_string(),
+            producer_session_id: "sess-root-1".to_string(),
+            producer_agent_id: "daily_root".to_string(),
+            turn_id: "turn-1".to_string(),
+            producer_invocation_id: Some("inv-1".to_string()),
+            producer_tool_name: Some("wiki_search".to_string()),
+            name: "rust_summary.md".to_string(),
+            mime_type: "text/markdown".to_string(),
+            kind: orchestrator_flow_rs::TaskArtifactKind::Report,
+            role: orchestrator_flow_rs::TaskArtifactRole::Primary,
+            size_bytes: 2048,
+            sha256: "0".repeat(64),
+            created_at: 1_760_000_004_000,
+        }],
         execution_summary: None,
         root_agent: Some(root_session),
         subagents: Vec::new(),
@@ -341,6 +357,10 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
     };
 
     let projected = project_task_to_admin_job(&task, Some(&detail));
+    let artifact = &projected["artifacts"][0];
+    assert_eq!(artifact["filename"], "rust_summary.md");
+    assert_eq!(artifact["media_type"], "text/markdown");
+    assert_eq!(artifact["step_key"], "daily_root:1:wiki_search");
     let agent_run = &projected["agent_runs"][0];
     let msgs = agent_run["messages"].as_array().expect("agent_run.messages array");
     assert_eq!(msgs.len(), 3);

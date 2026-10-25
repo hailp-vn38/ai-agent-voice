@@ -21,8 +21,10 @@ function canPreview(item: JobArtifact) {
 }
 function origin(item: JobArtifact) {
   const step = props.job.steps.find(row => row.step_key === item.step_key)
-  const run = props.job.agent_runs?.find(row => row.agent_run_id === step?.agent_run_id)
-  return [run?.role, item.step_key].filter(Boolean).join(' · ') || 'Job'
+  const run = props.job.agent_runs?.find(
+    row => row.agent_run_id === (step?.agent_run_id ?? item.producer_session_id),
+  )
+  return [run?.role ?? item.producer_agent_id, item.step_key ?? item.producer_tool_name].filter(Boolean).join(' · ') || 'Job'
 }
 async function download(item: JobArtifact) {
   if (downloading.value) return
@@ -33,7 +35,7 @@ async function download(item: JobArtifact) {
     const url = URL.createObjectURL(data)
     const link = document.createElement('a')
     link.href = url
-    link.download = item.filename || item.id
+    link.download = item.filename || item.name || item.id
     link.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   } catch (cause) {
@@ -51,8 +53,8 @@ async function download(item: JobArtifact) {
       <div class="flex min-w-0 items-center gap-3">
         <div class="grid size-9 shrink-0 place-items-center rounded-lg bg-muted/60"><File class="size-4" /></div>
         <div class="min-w-0">
-          <p class="truncate text-sm font-medium" :title="item.filename || item.id">{{ item.filename || item.id }}</p>
-          <p class="mt-1 truncate text-xs text-muted-foreground">{{ item.media_type }} · {{ (item.size_bytes / 1024).toFixed(1) }} KiB</p>
+          <p class="truncate text-sm font-medium" :title="item.filename || item.name || item.id">{{ item.filename || item.name || item.id }}</p>
+          <p class="mt-1 truncate text-xs text-muted-foreground">{{ item.media_type || item.mime_type }} · {{ (item.size_bytes / 1024).toFixed(1) }} KiB</p>
           <p class="truncate text-xs text-muted-foreground">{{ origin(item) }}</p>
         </div>
       </div>

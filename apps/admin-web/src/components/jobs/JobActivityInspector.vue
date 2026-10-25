@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Cpu } from '@lucide/vue'
-import type { JobEvent } from '@/api/types/agent-jobs'
+import { computed, ref } from 'vue'
+import { Cpu, Download, Eye, File } from '@lucide/vue'
+import { agentJobsApi } from '@/api/agent-jobs'
+import { formatApiError } from '@/api/errors'
+import type { JobArtifact, JobEvent } from '@/api/types/agent-jobs'
+import { jobResultReport } from '@/domain/jobs/result-report'
 import type { ActivityKind, UnifiedActivity } from '@/domain/jobs/unified-activity'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
+import ArtifactPreviewDialog, { artifactPreview } from './artifacts/ArtifactPreviewDialog.vue'
 
 const props = withDefaults(
   defineProps<{
+    jobId?: string
     activity: UnifiedActivity | null
     open?: boolean
     closable?: boolean
@@ -24,6 +30,35 @@ const stepAssistantMessage = computed(() => props.activity?.assistantMessage ?? 
 const agentMessages = computed(() =>
   (props.activity?.agentRun?.messages ?? []).filter(m => m.text && m.text.trim().length > 0),
 )
+const activityArtifacts = computed(() => props.activity?.artifacts ?? [])
+const report = computed(() => jobResultReport(props.activity?.jobResult))
+const selectedArtifact = ref<JobArtifact | null>(null)
+const artifactError = ref('')
+const downloadingId = ref<string | null>(null)
+
+function canPreview(item: JobArtifact): boolean {
+  const preview = artifactPreview(item)
+  return Boolean(props.jobId) && preview.kind !== 'download' && item.size_bytes >= 0 && item.size_bytes <= preview.limit
+}
+
+async function downloadArtifact(item: JobArtifact) {
+  if (!props.jobId || downloadingId.value) return
+  downloadingId.value = item.id
+  artifactError.value = ''
+  try {
+    const data = await agentJobsApi.artifact(props.jobId, item.id)
+    const url = URL.createObjectURL(data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = item.filename || item.name || item.id
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (cause) {
+    artifactError.value = formatApiError(cause)
+  } finally {
+    downloadingId.value = null
+  }
+}
 const pendingStage = computed(() => {
   if (run.value?.status !== 'running') return null
   switch (run.value.events.at(-1)?.event_type) {
@@ -303,12 +338,76 @@ function stageNote(event: JobEvent): string {
             </div>
           </div>
         </details>
+        <details v-if="report.kind !== 'empty'" class="mt-3 border-t pt-3 text-xs" open>
+          <summary class="cursor-pointer font-medium">{{ t('jobUi.result') }}</summary>
+          <article
+            v-if="report.kind === 'markdown'"
+            class="job-report mt-2 rounded-lg bg-muted p-2.5 text-xs leading-6"
+            v-html="report.html"
+          />
+          <pre
+            v-else-if="report.kind === 'json'"
+            class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2"
+          >{{ report.text }}</pre>
+        </details>
+        <details v-if="activityArtifacts.length" class="mt-3 border-t pt-3 text-xs" open>
+          <summary class="cursor-pointer font-medium">{{ t('jobUi.artifacts') }} ({{ activityArtifacts.length }})</summary>
+          <div class="mt-2 space-y-2">
+            <div
+              v-for="item in activityArtifacts"
+              :key="item.id"
+              class="flex items-center justify-between gap-2 rounded-lg bg-muted p-2"
+            >
+              <div class="flex min-w-0 items-center gap-2">
+                <File class="size-3.5 shrink-0 text-studio-violet" />
+                <div class="min-w-0">
+                  <p class="truncate font-medium" :title="item.filename || item.name || item.id">
+                    {{ item.filename || item.name || item.id }}
+                  </p>
+                  <p class="truncate text-[10px] text-muted-foreground">
+                    {{ item.media_type || item.mime_type }} · {{ (item.size_bytes / 1024).toFixed(1) }} KiB
+                  </p>
+                </div>
+              </div>
+              <div v-if="props.jobId" class="flex shrink-0 items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2 text-[10px]"
+                  :disabled="downloadingId !== null"
+                  @click="downloadArtifact(item)"
+                >
+                  <Download class="size-3" />{{ t('jobUi.download') }}
+                </Button>
+                <Button
+                  v-if="canPreview(item)"
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2 text-[10px]"
+                  data-artifact-preview
+                  @click="selectedArtifact = item"
+                >
+                  <Eye class="size-3" />Preview
+                </Button>
+              </div>
+            </div>
+            <p v-if="artifactError" role="alert" class="text-xs text-danger">{{ artifactError }}</p>
+          </div>
+        </details>
         <details v-if="activity.agentRun?.result" class="mt-3 border-t pt-3 text-xs">
           <summary class="cursor-pointer font-medium">{{ t('jobUi.agentResult') }}</summary>
           <pre class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(activity.agentRun.result, null, 2) }}</pre>
         </details>
       </template>
     </div>
+    <ArtifactPreviewDialog
+      v-if="selectedArtifact && props.jobId"
+      :key="selectedArtifact.id"
+      :job-id="props.jobId"
+      :artifact="selectedArtifact"
+      @close="selectedArtifact = null"
+      @download="selectedArtifact && downloadArtifact(selectedArtifact)"
+    />
   </details>
 </template>
 

@@ -121,6 +121,15 @@ export interface JobArtifact {
   size_bytes: number
   sha256: string
   created_at: string
+  name?: string
+  mime_type?: string
+  kind?: string
+  role?: string
+  producer_session_id?: string | null
+  producer_agent_id?: string | null
+  producer_tool_name?: string | null
+  producer_invocation_id?: string | null
+  download_url?: string
 }
 export interface AdminJob {
   knowledge_state?: KnowledgeCurrentState | null

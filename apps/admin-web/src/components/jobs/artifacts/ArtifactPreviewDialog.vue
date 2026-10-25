@@ -2,12 +2,13 @@
 import type { JobArtifact } from '@/api/types/agent-jobs'
 
 export function artifactPreview(artifact: JobArtifact) {
-  const mime = artifact.media_type.toLowerCase()
+  const mime = (artifact.media_type || artifact.mime_type || '').toLowerCase()
+  const filename = artifact.filename || artifact.name || ''
   if (['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mime)) return { kind: 'image', limit: 64 * 1024 * 1024 } as const
   if (['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/x-wav'].includes(mime)) return { kind: 'audio', limit: 64 * 1024 * 1024 } as const
   if (['video/mp4', 'video/webm'].includes(mime)) return { kind: 'video', limit: 64 * 1024 * 1024 } as const
   if (mime.startsWith('text/') || ['application/json', 'application/sql', 'application/javascript'].includes(mime)
-    || /\.(rs|py|js|ts|tsx|jsx|html|css|sql|json|csv|md|txt)$/i.test(artifact.filename)) return { kind: 'text', limit: 1024 * 1024 } as const
+    || /\.(rs|py|js|ts|tsx|jsx|html|css|sql|json|csv|md|txt)$/i.test(filename)) return { kind: 'text', limit: 1024 * 1024 } as const
   return { kind: 'download', limit: 0 } as const
 }
 </script>

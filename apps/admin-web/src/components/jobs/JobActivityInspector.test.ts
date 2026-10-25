@@ -142,4 +142,75 @@ describe('Job activity presentation', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('renders job result and artifacts on the canvas nodes and in the inspector with preview controls', () => {
+    const jobWithResultAndArtifacts = {
+      ...view,
+      id: 'job-art-1',
+      status: 'succeeded',
+      result: { text: '# Final Summary\nCompleted successfully.', summary: '# Final Summary\nCompleted successfully.' },
+      artifacts: [{
+        id: 'art-1',
+        step_key: 'daily_root:1:markdown_create',
+        filename: 'summary_report.md',
+        media_type: 'text/markdown',
+        size_bytes: 2048,
+        sha256: 'b'.repeat(64),
+        created_at: '1760000005',
+      }],
+      steps: [{
+        step_key: 'daily_root:1:markdown_create',
+        agent_run_id: 'sess-root-1',
+        plugin_id: 'orchestrator_flow',
+        operation: 'markdown_create',
+        status: 'succeeded',
+        instruction: 'daily_root -> markdown_create',
+        required: true,
+        dependencies: [],
+        input_refs: [],
+        arguments: { filename: 'summary_report.md' },
+        output_schema: {},
+        result: { artifact_id: 'art-1' },
+      }],
+    } as AdminJob
+    const activities = projectUnifiedActivity(jobWithResultAndArtifacts, [
+      {
+        sequence: 1,
+        event_type: 'step_started',
+        step_key: 'daily_root:1:markdown_create',
+        created_at: '2026-10-15T00:00:00Z',
+        payload: { agent_run_id: 'sess-root-1', tool_name: 'markdown_create' },
+      },
+      {
+        sequence: 2,
+        event_type: 'step_finished',
+        step_key: 'daily_root:1:markdown_create',
+        created_at: '2026-10-15T00:00:01Z',
+        payload: { agent_run_id: 'sess-root-1', status: 'succeeded' },
+      },
+      {
+        sequence: 3,
+        event_type: 'job_finished',
+        step_key: null,
+        created_at: '2026-10-15T00:00:02Z',
+        payload: { status: 'succeeded' },
+      },
+    ])
+    const timeline = mount(JobUnifiedTimeline, {
+      props: { jobId: 'job-art-1', activities, selectedId: 'job:terminal', filter: { kind: 'all' }, roles: [] },
+    })
+    const inspector = mount(JobActivityInspector, {
+      props: { jobId: 'job-art-1', activity: activities[1]!, open: true },
+    })
+    try {
+      expect(timeline.text()).toContain('📎 summary_report.md')
+      expect(timeline.text()).toContain('1 artifacts')
+      expect(inspector.text()).toContain('Final Summary')
+      expect(inspector.text()).toContain('summary_report.md')
+      expect(inspector.find('[data-artifact-preview]').exists()).toBe(true)
+    } finally {
+      timeline.unmount()
+      inspector.unmount()
+    }
+  })
+
 })

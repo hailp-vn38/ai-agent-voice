@@ -263,6 +263,7 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="eventsError" role="alert" class="text-xs text-danger">{{ eventsError }}</p>
       <JobUnifiedTimeline
+        :job-id="job.id"
         :activities="filteredActivity"
         :selected-id="selectedActivityId"
         :filter="activityFilter"

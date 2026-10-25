@@ -1,4 +1,4 @@
-import type { AdminJob, AgentRunView, JobEvent, JobStep } from '@/api/types/agent-jobs'
+import type { AdminJob, AgentRunView, JobArtifact, JobEvent, JobStep } from '@/api/types/agent-jobs'
 import { projectLlmRuns, type LlmRun } from './llm-activity'
 
 export type ActivityKind = 'llm' | 'plugin' | 'fork' | 'join' | 'agent' | 'job' | 'plan'
@@ -27,6 +27,8 @@ export interface UnifiedActivity {
   title: string
   note: string
   assistantMessage?: string | null
+  artifacts?: JobArtifact[]
+  jobResult?: Record<string, unknown> | null
   llm?: LlmRun
   step?: JobStep
   event?: JobEvent
@@ -81,6 +83,20 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
     }
   })
   const llmStepKeys = new Set(runs.map(run => run.stepKey).filter((key): key is string => key !== null))
+  const artifactsByStep = new Map<string, JobArtifact[]>()
+  const artifactsBySession = new Map<string, JobArtifact[]>()
+  for (const artifact of job.artifacts ?? []) {
+    if (artifact.step_key) {
+      const list = artifactsByStep.get(artifact.step_key) ?? []
+      list.push(artifact)
+      artifactsByStep.set(artifact.step_key, list)
+    }
+    if (artifact.producer_session_id) {
+      const list = artifactsBySession.get(artifact.producer_session_id) ?? []
+      list.push(artifact)
+      artifactsBySession.set(artifact.producer_session_id, list)
+    }
+  }
   const pluginRows = new Map<string, UnifiedActivity>()
   for (const event of ordered) {
     const payload = event.payload ?? {}
@@ -109,6 +125,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       const subagentPrompt = isSubagentStep
         ? text(rawArgs?.prompt) ?? text(rawArgs?.task)
         : null
+      const stepArtifacts = artifactsByStep.get(event.step_key)
       const item: UnifiedActivity = {
         id, sequence: event.sequence, time: event.created_at, kind: step && !step.plugin_id ? 'llm' : 'plugin',
         status: stepActivityStatus(step, event),
@@ -121,6 +138,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
           subagentPrompt ??
           (step && !step.plugin_id ? 'Legacy worker execution' : 'Plugin operation'),
         assistantMessage,
+        artifacts: stepArtifacts && stepArtifacts.length > 0 ? stepArtifacts : undefined,
         step, event,
       }
       pluginRows.set(id, item)
@@ -137,6 +155,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
       const agentRun = agentRunId ? agentRuns.get(agentRunId) : undefined
       const finalAssistantMessage =
         text(payload.assistant_message) ?? text(agentRun?.result?.text)
+      const sessionArtifacts = agentRunId ? artifactsBySession.get(agentRunId) : undefined
       const status: ActivityStatus =
         payload.status === 'succeeded' || payload.status === 'completed'
           ? 'completed'
@@ -154,11 +173,34 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         title: 'Agent finished',
         note: text(payload.error_code) ?? finalAssistantMessage ?? 'Run checkpoint',
         assistantMessage: finalAssistantMessage,
+        artifacts: sessionArtifacts && sessionArtifacts.length > 0 ? sessionArtifacts : undefined,
         event,
       })
     } else if (event.event_type === 'job_finished') {
-      make('job', 'job:terminal', 'Job finished', text(payload.error_code) ?? text(payload.status) ?? 'Terminal checkpoint',
-        payload.status === 'succeeded' || payload.status === 'partial_success' ? 'completed' : payload.status === 'cancelled' ? 'cancelled' : 'failed')
+      const resultText =
+        text(job.result?.text) ?? text(job.result?.summary) ?? text(job.result?.markdown)
+      const allArtifacts = job.artifacts && job.artifacts.length > 0 ? job.artifacts : undefined
+      const status: ActivityStatus =
+        payload.status === 'succeeded' || payload.status === 'partial_success'
+          ? 'completed'
+          : payload.status === 'cancelled'
+            ? 'cancelled'
+            : 'failed'
+      items.push({
+        id: 'job:terminal',
+        sequence: event.sequence,
+        time: event.created_at,
+        kind: 'job',
+        status,
+        agentRunId,
+        role,
+        title: 'Job finished',
+        note: text(payload.error_code) ?? resultText ?? text(payload.status) ?? 'Terminal checkpoint',
+        assistantMessage: resultText,
+        jobResult: job.result ?? null,
+        artifacts: allArtifacts,
+        event,
+      })
     } else if (event.event_type === 'plan_accepted' || event.event_type === 'plan_rejected') {
       make('plan', 'plan:' + event.sequence, event.event_type === 'plan_accepted' ? 'Plan accepted' : 'Plan rejected',
         text(payload.code) ?? 'Legacy DAG', event.event_type === 'plan_rejected' ? 'failed' : 'completed')
@@ -298,7 +340,11 @@ const LANE_GAP = 46
 const TOP_PAD = 48
 
 function activityNodeHeight(act: UnifiedActivity): number {
-  if ((act.llm && act.step) || (act.childRuns && act.childRuns.length > 0)) {
+  if (
+    (act.llm && act.step) ||
+    (act.childRuns && act.childRuns.length > 0) ||
+    (act.artifacts && act.artifacts.length > 0)
+  ) {
     return EXTRA_NODE_H
   }
   return BASE_NODE_H

@@ -12,6 +12,7 @@ import { useI18n } from '@/composables/useI18n'
 import JobActivityInspector from './JobActivityInspector.vue'
 
 const props = defineProps<{
+  jobId?: string
   activities: UnifiedActivity[]
   selectedId: string | null
   filter: ActivityFilter
@@ -225,6 +226,9 @@ function footerLeft(activity: UnifiedActivity): string {
   }
   if (activity.kind === 'plugin') return activity.step?.step_key ?? 'plugin'
   if (activity.kind === 'fork' || activity.kind === 'join') return activity.forkGroupId ?? activity.kind
+  if (activity.kind === 'job' && activity.artifacts?.length) {
+    return `${activity.artifacts.length} ${t('jobUi.artifacts').toLowerCase()}`
+  }
   return activity.step?.step_key ?? activity.agentRunId ?? activity.kind
 }
 function footerRight(activity: UnifiedActivity): string {
@@ -483,6 +487,13 @@ function footerRight(activity: UnifiedActivity): string {
                           <span class="font-mono text-[9px]">{{ child.agent_run_id }}</span>
                         </span>
                         <span
+                          v-if="node.activity.artifacts?.length"
+                          class="desc mt-1 truncate text-[#83e0e9]"
+                          :title="node.activity.artifacts.map(a => a.filename || a.name || a.id).join(', ')"
+                        >
+                          📎 {{ node.activity.artifacts[0]?.filename || node.activity.artifacts[0]?.name || node.activity.artifacts[0]?.id }}<template v-if="node.activity.artifacts.length > 1"> +{{ node.activity.artifacts.length - 1 }}</template>
+                        </span>
+                        <span
                           v-if="node.activity.llm && node.activity.step"
                           class="desc mt-1"
                           :class="
@@ -515,6 +526,7 @@ function footerRight(activity: UnifiedActivity): string {
         data-canvas-inspector
       >
         <JobActivityInspector
+          :job-id="jobId"
           :activity="inspectedActivity"
           open
           closable
