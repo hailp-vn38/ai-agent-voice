@@ -10,7 +10,7 @@ use crate::providers::{
     capabilities::{CapabilityDiscoveryMode, DiscoverySource, ProviderCapabilities},
     descriptor::{
         ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
-        ProviderType, field,
+        ProviderType, field, select_field,
     },
     llm::{LlmEvent, LlmEventStream, LlmRequest, ToolDefinition, stream_openai_request},
     registry::ProviderAdapterRegistration,
@@ -34,6 +34,14 @@ pub struct OpenCodeFreeConfig {
     pub model: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_percent: Option<u16>,
 }
 
 pub(crate) fn valid_free_model_id(model: &str) -> bool {
@@ -46,7 +54,17 @@ pub(crate) fn valid_free_model_id(model: &str) -> bool {
 
 impl OpenCodeFreeConfig {
     pub fn valid(&self) -> bool {
-        valid_free_model_id(&self.model) && (1_000..=120_000).contains(&self.timeout_ms)
+        valid_free_model_id(&self.model)
+            && (1_000..=600_000).contains(&self.timeout_ms)
+            && self.max_tokens.is_none_or(|v| (1..=65_536).contains(&v))
+            && self
+                .context_limit_tokens
+                .is_none_or(|v| (4_096..=2_000_000).contains(&v))
+            && self
+                .reasoning_effort
+                .as_deref()
+                .is_none_or(|v| matches!(v, "low" | "medium" | "high"))
+            && self.temperature_percent.is_none_or(|v| v <= 200)
     }
 }
 
@@ -175,6 +193,8 @@ fn reject_placeholder_call(
     event
 }
 
+const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
+
 const FIELDS: &[ProviderConfigField] = &[
     field(
         "model",
@@ -193,7 +213,42 @@ const FIELDS: &[ProviderConfigField] = &[
         false,
         None,
         Some(1_000),
-        Some(120_000),
+        Some(600_000),
+        None,
+    ),
+    field(
+        "max_tokens",
+        "Max output tokens",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(256),
+        Some(65_536),
+        None,
+    ),
+    field(
+        "context_limit_tokens",
+        "Context window (tokens)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(4_096),
+        Some(2_000_000),
+        None,
+    ),
+    select_field(
+        "reasoning_effort",
+        "Reasoning effort",
+        REASONING_EFFORTS,
+    ),
+    field(
+        "temperature_percent",
+        "Temperature (0-200%)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(0),
+        Some(200),
         None,
     ),
 ];

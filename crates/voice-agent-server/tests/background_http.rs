@@ -301,3 +301,186 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
     // The first 8 events must be 100% identical in sequence and content!
     assert_eq!(&events_2[..8], &events_1[..]);
 }
+
+#[tokio::test]
+async fn background_settings_integrates_llm_providers_and_configures_subagents() {
+    let temp_root = std::env::temp_dir().join(format!("background-agents-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let config: AppConfig = toml::from_str(&format!(
+        r#"
+[server]
+bind = "127.0.0.1:0"
+public_ws_url = "ws://127.0.0.1:0/voice/v1/"
+[provider_defaults]
+vad = "test"
+asr = "test"
+llm = "test"
+tts = "test"
+[database]
+url = "sqlite://{}"
+[api]
+enabled = true
+admin_token = "background-test-token"
+[orchestrator]
+store_dir = "{}"
+prompts_dir = "{}"
+"#,
+        temp_root.join("voice-agent.db").display(),
+        temp_root.join("orch-store").display(),
+        temp_root.join("prompts").display(),
+    ))
+    .unwrap();
+    let router = bootstrap_with_providers(config, Arc::new(ProviderSet::unavailable()))
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/api/admin", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::new();
+
+    // 1. Create a database LLM provider with full model & generation bounds
+    let created_resp = client
+        .post(format!("{base}/providers"))
+        .bearer_auth("background-test-token")
+        .json(&json!({
+            "name": "DeepSeek R1 Worker",
+            "type": "llm",
+            "adapter": "openai",
+            "config_json": {
+                "base_url": "https://api.deepseek.example/v1",
+                "model": "deepseek-reasoner",
+                "timeout_ms": 240_000,
+                "max_tokens": 16_384,
+                "context_limit_tokens": 128_000,
+                "reasoning_effort": "high",
+                "temperature_percent": 60
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created_resp.status(), StatusCode::CREATED);
+    let created_provider: Value = created_resp.json().await.unwrap();
+    let db_provider_key = created_provider["key"].as_str().unwrap().to_owned();
+
+    // 2. Fetch GET /api/admin/background/settings and verify provider catalog + 9 agents
+    let initial: Value = client
+        .get(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let llm_providers = initial["llm_providers"].as_array().unwrap();
+    assert!(
+        llm_providers
+            .iter()
+            .any(|p| p["ref"] == "orchestrator:default")
+    );
+    let db_entry = llm_providers
+        .iter()
+        .find(|p| p["ref"] == db_provider_key)
+        .expect("newly created DB LLM provider must appear in background settings");
+    assert_eq!(db_entry["model"], "deepseek-reasoner");
+    assert_eq!(db_entry["max_tokens"], 16_384);
+    assert_eq!(db_entry["context_limit_tokens"], 128_000);
+    assert_eq!(db_entry["reasoning_effort"], "high");
+    assert_eq!(db_entry["temperature_percent"], 60);
+
+    let agents = initial["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 9);
+
+    // 3. Update global worker provider + specific subagent overrides via PUT /api/admin/background/settings
+    let update_resp = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"1\"")
+        .json(&json!({
+            "enabled": true,
+            "orchestrator_llm_provider": "orchestrator:default",
+            "worker_llm_provider": db_provider_key,
+            "agents": {
+                "wiki_researcher": {
+                    "enabled": true,
+                    "provider_ref": db_provider_key,
+                    "steps": 8,
+                    "allowed_tools": ["skill", "wiki_tree", "wiki_query", "wiki_get"],
+                    "allowed_skills": ["wiki-query"],
+                    "description": "Custom fast researcher",
+                    "system_prompt": "Custom Vietnamese researcher prompt."
+                },
+                "media_creator": {
+                    "enabled": false
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(update_resp.status(), StatusCode::OK);
+    let updated: Value = update_resp.json().await.unwrap();
+    assert_eq!(updated["revision"], 2);
+    assert_eq!(updated["worker_llm_provider"], db_provider_key);
+
+    let updated_agents = updated["agents"].as_array().unwrap();
+    let researcher = updated_agents
+        .iter()
+        .find(|a| a["id"] == "wiki_researcher")
+        .unwrap();
+    assert_eq!(researcher["steps"], 8);
+    assert_eq!(researcher["effective_provider_ref"], db_provider_key);
+    assert_eq!(researcher["effective_model"], "deepseek-reasoner");
+    assert_eq!(researcher["description"], "Custom fast researcher");
+    assert_eq!(
+        researcher["system_prompt"],
+        "Custom Vietnamese researcher prompt."
+    );
+    assert_eq!(
+        researcher["allowed_tools"],
+        json!(["skill", "wiki_tree", "wiki_query", "wiki_get"])
+    );
+
+    let daily_root = updated_agents
+        .iter()
+        .find(|a| a["id"] == "daily_root")
+        .unwrap();
+    let daily_subs = daily_root["allowed_subagents"].as_array().unwrap();
+    assert!(
+        !daily_subs.iter().any(|s| s == "media_creator"),
+        "disabled subagent media_creator must be removed from daily_root.allowed_subagents"
+    );
+
+    // 4. Reject invalid provider_ref or disabling a primary root agent
+    let bad_provider = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "enabled": true,
+            "worker_llm_provider": "nonexistent:provider"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_provider.status(), StatusCode::BAD_REQUEST);
+
+    let disable_root = client
+        .put(format!("{base}/background/settings"))
+        .bearer_auth("background-test-token")
+        .header("If-Match", "\"2\"")
+        .json(&json!({
+            "enabled": true,
+            "agents": {
+                "daily_root": { "enabled": false }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disable_root.status(), StatusCode::BAD_REQUEST);
+
+    server.abort();
+}
+

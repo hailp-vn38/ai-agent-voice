@@ -4,6 +4,46 @@ export interface BackgroundProviderOption {
   ref: string
   name: string
   source: 'config' | 'database'
+  adapter?: string
+  model?: string
+  base_url?: string
+  timeout_ms?: number
+  max_tokens?: number
+  context_limit_tokens?: number
+  reasoning_effort?: 'low' | 'medium' | 'high' | null
+  temperature_percent?: number | null
+}
+export interface BackgroundAgentConfig {
+  id: string
+  flow_id: 'daily' | 'wiki' | (string & {})
+  parent_id?: string | null
+  mode: 'primary' | 'subagent' | 'all'
+  enabled: boolean
+  provider_ref: string | null
+  effective_provider_ref: string
+  effective_model: string
+  steps: number
+  default_steps: number
+  allowed_tools: string[]
+  default_allowed_tools?: string[]
+  available_tools: string[]
+  allowed_skills: string[]
+  default_allowed_skills?: string[]
+  available_skills: string[]
+  allowed_subagents: string[]
+  description: string
+  default_description: string
+  system_prompt: string
+  default_system_prompt: string
+}
+export interface BackgroundAgentConfigUpdate {
+  enabled: boolean
+  provider_ref?: string | null
+  steps?: number
+  allowed_tools?: string[]
+  allowed_skills?: string[]
+  description?: string
+  system_prompt?: string
 }
 export interface BackgroundSettings {
   llm_providers?: BackgroundProviderOption[]
@@ -12,11 +52,13 @@ export interface BackgroundSettings {
   orchestrator_llm_provider: string | null
   worker_llm_provider: string | null
   revision: number
+  agents?: BackgroundAgentConfig[]
 }
 export interface BackgroundSettingsUpdate {
   enabled: boolean
   orchestrator_llm_provider: string | null
   worker_llm_provider: string | null
+  agents?: Record<string, BackgroundAgentConfigUpdate>
 }
 
 export type AgentRole = 'orchestrator' | 'research' | 'document' | 'general' | 'root' | 'source_collector' | 'wiki_ingestor' | 'wiki_curator' | (string & {})

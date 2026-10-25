@@ -16,6 +16,14 @@ pub struct OpenAiConfig {
     pub model: String,
     #[serde(default = "default_llm_timeout_ms")]
     pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_percent: Option<u16>,
 }
 
 impl Default for OpenAiConfig {
@@ -25,6 +33,10 @@ impl Default for OpenAiConfig {
             base_url: default_openai_base_url(),
             model: default_openai_model(),
             timeout_ms: default_llm_timeout_ms(),
+            max_tokens: None,
+            context_limit_tokens: None,
+            reasoning_effort: None,
+            temperature_percent: None,
         }
     }
 }

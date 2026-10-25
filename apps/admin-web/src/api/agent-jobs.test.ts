@@ -20,10 +20,28 @@ describe('Agent Job admin clients', () => {
   it('protects Background Settings mutations with If-Match', async () => {
     const fetch = vi.fn().mockResolvedValue(json({ enabled: false, orchestrator_llm_provider: null, worker_llm_provider: null, revision: 8 }))
     vi.stubGlobal('fetch', fetch)
-    await agentJobsApi.updateSettings({ enabled: false, orchestrator_llm_provider: null, worker_llm_provider: null }, 7)
+    await agentJobsApi.updateSettings({
+      enabled: false,
+      orchestrator_llm_provider: 'orchestrator:default',
+      worker_llm_provider: 'llm_deepseek',
+      agents: {
+        wiki_researcher: {
+          enabled: true,
+          provider_ref: 'llm_deepseek',
+          steps: 8,
+          allowed_tools: ['skill', 'wiki_query'],
+          allowed_skills: ['wiki-query'],
+          description: 'Custom researcher',
+          system_prompt: 'Prompt body',
+        },
+      },
+    }, 7)
     const init = fetch.mock.calls[0]?.[1] as RequestInit
     expect(init.method).toBe('PUT')
     expect(new Headers(init.headers).get('if-match')).toBe('"7"')
+    const sent = JSON.parse(String(init.body))
+    expect(sent.agents.wiki_researcher.provider_ref).toBe('llm_deepseek')
+    expect(sent.agents.wiki_researcher.steps).toBe(8)
   })
 
   it('submits Admin-owned Jobs', async () => {

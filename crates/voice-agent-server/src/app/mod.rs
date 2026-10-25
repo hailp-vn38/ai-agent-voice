@@ -434,6 +434,16 @@ async fn managed_startup(
 }
 
 async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> {
+    let settings_dir = crate::services::task_flow::effective_settings_dir(&state.config);
+    if let Some(persisted) = crate::services::task_flow::load_persisted_settings(&settings_dir) {
+        let mut guard = state
+            .admin_task_control
+            .lock()
+            .expect("admin_task_control mutex poisoned");
+        guard.background_enabled_override = persisted.enabled;
+        guard.background_revision = persisted.revision.max(1);
+        guard.background_settings = persisted;
+    }
     let runtime = crate::services::task_flow::init_from_app_config(&state.config)
         .await
         .map_err(BootstrapError::TaskFlow)?;
@@ -471,6 +481,7 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
     state.orchestrator = runtime.orchestrator;
     state.task_manager = runtime.task_manager;
     state.autoflow_notify = Some(runtime.autoflow_notify);
+    let _ = crate::services::task_flow::sync_orchestrator_from_state(state).await;
     Ok(())
 }
 

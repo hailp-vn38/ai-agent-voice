@@ -129,13 +129,27 @@ struct OpenAi {
     timeout_ms: u64,
     #[serde(default)]
     max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_limit_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    temperature_percent: Option<u16>,
 }
 impl OpenAi {
     fn valid(&self) -> bool {
         matches!(self.base_url.scheme(), "http" | "https")
             && string(&self.model, 256)
-            && (1..=120_000).contains(&self.timeout_ms)
+            && (1..=600_000).contains(&self.timeout_ms)
             && self.max_tokens.is_none_or(|v| v > 0 && v <= 65_536)
+            && self
+                .context_limit_tokens
+                .is_none_or(|v| (4_096..=2_000_000).contains(&v))
+            && self
+                .reasoning_effort
+                .as_deref()
+                .is_none_or(|v| matches!(v, "low" | "medium" | "high"))
+            && self.temperature_percent.is_none_or(|v| v <= 200)
     }
 }
 #[derive(Deserialize, Serialize)]
@@ -146,12 +160,26 @@ struct OpenCodeFree {
     timeout_ms: u64,
     #[serde(default)]
     max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_limit_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    temperature_percent: Option<u16>,
 }
 impl OpenCodeFree {
     fn valid(&self) -> bool {
         crate::providers::llm::opencode_free::valid_free_model_id(&self.model)
-            && (1_000..=120_000).contains(&self.timeout_ms)
+            && (1_000..=600_000).contains(&self.timeout_ms)
             && self.max_tokens.is_none_or(|v| v > 0 && v <= 65_536)
+            && self
+                .context_limit_tokens
+                .is_none_or(|v| (4_096..=2_000_000).contains(&v))
+            && self
+                .reasoning_effort
+                .as_deref()
+                .is_none_or(|v| matches!(v, "low" | "medium" | "high"))
+            && self.temperature_percent.is_none_or(|v| v <= 200)
     }
 }
 #[derive(Deserialize, Serialize)]

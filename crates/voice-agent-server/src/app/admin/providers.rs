@@ -209,6 +209,9 @@ pub(super) async fn create_provider(State(state): State<AppState>, request: Requ
     {
         return write_error(&request, cause);
     }
+    if body.kind == "llm" {
+        let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
+    }
     match crate::database::providers::provider_by(database, &provider_key).await {
         Ok(v) => (
             StatusCode::CREATED,
@@ -493,6 +496,9 @@ pub(super) async fn patch_provider(
     }
     if let Some(prewarm) = &state.provider_prewarm {
         prewarm.provider(provider_id, expected + 1).await;
+    }
+    if kind == "llm" {
+        let _ = crate::services::task_flow::sync_orchestrator_from_state(&state).await;
     }
     let _ = kind; // type is immutable and retained for the provider instance.
     match crate::database::providers::provider_by(database, &key).await {

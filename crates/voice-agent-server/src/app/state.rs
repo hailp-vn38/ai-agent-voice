@@ -35,6 +35,7 @@ const MAX_IDEMPOTENCY_ENTRIES: usize = 256;
 #[derive(Debug)]
 pub(crate) struct AdminTaskControlState {
     pub background_enabled_override: Option<bool>,
+    pub background_settings: crate::services::task_flow::PersistedBackgroundSettings,
     pub background_revision: i64,
     pub knowledge_processing_overrides: serde_json::Map<String, serde_json::Value>,
     pub knowledge_processing_revision: i64,
@@ -65,6 +66,7 @@ impl Default for AdminTaskControlState {
     fn default() -> Self {
         Self {
             background_enabled_override: None,
+            background_settings: Default::default(),
             background_revision: 1,
             knowledge_processing_overrides: serde_json::Map::new(),
             knowledge_processing_revision: 1,

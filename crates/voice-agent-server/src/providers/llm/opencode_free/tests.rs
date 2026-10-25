@@ -4,6 +4,10 @@ fn config(model: &str) -> OpenCodeFreeConfig {
     OpenCodeFreeConfig {
         model: model.into(),
         timeout_ms: 60_000,
+        max_tokens: None,
+        context_limit_tokens: None,
+        reasoning_effort: None,
+        temperature_percent: None,
     }
 }
 

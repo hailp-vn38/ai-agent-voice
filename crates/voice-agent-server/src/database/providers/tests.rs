@@ -121,3 +121,107 @@ INSERT INTO devices (device_id,agent_id,template_id,enabled,created_at,updated_a
         "a disabled explicit override cannot warm the default instead"
     );
 }
+
+#[test]
+fn llm_provider_config_accepts_generation_and_context_bounds() {
+    for (adapter, valid_payload) in [
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4.1-mini",
+                "timeout_ms": 300_000,
+                "max_tokens": 8_192,
+                "context_limit_tokens": 128_000,
+                "reasoning_effort": "medium",
+                "temperature_percent": 70
+            }),
+        ),
+        (
+            "opencode_free",
+            serde_json::json!({
+                "model": "nemotron-3-ultra-free",
+                "timeout_ms": 300_000,
+                "max_tokens": 4_096,
+                "context_limit_tokens": 64_000,
+                "reasoning_effort": "high",
+                "temperature_percent": 30
+            }),
+        ),
+    ] {
+        let canonical = crate::database::provider_config::validate(adapter, &valid_payload)
+            .expect("valid LLM generation bounds should pass");
+        let parsed: serde_json::Value = serde_json::from_str(&canonical).unwrap();
+        assert_eq!(parsed["timeout_ms"], 300_000);
+        assert_eq!(parsed["reasoning_effort"], valid_payload["reasoning_effort"]);
+        assert_eq!(
+            parsed["context_limit_tokens"],
+            valid_payload["context_limit_tokens"]
+        );
+        assert_eq!(
+            parsed["temperature_percent"],
+            valid_payload["temperature_percent"]
+        );
+    }
+
+    for (adapter, invalid_payload) in [
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4.1-mini",
+                "context_limit_tokens": 1_024
+            }),
+        ),
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4.1-mini",
+                "reasoning_effort": "extreme"
+            }),
+        ),
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4.1-mini",
+                "temperature_percent": 250
+            }),
+        ),
+        (
+            "opencode_free",
+            serde_json::json!({
+                "model": "nemotron-3-ultra-free",
+                "timeout_ms": 700_000
+            }),
+        ),
+    ] {
+        assert!(
+            crate::database::provider_config::validate(adapter, &invalid_payload).is_err(),
+            "expected {adapter} with {invalid_payload} to be rejected"
+        );
+    }
+
+    let openai_keys: Vec<&str> = crate::providers::llm::openai::descriptor::DESCRIPTOR
+        .config_schema
+        .fields
+        .iter()
+        .map(|f| f.key)
+        .collect();
+    for expected in [
+        "base_url",
+        "model",
+        "timeout_ms",
+        "max_tokens",
+        "context_limit_tokens",
+        "reasoning_effort",
+        "temperature_percent",
+    ] {
+        assert!(
+            openai_keys.contains(&expected),
+            "missing field {expected} in openai descriptor"
+        );
+    }
+}
+

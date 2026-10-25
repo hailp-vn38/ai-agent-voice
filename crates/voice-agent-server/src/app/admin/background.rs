@@ -1,10 +1,16 @@
 use super::*;
-use crate::services::task_flow::{project_task_events, project_task_to_admin_job};
+use crate::services::task_flow::{
+    AgentConfigOverride, DEFAULT_ORCHESTRATOR_PROVIDER_REF, PersistedBackgroundSettings,
+    project_agents_json, project_task_events, project_task_to_admin_job,
+    resolve_llm_provider_catalog, save_persisted_settings, sync_orchestrator_from_state,
+    validate_agent_overrides,
+};
 use orchestrator_flow_rs::{
     CreateTaskRequest, ErrorCode, TaskError, TaskEvent, TaskFeedItem, TaskFilter, TaskManager,
     TaskSource, TaskStatus,
 };
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[allow(clippy::result_large_err)]
@@ -46,10 +52,30 @@ fn task_failure(request: &Request, cause: TaskError) -> Response {
     error(request, status, cause.code().as_str())
 }
 
-fn build_settings_json(state: &AppState, enabled_override: Option<bool>, revision: i64) -> Value {
+async fn build_settings_json(
+    state: &AppState,
+    settings: &PersistedBackgroundSettings,
+    revision: i64,
+) -> Value {
     let runtime_ready = state.task_manager.is_some();
-    let enabled = enabled_override.unwrap_or(state.config.orchestrator.enabled && runtime_ready);
-    let provider_ref = "orchestrator:default";
+    let enabled = settings
+        .enabled
+        .unwrap_or(state.config.orchestrator.enabled && runtime_ready);
+    let catalog = resolve_llm_provider_catalog(state).await;
+    let valid_ref = |pref: &str| -> String {
+        catalog
+            .iter()
+            .find(|p| p.provider_ref == pref)
+            .map(|p| p.provider_ref.clone())
+            .unwrap_or_else(|| DEFAULT_ORCHESTRATOR_PROVIDER_REF.to_owned())
+    };
+    let orchestrator_llm_provider = valid_ref(&settings.orchestrator_llm_provider);
+    let worker_llm_provider = valid_ref(&settings.worker_llm_provider);
+    let llm_providers: Vec<Value> = catalog
+        .iter()
+        .map(|p| p.to_json_summary())
+        .collect();
+    let agents = project_agents_json(&state.config.orchestrator, settings, &catalog);
     let available_agents = state
         .task_manager
         .as_ref()
@@ -58,34 +84,35 @@ fn build_settings_json(state: &AppState, enabled_override: Option<bool>, revisio
     serde_json::json!({
         "runtime_ready": runtime_ready,
         "enabled": enabled,
-        "orchestrator_llm_provider": provider_ref,
-        "worker_llm_provider": provider_ref,
+        "orchestrator_llm_provider": orchestrator_llm_provider,
+        "worker_llm_provider": worker_llm_provider,
         "revision": revision,
-        "llm_providers": [
-            {
-                "ref": provider_ref,
-                "name": state.config.orchestrator.model,
-                "source": "config"
-            }
-        ],
+        "llm_providers": llm_providers,
         "available_agents": available_agents,
+        "agents": agents,
     })
 }
 
 pub(super) async fn settings(State(state): State<AppState>, _request: Request) -> Response {
-    let (enabled_override, revision) = {
+    let (settings, revision) = {
         let guard = state
             .admin_task_control
             .lock()
             .expect("admin_task_control mutex poisoned");
-        (guard.background_enabled_override, guard.background_revision)
+        (guard.background_settings.clone(), guard.background_revision)
     };
-    Json(build_settings_json(&state, enabled_override, revision)).into_response()
+    Json(build_settings_json(&state, &settings, revision).await).into_response()
 }
 
 #[derive(Deserialize)]
 pub(super) struct SettingsUpdateInput {
     pub enabled: bool,
+    #[serde(default)]
+    pub orchestrator_llm_provider: Option<String>,
+    #[serde(default)]
+    pub worker_llm_provider: Option<String>,
+    #[serde(default)]
+    pub agents: Option<BTreeMap<String, AgentConfigOverride>>,
 }
 
 pub(super) async fn save_settings(State(state): State<AppState>, request: Request) -> Response {
@@ -97,6 +124,61 @@ pub(super) async fn save_settings(State(state): State<AppState>, request: Reques
         Ok(v) => v,
         Err(e) => return e,
     };
+
+    let catalog = resolve_llm_provider_catalog(&state).await;
+    let current = {
+        let guard = state
+            .admin_task_control
+            .lock()
+            .expect("admin_task_control mutex poisoned");
+        if guard.background_revision != expected_rev {
+            return error(&request, StatusCode::CONFLICT, "revision_conflict");
+        }
+        guard.background_settings.clone()
+    };
+
+    let next_orchestrator_provider = input
+        .orchestrator_llm_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| current.orchestrator_llm_provider.clone());
+    let next_worker_provider = input
+        .worker_llm_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| current.worker_llm_provider.clone());
+    let next_agents = match input.agents {
+        Some(incoming) => {
+            let mut merged = current.agents.clone();
+            for (k, v) in incoming {
+                merged.insert(k, v);
+            }
+            merged
+        }
+        None => current.agents.clone(),
+    };
+
+    if let Err(code) = validate_agent_overrides(
+        &next_orchestrator_provider,
+        &next_worker_provider,
+        &next_agents,
+        &catalog,
+    ) {
+        return error(&request, StatusCode::BAD_REQUEST, code);
+    }
+
+    let mut next_settings = PersistedBackgroundSettings {
+        enabled: Some(input.enabled),
+        revision: expected_rev.saturating_add(1),
+        orchestrator_llm_provider: next_orchestrator_provider,
+        worker_llm_provider: next_worker_provider,
+        agents: next_agents,
+    };
+
     let new_rev = {
         let mut guard = state
             .admin_task_control
@@ -107,9 +189,18 @@ pub(super) async fn save_settings(State(state): State<AppState>, request: Reques
         }
         guard.background_enabled_override = Some(input.enabled);
         guard.background_revision = guard.background_revision.saturating_add(1);
+        next_settings.revision = guard.background_revision;
+        guard.background_settings = next_settings.clone();
         guard.background_revision
     };
-    Json(build_settings_json(&state, Some(input.enabled), new_rev)).into_response()
+
+    let settings_dir = crate::services::task_flow::effective_settings_dir(&state.config);
+    let _ = save_persisted_settings(&settings_dir, &next_settings);
+    if let Err(err) = sync_orchestrator_from_state(&state).await {
+        tracing::warn!(error = %err, "failed to reconfigure orchestrator after background settings update");
+    }
+
+    Json(build_settings_json(&state, &next_settings, new_rev).await).into_response()
 }
 
 #[derive(Deserialize)]

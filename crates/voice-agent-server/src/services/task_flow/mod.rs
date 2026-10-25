@@ -1,6 +1,7 @@
 //! Unified Background Task, Followup, Schedule/Reminder & Karpathy LLM Wiki Dual-Flow service
 //! powered by [`orchestrator_flow_rs`] (`orchestrator_task_rs`).
 
+pub mod agent_settings;
 mod projections;
 mod voice;
 mod workspace_seed;
@@ -8,12 +9,20 @@ mod workspace_seed;
 #[cfg(test)]
 mod tests;
 
+pub use agent_settings::{
+    AGENT_SPECS, AgentConfigOverride, AgentSpec, DEFAULT_ORCHESTRATOR_PROVIDER_REF,
+    PersistedBackgroundSettings, ResolvedLlmProvider, build_agent_definitions,
+    default_orchestrator_provider, effective_settings_dir, find_agent_spec,
+    load_persisted_settings, project_agents_json, resolve_llm_provider_catalog,
+    save_persisted_settings, sync_orchestrator_from_state, validate_agent_overrides,
+    write_agent_prompts,
+};
 pub use projections::{project_task_events, project_task_to_admin_job};
 pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};
 pub use workspace_seed::{
     DAILY_ROOT_PROMPT, DAILY_SYNTHESIS_STAGING_SKILL, DAILY_TASK_REMINDER_SKILL,
-    MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, WIKI_RESEARCHER_PROMPT,
-    WIKI_ROOT_PROMPT,
+    MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, SOURCE_COLLECTOR_PROMPT,
+    WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
 };
 
 use std::path::PathBuf;
@@ -22,8 +31,7 @@ use std::time::Duration;
 
 use llm_wiki::{AdaptiveReadBudget, WikiEngine, WikiError};
 use orchestrator_agent_rs::{
-    AgentDefinition, AgentMode, LlmBackend, LlmConfig, LlmProviderConfig, Orchestrator,
-    OrchestratorConfig, OrchestratorError, ProviderAuth, SecretString,
+    LlmConfig, Orchestrator, OrchestratorConfig, OrchestratorError,
 };
 use orchestrator_flow_rs::{
     CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
@@ -175,206 +183,12 @@ async fn init_orchestrator_and_task_manager(
         .with_runtime(runtime_cfg);
     let task_init = TaskManager::prepare(task_cfg).await?;
 
-    // Build unified `Orchestrator` with Flow 2 (`daily_root`) & Flow 1 (`wiki_root`)
-    let provider_id = "default_openai";
-    let llm_cfg = LlmConfig {
-        providers: vec![LlmProviderConfig {
-            id: provider_id.into(),
-            backend: LlmBackend::OpenAiCompatible,
-            endpoint: Some(cfg.endpoint.clone()),
-            auth: if cfg.api_key.trim().is_empty() {
-                ProviderAuth::None
-            } else {
-                ProviderAuth::ApiKey(SecretString::new(cfg.api_key.clone()))
-            },
-            request_timeout: Duration::from_millis(cfg.request_timeout_ms),
-        }],
-    };
-
-    let prompts = &cfg.prompts_dir;
-    let model = &cfg.model;
+    let persisted = load_persisted_settings(&cfg.store_dir).unwrap_or_default();
+    let _ = write_agent_prompts(&cfg.prompts_dir, &persisted);
+    let initial_catalog = vec![default_orchestrator_provider(cfg)];
+    let (providers, agents) = build_agent_definitions(cfg, &persisted, &initial_catalog);
+    let llm_cfg = LlmConfig { providers };
     let ctx_limit = cfg.context_limit_tokens;
-    let max_out = cfg.max_output_tokens;
-
-    let agents = vec![
-        // === Flow 2: Interactive & Daily Background Assistant (`daily_root`) ===
-        AgentDefinition::new("daily_root", provider_id, model)
-            .with_mode(AgentMode::Primary)
-            .with_description(
-                "Interactive & background daily assistant: researches Wiki/Web, creates reports, generates images/TTS artifacts, stages knowledge to sources/, and manages reminders.",
-            )
-            .with_prompt_path(prompts.join("daily_root.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools(["subagent"])
-            .with_allowed_subagents([
-                "wiki_researcher",
-                "report_stager",
-                "media_creator",
-                "reminder_planner",
-            ])
-            .with_steps(15),
-        AgentDefinition::new("wiki_researcher", provider_id, model)
-            .with_mode(AgentMode::Subagent)
-            .with_description(
-                "Read-only specialist for querying and reading the LLM Wiki and inspecting web pages.",
-            )
-            .with_prompt_path(prompts.join("wiki_researcher.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools([
-                "skill",
-                "wiki_tree",
-                "wiki_query",
-                "wiki_get",
-                "wiki_multi_get",
-                "wiki_metadata",
-                "wiki_status",
-                "wiki_graph_neighbors",
-                "fetch_html",
-                "html_extract_metadata",
-                "html_extract_article",
-                "html_extract_feed",
-                "html_extract_links",
-                "html_select_elements",
-            ])
-            .with_allowed_skills(["wiki-query"])
-            .with_steps(12),
-        AgentDefinition::new("report_stager", provider_id, model)
-            .with_mode(AgentMode::Subagent)
-            .with_description(
-                "Synthesizes discussions into sources/<domain>/<topic>/ via add_to_sources, writes standalone reports via markdown_create, or publishes accompanying image/TTS artifacts.",
-            )
-            .with_prompt_path(prompts.join("report_stager.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools([
-                "skill",
-                "wiki_tree",
-                "wiki_get",
-                "add_to_sources",
-                "markdown_create",
-                "markdown_read",
-                "image_create",
-                "tts_synthesize",
-                "artifact_create",
-            ])
-            .with_allowed_skills(["wiki-taxonomy", "daily-synthesis-staging"])
-            .with_steps(12),
-        AgentDefinition::new("media_creator", provider_id, model)
-            .with_mode(AgentMode::Subagent)
-            .with_description(
-                "Generates PNG/SVG images via image_create, synthesizes TTS audio via tts_synthesize, and publishes multi-format Task Artifacts via artifact_create / markdown_create.",
-            )
-            .with_prompt_path(prompts.join("media_creator.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools([
-                "skill",
-                "image_create",
-                "tts_synthesize",
-                "artifact_create",
-                "markdown_create",
-                "markdown_read",
-            ])
-            .with_steps(12),
-        AgentDefinition::new("reminder_planner", provider_id, model)
-            .with_mode(AgentMode::Subagent)
-            .with_description(
-                "Creates, lists, completes, and deletes user reminders and scheduled tasks.",
-            )
-            .with_prompt_path(prompts.join("reminder_planner.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools([
-                "skill",
-                "reminder_create",
-                "reminder_list",
-                "reminder_complete",
-                "reminder_delete",
-            ])
-            .with_allowed_skills(["daily-task-reminder"])
-            .with_steps(10),
-        // === Flow 1: Background Karpathy LLM Wiki Pipeline (`wiki_root`) ===
-        AgentDefinition::new("wiki_root", provider_id, model)
-            .with_mode(AgentMode::Primary)
-            .with_description(
-                "Background Wiki pipeline coordinator: collects external sources (YouTube playlists, PDFs, Web pages), ingests new files from sources/, updates/patches Wiki pages, synthesizes topics, and runs wiki_lint.",
-            )
-            .with_prompt_path(prompts.join("wiki_root.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools(["subagent"])
-            .with_allowed_subagents(["source_collector", "wiki_ingestor", "wiki_curator"])
-            .with_steps(40),
-        AgentDefinition::new("source_collector", provider_id, model)
-            .with_mode(AgentMode::Subagent)
-            .with_description(
-                "Inspects external sources (YouTube playlist, PDF via anydoc, or Web via fetch_html/html_*), extracts detailed transcripts/markdown/metadata, classifies topic hierarchy (<domain>/<topic>), and saves raw Markdown files into sources/<domain>/<topic>/<slug>.md.",
-            )
-            .with_prompt_path(prompts.join("source_collector.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools([
-                "skill",
-                "anydoc_inspect_pdf",
-                "anydoc_save_to_sources",
-                "yt_list_playlist",
-                "yt_fetch_transcript",
-                "fetch_html",
-                "html_extract_metadata",
-                "html_extract_article",
-                "html_extract_feed",
-                "html_extract_links",
-                "html_select_elements",
-                "add_to_sources",
-                "wiki_tree",
-            ])
-            .with_allowed_skills(["wiki-taxonomy"])
-            .with_steps(35),
-        AgentDefinition::new("wiki_ingestor", provider_id, model)
-            .with_mode(AgentMode::Subagent)
-            .with_description(
-                "Compiles raw sources into wiki/sources/ and creates/patches entity & concept pages.",
-            )
-            .with_prompt_path(prompts.join("wiki_ingestor.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools([
-                "skill",
-                "wiki_tree",
-                "wiki_get",
-                "wiki_multi_get",
-                "wiki_query",
-                "wiki_metadata",
-                "wiki_ingest_source",
-                "wiki_write_file",
-                "wiki_patch_file",
-            ])
-            .with_allowed_skills(["wiki-taxonomy", "wiki-ingest"])
-            .with_steps(35),
-        AgentDefinition::new("wiki_curator", provider_id, model)
-            .with_mode(AgentMode::Subagent)
-            .with_description("Creates topic syntheses and repairs structural issues via wiki_lint.")
-            .with_prompt_path(prompts.join("wiki_curator.md"))
-            .with_context_limit_tokens(ctx_limit)
-            .with_max_output_tokens(max_out)
-            .with_allowed_tools([
-                "skill",
-                "wiki_tree",
-                "wiki_get",
-                "wiki_multi_get",
-                "wiki_query",
-                "wiki_file_synthesis",
-                "wiki_write_file",
-                "wiki_patch_file",
-                "wiki_delete_file",
-                "wiki_lint",
-                "wiki_schema",
-            ])
-            .with_allowed_skills(["wiki-taxonomy", "wiki-query", "wiki-lint"])
-            .with_steps(35),
-    ];
 
     let mut orch_cfg = OrchestratorConfig::new(llm_cfg, agents, &cfg.store_dir)
         .with_project_instructions(engine.config().schema_path());

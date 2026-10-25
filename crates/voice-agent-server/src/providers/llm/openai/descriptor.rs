@@ -2,10 +2,11 @@ use crate::providers::{
     capabilities::{CapabilityDiscoveryMode, DiscoverySource, ProviderCapabilities},
     descriptor::{
         ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
-        ProviderType, field,
+        ProviderType, field, select_field,
     },
     registry::ProviderAdapterRegistration,
 };
+const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
 const FIELDS: &[ProviderConfigField] = &[
     field(
         "base_url",
@@ -34,7 +35,42 @@ const FIELDS: &[ProviderConfigField] = &[
         false,
         None,
         Some(1),
-        Some(120_000),
+        Some(600_000),
+        None,
+    ),
+    field(
+        "max_tokens",
+        "Max output tokens",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(256),
+        Some(65_536),
+        None,
+    ),
+    field(
+        "context_limit_tokens",
+        "Context window (tokens)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(4_096),
+        Some(2_000_000),
+        None,
+    ),
+    select_field(
+        "reasoning_effort",
+        "Reasoning effort",
+        REASONING_EFFORTS,
+    ),
+    field(
+        "temperature_percent",
+        "Temperature (0-200%)",
+        ConfigFieldType::Integer,
+        false,
+        None,
+        Some(0),
+        Some(200),
         None,
     ),
 ];

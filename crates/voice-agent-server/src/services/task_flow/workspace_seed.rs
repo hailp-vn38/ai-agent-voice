@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use llm_wiki::{SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT};
+pub use llm_wiki::{SOURCE_COLLECTOR_PROMPT, WIKI_CURATOR_PROMPT, WIKI_INGESTOR_PROMPT};
 
 pub const WIKI_ROOT_PROMPT: &str = r#"You are `wiki_root` — the Root Subagent Dispatcher for Flow 1 (Background Karpathy LLM Wiki Pipeline) managed by `orchestrator_flow_rs`.
 
