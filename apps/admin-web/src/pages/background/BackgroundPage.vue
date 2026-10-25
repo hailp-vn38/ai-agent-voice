@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
-  Activity, ArrowRight, Bot, CheckCircle2, Cpu, ExternalLink, RefreshCw, RotateCcw,
-  Save, Settings2, ShieldCheck, Sliders, Wrench, Workflow,
+  Activity, Bot, Cpu, ExternalLink, RefreshCw, RotateCcw,
+  Save, Settings2, Sliders, Wrench,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -31,8 +31,6 @@ const saving = ref(false)
 const error = ref('')
 const notice = ref('')
 const unavailable = ref(false)
-const runningJobs = ref<number | null>(null)
-const queuedJobs = ref<number | null>(null)
 
 const editingAgentId = ref<string | null>(null)
 const modalOpen = ref(false)
@@ -239,20 +237,6 @@ function applyModalChanges() {
   modalOpen.value = false
 }
 
-async function refreshCapacity(signal: AbortSignal) {
-  try {
-    const [running, queued] = await Promise.all([
-      agentJobsApi.listJobs({ status: 'running' }, signal),
-      agentJobsApi.listJobs({ status: 'queued' }, signal),
-    ])
-    if (signal.aborted) return
-    runningJobs.value = running.total ?? null
-    queuedJobs.value = queued.total ?? null
-  } catch {
-    if (!signal.aborted) { runningJobs.value = null; queuedJobs.value = null }
-  }
-}
-
 async function load() {
   controller?.abort()
   const pending = new AbortController()
@@ -266,7 +250,6 @@ async function load() {
     settings.value = config
     restore(config)
     unavailable.value = false
-    void refreshCapacity(pending.signal)
   } catch (cause) {
     if (pending.signal.aborted) return
     unavailable.value = isApiError(cause) && cause.status === 404
@@ -582,36 +565,6 @@ onBeforeUnmount(() => controller?.abort())
           </div>
         </div>
       </section>
-
-      <div class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,1fr)]">
-        <section class="studio-panel p-5">
-          <h2 class="mb-5 flex items-center gap-2 font-semibold"><Workflow class="size-4 text-studio-violet" />{{ t('jobUi.executionFlow') }}</h2>
-          <div class="flex flex-wrap items-center gap-2 text-xs">
-            <span class="rounded-lg border bg-studio-violet/10 px-3 py-2 text-studio-violet">{{ t('jobUi.orchestrator') }}</span>
-            <ArrowRight class="size-4 text-muted-foreground" />
-            <span class="rounded-lg border bg-studio-violet/10 px-3 py-2 text-studio-violet">{{ t('jobUi.worker') }}</span>
-            <ArrowRight class="size-4 text-muted-foreground" />
-            <span class="rounded-lg border bg-success/10 px-3 py-2 text-success">{{ t('jobUi.pythonPlugin') }}</span>
-            <ArrowRight class="size-4 text-muted-foreground" />
-            <span class="rounded-lg border bg-muted px-3 py-2">{{ t('jobUi.artifacts') }}</span>
-          </div>
-          <div class="mt-5 flex items-start gap-2 text-sm text-muted-foreground"><CheckCircle2 class="mt-0.5 size-4 shrink-0 text-studio-cyan" /><p>{{ t('jobUi.noMcp') }}</p></div>
-          <Button class="mt-4" variant="outline" @click="router.push({ name: 'jobs' })">{{ t('jobUi.jobs') }}<ArrowRight class="size-4" /></Button>
-        </section>
-        <section class="studio-panel p-5">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="font-semibold">{{ t('jobUi.runtimeCapacity') }}</h2>
-            <Badge :variant="settings.runtime_ready ? 'success' : 'secondary'">{{ settings.runtime_ready ? t('jobUi.runtimeReady') : t('jobUi.runtimeUnavailable') }}</Badge>
-          </div>
-          <div class="mt-4 divide-y text-sm">
-            <div class="flex items-center justify-between gap-2 py-3"><span class="text-muted-foreground">{{ t('jobUi.runningJobs') }}</span><strong>{{ runningJobs ?? '—' }}</strong></div>
-            <div class="flex items-center justify-between gap-2 py-3"><span class="text-muted-foreground">{{ t('jobUi.queuedJobs') }}</span><strong>{{ queuedJobs ?? '—' }}</strong></div>
-            <div class="flex items-center justify-between gap-2 py-3"><span class="text-muted-foreground">{{ t('jobUi.workerConcurrency') }}</span><span class="text-muted-foreground">{{ t('jobUi.serverConfigured') }}</span></div>
-            <div class="flex items-center justify-between gap-2 py-3"><span class="text-muted-foreground">{{ t('jobUi.voiceReserved') }}</span><span class="inline-flex items-center gap-2"><ShieldCheck class="size-4 text-studio-cyan" />{{ t('jobUi.serverConfigured') }}</span></div>
-          </div>
-          <p class="mt-4 text-xs text-muted-foreground">{{ t('jobUi.capacityHint') }}</p>
-        </section>
-      </div>
     </template>
 
     <!-- Configure Agent / Sub-Agent Modal -->

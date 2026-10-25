@@ -169,7 +169,7 @@ it('opens Jobs settings from the settings icon', async () => {
     expect(settings.attributes('title')).toBe('Settings Jobs')
     expect(settings.find('svg').exists()).toBe(true)
     await settings.trigger('click')
-    expect(push).toHaveBeenCalledWith({ name: 'background' })
+    expect(push).toHaveBeenCalledWith({ name: 'jobs-settings' })
   } finally {
     wrapper.unmount()
   }

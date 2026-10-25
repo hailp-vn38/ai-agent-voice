@@ -61,16 +61,16 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.memory' },
   },
   {
-    path: '/background',
-    name: 'background',
-    component: () => import('@/pages/background/BackgroundPage.vue'),
-    meta: { titleKey: 'nav.background' },
-  },
-  {
     path: '/jobs',
     name: 'jobs',
     component: () => import('@/pages/jobs/JobsPage.vue'),
     meta: { titleKey: 'nav.jobs' },
+  },
+  {
+    path: '/jobs/settings',
+    name: 'jobs-settings',
+    component: () => import('@/pages/background/BackgroundPage.vue'),
+    meta: { titleKey: 'nav.background' },
   },
   {
     path: '/jobs/:jobId',

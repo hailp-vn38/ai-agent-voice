@@ -10,8 +10,8 @@ describe('Agent Job detail routing', () => {
     expect(detail.params.jobId).toBe('job-2847')
   })
 
-  it('uses a global Background page without an Agent permission route', () => {
-    expect(router.resolve('/background').name).toBe('background')
+  it('uses a dedicated Jobs settings route without an Agent permission route', () => {
+    expect(router.resolve('/jobs/settings').name).toBe('jobs-settings')
     expect(router.resolve('/agents/demo-agent').name).toBe('agent-detail')
   })
 })

@@ -98,7 +98,7 @@ onBeforeUnmount(() => { controller?.abort() })
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load()"><RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />{{ t('jobUi.refresh') }}</Button>
         <Button @click="createOpen = true"><Plus class="size-4" />{{ t('jobUi.newJob') }}</Button>
-        <Button variant="outline" size="icon" :aria-label="t('jobUi.background')" :title="t('jobUi.background')" @click="router.push({ name: 'background' })"><Settings2 class="size-4" aria-hidden="true" /></Button>
+        <Button variant="outline" size="icon" :aria-label="t('jobUi.background')" :title="t('jobUi.background')" @click="router.push({ name: 'jobs-settings' })"><Settings2 class="size-4" aria-hidden="true" /></Button>
       </template>
     </PageHeader>
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">

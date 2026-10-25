@@ -114,6 +114,8 @@ describe('BackgroundPage subagent & LLM provider configuration', () => {
     expect(wrapper.text()).toContain('daily_root')
     expect(wrapper.text()).toContain('wiki_researcher')
     expect(wrapper.text()).toContain('DeepSeek R1')
+    expect(wrapper.text()).not.toContain('Execution Flow')
+    expect(wrapper.text()).not.toContain('Runtime Capacity')
 
     // Open Configure modal for wiki_researcher (second Configure button)
     const configButtons = wrapper
