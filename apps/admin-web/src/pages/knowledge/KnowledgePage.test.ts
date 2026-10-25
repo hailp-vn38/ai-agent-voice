@@ -68,25 +68,33 @@ it('matches option A with a read-only Markdown document, tabs, explorer and outl
   } finally { wrapper.unmount() }
 })
 
-it('defaults to Wiki and switches its single displayed tree using the source select', async () => {
+it('defaults to Knowledge and switches its single displayed tree using the source tabs', async () => {
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
-    const picker = wrapper.find('select[aria-label="Knowledge source"]')
-    expect((picker.element as HTMLSelectElement).value).toBe('wiki')
+    expect(wrapper.find('select[aria-label="Knowledge source"]').exists()).toBe(false)
+    expect(wrapper.get('.a-pane-heading').text()).not.toContain('File explorer')
+    const tablist = wrapper.get('.a-pane-heading [role="tablist"][aria-label="Knowledge source"]')
+    const tabs = tablist.findAll('[role="tab"]')
+    expect(tabs.map(tab => tab.text())).toEqual(['Knowledge', 'File'])
+    expect(tabs[0]!.attributes('aria-selected')).toBe('true')
+    expect(tabs[1]!.attributes('aria-selected')).toBe('false')
     expect(wrapper.text()).toContain('Wiki Demo')
     expect(wrapper.text()).not.toContain('raw-file')
 
-    await picker.setValue('raw')
+    await tabs[1]!.trigger('click')
     await flushPromises()
+    expect(tabs[0]!.attributes('aria-selected')).toBe('false')
+    expect(tabs[1]!.attributes('aria-selected')).toBe('true')
     expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/tree?space=raw')
     expect(wrapper.find('.tree-holder').text()).toContain('raw-file')
     expect(wrapper.find('.tree-holder').text()).not.toContain('wiki-file')
 
-    await picker.setValue('drafts')
+    await tabs[0]!.trigger('click')
     await flushPromises()
-    expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/tree?space=drafts')
-    expect(wrapper.find('.tree-holder').text()).toContain('drafts-file')
+    expect(tabs[0]!.attributes('aria-selected')).toBe('true')
+    expect(tabs[1]!.attributes('aria-selected')).toBe('false')
+    expect(wrapper.find('.tree-holder').text()).toContain('Wiki Demo')
     expect(wrapper.find('.tree-holder').text()).not.toContain('raw-file')
   } finally { wrapper.unmount() }
 })
@@ -106,28 +114,37 @@ it('supports rendered Wiki links and the existing Graph tab without editor forms
   } finally { wrapper.unmount() }
 })
 
-it('displays drafts read-only without save or publication actions', async () => {
-  const fallback = requestJsonMock.getMockImplementation()!
-  requestJsonMock.mockImplementation(async (url: string) => {
-    if (url === '/api/admin/knowledge/pages/wiki_demo') return {
-      id: 'wiki_demo', title: 'Saved draft', body: 'Saved draft content', revision: 1,
-      status: 'draft', source_ref: 'src_demo:1',
+it('hides file and folder creation actions in the Knowledge tab and shows them only in the File tab', async () => {
+  const original = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string, options?: {method?: string; body?: Record<string, unknown>}) => {
+    if (url === '/api/admin/knowledge/tree?space=wiki') return {
+      items: [
+        { type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true },
+        { type: 'folder', space: 'wiki', path: 'wiki/AI', name: 'AI', editable: true },
+      ],
     }
-    return fallback(url)
+    if (url === '/api/admin/knowledge/tree?space=raw') return {
+      items: [
+        { type: 'folder', space: 'raw', path: 'raw', name: 'raw', editable: true },
+        { type: 'folder', space: 'raw', path: 'raw/notes', name: 'notes', editable: true },
+      ],
+    }
+    return original(url, options)
   })
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
-    await wrapper.get('select[aria-label="Knowledge source"]').setValue('drafts')
+    expect(wrapper.find('button[aria-label="Add folder"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Add file"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label^="Create note in"]').exists()).toBe(false)
+
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    await fileTab.trigger('click')
     await flushPromises()
-    await wrapper.get('button.tree-leaf').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('.doc h1').text()).toBe('Saved draft')
-    expect(wrapper.get('.markdown-body').text()).toBe('Saved draft content')
-    expect(wrapper.find('form').exists()).toBe(false)
-    expect(wrapper.find('input').exists()).toBe(false)
-    expect(wrapper.find('textarea').exists()).toBe(false)
-    expect(requestJsonMock.mock.calls.every(([, options]) => options === undefined)).toBe(true)
+    expect(wrapper.find('button[aria-label="Add folder"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="Add file"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="Create note in notes"]').exists()).toBe(true)
   } finally { wrapper.unmount() }
 })
 
@@ -146,7 +163,9 @@ it('does not render its own sidebar controls inside the Knowledge page', async (
 it('persists the selected vault and restores it on reload', async () => {
   const first = mount(KnowledgePage)
   await flushPromises()
-  await first.get('select[aria-label="Knowledge source"]').setValue('raw')
+  const fileTab = first.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+    .find(tab => tab.text() === 'File')!
+  await fileTab.trigger('click')
   await flushPromises()
   expect(window.localStorage.getItem('voice-agent-knowledge-vault-space')).toBe('raw')
   first.unmount()
@@ -154,62 +173,13 @@ it('persists the selected vault and restores it on reload', async () => {
   const again = mount(KnowledgePage)
   try {
     await flushPromises()
-    expect((again.get('select[aria-label="Knowledge source"]').element as HTMLSelectElement).value).toBe('raw')
+    const restoredFileTab = again.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    expect(restoredFileTab.attributes('aria-selected')).toBe('true')
     expect(requestJsonMock).toHaveBeenCalledWith('/api/admin/knowledge/tree?space=raw')
     expect(again.get('.tree-holder').text()).toContain('raw-file')
     expect(again.get('.tree-holder').text()).not.toContain('wiki-file')
   } finally { again.unmount() }
-})
-
-it('creates a Wiki draft from the folder action with inline naming and a Markdown editor', async () => {
-  const original = requestJsonMock.getMockImplementation()!
-  const writes: Array<{url:string; options?: {method?:string; body?: Record<string, unknown>}}> = []
-  let created = false
-  requestJsonMock.mockImplementation(async (url: string, options?: {method?:string; body?: Record<string, unknown>}) => {
-    if (url === '/api/admin/knowledge/tree?space=wiki') return {
-      items: [
-        {type: 'folder', space: 'wiki', path: 'wiki', name: 'wiki', editable: true},
-        {type: 'folder', space: 'wiki', path: 'wiki/AI', name: 'AI', editable: true},
-        ...(created ? [{
-          type: 'file', space: 'wiki', path: 'wiki/AI/New Agent.md', name: 'New Agent.md',
-          editable: true, id: 'wiki_created', status: 'draft', revision: 1,
-        }] : []),
-      ],
-    }
-    if (url === '/api/admin/knowledge/pages' && options?.method === 'POST') {
-      writes.push({url, options}); created = true
-      return {id:'wiki_created', title:'New Agent', body:'', status:'draft', revision:1, source_ref:null}
-    }
-    if (url === '/api/admin/knowledge/pages/wiki_created' && options?.method === 'PUT') {
-      writes.push({url, options})
-      return {id:'wiki_created', title:'New Agent', body:options.body?.body,
-        status:'draft', revision:2, source_ref:null}
-    }
-    return original(url, options)
-  })
-  const wrapper = mount(KnowledgePage)
-  try {
-    await flushPromises()
-    await wrapper.get('button[aria-label="Create note in AI"]').trigger('click')
-    const name = wrapper.get('input[aria-label="New note name"]')
-    await name.setValue('New Agent')
-    await name.trigger('keydown', {key:'Enter'})
-    await flushPromises()
-    expect(writes).toHaveLength(1)
-    expect(writes[0]).toEqual({url:'/api/admin/knowledge/pages', options:{
-      method:'POST', body: {
-        folder_path:'wiki/AI',file_name:'New Agent.md',title:'New Agent',
-        body:'',source_ref:null,expected_revision:0,
-      },
-    }})
-    expect(wrapper.find('textarea#knowledge-note-body').exists()).toBe(true)
-    expect(wrapper.get('.knowledge-note-editor').text()).toContain('New Agent')
-    await wrapper.get('textarea#knowledge-note-body').setValue('# New Agent\n\nHello')
-    await wrapper.get('form.knowledge-note-editor').trigger('submit')
-    await flushPromises()
-    expect(writes[1]?.url).toBe('/api/admin/knowledge/pages/wiki_created')
-    expect(writes[1]?.options?.body).toMatchObject({expected_revision:1,body:'# New Agent\n\nHello'})
-  } finally {wrapper.unmount()}
 })
 
 it('creates an empty Raw note in the selected folder and saves its content with CAS', async () => {
@@ -235,7 +205,9 @@ it('creates an empty Raw note in the selected folder and saves its content with 
   const wrapper=mount(KnowledgePage)
   try {
     await flushPromises()
-    await wrapper.get('select[aria-label="Knowledge source"]').setValue('raw')
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    await fileTab.trigger('click')
     await flushPromises()
     await wrapper.get('button[aria-label="Create note in notes"]').trigger('click')
     const name=wrapper.get('input[aria-label="New note name"]')
@@ -254,29 +226,29 @@ it('creates an empty Raw note in the selected folder and saves its content with 
   } finally {wrapper.unmount()}
 })
 
-it('cancels inline note naming with Escape and blocks creation under Drafts', async () => {
+it('cancels inline note naming with Escape in the File tab', async () => {
   const wrapper=mount(KnowledgePage)
   try {
+    await flushPromises()
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    await fileTab.trigger('click')
     await flushPromises()
     await wrapper.get('button[aria-label="Add file"]').trigger('click')
     const name=wrapper.get('input[aria-label="New note name"]')
     await name.trigger('keydown',{key:'Escape'})
     expect(wrapper.find('input[aria-label="New note name"]').exists()).toBe(false)
-    await wrapper.get('select[aria-label="Knowledge source"]').setValue('drafts')
-    await flushPromises()
-    expect(wrapper.get('button[aria-label="Add file"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('button[aria-label^="Create note in"]').exists()).toBe(false)
   } finally {wrapper.unmount()}
 })
 
 
-it('creates nested folders through Explorer without writing a file', async () => {
+it('creates nested folders through Explorer in the File tab without writing a file', async () => {
   const fallback = requestJsonMock.getMockImplementation()!
   const creates: unknown[] = []
   requestJsonMock.mockImplementation(async (url: string, options?: {method?: string;body?: unknown}) => {
     if (url === '/api/admin/knowledge/folders' && options?.method === 'POST') {
       creates.push(options.body)
-      return { path: 'wiki/docs/flow' }
+      return { path: 'raw/docs/flow' }
     }
     return fallback(url)
   })
@@ -284,10 +256,14 @@ it('creates nested folders through Explorer without writing a file', async () =>
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    await fileTab.trigger('click')
+    await flushPromises()
     await wrapper.get('button[aria-label="Add folder"]').trigger('click')
     await flushPromises()
     expect(creates).toEqual([
-      { space: 'wiki', parent_path: 'wiki', name: 'docs/flow' },
+      { space: 'raw', parent_path: 'raw', name: 'docs/flow' },
     ])
     expect(wrapper.find('input').exists()).toBe(false)
   } finally { prompt.mockRestore(); wrapper.unmount() }
@@ -362,19 +338,19 @@ it('restores different Explorer folders when switching between Knowledge sources
   const wrapper = mount(KnowledgePage)
   try {
     await flushPromises()
-    const source = wrapper.get('select[aria-label="Knowledge source"]')
+    const tabs = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
     let folder = wrapper.get('button.tree-folder')
     await folder.trigger('click')
     expect(folder.attributes('aria-expanded')).toBe('false')
 
-    await source.setValue('raw')
+    await tabs[1]!.trigger('click')
     await flushPromises()
     folder = wrapper.get('button.tree-folder')
     expect(folder.attributes('aria-expanded')).toBe('false')
     await folder.trigger('click')
     expect(folder.attributes('aria-expanded')).toBe('true')
 
-    await source.setValue('wiki')
+    await tabs[0]!.trigger('click')
     await flushPromises()
     folder = wrapper.get('button.tree-folder')
     expect(folder.attributes('aria-expanded')).toBe('false')
@@ -402,7 +378,90 @@ it('opens a Job Wiki link even when the explorer previously selected raw space',
   routeQuery.wiki = 'wiki_demo'
   const wrapper = mount(KnowledgePage)
   await flushPromises()
-  expect((wrapper.get('select[aria-label="Knowledge source"]').element as HTMLSelectElement).value).toBe('wiki')
+  const knowledgeTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+    .find(tab => tab.text() === 'Knowledge')!
+  expect(knowledgeTab.attributes('aria-selected')).toBe('true')
   expect(wrapper.get('.doc h1').text()).toBe('Wiki Demo')
   wrapper.unmount()
+})
+
+it('uploads a dropped Markdown file into the File space and displays its content', async () => {
+  const original = requestJsonMock.getMockImplementation()!
+  const writes: Array<{ url: string; options?: { method?: string; body?: Record<string, unknown> } }> = []
+  requestJsonMock.mockImplementation(async (url: string, options?: { method?: string; body?: Record<string, unknown> }) => {
+    if (url === '/api/admin/knowledge/tree?space=raw') return {
+      items: [
+        { type: 'folder', space: 'raw', path: 'raw', name: 'raw', editable: true },
+        { type: 'folder', space: 'raw', path: 'raw/notes', name: 'notes', editable: true },
+      ],
+    }
+    if (url === '/api/admin/knowledge/raw/files' && options?.method === 'POST') {
+      writes.push({ url, options })
+      return {
+        path: String(options.body?.folder_path) + '/' + String(options.body?.file_name),
+        body: String(options.body?.body ?? ''),
+        sha256: 'dropped-sha',
+      }
+    }
+    return original(url, options)
+  })
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const droppedFile = new File(['# Dropped Guide\n\nDragged into page.'], 'Guide.md', { type: 'text/markdown' })
+    await wrapper.get('.knowledge-a').trigger('dragover', {
+      dataTransfer: { types: ['Files'], files: [droppedFile] },
+    })
+    expect(wrapper.find('.a-drop-banner').exists()).toBe(true)
+
+    await wrapper.get('.knowledge-a').trigger('drop', {
+      dataTransfer: { types: ['Files'], files: [droppedFile] },
+    })
+    await flushPromises()
+    expect(wrapper.find('.a-drop-banner').exists()).toBe(false)
+    expect(writes).toEqual([{
+      url: '/api/admin/knowledge/raw/files',
+      options: {
+        method: 'POST',
+        body: { folder_path: 'raw', file_name: 'Guide.md', body: '# Dropped Guide\n\nDragged into page.' },
+      },
+    }])
+    const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
+      .find(tab => tab.text() === 'File')!
+    expect(fileTab.attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('.doc h1').text()).toBe('Guide')
+    expect(wrapper.get('.markdown-body').text()).toContain('Dragged into page.')
+
+    const folderFile = new File(['Folder note body'], 'Inside.md', { type: 'text/markdown' })
+    await wrapper.get('.tree-folder-row').trigger('drop', {
+      dataTransfer: { types: ['Files'], files: [folderFile] },
+    })
+    await flushPromises()
+    expect(writes[1]).toEqual({
+      url: '/api/admin/knowledge/raw/files',
+      options: {
+        method: 'POST',
+        body: { folder_path: 'raw/notes', file_name: 'Inside.md', body: 'Folder note body' },
+      },
+    })
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('rejects non-Markdown files dropped onto the page', async () => {
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const invalidFile = new File(['binary'], 'image.png', { type: 'image/png' })
+    await wrapper.get('.knowledge-a').trigger('drop', {
+      dataTransfer: { types: ['Files'], files: [invalidFile] },
+    })
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Markdown')
+    expect(requestJsonMock.mock.calls.some(([url, options]) =>
+      url === '/api/admin/knowledge/raw/files' && options?.method === 'POST')).toBe(false)
+  } finally {
+    wrapper.unmount()
+  }
 })

@@ -6,22 +6,42 @@
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   font-size: 13px;
   display: flex;
+  position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+.knowledge-a.is-dragging-file { outline: 2px dashed var(--studio-violet); outline-offset: -4px; }
+.knowledge-a .a-drop-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  pointer-events: none;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--studio-violet);
+  background: var(--card);
+  color: var(--studio-violet);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
 }
 .knowledge-a * { box-sizing: border-box; }
 .knowledge-a button, .knowledge-a select { font: inherit; }
 .knowledge-a button:focus-visible, .knowledge-a select:focus-visible, .knowledge-a a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .knowledge-a button { cursor: pointer; }
 .knowledge-a .a-explorer { color: var(--sidebar-foreground); flex: none; width: 258px; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--border); min-width: 0; }
-.knowledge-a .a-pane-heading { height: 61px; padding: 0 15px 0 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex: none; }
-.knowledge-a .a-pane-heading .name { font-size: 13px; font-weight: 760; color: var(--sidebar-foreground); }
-.knowledge-a .icon-button { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 7px; background: none; color: inherit; }
+.knowledge-a .a-pane-heading { height: 61px; padding: 0 12px; gap: 8px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex: none; }
+.knowledge-a .icon-button { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 7px; background: none; color: inherit; flex: none; }
 .knowledge-a .icon-button:hover { background: var(--sidebar-accent); }
-.knowledge-a .a-source-picker { padding: 13px 15px 8px; }
-.knowledge-a .a-source-picker select { width: 100%; height: 34px; background: var(--background); color: var(--foreground); border: 1px solid var(--input); border-radius: 7px; padding: 0 10px; }
+.knowledge-a .a-source-tabs { display: inline-flex; align-items: center; gap: 2px; padding: 3px; background: var(--background); border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.knowledge-a .a-source-tab { height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 12px; font-weight: 600; white-space: nowrap; transition: background-color 120ms ease, color 120ms ease; }
+.knowledge-a .a-source-tab:hover:not(:disabled) { color: var(--sidebar-foreground); }
+.knowledge-a .a-source-tab.active { background: var(--sidebar-accent); color: var(--studio-violet); }
+.knowledge-a .a-source-tab:disabled { opacity: .55; cursor: not-allowed; }
 .knowledge-a .a-explorer .tree-holder { padding: 5px 9px; overflow: auto; flex: 1; min-height: 0; }
 .knowledge-a .tree-folder { display: flex; align-items: center; gap: 9px; min-height: 33px; width: 100%; border: 0; background: transparent; color: var(--sidebar-foreground); text-align: left; font-size: 12px; border-radius: 6px; }
 .knowledge-a .tree-folder:hover { background: var(--sidebar-accent); }
@@ -135,6 +155,10 @@
 .knowledge-a .tree-folder-row { display: flex; align-items: center; min-width: 0; border-radius: 6px; }
 .knowledge-a .tree-folder-row:hover, .knowledge-a .tree-folder-row:focus-within {
   background: var(--sidebar-accent);
+}
+.knowledge-a .tree-folder-row.drop-target {
+  background: var(--sidebar-accent);
+  outline: 1px dashed var(--studio-violet);
 }
 .knowledge-a .tree-folder-row .tree-folder { flex: 1; min-width: 0; width: auto; gap: 9px; }
 .knowledge-a .tree-folder-add {

@@ -65,16 +65,15 @@ function foldersForSpace(space: TreeSpace): Set<string> {
 function restoredVaultSpace(): TreeSpace {
   try {
     const saved = window.localStorage.getItem(VAULT_SPACE_KEY)
-    if (saved === 'wiki' || saved === 'raw' || saved === 'drafts') return saved
+    if (saved === 'wiki' || saved === 'raw') return saved
   } catch { /* Storage can be disabled; keep the default. */ }
   return 'wiki'
 }
 
 const q = ref('')
 const storageSpaces = [
-  { id: 'raw', label: 'knowledgeV3.viewRaw' },
   { id: 'wiki', label: 'knowledgeV3.viewWiki' },
-  { id: 'drafts', label: 'knowledgeV3.viewDrafts' },
+  { id: 'raw', label: 'knowledgeV3.viewRaw' },
 ] as const
 const activeSpace = ref<TreeSpace>(restoredVaultSpace())
 watch(activeSpace, space => {
@@ -115,7 +114,7 @@ function cancelInlineNote() {
   newNoteName.value = ''
 }
 function beginInlineNote(folderPath?: string) {
-  if (busy.value || activeSpace.value === 'drafts') return
+  if (busy.value || activeSpace.value !== 'raw') return
   const folder = folderPath ?? (currentFolder.value.startsWith(activeSpace.value)
     && activeTree.value?.editable !== false ? currentFolder.value : activeSpace.value)
   if (folder !== activeSpace.value &&
@@ -132,7 +131,7 @@ function beginInlineNote(folderPath?: string) {
 }
 async function confirmInlineNote() {
   const folder = newNoteFolder.value
-  if (!folder || busy.value || activeSpace.value === 'drafts') return
+  if (!folder || busy.value || activeSpace.value !== 'raw') return
   const typed = newNoteName.value.trim()
   const name = typed.toLowerCase().endsWith('.md') ? typed : typed + '.md'
   let fileName = ''
@@ -154,17 +153,9 @@ async function confirmInlineNote() {
   error.value = ''
   notice.value = ''
   try {
-    if (activeSpace.value === 'raw') {
-      rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
-        jsonRequest('POST', { folder_path: folder, file_name: fileName, body: '' }))
-      selected.value = null
-    } else {
-      selected.value = await requestJson<Page>('/api/admin/knowledge/pages',
-        jsonRequest('POST', { folder_path: folder, file_name: fileName, title: heading,
-          body: '', source_ref: null, expected_revision: 0 }))
-      rawFile.value = null
-      refreshGraph()
-    }
+    rawFile.value = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
+      jsonRequest('POST', { folder_path: folder, file_name: fileName, body: '' }))
+    selected.value = null
     title.value = heading
     body.value = ''
     editorSavedBody.value = ''
@@ -179,12 +170,141 @@ async function confirmInlineNote() {
     cancelInlineNote()
     await refreshTree()
     await refreshHealth()
-    if (activeSpace.value === 'wiki') await listPages()
     await nextTick()
     document.getElementById('knowledge-note-body')?.focus()
   } catch (cause) {
     error.value = formatApiError(cause)
   } finally { busy.value = false }
+}
+const isDraggingFile = ref(false)
+const dragDepth = ref(0)
+const dropTargetFolder = ref<string | null>(null)
+function hasDraggedFiles(event: DragEvent): boolean {
+  const types = event.dataTransfer?.types
+  if (types && types.length > 0) return Array.from(types).includes('Files')
+  return Boolean(event.dataTransfer?.files?.length)
+}
+function readFileText(file: File): Promise<string> {
+  if (typeof file.text === 'function') return file.text()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    reader.readAsText(file)
+  })
+}
+function onPageDragEnter(event: DragEvent) {
+  if (busy.value || !hasDraggedFiles(event)) return
+  dragDepth.value++
+  isDraggingFile.value = true
+}
+function onPageDragOver(event: DragEvent) {
+  if (busy.value || !hasDraggedFiles(event)) return
+  isDraggingFile.value = true
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+function onPageDragLeave(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+  if (dragDepth.value === 0) {
+    isDraggingFile.value = false
+    dropTargetFolder.value = null
+  }
+}
+function onFolderDragOver(event: DragEvent, targetPath: string) {
+  if (busy.value || activeSpace.value !== 'raw' || !hasDraggedFiles(event)) return
+  isDraggingFile.value = true
+  dropTargetFolder.value = targetPath
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+function onFolderDragLeave(targetPath: string) {
+  if (dropTargetFolder.value === targetPath) dropTargetFolder.value = null
+}
+async function onFileDrop(event: DragEvent, targetFolderPath?: string) {
+  dragDepth.value = 0
+  isDraggingFile.value = false
+  dropTargetFolder.value = null
+  if (busy.value) return
+  const files = Array.from(event.dataTransfer?.files ?? [])
+  if (files.length === 0) return
+  const prepared: Array<{ file: File; fileName: string }> = []
+  for (const file of files) {
+    const rawName = file.name.trim()
+    if (!rawName.toLowerCase().endsWith('.md')) {
+      error.value = t('knowledgeV3.invalidFileName')
+      return
+    }
+    try {
+      const parts = segmentsOfPath(rawName, true)
+      if (parts.length !== 1 || rawName.toLowerCase() === '.md') {
+        throw new Error(t('knowledgeV3.invalidFileName'))
+      }
+      prepared.push({ file, fileName: parts[0]! })
+    } catch {
+      error.value = t('knowledgeV3.invalidFileName')
+      return
+    }
+  }
+  if (viewMode.value === 'compose' && editorDirty.value
+      && !window.confirm(t('knowledgeV3.discardChanges'))) return
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    if (activeSpace.value !== 'raw') {
+      cancelInlineNote()
+      resetExplorer('raw')
+      composeOpen.value = false
+      await refreshTree()
+    }
+    const candidateFolder = targetFolderPath
+      ?? (currentFolder.value.startsWith('raw') && activeTree.value?.editable !== false
+        ? currentFolder.value
+        : 'raw')
+    const folder = candidateFolder === 'raw' || tree.value.some(
+      node => node.path === candidateFolder && node.type === 'folder' && node.space === 'raw' && node.editable,
+    ) ? candidateFolder : 'raw'
+    const seen = new Set<string>()
+    for (const item of prepared) {
+      const path = (folder + '/' + item.fileName).toLowerCase()
+      if (seen.has(path) || tree.value.some(node => node.path.toLowerCase() === path)) {
+        error.value = t('knowledgeV3.fileExists')
+        return
+      }
+      seen.add(path)
+    }
+    let lastCreated: RawFile | null = null
+    let lastFileName = ''
+    for (const item of prepared) {
+      const content = await readFileText(item.file)
+      lastCreated = await requestJson<RawFile>('/api/admin/knowledge/raw/files',
+        jsonRequest('POST', { folder_path: folder, file_name: item.fileName, body: content }))
+      lastFileName = item.fileName
+    }
+    if (lastCreated) {
+      cancelInlineNote()
+      composeOpen.value = false
+      preview.value = false
+      viewMode.value = 'read'
+      selected.value = null
+      readOnlySource.value = false
+      rawFile.value = lastCreated
+      title.value = lastFileName.slice(0, -3)
+      body.value = lastCreated.body
+      editorSavedBody.value = lastCreated.body
+      sourceRef.value = ''
+      folderPath.value = folder
+      openFolders.value = new Set([...openFolders.value, folder])
+      selectedPath.value = lastCreated.path || (folder + '/' + lastFileName)
+      notice.value = t('knowledgeV3.rawSaved')
+      await refreshTree()
+      await refreshHealth()
+    }
+  } catch (cause) {
+    error.value = formatApiError(cause)
+  } finally {
+    busy.value = false
+  }
 }
 function startEditNote() {
   if (busy.value || readOnlySource.value || activeSpace.value === 'drafts'
@@ -575,9 +695,9 @@ function segmentsOfPath(value: string, file: boolean): string[] {
 }
 
 async function newFolder() {
-  if (busy.value) return
-  const space: 'wiki' | 'raw' = activeSpace.value === 'wiki' ? 'wiki' : 'raw'
-  const base = activeSpace.value === space && currentFolder.value.startsWith(space)
+  if (busy.value || activeSpace.value !== 'raw') return
+  const space = 'raw'
+  const base = currentFolder.value.startsWith(space)
     && activeTree.value?.editable !== false ? currentFolder.value : space
   const value = window.prompt(t('knowledgeV3.folderName'), 'docs/flow')
   if (value === null) return
@@ -588,7 +708,6 @@ async function newFolder() {
     const created = await requestJson<{ path: string }>('/api/admin/knowledge/folders',
       jsonRequest('POST', { space, parent_path: base, name: parts.join('/') }))
     const resultPath = created.path
-    if (activeSpace.value !== space) resetExplorer(space)
     openFolders.value = new Set([...openFolders.value, ...parts.map((_, index) =>
       base + '/' + parts.slice(0, index + 1).join('/')), base])
     await refreshTree()
@@ -686,10 +805,6 @@ function treeTitle(node: TreeNode) {
   if (node.id && selected.value?.id === node.id) return selected.value.title
   const hit = node.id ? hits.value.find(item => item.id === node.id) : null
   return hit?.title || node.name.replace(/\.md$/i, '')
-}
-function handleSpaceChange(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
-  if (value === 'wiki' || value === 'drafts' || value === 'raw') void selectSpace(value)
 }
 function showReading() {
   if (viewMode.value === 'compose') void closeEditor()
@@ -799,28 +914,36 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="knowledge-a" aria-label="Knowledge Vault">
+  <section class="knowledge-a" :class="{ 'is-dragging-file': isDraggingFile }" aria-label="Knowledge Vault"
+    @dragenter.prevent="onPageDragEnter" @dragover.prevent="onPageDragOver"
+    @dragleave="onPageDragLeave" @drop.prevent="onFileDrop($event)">
+    <div v-if="isDraggingFile" class="a-drop-banner" role="status">{{ t('knowledgeV3.dropMarkdownHint') }}</div>
     <aside class="a-explorer">
       <div class="a-pane-heading">
-        <span class="name">File explorer</span>
+        <div class="a-source-tabs" role="tablist" aria-label="Knowledge source">
+          <button v-for="space in storageSpaces" :key="space.id" type="button" role="tab"
+            class="a-source-tab" :class="{ active: activeSpace === space.id }"
+            :aria-selected="activeSpace === space.id" :disabled="busy"
+            @click="selectSpace(space.id)">{{ t(space.label) }}</button>
+        </div>
         <div class="flex items-center gap-1">
-          <button type="button" class="icon-button" aria-label="Add folder" title="Add folder"
-            :disabled="busy" @click="newFolder"><FolderPlus :size="17" /></button>
-          <button type="button" class="icon-button" aria-label="Add file" :title="t('knowledgeV3.createNote')"
-            :disabled="busy || activeSpace === 'drafts'" @click="startNewFile"><FilePlus2 :size="17" /></button>
+          <template v-if="activeSpace === 'raw'">
+            <button type="button" class="icon-button" aria-label="Add folder" title="Add folder"
+              :disabled="busy" @click="newFolder"><FolderPlus :size="17" /></button>
+            <button type="button" class="icon-button" aria-label="Add file" :title="t('knowledgeV3.createNote')"
+              :disabled="busy" @click="startNewFile"><FilePlus2 :size="17" /></button>
+          </template>
           <button class="icon-button" type="button" title="Collapse folders" aria-label="Collapse folders"
             @click="openFolders = new Set([activeSpace])"><ChevronsUp :size="17" /></button>
         </div>
       </div>
-      <div class="a-source-picker">
-        <select :value="activeSpace" :disabled="busy" aria-label="Knowledge source" @change="handleSpaceChange">
-          <option v-for="space in storageSpaces" :key="space.id" :value="space.id">{{ t(space.label) }}</option>
-        </select>
-      </div>
       <div ref="treeHolder" class="tree-holder" role="tree" :aria-label="t('knowledgeV3.explorer')">
         <template v-for="node in readableNodes" :key="node.path">
           <template v-if="node.type === 'folder'">
-            <div class="tree-folder-row">
+            <div class="tree-folder-row" :class="{ 'drop-target': dropTargetFolder === node.path }"
+              @dragover.prevent.stop="onFolderDragOver($event, node.path)"
+              @dragleave="onFolderDragLeave(node.path)"
+              @drop.prevent.stop="onFileDrop($event, node.path)">
               <button type="button" role="treeitem" class="tree-folder" :aria-expanded="openFolders.has(node.path)"
                 :style="{ paddingLeft: (14 + Math.max(0, node.path.split('/').length - 2) * 13) + 'px' }"
                 @click="chooseNode(node)">
@@ -830,7 +953,7 @@ onMounted(() => {
                 <ChevronDown v-if="openFolders.has(node.path)" :size="12" class="ml-auto shrink-0 opacity-60" />
                 <ChevronRight v-else :size="12" class="ml-auto shrink-0 opacity-60" />
               </button>
-              <button v-if="node.editable && node.space !== 'drafts'" type="button"
+              <button v-if="activeSpace === 'raw' && node.space === 'raw' && node.editable" type="button"
                 class="tree-folder-add" :aria-label="'Create note in ' + node.name"
                 :title="t('knowledgeV3.createNote') + ' · ' + node.path"
                 :disabled="busy" @click.stop="beginInlineNote(node.path)">
