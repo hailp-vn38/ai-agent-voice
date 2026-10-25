@@ -49,18 +49,34 @@ function stepActivityStatus(step: JobStep | undefined, event: JobEvent): Activit
 
 export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): UnifiedActivity[] {
   const ordered = [...events].sort((a, b) => a.sequence - b.sequence)
-  const runs = projectLlmRuns(ordered, job.status)
+  const runs = projectLlmRuns(ordered, job.status, job.agent_runs)
   const steps = new Map(job.steps.map(step => [step.step_key, step]))
   const roles = new Map((job.agent_runs ?? []).map(run => [run.agent_run_id, run.role]))
+  const agentRuns = new Map((job.agent_runs ?? []).map(run => [run.agent_run_id, run]))
   const items: UnifiedActivity[] = runs.map(run => {
     const first = run.events[0]
     const agentRunId = text(first?.payload.agent_run_id)
+    const agentRun = agentRunId ? agentRuns.get(agentRunId) : undefined
+    const hasTools = (agentRun?.tool_calls ?? 0) > 0
+    const initialAssistantMessage = text(
+      agentRun?.messages?.find(
+        m =>
+          m.role === 'assistant' &&
+          m.text.trim().length > 0 &&
+          (!hasTools || (m.tool_call_ids && m.tool_call_ids.length > 0)),
+      )?.text,
+    )
+    const fallbackGoal = text(agentRun?.goal_excerpt)
     return {
       id: 'llm:' + run.id, sequence: run.startSequence, time: run.startedAt,
       kind: 'llm', status: run.status, agentRunId,
       role: agentRunId ? roles.get(agentRunId) ?? null : null,
       title: 'LLM Run ' + String(run.number).padStart(2, '0'),
-      note: run.errorCode ? run.errorCode + (run.validationPath ? ' · ' + run.validationPath : '') : run.phase, llm: run,
+      note: run.errorCode
+        ? run.errorCode + (run.validationPath ? ' · ' + run.validationPath : '')
+        : initialAssistantMessage ?? fallbackGoal ?? run.phase,
+      assistantMessage: initialAssistantMessage,
+      llm: run,
       step: run.stepKey ? steps.get(run.stepKey) : undefined,
     }
   })
@@ -87,14 +103,24 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         }
         continue
       }
+      const assistantMessage = text(step?.assistant_message) ?? text(payload.assistant_message)
+      const rawArgs = (step?.arguments ?? payload.arguments) as Record<string, unknown> | undefined
+      const isSubagentStep = step?.operation === 'subagent' || payload.tool_name === 'subagent'
+      const subagentPrompt = isSubagentStep
+        ? text(rawArgs?.prompt) ?? text(rawArgs?.task)
+        : null
       const item: UnifiedActivity = {
         id, sequence: event.sequence, time: event.created_at, kind: step && !step.plugin_id ? 'llm' : 'plugin',
         status: stepActivityStatus(step, event),
         agentRunId: agentRunId ?? step?.agent_run_id ?? null,
         role: role ?? (step?.agent_run_id ? roles.get(step.agent_run_id) ?? null : null),
         title: step?.plugin_id ? step.plugin_id + '.' + (step.operation ?? 'unknown') : step ? 'Worker Step · ' + event.step_key : event.step_key,
-        note: text(payload.error_code) ?? (step && !step.plugin_id ? 'Legacy worker execution' : 'Plugin operation'),
-        assistantMessage: text(step?.assistant_message) ?? text(payload.assistant_message),
+        note:
+          text(payload.error_code) ??
+          assistantMessage ??
+          subagentPrompt ??
+          (step && !step.plugin_id ? 'Legacy worker execution' : 'Plugin operation'),
+        assistantMessage,
         step, event,
       }
       pluginRows.set(id, item)
@@ -108,8 +134,28 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
     } else if (event.event_type === 'join_completed') {
       make('join', 'join:' + (text(payload.fork_group_id) ?? event.sequence), 'Join completed', 'Children: ' + (payload.member_count ?? '—'))
     } else if (event.event_type === 'agent_run_finished') {
-      make('agent', 'agent:' + (agentRunId ?? event.sequence), 'Agent finished', text(payload.error_code) ?? 'Run checkpoint',
-        payload.status === 'succeeded' || payload.status === 'completed' ? 'completed' : payload.status === 'cancelled' ? 'cancelled' : 'failed')
+      const agentRun = agentRunId ? agentRuns.get(agentRunId) : undefined
+      const finalAssistantMessage =
+        text(payload.assistant_message) ?? text(agentRun?.result?.text)
+      const status: ActivityStatus =
+        payload.status === 'succeeded' || payload.status === 'completed'
+          ? 'completed'
+          : payload.status === 'cancelled'
+            ? 'cancelled'
+            : 'failed'
+      items.push({
+        id: 'agent:' + (agentRunId ?? event.sequence),
+        sequence: event.sequence,
+        time: event.created_at,
+        kind: 'agent',
+        status,
+        agentRunId,
+        role,
+        title: 'Agent finished',
+        note: text(payload.error_code) ?? finalAssistantMessage ?? 'Run checkpoint',
+        assistantMessage: finalAssistantMessage,
+        event,
+      })
     } else if (event.event_type === 'job_finished') {
       make('job', 'job:terminal', 'Job finished', text(payload.error_code) ?? text(payload.status) ?? 'Terminal checkpoint',
         payload.status === 'succeeded' || payload.status === 'partial_success' ? 'completed' : payload.status === 'cancelled' ? 'cancelled' : 'failed')
@@ -120,7 +166,6 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
   }
   const created = new Map(ordered.filter(event => event.event_type === 'agent_run_created')
     .map(event => [text(event.payload.agent_run_id), event.payload]))
-  const agentRuns = new Map((job.agent_runs ?? []).map(run => [run.agent_run_id, run]))
   for (const item of items) {
     const agent = item.agentRunId ? agentRuns.get(item.agentRunId) : undefined
     const creation = item.agentRunId ? created.get(item.agentRunId) : undefined
@@ -154,7 +199,15 @@ export function visibleActivities(items: UnifiedActivity[], filter: ActivityFilt
   if (filter.kind === 'llm') return items.filter(item => item.kind === 'llm')
   if (filter.kind === 'plugin') return items.filter(item => item.kind === 'plugin')
   if (filter.kind === 'root') {
-    return items.filter(item => !item.parentAgentRunId && (item.role === 'orchestrator' || item.role === 'root' || !item.agentRunId))
+    return items.filter(
+      item =>
+        !item.parentAgentRunId &&
+        (item.role === 'orchestrator' ||
+          item.role === 'root' ||
+          Boolean(item.role?.endsWith('_root')) ||
+          item.agentRun?.run_index === 0 ||
+          !item.agentRunId),
+    )
   }
   if (filter.kind === 'agent') return items.filter(item => item.agentRunId === filter.id)
   return items.filter(item => item.role === filter.role)

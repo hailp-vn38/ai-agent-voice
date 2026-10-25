@@ -29,6 +29,8 @@ const pendingStage = computed(() => {
   switch (run.value.events.at(-1)?.event_type) {
     case 'llm_run_started':
       return t('jobUi.llmAcquiringProvider')
+    case 'agent_run_started':
+      return t('jobUi.llmWaitingResponse')
     case 'llm_provider_acquired':
       return t('jobUi.llmWaitingCapacity')
     case 'llm_request_started':
@@ -63,6 +65,7 @@ function duration(ms: number | null): string {
 function stageLabel(event: JobEvent): string {
   switch (event.event_type) {
     case 'llm_run_started':
+    case 'agent_run_started':
       return t('jobUi.llmStarted')
     case 'llm_provider_acquired':
       return t('jobUi.llmProviderAcquired')
@@ -71,6 +74,7 @@ function stageLabel(event: JobEvent): string {
     case 'llm_response_received':
       return t('jobUi.llmReceived')
     case 'llm_run_finished':
+    case 'agent_run_finished':
       return t('jobUi.llmFinished')
     case 'plan_rejected':
       return t('jobUi.llmValidationFailed')
@@ -184,7 +188,11 @@ function stageNote(event: JobEvent): string {
               <dd class="max-w-[65%] break-all text-right font-mono text-[11px]">{{ activity.agentRunId }}</dd>
             </div>
           </dl>
-          <p class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.llmContentUnavailable') }}</p>
+          <details v-if="stepAssistantMessage" class="mt-3 text-xs" open>
+            <summary class="cursor-pointer font-medium">{{ t('jobUi.agentMessage') }}</summary>
+            <p class="mt-2 whitespace-pre-wrap break-words rounded-lg bg-muted p-2">{{ stepAssistantMessage }}</p>
+          </details>
+          <p v-else-if="!agentMessages.length" class="mt-3 text-xs text-muted-foreground">{{ t('jobUi.llmContentUnavailable') }}</p>
           <div class="mt-4 border-t pt-3">
             <h4 class="mb-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
               ◴ {{ t('jobUi.llmTimeline') }}
@@ -269,6 +277,10 @@ function stageNote(event: JobEvent): string {
               <dd class="max-w-[65%] break-words text-right">{{ activity.note }}</dd>
             </div>
           </dl>
+          <details v-if="stepAssistantMessage" class="mt-3 text-xs" open>
+            <summary class="cursor-pointer font-medium">{{ t('jobUi.agentMessage') }}</summary>
+            <p class="mt-2 whitespace-pre-wrap break-words rounded-lg bg-muted p-2">{{ stepAssistantMessage }}</p>
+          </details>
         </template>
 
         <details v-if="activity.agentRun?.goal_excerpt" class="mt-3 border-t pt-3 text-xs">

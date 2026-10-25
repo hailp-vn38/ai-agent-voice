@@ -1,4 +1,4 @@
-import type { AdminJob, JobEvent } from '@/api/types/agent-jobs'
+import type { AdminJob, AgentRunView, JobEvent } from '@/api/types/agent-jobs'
 
 export interface LlmRun {
   id: string
@@ -27,10 +27,95 @@ const text = (value: unknown): string | null => typeof value === 'string' && val
 const int = (value: unknown): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 
-export function projectLlmRuns(events: JobEvent[], status: AdminJob['status']): LlmRun[] {
+export function projectLlmRuns(
+  events: JobEvent[],
+  status: AdminJob['status'],
+  agentRuns?: AgentRunView[],
+): LlmRun[] {
   const runs = new Map<string, LlmRun>()
   const terminal = ['succeeded', 'partial_success', 'failed', 'cancelled'].includes(status)
-  for (const event of [...events].sort((a, b) => a.sequence - b.sequence)) {
+  const orderedEvents = [...events].sort((a, b) => a.sequence - b.sequence)
+  const hasExplicitLlmEvents = orderedEvents.some(event => event.event_type === 'llm_run_started')
+  const agentRunById = new Map((agentRuns ?? []).map(run => [run.agent_run_id, run]))
+  const createdByAgentId = new Map<string, Record<string, unknown>>()
+  for (const event of orderedEvents) {
+    if (event.event_type === 'agent_run_created') {
+      const agentRunId = text(event.payload?.agent_run_id)
+      if (agentRunId) createdByAgentId.set(agentRunId, event.payload)
+    }
+  }
+  for (const event of orderedEvents) {
+    if (!hasExplicitLlmEvents && event.event_type === 'agent_run_started') {
+      const id = text(event.payload?.run_id) ?? text(event.payload?.agent_run_id)
+      if (!id || runs.has(id)) continue
+      const agentRunId = text(event.payload?.agent_run_id)
+      const agentRun = agentRunId ? agentRunById.get(agentRunId) : undefined
+      const created = agentRunId ? createdByAgentId.get(agentRunId) : undefined
+      const roleName = text(agentRun?.role) ?? text(created?.role)
+      const parentId = agentRun?.parent_agent_run_id ?? text(created?.parent_agent_run_id)
+      const isRoot =
+        !parentId &&
+        (roleName === 'orchestrator' ||
+          roleName === 'root' ||
+          Boolean(roleName?.endsWith('_root')) ||
+          agentRun?.run_index === 0 ||
+          !created)
+      const inTokens = int(agentRun?.input_tokens)
+      const outTokens = int(agentRun?.output_tokens)
+      const hasObservedTokens =
+        agentRun?.status !== 'running'
+          ? inTokens !== null || outTokens !== null
+          : (inTokens ?? 0) > 0 || (outTokens ?? 0) > 0
+      const mappedStatus: LlmRun['status'] =
+        agentRun?.status === 'succeeded'
+          ? 'completed'
+          : agentRun?.status === 'failed' ||
+              agentRun?.status === 'cancelled' ||
+              agentRun?.status === 'interrupted'
+            ? agentRun.status
+            : 'running'
+      runs.set(id, {
+        id,
+        number: runs.size + 1,
+        startSequence: event.sequence,
+        startedAt: event.created_at,
+        role: isRoot ? 'planner' : 'worker',
+        phase: roleName ?? (isRoot ? 'orchestrator' : 'worker'),
+        attempt: int(event.payload?.attempt) ?? int(event.payload?.attempt_no) ?? 1,
+        stepKey: event.step_key,
+        provider: roleName ?? 'orchestrator_agent',
+        providerSource: 'orchestrator',
+        model: null,
+        adapter: null,
+        transport: null,
+        status: mappedStatus,
+        errorCode: null,
+        validationPath: null,
+        requestDurationMs: null,
+        totalDurationMs: null,
+        inputTokens: hasObservedTokens ? inTokens : null,
+        outputTokens: hasObservedTokens ? outTokens : null,
+        events: [event],
+      })
+      continue
+    }
+    if (!hasExplicitLlmEvents && event.event_type === 'agent_run_finished') {
+      const id = text(event.payload?.run_id) ?? text(event.payload?.agent_run_id)
+      const run = id ? runs.get(id) : undefined
+      if (!run) continue
+      run.events.push(event)
+      const state = text(event.payload.status)
+      run.status =
+        state === 'completed' || state === 'succeeded'
+          ? 'completed'
+          : state === 'cancelled' || state === 'interrupted'
+            ? state
+            : 'failed'
+      run.inputTokens = int(event.payload.input_tokens) ?? run.inputTokens
+      run.outputTokens = int(event.payload.output_tokens) ?? run.outputTokens
+      run.errorCode = text(event.payload.error_code) ?? run.errorCode
+      continue
+    }
     const id = text(event.payload?.run_id)
     if (!id) continue
     if (event.event_type === 'llm_run_started') {

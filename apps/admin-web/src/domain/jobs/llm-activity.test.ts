@@ -52,4 +52,69 @@ describe('projectLlmRuns', () => {
     expect(projectLlmRuns([old, invalid], 'succeeded')).toEqual([])
     expect(llmTokenSummary([])).toEqual({ tokens: 0, known: 0, total: 0 })
   })
+
+  it('projects orchestrator_agent runs from agent_run_started and agent_run_finished with token usage', () => {
+    const events: JobEvent[] = [
+      {
+        sequence: 1,
+        event_type: 'agent_run_created',
+        created_at: '2026-10-14T02:42:01Z',
+        step_key: null,
+        payload: { agent_run_id: 'root-sess', parent_agent_run_id: null, role: 'daily_root' },
+      },
+      {
+        sequence: 2,
+        event_type: 'agent_run_started',
+        created_at: '2026-10-14T02:42:01Z',
+        step_key: null,
+        payload: { agent_run_id: 'root-sess', run_id: 'run-root', turn_id: 'turn-1', attempt: 1 },
+      },
+      {
+        sequence: 3,
+        event_type: 'agent_run_created',
+        created_at: '2026-10-14T02:42:02Z',
+        step_key: null,
+        payload: { agent_run_id: 'child-sess', parent_agent_run_id: 'root-sess', role: 'youtube_brief' },
+      },
+      {
+        sequence: 4,
+        event_type: 'agent_run_started',
+        created_at: '2026-10-14T02:42:02Z',
+        step_key: null,
+        payload: { agent_run_id: 'child-sess', run_id: 'run-child', turn_id: 'turn-child', attempt: 1 },
+      },
+      {
+        sequence: 5,
+        event_type: 'agent_run_finished',
+        created_at: '2026-10-14T02:42:03Z',
+        step_key: null,
+        payload: {
+          agent_run_id: 'child-sess',
+          run_id: 'run-child',
+          status: 'succeeded',
+          input_tokens: 120,
+          output_tokens: 80,
+        },
+      },
+    ]
+    const runs = projectLlmRuns(events, 'running')
+    expect(runs).toHaveLength(2)
+    expect(runs[0]).toMatchObject({
+      id: 'run-root',
+      number: 1,
+      role: 'planner',
+      phase: 'daily_root',
+      status: 'running',
+    })
+    expect(runs[1]).toMatchObject({
+      id: 'run-child',
+      number: 2,
+      role: 'worker',
+      phase: 'youtube_brief',
+      status: 'completed',
+      inputTokens: 120,
+      outputTokens: 80,
+    })
+    expect(llmTokenSummary(runs)).toEqual({ tokens: 200, known: 1, total: 2 })
+  })
 })

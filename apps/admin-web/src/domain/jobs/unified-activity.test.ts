@@ -224,4 +224,241 @@ describe('unified Job activity', () => {
     }
   })
 
+  it('projects orchestrator_agent Root LLM -> Subagent tool -> Subagent LLM -> Subagent tool -> Finish onto the DAG canvas with assistant messages', () => {
+    const orchJob: AdminJob = {
+      id: 'job-orch',
+      goal: 'Tóm tắt video YouTube',
+      status: 'succeeded',
+      execution_mode: 'orchestrator_agent',
+      created_at: '1700000000',
+      requester_scope: 'api:personal:homelab',
+      plan_revision: 1,
+      retry_of_job_id: null,
+      result: { text: 'Bản tổng hợp cuối cùng từ Root Agent.' },
+      budget_used: {},
+      artifacts: [],
+      agent_runs: [
+        {
+          agent_run_id: 'root-sess',
+          parent_agent_run_id: null,
+          role: 'daily_root',
+          goal_excerpt: 'Tóm tắt video YouTube',
+          result: { text: 'Bản tổng hợp cuối cùng từ Root Agent.' },
+          messages: [
+            { id: 'm1', sequence: 1, role: 'user', text: 'Tóm tắt video YouTube' },
+            {
+              id: 'm2',
+              sequence: 2,
+              role: 'assistant',
+              text: 'Tôi sẽ giao cho youtube_brief lấy transcript.',
+              tool_call_ids: ['call-sub-1'],
+            },
+            {
+              id: 'm3',
+              sequence: 4,
+              role: 'assistant',
+              text: 'Bản tổng hợp cuối cùng từ Root Agent.',
+              tool_call_ids: [],
+            },
+          ],
+          status: 'succeeded',
+          run_index: 0,
+          llm_rounds: 2,
+          tool_calls: 1,
+          input_tokens: 200,
+          output_tokens: 100,
+          started_at: '1700000000',
+          finished_at: '1700000010',
+        },
+        {
+          agent_run_id: 'child-sess',
+          parent_agent_run_id: 'root-sess',
+          role: 'youtube_brief',
+          goal_excerpt: 'Hãy lấy transcript và tóm tắt video',
+          result: { text: 'Transcript đã được tóm tắt bởi Subagent.' },
+          messages: [
+            { id: 'cm1', sequence: 1, role: 'user', text: 'Hãy lấy transcript và tóm tắt video' },
+            {
+              id: 'cm2',
+              sequence: 2,
+              role: 'assistant',
+              text: 'Đang gọi công cụ yt_fetch_transcript.',
+              tool_call_ids: ['call-yt-1'],
+            },
+            {
+              id: 'cm3',
+              sequence: 4,
+              role: 'assistant',
+              text: 'Transcript đã được tóm tắt bởi Subagent.',
+              tool_call_ids: [],
+            },
+          ],
+          status: 'succeeded',
+          run_index: 1,
+          llm_rounds: 2,
+          tool_calls: 1,
+          input_tokens: 120,
+          output_tokens: 80,
+          started_at: '1700000001',
+          finished_at: '1700000008',
+        },
+      ],
+      steps: [
+        {
+          step_key: 'daily_root:1:subagent',
+          agent_run_id: 'root-sess',
+          plugin_id: 'orchestrator_flow',
+          operation: 'subagent',
+          status: 'succeeded',
+          attempt_state: 'completed',
+          instruction: 'daily_root -> subagent',
+          assistant_message: 'Tôi sẽ giao cho youtube_brief lấy transcript.',
+          required: true,
+          dependencies: [],
+          input_refs: [],
+          arguments: { agent_id: 'youtube_brief', prompt: 'Hãy lấy transcript và tóm tắt video' },
+          output_schema: {},
+          result: 'Transcript đã được tóm tắt bởi Subagent.',
+        },
+        {
+          step_key: 'youtube_brief:1:yt_fetch_transcript',
+          agent_run_id: 'child-sess',
+          plugin_id: 'orchestrator_flow',
+          operation: 'yt_fetch_transcript',
+          status: 'succeeded',
+          attempt_state: 'completed',
+          instruction: 'youtube_brief -> yt_fetch_transcript',
+          assistant_message: 'Đang gọi công cụ yt_fetch_transcript.',
+          required: true,
+          dependencies: [],
+          input_refs: [],
+          arguments: { url: 'https://youtu.be/test' },
+          output_schema: {},
+          result: { transcript: '...' },
+        },
+      ],
+    }
+
+    const events: JobEvent[] = [
+      event(1, 'agent_run_created', { agent_run_id: 'root-sess', parent_agent_run_id: null, role: 'daily_root' }),
+      event(2, 'agent_run_started', { agent_run_id: 'root-sess', run_id: 'run-root', turn_id: 'turn-1', attempt: 1 }),
+      event(
+        3,
+        'step_started',
+        {
+          agent_run_id: 'root-sess',
+          tool_name: 'subagent',
+          assistant_message: 'Tôi sẽ giao cho youtube_brief lấy transcript.',
+        },
+        'daily_root:1:subagent',
+      ),
+      event(4, 'agent_run_created', {
+        agent_run_id: 'child-sess',
+        parent_agent_run_id: 'root-sess',
+        role: 'youtube_brief',
+      }),
+      event(5, 'agent_run_started', {
+        agent_run_id: 'child-sess',
+        run_id: 'run-child',
+        turn_id: 'turn-child',
+        attempt: 1,
+      }),
+      event(
+        6,
+        'step_started',
+        {
+          agent_run_id: 'child-sess',
+          tool_name: 'yt_fetch_transcript',
+          assistant_message: 'Đang gọi công cụ yt_fetch_transcript.',
+        },
+        'youtube_brief:1:yt_fetch_transcript',
+      ),
+      event(
+        7,
+        'step_finished',
+        { agent_run_id: 'child-sess', tool_name: 'yt_fetch_transcript', status: 'succeeded' },
+        'youtube_brief:1:yt_fetch_transcript',
+      ),
+      event(8, 'agent_run_finished', {
+        agent_run_id: 'child-sess',
+        run_id: 'run-child',
+        status: 'succeeded',
+        input_tokens: 120,
+        output_tokens: 80,
+        assistant_message: 'Transcript đã được tóm tắt bởi Subagent.',
+      }),
+      event(
+        9,
+        'step_finished',
+        { agent_run_id: 'root-sess', tool_name: 'subagent', status: 'succeeded' },
+        'daily_root:1:subagent',
+      ),
+      event(10, 'agent_run_finished', {
+        agent_run_id: 'root-sess',
+        run_id: 'run-root',
+        status: 'succeeded',
+        input_tokens: 200,
+        output_tokens: 100,
+        assistant_message: 'Bản tổng hợp cuối cùng từ Root Agent.',
+      }),
+      event(11, 'job_finished', { status: 'succeeded' }),
+    ]
+
+    const rows = projectUnifiedActivity(orchJob, events)
+    expect(rows.map(r => r.id)).toEqual([
+      'llm:run-root',
+      'step:daily_root:1:subagent',
+      'llm:run-child',
+      'step:youtube_brief:1:yt_fetch_transcript',
+      'agent:child-sess',
+      'agent:root-sess',
+      'job:terminal',
+    ])
+    expect(rows[0]).toMatchObject({
+      id: 'llm:run-root',
+      title: 'LLM Run 01',
+      note: 'Tôi sẽ giao cho youtube_brief lấy transcript.',
+      assistantMessage: 'Tôi sẽ giao cho youtube_brief lấy transcript.',
+    })
+    expect(rows[1]).toMatchObject({
+      id: 'step:daily_root:1:subagent',
+      title: 'orchestrator_flow.subagent',
+      note: 'Tôi sẽ giao cho youtube_brief lấy transcript.',
+    })
+    expect(rows[2]).toMatchObject({
+      id: 'llm:run-child',
+      title: 'LLM Run 02',
+      note: 'Đang gọi công cụ yt_fetch_transcript.',
+      assistantMessage: 'Đang gọi công cụ yt_fetch_transcript.',
+    })
+    expect(rows[4]).toMatchObject({
+      id: 'agent:child-sess',
+      title: 'Agent finished',
+      note: 'Transcript đã được tóm tắt bởi Subagent.',
+      assistantMessage: 'Transcript đã được tóm tắt bởi Subagent.',
+    })
+    expect(rows[5]).toMatchObject({
+      id: 'agent:root-sess',
+      title: 'Agent finished',
+      note: 'Bản tổng hợp cuối cùng từ Root Agent.',
+      assistantMessage: 'Bản tổng hợp cuối cùng từ Root Agent.',
+    })
+    expect(visibleActivities(rows, { kind: 'root' }).map(r => r.id)).toEqual([
+      'llm:run-root',
+      'step:daily_root:1:subagent',
+      'agent:root-sess',
+      'job:terminal',
+    ])
+
+    const dag = layoutDagCanvas(rows)
+    expect(dag.edges.map(e => `${e.fromId}->${e.toId}`)).toEqual([
+      'llm:run-child->step:youtube_brief:1:yt_fetch_transcript',
+      'step:youtube_brief:1:yt_fetch_transcript->agent:child-sess',
+      'llm:run-root->step:daily_root:1:subagent',
+      'step:daily_root:1:subagent->llm:run-child',
+      'agent:child-sess->agent:root-sess',
+      'agent:root-sess->job:terminal',
+    ])
+  })
+
 })

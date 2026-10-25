@@ -50,7 +50,7 @@ const unknownOutcome = computed(() => job.value?.steps.some(step => step.attempt
 
 const activityFilter = ref<ActivityFilter>({ kind: 'all' })
 const selectedActivityId = ref<string | null>(null)
-const llmRuns = computed(() => job.value ? projectLlmRuns(events.value, job.value.status) : [])
+const llmRuns = computed(() => job.value ? projectLlmRuns(events.value, job.value.status, job.value.agent_runs) : [])
 const tokenUsage = computed(() => llmTokenSummary(llmRuns.value))
 const activeLlm = computed(() => llmRuns.value.filter(run => run.status === 'running').length)
 const pluginCalls = computed(() => job.value?.steps.filter(step => step.plugin_id && (step.attempt_state || step.status !== 'pending')).length ?? 0)

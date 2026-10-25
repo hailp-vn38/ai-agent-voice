@@ -176,7 +176,7 @@ function onPointerUp() {
 }
 
 function isRootRole(role: string | null): boolean {
-  return role === 'orchestrator' || role === 'root'
+  return role === 'orchestrator' || role === 'root' || Boolean(role?.endsWith('_root'))
 }
 function roleName(role: string | null): string {
   switch (role) {
