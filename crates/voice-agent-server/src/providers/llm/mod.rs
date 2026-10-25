@@ -81,52 +81,10 @@ impl From<&str> for LlmRequest {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct BackgroundTokenUsage {
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-    pub reasoning_tokens: Option<u64>,
-    pub cached_input_tokens: Option<u64>,
-}
-
-/// Strict Agent Job output; never an advisory schema.
-#[derive(Clone, Debug)]
-pub enum BackgroundMode {
-    Structured {
-        name: String,
-        schema: Value,
-    },
-    Tools,
-    /// Child may choose an authorized function or finish with assistant text.
-    ToolsAuto,
-    /// Root may issue up to two independent subagent calls in one turn.
-    ToolsParallel,
-}
-
-#[derive(Clone, Debug)]
-pub enum BackgroundTurn {
-    Text(String),
-    ToolCalls(Vec<ToolCall>),
-}
-
-#[derive(Clone, Debug)]
-pub struct BackgroundTurnResult {
-    pub turn: BackgroundTurn,
-    pub usage: Option<BackgroundTokenUsage>,
-}
-
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {
     fn supports_tools(&self) -> bool {
         false
-    }
-    /// Background-only strict one-shot. Unqualified adapters fail closed.
-    async fn background_turn(
-        &self,
-        _request: LlmRequest,
-        _mode: BackgroundMode,
-    ) -> Result<BackgroundTurnResult, LlmError> {
-        Err(LlmError::Rejected)
     }
     fn adapter(&self) -> &'static str;
     fn complete(&self, _: &LlmRequest) -> Result<String, LlmError> {
@@ -164,17 +122,14 @@ pub(crate) struct ConfiguredOpenAiLlm {
     base_url: String,
     model: String,
     timeout_seconds: u64,
-    supports_responses: bool,
-    supports_structured_outputs: bool,
 }
 
 impl ConfiguredOpenAiLlm {
-    pub(crate) fn build_with_responses(
+    pub(crate) fn build(
         api_key: &str,
         base_url: &str,
         model: &str,
         timeout_seconds: u64,
-        supports_responses: bool,
     ) -> Result<Self, LlmError> {
         if model.trim().is_empty() || timeout_seconds == 0 {
             return Err(LlmError::Failed);
@@ -184,50 +139,12 @@ impl ConfiguredOpenAiLlm {
             base_url: base_url.into(),
             model: model.into(),
             timeout_seconds,
-            supports_responses,
-            supports_structured_outputs: false,
         })
-    }
-    pub(crate) fn with_structured_outputs(mut self, structured: bool) -> Self {
-        self.supports_structured_outputs = structured;
-        self
     }
 }
 
 #[async_trait::async_trait]
 impl LlmProvider for ConfiguredOpenAiLlm {
-    async fn background_turn(
-        &self,
-        request: LlmRequest,
-        mode: BackgroundMode,
-    ) -> Result<BackgroundTurnResult, LlmError> {
-        if matches!(&mode, BackgroundMode::Structured { .. }) && !self.supports_structured_outputs {
-            return Err(LlmError::Rejected);
-        }
-        if self.supports_responses {
-            openai::responses::turn_with_usage(
-                &self.base_url,
-                &self.model,
-                &self.api_key,
-                self.timeout_seconds,
-                request,
-                mode,
-            )
-            .await
-        } else {
-            openai::chat::turn_with_usage(
-                &self.base_url,
-                &self.model,
-                &self.api_key,
-                self.timeout_seconds,
-                request,
-                mode,
-                &[],
-            )
-            .await
-        }
-    }
-
     fn supports_tools(&self) -> bool {
         true
     }

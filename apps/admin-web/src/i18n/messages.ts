@@ -589,11 +589,6 @@ export const en = {
 
   'diagnostics.testReview': 'Test & Review',
   'diagnostics.currentTest': 'Current test result',
-  'diagnostics.llmMode': 'LLM output mode',
-  'diagnostics.llmTextMode': 'Text (existing diagnostic)',
-  'diagnostics.llmStructuredMode': 'Strict Structured Outputs (Root)',
-  'diagnostics.llmToolsMode': 'Strict Function Calling (Child)',
-  'diagnostics.llmStrictHint': 'Strict modes test the selected provider with a real schema or function definition.',
   'diagnostics.runtime': 'Runtime status',
   'diagnostics.run': 'Run test',
   'diagnostics.running': 'Testing…',
@@ -1967,11 +1962,6 @@ export const vi: Record<MessageKey, MessageValue> = {
 
   'diagnostics.testReview': 'Kiểm thử & Xem lại',
   'diagnostics.currentTest': 'Kết quả kiểm thử hiện tại',
-  'diagnostics.llmMode': 'Chế độ đầu ra LLM',
-  'diagnostics.llmTextMode': 'Văn bản (kiểm thử hiện tại)',
-  'diagnostics.llmStructuredMode': 'Structured Outputs nghiêm ngặt (Root)',
-  'diagnostics.llmToolsMode': 'Function Calling nghiêm ngặt (Child)',
-  'diagnostics.llmStrictHint': 'Thử khả năng hỗ trợ JSON Schema hoặc function thực tế trên provider đã chọn.',
   'diagnostics.runtime': 'Trạng thái runtime',
   'diagnostics.run': 'Chạy kiểm thử',
   'diagnostics.running': 'Đang kiểm thử…',

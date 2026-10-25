@@ -34,14 +34,6 @@ pub struct OpenCodeFreeConfig {
     pub model: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
-    /// Explicit capability for the selected free model; default preserves Chat.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub supports_responses: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub supports_structured_outputs: bool,
-}
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 pub(crate) fn valid_free_model_id(model: &str) -> bool {
@@ -61,8 +53,6 @@ impl OpenCodeFreeConfig {
 pub(crate) struct OpenCodeFreeProvider {
     model: String,
     timeout_seconds: u64,
-    supports_responses: bool,
-    supports_structured_outputs: bool,
 }
 
 impl OpenCodeFreeProvider {
@@ -73,8 +63,6 @@ impl OpenCodeFreeProvider {
         Ok(Self {
             model: config.model.clone(),
             timeout_seconds: config.timeout_ms.div_ceil(1_000),
-            supports_responses: config.supports_responses,
-            supports_structured_outputs: config.supports_structured_outputs,
         })
     }
 
@@ -112,41 +100,6 @@ impl OpenCodeFreeProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for OpenCodeFreeProvider {
-    async fn background_turn(
-        &self,
-        request: LlmRequest,
-        mode: super::BackgroundMode,
-    ) -> Result<super::BackgroundTurnResult, LlmError> {
-        if matches!(&mode, super::BackgroundMode::Structured { .. })
-            && !self.supports_structured_outputs
-        {
-            return Err(LlmError::Rejected);
-        }
-        if self.supports_responses {
-            super::openai::responses::turn_with_usage(
-                BASE_URL,
-                &self.model,
-                PUBLIC_KEY,
-                self.timeout_seconds,
-                request,
-                mode,
-            )
-            .await
-        } else {
-            let headers = <ZenChat as OpenAIProviderConfig>::custom_headers().unwrap_or_default();
-            super::openai::chat::turn_with_usage(
-                BASE_URL,
-                &self.model,
-                PUBLIC_KEY,
-                self.timeout_seconds,
-                request,
-                mode,
-                &headers,
-            )
-            .await
-        }
-    }
-
     fn supports_tools(&self) -> bool {
         true
     }
@@ -224,26 +177,6 @@ fn reject_placeholder_call(
 
 const FIELDS: &[ProviderConfigField] = &[
     field(
-        "supports_structured_outputs",
-        "Supports Structured Outputs (Agent Job)",
-        ConfigFieldType::Boolean,
-        false,
-        None,
-        None,
-        None,
-        None,
-    ),
-    field(
-        "supports_responses",
-        "Supports Responses (Agent Job only)",
-        ConfigFieldType::Boolean,
-        false,
-        None,
-        None,
-        None,
-        None,
-    ),
-    field(
         "model",
         "Free model",
         ConfigFieldType::String,
@@ -269,7 +202,7 @@ pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     adapter: "opencode_free",
     provider_type: ProviderType::Llm,
     display_name: "OpenCode Free",
-    description: "OpenCode Zen free models. Agent Job may opt into Responses per supported model; Voice uses Chat Completions.",
+    description: "OpenCode Zen free models via Chat Completions.",
     config_schema: ProviderConfigSchema { fields: FIELDS },
     capabilities: ProviderCapabilities {
         models: None,

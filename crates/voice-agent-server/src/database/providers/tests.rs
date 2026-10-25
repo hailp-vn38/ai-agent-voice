@@ -13,12 +13,12 @@ async fn migration_removes_function_calling_flag_from_stored_providers() {
         (
             "on",
             "openai",
-            serde_json::json!({"base_url":"https://example.test/v1","model":"test","supports_function_calling":true}),
+            serde_json::json!({"base_url":"https://example.test/v1","model":"test","supports_function_calling":true,"supports_responses":true,"supports_structured_outputs":true}),
         ),
         (
             "off",
             "opencode_free",
-            serde_json::json!({"model":"space-bunny-free","supports_function_calling":false}),
+            serde_json::json!({"model":"space-bunny-free","supports_function_calling":false,"supports_responses":false}),
         ),
         (
             "absent",
@@ -34,7 +34,13 @@ async fn migration_removes_function_calling_flag_from_stored_providers() {
         .execute(database.pool())
         .await
         .unwrap();
-    for (key, expected_revision) in [("on", 2_i64), ("off", 2), ("absent", 1)] {
+    let migration_flags =
+        include_str!("../../../migrations/0135_remove_agent_job_provider_flags.sql");
+    sqlx::raw_sql(migration_flags)
+        .execute(database.pool())
+        .await
+        .unwrap();
+    for (key, expected_revision) in [("on", 3_i64), ("off", 3), ("absent", 1)] {
         let (adapter, raw, revision): (String, String, i64) =
             sqlx::query_as("SELECT adapter,config_json,revision FROM providers WHERE key=?")
                 .bind(key)
@@ -43,6 +49,8 @@ async fn migration_removes_function_calling_flag_from_stored_providers() {
                 .unwrap();
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert!(value.get("supports_function_calling").is_none());
+        assert!(value.get("supports_responses").is_none());
+        assert!(value.get("supports_structured_outputs").is_none());
         assert_eq!(revision, expected_revision);
         crate::database::provider_config::validate_raw(&adapter, &raw).unwrap();
     }
@@ -50,11 +58,15 @@ async fn migration_removes_function_calling_flag_from_stored_providers() {
         .execute(database.pool())
         .await
         .unwrap();
+    sqlx::raw_sql(migration_flags)
+        .execute(database.pool())
+        .await
+        .unwrap();
     let revision: i64 = sqlx::query_scalar("SELECT revision FROM providers WHERE key='on'")
         .fetch_one(database.pool())
         .await
         .unwrap();
-    assert_eq!(revision, 2);
+    assert_eq!(revision, 3);
 }
 
 #[tokio::test]

@@ -267,14 +267,7 @@ async fn llm_rejection_does_not_leave_provider_test_busy() {
             "llm-a".into(),
             Arc::new(LlmRuntime::new(
                 Arc::new(
-                    ConfiguredOpenAiLlm::build_with_responses(
-                        "public",
-                        &base,
-                        "space-bunny-free",
-                        1,
-                        true,
-                    )
-                    .unwrap(),
+                    ConfiguredOpenAiLlm::build("public", &base, "space-bunny-free", 1).unwrap(),
                 ),
                 2,
                 Duration::from_secs(1),

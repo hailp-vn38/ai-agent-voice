@@ -132,7 +132,6 @@ export interface AsrDiagnosticInput {
 
 export interface LlmDiagnosticInput {
   input: string
-  mode?: 'structured' | 'tools'
 }
 
 export interface TtsDiagnosticInput {

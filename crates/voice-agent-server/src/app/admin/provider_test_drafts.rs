@@ -10,7 +10,6 @@ use std::time::Instant;
 #[serde(deny_unknown_fields)]
 struct TextInput {
     text: String,
-    mode: Option<String>,
     voice: Option<String>,
     language: Option<String>,
 }
@@ -90,13 +89,7 @@ pub(super) async fn llm(State(state): State<AppState>, request: Request) -> Resp
         return error(&request, StatusCode::BAD_REQUEST, "invalid_test_input");
     }
     let started = Instant::now();
-    let input = match body.input.mode {
-        Some(mode) => ProviderTestInput::LlmStrict {
-            text: body.input.text,
-            mode,
-        },
-        None => ProviderTestInput::Llm(body.input.text),
-    };
+    let input = ProviderTestInput::Llm(body.input.text);
     match runner(&state).run(body.provider, input).await {
         Ok(v) => response(v, "llm", started, None),
         Err(e) => failure(&request, e),

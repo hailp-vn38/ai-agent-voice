@@ -147,10 +147,6 @@ adapter = "openai"
 api_key = ""
 base_url = "https://api.openai.com/v1"
 model = "model-name"
-# Agent Jobs use native Function Calling without a capability opt-in.
-# Legacy structured decisions still require Structured Outputs support.
-# supports_structured_outputs = true
-# supports_responses = true  # Optional Agent Job /responses route; Voice still uses Chat.
 
 [providers.tts.instances.zerotts_maichi]
 adapter = "zerotts_onnx"

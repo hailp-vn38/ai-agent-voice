@@ -14,7 +14,6 @@ const props = defineProps<{ type: ProviderType; savedKey?: string; revision?: nu
 const { t } = useI18n()
 const recorder = useMicrophoneRecorder()
 const text = ref('Xin chào')
-const llmMode = ref<'text' | 'structured' | 'tools'>('text')
 const voice = ref('')
 const language = ref('')
 const languageResult = ref('')
@@ -60,7 +59,7 @@ function invalidate() {
   clear()
   if (stale) status.value = 'stale'
 }
-watch([text, voice, language, llmMode], invalidate)
+watch([text, voice, language], invalidate)
 watch(() => [props.savedKey, props.revision, props.type, props.draft], () => {
   invalidate(); audio.value = undefined; voice.value = ''; language.value = ''; recorder.dispose()
 }, { deep: true })
@@ -90,7 +89,7 @@ async function run() {
     } else {
       const response = props.type === 'asr'
         ? props.draft ? await providersApi.testDraftAsr(props.draft, audio.value!, pending.signal) : await providersApi.testAsr(props.savedKey!, { audio: audio.value! }, pending.signal)
-        : props.draft ? await providersApi.testDraftLlm(props.draft, { text: text.value, ...(llmMode.value !== 'text' ? { mode: llmMode.value } : {}) }, pending.signal) : await providersApi.testLlm(props.savedKey!, { input: text.value, ...(llmMode.value !== 'text' ? { mode: llmMode.value } : {}) }, pending.signal)
+        : props.draft ? await providersApi.testDraftLlm(props.draft, { text: text.value }, pending.signal) : await providersApi.testLlm(props.savedKey!, { input: text.value }, pending.signal)
       if (pending.signal.aborted) return
       result.value = response.result.text
       elapsed.value = response.metrics.elapsed_ms
@@ -114,15 +113,6 @@ async function run() {
       <label v-if="type === 'llm' || type === 'tts'" class="block space-y-1.5">
         <span class="text-sm">{{ t('diagnostics.text') }}</span>
         <textarea v-model="text" class="admin-textarea min-h-24" :maxlength="type === 'llm' ? 8192 : 4096" :disabled="busy" />
-      </label>
-      <label v-if="type === 'llm'" class="block space-y-1.5">
-        <span class="text-sm">{{ t('diagnostics.llmMode') }}</span>
-        <select v-model="llmMode" class="admin-input" :disabled="busy">
-          <option value="text">{{ t('diagnostics.llmTextMode') }}</option>
-          <option value="structured">{{ t('diagnostics.llmStructuredMode') }}</option>
-          <option value="tools">{{ t('diagnostics.llmToolsMode') }}</option>
-        </select>
-        <small class="text-xs text-muted-foreground">{{ t('diagnostics.llmStrictHint') }}</small>
       </label>
       <div v-if="type === 'tts'" class="grid gap-3 sm:grid-cols-2">
         <label v-for="field in (['voices', 'languages'] as const)" v-show="options(field).length" :key="field" class="space-y-1.5 text-sm">
