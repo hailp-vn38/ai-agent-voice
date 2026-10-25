@@ -130,10 +130,44 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
             "failed_tool_calls": summary.failed_tool_calls,
             "sources_written": summary.sources_written,
             "wiki_pages_written": summary.wiki_pages_written,
+            "total_artifacts": summary.total_artifacts,
+            "primary_artifacts": summary.primary_artifacts,
+            "report_artifacts": summary.report_artifacts,
+            "image_artifacts": summary.image_artifacts,
+            "audio_artifacts": summary.audio_artifacts,
+            "artifact_ids": summary.artifact_ids,
             "last_lint_healthy": summary.last_lint_healthy,
         }),
         None => json!({}),
     };
+
+    let artifacts: Vec<Value> = detail
+        .map(|d| {
+            d.artifacts
+                .iter()
+                .map(|art| {
+                    json!({
+                        "id": art.id,
+                        "artifact_id": art.id,
+                        "task_id": art.task_id,
+                        "name": art.name,
+                        "mime_type": art.mime_type,
+                        "kind": art.kind,
+                        "role": art.role,
+                        "size_bytes": art.size_bytes,
+                        "sha256": art.sha256,
+                        "producer_session_id": art.producer_session_id,
+                        "producer_agent_id": art.producer_agent_id,
+                        "producer_tool_name": art.producer_tool_name,
+                        "producer_invocation_id": art.producer_invocation_id,
+                        "turn_id": art.turn_id,
+                        "created_at": (art.created_at / 1000).max(1).to_string(),
+                        "download_url": format!("/api/admin/jobs/{}/artifacts/{}", task.id, art.id),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let result = task.output_preview.as_ref().map(|text| {
         json!({
@@ -170,7 +204,7 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
         "budget_used": budget_used,
         "agent_runs": agent_runs,
         "steps": steps,
-        "artifacts": [],
+        "artifacts": artifacts,
         "followups": detail.map(|d| &d.followups),
         "execution_summary": detail.and_then(|d| d.execution_summary.as_ref()),
         "error_code": task.error_code,
@@ -305,7 +339,13 @@ pub fn project_task_events(detail: &TaskDetailView, after: i64, limit: u32) -> V
 
     let mut child_iter = detail.subagents.iter();
     if let Some(ref root) = detail.root_agent {
-        push_session_events(root, Some(&mut child_iter), &created_at, &mut seq, &mut events);
+        push_session_events(
+            root,
+            Some(&mut child_iter),
+            &created_at,
+            &mut seq,
+            &mut events,
+        );
     }
     for remaining_child in child_iter {
         push_session_events(remaining_child, None, &created_at, &mut seq, &mut events);

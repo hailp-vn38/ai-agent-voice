@@ -9,12 +9,11 @@ mod workspace_seed;
 mod tests;
 
 pub use projections::{project_task_events, project_task_to_admin_job};
-pub use voice::{
-    TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection,
-};
+pub use voice::{TASK_SUITE_TOOL_NAMES, VoiceTaskSubmit, is_task_suite_tool_name, voice_rejection};
 pub use workspace_seed::{
     DAILY_ROOT_PROMPT, DAILY_SYNTHESIS_STAGING_SKILL, DAILY_TASK_REMINDER_SKILL,
-    REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, WIKI_RESEARCHER_PROMPT, WIKI_ROOT_PROMPT,
+    MEDIA_CREATOR_PROMPT, REMINDER_PLANNER_PROMPT, REPORT_STAGER_PROMPT, WIKI_RESEARCHER_PROMPT,
+    WIKI_ROOT_PROMPT,
 };
 
 use std::path::PathBuf;
@@ -27,8 +26,8 @@ use orchestrator_agent_rs::{
     OrchestratorConfig, OrchestratorError, ProviderAuth, SecretString,
 };
 use orchestrator_flow_rs::{
-    CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource,
-    TaskView, WikiAutoFlowBinding, WorkspaceToolKit,
+    CreateTaskRequest, TaskConfig, TaskError, TaskManager, TaskRuntimeConfig, TaskSource, TaskView,
+    WikiAutoFlowBinding, WorkspaceToolKit,
 };
 use thiserror::Error;
 use tokio::sync::Notify;
@@ -67,9 +66,7 @@ pub struct TaskFlowRuntime {
     pub autoflow_notify: Arc<Notify>,
 }
 
-pub fn init_wiki_engine(
-    cfg: &WikiSectionConfig,
-) -> Result<Option<Arc<WikiEngine>>, TaskFlowError> {
+pub fn init_wiki_engine(cfg: &WikiSectionConfig) -> Result<Option<Arc<WikiEngine>>, TaskFlowError> {
     if !cfg.enabled {
         return Ok(None);
     }
@@ -204,13 +201,18 @@ async fn init_orchestrator_and_task_manager(
         AgentDefinition::new("daily_root", provider_id, model)
             .with_mode(AgentMode::Primary)
             .with_description(
-                "Interactive & background daily assistant: researches Wiki/Web, creates reports, stages knowledge to sources/, and manages reminders.",
+                "Interactive & background daily assistant: researches Wiki/Web, creates reports, generates images/TTS artifacts, stages knowledge to sources/, and manages reminders.",
             )
             .with_prompt_path(prompts.join("daily_root.md"))
             .with_context_limit_tokens(ctx_limit)
             .with_max_output_tokens(max_out)
             .with_allowed_tools(["subagent"])
-            .with_allowed_subagents(["wiki_researcher", "report_stager", "reminder_planner"])
+            .with_allowed_subagents([
+                "wiki_researcher",
+                "report_stager",
+                "media_creator",
+                "reminder_planner",
+            ])
             .with_steps(15),
         AgentDefinition::new("wiki_researcher", provider_id, model)
             .with_mode(AgentMode::Subagent)
@@ -241,7 +243,7 @@ async fn init_orchestrator_and_task_manager(
         AgentDefinition::new("report_stager", provider_id, model)
             .with_mode(AgentMode::Subagent)
             .with_description(
-                "Synthesizes discussions into sources/<domain>/<topic>/ via add_to_sources or writes standalone reports via markdown_create.",
+                "Synthesizes discussions into sources/<domain>/<topic>/ via add_to_sources, writes standalone reports via markdown_create, or publishes accompanying image/TTS artifacts.",
             )
             .with_prompt_path(prompts.join("report_stager.md"))
             .with_context_limit_tokens(ctx_limit)
@@ -253,8 +255,28 @@ async fn init_orchestrator_and_task_manager(
                 "add_to_sources",
                 "markdown_create",
                 "markdown_read",
+                "image_create",
+                "tts_synthesize",
+                "artifact_create",
             ])
             .with_allowed_skills(["wiki-taxonomy", "daily-synthesis-staging"])
+            .with_steps(12),
+        AgentDefinition::new("media_creator", provider_id, model)
+            .with_mode(AgentMode::Subagent)
+            .with_description(
+                "Generates PNG/SVG images via image_create, synthesizes TTS audio via tts_synthesize, and publishes multi-format Task Artifacts via artifact_create / markdown_create.",
+            )
+            .with_prompt_path(prompts.join("media_creator.md"))
+            .with_context_limit_tokens(ctx_limit)
+            .with_max_output_tokens(max_out)
+            .with_allowed_tools([
+                "skill",
+                "image_create",
+                "tts_synthesize",
+                "artifact_create",
+                "markdown_create",
+                "markdown_read",
+            ])
             .with_steps(12),
         AgentDefinition::new("reminder_planner", provider_id, model)
             .with_mode(AgentMode::Subagent)
@@ -363,8 +385,7 @@ async fn init_orchestrator_and_task_manager(
     orch_cfg.runtime.context_limit_tokens = ctx_limit;
     orch_cfg.runtime.compaction_threshold_percent = 85;
     orch_cfg.runtime.compaction_keep_recent = 6;
-    orch_cfg.runtime.tool_output_cap_bytes =
-        (read_budget.max_window_chars * 3 / 2).max(24 * 1024);
+    orch_cfg.runtime.tool_output_cap_bytes = (read_budget.max_window_chars * 3 / 2).max(24 * 1024);
     orch_cfg.runtime.max_concurrent_root_runs = cfg.max_concurrent_root_runs;
 
     let mut builder = Orchestrator::builder(orch_cfg);
@@ -400,10 +421,7 @@ pub async fn submit_wiki_source_analysis(
         ..Default::default()
     };
     if let Ok(page) = task_manager.list_all_tasks(&active_filter).await
-        && let Some(active) = page
-            .items
-            .into_iter()
-            .find(|t| !t.status.is_terminal())
+        && let Some(active) = page.items.into_iter().find(|t| !t.status.is_terminal())
     {
         return Ok(active);
     }

@@ -198,6 +198,7 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
     let detail_while_running = TaskDetailView {
         task: base_task.clone(),
         followups: Vec::new(),
+        artifacts: Vec::new(),
         execution_summary: None,
         root_agent: Some(TaskAgentSessionView {
             session_id: "root-sess".into(),
@@ -244,6 +245,7 @@ fn project_task_events_preserves_subagent_sequence_numbers_when_root_continues()
     let detail_after_root_continues = TaskDetailView {
         task: completed_task,
         followups: Vec::new(),
+        artifacts: Vec::new(),
         execution_summary: None,
         root_agent: Some(TaskAgentSessionView {
             session_id: "root-sess".into(),

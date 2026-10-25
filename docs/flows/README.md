@@ -18,3 +18,4 @@ Mỗi flow mô tả boundary, sequence, invariants và test contract. Khi hành 
 
 13. [Core TTS Provider → WAV Job Artifact V3](13-core-tts-v3.md)
 15. [Core ASR — Job-owned WAV to final text V3](15-core-asr-v3.md)
+16. [Unified Task Flow (`orchestrator_flow_rs`) & Multi-Kind Task Artifacts](16-task-flow-multi-kind-artifacts.md)

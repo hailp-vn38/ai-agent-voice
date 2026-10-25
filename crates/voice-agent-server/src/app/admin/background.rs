@@ -123,7 +123,9 @@ pub(super) struct CreateJobInput {
     pub related_wiki_links: Vec<String>,
 }
 
-fn extract_idempotency_key(headers: &axum::http::HeaderMap) -> Result<Option<String>, &'static str> {
+fn extract_idempotency_key(
+    headers: &axum::http::HeaderMap,
+) -> Result<Option<String>, &'static str> {
     let Some(raw) = headers.get("Idempotency-Key") else {
         return Ok(None);
     };
@@ -161,7 +163,12 @@ async fn lookup_idempotent_job(
     Ok(None)
 }
 
-fn store_idempotent_job(state: &AppState, key: Option<String>, fingerprint: String, task_id: String) {
+fn store_idempotent_job(
+    state: &AppState,
+    key: Option<String>,
+    fingerprint: String,
+    task_id: String,
+) {
     if let Some(key) = key {
         state
             .admin_task_control
@@ -328,11 +335,39 @@ pub(super) async fn delete(
 }
 
 pub(super) async fn artifact(
-    State(_state): State<AppState>,
-    Path((_id, _artifact_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Path((id, artifact_id)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    error(&request, StatusCode::NOT_FOUND, "not_found")
+    let tm = match task_manager(&state, &request) {
+        Ok(tm) => tm,
+        Err(resp) => return resp,
+    };
+    match tm
+        .read_task_artifact_bytes_any_scope(&id, &artifact_id)
+        .await
+    {
+        Ok((meta, bytes)) => {
+            let safe_filename: String = meta
+                .name
+                .chars()
+                .filter(|c| !matches!(c, '"' | '\\' | '\r' | '\n'))
+                .collect();
+            let disposition = format!("inline; filename=\"{safe_filename}\"");
+            let etag = format!("\"{}\"", meta.sha256);
+            (
+                StatusCode::OK,
+                [
+                    (axum::http::header::CONTENT_TYPE, meta.mime_type),
+                    (axum::http::header::CONTENT_DISPOSITION, disposition),
+                    (axum::http::header::ETAG, etag),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(e) => task_failure(&request, e),
+    }
 }
 
 pub(super) async fn cancel(
@@ -426,7 +461,10 @@ pub(super) async fn followup(
         Ok(tm) => tm,
         Err(resp) => return resp,
     };
-    match tm.send_followup_any_scope(&id, input.prompt, TaskSource::Api).await {
+    match tm
+        .send_followup_any_scope(&id, input.prompt, TaskSource::Api)
+        .await
+    {
         Ok(followup_view) => (StatusCode::ACCEPTED, Json(followup_view)).into_response(),
         Err(e) => task_failure(&request, e),
     }
@@ -513,9 +551,8 @@ pub(super) async fn stream(State(state): State<AppState>, request: Request) -> R
         Err(e) => return task_failure(&request, e),
     };
 
-    let messages = futures_util::stream::unfold(
-        (subscription, true),
-        |(mut sub, first)| async move {
+    let messages =
+        futures_util::stream::unfold((subscription, true), |(mut sub, first)| async move {
             if first {
                 return Some((
                     Ok::<Event, Infallible>(Event::default().event("ready").data("{}")),
@@ -542,8 +579,7 @@ pub(super) async fn stream(State(state): State<AppState>, request: Request) -> R
                     }
                 }
             }
-        },
-    );
+        });
 
     let mut response = Sse::new(messages)
         .keep_alive(
