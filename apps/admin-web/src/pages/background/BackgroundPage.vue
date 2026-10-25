@@ -12,7 +12,7 @@ import type {
 } from '@/api/types/agent-jobs'
 import { formatApiError, isApiError } from '@/api/errors'
 import BaseModal from '@/components/admin/BaseModal.vue'
-import PageHeader from '@/components/admin/PageHeader.vue'
+import DetailHeader from '@/components/admin/DetailHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
@@ -298,7 +298,15 @@ onBeforeUnmount(() => controller?.abort())
 
 <template>
   <section class="space-y-5">
-    <PageHeader :title="t('jobUi.background')" :description="t('jobUi.backgroundDescription')">
+    <DetailHeader :title="t('jobUi.background')" :back-label="t('jobUi.jobs')" @back="router.push({ name: 'jobs' })">
+      <template #icon>
+        <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet">
+          <Settings2 class="size-5" />
+        </div>
+      </template>
+      <template #details>
+        <span class="line-clamp-2">{{ t('jobUi.backgroundDescription') }}</span>
+      </template>
       <template #actions>
         <Button variant="outline" :disabled="loading || saving" @click="router.push({ name: 'providers', query: { type: 'llm' } })">
           <ExternalLink class="size-4" />{{ t('jobUi.manageProviders') }}
@@ -310,7 +318,7 @@ onBeforeUnmount(() => controller?.abort())
           <Save class="size-4" />{{ t('jobUi.save') }}
         </Button>
       </template>
-    </PageHeader>
+    </DetailHeader>
 
     <div v-if="error" role="alert" class="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
       <p class="font-medium">{{ unavailable ? t('jobUi.backendPending') : t('jobUi.loadFailed') }}</p>
