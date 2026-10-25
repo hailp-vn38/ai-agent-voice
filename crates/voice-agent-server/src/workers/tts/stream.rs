@@ -288,12 +288,14 @@ impl TtsWorkerRuntime {
     }
     /// Receipt belongs to the physical worker that owns this lease. Unlike
     /// reset_pending(), unrelated Voice workers cannot delay its acknowledgement.
+    #[cfg(test)]
     pub(crate) fn reset_receipt(&self, lease: TtsLease) -> Arc<AtomicBool> {
         let state = self.state.lock().expect("TTS worker state poisoned");
         let slot = state.slots.get(&lease).expect("newly started TTS lease");
         Arc::clone(&state.workers[slot.worker].reset_pending)
     }
 
+    #[cfg(test)]
     pub(crate) fn has_lease(&self, lease: TtsLease) -> bool {
         self.state
             .lock()

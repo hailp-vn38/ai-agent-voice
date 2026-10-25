@@ -60,6 +60,17 @@ pub(super) fn resolve_wiki_scoped_path(engine: &WikiEngine, id: &str) -> String 
 }
 
 pub(super) async fn trigger_source_analysis(state: &AppState, rel_path: &str, body: &mut Value) {
+    let enabled = state
+        .admin_task_control
+        .lock()
+        .expect("admin_task_control mutex poisoned")
+        .knowledge_processing_overrides
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if !enabled {
+        return;
+    }
     if let Some(ref tm) = state.task_manager {
         if let Ok(task) = crate::services::task_flow::submit_wiki_source_analysis(tm, rel_path).await
         {
@@ -70,7 +81,8 @@ pub(super) async fn trigger_source_analysis(state: &AppState, rel_path: &str, bo
                 "replayed": false,
             });
         }
-    } else if let Some(ref notify) = state.autoflow_notify {
+    }
+    if let Some(ref notify) = state.autoflow_notify {
         notify.notify_one();
     }
 }

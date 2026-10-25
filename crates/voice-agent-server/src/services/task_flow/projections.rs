@@ -178,113 +178,137 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
     })
 }
 
+fn push_session_events<'a>(
+    session: &'a orchestrator_flow_rs::TaskAgentSessionView,
+    mut child_iter: Option<&mut std::slice::Iter<'a, orchestrator_flow_rs::TaskAgentSessionView>>,
+    created_at: &str,
+    seq: &mut i64,
+    events: &mut Vec<(i64, Value)>,
+) {
+    *seq += 1;
+    events.push((
+        *seq,
+        json!({
+            "sequence": *seq,
+            "event_type": "agent_run_created",
+            "created_at": created_at,
+            "step_key": Value::Null,
+            "payload": {
+                "agent_run_id": session.session_id,
+                "parent_agent_run_id": session.parent_session_id,
+                "role": session.agent_id,
+            }
+        }),
+    ));
+
+    if let Some(ref run) = session.latest_run {
+        *seq += 1;
+        events.push((
+            *seq,
+            json!({
+                "sequence": *seq,
+                "event_type": "agent_run_started",
+                "created_at": created_at,
+                "step_key": Value::Null,
+                "payload": {
+                    "agent_run_id": session.session_id,
+                    "run_id": run.run_id,
+                    "turn_id": run.turn_id,
+                    "attempt": run.attempt,
+                }
+            }),
+        ));
+    }
+
+    for (inv_idx, inv) in session.invocations.iter().enumerate() {
+        let step_key = format!("{}:{}:{}", session.agent_id, inv_idx + 1, inv.tool_name);
+        *seq += 1;
+        events.push((
+            *seq,
+            json!({
+                "sequence": *seq,
+                "event_type": "step_started",
+                "created_at": created_at,
+                "step_key": step_key,
+                "payload": {
+                    "agent_run_id": session.session_id,
+                    "tool_name": inv.tool_name,
+                    "arguments": inv.arguments,
+                }
+            }),
+        ));
+
+        // Khi Root Agent gọi `subagent`, lồng các sự kiện của Subagent vào đúng vị trí nhân quả
+        // (sau `step_started` của lệnh `subagent` và trước `step_finished` của lệnh đó),
+        // tránh dịch chuyển `sequence` khi Root Agent tiếp tục gọi tool khác sau khi Subagent xong.
+        if inv.tool_name == "subagent"
+            && let Some(ref mut children) = child_iter
+            && let Some(child_session) = children.next()
+        {
+            push_session_events(child_session, None, created_at, seq, events);
+        }
+
+        if matches!(
+            inv.status.as_str(),
+            "completed" | "failed" | "cancelled" | "interrupted"
+        ) {
+            *seq += 1;
+            events.push((
+                *seq,
+                json!({
+                    "sequence": *seq,
+                    "event_type": "step_finished",
+                    "created_at": created_at,
+                    "step_key": step_key,
+                    "payload": {
+                        "agent_run_id": session.session_id,
+                        "tool_name": inv.tool_name,
+                        "status": map_step_status(&inv.status),
+                        "error_code": inv.error_code,
+                        "result": inv.result,
+                    }
+                }),
+            ));
+        }
+    }
+
+    if let Some(ref run) = session.latest_run
+        && run.status != "running"
+    {
+        *seq += 1;
+        events.push((
+            *seq,
+            json!({
+                "sequence": *seq,
+                "event_type": "agent_run_finished",
+                "created_at": created_at,
+                "step_key": Value::Null,
+                "payload": {
+                    "agent_run_id": session.session_id,
+                    "run_id": run.run_id,
+                    "status": map_agent_run_status(&run.status),
+                    "steps": run.steps,
+                    "input_tokens": run.input_tokens,
+                    "output_tokens": run.output_tokens,
+                    "error_code": run.error_code,
+                }
+            }),
+        ));
+    }
+}
+
 /// Projects a [`TaskDetailView`] into sequential `JobEvent` items for `/api/admin/jobs/{id}/events`.
 pub fn project_task_events(detail: &TaskDetailView, after: i64, limit: u32) -> Vec<Value> {
     let mut events = Vec::new();
     let mut seq: i64 = 0;
     let created_at = (detail.task.created_at / 1000).max(1).to_string();
 
-    for session in detail.all_agents() {
-        seq += 1;
-        events.push((
-            seq,
-            json!({
-                "sequence": seq,
-                "event_type": "agent_run_created",
-                "created_at": created_at,
-                "step_key": Value::Null,
-                "payload": {
-                    "agent_run_id": session.session_id,
-                    "parent_agent_run_id": session.parent_session_id,
-                    "role": session.agent_id,
-                }
-            }),
-        ));
-
-        if let Some(ref run) = session.latest_run {
-            seq += 1;
-            events.push((
-                seq,
-                json!({
-                    "sequence": seq,
-                    "event_type": "agent_run_started",
-                    "created_at": created_at,
-                    "step_key": Value::Null,
-                    "payload": {
-                        "agent_run_id": session.session_id,
-                        "run_id": run.run_id,
-                        "turn_id": run.turn_id,
-                        "attempt": run.attempt,
-                    }
-                }),
-            ));
-        }
-
-        for (inv_idx, inv) in session.invocations.iter().enumerate() {
-            let step_key = format!("{}:{}:{}", session.agent_id, inv_idx + 1, inv.tool_name);
-            seq += 1;
-            events.push((
-                seq,
-                json!({
-                    "sequence": seq,
-                    "event_type": "step_started",
-                    "created_at": created_at,
-                    "step_key": step_key,
-                    "payload": {
-                        "agent_run_id": session.session_id,
-                        "tool_name": inv.tool_name,
-                        "arguments": inv.arguments,
-                    }
-                }),
-            ));
-
-            if matches!(
-                inv.status.as_str(),
-                "completed" | "failed" | "cancelled" | "interrupted"
-            ) {
-                seq += 1;
-                events.push((
-                    seq,
-                    json!({
-                        "sequence": seq,
-                        "event_type": "step_finished",
-                        "created_at": created_at,
-                        "step_key": step_key,
-                        "payload": {
-                            "agent_run_id": session.session_id,
-                            "tool_name": inv.tool_name,
-                            "status": map_step_status(&inv.status),
-                            "error_code": inv.error_code,
-                            "result": inv.result,
-                        }
-                    }),
-                ));
-            }
-        }
-
-        if let Some(ref run) = session.latest_run
-            && run.status != "running"
-        {
-            seq += 1;
-            events.push((
-                seq,
-                json!({
-                    "sequence": seq,
-                    "event_type": "agent_run_finished",
-                    "created_at": created_at,
-                    "step_key": Value::Null,
-                    "payload": {
-                        "agent_run_id": session.session_id,
-                        "run_id": run.run_id,
-                        "status": map_agent_run_status(&run.status),
-                        "steps": run.steps,
-                        "input_tokens": run.input_tokens,
-                        "output_tokens": run.output_tokens,
-                        "error_code": run.error_code,
-                    }
-                }),
-            ));
-        }
+    let mut child_iter = detail.subagents.iter();
+    if let Some(ref root) = detail.root_agent {
+        push_session_events(root, Some(&mut child_iter), &created_at, &mut seq, &mut events);
+    }
+    for remaining_child in child_iter {
+        push_session_events(remaining_child, None, &created_at, &mut seq, &mut events);
     }
 
     if detail.task.status.is_terminal() {

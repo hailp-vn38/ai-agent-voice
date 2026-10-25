@@ -74,6 +74,16 @@ impl ActiveDeviceSessions {
             .cloned()
     }
 
+    pub fn active_device_ids(&self) -> Vec<i64> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, s)| !s.close.is_cancelled() && !s.sender.is_closed())
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Best effort after a committed mutation. Reconnect always requests a complete snapshot.
     pub fn sync_required(&self, device: i64, revision: i64) {
         let Some(session) = self.current(device) else {

@@ -438,6 +438,28 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
         .await
         .map_err(BootstrapError::TaskFlow)?;
     if let (Some(task_mgr), Some(orch)) = (runtime.task_manager.clone(), runtime.orchestrator.clone()) {
+        if let Ok(mut sub) = task_mgr.subscribe_all() {
+            let active_sessions = state.active_device_sessions.clone();
+            let stopping_sub = state.lifecycle.stopping().clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = stopping_sub.cancelled() => break,
+                        item = sub.recv() => match item {
+                            Some(orchestrator_flow_rs::TaskFeedItem::Event(
+                                orchestrator_flow_rs::TaskEvent::ReminderDue { schedule },
+                            )) => {
+                                deliver_task_reminder_to_devices(&active_sessions, &schedule).await;
+                            }
+                            Some(orchestrator_flow_rs::TaskFeedItem::Event(_)) => {}
+                            Some(orchestrator_flow_rs::TaskFeedItem::ResyncRequired) | None => break,
+                        }
+                    }
+                }
+            });
+        }
+
         let stopping = state.lifecycle.stopping().clone();
         tokio::spawn(async move {
             stopping.cancelled().await;
@@ -450,6 +472,51 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
     state.task_manager = runtime.task_manager;
     state.autoflow_notify = Some(runtime.autoflow_notify);
     Ok(())
+}
+
+async fn deliver_task_reminder_to_devices(
+    active_sessions: &crate::services::active_device_sessions::ActiveDeviceSessions,
+    schedule: &orchestrator_flow_rs::ScheduleView,
+) {
+    let target_devices = match schedule
+        .owner_id
+        .strip_prefix("device:")
+        .and_then(|s| s.parse::<i64>().ok())
+    {
+        Some(device_id) => vec![device_id],
+        None => active_sessions.active_device_ids(),
+    };
+    if target_devices.is_empty() {
+        return;
+    }
+    let raw_text = match schedule.notes.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(notes) => format!("Nhắc nhở: {}. {}", schedule.title, notes),
+        None => format!("Nhắc nhở: {}", schedule.title),
+    };
+    let text: String = raw_text.chars().take(500).collect();
+
+    for device_id in target_devices {
+        let Some(session) = active_sessions.current(device_id) else {
+            continue;
+        };
+        let attempt_id = format!("task-rem-{}", uuid::Uuid::new_v4().simple());
+        let origin = if session.features.reminders {
+            crate::session::SpeechOrigin::Reminder {
+                reminder_id: schedule.id.clone(),
+                attempt_id: attempt_id.clone(),
+            }
+        } else if session.features.direct_tts {
+            crate::session::SpeechOrigin::ToolDirect
+        } else {
+            continue;
+        };
+        let request = crate::session::DirectSpeechRequest {
+            request_id: attempt_id,
+            text: text.clone(),
+            origin,
+        };
+        let _ = active_sessions.speak(device_id, request).await;
+    }
 }
 
 async fn prepare_enrollment(state: &mut AppState) -> Result<(), BootstrapError> {

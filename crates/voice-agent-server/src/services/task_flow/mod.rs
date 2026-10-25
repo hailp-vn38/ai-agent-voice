@@ -368,7 +368,7 @@ async fn init_orchestrator_and_task_manager(
     orch_cfg.runtime.max_concurrent_root_runs = cfg.max_concurrent_root_runs;
 
     let mut builder = Orchestrator::builder(orch_cfg);
-    for tool in toolkit.all_host_tools_with_tasks(&task_init) {
+    for tool in toolkit.all_host_tools(&task_init) {
         builder = builder.register_tool(tool);
     }
     let orchestrator = Arc::new(builder.build().await?);
@@ -388,16 +388,42 @@ async fn init_orchestrator_and_task_manager(
 }
 
 /// Triggers an explicit Wiki ingestion/curation task for a source via [`TaskManager`].
+/// If a `wiki_root` autoflow task is already queued or running, returns that active task
+/// instead of spawning a competing duplicate run.
 pub async fn submit_wiki_source_analysis(
     task_manager: &TaskManager,
     source_id: &str,
 ) -> Result<TaskView, TaskFlowError> {
+    let active_filter = orchestrator_flow_rs::TaskFilter {
+        agent_id: Some("wiki_root".to_string()),
+        limit: Some(10),
+        ..Default::default()
+    };
+    if let Ok(page) = task_manager.list_all_tasks(&active_filter).await
+        && let Some(active) = page
+            .items
+            .into_iter()
+            .find(|t| !t.status.is_terminal())
+    {
+        return Ok(active);
+    }
+
     let title = format!("Phân tích & Ingest nguồn Wiki: {source_id}");
-    let prompt = format!(
-        "[AUTO-FLOW: NEW SOURCES DETECTED]\n\
-         Hãy điều phối subagent `wiki_ingestor` để ingest tài liệu `{source_id}` từ `sources/` sang `wiki/`, \
-         sau đó gọi `wiki_curator` để tổng hợp Synthesis và chạy `wiki_lint`."
-    );
+    let prompt = task_manager
+        .wiki_engine()
+        .and_then(|engine| engine.build_next_autoflow_prompt(None).ok().flatten())
+        .map(|canonical| {
+            format!(
+                "{canonical}\n\n[PRIORITY SOURCE FOCUS]: Ưu tiên kiểm tra và ingest tài liệu `{source_id}`."
+            )
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "[AUTO-FLOW: NEW SOURCES DETECTED]\n\
+                 Hãy điều phối subagent `wiki_ingestor` để ingest tài liệu `{source_id}` từ `sources/` sang `wiki/`, \
+                 sau đó gọi `wiki_curator` để tổng hợp Synthesis và chạy `wiki_lint`."
+            )
+        });
     let req = CreateTaskRequest::new(title, prompt)
         .with_target("wiki_root")
         .with_source(TaskSource::Autoflow);

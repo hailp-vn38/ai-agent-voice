@@ -23,10 +23,12 @@ use crate::{
     },
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
+
+const MAX_IDEMPOTENCY_ENTRIES: usize = 256;
 
 /// Mutable control-plane state for Admin Background & Knowledge Processing settings and
 /// idempotent job submission keys.
@@ -38,6 +40,25 @@ pub(crate) struct AdminTaskControlState {
     pub knowledge_processing_revision: i64,
     /// Maps `Idempotency-Key` -> `(request_fingerprint, task_id)`.
     pub idempotency_ledger: HashMap<String, (String, String)>,
+    pub idempotency_order: VecDeque<String>,
+}
+
+impl AdminTaskControlState {
+    pub(crate) fn get_idempotent(&self, key: &str) -> Option<(String, String)> {
+        self.idempotency_ledger.get(key).cloned()
+    }
+
+    pub(crate) fn insert_idempotent(&mut self, key: String, fingerprint: String, task_id: String) {
+        if !self.idempotency_ledger.contains_key(&key) {
+            while self.idempotency_order.len() >= MAX_IDEMPOTENCY_ENTRIES {
+                if let Some(evicted) = self.idempotency_order.pop_front() {
+                    self.idempotency_ledger.remove(&evicted);
+                }
+            }
+            self.idempotency_order.push_back(key.clone());
+        }
+        self.idempotency_ledger.insert(key, (fingerprint, task_id));
+    }
 }
 
 impl Default for AdminTaskControlState {
@@ -48,6 +69,7 @@ impl Default for AdminTaskControlState {
             knowledge_processing_overrides: serde_json::Map::new(),
             knowledge_processing_revision: 1,
             idempotency_ledger: HashMap::new(),
+            idempotency_order: VecDeque::new(),
         }
     }
 }
