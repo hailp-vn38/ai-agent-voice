@@ -10,9 +10,13 @@ const props = withDefaults(
   defineProps<{
     activity: UnifiedActivity | null
     open?: boolean
+    closable?: boolean
   }>(),
-  { open: false },
+  { open: false, closable: false },
 )
+const emit = defineEmits<{
+  close: []
+}>()
 const { t } = useI18n()
 const run = computed(() => props.activity?.llm ?? null)
 const step = computed(() => props.activity?.step ?? null)
@@ -94,7 +98,19 @@ function stageNote(event: JobEvent): string {
       <h3 class="inline-flex items-center gap-2 text-xs font-semibold">
         <Cpu class="size-4 text-studio-violet" />{{ t('jobUi.eventInspector') }}
       </h3>
-      <Badge variant="outline" class="ml-2 text-[10px]">{{ t('jobUi.llmReadOnly') }}</Badge>
+      <div class="flex items-center gap-1.5">
+        <Badge variant="outline" class="ml-2 text-[10px]">{{ t('jobUi.llmReadOnly') }}</Badge>
+        <button
+          v-if="props.closable"
+          type="button"
+          class="inspector-close"
+          data-inspector-close
+          :aria-label="t('common.close')"
+          @click.stop.prevent="emit('close')"
+        >
+          ✕
+        </button>
+      </div>
     </summary>
     <div class="ins-body p-4">
       <p v-if="!activity" class="text-xs text-muted-foreground">{{ t('jobUi.selectTimelineEvent') }}</p>
@@ -188,6 +204,7 @@ function stageNote(event: JobEvent): string {
 
         <section v-if="step" class="mt-4 border-t pt-3">
           <h4 v-if="run" class="mb-2 text-xs font-semibold">{{ t('jobUi.llmCheckpointProgress') }}</h4>
+          <p v-if="step.instruction" class="mb-2 break-words text-xs font-medium">{{ step.instruction }}</p>
           <dl class="divide-y divide-border/60 text-xs">
             <div v-if="step.plugin_id" class="detail-row flex items-start justify-between gap-3 py-2">
               <dt class="text-muted-foreground">{{ t('jobUi.plugin') }}</dt>
@@ -245,6 +262,15 @@ function stageNote(event: JobEvent): string {
             </div>
           </dl>
         </template>
+
+        <details v-if="activity.agentRun?.goal_excerpt" class="mt-3 border-t pt-3 text-xs">
+          <summary class="cursor-pointer font-medium">{{ t('jobUi.goal') }}</summary>
+          <p class="mt-1 whitespace-pre-wrap break-words">{{ activity.agentRun.goal_excerpt }}</p>
+        </details>
+        <details v-if="activity.agentRun?.result" class="mt-3 border-t pt-3 text-xs">
+          <summary class="cursor-pointer font-medium">{{ t('jobUi.agentResult') }}</summary>
+          <pre class="ins-pre mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-2">{{ JSON.stringify(activity.agentRun.result, null, 2) }}</pre>
+        </details>
       </template>
     </div>
   </details>
@@ -253,6 +279,20 @@ function stageNote(event: JobEvent): string {
 <style scoped>
 .surface-head::-webkit-details-marker {
   display: none;
+}
+.inspector-close {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: #1d2738;
+  border: 1px solid #33425a;
+  font-size: 11px;
+  color: #a5b3ce;
+  display: inline-grid;
+  place-items: center;
+}
+.inspector-close:hover {
+  background: #29364b;
 }
 .ins-type {
   display: inline-flex;

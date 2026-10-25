@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ChevronRight } from '@lucide/vue'
+import { computed, ref, watch } from 'vue'
 import {
+  groupTimelineActivities,
   layoutDagCanvas,
   type ActivityFilter,
   type ActivityKind,
   type UnifiedActivity,
 } from '@/domain/jobs/unified-activity'
 import { useI18n } from '@/composables/useI18n'
+import JobActivityInspector from './JobActivityInspector.vue'
 
 const props = defineProps<{
   activities: UnifiedActivity[]
@@ -25,20 +28,130 @@ const viewportRef = ref<HTMLElement | null>(null)
 const dragging = ref(false)
 let dragStart = { x: 0, y: 0, scrollLeft: 0, scrollTop: 0 }
 
-const layout = computed(() => layoutDagCanvas(props.activities))
+const inspectorOpen = ref(false)
+const inspectedId = ref<string | null>(props.selectedId)
+
+watch(
+  () => props.selectedId,
+  nextId => {
+    inspectedId.value = nextId
+  },
+)
+
+const activeSelectedId = computed(() => inspectedId.value ?? props.selectedId)
+const inspectedActivity = computed(() => {
+  if (!inspectorOpen.value || !activeSelectedId.value) return null
+  return props.activities.find(activity => activity.id === activeSelectedId.value) ?? null
+})
+
+function onNodeClick(id: string) {
+  inspectedId.value = id
+  inspectorOpen.value = true
+  emit('select', id)
+}
+
+function closeInspector() {
+  inspectorOpen.value = false
+}
+
+const userOpenOverrides = ref<Record<string, boolean>>({})
+const prevFinished = new Map<string, boolean>()
+
+function agentFinished(activities: UnifiedActivity[]): boolean {
+  return activities.some(
+    activity =>
+      activity.kind === 'agent' ||
+      ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(activity.agentRun?.status ?? ''),
+  )
+}
+
+watch(
+  () => props.activities,
+  activities => {
+    const groups = groupTimelineActivities(activities)
+    let changed = false
+    const nextOverrides = { ...userOpenOverrides.value }
+    for (const group of groups) {
+      if (!group.child) continue
+      const finished = agentFinished(group.activities)
+      const prev = prevFinished.get(group.id)
+      if (prev !== undefined && prev !== finished && group.id in nextOverrides) {
+        delete nextOverrides[group.id]
+        changed = true
+      }
+      prevFinished.set(group.id, finished)
+    }
+    if (changed) {
+      userOpenOverrides.value = nextOverrides
+    }
+  },
+  { immediate: true },
+)
+
+const collapsedLaneIds = computed(() => {
+  const collapsed = new Set<string>()
+  for (const group of groupTimelineActivities(props.activities)) {
+    if (!group.child) continue
+    const isOpen = userOpenOverrides.value[group.id] ?? !agentFinished(group.activities)
+    if (!isOpen) collapsed.add(group.id)
+  }
+  return collapsed
+})
+
+const layout = computed(() => layoutDagCanvas(props.activities, collapsedLaneIds.value))
+
+function onSummaryClick(event: MouseEvent, groupId: string) {
+  event.preventDefault()
+  const currentlyOpen = !collapsedLaneIds.value.has(groupId)
+  const nextOpen = !currentlyOpen
+  userOpenOverrides.value = {
+    ...userOpenOverrides.value,
+    [groupId]: nextOpen,
+  }
+  const details = (event.currentTarget as HTMLElement | null)?.closest('details')
+  if (details) {
+    details.open = nextOpen
+  }
+}
+
+const MIN_ZOOM = 0.35
+const MAX_ZOOM = 1.6
 
 function setZoom(next: number) {
-  zoom.value = Math.min(1.2, Math.max(0.43, Number(next.toFixed(2))))
+  zoom.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(next.toFixed(4))))
 }
 function stepZoom(delta: number) {
   setZoom(zoom.value + delta)
 }
 function fitCanvas() {
   const cw = viewportRef.value?.clientWidth || 1100
-  setZoom(Math.max(0.43, Math.min(0.95, (cw - 15) / layout.value.width)))
+  const ch = viewportRef.value?.clientHeight || 618
+  const fitW = (cw - 24) / layout.value.width
+  const fitH = (ch - 24) / layout.value.height
+  setZoom(Math.max(0.43, Math.min(0.95, Math.min(fitW, fitH))))
   if (viewportRef.value) {
     viewportRef.value.scrollLeft = 0
     viewportRef.value.scrollTop = 0
+  }
+}
+function onWheel(event: WheelEvent) {
+  if (event.deltaY === 0) return
+  const viewport = viewportRef.value
+  const prevZoom = zoom.value
+  const deltaPixels =
+    event.deltaMode === 1 ? event.deltaY * 33 : event.deltaMode === 2 ? event.deltaY * 100 : event.deltaY
+  const sensitivity = event.ctrlKey ? 0.004 : 0.001
+  const delta = Math.min(0.2, Math.max(-0.2, -deltaPixels * sensitivity))
+  setZoom(prevZoom + delta)
+  const nextZoom = zoom.value
+  if (!viewport || nextZoom === prevZoom) return
+  const rect = viewport.getBoundingClientRect()
+  if (rect.width > 0 && rect.height > 0) {
+    const offsetX = event.clientX - rect.left
+    const offsetY = event.clientY - rect.top
+    const ratio = nextZoom / prevZoom
+    viewport.scrollLeft = Math.max(0, Math.round((viewport.scrollLeft + offsetX) * ratio - offsetX))
+    viewport.scrollTop = Math.max(0, Math.round((viewport.scrollTop + offsetY) * ratio - offsetY))
   }
 }
 
@@ -62,13 +175,6 @@ function onPointerUp() {
   dragging.value = false
 }
 
-function agentFinished(activities: UnifiedActivity[]): boolean {
-  return activities.some(
-    activity =>
-      activity.kind === 'agent' ||
-      ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(activity.agentRun?.status ?? ''),
-  )
-}
 function isRootRole(role: string | null): boolean {
   return role === 'orchestrator' || role === 'root'
 }
@@ -134,7 +240,7 @@ function footerRight(activity: UnifiedActivity): string {
 </script>
 
 <template>
-  <section class="studio-panel dag-surface min-w-0 overflow-hidden" :aria-label="t('jobUi.dagCanvasBadge')">
+  <section class="studio-panel dag-surface min-w-0 overflow-hidden" :aria-label="t('jobUi.unifiedTimeline')">
     <div class="surface-head flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
       <div class="mini-tools flex flex-wrap items-center gap-2">
         <strong class="text-xs font-semibold">◎ {{ t('jobUi.executionMap') }}</strong>
@@ -238,62 +344,63 @@ function footerRight(activity: UnifiedActivity): string {
 
     <p v-if="!activities.length" class="p-6 text-sm text-muted-foreground">{{ t('jobUi.noTimelineActivity') }}</p>
 
-    <div
-      v-else
-      ref="viewportRef"
-      class="canvas-viewport"
-      @pointerdown="onPointerDown"
-      @pointermove="onPointerMove"
-      @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
-      @pointerleave="onPointerUp"
-    >
+    <div v-else class="canvas-body">
       <div
-        class="canvas-scale-box"
-        :style="{
-          width: Math.round(layout.width * zoom) + 'px',
-          height: Math.round(layout.height * zoom) + 'px',
-        }"
+        ref="viewportRef"
+        class="canvas-viewport"
+        @wheel.prevent="onWheel"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @pointerleave="onPointerUp"
       >
         <div
-          class="canvas-stage"
+          class="canvas-scale-box"
           :style="{
-            width: layout.width + 'px',
-            height: layout.height + 'px',
-            transform: 'scale(' + zoom + ')',
+            width: Math.round(layout.width * zoom) + 'px',
+            height: Math.round(layout.height * zoom) + 'px',
           }"
         >
-          <svg
-            class="edge-layer"
-            :viewBox="'0 0 ' + layout.width + ' ' + layout.height"
-            aria-hidden="true"
+          <div
+            class="canvas-stage"
+            :style="{
+              width: layout.width + 'px',
+              height: layout.height + 'px',
+              transform: 'scale(' + zoom + ')',
+            }"
           >
-            <defs>
-              <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
-                <path d="M0 0 L6 3 L0 6 Z" fill="#687897" />
-              </marker>
-            </defs>
-            <path
-              v-for="edge in layout.edges"
-              :key="edge.id"
-              :class="edge.kind === 'default' ? undefined : edge.kind"
-              :d="edge.d"
-              marker-end="url(#arrow)"
-            />
-          </svg>
-
-          <ol class="execution-timeline">
-            <li
-              v-for="item in layout.groups"
-              :key="item.group.id"
-              class="timeline-group"
-              :class="{ 'child-group': item.group.child }"
-              :data-agent-run-id="item.group.child ? item.group.id : undefined"
+            <svg
+              class="edge-layer"
+              :viewBox="'0 0 ' + layout.width + ' ' + layout.height"
+              aria-hidden="true"
             >
-              <template v-if="item.group.child && item.lane">
+              <defs>
+                <marker id="arrow" markerWidth="5" markerHeight="5" refX="4.5" refY="2.5" orient="auto">
+                  <path d="M0 0 L5 2.5 L0 5 Z" fill="#687897" />
+                </marker>
+              </defs>
+              <path
+                v-for="edge in layout.edges"
+                :key="edge.id"
+                :class="edge.kind === 'default' ? undefined : edge.kind"
+                :d="edge.d"
+                marker-end="url(#arrow)"
+              />
+            </svg>
+
+            <ol class="execution-timeline">
+              <li
+                v-for="item in layout.groups"
+                :key="item.group.id"
+                class="timeline-group"
+                :class="{ 'child-group': item.group.child }"
+                :data-agent-run-id="item.group.child ? item.group.id : undefined"
+              >
                 <div
+                  v-if="item.group.child && item.lane"
                   class="lane-bg"
-                  :class="item.lane.theme"
+                  :class="[item.lane.theme, { collapsed: item.lane.collapsed }]"
                   :style="{
                     left: item.lane.x + 'px',
                     top: item.lane.y + 'px',
@@ -301,90 +408,119 @@ function footerRight(activity: UnifiedActivity): string {
                     height: item.lane.height + 'px',
                   }"
                 />
-                <details
+
+                <component
+                  :is="item.group.child ? 'details' : 'div'"
                   class="lane-details"
-                  :open="!agentFinished(item.group.activities)"
-                  :style="{
-                    left: item.lane.x + 23 + 'px',
-                    top: item.lane.y + 11 + 'px',
-                    maxWidth: item.lane.width - 36 + 'px',
-                  }"
+                  :open="item.group.child ? !collapsedLaneIds.has(item.group.id) : undefined"
                 >
-                  <summary class="lane-title cursor-pointer list-none" :class="item.lane.theme">
-                    <span>◉ {{ t('jobUi.subAgent') }} · {{ roleName(item.lane.role) }}</span>
-                    <span class="ml-2 font-mono text-[10px] opacity-80">{{ item.group.id }}</span>
+                  <summary
+                    v-if="item.group.child && item.lane"
+                    class="lane-title cursor-pointer list-none"
+                    :class="item.lane.theme"
+                    :style="{
+                      left: item.lane.x + 18 + 'px',
+                      top: item.lane.y + 12 + 'px',
+                      width: item.lane.width - 36 + 'px',
+                    }"
+                    @click="onSummaryClick($event, item.group.id)"
+                  >
+                    <span class="flex items-center gap-1">
+                      <ChevronRight class="branch-toggle size-3.5 shrink-0 transition-transform" aria-hidden="true" />
+                      <span class="truncate">◉ {{ t('jobUi.subAgent') }} · {{ roleName(item.lane.role) }}</span>
+                      <span class="ml-1 truncate font-mono text-[10px] opacity-80">{{ item.group.id }}</span>
+                      <span class="lane-badge ml-auto shrink-0">{{ item.nodes.length }}</span>
+                    </span>
                     <span
                       v-if="item.group.activities[0]?.agentRun?.goal_excerpt"
-                      class="lane-goal mt-0.5 block truncate font-normal text-[#9eaac1]"
+                      class="lane-goal mt-1 block truncate font-normal text-[#9eaac1]"
                     >
                       {{ item.group.activities[0].agentRun.goal_excerpt }}
                     </span>
                   </summary>
-                </details>
-              </template>
 
-              <ol>
-                <li v-for="node in item.nodes" :key="node.id" class="timeline-row">
-                  <button
-                    type="button"
-                    class="graph-node"
-                    :class="{
-                      selected: selectedId === node.activity.id,
-                      running: node.activity.status === 'running',
-                      pending: node.activity.status === 'cancelled' || node.activity.status === 'skipped',
-                    }"
-                    :data-step="node.activity.id"
-                    :data-kind="node.activity.kind"
-                    :style="{ left: node.x + 'px', top: node.y + 'px' }"
-                    :aria-current="selectedId === node.activity.id ? 'true' : undefined"
-                    @click="emit('select', node.activity.id)"
-                  >
-                    <div class="node-header">
-                      <span class="node-icon" aria-hidden="true">{{ nodeIcon(node.activity.kind) }}</span>
-                      <span class="node-status" :class="node.activity.status">
-                        {{ node.activity.status === 'completed' || node.activity.status === 'running' ? '● ' : '○ ' }}{{ node.activity.status }}
-                      </span>
-                    </div>
-                    <b class="truncate" :title="node.activity.title">{{ node.activity.title }}</b>
-                    <span class="desc line-clamp-2">
-                      {{
-                        isRootRole(node.activity.role) && !item.group.child
-                          ? t('jobUi.rootAgent') + ' · ' + node.activity.note
-                          : node.activity.note
-                      }}
-                    </span>
-                    <span
-                      v-for="child in node.activity.childRuns"
-                      :key="child.agent_run_id"
-                      class="desc mt-1 truncate text-[#83e0e9]"
-                    >
-                      {{ roleName(child.role) }} · {{ child.goal_excerpt }}
-                      <span class="font-mono text-[9px]">{{ child.agent_run_id }}</span>
-                    </span>
-                    <span
-                      v-if="node.activity.llm && node.activity.step"
-                      class="desc mt-1"
-                      :class="
-                        node.activity.step.attempt_state === 'unknown_outcome' ||
-                        node.activity.step.status === 'failed'
-                          ? 'text-[#fb8490]'
-                          : ''
-                      "
-                    >
-                      {{ t('jobUi.llmCheckpointProgress') }} · {{ node.activity.step.step_key }} · {{ node.activity.step.status }}<template v-if="node.activity.step.attempt_state === 'unknown_outcome'"> · unknown_outcome</template>
-                    </span>
-                    <div class="node-footer">
-                      <span class="truncate">{{ footerLeft(node.activity) }}</span>
-                      <span class="shrink-0">{{ footerRight(node.activity) }}</span>
-                    </div>
-                  </button>
-                </li>
-              </ol>
-            </li>
-          </ol>
+                  <ol v-show="!item.lane?.collapsed">
+                    <li v-for="node in item.nodes" :key="node.id" class="timeline-row">
+                      <button
+                        type="button"
+                        class="graph-node"
+                        :class="{
+                          selected: activeSelectedId === node.activity.id,
+                          running: node.activity.status === 'running',
+                          pending: node.activity.status === 'cancelled' || node.activity.status === 'skipped',
+                        }"
+                        :data-step="node.activity.id"
+                        :data-kind="node.activity.kind"
+                        :style="{
+                          left: node.x + 'px',
+                          top: node.y + 'px',
+                          width: node.width + 'px',
+                          height: node.height + 'px',
+                        }"
+                        :aria-current="activeSelectedId === node.activity.id ? 'true' : undefined"
+                        @click="onNodeClick(node.activity.id)"
+                      >
+                        <div class="node-header">
+                          <span class="node-icon" aria-hidden="true">{{ nodeIcon(node.activity.kind) }}</span>
+                          <span class="node-status" :class="node.activity.status">
+                            {{ node.activity.status === 'completed' || node.activity.status === 'running' ? '● ' : '○ ' }}{{ node.activity.status }}
+                          </span>
+                        </div>
+                        <b class="truncate" :title="node.activity.title">{{ node.activity.title }}</b>
+                        <span class="desc line-clamp-2">
+                          {{
+                            isRootRole(node.activity.role) && !item.group.child
+                              ? t('jobUi.rootAgent') + ' · ' + node.activity.note
+                              : node.activity.note
+                          }}
+                        </span>
+                        <span
+                          v-for="child in node.activity.childRuns"
+                          :key="child.agent_run_id"
+                          class="desc mt-1 truncate text-[#83e0e9]"
+                        >
+                          {{ roleName(child.role) }} · {{ child.goal_excerpt }}
+                          <span class="font-mono text-[9px]">{{ child.agent_run_id }}</span>
+                        </span>
+                        <span
+                          v-if="node.activity.llm && node.activity.step"
+                          class="desc mt-1"
+                          :class="
+                            node.activity.step.attempt_state === 'unknown_outcome' ||
+                            node.activity.step.status === 'failed'
+                              ? 'text-[#fb8490]'
+                              : ''
+                          "
+                        >
+                          {{ t('jobUi.llmCheckpointProgress') }} · {{ node.activity.step.step_key }} · {{ node.activity.step.status }}<template v-if="node.activity.step.attempt_state === 'unknown_outcome'"> · unknown_outcome</template>
+                        </span>
+                        <div class="node-footer">
+                          <span class="truncate">{{ footerLeft(node.activity) }}</span>
+                          <span class="shrink-0">{{ footerRight(node.activity) }}</span>
+                        </div>
+                      </button>
+                    </li>
+                  </ol>
+                </component>
+              </li>
+            </ol>
+          </div>
         </div>
       </div>
       <div class="canvas-help">{{ t('jobUi.canvasHelp') }}</div>
+
+      <aside
+        v-if="inspectedActivity"
+        class="canvas-inspector"
+        data-canvas-inspector
+      >
+        <JobActivityInspector
+          :activity="inspectedActivity"
+          open
+          closable
+          @close="closeInspector"
+        />
+      </aside>
     </div>
   </section>
 </template>
@@ -434,10 +570,20 @@ function footerRight(activity: UnifiedActivity): string {
   background: #2a2448;
   color: #c5b8ff;
 }
-.canvas-viewport {
+.canvas-body {
+  display: flex;
+  align-items: stretch;
+  position: relative;
   height: 618px;
+  background-color: #101725;
+}
+.canvas-viewport {
+  flex: 1 1 0%;
+  min-width: 0;
+  height: 100%;
   overflow: auto;
   position: relative;
+  display: flex;
   background-color: #101725;
   background-image: radial-gradient(#4c597647 1px, transparent 1px);
   background-size: 20px 20px;
@@ -446,6 +592,34 @@ function footerRight(activity: UnifiedActivity): string {
 }
 .canvas-viewport:active {
   cursor: grabbing;
+}
+.canvas-scale-box {
+  margin: auto;
+  flex-shrink: 0;
+}
+.canvas-inspector {
+  width: 340px;
+  max-width: 45%;
+  height: 100%;
+  overflow-y: auto;
+  border-left: 1px solid #283348;
+  background: #131b2c;
+  scrollbar-color: #3e4860 transparent;
+  flex-shrink: 0;
+  z-index: 4;
+}
+.canvas-inspector :deep(.inspector) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.canvas-inspector :deep(.surface-head) {
+  position: sticky;
+  top: 0;
+  background: #151e30;
+  border-color: #283348;
+  z-index: 1;
 }
 .canvas-stage {
   position: relative;
@@ -463,26 +637,54 @@ function footerRight(activity: UnifiedActivity): string {
   border: 1px dashed #2a66726b;
   background: linear-gradient(90deg, #16414c24, #1d2e3f11);
   pointer-events: none;
+  transition: width 0.15s, height 0.15s, top 0.15s, left 0.15s;
+}
+.lane-bg.collapsed {
+  border-style: solid;
+  border-color: #2f728088;
+  background: linear-gradient(145deg, #17364266, #14223388);
+  box-shadow: 0 8px 24px #0004;
 }
 .lane-bg.document {
   border-color: #6d6c3c59;
   background: linear-gradient(90deg, #51451e1b, #2c30300d);
 }
+.lane-bg.document.collapsed {
+  border-color: #82864588;
+  background: linear-gradient(145deg, #3c3a1f66, #1c222b88);
+}
 .lane-details {
-  position: absolute;
-  z-index: 2;
+  position: static;
+}
+details.lane-details:not([open]) > ol {
+  display: none;
+}
+details.lane-details[open] > .lane-title .branch-toggle {
+  transform: rotate(90deg);
 }
 .lane-title {
+  position: absolute;
+  z-index: 2;
   font-size: 11px;
-  letter-spacing: 0.7px;
+  letter-spacing: 0.5px;
   font-weight: 700;
   color: #87ccd8;
+  user-select: none;
 }
 .lane-title::-webkit-details-marker {
   display: none;
 }
 .lane-title.document {
   color: #bacb85;
+}
+.lane-badge {
+  border-radius: 999px;
+  background: #202d42;
+  border: 1px solid #354764;
+  color: #b8c7df;
+  padding: 1px 7px;
+  font-size: 9px;
+  font-weight: 650;
 }
 .lane-goal {
   font-size: 9.5px;
@@ -522,8 +724,8 @@ function footerRight(activity: UnifiedActivity): string {
 .graph-node {
   position: absolute;
   width: 164px;
-  min-height: 108px;
-  padding: 12px;
+  height: 122px;
+  padding: 11px 12px;
   border-radius: 12px;
   border: 1px solid #3a4560;
   background: linear-gradient(145deg, #212b3e, #161e2d);
@@ -532,6 +734,9 @@ function footerRight(activity: UnifiedActivity): string {
   box-shadow: 0 9px 27px #0004;
   transition: border 0.15s, box-shadow 0.15s, transform 0.15s;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .graph-node:hover {
   transform: translateY(-2px);
@@ -619,8 +824,8 @@ function footerRight(activity: UnifiedActivity): string {
   color: #fb8490;
 }
 .node-footer {
-  margin-top: 9px;
-  padding-top: 7px;
+  margin-top: auto;
+  padding-top: 6px;
   border-top: 1px solid #3d486033;
   font-size: 9px;
   color: #8b9db9;
@@ -629,11 +834,9 @@ function footerRight(activity: UnifiedActivity): string {
   gap: 6px;
 }
 .canvas-help {
-  position: sticky;
+  position: absolute;
   bottom: 15px;
   left: 16px;
-  display: inline-block;
-  margin: 0 0 15px 16px;
   background: #101826e8;
   color: #9aa9c3;
   border: 1px solid #354159;
@@ -644,8 +847,17 @@ function footerRight(activity: UnifiedActivity): string {
   z-index: 3;
 }
 @media (max-width: 850px) {
-  .canvas-viewport {
+  .canvas-body {
     height: 470px;
+  }
+  .canvas-inspector {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(320px, 88%);
+    max-width: 88%;
+    box-shadow: -12px 0 28px #0007;
   }
 }
 </style>

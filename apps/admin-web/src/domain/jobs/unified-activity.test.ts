@@ -190,7 +190,19 @@ describe('unified Job activity', () => {
     const dag = layoutDagCanvas(rows)
     expect(dag.lanes).toHaveLength(2)
     expect(dag.lanes[0]).toMatchObject({ id: 'child-a', theme: 'research', y: 48 })
-    expect(dag.lanes[1]).toMatchObject({ id: 'child-b', theme: 'document', y: 365 })
+    expect(dag.lanes[1]).toMatchObject({ id: 'child-b', theme: 'document', y: 454 })
+    expect(dag.lanes[0]!.nodes[0]!.x).toBe(dag.lanes[0]!.nodes[1]!.x)
+    expect(dag.lanes[0]!.nodes[1]!.y).toBeGreaterThan(
+      dag.lanes[0]!.nodes[0]!.y + dag.lanes[0]!.nodes[0]!.height,
+    )
+    for (const lane of dag.lanes) {
+      for (const node of lane.nodes) {
+        expect(node.x).toBeGreaterThanOrEqual(lane.x + 20)
+        expect(node.x + node.width).toBeLessThanOrEqual(lane.x + lane.width - 20)
+        expect(node.y).toBeGreaterThanOrEqual(lane.y + 58)
+        expect(node.y + node.height).toBeLessThanOrEqual(lane.y + lane.height - 20)
+      }
+    }
     expect(dag.edges.map(e => `${e.fromId}->${e.toId}`)).toEqual([
       'llm:res-llm->step:fetch-a',
       'llm:plan->fork:fork-1',
@@ -200,6 +212,16 @@ describe('unified Job activity', () => {
       'llm:doc-llm->join:fork-1',
       'join:fork-1->job:terminal',
     ])
+
+    const collapsedDag = layoutDagCanvas(rows, new Set(['child-a', 'child-b']))
+    const topMargin = collapsedDag.lanes[0]!.y
+    const bottomMargin =
+      collapsedDag.height - (collapsedDag.lanes[1]!.y + collapsedDag.lanes[1]!.height)
+    expect(topMargin).toBe(bottomMargin)
+    const rootNodes = collapsedDag.nodes.filter(node => node.laneId === null)
+    for (const rootNode of rootNodes) {
+      expect(Math.round(rootNode.y + rootNode.height / 2)).toBe(Math.round(collapsedDag.height / 2))
+    }
   })
 
 })

@@ -198,6 +198,7 @@ export interface DagLaneLayout {
   role: string | null
   theme: 'research' | 'document'
   group: TimelineGroup
+  collapsed: boolean
   x: number
   y: number
   width: number
@@ -230,23 +231,52 @@ export interface DagCanvasLayout {
 }
 
 const NODE_W = 164
-const NODE_H = 108
-const COL_STEP = 210
-const LANE_H = 178
+const BASE_NODE_H = 122
+const EXTRA_NODE_H = 138
+const NODE_ROW_GAP = 32
+const LANE_HEADER_OFFSET = 62
+const LANE_BOTTOM_PAD = 22
+const LANE_SIDE_PAD = 24
+const COLLAPSED_LANE_W = 256
+const COLLAPSED_LANE_H = 88
+const LANE_GAP = 46
+const TOP_PAD = 48
+
+function activityNodeHeight(act: UnifiedActivity): number {
+  if ((act.llm && act.step) || (act.childRuns && act.childRuns.length > 0)) {
+    return EXTRA_NODE_H
+  }
+  return BASE_NODE_H
+}
 
 function buildEdge(u: DagNodeLayout, v: DagNodeLayout): DagEdgeLayout {
-  const sx = u.x + u.width
-  const sy = u.y + Math.round(u.height / 2)
-  const tx = v.x
-  const ty = v.y + Math.round(v.height / 2)
   let d: string
-  if (Math.abs(sy - ty) <= 2) {
-    d = `M${sx} ${sy} L${tx} ${ty}`
+  if (u.laneId !== null && u.laneId === v.laneId) {
+    const sx = u.x + Math.round(u.width / 2)
+    const sy = u.y + u.height
+    const tx = v.x + Math.round(v.width / 2)
+    const ty = v.y
+    if (Math.abs(sx - tx) <= 2) {
+      d = `M${sx} ${sy} L${tx} ${ty}`
+    } else {
+      const dy = ty - sy
+      const c1y = Math.round(sy + dy * 0.45)
+      const c2y = Math.round(sy + dy * 0.55)
+      d = `M${sx} ${sy} C${sx} ${c1y},${tx} ${c2y},${tx} ${ty}`
+    }
   } else {
-    const dx = tx - sx
-    const c1x = Math.round(sx + dx * 0.42)
-    const c2x = Math.round(sx + dx * 0.58)
-    d = `M${sx} ${sy} C${c1x} ${sy},${c2x} ${ty},${tx} ${ty}`
+    const sx = u.x + u.width
+    const sy = u.y + Math.round(u.height / 2)
+    const tx = v.x
+    const ty = v.y + Math.round(v.height / 2)
+    if (Math.abs(sy - ty) <= 2) {
+      d = `M${sx} ${sy} L${tx} ${ty}`
+    } else {
+      const dx = tx - sx
+      const c1x = Math.round(sx + dx * 0.45)
+      const c2x = Math.round(sx + dx * 0.55)
+      d = `M${sx} ${sy} C${c1x} ${sy},${c2x} ${ty},${tx} ${ty}`
+    }
   }
   const status = v.activity.status
   const kind: DagEdgeLayout['kind'] =
@@ -260,7 +290,10 @@ function buildEdge(u: DagNodeLayout, v: DagNodeLayout): DagEdgeLayout {
   return { id: `${u.id}->${v.id}`, fromId: u.id, toId: v.id, d, kind }
 }
 
-export function layoutDagCanvas(activities: UnifiedActivity[]): DagCanvasLayout {
+export function layoutDagCanvas(
+  activities: UnifiedActivity[],
+  collapsedLaneIds: ReadonlySet<string> = new Set(),
+): DagCanvasLayout {
   const timelineGroups = groupTimelineActivities(activities)
   type Stage = { type: 'root'; group: TimelineGroup } | { type: 'branches'; groups: TimelineGroup[] }
   const stages: Stage[] = []
@@ -277,27 +310,80 @@ export function layoutDagCanvas(activities: UnifiedActivity[]): DagCanvasLayout 
     }
   }
 
-  const maxBranches = Math.max(0, ...stages.map(s => (s.type === 'branches' ? s.groups.length : 0)))
-  const laneGap = 42
-  const topPad = 48
-  const height = maxBranches <= 2 ? 630 : topPad * 2 + maxBranches * LANE_H + (maxBranches - 1) * laneGap
-  const rootY =
-    maxBranches <= 2
-      ? 260
-      : Math.round((topPad + 66 + (topPad + (maxBranches - 1) * (LANE_H + laneGap) + 66)) / 2)
-
-  function lanePosition(index: number, total: number) {
-    if (maxBranches <= 2 && total === 2) {
-      return index === 0
-        ? { laneY: 48, nodeY: 114, laneH: LANE_H }
-        : { laneY: 365, nodeY: 438, laneH: LANE_H }
+  function computeStageLaneGeometries(branchGroups: TimelineGroup[]) {
+    const geometries: {
+      laneY: number
+      nodeY: number
+      laneH: number
+      firstNodeH: number
+      collapsed: boolean
+    }[] = []
+    let currentY = TOP_PAD
+    for (const [idx, group] of branchGroups.entries()) {
+      const collapsed = collapsedLaneIds.has(group.id)
+      const nodeHeights = group.activities.map(activityNodeHeight)
+      const firstNodeH = nodeHeights[0] ?? BASE_NODE_H
+      const stackH =
+        nodeHeights.length > 0
+          ? nodeHeights.reduce((sum, h) => sum + h, 0) + (nodeHeights.length - 1) * NODE_ROW_GAP
+          : BASE_NODE_H
+      const laneH = collapsed ? COLLAPSED_LANE_H : LANE_HEADER_OFFSET + stackH + LANE_BOTTOM_PAD
+      if (branchGroups.length === 2 && idx === 1 && !collapsed && !collapsedLaneIds.has(branchGroups[0]!.id)) {
+        currentY = Math.max(350, currentY)
+      }
+      const laneY = currentY
+      const nodeY = laneY + LANE_HEADER_OFFSET
+      geometries.push({ laneY, nodeY, laneH, firstNodeH, collapsed })
+      currentY = laneY + laneH + LANE_GAP
     }
-    if (maxBranches <= 2 && total === 1) {
-      return { laneY: 48, nodeY: 114, laneH: LANE_H }
-    }
-    const laneY = topPad + index * (LANE_H + laneGap)
-    return { laneY, nodeY: laneY + 66, laneH: LANE_H }
+    return geometries
   }
+
+  const branchGeometriesByStage = new Map<number, ReturnType<typeof computeStageLaneGeometries>>()
+  const maxRootNodeH = Math.max(
+    BASE_NODE_H,
+    ...stages.filter(stage => stage.type === 'root').map(stage => activityNodeHeight(stage.group.activities[0]!)),
+  )
+  let maxStageBottom = maxRootNodeH + TOP_PAD * 2
+
+  for (const [stageIdx, stage] of stages.entries()) {
+    if (stage.type !== 'branches') continue
+    const geoms = computeStageLaneGeometries(stage.groups)
+    branchGeometriesByStage.set(stageIdx, geoms)
+    const lastGeom = geoms.at(-1)
+    if (lastGeom) {
+      maxStageBottom = Math.max(maxStageBottom, lastGeom.laneY + lastGeom.laneH + TOP_PAD)
+    }
+  }
+
+  const height = maxStageBottom
+  const stageMidpoints: number[] = []
+
+  for (const geoms of branchGeometriesByStage.values()) {
+    const firstGeom = geoms[0]
+    const lastGeom = geoms.at(-1)
+    if (!firstGeom || !lastGeom) continue
+    const stageSpanH = lastGeom.laneY + lastGeom.laneH - firstGeom.laneY
+    const centeredTopY = Math.max(TOP_PAD, Math.round((height - stageSpanH) / 2))
+    const shiftY = centeredTopY - firstGeom.laneY
+    if (shiftY !== 0) {
+      for (const geom of geoms) {
+        geom.laneY += shiftY
+        geom.nodeY += shiftY
+      }
+    }
+    const firstCenter = firstGeom.collapsed
+      ? firstGeom.laneY + Math.round(firstGeom.laneH / 2)
+      : firstGeom.nodeY + Math.round(firstGeom.firstNodeH / 2)
+    const lastCenter = lastGeom.collapsed
+      ? lastGeom.laneY + Math.round(lastGeom.laneH / 2)
+      : lastGeom.nodeY + Math.round(lastGeom.firstNodeH / 2)
+    stageMidpoints.push(Math.round((firstCenter + lastCenter) / 2 - BASE_NODE_H / 2))
+  }
+
+  const defaultRootY = Math.max(TOP_PAD, Math.round((height - BASE_NODE_H) / 2))
+  const rootY = stageMidpoints.length > 0 ? Math.max(TOP_PAD, stageMidpoints[0]!) : defaultRootY
+  const rootCenterY = rootY + Math.round(BASE_NODE_H / 2)
 
   const groups: DagGroupRender[] = []
   const lanes: DagLaneLayout[] = []
@@ -306,62 +392,89 @@ export function layoutDagCanvas(activities: UnifiedActivity[]): DagCanvasLayout 
   const stageBoundaries: { entry: DagNodeLayout[]; exit: DagNodeLayout[] }[] = []
 
   let cursorX = 40
+  let maxRight = 0
   for (const [stageIdx, stage] of stages.entries()) {
     const nextStage = stages[stageIdx + 1]
     if (stage.type === 'root') {
       const act = stage.group.activities[0]!
+      const nodeH = activityNodeHeight(act)
       const node: DagNodeLayout = {
         id: act.id,
         activity: act,
         x: cursorX,
-        y: rootY,
+        y: Math.max(TOP_PAD, Math.round(rootCenterY - nodeH / 2)),
         width: NODE_W,
-        height: NODE_H,
+        height: nodeH,
         laneId: null,
       }
       nodes.push(node)
       groups.push({ group: stage.group, lane: null, nodes: [node] })
       stageBoundaries.push({ entry: [node], exit: [node] })
-      cursorX += nextStage?.type === 'branches' ? 205 : 225
+      maxRight = Math.max(maxRight, node.x + node.width)
+      cursorX += nextStage?.type === 'branches' ? 248 : 225
       continue
     }
 
     const branchStartX = cursorX
-    const maxCols = Math.max(1, ...stage.groups.map(g => g.activities.length))
     const entry: DagNodeLayout[] = []
     const exit: DagNodeLayout[] = []
+    const geoms = branchGeometriesByStage.get(stageIdx) ?? computeStageLaneGeometries(stage.groups)
+    let maxLaneRight = branchStartX + NODE_W
 
     for (const [laneIdx, group] of stage.groups.entries()) {
-      const { laneY, nodeY, laneH } = lanePosition(laneIdx, stage.groups.length)
+      const { laneY, nodeY, laneH, collapsed } = geoms[laneIdx]!
       const role = group.activities[0]?.role ?? null
       const theme: 'research' | 'document' =
         role === 'document' || role === 'wiki_curator' || role === 'wiki_ingestor' || laneIdx % 2 === 1
           ? 'document'
           : 'research'
-      const laneNodes: DagNodeLayout[] = group.activities.map((act, colIdx) => ({
-        id: act.id,
-        activity: act,
-        x: branchStartX + colIdx * COL_STEP,
-        y: nodeY,
-        width: NODE_W,
-        height: NODE_H,
-        laneId: group.id,
-      }))
+      const laneX = branchStartX - LANE_SIDE_PAD
+      const laneW = COLLAPSED_LANE_W
+      const nodeX = laneX + Math.round((laneW - NODE_W) / 2)
+      let currentNodeY = nodeY
+      const laneNodes: DagNodeLayout[] = group.activities.map(act => {
+        const height = activityNodeHeight(act)
+        const node: DagNodeLayout = {
+          id: act.id,
+          activity: act,
+          x: nodeX,
+          y: currentNodeY,
+          width: NODE_W,
+          height,
+          laneId: group.id,
+        }
+        currentNodeY += height + NODE_ROW_GAP
+        return node
+      })
       nodes.push(...laneNodes)
-      if (laneNodes.length > 0) {
+      maxLaneRight = Math.max(maxLaneRight, laneX + laneW)
+
+      if (collapsed && laneNodes.length > 0) {
+        const anchor: DagNodeLayout = {
+          id: `lane:${group.id}`,
+          activity: laneNodes[laneNodes.length - 1]!.activity,
+          x: laneX,
+          y: laneY,
+          width: laneW,
+          height: laneH,
+          laneId: group.id,
+        }
+        entry.push(anchor)
+        exit.push(anchor)
+      } else if (laneNodes.length > 0) {
         entry.push(laneNodes[0]!)
         exit.push(laneNodes[laneNodes.length - 1]!)
         for (let i = 0; i < laneNodes.length - 1; i++) {
           edges.push(buildEdge(laneNodes[i]!, laneNodes[i + 1]!))
         }
       }
-      const laneX = branchStartX - 17
-      const laneW = Math.max(220, ( Math.max(1, group.activities.length) - 1) * COL_STEP + NODE_W + 68)
+
       const lane: DagLaneLayout = {
         id: group.id,
         role,
         theme,
         group,
+        collapsed,
         x: laneX,
         y: laneY,
         width: laneW,
@@ -372,7 +485,8 @@ export function layoutDagCanvas(activities: UnifiedActivity[]): DagCanvasLayout 
       groups.push({ group, lane, nodes: laneNodes })
     }
     stageBoundaries.push({ entry, exit })
-    cursorX = branchStartX + (maxCols - 1) * COL_STEP + NODE_W + 71
+    maxRight = Math.max(maxRight, maxLaneRight)
+    cursorX = maxLaneRight + 60
   }
 
   for (let i = 0; i < stageBoundaries.length - 1; i++) {
@@ -385,6 +499,6 @@ export function layoutDagCanvas(activities: UnifiedActivity[]): DagCanvasLayout 
     }
   }
 
-  const width = Math.max(1540, cursorX + 40)
+  const width = Math.max(NODE_W + 80, maxRight + 40)
   return { width, height, rootY, groups, lanes, nodes, edges }
 }

@@ -37,7 +37,7 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers() })
 
-it('shows the selected timeline item input and extracted source in Source coverage', async () => {
+it('shows the selected timeline item details in the Canvas right-side inspector when clicked', async () => {
   const job = await api.job()
   const steps = ['first', 'second'].map(name => ({
     step_key: name, agent_run_id: 'child', plugin_id: 'core', operation: 'web.extract',
@@ -61,38 +61,26 @@ it('shows the selected timeline item input and extracted source in Source covera
   const wrapper = mount(JobDetailPage, { global: { stubs: { teleport: true } } })
   try {
     await flushPromises()
-    const coverageHeading = wrapper.findAll('h3').find(node => node.text() === translate('jobUi.sourceCoverage'))!
-    const coverageCard = coverageHeading.element.parentElement!
+    expect(wrapper.find('[data-canvas-inspector]').exists()).toBe(false)
     const items = wrapper.findAll('ol button')
     await items[1]!.trigger('click')
-    expect(coverageCard.querySelectorAll('details').length).toBe(3)
-    expect(coverageCard.querySelector('details[open]')).toBeNull()
-    const stepDetails = coverageCard.querySelectorAll('details')[1]!
-    stepDetails.querySelector('summary')!.click()
-    expect(stepDetails.open).toBe(true)
-    stepDetails.querySelector('summary')!.click()
-    expect(stepDetails.open).toBe(false)
-    stepDetails.querySelector('summary')!.click()
-    expect(coverageCard.textContent).toContain('Extract second')
-    expect(coverageCard.textContent).toContain('https://example.com/second')
-    expect(coverageCard.textContent).toContain('Article second')
-    expect(coverageCard.textContent).toContain('Extracted news second')
-    expect(coverageCard.textContent).toContain('web_extract')
-    expect(coverageCard.textContent).not.toContain('Extracted news first')
+    const inspector = wrapper.get('[data-canvas-inspector]')
+    expect(inspector.text()).toContain('Extract second')
+    expect(inspector.text()).toContain('https://example.com/second')
+    expect(inspector.text()).toContain('Article second')
+    expect(inspector.text()).toContain('Extracted news second')
+    expect(inspector.text()).toContain('web_extract')
+    expect(inspector.text()).not.toContain('Extracted news first')
     await items[0]!.trigger('click')
-    expect(coverageCard.querySelector('details[open]')).toBeNull()
-    expect(coverageCard.textContent).toContain('Extracted news first')
-    expect(coverageCard.textContent).not.toContain('Extracted news second')
+    expect(wrapper.get('[data-canvas-inspector]').text()).toContain('Extracted news first')
+    expect(wrapper.get('[data-canvas-inspector]').text()).not.toContain('Extracted news second')
     await items[2]!.trigger('click')
-    expect(coverageCard.textContent).toContain('Fetch news highlights')
-    expect(coverageCard.textContent).toContain('News summary')
-    expect(coverageCard.textContent).toContain('Extracted news first')
-    expect(coverageCard.textContent).toContain('Extracted news second')
+    expect(wrapper.get('[data-canvas-inspector]').text()).toContain('Fetch news highlights')
+    expect(wrapper.get('[data-canvas-inspector]').text()).toContain('News summary')
     await items[3]!.trigger('click')
-    expect(coverageCard.textContent).toContain('Coordinate extraction')
-    expect(coverageCard.textContent).toContain(translate('jobUi.noSourceDetails'))
-    expect(coverageCard.textContent).not.toContain('Extracted news')
-    expect(coverageCard.textContent).not.toContain('News summary')
+    expect(wrapper.get('[data-canvas-inspector]').text()).toContain('Coordinate extraction')
+    expect(wrapper.get('[data-canvas-inspector]').text()).not.toContain('Extracted news')
+    expect(wrapper.get('[data-canvas-inspector]').text()).not.toContain('News summary')
   } finally { wrapper.unmount() }
 })
 
@@ -100,7 +88,7 @@ it.each([
   { result: { summary: 'Completed report' }, expected: 'Completed report' },
   { result: { count: 2 }, expected: JSON.stringify({ count: 2 }, null, 2) },
   { result: null, expected: '—' },
-])('shows a standalone Result card for $result and artifacts below coverage', async ({ result, expected }) => {
+])('shows a standalone Result card for $result and artifacts below the canvas', async ({ result, expected }) => {
   const job = await api.job()
   api.job.mockClear().mockResolvedValue({ ...job, result, artifacts: [
     { id: 'report.txt', media_type: 'text/plain', size_bytes: 12, sha256: 'digest' },
@@ -113,9 +101,9 @@ it.each([
     expect(card.closest('details')).toBeNull()
     expect(card.parentElement).toBe(wrapper.element)
     expect(card.textContent).toContain(expected)
-    const coverage = wrapper.findAll('h3').find(node => node.text() === translate('jobUi.sourceCoverage'))!
-    const artifacts = coverage.element.parentElement!.nextElementSibling!
-    expect(artifacts.parentElement?.tagName).toBe('ASIDE')
+    const artifactsHeading = wrapper.findAll('h2').find(node => node.text() === translate('jobUi.artifacts'))!
+    const artifacts = artifactsHeading.element.parentElement!
+    expect(artifacts.parentElement).toBe(wrapper.element)
     expect(artifacts.textContent).toContain(translate('jobUi.artifacts'))
     expect(artifacts.textContent).toContain('report.txt')
     expect(artifacts.querySelector('button')?.textContent).toContain(translate('jobUi.download'))

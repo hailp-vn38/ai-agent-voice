@@ -100,15 +100,59 @@ describe('nested Job timeline', () => {
     })
     try {
       expect(wrapper.find('.canvas-viewport').exists()).toBe(true)
-      expect(wrapper.findAll('.lane-bg')).toHaveLength(2)
-      expect(wrapper.findAll('.edge-layer path[marker-end="url(#arrow)"]')).toHaveLength(7)
+      expect(wrapper.findAll('.lane-bg.collapsed')).toHaveLength(2)
+      expect(wrapper.findAll('.edge-layer path[marker-end="url(#arrow)"]')).toHaveLength(5)
       expect(wrapper.get('[data-zoom-readout]').text()).toBe('72%')
+
+      for (const summary of wrapper.findAll('.child-group summary')) {
+        const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
+        summary.element.dispatchEvent(clickEvent)
+        expect(clickEvent.defaultPrevented).toBe(true)
+      }
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findAll('.lane-bg.collapsed')).toHaveLength(0)
+      expect(wrapper.findAll('.edge-layer path[marker-end="url(#arrow)"]')).toHaveLength(7)
+      for (const branch of wrapper.findAll('.child-group')) {
+        expect((branch.get('details').element as HTMLDetailsElement).open).toBe(true)
+        expect((branch.get('ol').element as HTMLElement).style.display).not.toBe('none')
+        const nodes = branch.findAll('.graph-node').map(node => node.element as HTMLElement)
+        expect(nodes).toHaveLength(2)
+        expect(nodes[0]!.style.left).toBe(nodes[1]!.style.left)
+        expect(Number.parseInt(nodes[1]!.style.top, 10)).toBeGreaterThan(
+          Number.parseInt(nodes[0]!.style.top, 10),
+        )
+      }
+
+      await wrapper.find('.child-group summary').trigger('click')
+      expect(wrapper.findAll('.lane-bg.collapsed')).toHaveLength(1)
+      expect((wrapper.get('.child-group details').element as HTMLDetailsElement).open).toBe(false)
+      expect((wrapper.get('.child-group ol').element as HTMLElement).style.display).toBe('none')
+
+      expect(wrapper.find('[data-canvas-inspector]').exists()).toBe(false)
+      await wrapper.get('[data-step="join:turn"]').trigger('click')
+      const inspector = wrapper.get('[data-canvas-inspector]')
+      expect(inspector.text()).toContain('Join completed')
+      await inspector.get('[data-inspector-close]').trigger('click')
+      expect(wrapper.find('[data-canvas-inspector]').exists()).toBe(false)
 
       await wrapper.get('[data-zoom-in]').trigger('click')
       expect(wrapper.get('[data-zoom-readout]').text()).toBe('82%')
 
       await wrapper.get('[data-zoom-out]').trigger('click')
       expect(wrapper.get('[data-zoom-readout]').text()).toBe('72%')
+
+      const viewport = wrapper.get('.canvas-viewport')
+      const wheelIn = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+      viewport.element.dispatchEvent(wheelIn)
+      await wrapper.vm.$nextTick()
+      expect(wheelIn.defaultPrevented).toBe(true)
+      expect(wrapper.get('[data-zoom-readout]').text()).toBe('82%')
+
+      const wheelOut = new WheelEvent('wheel', { deltaY: 150, bubbles: true, cancelable: true })
+      viewport.element.dispatchEvent(wheelOut)
+      await wrapper.vm.$nextTick()
+      expect(wheelOut.defaultPrevented).toBe(true)
+      expect(wrapper.get('[data-zoom-readout]').text()).toBe('67%')
 
       await wrapper.get('[data-zoom-fit]').trigger('click')
       expect(wrapper.get('[data-zoom-readout]').text()).toMatch(/^\d+%$/)
