@@ -85,18 +85,6 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'jobUi.jobDetail' },
   },
   {
-    path: '/plugins',
-    name: 'plugins',
-    component: () => import('@/pages/plugins/PluginStorePage.vue'),
-    meta: { titleKey: 'nav.plugins' },
-  },
-  {
-    path: '/plugins/:id',
-    name: 'plugin-detail',
-    component: () => import('@/pages/plugins/PluginDetailPage.vue'),
-    meta: { titleKey: 'jobUi.pluginDetail' },
-  },
-  {
     path: '/mcp',
     name: 'mcp',
     component: () => import('@/views/McpServersView.vue'),

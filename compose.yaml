@@ -1,55 +1,5 @@
-x-plugin-runtime: &plugin-runtime
-  image: voice-plugin-runtime:${PLUGIN_RUNTIME_TAG:-local}
-  build:
-    context: .
-    dockerfile: docker/plugin-runtime.Dockerfile
-  restart: unless-stopped
-  read_only: true
-  user: "1000:1000"
-  cap_drop: [ALL]
-  security_opt: ["no-new-privileges:true"]
-  pids_limit: 128
-  mem_limit: 2g
-  tmpfs: [/tmp]
-
 services:
-  plugin-installer:
-    <<: *plugin-runtime
-    command: ["installer"]
-    volumes:
-      - plugin-installer-control:/control
-      - plugin-staging:/staging:ro
-      - plugin-installations:/installations
-    healthcheck:
-      test: ["CMD-SHELL", "test -S /control/installer.sock"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-
-  plugin-runner:
-    <<: *plugin-runtime
-    command: ["runner"]
-    volumes:
-      - plugin-runner-control:/control
-      - plugin-installations:/installations:ro
-      - plugin-attempts:/attempts
-    healthcheck:
-      test: ["CMD-SHELL", "test -S /control/runner.sock"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
   server:
-    depends_on:
-      plugin-installer:
-        condition: service_healthy
-      plugin-runner:
-        condition: service_healthy
-    volumes:
-      - plugin-installer-control:/run/plugin-installer
-      - plugin-runner-control:/run/plugin-runner
-      - plugin-staging:/app/data/plugins/staging
-      - plugin-installations:/app/data/plugins/installations:ro
-      - plugin-attempts:/app/data/plugins/workspaces
     image: voice-agent-server:${IMAGE_TAG:-local}
     build:
       context: .
@@ -75,9 +25,3 @@ services:
       server:
         condition: service_healthy
 
-volumes:
-  plugin-installer-control:
-  plugin-runner-control:
-  plugin-staging:
-  plugin-installations:
-  plugin-attempts:

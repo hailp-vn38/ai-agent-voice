@@ -12,8 +12,6 @@ jobs:
           python3 scripts/check-sqlx-placement.py
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Plugin SDK large artifact regression
-        run: scripts/agent-test.sh run -- cargo test --manifest-path plugins/rust-plugin-sdk/Cargo.toml
       - name: Knowledge Graph targeted regression tests
         run: |
           scripts/agent-test.sh targeted wiki_links

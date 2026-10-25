@@ -10,14 +10,6 @@ describe('Agent Job detail routing', () => {
     expect(detail.params.jobId).toBe('job-2847')
   })
 
-  it('resolves Plugin details as a distinct page from Plugin Store', () => {
-    const list = router.resolve('/plugins')
-    const detail = router.resolve('/plugins/weibo-crawler')
-    expect(list.name).toBe('plugins')
-    expect(detail.name).toBe('plugin-detail')
-    expect(detail.params.id).toBe('weibo-crawler')
-  })
-
   it('uses a global Background page without an Agent permission route', () => {
     expect(router.resolve('/background').name).toBe('background')
     expect(router.resolve('/agents/demo-agent').name).toBe('agent-detail')

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { agentJobsApi } from './agent-jobs'
-import { agentPluginsApi } from './agent-plugins'
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -25,26 +24,6 @@ describe('Agent Job admin clients', () => {
     const init = fetch.mock.calls[0]?.[1] as RequestInit
     expect(init.method).toBe('PUT')
     expect(new Headers(init.headers).get('if-match')).toBe('"7"')
-  })
-
-  it('uploads code packages as multipart instead of MCP bindings', async () => {
-    const fetch = vi.fn().mockResolvedValue(json({ id: 'weibo-crawler', status: 'disabled' }))
-    vi.stubGlobal('fetch', fetch)
-    await agentPluginsApi.install(new File(['package'], 'plugin.zip', { type: 'application/zip' }))
-    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/plugins/install')
-    const init = fetch.mock.calls[0]?.[1] as RequestInit
-    expect(init.method).toBe('POST')
-    expect(init.body).toBeInstanceOf(FormData)
-    expect((init.body as FormData).get('package')).toBeTruthy()
-    expect(new Headers(init.headers).has('content-type')).toBe(false)
-  })
-
-  it('uses revision-guarded Activate, never implicit plugin reset', async () => {
-    const fetch = vi.fn().mockResolvedValue(json({ id: 'p', status: 'ready', revision: 4 }))
-    vi.stubGlobal('fetch', fetch)
-    await agentPluginsApi.activate('p', 3)
-    expect(fetch.mock.calls[0]?.[0]).toContain('/api/admin/plugins/p/activate')
-    expect(new Headers((fetch.mock.calls[0]?.[1] as RequestInit).headers).get('if-match')).toBe('"3"')
   })
 
   it('submits Admin-owned Jobs', async () => {

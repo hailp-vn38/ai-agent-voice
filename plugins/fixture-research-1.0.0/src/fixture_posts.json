@@ -1,8 +1,0 @@
-[
-  {"id":"fx-001","source_id":"fixture","title":"AI Agent trên ESP32","text":"AI Agent có thể tạo background job để tổng hợp thông tin.","published_at":"2026-10-01T08:00:00Z","synthetic":true},
-  {"id":"fx-002","source_id":"fixture","title":"Python cho AI research","text":"Python xử lý dữ liệu AI và tạo báo cáo Markdown.","published_at":"2026-10-02T09:00:00Z","synthetic":true},
-  {"id":"fx-003","source_id":"fixture","title":"Tổng hợp bản tin AI","text":"Bản tin AI có thể chạy trong isolated worker và xuất artifact.","published_at":"2026-10-03T10:00:00Z","synthetic":true},
-  {"id":"fx-004","source_id":"fixture","title":"Rust Voice Server","text":"Rust quản lý job, SQLite và WebSocket cho thiết bị.","published_at":"2026-10-04T11:00:00Z","synthetic":true},
-  {"id":"fx-005","source_id":"fixture","title":"LifeTrail GPS","text":"Lưu GPS và bản đồ hành trình vào timeline.","published_at":"2026-10-05T12:00:00Z","synthetic":true},
-  {"id":"fx-006","source_id":"fixture","title":"Device Reminders","text":"Reminder Scheduler gửi Direct TTS theo thiết bị.","published_at":"2026-10-06T13:00:00Z","synthetic":true}
-]

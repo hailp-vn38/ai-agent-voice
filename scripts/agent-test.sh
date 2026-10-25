@@ -80,7 +80,7 @@ deps_dir = target_dir / "deps"
 if deps_dir.is_dir():
     test_dir = root / "crates" / "voice-agent-server" / "tests"
     test_stems = {p.stem.replace("-", "_") for p in test_dir.glob("*.rs")} if test_dir.is_dir() else set()
-    tracked_prefixes = test_stems | {"voice_agent_server", "libvoice_agent_server", "plugin_runtime", "provider_bench", "provider_bench_av", "provider_runtime_bench", "zerotts_core_check"}
+    tracked_prefixes = test_stems | {"voice_agent_server", "libvoice_agent_server", "provider_bench", "provider_bench_av", "provider_runtime_bench", "zerotts_core_check"}
     pattern = re.compile(r"^([a-zA-Z0-9_]+)-([0-9a-f]{16})(\..+)?$")
     groups = {}
     for entry in deps_dir.iterdir():
