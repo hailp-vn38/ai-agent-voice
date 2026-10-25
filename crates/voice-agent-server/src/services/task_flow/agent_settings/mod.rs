@@ -1,4 +1,4 @@
-//! Persistent & live configuration for Flow 1 (`wiki_root`) & Flow 2 (`daily_root`) Root Agents
+//! Persistent & live configuration for Flow 1 (`daily_root`) & Flow 2 (`wiki_root`) Root Agents
 //! and their 7 specialist Subagents, integrated with the Server LLM Provider Catalog.
 
 mod catalog;
@@ -80,7 +80,18 @@ impl Default for PersistedBackgroundSettings {
 pub fn load_persisted_settings(store_dir: &Path) -> Option<PersistedBackgroundSettings> {
     let path = store_dir.join(AGENT_SETTINGS_FILE);
     let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    let mut settings: PersistedBackgroundSettings = serde_json::from_str(&raw).ok()?;
+    for (id, ovr) in &mut settings.agents {
+        if let Some(spec) = find_agent_spec(id) {
+            if let Some(ref mut tools) = ovr.allowed_tools {
+                tools.retain(|t| spec.available_tools.contains(&t.as_str()));
+            }
+            if let Some(ref mut skills) = ovr.allowed_skills {
+                skills.retain(|s| spec.available_skills.contains(&s.as_str()));
+            }
+        }
+    }
+    Some(settings)
 }
 
 pub fn save_persisted_settings(

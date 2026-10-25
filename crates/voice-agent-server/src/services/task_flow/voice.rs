@@ -66,7 +66,18 @@ impl VoiceTaskSubmit {
 
     pub fn tool_definitions(&self) -> Vec<ToolDefinition> {
         let specs: Vec<TaskToolSpec> = match &self.suite {
-            Some(suite) => suite.tool_specs(),
+            Some(suite) => {
+                let user_facing_agents: Vec<AgentCatalogEntry> = suite
+                    .available_agents()
+                    .into_iter()
+                    .filter(|entry| entry.target.agent_id != "wiki_root")
+                    .collect();
+                if user_facing_agents.is_empty() {
+                    suite.tool_specs()
+                } else {
+                    build_tool_specs_for_agents(&user_facing_agents)
+                }
+            }
             None => fallback_tool_specs(),
         };
         specs
@@ -80,13 +91,22 @@ impl VoiceTaskSubmit {
             .collect()
     }
 
-    pub async fn execute(&self, tool_name: &str, arguments: Value, budget: Duration) -> Value {
+    pub async fn execute(&self, tool_name: &str, mut arguments: Value, budget: Duration) -> Value {
         if !is_task_suite_tool_name(tool_name) {
             return voice_rejection("invalid_arguments");
         }
         let Some(ref suite) = self.suite else {
             return voice_rejection("runtime_unavailable");
         };
+        if matches!(tool_name, "task_create" | "reminder_create")
+            && let Some(obj) = arguments.as_object_mut()
+            && obj
+                .get("target_agent")
+                .and_then(Value::as_str)
+                .is_some_and(|t| t == "wiki_root" || t.ends_with("/wiki_root"))
+        {
+            obj.insert("target_agent".to_owned(), Value::String("daily_root".to_owned()));
+        }
         match tokio::time::timeout(
             budget,
             suite.execute_raw_scoped(&self.scope, tool_name, arguments),
@@ -109,15 +129,12 @@ pub fn voice_rejection(code: &str) -> Value {
 }
 
 fn fallback_tool_specs() -> Vec<TaskToolSpec> {
-    let default_agents = [
-        AgentCatalogEntry {
-            target: TargetAgent::new("default", "daily_root"),
-            description: "Interactive & background daily assistant: researches Wiki, creates reports, stages knowledge to sources/, and manages reminders.".into(),
-        },
-        AgentCatalogEntry {
-            target: TargetAgent::new("default", "wiki_root"),
-            description: "Background Wiki pipeline coordinator: collects external sources, ingests new files from sources/, updates/patches Wiki pages, synthesizes topics, and runs wiki_lint.".into(),
-        },
-    ];
+    let description = super::find_agent_spec("daily_root")
+        .map(|spec| spec.default_description)
+        .unwrap_or("Interactive & background multi-functional assistant.");
+    let default_agents = [AgentCatalogEntry {
+        target: TargetAgent::new("default", "daily_root"),
+        description: description.into(),
+    }];
     build_tool_specs_for_agents(&default_agents)
 }

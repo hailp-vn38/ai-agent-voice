@@ -395,6 +395,17 @@ prompts_dir = "{}"
 
     let agents = initial["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 9);
+    let initial_collector = agents
+        .iter()
+        .find(|a| a["id"] == "source_collector")
+        .unwrap();
+    assert_eq!(initial_collector["flow_id"], "daily");
+    assert_eq!(initial_collector["parent_id"], "daily_root");
+    let initial_wiki_root = agents.iter().find(|a| a["id"] == "wiki_root").unwrap();
+    assert_eq!(
+        initial_wiki_root["allowed_subagents"],
+        json!(["wiki_ingestor", "wiki_curator"])
+    );
 
     // 3. Update global worker provider + specific subagent overrides via PUT /api/admin/background/settings
     let update_resp = client

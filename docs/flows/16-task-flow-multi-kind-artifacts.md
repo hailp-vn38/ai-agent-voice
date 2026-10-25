@@ -8,15 +8,16 @@ Tài liệu này mô tả luồng thực thi Task nền hợp nhất trên `voic
 
 `crates/voice-agent-server/src/services/task_flow/mod.rs` khởi tạo `TaskManager` và `Orchestrator` với 2 Flow chính:
 
-### Flow 2 (`daily_root`) — Trợ lý Hằng ngày & Xuất bản Đa Phương Tiện
-- **Root Agent (`daily_root`)**: Chỉ có tool `subagent`, điều phối công việc tới 4 Subagent chuyên biệt:
-  1. `wiki_researcher`: Tra cứu chỉ-đọc kho tri thức Wiki (`wiki_query`, `wiki_get`, `wiki_tree`, `wiki_graph_neighbors`) và trích xuất trang Web (`fetch_html`, `html_extract_*`).
-  2. `report_stager`: Tổng hợp nội dung thảo luận vào `sources/<domain>/<topic>/` qua `add_to_sources`, xuất báo cáo độc lập qua `markdown_create`, hoặc đính kèm hình ảnh/âm thanh (`image_create`, `tts_synthesize`, `artifact_create`).
-  3. `media_creator`: Chuyên gia tạo hình ảnh minh họa/sơ đồ (`image_create` cho `image/png` và `image/svg+xml`), tổng hợp giọng nói TTS (`tts_synthesize` cho `audio/wav`), và xuất dữ liệu cấu trúc (`artifact_create`, `markdown_create`).
-  4. `reminder_planner`: Quản lý lịch hẹn và lời nhắc (`reminder_create`, `reminder_list`, `reminder_complete`, `reminder_delete`).
+### Flow 1 (`daily_root`) — Thu thập Thông tin & Trợ lý Đa chức năng
+- **Root Agent (`daily_root`)**: Chỉ có tool `subagent`, nhận toàn bộ Job từ người dùng / Voice Agent và điều phối tới 5 Subagent chuyên biệt:
+  1. `source_collector`: Thu thập nguồn ngoài (YouTube Playlist qua `yt_list_playlist` / `yt_fetch_transcript`, tài liệu PDF qua `anydoc_inspect_pdf` / `anydoc_save_to_sources`, hoặc trang Web qua `fetch_html` / `html_extract_*`), phân loại chủ đề `<domain>/<topic>` và lưu file Markdown thô vào `sources/<domain>/<topic>/` (tự động kích hoạt Flow 2).
+  2. `wiki_researcher`: Tra cứu chỉ-đọc kho tri thức Wiki (`wiki_query`, `wiki_get`, `wiki_tree`, `wiki_graph_neighbors`) và trích xuất trang Web (`fetch_html`, `html_extract_*`).
+  3. `report_stager`: Tổng hợp nội dung thảo luận vào `sources/<domain>/<topic>/` qua `add_to_sources` hoặc xuất báo cáo độc lập qua `markdown_create` / `markdown_read`.
+  4. `media_creator`: Chuyên gia tạo hình ảnh minh họa/sơ đồ (`image_create` cho `image/png` và `image/svg+xml`), tổng hợp giọng nói TTS (`tts_synthesize` cho `audio/wav`), và xuất dữ liệu cấu trúc (`artifact_create`).
+  5. `reminder_planner`: Quản lý lịch hẹn và lời nhắc (`reminder_create`, `reminder_list`, `reminder_complete`, `reminder_delete`).
 
-### Flow 1 (`wiki_root`) — Đường ống Biên soạn Tri thức Karpathy LLM Wiki
-- **Root Agent (`wiki_root`)**: Điều phối tuần tự 3 Subagent (`source_collector`, `wiki_ingestor`, `wiki_curator`) để thu thập nguồn ngoài (PDF, YouTube Playlist, Web), biên soạn trang Wiki và kiểm toán `wiki_lint`.
+### Flow 2 (`wiki_root`) — Đường ống Biên soạn Tri thức Karpathy LLM Wiki Tự động
+- **Root Agent (`wiki_root`)**: Tự động kích hoạt qua `WikiAutoFlowBinding` khi phát hiện có file mới thêm vào `sources/`, điều phối tuần tự 2 Subagent (`wiki_ingestor`, `wiki_curator`) để biên soạn trang Wiki, tổng hợp Synthesis và kiểm toán `wiki_lint` (hoàn toàn không chứa tool thu thập ngoại vi).
 
 ---
 

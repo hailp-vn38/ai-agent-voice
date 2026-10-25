@@ -149,3 +149,90 @@ fn project_task_to_admin_job_includes_multi_kind_artifacts_and_download_urls() {
     assert_eq!(projected["budget_used"]["image_artifacts"], 1);
     assert_eq!(projected["budget_used"]["audio_artifacts"], 1);
 }
+
+#[test]
+fn dual_flow_agent_specs_assign_collectors_to_daily_flow_and_keep_wiki_flow_pure() {
+    let daily_root = find_agent_spec("daily_root").expect("daily_root spec");
+    assert_eq!(daily_root.flow_id, "daily");
+    assert_eq!(
+        daily_root.default_subagents,
+        &[
+            "source_collector",
+            "wiki_researcher",
+            "report_stager",
+            "media_creator",
+            "reminder_planner",
+        ]
+    );
+
+    let collector = find_agent_spec("source_collector").expect("source_collector spec");
+    assert_eq!(collector.flow_id, "daily");
+    assert_eq!(collector.parent_id, Some("daily_root"));
+    for tool in [
+        "yt_list_playlist",
+        "yt_fetch_transcript",
+        "anydoc_inspect_pdf",
+        "anydoc_save_to_sources",
+        "fetch_html",
+        "add_to_sources",
+    ] {
+        assert!(
+            collector.default_allowed_tools.contains(&tool),
+            "source_collector in Flow 1 (daily) must have tool '{tool}'"
+        );
+    }
+
+    let report_stager = find_agent_spec("report_stager").expect("report_stager spec");
+    assert!(report_stager.default_allowed_tools.contains(&"add_to_sources"));
+    assert!(report_stager.default_allowed_tools.contains(&"markdown_create"));
+    assert!(
+        !report_stager.default_allowed_tools.contains(&"image_create")
+            && !report_stager.default_allowed_tools.contains(&"tts_synthesize"),
+        "report_stager must not duplicate media_creator tools"
+    );
+
+    let media_creator = find_agent_spec("media_creator").expect("media_creator spec");
+    assert!(media_creator.default_allowed_tools.contains(&"image_create"));
+    assert!(media_creator.default_allowed_tools.contains(&"tts_synthesize"));
+    assert!(media_creator.default_allowed_tools.contains(&"artifact_create"));
+    assert!(
+        !media_creator.default_allowed_tools.contains(&"markdown_create"),
+        "media_creator must not duplicate report_stager markdown_create tool"
+    );
+
+    let wiki_root = find_agent_spec("wiki_root").expect("wiki_root spec");
+    assert_eq!(wiki_root.flow_id, "wiki");
+    assert_eq!(
+        wiki_root.default_subagents,
+        &["wiki_ingestor", "wiki_curator"]
+    );
+
+    for spec in AGENT_SPECS.iter().filter(|s| s.flow_id == "wiki") {
+        for forbidden in [
+            "yt_list_playlist",
+            "yt_fetch_transcript",
+            "anydoc_inspect_pdf",
+            "anydoc_save_to_sources",
+            "fetch_html",
+        ] {
+            assert!(
+                !spec.available_tools.contains(&forbidden)
+                    && !spec.default_allowed_tools.contains(&forbidden),
+                "Flow 2 wiki agent '{}' must not have external collector tool '{forbidden}'",
+                spec.id
+            );
+        }
+    }
+
+    let submit = VoiceTaskSubmit::unbacked_for_test();
+    let defs = submit.tool_definitions();
+    let task_create = defs
+        .iter()
+        .find(|d| d.name == "task_create")
+        .expect("task_create definition");
+    assert!(task_create.description.contains("daily_root"));
+    assert!(
+        !task_create.description.contains("wiki_root"),
+        "Voice task_create must route user tasks to Flow 1 (daily_root) without exposing internal Flow 2 (wiki_root)"
+    );
+}

@@ -98,7 +98,7 @@ describe('BackgroundPage subagent & LLM provider configuration', () => {
     })
   })
 
-  it('renders Flow 2 agents, selects LLM provider per subagent, and saves overrides', async () => {
+  it('renders Flow 1 (daily_root) and Flow 2 (wiki_root) titles, selects LLM provider per subagent, and saves overrides', async () => {
     const wrapper = mount(BackgroundPage, {
       global: {
         stubs: {
@@ -108,6 +108,9 @@ describe('BackgroundPage subagent & LLM provider configuration', () => {
     })
     await flushPromises()
 
+    expect(wrapper.text()).toContain(
+      'Flow 1 — Information Collection & Multi-Functional Assistant (daily_root)',
+    )
     expect(wrapper.text()).toContain('daily_root')
     expect(wrapper.text()).toContain('wiki_researcher')
     expect(wrapper.text()).toContain('DeepSeek R1')
