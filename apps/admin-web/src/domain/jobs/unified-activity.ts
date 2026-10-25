@@ -26,6 +26,7 @@ export interface UnifiedActivity {
   childRuns?: AgentRunView[]
   title: string
   note: string
+  assistantMessage?: string | null
   llm?: LlmRun
   step?: JobStep
   event?: JobEvent
@@ -93,6 +94,7 @@ export function projectUnifiedActivity(job: AdminJob, events: JobEvent[]): Unifi
         role: role ?? (step?.agent_run_id ? roles.get(step.agent_run_id) ?? null : null),
         title: step?.plugin_id ? step.plugin_id + '.' + (step.operation ?? 'unknown') : step ? 'Worker Step · ' + event.step_key : event.step_key,
         note: text(payload.error_code) ?? (step && !step.plugin_id ? 'Legacy worker execution' : 'Plugin operation'),
+        assistantMessage: text(step?.assistant_message) ?? text(payload.assistant_message),
         step, event,
       }
       pluginRows.set(id, item)

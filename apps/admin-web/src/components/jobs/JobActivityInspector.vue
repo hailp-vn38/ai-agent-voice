@@ -20,13 +20,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const run = computed(() => props.activity?.llm ?? null)
 const step = computed(() => props.activity?.step ?? null)
-const stepAssistantMessage = computed(() => {
-  const fromStep = props.activity?.step?.assistant_message
-  if (typeof fromStep === 'string' && fromStep.trim().length > 0) return fromStep
-  const fromEvent = props.activity?.event?.payload.assistant_message
-  if (typeof fromEvent === 'string' && fromEvent.trim().length > 0) return fromEvent
-  return null
-})
+const stepAssistantMessage = computed(() => props.activity?.assistantMessage ?? null)
 const agentMessages = computed(() =>
   (props.activity?.agentRun?.messages ?? []).filter(m => m.text && m.text.trim().length > 0),
 )

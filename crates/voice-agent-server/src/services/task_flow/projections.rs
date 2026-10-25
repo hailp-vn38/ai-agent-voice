@@ -35,37 +35,12 @@ fn map_step_status(status: &str) -> &'static str {
     }
 }
 
-fn find_invocation_assistant_message<'a>(
-    session: &'a orchestrator_flow_rs::TaskAgentSessionView,
-    tool_call_id: &str,
-) -> Option<&'a str> {
-    session
-        .recent_messages
-        .iter()
-        .find(|m| {
-            m.role == "assistant"
-                && !m.text.trim().is_empty()
-                && m.tool_calls.iter().any(|tc| tc.call_id == tool_call_id)
-        })
-        .map(|m| m.text.as_str())
-}
-
-fn find_last_assistant_message(session: &orchestrator_flow_rs::TaskAgentSessionView) -> Option<&str> {
-    let latest_run_id = session.latest_run.as_ref().map(|r| r.run_id.as_str());
-    session
-        .recent_messages
-        .iter()
-        .rev()
-        .find(|m| {
-            m.role == "assistant"
-                && m.tool_calls.is_empty()
-                && !m.text.trim().is_empty()
-                && match (latest_run_id, m.run_id.as_deref()) {
-                    (Some(expected), Some(actual)) => expected == actual,
-                    _ => true,
-                }
-        })
-        .map(|m| m.text.as_str())
+fn insert_optional_str(payload: &mut Value, key: &str, value: Option<&str>) {
+    if let Some(text) = value
+        && let Some(obj) = payload.as_object_mut()
+    {
+        obj.insert(key.to_string(), json!(text));
+    }
 }
 
 /// Projects a [`TaskView`] and optional [`TaskDetailView`] into the `AdminJob` JSON contract
@@ -107,7 +82,9 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
                     }
                 });
 
-            let last_assistant = find_last_assistant_message(session).map(|text| json!({ "text": text }));
+            let last_assistant = session
+                .final_assistant_text()
+                .map(|text| json!({ "text": text }));
 
             let messages: Vec<Value> = session
                 .recent_messages
@@ -143,7 +120,7 @@ pub fn project_task_to_admin_job(task: &TaskView, detail: Option<&TaskDetailView
             }));
 
             for (inv_idx, inv) in session.invocations.iter().enumerate() {
-                let assistant_message = find_invocation_assistant_message(session, &inv.tool_call_id);
+                let assistant_message = session.invocation_assistant_text(&inv.tool_call_id);
                 steps.push(json!({
                     "step_key": format!("{}:{}:{}", session.agent_id, inv_idx + 1, inv.tool_name),
                     "agent_run_id": session.session_id,
@@ -308,11 +285,11 @@ fn push_session_events<'a>(
             "tool_name": inv.tool_name,
             "arguments": inv.arguments,
         });
-        if let Some(msg) = find_invocation_assistant_message(session, &inv.tool_call_id)
-            && let Some(obj) = step_payload.as_object_mut()
-        {
-            obj.insert("assistant_message".to_string(), json!(msg));
-        }
+        insert_optional_str(
+            &mut step_payload,
+            "assistant_message",
+            session.invocation_assistant_text(&inv.tool_call_id),
+        );
         events.push((
             *seq,
             json!({
@@ -371,11 +348,11 @@ fn push_session_events<'a>(
             "output_tokens": run.output_tokens,
             "error_code": run.error_code,
         });
-        if let Some(msg) = find_last_assistant_message(session)
-            && let Some(obj) = finish_payload.as_object_mut()
-        {
-            obj.insert("assistant_message".to_string(), json!(msg));
-        }
+        insert_optional_str(
+            &mut finish_payload,
+            "assistant_message",
+            session.final_assistant_text(),
+        );
         events.push((
             *seq,
             json!({

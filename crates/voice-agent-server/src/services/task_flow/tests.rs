@@ -371,4 +371,17 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
         run_finished["payload"]["assistant_message"],
         "Đã tìm xong tài liệu Rust."
     );
+
+    // Khi run còn đang `running`, `agent_run.result` phải là `null` (docs/17 §17.6),
+    // nhưng `messages` và `step.assistant_message` vẫn phản ánh thông điệp gọi tool.
+    let mut running_detail = detail;
+    if let Some(ref mut root) = running_detail.root_agent {
+        root.latest_run.as_mut().unwrap().status = "running".to_string();
+    }
+    let running_projected = project_task_to_admin_job(&task, Some(&running_detail));
+    assert!(running_projected["agent_runs"][0]["result"].is_null());
+    assert_eq!(
+        running_projected["steps"][0]["assistant_message"],
+        "Tôi sẽ tra cứu Wiki về Rust trước."
+    );
 }
