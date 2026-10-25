@@ -26,4 +26,14 @@ describe('Job Result presentation', () => {
     expect(jobResultReport({ summary: { count: 2 } })).toEqual({ kind: 'json', text: '{\n  "summary": {\n    "count": 2\n  }\n}' })
     expect(jobResultReport(null)).toEqual({ kind: 'empty' })
   })
+  it('renders ![label](url) image and video links in job reports without leaving stray ! characters', () => {
+    const report = jobResultReport({
+      markdown: '## Media\n\n- ![Infographic](https://cdn.example.com/info.jpg)\n- ![Video](https://www.youtube.com/watch?v=tiDCkt-TwWM)',
+    })
+    expect(report.kind).toBe('markdown')
+    if (report.kind !== 'markdown') return
+    expect(report.html).toContain('<img alt="Infographic" src="https://cdn.example.com/info.jpg" loading="lazy">')
+    expect(report.html).toContain('data-media-embed="video"')
+    expect(report.html).not.toContain('!<a ')
+  })
 })

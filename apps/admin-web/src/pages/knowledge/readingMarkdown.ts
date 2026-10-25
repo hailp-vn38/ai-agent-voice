@@ -49,8 +49,32 @@ function safeHref(href: string): string | null {
   return null
 }
 
+const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico|tiff?)(?:[?#].*)?$/i
+const VIDEO_FILE_EXT_RE = /\.(?:mp4|webm|mov|m4v|ogv|ogg|mkv|avi|m3u8)(?:[?#].*)?$/i
+const VIDEO_PLATFORM_RE =
+  /^https?:\/\/(?:(?:www\.|m\.|music\.)?youtube\.com\/(?:watch\?(?:.*&)?v=[^&\s]+|shorts\/[^/?#\s]+|embed\/[^/?#\s]+|live\/[^/?#\s]+)|(?:www\.)?youtu\.be\/[^/?#\s]+|player\.vimeo\.com\/video\/[^/?#\s]+|(?:www\.)?vimeo\.com\/\d+|(?:www\.)?dailymotion\.com\/video\/[^/?#\s]+|dai\.ly\/[^/?#\s]+|(?:www\.)?loom\.com\/(?:share|embed)\/[^/?#\s]+)/i
+
+function isMediaHref(rawUrl: string): boolean {
+  const clean = rawUrl.trim().replace(/^<|>$/g, '').split(/\s+/)[0] || ''
+  return IMAGE_EXT_RE.test(clean) || VIDEO_FILE_EXT_RE.test(clean) || VIDEO_PLATFORM_RE.test(clean)
+}
+
+function renderMediaHref(alt: string, href: string): string {
+  if (VIDEO_FILE_EXT_RE.test(href)) {
+    const label = escapeHtml(alt || href)
+    return '<video controls preload="metadata" src="' + escapeHtml(href) + '"><a href="' +
+      escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + label + '</a></video>'
+  }
+  if (VIDEO_PLATFORM_RE.test(href)) {
+    const label = escapeHtml(alt || href)
+    return '<a href="' + escapeHtml(href) + '" class="markdown-media-embed" data-media-embed="video" target="_blank" rel="noopener noreferrer">' +
+      label + '</a>'
+  }
+  return '<img alt="' + escapeHtml(alt) + '" src="' + escapeHtml(href) + '" loading="lazy">'
+}
+
 function inlineMarkdown(source: string): string {
-  const token = /(!?\[\[[^\]\r\n]+\]\]|\[([^\]\r\n]+)\]\(([^)\r\n]+)\)|\x60[^\x60\r\n]+\x60|\*\*[^*\r\n]+\*\*|~~[^~\r\n]+~~|\*[^*\r\n]+\*)/g
+  const token = /(!?\[\[[^\]\r\n]+\]\]|!\[([^\]\r\n]*)\]\(([^)\r\n]+)\)|\[([^\]\r\n]+)\]\(([^)\r\n]+)\)|\x60[^\x60\r\n]+\x60|\*\*[^*\r\n]+\*\*|~~[^~\r\n]+~~|\*[^*\r\n]+\*)/g
   let result = ''
   let from = 0
   for (const match of source.matchAll(token)) {
@@ -65,12 +89,19 @@ function inlineMarkdown(source: string): string {
         ? '<a href="#" class="wikilink" data-wikilink="' + escapeHtml(cleanTarget) +
           '">' + escapeHtml((label || cleanTarget).trim()) + '</a>'
         : escapeHtml(raw)
-    } else if (raw.startsWith('[')) {
+    } else if (raw.startsWith('![')) {
       const href = safeHref(match[3] || '')
-      result += href
-        ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' +
-          escapeHtml(match[2]) + '</a>'
-        : escapeHtml(raw)
+      result += href ? renderMediaHref(match[2] || '', href) : escapeHtml(raw)
+    } else if (raw.startsWith('[')) {
+      const href = safeHref(match[5] || '')
+      if (href && isMediaHref(href)) {
+        result += renderMediaHref(match[4] || '', href)
+      } else {
+        result += href
+          ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' +
+            escapeHtml(match[4] || '') + '</a>'
+          : escapeHtml(raw)
+      }
     } else if (raw.startsWith('\x60')) {
       result += '<code>' + escapeHtml(raw.slice(1, -1)) + '</code>'
     } else if (raw.startsWith('**')) {

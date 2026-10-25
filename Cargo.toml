@@ -60,6 +60,7 @@ debug = "line-tables-only"
 debug = false
 
 [patch.crates-io]
+llm-wiki-rs = { path = "../llm-wiki-rs" }
 orchestrator-agent = { path = "../orchestrator_agent_rs" }
 orchestrator-flow = { path = "../orchestrator_task_rs" }
 

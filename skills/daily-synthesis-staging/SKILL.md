@@ -20,6 +20,8 @@ Use this skill when the user asks to summarize/synthesize a conversation, resear
    - Use `"user"` for explicit user decisions/preferences, `"source"` for external document/web findings, or `"verified_synthesis"` for confirmed technical conclusions.
    - **NEVER** promote unverified assistant-only speculation as established Wiki truth (`provenance="assistant"` is hard-blocked by `add_to_sources`). Put unverified hypotheses into `open_questions: [...]`.
 2. **Non-Destructive Conflict Handling (`conflict_with`)**:
-   - If the discussion contradicts an existing Wiki page, pass its path/slug in `conflict_with` so Flow 1 (`wiki_ingestor`) preserves both perspectives under a `> [!WARNING] Contradiction / Caveat` callout rather than overwriting prior knowledge.
+   - If the discussion contradicts an existing Wiki page, pass its path/slug in `conflict_with` so Flow 2 (`wiki_ingestor`) preserves both perspectives under a `> [!WARNING] Contradiction / Caveat` callout rather than overwriting prior knowledge.
 3. **Numeric & Version Identity Preservation**:
    - Keep version numbers, model generations, and numeric identifiers exact (e.g., never conflate `GPT-4` with `GPT-5` or `v1` with `v2`).
+4. **Image & Video Link Syntax (`![alt](url)`)**:
+   - Format all image and video links in Markdown using `![mô tả hoặc tiêu đề](url)` (with a leading `!`) rather than `[link](url)`.
