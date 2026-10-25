@@ -161,6 +161,15 @@ adapter = "chillaudio_ws"
 token = "set-deployment-token-here"
 # voice = "BV421_vivn_streaming"
 
+# Remote Microsoft Edge Read Aloud neural TTS over WebSocket (142 locales, 322 voices).
+# [providers.tts.instances.edge_tts_default]
+# adapter = "edge_tts"
+# voice = "vi-VN-HoaiMyNeural"
+# language = "vi-VN"
+# rate_percent = 0
+# pitch_hz = 0
+# preload = false
+
 # Native VieNeu v3 Turbo (CPU FP32). Model Preparation installs the pinned assets.
 # To select it, set [provider_defaults].tts = "vieneu_default".
 # [providers.tts.instances.vieneu_default]
@@ -322,6 +331,7 @@ Bạn trả lời tự nhiên, thân thiện và súc tích.
 # openai = 67108864
 # opencode_free = 67108864
 # chillaudio_ws = 67108864
+# edge_tts = 67108864
 
 [mcp]
 enabled = true

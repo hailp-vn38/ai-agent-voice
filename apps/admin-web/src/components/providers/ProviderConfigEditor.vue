@@ -4,9 +4,15 @@ const config = defineModel<Record<string, unknown>>({ required: true })
 const props = defineProps<{ schema?: ProviderConfigSchema; capabilities?: Record<string, unknown>; readonly?: boolean }>()
 function options(field: ProviderConfigField): Array<{ id: string; name: string }> {
   const values = field.enum_values ?? (field.enum_source ? props.capabilities?.[field.enum_source] : undefined)
+  const selectedLanguage = typeof config.value.language === 'string' && config.value.language ? config.value.language : ''
   return Array.isArray(values) ? values.flatMap((value) => {
     if (typeof value === 'string' || typeof value === 'number') return [{ id: String(value), name: String(value) }]
-    if (value && typeof value === 'object' && typeof value.id === 'string') return [{ id: value.id, name: String(value.name ?? value.id) }]
+    if (value && typeof value === 'object' && typeof value.id === 'string') {
+      if (field.enum_source === 'voices' && selectedLanguage && Array.isArray(value.languages) && value.languages.length > 0 && !value.languages.includes(selectedLanguage)) {
+        return []
+      }
+      return [{ id: value.id, name: String(value.name ?? value.id) }]
+    }
     return []
   }) : []
 }
@@ -15,6 +21,14 @@ function update(key: string, value: unknown) {
   const next = { ...config.value }
   if (value === '') delete next[key]
   else next[key] = value
+  if (key === 'language' && typeof value === 'string' && value && Array.isArray(props.capabilities?.voices)) {
+    const matching = props.capabilities.voices.filter((item): item is { id: string; languages?: string[] } =>
+      Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string' && Array.isArray((item as { languages?: unknown }).languages) && (item as { languages: string[] }).languages.includes(value)),
+    )
+    if (matching.length > 0 && !matching.some((item) => item.id === next.voice)) {
+      next.voice = matching[0]!.id
+    }
+  }
   config.value = next
 }
 </script>

@@ -673,6 +673,8 @@ pub struct RuntimeConfig {
     pub kokoro_vi: KokoroViRuntimeConfig,
     #[serde(default)]
     pub chillaudio: ChillAudioRuntimeConfig,
+    #[serde(default)]
+    pub edge_tts: EdgeTtsRuntimeConfig,
 }
 
 /// Deployment-owned executable for Vietnamese grapheme-to-phoneme conversion.
@@ -1269,6 +1271,39 @@ impl std::fmt::Debug for ChillAudioRuntimeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChillAudioRuntimeConfig")
             .field("ws_url", &"[REDACTED]")
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeTtsRuntimeConfig {
+    #[serde(default = "default_edge_tts_ws_url")]
+    pub ws_url: url::Url,
+    #[serde(default = "default_edge_tts_trusted_client_token")]
+    pub trusted_client_token: String,
+    #[serde(default = "default_edge_tts_sec_ms_gec_version")]
+    pub sec_ms_gec_version: String,
+    #[serde(default = "default_edge_tts_timeout_ms")]
+    pub timeout_ms: u64,
+}
+impl Default for EdgeTtsRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            ws_url: default_edge_tts_ws_url(),
+            trusted_client_token: default_edge_tts_trusted_client_token(),
+            sec_ms_gec_version: default_edge_tts_sec_ms_gec_version(),
+            timeout_ms: default_edge_tts_timeout_ms(),
+        }
+    }
+}
+impl std::fmt::Debug for EdgeTtsRuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EdgeTtsRuntimeConfig")
+            .field("ws_url", &self.ws_url.as_str())
+            .field("trusted_client_token", &"[REDACTED]")
+            .field("sec_ms_gec_version", &self.sec_ms_gec_version)
             .field("timeout_ms", &self.timeout_ms)
             .finish()
     }

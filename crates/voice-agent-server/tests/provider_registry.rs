@@ -37,6 +37,10 @@ fn registry_exposes_only_adapters_compiled_into_the_binary() {
         "chillaudio_ws"
     );
     assert_eq!(
+        registry.tts_factory("edge_tts").unwrap().adapter(),
+        "edge_tts"
+    );
+    assert_eq!(
         registry.tts_factory("kokoro_vi_onnx").unwrap().adapter(),
         "kokoro_vi_onnx"
     );
@@ -87,6 +91,7 @@ fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapter
     assert_eq!(adapters.len(), descriptors.len());
     assert!(adapters.contains("zerotts_onnx"));
     assert!(adapters.contains("chillaudio_ws"));
+    assert!(adapters.contains("edge_tts"));
     assert!(adapters.contains("kokoro_vi_onnx"));
     let factory_adapters: HashSet<_> = compiled_provider_registry()
         .admin_adapters()
@@ -118,13 +123,13 @@ fn admin_adapter_descriptors_are_bounded_unique_and_cover_the_active_tts_adapter
             );
         }
         let languages = descriptor.capabilities.languages.unwrap_or(&[]);
-        assert!(languages.len() <= 64);
+        assert!(languages.len() <= 256);
         for language in languages {
             assert!(language.id.len() <= 32);
             assert!(language.name.len() <= 128);
         }
         let voices = descriptor.capabilities.voices.unwrap_or(&[]);
-        assert!(voices.len() <= 256);
+        assert!(voices.len() <= 512);
         for voice in voices {
             assert!(voice.id.len() <= 128);
             assert!(voice.name.len() <= 128);
@@ -192,6 +197,11 @@ fn descriptors_expose_only_user_configuration_and_typed_decoding_choices() {
     let chill = registry.get("chillaudio_ws").unwrap();
     assert_eq!(chill.capabilities.voices.unwrap().len(), 4);
     assert_eq!(chill.capabilities.languages.unwrap()[0].id, "vi");
+    let edge = registry.get("edge_tts").unwrap();
+    assert_eq!(edge.capabilities.languages.unwrap().len(), 142);
+    assert_eq!(edge.capabilities.voices.unwrap().len(), 322);
+    assert_eq!(edge.capabilities.languages.unwrap()[0].id, "vi-VN");
+    assert_eq!(edge.capabilities.voices.unwrap()[0].id, "vi-VN-HoaiMyNeural");
 }
 
 /// Every voice a local provider advertises is one it can actually load, because both come from the
@@ -240,7 +250,7 @@ fn asset_ownership_follows_whether_a_provider_loads_local_files() {
             owns_assets,
             !matches!(
                 adapter,
-                "openai" | "opencode_free" | "openai_vision" | "chillaudio_ws"
+                "openai" | "opencode_free" | "openai_vision" | "chillaudio_ws" | "edge_tts"
             ) && !adapter.starts_with("qualification_"),
             "{adapter}"
         );

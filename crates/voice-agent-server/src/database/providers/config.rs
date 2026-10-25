@@ -51,6 +51,7 @@ pub fn validate_raw(adapter: &str, raw: &str) -> Result<String, ProviderConfigEr
         }
         "kokoro_vi_onnx" => canonical::<Kokoro, _>(&value, Kokoro::valid),
         "chillaudio_ws" => canonical::<ChillAudio, _>(&value, ChillAudio::valid),
+        "edge_tts" => canonical::<EdgeTts, _>(&value, EdgeTts::valid),
         #[cfg(feature = "qualification-providers")]
         "qualification_vad" | "qualification_asr" | "qualification_llm" | "qualification_tts" => {
             canonical::<Empty, _>(&value, Empty::valid)
@@ -277,6 +278,58 @@ impl ChillAudio {
             .voices
             .is_some_and(|voices| voices.iter().any(|voice| voice.id == self.voice))
             && self.language == "vi"
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(from = "RawEdgeTts")]
+struct EdgeTts {
+    voice: String,
+    language: String,
+    rate_percent: i16,
+    pitch_hz: i16,
+    preload: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEdgeTts {
+    #[serde(default = "crate::config::defaults::default_edge_tts_voice")]
+    voice: String,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    rate_percent: i16,
+    #[serde(default)]
+    pitch_hz: i16,
+    #[serde(default)]
+    preload: bool,
+}
+impl From<RawEdgeTts> for EdgeTts {
+    fn from(raw: RawEdgeTts) -> Self {
+        let language = raw.language.unwrap_or_else(|| {
+            crate::providers::tts::edge_tts::voices::voice_locale(&raw.voice)
+                .unwrap_or("vi-VN")
+                .to_string()
+        });
+        Self {
+            voice: raw.voice,
+            language,
+            rate_percent: raw.rate_percent,
+            pitch_hz: raw.pitch_hz,
+            preload: raw.preload,
+        }
+    }
+}
+impl EdgeTts {
+    fn valid(&self) -> bool {
+        crate::providers::tts::edge_tts::voices::is_valid_voice_and_language(
+            &self.voice,
+            &self.language,
+        ) && (crate::providers::tts::edge_tts::config::MIN_RATE_PERCENT
+            ..=crate::providers::tts::edge_tts::config::MAX_RATE_PERCENT)
+            .contains(&self.rate_percent)
+            && (crate::providers::tts::edge_tts::config::MIN_PITCH_HZ
+                ..=crate::providers::tts::edge_tts::config::MAX_PITCH_HZ)
+                .contains(&self.pitch_hz)
     }
 }
 fn default_chillaudio_language() -> String {

@@ -18,7 +18,7 @@ use crate::{
         asr::{GipformerAsrProvider, ZipformerAsrProvider, gipformer, zipformer},
         llm::{openai::provider::ConfiguredOpenAiLlm, opencode_free::OpenCodeFreeProvider},
         tts::{
-            ChillAudioWsProvider, ConfiguredZeroTts, ZeroTtsArtifacts,
+            ChillAudioWsProvider, ConfiguredZeroTts, EdgeTtsProvider, ZeroTtsArtifacts,
             kokoro_vi::{ConfiguredKokoroVi, KokoroViArtifacts, assets as kokoro_assets},
             vieneu::{ConfiguredVieneuNative, assets as vieneu_assets},
             zerotts::assets as zerotts_assets,
@@ -627,6 +627,48 @@ impl TtsFactory for ChillAudioWsFactory {
     }
 }
 
+struct EdgeTtsFactory;
+
+impl TtsFactory for EdgeTtsFactory {
+    fn adapter(&self) -> &'static str {
+        "edge_tts"
+    }
+    fn model_identity<'a>(
+        &self,
+        _: &'a TtsInstanceConfig,
+    ) -> Result<Option<&'a str>, ProviderLoadError> {
+        Ok(None)
+    }
+    fn build(
+        &self,
+        config: &TtsInstanceConfig,
+        runtime: &RuntimeConfig,
+    ) -> Result<Arc<dyn TtsProvider>, ProviderLoadError> {
+        let TtsInstanceConfig::EdgeTts(options) = config else {
+            return Err(ProviderLoadError::Configuration(
+                "edge_tts factory received another adapter config".into(),
+            ));
+        };
+        if !options.valid_selection()
+            || runtime.edge_tts.ws_url.scheme() != "wss"
+            || runtime.edge_tts.ws_url.host_str().is_none()
+            || runtime.edge_tts.trusted_client_token.trim().is_empty()
+            || runtime.edge_tts.sec_ms_gec_version.trim().is_empty()
+            || !(1..=120_000).contains(&runtime.edge_tts.timeout_ms)
+        {
+            return Err(ProviderLoadError::Configuration(
+                "invalid Edge TTS selection or server runtime".into(),
+            ));
+        }
+        let mut options = options.clone();
+        options.ws_url = runtime.edge_tts.ws_url.clone();
+        options.trusted_client_token = runtime.edge_tts.trusted_client_token.clone();
+        options.sec_ms_gec_version = runtime.edge_tts.sec_ms_gec_version.clone();
+        options.timeout_ms = runtime.edge_tts.timeout_ms;
+        Ok(Arc::new(EdgeTtsProvider::new(options)))
+    }
+}
+
 impl AsrFactory for ZipformerSherpaFactory {
     fn adapter(&self) -> &'static str {
         "zipformer_sherpa"
@@ -756,6 +798,7 @@ static OPENAI_VISION_FACTORY: OpenAiVisionFactory = OpenAiVisionFactory;
 static ZEROTTS_ONNX_FACTORY: ZeroTtsOnnxFactory = ZeroTtsOnnxFactory;
 static VIENEU_NATIVE_FACTORY: VieneuNativeFactory = VieneuNativeFactory;
 static CHILLAUDIO_WS_FACTORY: ChillAudioWsFactory = ChillAudioWsFactory;
+static EDGE_TTS_FACTORY: EdgeTtsFactory = EdgeTtsFactory;
 static KOKORO_VI_ONNX_FACTORY: KokoroViOnnxFactory = KokoroViOnnxFactory;
 #[cfg(feature = "qualification-providers")]
 static QUALIFICATION_VAD_FACTORY: QualificationVadFactory = QualificationVadFactory;
@@ -785,6 +828,7 @@ static LLM_FACTORIES: &[&dyn LlmFactory] = &[
 static TTS_FACTORIES: &[&dyn TtsFactory] = &[
     &ZEROTTS_ONNX_FACTORY,
     &CHILLAUDIO_WS_FACTORY,
+    &EDGE_TTS_FACTORY,
     &VIENEU_NATIVE_FACTORY,
     &KOKORO_VI_ONNX_FACTORY,
     #[cfg(feature = "qualification-providers")]
@@ -858,6 +902,18 @@ pub(crate) fn effective_local_config(
     if adapter == "chillaudio_ws" {
         object.insert("ws_url".into(), runtime.chillaudio.ws_url.as_str().into());
         object.insert("timeout_ms".into(), runtime.chillaudio.timeout_ms.into());
+    }
+    if adapter == "edge_tts" {
+        object.insert("ws_url".into(), runtime.edge_tts.ws_url.as_str().into());
+        object.insert(
+            "trusted_client_token".into(),
+            runtime.edge_tts.trusted_client_token.as_str().into(),
+        );
+        object.insert(
+            "sec_ms_gec_version".into(),
+            runtime.edge_tts.sec_ms_gec_version.as_str().into(),
+        );
+        object.insert("timeout_ms".into(), runtime.edge_tts.timeout_ms.into());
     }
     Ok(value)
 }

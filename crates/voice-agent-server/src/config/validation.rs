@@ -581,6 +581,11 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
         || config.runtime.chillaudio.ws_url.scheme() != "wss"
         || config.runtime.chillaudio.ws_url.host_str().is_none()
         || !(1..=120_000).contains(&config.runtime.chillaudio.timeout_ms)
+        || config.runtime.edge_tts.ws_url.scheme() != "wss"
+        || config.runtime.edge_tts.ws_url.host_str().is_none()
+        || config.runtime.edge_tts.trusted_client_token.trim().is_empty()
+        || config.runtime.edge_tts.sec_ms_gec_version.trim().is_empty()
+        || !(1..=120_000).contains(&config.runtime.edge_tts.timeout_ms)
     {
         return Err(ConfigError::Validation(
             "invalid server-owned provider runtime configuration".into(),
@@ -699,6 +704,18 @@ fn validate_providers(config: &AppConfig) -> Result<(), ConfigError> {
             {
                 return Err(ConfigError::Validation(format!(
                     "ChillAudio instance `{id}` has invalid URL, credential, voice, or timeout"
+                )));
+            }
+            TtsInstanceConfig::EdgeTts(tts)
+                if tts.ws_url.scheme() != "wss"
+                    || tts.ws_url.host_str().is_none()
+                    || tts.trusted_client_token.trim().is_empty()
+                    || tts.sec_ms_gec_version.trim().is_empty()
+                    || !(1..=120_000).contains(&tts.timeout_ms)
+                    || !tts.valid_selection() =>
+            {
+                return Err(ConfigError::Validation(format!(
+                    "Edge TTS instance `{id}` has invalid URL, token, voice, language, rate, pitch, or timeout"
                 )));
             }
             TtsInstanceConfig::KokoroViOnnx(tts)

@@ -10,6 +10,7 @@ pub use crate::providers::{
     llm::{openai::config::OpenAiConfig, opencode_free::OpenCodeFreeConfig},
     tts::{
         chillaudio::config::ChillAudioWsConfig,
+        edge_tts::config::EdgeTtsConfig,
         kokoro_vi::config::KokoroViOnnxConfig,
         vieneu::config::VieneuNativeConfig,
         zerotts::config::{ZeroTtsDeliveryMode, ZeroTtsOnnxConfig},
@@ -193,6 +194,8 @@ pub enum TtsInstanceConfig {
     ZeroTtsOnnx(ZeroTtsOnnxConfig),
     #[serde(rename = "chillaudio_ws")]
     ChillAudioWs(ChillAudioWsConfig),
+    #[serde(rename = "edge_tts")]
+    EdgeTts(EdgeTtsConfig),
     #[serde(rename = "vieneu")]
     Vieneu(VieneuNativeConfig),
     #[serde(rename = "kokoro_vi_onnx")]
@@ -206,6 +209,7 @@ impl TtsInstanceConfig {
         match self {
             Self::ZeroTtsOnnx(_) => "zerotts_onnx",
             Self::ChillAudioWs(_) => "chillaudio_ws",
+            Self::EdgeTts(_) => "edge_tts",
             Self::Vieneu(_) => "vieneu",
             Self::KokoroViOnnx(_) => "kokoro_vi_onnx",
             #[cfg(feature = "qualification-providers")]
@@ -216,6 +220,7 @@ impl TtsInstanceConfig {
         match self {
             Self::ZeroTtsOnnx(config) => config.preload,
             Self::ChillAudioWs(config) => config.preload,
+            Self::EdgeTts(config) => config.preload,
             Self::Vieneu(config) => config.preload,
             Self::KokoroViOnnx(config) => config.preload,
             #[cfg(feature = "qualification-providers")]

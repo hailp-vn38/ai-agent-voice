@@ -310,6 +310,10 @@ fn tts_binding(instance: &crate::config::TtsInstanceConfig) -> TtsBinding {
             voice: config.voice.clone(),
             language: config.language.clone(),
         },
+        crate::config::TtsInstanceConfig::EdgeTts(config) => TtsBinding {
+            voice: config.voice.clone(),
+            language: config.language.clone(),
+        },
         _ => TtsBinding::readiness(),
     }
 }
@@ -324,6 +328,7 @@ fn deployment_tts_replicas(
     let value = match instance {
         TtsInstanceConfig::ZeroTtsOnnx(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::ChillAudioWs(config) => serde_json::to_value(config).ok()?,
+        TtsInstanceConfig::EdgeTts(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::Vieneu(config) => serde_json::to_value(config).ok()?,
         TtsInstanceConfig::KokoroViOnnx(config) => serde_json::to_value(config).ok()?,
         #[cfg(feature = "qualification-providers")]

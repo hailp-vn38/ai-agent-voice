@@ -60,8 +60,28 @@ function backToAdapterSelection() {
   error.value = null
 }
 function options(field: ProviderConfigField) {
-  const values = field.enum_values ?? capabilityValues(field.enum_source)
-  return values.map((value) => ({ value: String(value), label: String(value) }))
+  if (field.enum_values) {
+    return field.enum_values.map((value) => ({ value: String(value), label: String(value) }))
+  }
+  if (!field.enum_source) return []
+  const raw = descriptor.value?.capabilities?.[field.enum_source]
+  if (!Array.isArray(raw)) return []
+  const selectedLanguage = typeof form.config.language === 'string' && form.config.language ? form.config.language : ''
+  return raw.flatMap((item) => {
+    if (typeof item === 'string' || typeof item === 'number') {
+      return [{ value: String(item), label: String(item) }]
+    }
+    if (item && typeof item === 'object') {
+      const record = item as Record<string, unknown>
+      const id = record.key ?? record.id ?? record.value ?? record.name
+      if (!id) return []
+      if (field.enum_source === 'voices' && selectedLanguage && Array.isArray(record.languages) && record.languages.length > 0 && !record.languages.includes(selectedLanguage)) {
+        return []
+      }
+      return [{ value: String(id), label: String(record.name ?? id) }]
+    }
+    return []
+  })
 }
 function capabilityValues(source: ProviderConfigField['enum_source']): unknown[] {
   if (!source) return []
@@ -131,6 +151,17 @@ function reset() { invalidatePendingRequests(); step.value = 1; descriptor.value
 
 watch(open, (value) => { if (value) { type.value = props.initialType ?? 'tts'; void loadAdapters() } else reset() })
 watch(() => form.config.model, () => { if (step.value === 2 && supportsDiscovery.value) void discover() })
+watch(() => form.config.language, (lang) => {
+  if (typeof lang !== 'string' || !lang) return
+  const voices = descriptor.value?.capabilities?.voices
+  if (!Array.isArray(voices)) return
+  const matching = voices.filter((item): item is { id: string; languages?: string[] } =>
+    Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string' && Array.isArray((item as { languages?: unknown }).languages) && (item as { languages: string[] }).languages.includes(lang)),
+  )
+  if (matching.length > 0 && !matching.some((item) => item.id === form.config.voice)) {
+    form.config.voice = matching[0]!.id
+  }
+})
 </script>
 
 <template>

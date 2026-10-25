@@ -1178,6 +1178,11 @@ async fn provider_adapter_descriptors_and_bootstrap_discovery_are_public_read_on
             "display_name": "ChillAudio WebSocket"
         },
         {
+            "adapter": "edge_tts",
+            "type": "tts",
+            "display_name": "Microsoft Edge TTS"
+        },
+        {
             "adapter": "vieneu",
             "type": "tts",
             "display_name": "VieNeu v3 Turbo Native"
@@ -1355,6 +1360,25 @@ async fn descriptor_language_fields_match_provider_config_migration_and_validati
         .await
         .unwrap();
     assert_eq!(chillaudio.status(), StatusCode::CREATED);
+
+    let edge_tts = client
+        .post(&providers)
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({
+            "name": "Edge TTS International",
+            "type": "tts",
+            "adapter": "edge_tts",
+            "config_json": {
+                "voice": "ja-JP-NanamiNeural",
+                "language": "ja-JP",
+                "rate_percent": 10,
+                "pitch_hz": -5
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edge_tts.status(), StatusCode::CREATED);
 
     task.abort();
 }
@@ -2431,6 +2455,19 @@ async fn provider_mutations_reject_server_owned_configuration() {
                 ("ws_url", serde_json::json!("wss://attacker.example/socket")),
                 ("timeout_ms", serde_json::json!(1)),
                 ("voice", serde_json::json!("unknown")),
+            ],
+        ),
+        (
+            "tts",
+            "edge_tts",
+            serde_json::json!({"voice":"vi-VN-HoaiMyNeural","language":"vi-VN","rate_percent":0,"pitch_hz":0}),
+            vec![
+                ("ws_url", serde_json::json!("wss://attacker.example/socket")),
+                ("timeout_ms", serde_json::json!(1)),
+                ("voice", serde_json::json!("unknown")),
+                ("language", serde_json::json!("en-US")),
+                ("rate_percent", serde_json::json!(150)),
+                ("pitch_hz", serde_json::json!(-80)),
             ],
         ),
     ]

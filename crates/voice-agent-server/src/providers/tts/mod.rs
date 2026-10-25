@@ -9,6 +9,7 @@ use std::{
 use thiserror::Error;
 
 pub(crate) mod chillaudio;
+pub mod edge_tts;
 mod file_delivery;
 pub mod kokoro_vi;
 #[cfg(feature = "qualification-providers")]
@@ -16,6 +17,7 @@ pub mod qualification;
 pub mod vieneu;
 pub mod zerotts;
 pub(crate) use chillaudio::ChillAudioWsProvider;
+pub(crate) use edge_tts::EdgeTtsProvider;
 /// Compatibility exports for native ZeroTTS tooling.
 pub mod zerotts_onnx {
     pub use super::zerotts::runtime::{

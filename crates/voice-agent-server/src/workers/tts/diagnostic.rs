@@ -58,16 +58,20 @@ impl TtsWorkerRuntime {
         &self,
         request: TtsDiagnosticRequest,
     ) -> Result<TtsSynthesisRequest, TtsError> {
-        let selection = TtsBinding {
-            voice: request
-                .voice
-                .clone()
-                .unwrap_or_else(|| self.binding.voice.clone()),
-            language: request
-                .language
-                .clone()
-                .unwrap_or_else(|| self.binding.language.clone()),
+        let voice = request
+            .voice
+            .clone()
+            .unwrap_or_else(|| self.binding.voice.clone());
+        let language = match &request.language {
+            Some(lang) => lang.clone(),
+            None if self.provider.adapter() == "edge_tts" && request.voice.is_some() => {
+                crate::providers::tts::edge_tts::voices::voice_locale(&voice)
+                    .unwrap_or(&self.binding.language)
+                    .to_string()
+            }
+            None => self.binding.language.clone(),
         };
+        let selection = TtsBinding { voice, language };
         if self.provider.adapter() == "zerotts_onnx" {
             self.provider.validate_diagnostic(&TtsDiagnosticRequest {
                 text: request.text.clone(),

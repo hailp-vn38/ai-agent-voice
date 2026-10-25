@@ -432,6 +432,17 @@ fn tts_binding(snapshot: &DesiredProvider) -> Option<crate::providers::TtsBindin
             language: configuration.language,
         });
     }
+    if snapshot.adapter == "edge_tts" {
+        let configuration: crate::config::EdgeTtsConfig =
+            serde_json::from_str(&snapshot.config_json).ok()?;
+        if !configuration.valid_selection() {
+            return None;
+        }
+        return Some(crate::providers::TtsBinding {
+            voice: configuration.voice,
+            language: configuration.language,
+        });
+    }
     if snapshot.adapter != "zerotts_onnx" {
         return Some(crate::providers::TtsBinding::readiness());
     }

@@ -187,6 +187,22 @@ pub(crate) fn default_chillaudio_voice() -> String {
 pub(crate) fn default_chillaudio_timeout_ms() -> u64 {
     12_000
 }
+pub(crate) fn default_edge_tts_ws_url() -> Url {
+    Url::parse("wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1")
+        .expect("valid Edge TTS URL")
+}
+pub(crate) fn default_edge_tts_trusted_client_token() -> String {
+    "6A5AA1D4EAFF4E9FB37E23D68491D6F4".into()
+}
+pub(crate) fn default_edge_tts_sec_ms_gec_version() -> String {
+    "2-143.0.3650.75".into()
+}
+pub(crate) fn default_edge_tts_voice() -> String {
+    "vi-VN-HoaiMyNeural".into()
+}
+pub(crate) fn default_edge_tts_timeout_ms() -> u64 {
+    15_000
+}
 pub(super) fn default_provider_threads() -> i32 {
     1
 }

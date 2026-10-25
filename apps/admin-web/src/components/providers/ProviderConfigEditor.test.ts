@@ -21,3 +21,36 @@ it('readonly disables every control and rejects synthetic change events', async 
   await wrapper.get('select').setValue('two')
   expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual({ voice: 'two', streaming: false, count: 1 })
 })
+
+it('filters voices by selected language and auto-selects a compatible voice when language changes', async () => {
+  const wrapper = mount(ProviderConfigEditor, {
+    props: {
+      modelValue: { language: 'vi-VN', voice: 'vi-VN-HoaiMyNeural', rate_percent: 0, pitch_hz: 0 },
+      schema: {
+        fields: [
+          { key: 'language', type: 'select', enum_source: 'languages' },
+          { key: 'voice', type: 'select', enum_source: 'voices' },
+        ],
+      },
+      capabilities: {
+        languages: [
+          { id: 'vi-VN', name: 'Vietnamese (Vietnam)' },
+          { id: 'ja-JP', name: 'Japanese (Japan)' },
+        ],
+        voices: [
+          { id: 'vi-VN-HoaiMyNeural', name: 'vi-VN-HoaiMyNeural (Female)', languages: ['vi-VN'] },
+          { id: 'ja-JP-NanamiNeural', name: 'ja-JP-NanamiNeural (Female)', languages: ['ja-JP'] },
+        ],
+      },
+    },
+  })
+  const selects = wrapper.findAll('select')
+  expect(selects[1]!.findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'vi-VN-HoaiMyNeural'])
+  await selects[0]!.setValue('ja-JP')
+  expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual({
+    language: 'ja-JP',
+    voice: 'ja-JP-NanamiNeural',
+    rate_percent: 0,
+    pitch_hz: 0,
+  })
+})
