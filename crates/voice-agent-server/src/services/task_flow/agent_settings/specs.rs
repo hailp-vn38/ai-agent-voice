@@ -37,7 +37,6 @@ pub struct AgentSpec {
 const SOURCE_COLLECTOR_TOOLS: &[&str] = &[
     "skill",
     "anydoc_inspect_pdf",
-    "anydoc_save_to_sources",
     "yt_list_playlist",
     "yt_fetch_transcript",
     "fetch_html",
@@ -139,7 +138,7 @@ pub const AGENT_SPECS: &[AgentSpec] = &[
         parent_id: Some("daily_root"),
         mode: AgentMode::Subagent,
         user_routable: false,
-        default_description: "Inspects external sources (YouTube videos/playlists via yt_list_playlist/yt_fetch_transcript, PDF via anydoc_inspect_pdf, or Web via fetch_html/html_*) to extract transcripts/content and return summaries directly (default: save_to_sources=false, does NOT write to sources/), OR saves raw Markdown files into sources/<domain>/<topic>/<slug>.md ONLY when the user explicitly requests saving/adding to sources/ or the Wiki.",
+        default_description: "Inspects external sources using read-only extraction tools (YouTube videos/playlists via yt_list_playlist/yt_fetch_transcript, PDF via anydoc_inspect_pdf, or Web via fetch_html/html_*) to return summaries/answers directly, OR calls the unified add_to_sources tool to save into sources/<domain>/<topic>/<slug>.md ONLY when the user explicitly requests saving/adding to sources/ or the Wiki.",
         default_prompt: SOURCE_COLLECTOR_PROMPT,
         default_steps: 35,
         default_allowed_tools: SOURCE_COLLECTOR_TOOLS,
