@@ -14,6 +14,9 @@ describe('API errors', () => {
     const error = new ApiError('ignored', 409, 'revision_conflict', 'req-3')
     expect(isApiError(error)).toBe(true)
     expect(formatApiError(error)).toBe('Dữ liệu đã thay đổi trên server. Đã tải lại bản mới nhất. (request_id: req-3)')
+    expect(formatApiError(new ApiError('ignored', 503, 'credential_storage_unavailable', 'req-7'))).toBe(
+      'Chưa cấu hình khóa mã hóa credential trên server (credential_keys_file hoặc VOICE_CREDENTIAL_KEY_*). (request_id: req-7)',
+    )
     expect(formatApiError(new Error('offline'))).toBe('offline')
     expect(formatApiError('offline')).toBe('Unknown API error')
   })
