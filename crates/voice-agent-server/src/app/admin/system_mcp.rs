@@ -198,7 +198,18 @@ pub(super) async fn save_knowledge_settings(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {
+    if trusted_origin(&state, request.headers()).is_none() {
+        return error(&request, StatusCode::FORBIDDEN, "untrusted_origin");
+    }
     let headers = request.headers().clone();
+    let header_revision = if headers.contains_key(header::IF_MATCH) {
+        match expected(&headers) {
+            Ok(rev) => Some(rev),
+            Err(code) => return error(&request, StatusCode::BAD_REQUEST, code),
+        }
+    } else {
+        None
+    };
     let (request, input): (_, crate::tools::knowledge_mcp::UpdateKnowledgeMcpInput) =
         match json(request).await {
             Ok(v) => v,
@@ -211,37 +222,36 @@ pub(super) async fn save_knowledge_settings(
             "knowledge_unavailable",
         );
     };
-    match core.update_settings(input) {
+    match core.update_settings(input, header_revision) {
         Ok(snap) => Json(attach_base_url(&state, &headers, snap)).into_response(),
+        Err(crate::tools::knowledge_mcp::KnowledgeMcpAdminError::RevisionConflict) => {
+            error(&request, StatusCode::CONFLICT, "revision_conflict")
+        }
         Err(_) => error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
     }
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateKnowledgeTokenBody {
     name: String,
-    #[serde(default = "default_token_access")]
-    access: String,
+    #[serde(default)]
+    access: crate::tools::knowledge_mcp::KnowledgeMcpAccess,
     #[serde(default)]
     custom_token: Option<String>,
-}
-
-fn default_token_access() -> String {
-    "read_write".to_string()
 }
 
 pub(super) async fn create_knowledge_token(
     State(state): State<AppState>,
     request: Request,
 ) -> Response {
+    if trusted_origin(&state, request.headers()).is_none() {
+        return error(&request, StatusCode::FORBIDDEN, "untrusted_origin");
+    }
     let headers = request.headers().clone();
     let (request, body): (_, CreateKnowledgeTokenBody) = match json(request).await {
         Ok(v) => v,
         Err(e) => return e,
-    };
-    let Some(access) = crate::tools::knowledge_mcp::KnowledgeMcpAccess::from_str_opt(&body.access)
-    else {
-        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
     };
     let Some(core) = state.get_or_init_knowledge_mcp() else {
         return error(
@@ -250,7 +260,7 @@ pub(super) async fn create_knowledge_token(
             "knowledge_unavailable",
         );
     };
-    match core.create_token(body.name, access, body.custom_token) {
+    match core.create_token(body.name, body.access, body.custom_token) {
         Ok((created, snap)) => {
             let mut full = attach_base_url(&state, &headers, snap);
             if let Some(obj) = full.as_object_mut() {
@@ -270,6 +280,9 @@ pub(super) async fn delete_knowledge_token(
     Path(id): Path<String>,
     request: Request,
 ) -> Response {
+    if trusted_origin(&state, request.headers()).is_none() {
+        return error(&request, StatusCode::FORBIDDEN, "untrusted_origin");
+    }
     let Some(core) = state.get_or_init_knowledge_mcp() else {
         return error(
             &request,

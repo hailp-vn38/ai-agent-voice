@@ -45,7 +45,6 @@ fn extract_credential(headers: &HeaderMap) -> Option<&str> {
 #[derive(Clone)]
 struct KnowledgeAuthState {
     state: AppState,
-    permits: Arc<tokio::sync::Semaphore>,
 }
 
 pub(super) fn router(state: &AppState) -> Router<AppState> {
@@ -79,7 +78,6 @@ pub(super) fn router(state: &AppState) -> Router<AppState> {
         .route_layer(middleware::from_fn_with_state(
             KnowledgeAuthState {
                 state: state.clone(),
-                permits: Arc::new(tokio::sync::Semaphore::new(64)),
             },
             authenticate,
         ))
@@ -99,14 +97,17 @@ async fn authenticate(
     if !core.is_enabled() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(_permit) = auth.permits.clone().try_acquire_owned() else {
+    let Some(_permit) = core.try_acquire_permit() else {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     };
     let ctx = extract_credential(request.headers()).and_then(|token| core.verify_token(token));
     let Some(ctx) = ctx else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    let request_timeout = core.call_timeout() + Duration::from_secs(5);
+    let request_timeout = ctx
+        .deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        + Duration::from_secs(5);
     request.extensions_mut().insert(ctx);
     match tokio::time::timeout(request_timeout, next.run(request)).await {
         Ok(response) => response,

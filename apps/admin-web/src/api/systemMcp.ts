@@ -37,6 +37,15 @@ export type KnowledgeMcpAccess = 'read_only' | 'read_write'
 export interface KnowledgeMcpToken {
   id: string
   name: string
+  masked_token: string
+  token?: string
+  access: KnowledgeMcpAccess
+  created_at: number
+}
+
+export interface KnowledgeMcpCreatedToken {
+  id: string
+  name: string
   token: string
   access: KnowledgeMcpAccess
   created_at: number
@@ -70,7 +79,7 @@ export interface KnowledgeMcpState {
   read_only_tools_count: number
   read_write_tools_count: number
   wiki_status?: KnowledgeMcpWikiStatus | null
-  created_token?: KnowledgeMcpToken
+  created_token?: KnowledgeMcpCreatedToken
 }
 
 export interface UpdateKnowledgeMcpInput {
@@ -105,8 +114,12 @@ export const systemMcpApi = {
 
   knowledge: (signal?: AbortSignal) =>
     requestJson<KnowledgeMcpState>(`${path}/knowledge`, { signal }),
-  saveKnowledge: (input: UpdateKnowledgeMcpInput) =>
-    requestJson<KnowledgeMcpState>(`${path}/knowledge`, jsonRequest('PUT', input)),
+  saveKnowledge: (input: UpdateKnowledgeMcpInput, revision?: number) =>
+    requestJson<KnowledgeMcpState>(
+      `${path}/knowledge`,
+      jsonRequest('PUT', input),
+      revision !== undefined ? { revision } : undefined,
+    ),
   createToken: (input: CreateKnowledgeMcpTokenInput) =>
     requestJson<KnowledgeMcpState>(`${path}/knowledge/tokens`, jsonRequest('POST', input)),
   deleteToken: (id: string) =>

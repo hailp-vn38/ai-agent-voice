@@ -18,7 +18,7 @@ import { useServerStore } from '@/stores/server'
 
 const server = useServerStore()
 const { health, status, lastError } = storeToRefs(server)
-const { t, formatDateTime } = useI18n()
+const { t, locale, formatDateTime } = useI18n()
 const resources = ref<SystemResources | null>(null)
 const loading = ref(true)
 const error = ref('')
@@ -165,7 +165,11 @@ onBeforeUnmount(() => {
         </RouterLink>
       </CardHeader>
       <CardContent class="text-sm text-muted-foreground">
-        Streamable HTTP Knowledge MCP endpoint (<code>/mcp/knowledge</code>) — tạo Bearer Token / API Key, lấy Base URL và cấu hình kết nối cho Client Agent trực tiếp trên Web.
+        {{
+          locale === 'vi'
+            ? 'Streamable HTTP Knowledge MCP endpoint (/mcp/knowledge) — tạo Bearer Token / API Key, lấy Base URL và cấu hình kết nối cho Client Agent trực tiếp trên Web.'
+            : 'Streamable HTTP Knowledge MCP endpoint (/mcp/knowledge) — create Bearer / API-Key tokens, copy Base URLs, and configure Client Agent connections directly from the web UI.'
+        }}
       </CardContent>
     </Card>
     <Card>

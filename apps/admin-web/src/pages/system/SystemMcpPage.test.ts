@@ -26,7 +26,7 @@ const initialState = {
     {
       id: 'tok-1',
       name: 'Default Config Token',
-      token: 'kmcp_default_secret_123456',
+      masked_token: 'kmcp_def••••••••3456',
       access: 'read_write' as const,
       created_at: 1760000000,
     },
@@ -54,24 +54,25 @@ beforeEach(() => {
 })
 
 describe('SystemMcpPage', () => {
-  it('loads and displays Base URL, config snippet, active tokens, and tools', async () => {
+  it('loads and displays Base URL, masked tokens, config snippet, and tools', async () => {
     const wrapper = mount(SystemMcpPage, {
-      global: { stubs: { RouterLink: true } },
+      global: { stubs: { RouterLink: true, SystemMcpSettings: true } },
     })
     await flushPromises()
 
     const baseUrlInput = wrapper.get('[data-testid="mcp-base-url-input"]')
     expect((baseUrlInput.element as HTMLInputElement).value).toContain('/mcp/knowledge')
     expect(wrapper.get('[data-testid="mcp-config-snippet"]').text()).toContain(
-      'Bearer kmcp_default_secret_123456',
+      'Bearer <YOUR_MCP_TOKEN>',
     )
     expect(wrapper.text()).toContain('Default Config Token')
+    expect(wrapper.text()).toContain('kmcp_def••••••••3456')
     expect(wrapper.text()).toContain('wiki_query')
     expect(wrapper.text()).toContain('add_to_sources')
     wrapper.unmount()
   })
 
-  it('creates a new token and saves web configuration', async () => {
+  it('creates a new token, populates connection snippet, and saves web configuration with revision', async () => {
     const createdToken = {
       id: 'tok-2',
       name: 'Cursor Agent',
@@ -79,10 +80,17 @@ describe('SystemMcpPage', () => {
       access: 'read_only' as const,
       created_at: 1760000100,
     }
+    const createdSummary = {
+      id: 'tok-2',
+      name: 'Cursor Agent',
+      masked_token: 'kmcp_cur••••••••9999',
+      access: 'read_only' as const,
+      created_at: 1760000100,
+    }
     api.createToken.mockResolvedValue({
       ...initialState,
       revision: 3,
-      tokens: [...initialState.tokens, createdToken],
+      tokens: [...initialState.tokens, createdSummary],
       created_token: createdToken,
     })
     api.saveKnowledge.mockResolvedValue({
@@ -93,7 +101,7 @@ describe('SystemMcpPage', () => {
     })
 
     const wrapper = mount(SystemMcpPage, {
-      global: { stubs: { RouterLink: true } },
+      global: { stubs: { RouterLink: true, SystemMcpSettings: true } },
     })
     await flushPromises()
 
@@ -110,6 +118,9 @@ describe('SystemMcpPage', () => {
     expect(wrapper.get('[data-testid="newly-created-token-banner"]').text()).toContain(
       'kmcp_cursor_secret_999999',
     )
+    expect(wrapper.get('[data-testid="mcp-config-snippet"]').text()).toContain(
+      'Bearer kmcp_cursor_secret_999999',
+    )
 
     await wrapper.get('[data-testid="mcp-allow-write-checkbox"]').setValue(false)
     await wrapper.get('[data-testid="save-mcp-config-btn"]').trigger('submit')
@@ -120,6 +131,7 @@ describe('SystemMcpPage', () => {
         enabled: true,
         allow_write: false,
       }),
+      3,
     )
     wrapper.unmount()
   })

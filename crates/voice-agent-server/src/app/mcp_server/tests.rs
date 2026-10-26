@@ -478,10 +478,25 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
         StatusCode::NOT_FOUND
     );
 
-    // Enable via Admin Web API
+    // Mutating routes reject untrusted Origin with 403 FORBIDDEN
+    assert_eq!(
+        http.put(&admin_url)
+            .bearer_auth("admin-test-token")
+            .header("Origin", "https://evil.example")
+            .json(&json!({"enabled": true, "allow_write": true}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Enable via Admin Web API with trusted Origin and If-Match revision
     let updated: Value = http
         .put(&admin_url)
         .bearer_auth("admin-test-token")
+        .header("Origin", "http://localhost")
+        .header("If-Match", "\"1\"")
         .json(&json!({
             "enabled": true,
             "allow_write": true,
@@ -497,11 +512,27 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
         .unwrap();
     assert_eq!(updated["enabled"], true);
     assert_eq!(updated["base_url"], mcp_url);
+    assert_eq!(updated["revision"], 2);
+
+    // Stale If-Match revision returns 409 CONFLICT
+    assert_eq!(
+        http.put(&admin_url)
+            .bearer_auth("admin-test-token")
+            .header("Origin", "http://localhost")
+            .header("If-Match", "\"1\"")
+            .json(&json!({"enabled": false, "allow_write": false}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
 
     // Create token via Admin Web API
     let created_res: Value = http
         .post(format!("{admin_url}/tokens"))
         .bearer_auth("admin-test-token")
+        .header("Origin", "http://localhost")
         .json(&json!({
             "name": "Cursor Agent",
             "access": "read_only"
@@ -518,6 +549,27 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
         .unwrap()
         .to_string();
     assert!(token_secret.starts_with("kmcp_"));
+    // Snapshot tokens list must only contain masked_token, never raw token
+    assert!(created_res["tokens"][0].get("token").is_none());
+    assert!(
+        created_res["tokens"][0]["masked_token"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("••••••••")
+    );
+
+    // GET /api/admin/system-mcp/knowledge must also only expose masked_token
+    let get_snap: Value = http
+        .get(&admin_url)
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let get_snap_raw = serde_json::to_string(&get_snap).unwrap();
+    assert!(!get_snap_raw.contains(&token_secret));
 
     // Use newly generated token on /mcp/knowledge without restarting server
     let list_res: Value = http
@@ -545,6 +597,7 @@ async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
     let del_status = http
         .delete(format!("{admin_url}/tokens/{token_id}"))
         .bearer_auth("admin-test-token")
+        .header("Origin", "http://localhost")
         .send()
         .await
         .unwrap()

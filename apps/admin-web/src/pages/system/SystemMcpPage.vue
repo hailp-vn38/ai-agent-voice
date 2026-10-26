@@ -17,17 +17,19 @@ import {
   Trash2,
   Wrench,
 } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { formatApiError } from '@/api/errors'
 import {
   systemMcpApi,
   type KnowledgeMcpAccess,
+  type KnowledgeMcpCreatedToken,
   type KnowledgeMcpState,
   type KnowledgeMcpToken,
 } from '@/api/systemMcp'
 import PageHeader from '@/components/admin/PageHeader.vue'
+import SystemMcpSettings from '@/components/system/SystemMcpSettings.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -43,6 +45,7 @@ const creatingToken = ref(false)
 const deletingTokenId = ref('')
 const error = ref('')
 const notice = ref('')
+let loadAbortController: AbortController | null = null
 
 // Editable config form
 const formEnabled = ref(true)
@@ -55,7 +58,8 @@ const formMaxResultChars = ref(12000)
 const newTokenName = ref('')
 const newTokenAccess = ref<KnowledgeMcpAccess>('read_write')
 const newTokenCustom = ref('')
-const newlyCreatedToken = ref<KnowledgeMcpToken | null>(null)
+const newlyCreatedToken = ref<KnowledgeMcpCreatedToken | null>(null)
+const sessionPlaintextTokens = ref<Record<string, string>>({})
 
 // UI helpers
 const selectedTokenId = ref('')
@@ -70,6 +74,11 @@ function syncFormFromState(data: KnowledgeMcpState) {
   formMaxConcurrency.value = data.max_concurrency
   formCallTimeoutMs.value = data.call_timeout_ms
   formMaxResultChars.value = data.max_result_chars
+  for (const tok of data.tokens) {
+    if (tok.token) {
+      sessionPlaintextTokens.value[tok.id] = tok.token
+    }
+  }
   if (!selectedTokenId.value || !data.tokens.some((tok) => tok.id === selectedTokenId.value)) {
     selectedTokenId.value = data.tokens[0]?.id ?? ''
   }
@@ -83,9 +92,22 @@ const resolvedBaseUrl = computed(() => {
   return state.value?.base_url || `http://127.0.0.1:8000${path}`
 })
 
+function resolvePlaintextToken(tok: KnowledgeMcpToken): string | undefined {
+  return sessionPlaintextTokens.value[tok.id] || tok.token
+}
+
+function displayTokenValue(tok: KnowledgeMcpToken): string {
+  const plain = resolvePlaintextToken(tok)
+  if (revealedTokens.value[tok.id] && plain) {
+    return plain
+  }
+  return tok.masked_token || (plain ? maskToken(plain) : '••••••••')
+}
+
 const selectedTokenValue = computed(() => {
   const found = state.value?.tokens.find((tok) => tok.id === selectedTokenId.value)
-  return found?.token || '<YOUR_MCP_TOKEN>'
+  if (!found) return '<YOUR_MCP_TOKEN>'
+  return resolvePlaintextToken(found) || '<YOUR_MCP_TOKEN>'
 })
 
 const snippetContent = computed(() => {
@@ -156,16 +178,22 @@ function maskToken(token: string) {
 }
 
 async function load() {
+  loadAbortController?.abort()
+  const controller = new AbortController()
+  loadAbortController = controller
   loading.value = true
   error.value = ''
   try {
-    const res = await systemMcpApi.knowledge()
+    const res = await systemMcpApi.knowledge(controller.signal)
     state.value = res
     syncFormFromState(res)
   } catch (cause) {
+    if ((cause as { name?: string })?.name === 'AbortError') return
     error.value = formatApiError(cause)
   } finally {
-    loading.value = false
+    if (loadAbortController === controller) {
+      loading.value = false
+    }
   }
 }
 
@@ -174,13 +202,16 @@ async function saveConfig() {
   error.value = ''
   notice.value = ''
   try {
-    const updated = await systemMcpApi.saveKnowledge({
-      enabled: formEnabled.value,
-      allow_write: formAllowWrite.value,
-      max_concurrency: Number(formMaxConcurrency.value),
-      call_timeout_ms: Number(formCallTimeoutMs.value),
-      max_result_chars: Number(formMaxResultChars.value),
-    })
+    const updated = await systemMcpApi.saveKnowledge(
+      {
+        enabled: formEnabled.value,
+        allow_write: formAllowWrite.value,
+        max_concurrency: Number(formMaxConcurrency.value),
+        call_timeout_ms: Number(formCallTimeoutMs.value),
+        max_result_chars: Number(formMaxResultChars.value),
+      },
+      state.value?.revision,
+    )
     state.value = updated
     syncFormFromState(updated)
     notice.value = isVi.value
@@ -205,12 +236,14 @@ async function handleCreateToken() {
       access: newTokenAccess.value,
       custom_token: newTokenCustom.value.trim() || undefined,
     })
-    state.value = updated
     if (updated.created_token) {
+      sessionPlaintextTokens.value[updated.created_token.id] = updated.created_token.token
       newlyCreatedToken.value = updated.created_token
       selectedTokenId.value = updated.created_token.id
       revealedTokens.value[updated.created_token.id] = true
     }
+    state.value = updated
+    syncFormFromState(updated)
     newTokenName.value = ''
     newTokenCustom.value = ''
     notice.value = isVi.value ? 'Đã tạo token MCP mới thành công.' : 'New MCP token created.'
@@ -227,6 +260,7 @@ async function handleDeleteToken(tok: KnowledgeMcpToken) {
   notice.value = ''
   try {
     const updated = await systemMcpApi.deleteToken(tok.id)
+    delete sessionPlaintextTokens.value[tok.id]
     state.value = updated
     if (newlyCreatedToken.value?.id === tok.id) {
       newlyCreatedToken.value = null
@@ -244,6 +278,10 @@ async function handleDeleteToken(tok: KnowledgeMcpToken) {
 
 onMounted(() => {
   void load()
+})
+
+onBeforeUnmount(() => {
+  loadAbortController?.abort()
 })
 </script>
 
@@ -586,7 +624,7 @@ onMounted(() => {
                     </Badge>
                   </div>
                   <p class="break-all font-mono text-xs text-muted-foreground">
-                    {{ revealedTokens[tok.id] ? tok.token : maskToken(tok.token) }}
+                    {{ displayTokenValue(tok) }}
                   </p>
                   <p v-if="tok.created_at" class="text-[11px] text-muted-foreground">
                     {{ formatDateTime(new Date(tok.created_at * 1000)) }}
@@ -594,6 +632,7 @@ onMounted(() => {
                 </div>
                 <div class="flex shrink-0 items-center gap-1.5">
                   <Button
+                    v-if="resolvePlaintextToken(tok)"
                     type="button"
                     size="sm"
                     variant="ghost"
@@ -604,10 +643,11 @@ onMounted(() => {
                     <Eye v-else class="size-4" />
                   </Button>
                   <Button
+                    v-if="resolvePlaintextToken(tok)"
                     type="button"
                     size="sm"
                     variant="outline"
-                    @click="copyText(`tok_${tok.id}`, tok.token)"
+                    @click="copyText(`tok_${tok.id}`, resolvePlaintextToken(tok)!)"
                   >
                     <Check v-if="copiedKey === `tok_${tok.id}`" class="size-3.5 text-emerald-500" />
                     <Copy v-else class="size-3.5" />
@@ -726,7 +766,7 @@ onMounted(() => {
                   v-model.number="formMaxResultChars"
                   type="number"
                   min="512"
-                  max="65536"
+                  max="64000"
                   step="512"
                   required
                   class="admin-input w-full"
@@ -819,5 +859,8 @@ onMounted(() => {
         </div>
       </CardContent>
     </Card>
+
+    <!-- Studio Assistant System Tool Grants & Change Requests -->
+    <SystemMcpSettings />
   </section>
 </template>
