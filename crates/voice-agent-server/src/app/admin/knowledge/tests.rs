@@ -371,3 +371,93 @@ admin_token = "knowledge-test-token"
     handle.abort();
     let _ = std::fs::remove_dir_all(temp_root);
 }
+
+#[tokio::test]
+async fn knowledge_graph_filters_dangling_edges_aggregates_lines_and_bounds_local_neighborhood() {
+    let (base, temp_root, handle) = fixture_server().await;
+    let client = reqwest::Client::new();
+
+    // Create Wiki notes with links to another Wiki note (twice), a distant 2-hop Wiki note, and a Source file.
+    for (folder, file_name, title, body) in [
+        (
+            "wiki/concepts",
+            "agent",
+            "Agent",
+            "Uses [[concepts/hybrid-search|Hybrid 1]] on line 1.\nAlso uses [[concepts/hybrid-search|Hybrid 2]] and [[notes/field-observation]].\n",
+        ),
+        (
+            "wiki/concepts",
+            "router",
+            "Router",
+            "Connects to [[concepts/agent]].\n",
+        ),
+        (
+            "wiki/concepts",
+            "isolated",
+            "Isolated",
+            "Unconnected wiki note.\n",
+        ),
+    ] {
+        let resp = client
+            .post(format!("{base}/knowledge/pages"))
+            .bearer_auth("knowledge-test-token")
+            .json(&serde_json::json!({
+                "folder_path": folder,
+                "file_name": file_name,
+                "title": title,
+                "body": body,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    let local_resp = client
+        .get(format!(
+            "{base}/knowledge/graph?scope=local&center_id=wiki%2Fconcepts%2Fagent.md&depth=1&limit=500"
+        ))
+        .bearer_auth("knowledge-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(local_resp.status(), StatusCode::OK);
+    let local_body: Value = local_resp.json().await.unwrap();
+    let nodes = local_body["nodes"].as_array().unwrap();
+    let node_ids: std::collections::HashSet<&str> =
+        nodes.iter().filter_map(|n| n["id"].as_str()).collect();
+
+    // 1-hop around agent includes agent, hybrid-search, and router, but NOT isolated or raw sources.
+    assert!(node_ids.contains("wiki/concepts/agent.md"));
+    assert!(node_ids.contains("wiki/concepts/hybrid-search.md"));
+    assert!(node_ids.contains("wiki/concepts/router.md"));
+    assert!(!node_ids.contains("wiki/concepts/isolated.md"));
+    assert!(!node_ids.contains("sources/notes/field-observation.md"));
+
+    // Every edge endpoint must exist in returned `nodes` (no dangling target_id to sources/*).
+    let edges = local_body["edges"].as_array().unwrap();
+    for edge in edges {
+        let src = edge["source_id"].as_str().unwrap();
+        let dst = edge["target_id"].as_str().unwrap();
+        assert!(node_ids.contains(src), "missing edge source {src}");
+        assert!(node_ids.contains(dst), "missing edge target {dst}");
+    }
+
+    // Repeated links from agent -> hybrid-search are aggregated into a single edge with 2 lines.
+    let agent_to_hybrid: Vec<&Value> = edges
+        .iter()
+        .filter(|e| {
+            e["source_id"] == "wiki/concepts/agent.md"
+                && e["target_id"] == "wiki/concepts/hybrid-search.md"
+        })
+        .collect();
+    assert_eq!(agent_to_hybrid.len(), 1);
+    assert_eq!(agent_to_hybrid[0]["lines"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        agent_to_hybrid[0]["references"].as_array().unwrap().len(),
+        2
+    );
+
+    handle.abort();
+    let _ = std::fs::remove_dir_all(temp_root);
+}

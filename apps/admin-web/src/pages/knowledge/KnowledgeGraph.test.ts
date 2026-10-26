@@ -103,3 +103,65 @@ it('offers an index rebuild when Graph is stale', async () => {
     expect(wrapper.emitted('rebuild')).toHaveLength(1)
   } finally { wrapper.unmount() }
 })
+
+it('keeps non-zero flex sizing when Cytoscape applies position:relative and drops dangling or duplicate edges', async () => {
+  requestJsonMock.mockResolvedValue({
+    nodes: [
+      { id: 'wiki_agent', path: 'wiki/AI/Agent.md', title: 'Agent', status: 'verified', revision: 2 },
+      { id: 'wiki_llm', path: 'wiki/AI/LLM.md', title: 'LLM', status: 'verified', revision: 1 },
+    ],
+    edges: [
+      {
+        source_id: 'wiki_agent',
+        target_id: 'sources/missing-node.md',
+        kind: 'wikilink',
+        lines: [3],
+        references: [{ line: 3, raw_target: 'sources/missing-node.md' }],
+      },
+      {
+        source_id: 'wiki_agent',
+        target_id: 'wiki_llm',
+        kind: 'wikilink',
+        lines: [8],
+        references: [{ line: 8, raw_target: 'AI/LLM', alias: 'LLM 1' }],
+      },
+      {
+        source_id: 'wiki_agent',
+        target_id: 'wiki_llm',
+        kind: 'wikilink',
+        lines: [14],
+        references: [{ line: 14, raw_target: 'AI/LLM', alias: 'LLM 2' }],
+      },
+    ],
+    unresolved: [],
+    truncated: false,
+  })
+  const wrapper = mount(KnowledgeGraph, { props: { centerId: 'wiki_agent', reloadToken: 0 } })
+  try {
+    await flushPromises()
+    const canvas = wrapper.find('[role="img"]')
+    expect(canvas.classes()).not.toContain('absolute')
+    expect(canvas.classes()).toContain('flex-1')
+    expect(canvas.classes()).toContain('min-h-[410px]')
+
+    expect(drawMock).toHaveBeenCalledOnce()
+    const options = drawMock.mock.calls[0]?.[0] as {
+      elements: Array<{ data: { id: string; source?: string; target?: string } }>
+    }
+    const edgeElements = options.elements.filter(el => 'source' in el.data)
+    expect(edgeElements).toEqual([
+      {
+        data: {
+          id: 'link_0',
+          source: 'wiki_agent',
+          target: 'wiki_llm',
+          kind: 'wikilink',
+        },
+      },
+    ])
+    expect(wrapper.text()).toContain('Outgoing (1)')
+    expect(wrapper.text()).toContain('→ LLM · 8, 14')
+  } finally {
+    wrapper.unmount()
+  }
+})
