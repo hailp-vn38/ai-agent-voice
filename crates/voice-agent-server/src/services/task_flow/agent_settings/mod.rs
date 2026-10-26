@@ -4,7 +4,7 @@
 mod catalog;
 mod specs;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use orchestrator_agent_rs::AgentMode;
@@ -14,8 +14,9 @@ use crate::app::AppState;
 
 pub use catalog::{
     ResolvedLlmProvider, build_agent_definitions, default_orchestrator_provider,
-    project_agents_json, resolve_llm_provider_catalog,
+    find_provider_by_tag, project_agents_json, resolve_llm_provider_catalog,
 };
+use catalog::agent_supports_provider;
 pub use specs::{
     AGENT_SPECS, AgentSpec, DEFAULT_USER_ROOT_AGENT_ID, WIKI_AUTOFLOW_ROOT_AGENT_ID,
     find_agent_spec, is_user_routable_root_agent, normalize_user_target_agent,
@@ -131,11 +132,15 @@ pub fn validate_agent_overrides(
     overrides: &BTreeMap<String, AgentConfigOverride>,
     catalog: &[ResolvedLlmProvider],
 ) -> Result<(), &'static str> {
-    let valid_refs: HashSet<&str> = catalog.iter().map(|p| p.provider_ref.as_str()).collect();
-    if !valid_refs.contains(orchestrator_provider.trim())
-        || !valid_refs.contains(worker_provider.trim())
-    {
+    let find_prov = |pref: &str| catalog.iter().find(|p| p.provider_ref == pref);
+    let Some(orch_prov) = find_prov(orchestrator_provider.trim()) else {
         return Err("invalid_provider");
+    };
+    let Some(work_prov) = find_prov(worker_provider.trim()) else {
+        return Err("invalid_provider");
+    };
+    if !orch_prov.supports_tag("chat") || !work_prov.supports_tag("chat") {
+        return Err("provider_capability_mismatch");
     }
 
     for (id, ovr) in overrides {
@@ -147,8 +152,13 @@ pub fn validate_agent_overrides(
         }
         if let Some(ref pref) = ovr.provider_ref {
             let trimmed = pref.trim();
-            if !trimmed.is_empty() && !valid_refs.contains(trimmed) {
-                return Err("invalid_provider");
+            if !trimmed.is_empty() {
+                let Some(prov) = find_prov(trimmed) else {
+                    return Err("invalid_provider");
+                };
+                if !agent_supports_provider(spec.id, prov) {
+                    return Err("provider_capability_mismatch");
+                }
             }
         }
         if let Some(steps) = ovr.steps

@@ -15,6 +15,8 @@ import ProviderTypeTabs from '@/components/providers/ProviderTypeTabs.vue'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import {
+  llmCapabilityTags,
+  providerSupportsLlmTag,
   providerTypes,
   type ProviderInstance,
   type ProviderStatus,
@@ -46,6 +48,7 @@ const activeType = computed<string>({
   },
 })
 const statusFilter = ref<string>(ALL)
+const tagFilter = ref<string>(ALL)
 
 const createOpen = ref(false)
 const createType = ref<TemplateProviderType | undefined>()
@@ -109,11 +112,18 @@ const typeCounts = computed(() => {
   return counts
 })
 
-const visibleProviders = computed(() =>
-  activeType.value === ALL
-    ? filteredProviders.value
-    : filteredProviders.value.filter((provider) => provider.type === activeType.value),
-)
+const visibleProviders = computed(() => {
+  const byType =
+    activeType.value === ALL
+      ? filteredProviders.value
+      : filteredProviders.value.filter((provider) => provider.type === activeType.value)
+  if (tagFilter.value === ALL || (activeType.value !== ALL && activeType.value !== 'llm')) {
+    return byType
+  }
+  return byType.filter(
+    (provider) => provider.type === 'llm' && providerSupportsLlmTag(provider, tagFilter.value),
+  )
+})
 
 /** The All view keeps pipeline order so types never interleave in one grid. */
 const groups = computed(() =>
@@ -148,6 +158,7 @@ const activeProviderType = computed(() => activeType.value as ProviderType)
 function clearFilters() {
   searchQuery.value = ''
   statusFilter.value = ALL
+  tagFilter.value = ALL
   activeType.value = ALL
 }
 
@@ -249,6 +260,44 @@ function providerNameById(id?: string) {
     </div>
 
     <ProviderTypeTabs v-model="activeType" :counts="typeCounts" />
+
+    <div
+      v-if="activeType === 'llm' || activeType === ALL"
+      class="flex flex-wrap items-center gap-1.5"
+      role="group"
+      aria-label="LLM capability tags"
+    >
+      <button
+        type="button"
+        data-tag-filter="all"
+        :aria-pressed="tagFilter === ALL"
+        :class="[
+          'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+          tagFilter === ALL
+            ? 'border-primary bg-primary text-primary-foreground'
+            : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
+        ]"
+        @click="tagFilter = ALL"
+      >
+        {{ t('common.all') }}
+      </button>
+      <button
+        v-for="tag in llmCapabilityTags"
+        :key="tag"
+        type="button"
+        :data-tag-filter="tag"
+        :aria-pressed="tagFilter === tag"
+        :class="[
+          'rounded-full border px-2.5 py-1 font-mono text-xs transition-colors',
+          tagFilter === tag
+            ? 'border-primary bg-primary text-primary-foreground'
+            : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
+        ]"
+        @click="tagFilter = tagFilter === tag ? ALL : tag"
+      >
+        {{ tag }}
+      </button>
+    </div>
 
     <CardListSkeleton v-if="store.loading" class="gap-3 sm:grid-cols-2 xl:grid-cols-3" />
     <div v-else-if="displayGroups.length" class="space-y-8">

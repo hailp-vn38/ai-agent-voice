@@ -6,7 +6,7 @@ import ProviderUsageList from '@/components/providers/ProviderUsageList.vue'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useI18n } from '@/composables/useI18n'
-import type { ProviderInstance, ProviderUsageEntry } from '@/domain/admin'
+import { effectiveLlmTags, type ProviderInstance, type ProviderUsageEntry } from '@/domain/admin'
 import { providerTypeIcons } from '@/lib/providerTypeIcons'
 
 const props = defineProps<{
@@ -28,6 +28,7 @@ const { t, providerTypeLabel, providerStatusLabel } = useI18n()
 const usageOpen = ref(false)
 
 const typeIcon = computed(() => providerTypeIcons[props.provider.type])
+const llmTags = computed(() => effectiveLlmTags(props.provider))
 
 const usageCount = computed(() => props.usage.length)
 
@@ -91,6 +92,17 @@ const statusTone = computed(() => {
         <p class="mt-0.5 truncate font-mono text-xs">
           {{ provider.model || t('providers.modelMissing') }}
         </p>
+      </div>
+
+      <div v-if="llmTags.length" class="flex flex-wrap gap-1">
+        <span
+          v-for="tag in llmTags"
+          :key="tag"
+          data-llm-tag
+          class="inline-flex items-center rounded-md border border-border/80 bg-muted/50 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+        >
+          {{ tag }}
+        </span>
       </div>
 
       <p

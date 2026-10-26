@@ -31,9 +31,14 @@ pub struct ResolvedLlmProvider {
     pub context_limit_tokens: usize,
     pub reasoning_effort: Option<String>,
     pub temperature_percent: Option<u16>,
+    pub tags: Vec<String>,
 }
 
 impl ResolvedLlmProvider {
+    pub fn supports_tag(&self, tag: &str) -> bool {
+        self.tags.iter().any(|t| t == tag)
+    }
+
     pub fn to_json_summary(&self) -> Value {
         json!({
             "ref": self.provider_ref,
@@ -47,6 +52,7 @@ impl ResolvedLlmProvider {
             "context_limit_tokens": self.context_limit_tokens,
             "reasoning_effort": self.reasoning_effort,
             "temperature_percent": self.temperature_percent,
+            "tags": self.tags,
         })
     }
 
@@ -65,6 +71,23 @@ impl ResolvedLlmProvider {
     }
 }
 
+pub fn find_provider_by_tag<'a>(
+    catalog: &'a [ResolvedLlmProvider],
+    tag: &str,
+) -> Option<&'a ResolvedLlmProvider> {
+    catalog.iter().find(|p| p.supports_tag(tag))
+}
+
+pub(crate) fn agent_supports_provider(agent_id: &str, provider: &ResolvedLlmProvider) -> bool {
+    if agent_id == "media_creator" {
+        ["chat", "image", "video", "audio"]
+            .iter()
+            .any(|tag| provider.supports_tag(tag))
+    } else {
+        provider.supports_tag("chat")
+    }
+}
+
 pub fn default_orchestrator_provider(cfg: &OrchestratorSectionConfig) -> ResolvedLlmProvider {
     ResolvedLlmProvider {
         provider_ref: DEFAULT_ORCHESTRATOR_PROVIDER_REF.to_owned(),
@@ -79,6 +102,7 @@ pub fn default_orchestrator_provider(cfg: &OrchestratorSectionConfig) -> Resolve
         context_limit_tokens: cfg.context_limit_tokens,
         reasoning_effort: None,
         temperature_percent: None,
+        tags: vec!["chat".to_owned()],
     }
 }
 
@@ -113,6 +137,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                         .unwrap_or(orch_cfg.context_limit_tokens),
                     reasoning_effort: openai.reasoning_effort.clone(),
                     temperature_percent: openai.temperature_percent,
+                    tags: crate::providers::llm::effective_llm_tags(openai.tags.as_deref()),
                 });
             }
             LlmInstanceConfig::OpenCodeFree(free) => {
@@ -134,6 +159,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                         .unwrap_or(orch_cfg.context_limit_tokens),
                     reasoning_effort: free.reasoning_effort.clone(),
                     temperature_percent: free.temperature_percent,
+                    tags: crate::providers::llm::effective_llm_tags(free.tags.as_deref()),
                 });
             }
             #[cfg(feature = "qualification-providers")]
@@ -218,6 +244,8 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 _ => continue,
             };
 
+            let tags = crate::providers::llm::llm_config_tags(&config_json);
+
             out.push(ResolvedLlmProvider {
                 provider_ref: key,
                 name,
@@ -231,6 +259,7 @@ pub async fn resolve_llm_provider_catalog(state: &AppState) -> Vec<ResolvedLlmPr
                 context_limit_tokens,
                 reasoning_effort,
                 temperature_percent,
+                tags,
             });
         }
     }
@@ -256,14 +285,13 @@ fn resolve_effective_agents<'a>(
     settings: &'a PersistedBackgroundSettings,
     catalog: &[ResolvedLlmProvider],
 ) -> Vec<ResolvedAgentSettings<'a>> {
-    let fallback = catalog
-        .first()
+    let fallback = find_provider_by_tag(catalog, "chat")
         .cloned()
         .unwrap_or_else(|| default_orchestrator_provider(cfg));
-    let find_provider = |pref: &str| -> ResolvedLlmProvider {
+    let find_provider = |agent_id: &str, pref: &str| -> ResolvedLlmProvider {
         catalog
             .iter()
-            .find(|p| p.provider_ref == pref)
+            .find(|p| p.provider_ref == pref && agent_supports_provider(agent_id, p))
             .cloned()
             .unwrap_or_else(|| fallback.clone())
     };
@@ -286,7 +314,7 @@ fn resolve_effective_agents<'a>(
                 AgentMode::Primary => settings.orchestrator_llm_provider.as_str(),
                 _ => settings.worker_llm_provider.as_str(),
             });
-            let resolved_provider = find_provider(effective_ref);
+            let resolved_provider = find_provider(spec.id, effective_ref);
             let steps = ovr
                 .and_then(|o| o.steps)
                 .unwrap_or(spec.default_steps)

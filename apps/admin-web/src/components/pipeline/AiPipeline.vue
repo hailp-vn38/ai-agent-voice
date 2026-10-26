@@ -5,6 +5,7 @@ import EmptyProviderNode from '@/components/pipeline/EmptyProviderNode.vue'
 import ProviderNode from '@/components/pipeline/ProviderNode.vue'
 import { useI18n } from '@/composables/useI18n'
 import {
+  providerSupportsLlmTag,
   providerTypes,
   type AgentTemplate,
   type ProviderInstance,
@@ -35,7 +36,10 @@ function providerFor(type: ProviderType) {
 }
 
 function candidatesFor(type: ProviderType) {
-  return props.providers.filter((provider) => provider.type === type)
+  return props.providers.filter(
+    (provider) =>
+      provider.type === type && (type !== 'llm' || providerSupportsLlmTag(provider, 'chat')),
+  )
 }
 
 function sharedFor(type: ProviderType) {

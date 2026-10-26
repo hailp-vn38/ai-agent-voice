@@ -83,6 +83,7 @@ pub enum ConfigFieldType {
     Integer,
     Boolean,
     Select,
+    MultiSelect,
 }
 
 #[derive(Serialize)]
@@ -141,6 +142,27 @@ pub(crate) const fn select_field(
             key,
             label,
             ConfigFieldType::Select,
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+}
+
+/// A multi-value capability tag field whose allowed values come from a fixed domain set.
+pub(crate) const fn multi_select_field(
+    key: &'static str,
+    label: &'static str,
+    values: &'static [&'static str],
+) -> ProviderConfigField {
+    ProviderConfigField {
+        enum_values: Some(values),
+        ..field(
+            key,
+            label,
+            ConfigFieldType::MultiSelect,
             false,
             None,
             None,

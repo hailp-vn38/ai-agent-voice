@@ -220,10 +220,143 @@ fn llm_provider_config_accepts_generation_and_context_bounds() {
         "context_limit_tokens",
         "reasoning_effort",
         "temperature_percent",
+        "tags",
     ] {
         assert!(
             openai_keys.contains(&expected),
             "missing field {expected} in openai descriptor"
         );
     }
+}
+
+#[test]
+fn llm_provider_config_validates_capability_tags_and_defaults_to_chat() {
+    for (adapter, valid_payload, expected_tags) in [
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4o",
+                "tags": ["chat", "vision"]
+            }),
+            serde_json::json!(["chat", "vision"]),
+        ),
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "sora-1",
+                "tags": ["video"]
+            }),
+            serde_json::json!(["video"]),
+        ),
+        (
+            "opencode_free",
+            serde_json::json!({
+                "model": "nemotron-3-ultra-free",
+                "tags": ["chat", "reasoning"]
+            }),
+            serde_json::json!(["chat", "reasoning"]),
+        ),
+    ] {
+        let canonical = crate::database::provider_config::validate(adapter, &valid_payload)
+            .expect("valid LLM capability tags should pass");
+        let parsed: serde_json::Value = serde_json::from_str(&canonical).unwrap();
+        assert_eq!(parsed["tags"], expected_tags);
+    }
+
+    for (adapter, invalid_payload) in [
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4o",
+                "tags": []
+            }),
+        ),
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4o",
+                "tags": ["unknown_tag"]
+            }),
+        ),
+        (
+            "openai",
+            serde_json::json!({
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4o",
+                "tags": ["chat", "chat"]
+            }),
+        ),
+        (
+            "opencode_free",
+            serde_json::json!({
+                "model": "nemotron-3-ultra-free",
+                "tags": ["invalid"]
+            }),
+        ),
+    ] {
+        assert!(
+            crate::database::provider_config::validate(adapter, &invalid_payload).is_err(),
+            "expected {adapter} with {invalid_payload} to be rejected"
+        );
+    }
+
+    assert!(crate::providers::llm::llm_config_supports_tag(
+        r#"{"base_url":"https://api.example.com/v1","model":"gpt-4o"}"#,
+        "chat"
+    ));
+    assert!(!crate::providers::llm::llm_config_supports_tag(
+        r#"{"base_url":"https://api.example.com/v1","model":"sora","tags":["video"]}"#,
+        "chat"
+    ));
+    assert!(crate::providers::llm::llm_config_supports_tag(
+        r#"{"base_url":"https://api.example.com/v1","model":"sora","tags":["video"]}"#,
+        "video"
+    ));
+}
+
+#[tokio::test]
+async fn template_llm_binding_requires_chat_capability_tag() {
+    let database = Database::connect(&crate::config::DatabaseConfig {
+        url: "sqlite::memory:".into(),
+        max_connections: 1,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    sqlx::raw_sql(
+        r#"
+INSERT INTO agent_templates (id,key,name,language,prompt,enabled,created_at,updated_at)
+VALUES (1,'tpl','Default','vi','prompt',1,1,1);
+INSERT INTO providers (id,key,name,type,adapter,config_json,enabled,created_at,updated_at)
+VALUES
+ (1,'llm_chat','Chat Multimodal','llm','openai','{"base_url":"https://example.test/v1","model":"gpt-4o","tags":["chat","vision"]}',1,1,1),
+ (2,'llm_video_only','Video Generator','llm','openai','{"base_url":"https://example.test/v1","model":"sora","tags":["video"]}',1,1,1);
+"#,
+    )
+    .execute(database.pool())
+    .await
+    .unwrap();
+
+    let chat_ref =
+        crate::providers::config_catalog::ProviderRef::parse("llm_chat", Some("llm")).unwrap();
+    database
+        .bind_template_provider("tpl", "llm", &chat_ref, 1, "req-1")
+        .await
+        .expect("LLM with chat tag should bind to template");
+
+    let video_ref =
+        crate::providers::config_catalog::ProviderRef::parse("llm_video_only", Some("llm"))
+            .unwrap();
+    let err = database
+        .bind_template_provider("tpl", "llm", &video_ref, 2, "req-2")
+        .await
+        .expect_err("video-only LLM without chat tag should be rejected for voice template");
+    assert!(
+        matches!(err, crate::database::writes::WriteError::Invalid("provider_capability_mismatch")),
+        "unexpected error: {err:?}"
+    );
 }

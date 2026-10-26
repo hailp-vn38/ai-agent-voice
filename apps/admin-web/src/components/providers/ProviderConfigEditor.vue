@@ -16,6 +16,20 @@ function options(field: ProviderConfigField): Array<{ id: string; name: string }
     return []
   }) : []
 }
+function selectedValues(key: string): string[] {
+  const value = config.value[key]
+  return Array.isArray(value) ? value.map(String) : []
+}
+function toggleMultiSelect(key: string, item: string) {
+  if (props.readonly) return
+  const current = new Set(selectedValues(key))
+  if (current.has(item)) current.delete(item)
+  else current.add(item)
+  const next = { ...config.value }
+  if (current.size === 0) delete next[key]
+  else next[key] = Array.from(current)
+  config.value = next
+}
 function update(key: string, value: unknown) {
   if (props.readonly) return
   const next = { ...config.value }
@@ -37,7 +51,26 @@ function update(key: string, value: unknown) {
     <label v-for="field in schema?.fields ?? []" :key="field.key" class="block space-y-1.5">
       <span class="text-sm font-medium">{{ field.label || field.key }}<span v-if="field.required" class="text-danger"> *</span></span>
       <small v-if="field.description" class="block text-xs text-muted-foreground">{{ field.description }}</small>
-      <select :disabled="readonly" v-if="options(field).length" class="admin-input" :value="config[field.key] ?? ''" :required="field.required" @change="update(field.key, field.enum_values?.find((value) => String(value) === ($event.target as HTMLSelectElement).value) ?? ($event.target as HTMLSelectElement).value)">
+      <div v-if="field.type === 'multi_select' && options(field).length" class="flex flex-wrap gap-1.5 pt-0.5">
+        <button
+          v-for="option in options(field)"
+          :key="option.id"
+          type="button"
+          :disabled="readonly"
+          :data-multi-select-option="option.id"
+          :aria-pressed="selectedValues(field.key).includes(option.id)"
+          :class="[
+            'rounded-md border px-2.5 py-1 font-mono text-xs transition-colors',
+            selectedValues(field.key).includes(option.id)
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
+          ]"
+          @click.prevent="toggleMultiSelect(field.key, option.id)"
+        >
+          {{ option.name }}
+        </button>
+      </div>
+      <select :disabled="readonly" v-else-if="options(field).length" class="admin-input" :value="config[field.key] ?? ''" :required="field.required" @change="update(field.key, field.enum_values?.find((value) => String(value) === ($event.target as HTMLSelectElement).value) ?? ($event.target as HTMLSelectElement).value)">
         <option value="">—</option><option v-if="config[field.key] && !options(field).some((option) => option.id === String(config[field.key]))" :value="config[field.key]">{{ config[field.key] }}</option><option v-for="option in options(field)" :key="option.id" :value="option.id">{{ option.name }}</option>
       </select>
       <input :disabled="readonly" v-else-if="field.type === 'boolean'" type="checkbox" :checked="Boolean(config[field.key])" @change="update(field.key, ($event.target as HTMLInputElement).checked)" />

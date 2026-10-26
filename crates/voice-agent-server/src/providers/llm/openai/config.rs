@@ -24,6 +24,8 @@ pub struct OpenAiConfig {
     pub reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature_percent: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 impl Default for OpenAiConfig {
@@ -37,6 +39,7 @@ impl Default for OpenAiConfig {
             context_limit_tokens: None,
             reasoning_effort: None,
             temperature_percent: None,
+            tags: None,
         }
     }
 }

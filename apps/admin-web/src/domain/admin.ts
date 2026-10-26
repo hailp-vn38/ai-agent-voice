@@ -1,6 +1,17 @@
 export const providerTypes = ['vad', 'asr', 'llm', 'tts', 'vision'] as const
 export type ProviderType = (typeof providerTypes)[number] | 'speaker' // legacy deserialization only
 
+export const llmCapabilityTags = [
+  'chat',
+  'vision',
+  'image',
+  'video',
+  'audio',
+  'reasoning',
+  'embedding',
+] as const
+export type LlmCapabilityTag = (typeof llmCapabilityTags)[number]
+
 export type ProviderStatus = 'ready' | 'disabled' | 'error'
 export type DeviceStatus = 'online' | 'offline'
 
@@ -12,6 +23,7 @@ export interface ProviderInstance {
   name: string
   type: ProviderType
   adapter: string
+  tags?: string[]
   credentialEnv?: string
   credential?: import('@/api/types/providers').CredentialMetadata | null
   model: string
@@ -20,6 +32,28 @@ export interface ProviderInstance {
   desiredRevision?: number
   runtime?: import('@/api/types/providers').ProviderRuntime
   endpoint?: string
+}
+
+export function effectiveLlmTags(
+  provider: Pick<ProviderInstance, 'type' | 'tags' | 'configJson'>,
+): string[] {
+  if (provider.type !== 'llm') return []
+  if (Array.isArray(provider.tags) && provider.tags.length > 0) return provider.tags
+  const raw = provider.configJson?.tags
+  if (Array.isArray(raw)) {
+    const valid = raw.filter(
+      (item): item is string => typeof item === 'string' && item.trim().length > 0,
+    )
+    if (valid.length > 0) return valid
+  }
+  return ['chat']
+}
+
+export function providerSupportsLlmTag(
+  provider: Pick<ProviderInstance, 'type' | 'tags' | 'configJson'>,
+  tag: string,
+): boolean {
+  return effectiveLlmTags(provider).includes(tag)
 }
 
 /**

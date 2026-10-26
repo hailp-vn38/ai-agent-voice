@@ -12,6 +12,66 @@ pub(crate) mod opencode_free;
 pub mod qualification;
 
 pub(crate) const REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
+pub const LLM_CAPABILITY_TAGS: &[&str] = &[
+    "chat",
+    "vision",
+    "image",
+    "video",
+    "audio",
+    "reasoning",
+    "embedding",
+];
+
+pub fn valid_llm_tags(tags: Option<&[String]>) -> bool {
+    let Some(tags) = tags else {
+        return true;
+    };
+    if tags.is_empty() || tags.len() > LLM_CAPABILITY_TAGS.len() {
+        return false;
+    }
+    for (idx, tag) in tags.iter().enumerate() {
+        if !LLM_CAPABILITY_TAGS.contains(&tag.as_str()) {
+            return false;
+        }
+        if tags[..idx].iter().any(|earlier| earlier == tag) {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn effective_llm_tags(tags: Option<&[String]>) -> Vec<String> {
+    match tags {
+        Some(list) if !list.is_empty() => list.to_vec(),
+        _ => vec!["chat".to_owned()],
+    }
+}
+
+pub fn llm_config_tags(config_json: &str) -> Vec<String> {
+    let Ok(parsed) = serde_json::from_str::<Value>(config_json) else {
+        return vec!["chat".to_owned()];
+    };
+    let Some(arr) = parsed.get("tags").and_then(Value::as_array) else {
+        return vec!["chat".to_owned()];
+    };
+    let tags: Vec<String> = arr
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|t| LLM_CAPABILITY_TAGS.contains(t))
+        .map(str::to_owned)
+        .collect();
+    if tags.is_empty() {
+        vec!["chat".to_owned()]
+    } else {
+        tags
+    }
+}
+
+pub fn llm_config_supports_tag(config_json: &str, required_tag: &str) -> bool {
+    llm_config_tags(config_json)
+        .iter()
+        .any(|t| t == required_tag)
+}
 
 pub(crate) fn valid_generation_bounds(
     max_tokens: Option<u32>,

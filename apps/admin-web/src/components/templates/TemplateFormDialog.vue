@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
 import {
+  providerSupportsLlmTag,
   providerTypes,
   templateLanguageOptions,
   type AgentTemplate,
@@ -67,7 +68,10 @@ const canContinue = computed(() => step.value !== 1 || form.name.trim().length >
 const canSave = computed(() => form.name.trim().length > 0)
 
 function candidatesFor(type: ProviderType) {
-  return props.providers.filter((provider) => provider.type === type)
+  return props.providers.filter(
+    (provider) =>
+      provider.type === type && (type !== 'llm' || providerSupportsLlmTag(provider, 'chat')),
+  )
 }
 
 function boundProviderName(type: ProviderType) {

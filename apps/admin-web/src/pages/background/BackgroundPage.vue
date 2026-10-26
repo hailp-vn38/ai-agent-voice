@@ -55,6 +55,24 @@ const modalForm = ref<{
 let controller: AbortController | undefined
 
 const providerOptions = computed(() => settings.value?.llm_providers ?? [])
+function providerSupportsAnyTag(option: BackgroundProviderOption, requiredTags: string[]): boolean {
+  const tags = option.tags && option.tags.length > 0 ? option.tags : ['chat']
+  return requiredTags.some(tag => tags.includes(tag))
+}
+const chatProviderOptions = computed(() =>
+  providerOptions.value.filter(option => providerSupportsAnyTag(option, ['chat'])),
+)
+function providerOptionsForAgent(agent: BackgroundAgentConfig | null): BackgroundProviderOption[] {
+  if (!agent) return chatProviderOptions.value
+  const allowedTags =
+    agent.id === 'media_creator' ? ['chat', 'image', 'video', 'audio'] : ['chat']
+  return providerOptions.value.filter(option => providerSupportsAnyTag(option, allowedTags))
+}
+function formatProviderOptionLabel(option: BackgroundProviderOption): string {
+  const modelPart = option.model && option.model !== option.name ? ` (${option.model})` : ''
+  const tagsPart = option.tags && option.tags.length > 0 ? ` [${option.tags.join(', ')}]` : ''
+  return `${option.name}${modelPart}${tagsPart} · ${option.source}`
+}
 const agentsCatalog = computed(() => settings.value?.agents ?? [])
 const dailyFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'daily'))
 const wikiFlowAgents = computed(() => agentsCatalog.value.filter(a => a.flow_id === 'wiki'))
@@ -368,16 +386,19 @@ onBeforeUnmount(() => controller?.abort())
               <span class="text-xs font-medium text-muted-foreground">{{ t('jobUi.providers') }}</span>
               <select v-model="draft.orchestrator_llm_provider" class="admin-input" :disabled="saving">
                 <option :value="null">{{ t('jobUi.chooseProvider') }}</option>
-                <option v-for="option in providerOptions" :key="option.ref" :value="option.ref">
-                  {{ option.name }}{{ option.model && option.model !== option.name ? ` (${option.model})` : '' }} · {{ option.source }}
+                <option v-for="option in chatProviderOptions" :key="option.ref" :value="option.ref">
+                  {{ formatProviderOptionLabel(option) }}
                 </option>
-                <option v-if="draft.orchestrator_llm_provider && !providerOptions.some(p => p.ref === draft.orchestrator_llm_provider)"
+                <option v-if="draft.orchestrator_llm_provider && !chatProviderOptions.some(p => p.ref === draft.orchestrator_llm_provider)"
                   :value="draft.orchestrator_llm_provider">{{ draft.orchestrator_llm_provider }} ({{ t('jobUi.unavailable') }})</option>
               </select>
             </label>
             <div v-if="findProvider(draft.orchestrator_llm_provider)" class="mt-3 flex flex-wrap gap-1.5 text-xs">
               <Badge v-if="findProvider(draft.orchestrator_llm_provider)?.model" variant="secondary">
                 model: {{ findProvider(draft.orchestrator_llm_provider)?.model }}
+              </Badge>
+              <Badge v-for="tag in findProvider(draft.orchestrator_llm_provider)?.tags ?? []" :key="tag" variant="outline">
+                tag: {{ tag }}
               </Badge>
               <Badge v-if="findProvider(draft.orchestrator_llm_provider)?.max_tokens" variant="outline">
                 max_tokens: {{ findProvider(draft.orchestrator_llm_provider)?.max_tokens }}
@@ -401,16 +422,19 @@ onBeforeUnmount(() => controller?.abort())
               <span class="text-xs font-medium text-muted-foreground">{{ t('jobUi.providers') }}</span>
               <select v-model="draft.worker_llm_provider" class="admin-input" :disabled="saving">
                 <option :value="null">{{ t('jobUi.chooseProvider') }}</option>
-                <option v-for="option in providerOptions" :key="option.ref" :value="option.ref">
-                  {{ option.name }}{{ option.model && option.model !== option.name ? ` (${option.model})` : '' }} · {{ option.source }}
+                <option v-for="option in chatProviderOptions" :key="option.ref" :value="option.ref">
+                  {{ formatProviderOptionLabel(option) }}
                 </option>
-                <option v-if="draft.worker_llm_provider && !providerOptions.some(p => p.ref === draft.worker_llm_provider)"
+                <option v-if="draft.worker_llm_provider && !chatProviderOptions.some(p => p.ref === draft.worker_llm_provider)"
                   :value="draft.worker_llm_provider">{{ draft.worker_llm_provider }} ({{ t('jobUi.unavailable') }})</option>
               </select>
             </label>
             <div v-if="findProvider(draft.worker_llm_provider)" class="mt-3 flex flex-wrap gap-1.5 text-xs">
               <Badge v-if="findProvider(draft.worker_llm_provider)?.model" variant="secondary">
                 model: {{ findProvider(draft.worker_llm_provider)?.model }}
+              </Badge>
+              <Badge v-for="tag in findProvider(draft.worker_llm_provider)?.tags ?? []" :key="tag" variant="outline">
+                tag: {{ tag }}
               </Badge>
               <Badge v-if="findProvider(draft.worker_llm_provider)?.max_tokens" variant="outline">
                 max_tokens: {{ findProvider(draft.worker_llm_provider)?.max_tokens }}
@@ -480,8 +504,8 @@ onBeforeUnmount(() => controller?.abort())
                   <option :value="null">
                     {{ t('jobUi.inheritProvider') }} ({{ draft.orchestrator_llm_provider }})
                   </option>
-                  <option v-for="option in providerOptions" :key="option.ref" :value="option.ref">
-                    {{ option.name }}{{ option.model && option.model !== option.name ? ` (${option.model})` : '' }} · {{ option.source }}
+                  <option v-for="option in providerOptionsForAgent(agent)" :key="option.ref" :value="option.ref">
+                    {{ formatProviderOptionLabel(option) }}
                   </option>
                 </select>
               </label>
@@ -589,8 +613,8 @@ onBeforeUnmount(() => controller?.abort())
               <option :value="null">
                 {{ t('jobUi.inheritProvider') }} ({{ editingAgentSpec.mode === 'primary' ? draft.orchestrator_llm_provider : draft.worker_llm_provider }})
               </option>
-              <option v-for="option in providerOptions" :key="option.ref" :value="option.ref">
-                {{ option.name }}{{ option.model && option.model !== option.name ? ` (${option.model})` : '' }} · {{ option.source }}
+              <option v-for="option in providerOptionsForAgent(editingAgentSpec)" :key="option.ref" :value="option.ref">
+                {{ formatProviderOptionLabel(option) }}
               </option>
             </select>
           </label>

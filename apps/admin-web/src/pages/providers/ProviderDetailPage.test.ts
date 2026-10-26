@@ -155,3 +155,27 @@ it.each(['cold', 'ready'])('config mutations stay disabled when runtime is %s', 
   expect(api.update).not.toHaveBeenCalled()
   expect(api.remove).not.toHaveBeenCalled()
 })
+
+it('displays multi_select capability tags in configuration details when present', async () => {
+  api.get.mockResolvedValue({
+    ...fixture,
+    config_json: JSON.stringify({
+      model: 'gpt-4o',
+      tags: ['chat', 'vision', 'image'],
+    }),
+  })
+  adapters.get.mockResolvedValue({
+    adapter: 'openai',
+    type: 'llm',
+    config_schema: {
+      fields: [
+        { key: 'tags', type: 'multi_select', label: 'Capability tags', enum_values: ['chat', 'vision', 'image', 'video'] },
+      ],
+    },
+  })
+  const wrapper = render()
+  await flushPromises()
+  expect(wrapper.text()).toContain('Capability tags')
+  expect(wrapper.text()).toContain('chat, vision, image')
+  wrapper.unmount()
+})

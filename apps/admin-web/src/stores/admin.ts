@@ -16,6 +16,7 @@ import type {
   TemplateProviderType,
 } from '@/api/types/templates'
 import {
+  effectiveLlmTags,
   providerTypes,
   type Agent,
   type AgentTemplate,
@@ -114,15 +115,18 @@ function providerConfig(provider: AdminProvider, field: string): string {
 }
 
 function toProvider(provider: AdminProvider): ProviderInstance {
+  const configJson = providerConfiguration(provider)
+  const type = provider.type as ProviderType
   return {
     source: provider.source,
     id: provider.key,
     name: provider.name,
-    type: provider.type as ProviderType,
+    type,
     adapter: provider.adapter,
+    tags: type === 'llm' ? effectiveLlmTags({ type, configJson }) : undefined,
     credentialEnv: provider.credential_env ?? undefined,
     credential: provider.credential,
-    configJson: providerConfiguration(provider),
+    configJson,
     model: providerConfig(provider, 'model'),
     description: providerConfig(provider, 'description'),
     status: providerStatus(provider),
@@ -132,11 +136,12 @@ function toProvider(provider: AdminProvider): ProviderInstance {
   }
 }
 
-function toProviderConfig(instance: Pick<ProviderInstance, 'model' | 'description' | 'endpoint'>) {
+function toProviderConfig(instance: Pick<ProviderInstance, 'model' | 'description' | 'endpoint' | 'tags'>) {
   return {
     ...(instance.model ? { model: instance.model } : {}),
     ...(instance.description ? { description: instance.description } : {}),
     ...(instance.endpoint ? { endpoint: instance.endpoint } : {}),
+    ...(instance.tags?.length ? { tags: instance.tags } : {}),
   }
 }
 
@@ -476,7 +481,7 @@ export const useAdminStore = defineStore('admin', () => {
     const needle = query.trim().toLowerCase()
     if (!needle) return providerList.value
     return providerList.value.filter((provider) =>
-      [provider.name, provider.adapter, provider.model].some((field) =>
+      [provider.name, provider.adapter, provider.model, ...(provider.tags ?? [])].some((field) =>
         field.toLowerCase().includes(needle),
       ),
     )

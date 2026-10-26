@@ -405,3 +405,88 @@ fn project_task_to_admin_job_and_events_include_agent_messages_for_tool_calls() 
         "Tôi sẽ tra cứu Wiki về Rust trước."
     );
 }
+
+#[test]
+fn resolved_llm_provider_exposes_capability_tags_and_enforces_agent_compatibility() {
+    use crate::services::task_flow::agent_settings::{
+        AgentConfigOverride, ResolvedLlmProvider, find_provider_by_tag, validate_agent_overrides,
+    };
+    use std::collections::BTreeMap;
+
+    let chat_provider = ResolvedLlmProvider {
+        provider_ref: "llm_chat".into(),
+        name: "GPT-4o".into(),
+        source: "database",
+        adapter: "openai".into(),
+        model: "gpt-4o".into(),
+        base_url: "https://api.example.com/v1".into(),
+        api_key: None,
+        timeout_ms: 30_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 128_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["chat".into(), "vision".into()],
+    };
+    let image_only_provider = ResolvedLlmProvider {
+        provider_ref: "llm_image".into(),
+        name: "Flux Image".into(),
+        source: "database",
+        adapter: "openai".into(),
+        model: "flux-1".into(),
+        base_url: "https://api.example.com/v1".into(),
+        api_key: None,
+        timeout_ms: 30_000,
+        max_tokens: 4_096,
+        context_limit_tokens: 32_000,
+        reasoning_effort: None,
+        temperature_percent: None,
+        tags: vec!["image".into()],
+    };
+
+    let summary = chat_provider.to_json_summary();
+    assert_eq!(summary["tags"], serde_json::json!(["chat", "vision"]));
+
+    let catalog = vec![chat_provider, image_only_provider];
+    assert_eq!(
+        find_provider_by_tag(&catalog, "image").map(|p| p.provider_ref.as_str()),
+        Some("llm_image")
+    );
+    assert_eq!(
+        find_provider_by_tag(&catalog, "vision").map(|p| p.provider_ref.as_str()),
+        Some("llm_chat")
+    );
+    assert!(find_provider_by_tag(&catalog, "video").is_none());
+
+    // Orchestrator provider must support `chat`
+    assert_eq!(
+        validate_agent_overrides("llm_image", "llm_chat", &BTreeMap::new(), &catalog),
+        Err("provider_capability_mismatch")
+    );
+
+    // Media creator can use an `image`-tagged provider, whereas `wiki_researcher` requires `chat`
+    let mut media_overrides = BTreeMap::new();
+    media_overrides.insert(
+        "media_creator".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            provider_ref: Some("llm_image".to_owned()),
+            ..Default::default()
+        },
+    );
+    assert!(validate_agent_overrides("llm_chat", "llm_chat", &media_overrides, &catalog).is_ok());
+
+    let mut wiki_overrides = BTreeMap::new();
+    wiki_overrides.insert(
+        "wiki_researcher".to_owned(),
+        AgentConfigOverride {
+            enabled: true,
+            provider_ref: Some("llm_image".to_owned()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        validate_agent_overrides("llm_chat", "llm_chat", &wiki_overrides, &catalog),
+        Err("provider_capability_mismatch")
+    );
+}

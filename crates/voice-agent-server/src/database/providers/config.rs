@@ -136,6 +136,8 @@ struct OpenAi {
     reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     temperature_percent: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tags: Option<Vec<String>>,
 }
 impl OpenAi {
     fn valid(&self) -> bool {
@@ -148,6 +150,7 @@ impl OpenAi {
                 self.reasoning_effort.as_deref(),
                 self.temperature_percent,
             )
+            && crate::providers::llm::valid_llm_tags(self.tags.as_deref())
     }
 }
 #[derive(Deserialize, Serialize)]
@@ -164,6 +167,8 @@ struct OpenCodeFree {
     reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     temperature_percent: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tags: Option<Vec<String>>,
 }
 impl OpenCodeFree {
     fn valid(&self) -> bool {
@@ -175,6 +180,7 @@ impl OpenCodeFree {
                 self.reasoning_effort.as_deref(),
                 self.temperature_percent,
             )
+            && crate::providers::llm::valid_llm_tags(self.tags.as_deref())
     }
 }
 #[derive(Deserialize, Serialize)]

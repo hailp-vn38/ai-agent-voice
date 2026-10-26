@@ -14,7 +14,7 @@ import ProviderTestPanel from '@/components/providers/ProviderTestPanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/composables/useI18n'
-import type { ProviderInstance, ProviderStatus, ProviderType } from '@/domain/admin'
+import { effectiveLlmTags, type ProviderInstance, type ProviderStatus, type ProviderType } from '@/domain/admin'
 import { providerTypeIcons } from '@/lib/providerTypeIcons'
 import { redactEndpoint } from '@/lib/providerEndpoint'
 import { useAdminStore } from '@/stores/admin'
@@ -99,8 +99,17 @@ const sensitiveField = (field: string) => /key|token|password|secret|credential|
 const configFields = computed(() => (adapterDescriptor.value?.config_schema?.fields ?? [])
   .filter((field) => !sensitiveField(field.key) && field.key !== 'model' && field.key !== 'base_url' && field.key !== 'endpoint')
   .flatMap((field) => {
-    const value = config.value[field.key]
-    if (value === undefined || value === null || typeof value === 'object') return []
+    const rawValue = config.value[field.key]
+    const value =
+      rawValue === undefined && field.key === 'tags' && provider.value?.type === 'llm'
+        ? effectiveLlmTags({ type: 'llm', configJson: config.value })
+        : rawValue
+    if (value === undefined || value === null) return []
+    if (Array.isArray(value)) {
+      const items = value.map(String).filter(Boolean)
+      return items.length ? [{ key: field.key, label: field.label || field.key, value: items.join(', ') }] : []
+    }
+    if (typeof value === 'object') return []
     return [{ key: field.key, label: field.label || field.key, value: typeof value === 'string' && (value.startsWith('https://') || value.startsWith('http://')) ? redactEndpoint(value) : String(value) }]
   }))
 

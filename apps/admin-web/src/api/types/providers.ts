@@ -99,7 +99,7 @@ export interface ProviderConfigField {
   key: string
   label?: string
   description?: string
-  type: 'string' | 'integer' | 'boolean' | 'select'
+  type: 'string' | 'integer' | 'boolean' | 'select' | 'multi_select'
   required?: boolean
   minimum?: number
   maximum?: number

@@ -8,6 +8,7 @@ fn config(model: &str) -> OpenCodeFreeConfig {
         context_limit_tokens: None,
         reasoning_effort: None,
         temperature_percent: None,
+        tags: None,
     }
 }
 

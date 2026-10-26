@@ -65,7 +65,7 @@ async fn build_settings_json(
     let valid_ref = |pref: &str| -> String {
         catalog
             .iter()
-            .find(|p| p.provider_ref == pref)
+            .find(|p| p.provider_ref == pref && p.supports_tag("chat"))
             .map(|p| p.provider_ref.clone())
             .unwrap_or_else(|| DEFAULT_ORCHESTRATOR_PROVIDER_REF.to_owned())
     };

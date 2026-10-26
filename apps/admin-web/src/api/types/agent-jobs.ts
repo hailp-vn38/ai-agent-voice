@@ -6,6 +6,7 @@ export interface BackgroundProviderOption {
   source: 'config' | 'database'
   adapter?: string
   model?: string
+  tags?: string[]
   base_url?: string
   timeout_ms?: number
   max_tokens?: number

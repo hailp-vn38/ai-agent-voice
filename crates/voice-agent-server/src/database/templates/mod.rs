@@ -199,15 +199,22 @@ impl Database {
         let mut tx = pool.begin().await.map_err(|_| WriteError::Unavailable)?;
         let (provider_source, provider_id, config_key) = match reference.origin {
             crate::providers::config_catalog::ProviderOrigin::Database => {
-                let (id, kind, enabled): (i64, String, i64) =
-                    sqlx::query_as("SELECT id,type,enabled FROM providers WHERE key=?")
-                        .bind(&reference.key)
-                        .fetch_optional(&mut *tx)
-                        .await
-                        .map_err(WriteError::Sql)?
-                        .ok_or(WriteError::Invalid("invalid_provider"))?;
+                let (id, kind, enabled, config_json): (i64, String, i64, String) =
+                    sqlx::query_as(
+                        "SELECT id,type,enabled,config_json FROM providers WHERE key=?",
+                    )
+                    .bind(&reference.key)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(WriteError::Sql)?
+                    .ok_or(WriteError::Invalid("invalid_provider"))?;
                 if kind != provider_type || enabled != 1 {
                     return Err(WriteError::Invalid("invalid_provider"));
+                }
+                if kind == "llm"
+                    && !crate::providers::llm::llm_config_supports_tag(&config_json, "chat")
+                {
+                    return Err(WriteError::Invalid("provider_capability_mismatch"));
                 }
                 ("database", Some(id), None)
             }

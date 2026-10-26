@@ -10,9 +10,12 @@ use crate::providers::{
     capabilities::{CapabilityDiscoveryMode, DiscoverySource, ProviderCapabilities},
     descriptor::{
         ConfigFieldType, ProviderConfigField, ProviderConfigSchema, ProviderDescriptor,
-        ProviderType, field, select_field,
+        ProviderType, field, multi_select_field, select_field,
     },
-    llm::{LlmEvent, LlmEventStream, LlmRequest, ToolDefinition, stream_openai_request},
+    llm::{
+        LLM_CAPABILITY_TAGS, LlmEvent, LlmEventStream, LlmRequest, ToolDefinition,
+        stream_openai_request,
+    },
     registry::ProviderAdapterRegistration,
 };
 
@@ -42,6 +45,8 @@ pub struct OpenCodeFreeConfig {
     pub reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature_percent: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 pub(crate) fn valid_free_model_id(model: &str) -> bool {
@@ -62,6 +67,7 @@ impl OpenCodeFreeConfig {
                 self.reasoning_effort.as_deref(),
                 self.temperature_percent,
             )
+            && super::valid_llm_tags(self.tags.as_deref())
     }
 }
 
@@ -244,6 +250,7 @@ const FIELDS: &[ProviderConfigField] = &[
         Some(200),
         None,
     ),
+    multi_select_field("tags", "Capability tags", LLM_CAPABILITY_TAGS),
 ];
 
 pub static DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {

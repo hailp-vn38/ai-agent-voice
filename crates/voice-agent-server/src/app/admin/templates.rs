@@ -260,8 +260,17 @@ pub(super) async fn bind_template_provider(
         Err(()) => return error(&request, StatusCode::BAD_REQUEST, "invalid_provider"),
     };
     if reference.origin == crate::providers::config_catalog::ProviderOrigin::Config {
-        if reference.snapshot(&state.config).is_err() {
+        let Ok(snapshot) = reference.snapshot(&state.config) else {
             return error(&request, StatusCode::BAD_REQUEST, "invalid_provider");
+        };
+        if provider_type == "llm"
+            && !crate::providers::llm::llm_config_supports_tag(&snapshot.config_json, "chat")
+        {
+            return error(
+                &request,
+                StatusCode::BAD_REQUEST,
+                "provider_capability_mismatch",
+            );
         }
         if state.provider_runtime_manager.is_none() {
             return error(

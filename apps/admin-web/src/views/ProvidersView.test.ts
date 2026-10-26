@@ -13,7 +13,8 @@ import ProvidersView from './ProvidersView.vue'
 
 const providers = [
   { id: 'tts_primary', name: 'TTS Primary', type: 'tts', status: 'ready', adapter: 'test', model: '', description: '' },
-  { id: 'llm_primary', name: 'LLM Primary', type: 'llm', status: 'ready', adapter: 'test', model: '', description: '' },
+  { id: 'llm_primary', name: 'LLM Primary', type: 'llm', status: 'ready', adapter: 'test', model: '', description: '', tags: ['chat', 'vision'] },
+  { id: 'llm_video', name: 'LLM Video', type: 'llm', status: 'ready', adapter: 'test', model: '', description: '', tags: ['video', 'image'] },
 ]
 vi.mock('@/stores/admin', () => ({
   useAdminStore: () => ({
@@ -88,6 +89,33 @@ it.each(['header', 'browser'])('keeps the TTS tab after opening details and goin
     expect(router.currentRoute.value.path).toBe('/providers')
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toContain('TTS')
     expect(wrapper.findAllComponents(ProviderCatalogCard).map((card) => card.props('provider').id)).toEqual(['tts_primary'])
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('renders capability tags on LLM cards and filters LLM providers by capability tag', async () => {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/providers', component: ProvidersView }],
+  })
+  await router.push('/providers?type=llm')
+  await router.isReady()
+  const wrapper = mount(ProvidersView, {
+    global: {
+      plugins: [router],
+      stubs: { ProviderCreateDrawer: true, ProviderFormModal: true, LinkProviderTemplateDialog: true, ConfirmDialog: true, ProviderTestPanel: true },
+    },
+  })
+  try {
+    const cards = wrapper.findAllComponents(ProviderCatalogCard)
+    expect(cards.map((card) => card.props('provider').id)).toEqual(['llm_primary', 'llm_video'])
+    expect(wrapper.findAll('[data-llm-tag]').map((el) => el.text())).toEqual(['chat', 'vision', 'video', 'image'])
+
+    const videoFilter = wrapper.get('[data-tag-filter="video"]')
+    await videoFilter.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAllComponents(ProviderCatalogCard).map((card) => card.props('provider').id)).toEqual(['llm_video'])
   } finally {
     wrapper.unmount()
   }
