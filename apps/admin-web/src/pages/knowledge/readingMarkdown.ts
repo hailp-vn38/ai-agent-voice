@@ -12,10 +12,11 @@ function slug(title: string): string {
 }
 
 export function getHeadings(source: string): Heading[] {
+  const body = source.replace(/^(?:\uFEFF)?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '')
   const counts = new Map<string, number>()
   let fence = ''
   const results: Heading[] = []
-  for (const line of source.split(/\r?\n/)) {
+  for (const line of body.split(/\r?\n/)) {
     const marker = /^\s*(\x60{3,}|~{3,})/.exec(line)
     if (marker) {
       if (!fence) fence = marker[1][0]
@@ -117,8 +118,9 @@ function inlineMarkdown(source: string): string {
 }
 
 export function renderMarkdown(source: string, skipLeadingTitle = ''): string {
-  const lines = source.split(/\r?\n/)
-  const headings = getHeadings(source)
+  const body = source.replace(/^(?:\uFEFF)?---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '')
+  const lines = body.split(/\r?\n/)
+  const headings = getHeadings(body)
   let headingPosition = 0
   let html = ''
   let paragraph: string[] = []

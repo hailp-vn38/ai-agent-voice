@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Network, Link2, FileText, Folder, FolderOpen, FolderPlus, FilePlus2, Pencil, ChevronsUp, BookOpen, ArrowUpRight, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from '@lucide/vue'
-import { renderMarkdown, markdownOutline } from './markdown'
+import { renderMarkdown, markdownOutline, parseMarkdownProperties, stripMarkdownFrontmatter } from './markdown'
 import { renderMermaidBlocks } from './mermaidRenderer'
 import { useTheme } from '@/composables/useTheme'
 import './knowledge-reader.css'
@@ -41,6 +41,7 @@ const VAULT_SPACE_KEY = 'voice-agent-knowledge-vault-space'
 const EXPLORER_STATE_KEY = 'voice-agent-knowledge-explorer-state-v1'
 const EXPLORER_COLLAPSED_KEY = 'voice-agent-knowledge-explorer-collapsed'
 const OUTLINE_COLLAPSED_KEY = 'voice-agent-knowledge-outline-collapsed'
+const PROPERTIES_COLLAPSED_KEY = 'voice-agent-knowledge-properties-collapsed'
 function restoredExplorerCollapsed(): boolean {
   try {
     return window.localStorage.getItem(EXPLORER_COLLAPSED_KEY) === 'true'
@@ -55,8 +56,16 @@ function restoredOutlineCollapsed(): boolean {
     return false
   }
 }
+function restoredPropertiesCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(PROPERTIES_COLLAPSED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 const explorerCollapsed = ref(restoredExplorerCollapsed())
 const outlineCollapsed = ref(restoredOutlineCollapsed())
+const propertiesCollapsed = ref(restoredPropertiesCollapsed())
 function toggleExplorer() {
   explorerCollapsed.value = !explorerCollapsed.value
   try {
@@ -67,6 +76,12 @@ function toggleOutline() {
   outlineCollapsed.value = !outlineCollapsed.value
   try {
     window.localStorage.setItem(OUTLINE_COLLAPSED_KEY, String(outlineCollapsed.value))
+  } catch { /* Storage can be disabled; keep the default. */ }
+}
+function toggleProperties() {
+  propertiesCollapsed.value = !propertiesCollapsed.value
+  try {
+    window.localStorage.setItem(PROPERTIES_COLLAPSED_KEY, String(propertiesCollapsed.value))
   } catch { /* Storage can be disabled; keep the default. */ }
 }
 type ExplorerPreference = { openFolders: string[]; selectedPath: string }
@@ -896,8 +911,9 @@ const activeHeading = ref('')
 const linkedNotes = ref<{ id: string; title: string }[]>([])
 let linkedRequestVersion = 0
 
+const noteProperties = computed(() => parseMarkdownProperties(body.value))
 const visibleMarkdown = computed(() => {
-  const markdown = body.value.trimStart()
+  const markdown = stripMarkdownFrontmatter(body.value).trimStart()
   const first = /^#\s+(.+?)\s*(?:\r?\n|$)/.exec(markdown)
   return first && first[1].trim().toLowerCase() === title.value.trim().toLowerCase()
     ? markdown.slice(first[0].length).trimStart()
@@ -1294,6 +1310,39 @@ onMounted(() => {
         <article v-else-if="selected || rawFile || readOnlySource" class="doc">
           <div class="doc-overline"><span>{{ activeSpace }} / Markdown note</span><span>·</span><span>Knowledge vault</span></div>
           <h1>{{ noteTitle }}</h1>
+          <section v-if="noteProperties.length" class="doc-properties" aria-label="Note properties">
+            <button type="button" class="doc-properties-toggle"
+              :aria-expanded="!propertiesCollapsed"
+              aria-controls="knowledge-doc-properties-list"
+              @click="toggleProperties">
+              <ChevronRight v-if="propertiesCollapsed" :size="14" class="shrink-0 opacity-70" />
+              <ChevronDown v-else :size="14" class="shrink-0 opacity-70" />
+              <span>Properties</span>
+              <span class="doc-properties-count">{{ noteProperties.length }}</span>
+            </button>
+            <div v-if="!propertiesCollapsed" id="knowledge-doc-properties-list" class="doc-properties-grid">
+              <div v-for="prop in noteProperties" :key="prop.key" class="doc-prop-row">
+                <div class="doc-prop-key">{{ prop.label }}</div>
+                <div class="doc-prop-val">
+                  <template v-if="prop.kind === 'badge'">
+                    <span v-for="val in prop.values" :key="val" class="doc-prop-badge">{{ val }}</span>
+                  </template>
+                  <template v-else-if="prop.kind === 'tags'">
+                    <span v-for="tag in prop.values" :key="tag" class="doc-prop-tag">#{{ tag }}</span>
+                  </template>
+                  <template v-else-if="prop.kind === 'code-list'">
+                    <code v-for="item in prop.values" :key="item" class="doc-prop-code">{{ item }}</code>
+                  </template>
+                  <template v-else-if="prop.kind === 'date'">
+                    <time class="doc-prop-date" :datetime="prop.raw || prop.values[0]" :title="prop.raw || prop.values[0]">{{ prop.values[0] }}</time>
+                  </template>
+                  <template v-else>
+                    <span class="doc-prop-text">{{ prop.values.join(', ') }}</span>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </section>
           <div v-if="leadHtml" class="lead" v-html="leadHtml"></div>
           <div class="doc-divider"></div>
           <div class="markdown-body" v-html="renderedBody" @click="onMarkdownClick"></div>

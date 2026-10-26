@@ -695,3 +695,72 @@ it('shares a single pair of left and right panel toggle actions across Knowledge
   }
 })
 
+it('renders YAML frontmatter as a collapsible Obsidian-style Properties section and removes raw frontmatter from the article body', async () => {
+  const fallback = requestJsonMock.getMockImplementation()!
+  requestJsonMock.mockImplementation(async (url: string) => {
+    if (url === '/api/admin/knowledge/pages/wiki_demo') {
+      return {
+        id: 'wiki_demo',
+        title: 'Đón không khí lạnh, miền Bắc giảm mấy độ?',
+        body: [
+          '---',
+          'title: "Đón không khí lạnh, miền Bắc giảm mấy độ?"',
+          'category: "source_summary"',
+          'summary: "Tin ngắn cho biết không khí lạnh tác động miền Bắc."',
+          'source_file: "don-khong-khi-lanh-mien-bac-giam-may-do.md"',
+          'source_count: 1',
+          'sources:',
+          '  - "don-khong-khi-lanh-mien-bac-giam-may-do.md"',
+          'tags:',
+          '  - "wiki/source"',
+          '  - "topic/weather/cold-air"',
+          'updated_at: "2026-10-24T17:17:57.633104+00:00"',
+          'qmd:',
+          '  metadata:',
+          '    category: "source_summary"',
+          '---',
+          '',
+          '# Đón không khí lạnh, miền Bắc giảm mấy độ?',
+          '',
+          'Đoạn mở đầu chính thức của bài viết.',
+          '',
+          '## Chi tiết dự báo',
+          '',
+          'Mưa rào và dông rải rác.',
+        ].join('\n'),
+        status: 'verified',
+        revision: 1,
+        source_ref: null,
+      }
+    }
+    return fallback(url)
+  })
+
+  const wrapper = mount(KnowledgePage)
+  try {
+    await flushPromises()
+    const propsSection = wrapper.get('section.doc-properties')
+    expect(propsSection.text()).toContain('Properties')
+    expect(propsSection.get('.doc-prop-badge').text()).toBe('source_summary')
+    expect(propsSection.findAll('.doc-prop-tag').map(t => t.text())).toEqual([
+      '#wiki/source',
+      '#topic/weather/cold-air',
+    ])
+    expect(propsSection.get('.doc-prop-code').text()).toBe('don-khong-khi-lanh-mien-bac-giam-may-do.md')
+    expect(propsSection.get('.doc-prop-date').text()).toBe('2026-10-24 17:17')
+    expect(propsSection.text()).not.toContain('qmd')
+
+    // Raw frontmatter is stripped from lead & markdown body, and duplicate H1 after frontmatter is removed
+    expect(wrapper.get('.doc .lead').text()).toBe('Đoạn mở đầu chính thức của bài viết.')
+    expect(wrapper.get('.markdown-body').text()).not.toContain('source_summary')
+    expect(wrapper.find('.markdown-body h1').exists()).toBe(false)
+
+    // Collapsing Properties hides the grid and persists in localStorage
+    await propsSection.get('button.doc-properties-toggle').trigger('click')
+    expect(propsSection.find('.doc-properties-grid').exists()).toBe(false)
+    expect(window.localStorage.getItem('voice-agent-knowledge-properties-collapsed')).toBe('true')
+  } finally {
+    wrapper.unmount()
+  }
+})
+

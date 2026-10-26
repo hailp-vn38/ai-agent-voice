@@ -3,6 +3,136 @@
  * User content is escaped before it becomes HTML; raw HTML never executes.
  */
 export type MarkdownHeading = { id: string; level: number; title: string }
+export type MarkdownProperty = {
+  key: string
+  label: string
+  kind: 'badge' | 'tags' | 'code-list' | 'date' | 'text'
+  values: string[]
+  raw?: string
+}
+
+const FRONTMATTER_RE = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/
+
+export function stripMarkdownFrontmatter(markdown: string): string {
+  const match = FRONTMATTER_RE.exec(markdown)
+  return match ? markdown.slice(match[0].length) : markdown
+}
+
+function unquoteYaml(value: string): string {
+  const trimmed = value.trim()
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim()
+  }
+  return trimmed
+}
+
+function formatPropertyDate(value: string): string {
+  const match = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/.exec(value)
+  return match ? `${match[1]} ${match[2]}` : value
+}
+
+function formatPropertyLabel(key: string): string {
+  const labels: Record<string, string> = {
+    category: 'Category',
+    status: 'Status',
+    tags: 'Tags',
+    sources: 'Sources',
+    source_file: 'Source',
+    updated_at: 'Updated',
+    created_at: 'Created',
+    summary: 'Summary',
+  }
+  if (labels[key]) return labels[key]
+  const spaced = key.replace(/[_-]+/g, ' ').trim()
+  return spaced ? spaced[0]!.toUpperCase() + spaced.slice(1) : key
+}
+
+export function parseMarkdownProperties(markdown: string): MarkdownProperty[] {
+  const match = FRONTMATTER_RE.exec(markdown)
+  if (!match) return []
+  const entries = new Map<string, string[]>()
+  let currentListKey: string | null = null
+
+  for (const line of match[1].split(/\r?\n/)) {
+    if (!line.trim() || /^\s*#/.test(line)) continue
+    const topKey = /^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/.exec(line)
+    if (topKey) {
+      const key = topKey[1]!
+      const rest = topKey[2]!.trim()
+      if (key === 'qmd') {
+        currentListKey = null
+        continue
+      }
+      if (!rest) {
+        currentListKey = key
+        if (!entries.has(key)) entries.set(key, [])
+      } else {
+        currentListKey = null
+        if (rest.startsWith('[') && rest.endsWith(']')) {
+          const items = rest
+            .slice(1, -1)
+            .split(',')
+            .map(unquoteYaml)
+            .filter(Boolean)
+          if (items.length) entries.set(key, items)
+        } else {
+          const clean = unquoteYaml(rest)
+          if (clean) entries.set(key, [clean])
+        }
+      }
+      continue
+    }
+    if (currentListKey) {
+      const listItem = /^\s+-\s+(.*)$/.exec(line)
+      if (listItem) {
+        const clean = unquoteYaml(listItem[1]!)
+        if (clean) entries.get(currentListKey)?.push(clean)
+        continue
+      }
+      currentListKey = null
+    }
+  }
+
+  entries.delete('title')
+  entries.delete('qmd')
+  if (entries.has('sources') && (entries.get('sources')?.length ?? 0) > 0) {
+    entries.delete('source_file')
+    entries.delete('source_count')
+  }
+
+  const priority = ['category', 'status', 'tags', 'sources', 'source_file', 'updated_at', 'created_at', 'date', 'summary']
+  const keys = [
+    ...priority.filter(k => entries.has(k)),
+    ...[...entries.keys()].filter(k => !priority.includes(k)),
+  ]
+
+  const result: MarkdownProperty[] = []
+  for (const key of keys) {
+    const values = (entries.get(key) ?? []).filter(Boolean)
+    if (!values.length) continue
+    if (key === 'category' || key === 'status') {
+      result.push({ key, label: formatPropertyLabel(key), kind: 'badge', values })
+    } else if (key === 'tags') {
+      result.push({ key, label: formatPropertyLabel(key), kind: 'tags', values })
+    } else if (key === 'sources' || key === 'source_file') {
+      result.push({ key, label: formatPropertyLabel(key), kind: 'code-list', values })
+    } else if (key === 'updated_at' || key === 'created_at' || key === 'date') {
+      result.push({
+        key,
+        label: formatPropertyLabel(key),
+        kind: 'date',
+        values: values.map(formatPropertyDate),
+        raw: values[0],
+      })
+    } else {
+      result.push({ key, label: formatPropertyLabel(key), kind: 'text', values })
+    }
+  }
+  return result
+}
 
 const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -11,10 +141,11 @@ const slug = (value: string) =>
   value.trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/\s+/g, '-').replace(/-+/g, '-') || 'section'
 
 export function markdownOutline(markdown: string): MarkdownHeading[] {
+  const body = stripMarkdownFrontmatter(markdown)
   const used = new Map<string, number>()
   let fence: string | null = null
   const result: MarkdownHeading[] = []
-  for (const line of markdown.split(/\r?\n/)) {
+  for (const line of body.split(/\r?\n/)) {
     const delimiter = /^\s*(\x60{3,}|~{3,})/.exec(line)?.[1]
     if (delimiter) {
       if (fence === null) fence = delimiter[0]
@@ -125,7 +256,8 @@ function inline(value: string): string {
 }
 
 export function renderMarkdown(markdown: string): string {
-  const headings = markdownOutline(markdown)
+  const body = stripMarkdownFrontmatter(markdown)
+  const headings = markdownOutline(body)
   let headingIndex = 0
   let output = ''
   let paragraph: string[] = []
@@ -146,7 +278,7 @@ export function renderMarkdown(markdown: string): string {
     if (list) output += '</' + list + '>'
     list = null
   }
-  for (const line of markdown.split(/\r?\n/)) {
+  for (const line of body.split(/\r?\n/)) {
     const delimiter = /^\s*(\x60{3,}|~{3,})\s*([\w-]*)/.exec(line)
     if (code !== null) {
       if (delimiter && delimiter[1][0] === fence) {
