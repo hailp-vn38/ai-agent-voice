@@ -202,12 +202,18 @@ impl ConfiguredOpenAiLlm {
         self.decode_media_json(value, default_mime_type).await
     }
 
-    async fn decode_media_json(
+    async fn try_decode_direct_media(
         &self,
-        value: Value,
+        value: &Value,
         default_mime_type: &str,
-    ) -> Result<LlmOutput, LlmError> {
+    ) -> Result<Option<LlmOutput>, LlmError> {
         if value.get("error").is_some_and(|err| !err.is_null()) {
+            return Err(LlmError::Rejected);
+        }
+        if matches!(
+            value.get("status").and_then(Value::as_str),
+            Some("failed" | "cancelled" | "canceled" | "expired")
+        ) {
             return Err(LlmError::Rejected);
         }
         if let Some(b64) = value
@@ -220,10 +226,10 @@ impl ConfiguredOpenAiLlm {
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }
-            return Ok(LlmOutput::Media {
+            return Ok(Some(LlmOutput::Media {
                 bytes,
                 mime_type: default_mime_type.to_owned(),
-            });
+            }));
         }
 
         if let Some(url) = value
@@ -239,10 +245,10 @@ impl ConfiguredOpenAiLlm {
                 if bytes.is_empty() {
                     return Err(LlmError::Rejected);
                 }
-                return Ok(LlmOutput::Media {
+                return Ok(Some(LlmOutput::Media {
                     bytes,
                     mime_type: default_mime_type.to_owned(),
-                });
+                }));
             }
             let media_resp = self
                 .client
@@ -255,28 +261,38 @@ impl ConfiguredOpenAiLlm {
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }
-            return Ok(LlmOutput::Media {
+            return Ok(Some(LlmOutput::Media {
                 bytes: bytes.to_vec(),
                 mime_type: default_mime_type.to_owned(),
-            });
+            }));
         }
 
-        if default_mime_type.starts_with("video/")
-            && value.get("status").and_then(Value::as_str) == Some("completed")
-            && let Some(video_id) = value.get("id").and_then(Value::as_str)
-            && !video_id.trim().is_empty()
-        {
-            let api_key = self.ensure_api_key()?;
-            let content_endpoint = self.endpoint(&format!("videos/{video_id}/content"))?;
-            let media_resp = self
-                .client
-                .get(content_endpoint)
-                .bearer_auth(api_key)
-                .send()
-                .await
-                .map_err(|_| LlmError::Failed)?;
-            let media_resp = Self::check_response(media_resp).await?;
-            let bytes = media_resp.bytes().await.map_err(|_| LlmError::Failed)?;
+        Ok(None)
+    }
+
+    async fn fetch_video_content(
+        &self,
+        video_id: &str,
+        default_mime_type: &str,
+    ) -> Result<LlmOutput, LlmError> {
+        let api_key = self.ensure_api_key()?;
+        let content_endpoint = self.endpoint(&format!("videos/{video_id}/content"))?;
+        let response = self
+            .client
+            .get(content_endpoint)
+            .bearer_auth(api_key)
+            .send()
+            .await
+            .map_err(|_| LlmError::Failed)?;
+        let response = Self::check_response(response).await?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !content_type.is_empty() && !content_type.contains("json") {
+            let bytes = response.bytes().await.map_err(|_| LlmError::Failed)?;
             if bytes.is_empty() {
                 return Err(LlmError::Rejected);
             }
@@ -284,6 +300,79 @@ impl ConfiguredOpenAiLlm {
                 bytes: bytes.to_vec(),
                 mime_type: default_mime_type.to_owned(),
             });
+        }
+        let value: Value = response.json().await.map_err(|_| LlmError::Rejected)?;
+        self.try_decode_direct_media(&value, default_mime_type)
+            .await?
+            .ok_or(LlmError::Rejected)
+    }
+
+    async fn decode_media_json(
+        &self,
+        value: Value,
+        default_mime_type: &str,
+    ) -> Result<LlmOutput, LlmError> {
+        if let Some(media) = self
+            .try_decode_direct_media(&value, default_mime_type)
+            .await?
+        {
+            return Ok(media);
+        }
+
+        if default_mime_type.starts_with("video/")
+            && let Some(video_id) = value
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+        {
+            match value.get("status").and_then(Value::as_str) {
+                Some("completed" | "succeeded") => {
+                    return self.fetch_video_content(video_id, default_mime_type).await;
+                }
+                Some("queued" | "in_progress" | "pending" | "processing" | "running") => {
+                    let api_key = self.ensure_api_key()?;
+                    let status_endpoint = self.endpoint(&format!("videos/{video_id}"))?;
+                    let deadline =
+                        tokio::time::Instant::now() + Duration::from_secs(self.timeout_seconds);
+                    let mut poll_delay = Duration::from_millis(25);
+                    loop {
+                        let now = tokio::time::Instant::now();
+                        if now >= deadline {
+                            return Err(LlmError::Failed);
+                        }
+                        tokio::time::sleep(poll_delay.min(deadline - now)).await;
+                        poll_delay = (poll_delay * 2).min(Duration::from_millis(1_000));
+
+                        let poll_resp = self
+                            .client
+                            .get(status_endpoint.clone())
+                            .bearer_auth(api_key)
+                            .send()
+                            .await
+                            .map_err(|_| LlmError::Failed)?;
+                        let poll_resp = Self::check_response(poll_resp).await?;
+                        let poll_val: Value =
+                            poll_resp.json().await.map_err(|_| LlmError::Rejected)?;
+                        if let Some(media) = self
+                            .try_decode_direct_media(&poll_val, default_mime_type)
+                            .await?
+                        {
+                            return Ok(media);
+                        }
+                        match poll_val.get("status").and_then(Value::as_str) {
+                            Some("completed" | "succeeded") => {
+                                return self.fetch_video_content(video_id, default_mime_type).await;
+                            }
+                            Some(
+                                "queued" | "in_progress" | "pending" | "processing" | "running",
+                            ) => continue,
+                            _ => return Err(LlmError::Rejected),
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
 
         Err(LlmError::Rejected)
@@ -335,27 +424,32 @@ impl ConfiguredOpenAiLlm {
             return Err(LlmError::Rejected);
         }
         #[derive(Serialize)]
-        struct VideoPayload<'a> {
+        struct VideoCreatePayload<'a> {
+            model: &'a str,
+            prompt: &'a str,
+            size: String,
+            seconds: u32,
+        }
+        #[derive(Serialize)]
+        struct VideoGenerationFallbackPayload<'a> {
             model: &'a str,
             prompt: &'a str,
             size: String,
             seconds: u32,
             duration: u32,
         }
-        let payload = VideoPayload {
-            model: &self.model,
-            prompt,
-            size: format!("{width}x{height}"),
-            seconds: duration_secs,
-            duration: duration_secs,
-        };
-        let mut endpoint = self.endpoint("videos")?;
-        endpoint.set_query(Some("sync=true"));
+        let size = format!("{width}x{height}");
+        let endpoint = self.endpoint("videos")?;
         let response = self
             .client
             .post(endpoint)
             .bearer_auth(api_key)
-            .json(&payload)
+            .json(&VideoCreatePayload {
+                model: &self.model,
+                prompt,
+                size: size.clone(),
+                seconds: duration_secs,
+            })
             .send()
             .await
             .map_err(|_| LlmError::Failed)?;
@@ -364,7 +458,13 @@ impl ConfiguredOpenAiLlm {
             self.client
                 .post(fallback)
                 .bearer_auth(api_key)
-                .json(&payload)
+                .json(&VideoGenerationFallbackPayload {
+                    model: &self.model,
+                    prompt,
+                    size,
+                    seconds: duration_secs,
+                    duration: duration_secs,
+                })
                 .send()
                 .await
                 .map_err(|_| LlmError::Failed)?
@@ -919,6 +1019,100 @@ mod tests {
             LlmOutput::Embeddings {
                 vectors: vec![vec![0.1, 0.2, 0.3], vec![0.4, 0.5, 0.6]],
                 dimensions: 3,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn video_generation_polls_async_job_status_until_completed_and_fetches_content() {
+        use axum::routing::get;
+
+        let poll_count = Arc::new(Mutex::new(0u32));
+        let poll_state = Arc::clone(&poll_count);
+
+        let app = Router::new()
+            .route(
+                "/v1/videos",
+                post(|Json(body): Json<Value>| async move {
+                    assert_eq!(body.get("model").and_then(Value::as_str), Some("sora-2"));
+                    assert_eq!(
+                        body.get("prompt").and_then(Value::as_str),
+                        Some("A drone shot over mountains")
+                    );
+                    assert_eq!(body.get("size").and_then(Value::as_str), Some("1280x720"));
+                    assert_eq!(body.get("seconds").and_then(Value::as_u64), Some(8));
+                    assert!(
+                        body.get("duration").is_none(),
+                        "POST /v1/videos must not send legacy duration field"
+                    );
+                    Json(serde_json::json!({
+                        "id": "video_job_42",
+                        "object": "video",
+                        "status": "queued"
+                    }))
+                }),
+            )
+            .route(
+                "/v1/videos/video_job_42",
+                get(move || {
+                    let poll_state = Arc::clone(&poll_state);
+                    async move {
+                        let mut count = poll_state.lock().unwrap();
+                        *count += 1;
+                        let status = if *count < 2 {
+                            "in_progress"
+                        } else {
+                            "completed"
+                        };
+                        Json(serde_json::json!({
+                            "id": "video_job_42",
+                            "object": "video",
+                            "status": status
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/v1/videos/video_job_42/content",
+                get(|| async move {
+                    let mut headers = HeaderMap::new();
+                    headers.insert(header::CONTENT_TYPE, "video/mp4".parse().unwrap());
+                    (StatusCode::OK, headers, b"ASYNC_SORA_MP4_BYTES".to_vec()).into_response()
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let provider = ConfiguredOpenAiLlm::from_config(&OpenAiConfig {
+            api_key: SecretString::new("sk-sora"),
+            base_url: Url::parse(&format!("http://{addr}/v1")).unwrap(),
+            model: "sora-2".into(),
+            timeout_ms: 5_000,
+            tags: Some(vec!["video".into()]),
+            ..OpenAiConfig::default()
+        })
+        .unwrap();
+
+        let video_out = provider
+            .invoke(LlmOperation::VideoGeneration {
+                prompt: "A drone shot over mountains".into(),
+                width: 1280,
+                height: 720,
+                duration_secs: 8,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(*poll_count.lock().unwrap(), 2);
+        assert_eq!(
+            video_out,
+            LlmOutput::Media {
+                bytes: b"ASYNC_SORA_MP4_BYTES".to_vec(),
+                mime_type: "video/mp4".into(),
             }
         );
     }
