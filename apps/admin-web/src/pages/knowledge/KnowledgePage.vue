@@ -408,7 +408,7 @@ const visibleTree = computed(() => tree.value.filter(node => {
   const parts = node.path.split('/')
   return parts.slice(1).every((_, index) => openFolders.value.has(parts.slice(0, index + 1).join('/')))
 }))
-const hits = ref<Hit[]>([])
+const pageCatalog = ref<Hit[]>([])
 const nextCursor = ref<string | null>(null)
 const sources = ref<Source[]>([])
 const sourceName = ref('')
@@ -502,7 +502,7 @@ async function listPages(append = false) {
         ...(append && nextCursor.value ? { after: nextCursor.value } : {}),
       }),
     )
-    hits.value = append ? [...hits.value, ...response.items] : response.items
+    pageCatalog.value = append ? [...pageCatalog.value, ...response.items] : response.items
     nextCursor.value = response.next_cursor
   } catch (cause) { error.value = formatApiError(cause) }
 }
@@ -664,7 +664,7 @@ async function refreshTree() {
     if (requestVersion === treeRequestVersion) treeLoading.value = false
   }
 }
-function resetExplorer(space: TreeSpace) {
+function resetExplorer(space: TreeSpace, preserveSearch = false) {
   viewMode.value = 'read'
   activeSpace.value = space
   tree.value = []
@@ -679,8 +679,13 @@ function resetExplorer(space: TreeSpace) {
   newFileName.value = ''
   folderPath.value = 'wiki'
   preview.value = false
-  closeSearch()
-  hits.value = []
+  if (preserveSearch) {
+    searchHits.value = []
+    searchExecuted.value = false
+  } else {
+    closeSearch()
+  }
+  pageCatalog.value = []
   nextCursor.value = null
   error.value = ''
   notice.value = ''
@@ -710,13 +715,15 @@ async function selectSpace(space: TreeSpace) {
   if (activeSpace.value === space || busy.value) return
   if (viewMode.value === 'compose' && editorDirty.value
       && !window.confirm(t('knowledgeV3.discardChanges'))) return
+  const shouldRerunSearch = searchOpen.value && Boolean(q.value.trim())
   cancelInlineNote()
-  resetExplorer(space)
+  resetExplorer(space, searchOpen.value)
   composeOpen.value = false
   busy.value = true
   try {
     await refreshTree()
     await restoreSelectedNote(space)
+    if (shouldRerunSearch) await search()
   } catch (cause) { error.value = formatApiError(cause) }
   finally { busy.value = false }
 }
@@ -885,7 +892,7 @@ const readableNodes = computed(() => visibleTree.value.filter(node => node.path 
 function treeTitle(node: TreeNode) {
   if (node.type === 'folder') return node.name
   if (node.id && selected.value?.id === node.id) return selected.value.title
-  const hit = node.id ? hits.value.find(item => item.id === node.id) : null
+  const hit = node.id ? pageCatalog.value.find(item => item.id === node.id) : null
   return hit?.title || node.name.replace(/\.md$/i, '')
 }
 function showReading() {
@@ -926,7 +933,7 @@ async function openWikiTarget(target: string) {
   const node = tree.value.find(item => item.space === 'wiki' && item.type === 'file' && item.id &&
     (item.path.replace(/^wiki\//, '').replace(/\.md$/i, '').toLowerCase() === file ||
       item.name.replace(/\.md$/i, '').toLowerCase() === file ||
-      hits.value.some(hit => hit.id === item.id && hit.title.toLowerCase() === file)))
+      pageCatalog.value.some(hit => hit.id === item.id && hit.title.toLowerCase() === file)))
   if (node?.id) await openPage(node.id, node.path)
 }
 function onMarkdownClick(event: MouseEvent) {
@@ -1033,10 +1040,10 @@ onMounted(() => {
           <input id="knowledge-search-input" v-model="q" type="search"
             class="a-search-input" :aria-label="t('knowledgeV3.search')"
             :placeholder="activeSpace === 'raw' ? t('knowledgeV3.filterHint') : t('knowledgeV3.searchHint')"
-            autocomplete="off" spellcheck="false" :disabled="busy"
+            autocomplete="off" spellcheck="false"
             @keydown.esc.prevent="closeSearch" />
           <select v-model="searchMode" class="a-search-mode"
-            :aria-label="t('knowledgeV3.searchMode')" :disabled="busy"
+            :aria-label="t('knowledgeV3.searchMode')"
             @change="q.trim() && void search()">
             <option value="hybrid">{{ t('knowledgeV3.searchModeHybrid') }}</option>
             <option value="lex">{{ t('knowledgeV3.searchModeLex') }}</option>

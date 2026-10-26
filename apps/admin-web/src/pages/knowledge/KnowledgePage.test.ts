@@ -541,6 +541,12 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
         source_ref: null,
       }
     }
+    if (url === '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=hybrid&limit=20') {
+      return {
+        items: [],
+        next_cursor: null,
+      }
+    }
     if (url === '/api/admin/knowledge/pages?q=barge-in&space=raw&mode=lex&limit=20') {
       return {
         items: [{
@@ -592,13 +598,18 @@ it('toggles Explorer search, queries Wiki and File spaces, and opens matching do
     expect(wrapper.get('.doc h1').text()).toBe('Hybrid Search Architecture')
     expect(wrapper.get('.markdown-body').text()).toContain('Reciprocal rank fusion details.')
 
-    // 2. Switch to File (raw) space and search with Keyword (lex) mode
+    // 2. Switching to File (raw) space keeps search open and automatically re-runs search in raw space
     const fileTab = wrapper.findAll('[role="tablist"][aria-label="Knowledge source"] [role="tab"]')
       .find(tab => tab.text() === 'File')!
     await fileTab.trigger('click')
     await flushPromises()
 
-    await wrapper.get('button[aria-label="Search"]').trigger('click')
+    expect(wrapper.find('input[aria-label="Search"]').exists()).toBe(true)
+    expect(requestJsonMock).toHaveBeenCalledWith(
+      '/api/admin/knowledge/pages?q=Reciprocal+rank&space=raw&mode=hybrid&limit=20',
+    )
+    expect(wrapper.get('.a-search-empty').text()).toContain('No matching documents found.')
+
     await wrapper.get('select[aria-label="Search mode"]').setValue('lex')
     const rawInput = wrapper.get('input[aria-label="Search"]')
     await rawInput.setValue('barge-in')

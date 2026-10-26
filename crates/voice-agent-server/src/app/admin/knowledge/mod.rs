@@ -252,11 +252,55 @@ pub(super) async fn knowledge_rebuild(State(state): State<AppState>, req: Reques
     .into_response()
 }
 
-fn browser_space_and_path(collection: CollectionScope, rel_path: &str) -> (&'static str, String) {
-    if collection == CollectionScope::Sources {
-        ("raw", rel_path.replacen("sources/", "raw/", 1))
-    } else {
-        ("wiki", rel_path.to_owned())
+#[derive(Clone, Copy)]
+enum BrowserSpaceParam {
+    Wiki,
+    Raw,
+}
+
+impl BrowserSpaceParam {
+    fn parse(raw: Option<&str>) -> Option<Self> {
+        match raw.map(str::trim).filter(|s| !s.is_empty()) {
+            None | Some("wiki") => Some(Self::Wiki),
+            Some("raw") => Some(Self::Raw),
+            Some(_) => None,
+        }
+    }
+
+    fn from_collection(collection: CollectionScope) -> Self {
+        if collection == CollectionScope::Sources {
+            Self::Raw
+        } else {
+            Self::Wiki
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Wiki => "wiki",
+            Self::Raw => "raw",
+        }
+    }
+
+    fn collection_scope(self) -> CollectionScope {
+        match self {
+            Self::Wiki => CollectionScope::Wiki,
+            Self::Raw => CollectionScope::Sources,
+        }
+    }
+
+    fn list_glob(self) -> &'static str {
+        match self {
+            Self::Wiki => "wiki/**/*.md",
+            Self::Raw => "sources/**/*.md",
+        }
+    }
+
+    fn ui_path(self, rel_path: &str) -> String {
+        match self {
+            Self::Wiki => rel_path.to_owned(),
+            Self::Raw => rel_path.replacen("sources/", "raw/", 1),
+        }
     }
 }
 
@@ -276,6 +320,65 @@ impl SearchModeParam {
             Some(_) => None,
         }
     }
+
+    fn execute(
+        self,
+        engine: &WikiEngine,
+        query: &str,
+        space: BrowserSpaceParam,
+        limit: usize,
+    ) -> llm_wiki::WikiResult<Vec<llm_wiki::SearchResultItem>> {
+        let collections = vec![space.collection_scope()];
+        match self {
+            Self::Hybrid => engine.query(HybridQueryRequest {
+                query: Some(query.to_owned()),
+                collections,
+                limit,
+                ..Default::default()
+            }),
+            Self::Lex => engine.search_lex(
+                query,
+                SearchOptions {
+                    collections,
+                    filter: None,
+                    limit,
+                    min_score: 0.0,
+                },
+            ),
+            Self::Vec => engine.search_vec(
+                query,
+                SearchOptions {
+                    collections,
+                    filter: None,
+                    limit,
+                    min_score: 0.0,
+                },
+            ),
+        }
+    }
+}
+
+fn base_page_item_json(
+    collection: CollectionScope,
+    rel_path: &str,
+    docid: &str,
+    title: &str,
+    source_ref: impl Into<Value>,
+    excerpt: &str,
+) -> Value {
+    let space = BrowserSpaceParam::from_collection(collection);
+    serde_json::json!({
+        "id": rel_path,
+        "docid": docid,
+        "space": space.as_str(),
+        "path": space.ui_path(rel_path),
+        "title": title,
+        "revision": 1,
+        "status": "verified",
+        "source_ref": source_ref.into(),
+        "excerpt": excerpt,
+        "relative_path": rel_path,
+    })
 }
 
 pub(super) async fn knowledge_search(
@@ -287,60 +390,33 @@ pub(super) async fn knowledge_search(
         Ok(engine) => engine,
         Err(resp) => return resp,
     };
-    let (collections, list_glob) = match q.space.as_deref().map(str::trim).filter(|s| !s.is_empty())
-    {
-        None | Some("wiki") => (vec![CollectionScope::Wiki], "wiki/**/*.md"),
-        Some("raw") => (vec![CollectionScope::Sources], "sources/**/*.md"),
-        Some(_) => return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments"),
+    let Some(space) = BrowserSpaceParam::parse(q.space.as_deref()) else {
+        return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments");
     };
     let Some(mode) = SearchModeParam::parse(q.mode.as_deref()) else {
         return error(&req, StatusCode::BAD_REQUEST, "invalid_arguments");
     };
     let limit = q.limit.unwrap_or(50).clamp(1, 200) as usize;
     if let Some(query) = q.q.as_deref().map(str::trim).filter(|query| !query.is_empty()) {
-        let search_result = match mode {
-            SearchModeParam::Hybrid => engine.query(HybridQueryRequest {
-                query: Some(query.to_owned()),
-                collections,
-                limit,
-                ..Default::default()
-            }),
-            SearchModeParam::Lex | SearchModeParam::Vec => {
-                let opts = SearchOptions {
-                    collections,
-                    filter: None,
-                    limit,
-                    min_score: 0.0,
-                };
-                match mode {
-                    SearchModeParam::Lex => engine.search_lex(query, opts),
-                    SearchModeParam::Vec => engine.search_vec(query, opts),
-                    SearchModeParam::Hybrid => unreachable!(),
-                }
-            }
-        };
-        match search_result {
+        match mode.execute(&engine, query, space, limit) {
             Ok(results) => {
                 let items: Vec<Value> = results
                     .into_iter()
                     .map(|item| {
-                        let (space, ui_path) =
-                            browser_space_and_path(item.collection, &item.rel_path);
-                        serde_json::json!({
-                            "id": item.rel_path,
-                            "docid": item.docid,
-                            "space": space,
-                            "path": ui_path,
-                            "title": item.title,
-                            "revision": 1,
-                            "status": "verified",
-                            "source_ref": item.virtual_uri,
-                            "excerpt": item.snippet,
-                            "relative_path": item.rel_path,
-                            "score": item.score,
-                            "match_line": item.match_line,
-                            "context": item.context,
-                        })
+                        let mut json = base_page_item_json(
+                            item.collection,
+                            &item.rel_path,
+                            &item.docid,
+                            &item.title,
+                            item.virtual_uri,
+                            &item.snippet,
+                        );
+                        if let Some(obj) = json.as_object_mut() {
+                            obj.insert("score".to_owned(), serde_json::json!(item.score));
+                            obj.insert("match_line".to_owned(), serde_json::json!(item.match_line));
+                            obj.insert("context".to_owned(), serde_json::json!(item.context));
+                        }
+                        json
                     })
                     .collect();
                 Json(serde_json::json!({
@@ -352,7 +428,7 @@ pub(super) async fn knowledge_search(
             Err(err) => wiki_error(&req, err),
         }
     } else {
-        match engine.multi_get(list_glob, MultiGetOptions::default()) {
+        match engine.multi_get(space.list_glob(), MultiGetOptions::default()) {
             Ok(batch) => {
                 let items: Vec<Value> = batch
                     .docs
@@ -360,20 +436,14 @@ pub(super) async fn knowledge_search(
                     .take(limit)
                     .map(|doc| {
                         let excerpt: String = doc.content.chars().take(240).collect();
-                        let (space, ui_path) =
-                            browser_space_and_path(doc.info.collection, &doc.info.rel_path);
-                        serde_json::json!({
-                            "id": doc.info.rel_path,
-                            "docid": doc.info.docid,
-                            "space": space,
-                            "path": ui_path,
-                            "title": doc.info.title,
-                            "revision": 1,
-                            "status": "verified",
-                            "source_ref": doc.info.source_rel_path,
-                            "excerpt": excerpt,
-                            "relative_path": doc.info.rel_path,
-                        })
+                        base_page_item_json(
+                            doc.info.collection,
+                            &doc.info.rel_path,
+                            &doc.info.docid,
+                            &doc.info.title,
+                            doc.info.source_rel_path,
+                            &excerpt,
+                        )
                     })
                     .collect();
                 Json(serde_json::json!({
