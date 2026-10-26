@@ -94,6 +94,8 @@ pub struct WikiSectionConfig {
     pub enabled: bool,
     pub vault_dir: PathBuf,
     pub template: WikiTemplateId,
+    #[serde(default)]
+    pub mcp: WikiMcpConfig,
 }
 
 impl Default for WikiSectionConfig {
@@ -102,15 +104,113 @@ impl Default for WikiSectionConfig {
             enabled: false,
             vault_dir: PathBuf::from("data/wiki-vault"),
             template: WikiTemplateId::Research,
+            mcp: WikiMcpConfig::default(),
         }
     }
 }
 
 impl WikiSectionConfig {
     pub fn valid(&self) -> bool {
-        if !self.enabled {
+        if !self.mcp.valid() {
+            return false;
+        }
+        if !self.enabled && !self.mcp.enabled {
             return true;
         }
         !self.vault_dir.as_os_str().is_empty()
     }
+}
+
+/// Streamable HTTP MCP Server configuration for Knowledge/Wiki (`[wiki.mcp]`).
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WikiMcpConfig {
+    pub enabled: bool,
+    pub path: String,
+    pub allow_write: bool,
+    pub token: String,
+    pub read_token: String,
+    pub write_token: String,
+    pub max_concurrency: usize,
+    pub call_timeout_ms: u64,
+    pub max_result_chars: usize,
+}
+
+impl std::fmt::Debug for WikiMcpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WikiMcpConfig")
+            .field("enabled", &self.enabled)
+            .field("path", &self.path)
+            .field("allow_write", &self.allow_write)
+            .field("token", &"[REDACTED]")
+            .field("read_token", &"[REDACTED]")
+            .field("write_token", &"[REDACTED]")
+            .field("max_concurrency", &self.max_concurrency)
+            .field("call_timeout_ms", &self.call_timeout_ms)
+            .field("max_result_chars", &self.max_result_chars)
+            .finish()
+    }
+}
+
+impl Default for WikiMcpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: "/mcp/knowledge".into(),
+            allow_write: true,
+            token: String::new(),
+            read_token: String::new(),
+            write_token: String::new(),
+            max_concurrency: 16,
+            call_timeout_ms: 30_000,
+            max_result_chars: 12_000,
+        }
+    }
+}
+
+impl WikiMcpConfig {
+    pub fn valid(&self) -> bool {
+        if !(1..=64).contains(&self.max_concurrency)
+            || !(1_000..=120_000).contains(&self.call_timeout_ms)
+            || !(512..=64_000).contains(&self.max_result_chars)
+            || !valid_mcp_path(&self.path)
+        {
+            return false;
+        }
+        if !self.enabled {
+            return true;
+        }
+        let has_token = !self.token.is_empty();
+        let has_read = !self.read_token.is_empty();
+        let has_write = !self.write_token.is_empty();
+        if !has_token && !has_read && !has_write {
+            return false;
+        }
+        for candidate in [&self.token, &self.read_token, &self.write_token] {
+            if !candidate.is_empty() && !valid_bearer_secret(candidate) {
+                return false;
+            }
+        }
+        if has_read && has_write && self.read_token == self.write_token {
+            return false;
+        }
+        true
+    }
+}
+
+fn valid_mcp_path(path: &str) -> bool {
+    path.starts_with("/mcp/")
+        && (6..=128).contains(&path.len())
+        && !path.ends_with('/')
+        && path != "/mcp/system"
+        && path != "/mcp/vision/explain"
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_'))
+}
+
+fn valid_bearer_secret(secret: &str) -> bool {
+    (8..=512).contains(&secret.len())
+        && secret.trim() == secret
+        && secret.bytes().all(|b| b > 0x20 && b < 0x7f)
 }

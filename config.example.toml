@@ -370,3 +370,23 @@ allowed_hosts = []
 
 [system_mcp]
 enabled = false # Read-only tools for authenticated Studio Assistant sessions.
+
+# Optional Knowledge (LLM Wiki) Streamable HTTP MCP endpoint for client agents.
+# Authenticate via `Authorization: Bearer <token>` or `X-API-Key: <token>`.
+# Environment overrides: VOICE_WIKI_MCP_ENABLED, VOICE_WIKI_MCP_TOKEN,
+# VOICE_WIKI_MCP_READ_TOKEN, VOICE_WIKI_MCP_WRITE_TOKEN.
+[wiki]
+enabled = false
+vault_dir = "data/wiki-vault"
+template = "research"
+
+[wiki.mcp]
+enabled = false
+path = "/mcp/knowledge"
+allow_write = true
+# token = "replace-with-knowledge-mcp-token"
+# read_token = "replace-with-read-only-token"
+# write_token = "replace-with-read-write-token"
+max_concurrency = 16
+call_timeout_ms = 30000
+max_result_chars = 12000

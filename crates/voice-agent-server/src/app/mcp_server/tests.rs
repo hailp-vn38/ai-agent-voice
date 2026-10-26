@@ -287,3 +287,281 @@ async fn admin_auth_and_origin_precede_claim_and_reject() {
     assert_eq!(result["status"], "rejected");
     task.abort();
 }
+
+#[tokio::test]
+async fn knowledge_mcp_http_auth_read_write_and_external_client_compatibility() {
+    let vault_path = std::env::temp_dir().join(format!(
+        "voice-agent-mcp-server-knowledge-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&vault_path).expect("create temp vault dir");
+    let (mut state, _, _) = fixture().await;
+    {
+        let cfg = Arc::make_mut(&mut state.config);
+        cfg.system_mcp.http.enabled = false;
+        cfg.wiki.enabled = true;
+        cfg.wiki.vault_dir = vault_path.clone();
+        cfg.orchestrator.store_dir = vault_path.join("store");
+        cfg.wiki.mcp.enabled = true;
+        cfg.wiki.mcp.path = "/mcp/knowledge".to_string();
+        cfg.wiki.mcp.allow_write = true;
+        cfg.wiki.mcp.read_token = "knowledge-read-secret-123456".to_string();
+        cfg.wiki.mcp.write_token = "knowledge-write-secret-654321".to_string();
+    }
+
+    let (base, task) = serve(crate::app::router_with_state(state)).await;
+    let url = format!("{base}/mcp/knowledge");
+    let http = reqwest::Client::new();
+
+    // 1. Unauthenticated or bad token -> 401 UNAUTHORIZED
+    assert_eq!(
+        http.post(&url)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        http.post(&url)
+            .bearer_auth("wrong-token")
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    // 2. Write token via RMCP Streamable HTTP client -> 14 tools, can write & stage
+    let mut rw_cfg = StreamableHttpClientTransportConfig::with_uri(url.clone());
+    rw_cfg.auth_header = Some("knowledge-write-secret-654321".to_string());
+    let rw_service = ()
+        .serve(StreamableHttpClientTransport::with_client(
+            crate::tools::external_mcp::rmcp_adapter::PolicyHttpClient::new(
+                url::Url::parse(&url).unwrap(),
+                http.clone(),
+                262_144,
+            ),
+            rw_cfg,
+        ))
+        .await
+        .expect("connect write rmcp client");
+    let rw_tools = rw_service.list_all_tools().await.expect("list write tools");
+    let expected_rw_len = llm_wiki::tools::definitions::build_llm_tool_definitions().len() + 1;
+    let expected_ro_len = llm_wiki::tools::definitions::build_llm_tool_definitions()
+        .iter()
+        .filter(|s| llm_wiki::is_read_only_wiki_tool(&s.name))
+        .count();
+    assert_eq!(rw_tools.len(), expected_rw_len);
+    assert!(rw_tools.iter().any(|t| t.name == "add_to_sources"));
+    for tool in &rw_tools {
+        let schema_val = Value::Object(tool.input_schema.as_ref().clone());
+        crate::tools::external_mcp::registry::validate_external_tool_schema(&schema_val)
+            .unwrap_or_else(|e| panic!("wire schema for {} rejected: {e}", tool.name));
+    }
+
+    let mut write_call = CallToolRequestParams::new("wiki_write_file");
+    write_call.arguments = Some(
+        json!({
+            "scope": "wiki",
+            "rel_path": "entities/knowledge-mcp.md",
+            "content": "---\ntitle: Knowledge MCP\ntags:\n  - mcp\n---\n\n# Knowledge MCP\n\nExposes [[llm-wiki]] over Streamable HTTP.\n"
+        })
+        .as_object()
+        .cloned()
+        .unwrap(),
+    );
+    let write_out = rw_service.call_tool(write_call).await.expect("call wiki_write_file");
+    assert_ne!(write_out.is_error, Some(true));
+    assert!(write_out.structured_content.is_some());
+    rw_service.cancel().await.unwrap();
+
+    // 3. Read-only token via X-API-Key header -> 7 tools, can read, denied write
+    let post_ro = |body: Value| {
+        http.post(&url)
+            .header("X-API-Key", "knowledge-read-secret-123456")
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .json(&body)
+    };
+    let ro_list: Value = post_ro(json!({"jsonrpc":"2.0","id":10,"method":"tools/list","params":{}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        ro_list["result"]["tools"].as_array().unwrap().len(),
+        expected_ro_len
+    );
+
+    let ro_get: Value = post_ro(json!({
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {
+            "name": "wiki_get",
+            "arguments": { "file": "wiki/entities/knowledge-mcp.md" }
+        }
+    }))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert!(
+        ro_get["result"]["structuredContent"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Streamable HTTP")
+    );
+
+    let ro_denied: Value = post_ro(json!({
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "tools/call",
+        "params": {
+            "name": "wiki_write_file",
+            "arguments": {
+                "scope": "wiki",
+                "rel_path": "entities/blocked.md",
+                "content": "# Blocked\n"
+            }
+        }
+    }))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(ro_denied["result"]["isError"], true);
+
+    task.abort();
+    let _ = std::fs::remove_dir_all(&vault_path);
+}
+
+#[tokio::test]
+async fn admin_web_can_configure_knowledge_mcp_and_create_revoke_tokens_live() {
+    let vault_path = std::env::temp_dir().join(format!(
+        "voice-agent-mcp-admin-web-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&vault_path).expect("create temp vault dir");
+    let (mut state, _, _) = fixture().await;
+    {
+        let cfg = Arc::make_mut(&mut state.config);
+        cfg.system_mcp.http.enabled = false;
+        cfg.wiki.enabled = false;
+        cfg.wiki.vault_dir = vault_path.clone();
+        cfg.orchestrator.store_dir = vault_path.join("store");
+        cfg.wiki.mcp.enabled = false;
+    }
+
+    let (base, task) = serve(crate::app::router_with_state(state)).await;
+    let http = reqwest::Client::new();
+    let mcp_url = format!("{base}/mcp/knowledge");
+    let admin_url = format!("{base}/api/admin/system-mcp/knowledge");
+
+    // Initially disabled -> 404 NOT_FOUND on /mcp/knowledge
+    assert_eq!(
+        http.post(&mcp_url)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // Enable via Admin Web API
+    let updated: Value = http
+        .put(&admin_url)
+        .bearer_auth("admin-test-token")
+        .json(&json!({
+            "enabled": true,
+            "allow_write": true,
+            "max_concurrency": 12,
+            "call_timeout_ms": 20000,
+            "max_result_chars": 10000
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(updated["enabled"], true);
+    assert_eq!(updated["base_url"], mcp_url);
+
+    // Create token via Admin Web API
+    let created_res: Value = http
+        .post(format!("{admin_url}/tokens"))
+        .bearer_auth("admin-test-token")
+        .json(&json!({
+            "name": "Cursor Agent",
+            "access": "read_only"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token_id = created_res["created_token"]["id"].as_str().unwrap().to_string();
+    let token_secret = created_res["created_token"]["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(token_secret.starts_with("kmcp_"));
+
+    // Use newly generated token on /mcp/knowledge without restarting server
+    let list_res: Value = http
+        .post(&mcp_url)
+        .bearer_auth(&token_secret)
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let expected_ro_len = llm_wiki::tools::definitions::build_llm_tool_definitions()
+        .iter()
+        .filter(|s| llm_wiki::is_read_only_wiki_tool(&s.name))
+        .count();
+    assert_eq!(
+        list_res["result"]["tools"].as_array().unwrap().len(),
+        expected_ro_len
+    );
+
+    // Delete token via Admin Web API -> immediately 401 UNAUTHORIZED
+    let del_status = http
+        .delete(format!("{admin_url}/tokens/{token_id}"))
+        .bearer_auth("admin-test-token")
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(del_status, StatusCode::OK);
+
+    assert_eq!(
+        http.post(&mcp_url)
+            .bearer_auth(&token_secret)
+            .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/list"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    task.abort();
+    let _ = std::fs::remove_dir_all(&vault_path);
+}

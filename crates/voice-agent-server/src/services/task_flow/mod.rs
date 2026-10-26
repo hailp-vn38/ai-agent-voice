@@ -76,13 +76,13 @@ pub struct TaskFlowRuntime {
 }
 
 pub fn init_wiki_engine(cfg: &WikiSectionConfig) -> Result<Option<Arc<WikiEngine>>, TaskFlowError> {
-    if !cfg.enabled {
+    if !cfg.enabled && !cfg.mcp.enabled {
         return Ok(None);
     }
     open_wiki_engine(cfg).map(Some)
 }
 
-fn open_wiki_engine(cfg: &WikiSectionConfig) -> Result<Arc<WikiEngine>, TaskFlowError> {
+pub(crate) fn open_wiki_engine(cfg: &WikiSectionConfig) -> Result<Arc<WikiEngine>, TaskFlowError> {
     std::fs::create_dir_all(&cfg.vault_dir)?;
     let engine = Arc::new(WikiEngine::open(&cfg.vault_dir)?);
     engine.apply_template(cfg.template)?;

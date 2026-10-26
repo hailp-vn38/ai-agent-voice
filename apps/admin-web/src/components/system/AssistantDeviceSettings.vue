@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import SystemMcpSettings from './SystemMcpSettings.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { assistantApi, type AssistantSettings } from '@/api/assistant'
 import { isApiError } from '@/api/errors'
@@ -96,6 +95,5 @@ function submit() { if (saved.value?.enabled && !enabled.value) confirmDisable.v
       </form>
     </CardContent>
   </Card>
-  <SystemMcpSettings />
   <ConfirmDialog v-model="confirmDisable" :title="t('assistant.disableTitle')" :description="t('assistant.disableDescription')" @confirm="save" />
 </template>

@@ -64,6 +64,7 @@ pub(super) fn classify_subsystem(explicit: Option<&str>, target: &str) -> String
     } else if target.contains("::tools::external_mcp")
         || target.contains("::telemetry")
         || target.contains("::tools::system_mcp")
+        || target.contains("::tools::knowledge_mcp")
         || target.contains("::app::mcp_server")
         || target.contains("::tools::round")
         || target.contains("::session::actor::tools")

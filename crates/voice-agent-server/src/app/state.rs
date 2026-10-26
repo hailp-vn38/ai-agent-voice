@@ -87,6 +87,7 @@ pub struct AppState {
     pub reminder_scheduler_started: Arc<std::sync::atomic::AtomicBool>,
     pub notification_hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
+    pub(crate) knowledge_mcp: Arc<std::sync::OnceLock<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
     pub system_logs: Arc<crate::services::system_logs::SystemLogHub>,
     pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,
@@ -143,6 +144,26 @@ impl AppState {
     /// has become worth counting.
     pub fn register_session(&self) -> crate::lifecycle::DrainRegistration {
         self.lifecycle.drain().register()
+    }
+
+    pub(crate) fn get_or_init_knowledge_mcp(
+        &self,
+    ) -> Option<Arc<crate::tools::knowledge_mcp::KnowledgeMcp>> {
+        if let Some(existing) = self.knowledge_mcp.get() {
+            return Some(Arc::clone(existing));
+        }
+        let engine = match &self.wiki_engine {
+            Some(eng) => Arc::clone(eng),
+            None => crate::services::task_flow::open_wiki_engine(&self.config.wiki).ok()?,
+        };
+        let built = Arc::new(crate::tools::knowledge_mcp::KnowledgeMcp::from_config(
+            engine,
+            self.autoflow_notify.clone(),
+            &self.config.wiki.mcp,
+            Some(self.config.orchestrator.store_dir.as_path()),
+        ));
+        let _ = self.knowledge_mcp.set(Arc::clone(&built));
+        self.knowledge_mcp.get().cloned().or(Some(built))
     }
 
     /// Whether this process can accept a *new* Voice connection right now.
@@ -729,6 +750,7 @@ impl AppState {
             reminder_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             notification_hub,
             system_mcp: None,
+            knowledge_mcp: Arc::new(std::sync::OnceLock::new()),
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
             system_logs: crate::services::system_logs::SystemLogHub::global(),
             web_assistant: Arc::new(Default::default()),

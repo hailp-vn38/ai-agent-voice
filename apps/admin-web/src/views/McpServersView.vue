@@ -160,6 +160,13 @@ onBeforeUnmount(() => controller.abort())
         <p class="mt-1 max-w-3xl text-sm leading-relaxed">{{ t('mcp.description') }}</p>
       </template>
       <template #actions>
+        <RouterLink
+          to="/system/mcp"
+          class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <ShieldCheck class="size-4 text-studio-violet" aria-hidden="true" />
+          <span>Knowledge MCP Server</span>
+        </RouterLink>
         <Button variant="outline" :disabled="loading || saving" @click="load()">
           <RefreshCw class="size-4" aria-hidden="true" />{{ t('common.refresh') }}
         </Button>

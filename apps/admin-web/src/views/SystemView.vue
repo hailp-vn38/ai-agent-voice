@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bell, RefreshCcw, ScrollText, Settings2 } from '@lucide/vue'
+import { Bell, KeyRound, RefreshCcw, ScrollText, Settings2, Workflow } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -145,6 +145,32 @@ onBeforeUnmount(() => {
     <Card>
       <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-3">
+          <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <Workflow class="size-5" />
+          </div>
+          <div class="space-y-0.5">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              KNOWLEDGE &amp; SYSTEM MCP
+            </p>
+            <CardTitle>System &amp; Knowledge MCP Server</CardTitle>
+          </div>
+        </div>
+        <RouterLink
+          to="/system/mcp"
+          data-testid="system-open-mcp-settings"
+          class="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <KeyRound class="size-4 shrink-0" />
+          <span>MCP Config &amp; Tokens</span>
+        </RouterLink>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground">
+        Streamable HTTP Knowledge MCP endpoint (<code>/mcp/knowledge</code>) — tạo Bearer Token / API Key, lấy Base URL và cấu hình kết nối cho Client Agent trực tiếp trên Web.
+      </CardContent>
+    </Card>
+    <Card>
+      <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
           <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet">
             <Bell class="size-5" />
           </div>
@@ -203,6 +229,7 @@ onBeforeUnmount(() => {
         <p>OTA: <code>/voice/ota/</code></p>
         <p>WS: <code>/voice/v1/</code></p>
         <p>Vision: <code>/mcp/vision/explain</code></p>
+        <p>Knowledge MCP: <code>/mcp/knowledge</code></p>
       </CardContent>
     </Card>
   </section>

@@ -110,6 +110,34 @@ impl AppConfig {
         {
             self.database.url = db_url;
         }
+        if let Ok(enabled) = std::env::var("VOICE_WIKI_MCP_ENABLED")
+            && !enabled.trim().is_empty()
+        {
+            self.wiki.mcp.enabled = match enabled.trim() {
+                "true" | "1" => true,
+                "false" | "0" => false,
+                _ => {
+                    return Err(ConfigError::Validation(
+                        "invalid VOICE_WIKI_MCP_ENABLED".into(),
+                    ));
+                }
+            };
+        }
+        if let Ok(token) = std::env::var("VOICE_WIKI_MCP_TOKEN")
+            && !token.is_empty()
+        {
+            self.wiki.mcp.token = token;
+        }
+        if let Ok(token) = std::env::var("VOICE_WIKI_MCP_READ_TOKEN")
+            && !token.is_empty()
+        {
+            self.wiki.mcp.read_token = token;
+        }
+        if let Ok(token) = std::env::var("VOICE_WIKI_MCP_WRITE_TOKEN")
+            && !token.is_empty()
+        {
+            self.wiki.mcp.write_token = token;
+        }
         for (id, instance) in &mut self.providers.llm.instances {
             if let crate::config::LlmInstanceConfig::Openai(openai) = instance
                 && let Some(env_name) = crate::database::secrets::provider_secret_env(id, "openai")

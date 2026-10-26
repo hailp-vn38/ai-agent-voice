@@ -128,6 +128,19 @@ pub fn router_with_state(mut state: AppState) -> Router {
         .with_discovery(state.external_mcp.clone(), state.secret_resolver.clone())
         .with_notification_hub(state.notification_hub.clone()),
     ));
+    if state.wiki_engine.is_none()
+        && (state.config.wiki.enabled
+            || state.config.wiki.mcp.enabled
+            || crate::tools::knowledge_mcp::persisted_settings_exist(
+                &state.config.orchestrator.store_dir,
+            ))
+        && let Ok(engine) = crate::services::task_flow::open_wiki_engine(&state.config.wiki)
+    {
+        state.wiki_engine = Some(engine);
+    }
+    if state.wiki_engine.is_some() {
+        let _ = state.get_or_init_knowledge_mcp();
+    }
     let vision_enabled = state.config.vision.enabled;
     let vision_config = state.config.vision.clone();
     let router = Router::new()

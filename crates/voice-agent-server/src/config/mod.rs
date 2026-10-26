@@ -7,7 +7,7 @@ use url::Url;
 
 mod orchestrator_wiki;
 mod validation;
-pub use orchestrator_wiki::{OrchestratorSectionConfig, WikiSectionConfig};
+pub use orchestrator_wiki::{OrchestratorSectionConfig, WikiMcpConfig, WikiSectionConfig};
 
 pub use validation::{BenchmarkTarget, ConfigError};
 

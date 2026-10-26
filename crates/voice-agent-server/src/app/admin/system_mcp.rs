@@ -138,3 +138,147 @@ pub(super) async fn revoke_token(State(state): State<AppState>, request: Request
         Err(e) => write_error(&request, e),
     }
 }
+
+fn resolve_base_url(state: &AppState, headers: &HeaderMap, mcp_path: &str) -> String {
+    let clean_path = if mcp_path.starts_with('/') {
+        mcp_path.to_owned()
+    } else {
+        format!("/{mcp_path}")
+    };
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| *s == "http" || *s == "https")
+        .unwrap_or("http");
+    if let Some(host) = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get(header::HOST))
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return format!("{proto}://{host}{clean_path}");
+    }
+    let bind = state.config.server.bind;
+    let host_ip = if bind.ip().is_unspecified() {
+        "127.0.0.1".to_string()
+    } else {
+        bind.ip().to_string()
+    };
+    format!("http://{host_ip}:{}{clean_path}", bind.port())
+}
+
+fn attach_base_url(state: &AppState, headers: &HeaderMap, mut snap: Value) -> Value {
+    let path = snap
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("/mcp/knowledge")
+        .to_owned();
+    let base_url = resolve_base_url(state, headers, &path);
+    if let Some(obj) = snap.as_object_mut() {
+        obj.insert("base_url".to_string(), Value::String(base_url));
+    }
+    snap
+}
+
+pub(super) async fn knowledge_settings(State(state): State<AppState>, request: Request) -> Response {
+    let Some(core) = state.get_or_init_knowledge_mcp() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "knowledge_unavailable",
+        );
+    };
+    let snap = attach_base_url(&state, request.headers(), core.admin_snapshot());
+    Json(snap).into_response()
+}
+
+pub(super) async fn save_knowledge_settings(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
+    let headers = request.headers().clone();
+    let (request, input): (_, crate::tools::knowledge_mcp::UpdateKnowledgeMcpInput) =
+        match json(request).await {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+    let Some(core) = state.get_or_init_knowledge_mcp() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "knowledge_unavailable",
+        );
+    };
+    match core.update_settings(input) {
+        Ok(snap) => Json(attach_base_url(&state, &headers, snap)).into_response(),
+        Err(_) => error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateKnowledgeTokenBody {
+    name: String,
+    #[serde(default = "default_token_access")]
+    access: String,
+    #[serde(default)]
+    custom_token: Option<String>,
+}
+
+fn default_token_access() -> String {
+    "read_write".to_string()
+}
+
+pub(super) async fn create_knowledge_token(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
+    let headers = request.headers().clone();
+    let (request, body): (_, CreateKnowledgeTokenBody) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let Some(access) = crate::tools::knowledge_mcp::KnowledgeMcpAccess::from_str_opt(&body.access)
+    else {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    };
+    let Some(core) = state.get_or_init_knowledge_mcp() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "knowledge_unavailable",
+        );
+    };
+    match core.create_token(body.name, access, body.custom_token) {
+        Ok((created, snap)) => {
+            let mut full = attach_base_url(&state, &headers, snap);
+            if let Some(obj) = full.as_object_mut() {
+                obj.insert(
+                    "created_token".to_string(),
+                    serde_json::to_value(created).unwrap_or(Value::Null),
+                );
+            }
+            (StatusCode::CREATED, Json(full)).into_response()
+        }
+        Err(_) => error(&request, StatusCode::BAD_REQUEST, "validation_failed"),
+    }
+}
+
+pub(super) async fn delete_knowledge_token(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    let Some(core) = state.get_or_init_knowledge_mcp() else {
+        return error(
+            &request,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "knowledge_unavailable",
+        );
+    };
+    match core.delete_token(&id) {
+        Ok(snap) => Json(attach_base_url(&state, request.headers(), snap)).into_response(),
+        Err(_) => error(&request, StatusCode::NOT_FOUND, "not_found"),
+    }
+}

@@ -223,6 +223,18 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             "/system-mcp/token-revocations",
             axum::routing::post(system_mcp::revoke_token),
         )
+        .route(
+            "/system-mcp/knowledge",
+            get(system_mcp::knowledge_settings).put(system_mcp::save_knowledge_settings),
+        )
+        .route(
+            "/system-mcp/knowledge/tokens",
+            axum::routing::post(system_mcp::create_knowledge_token),
+        )
+        .route(
+            "/system-mcp/knowledge/tokens/{id}",
+            axum::routing::delete(system_mcp::delete_knowledge_token),
+        )
         .route("/system", get(get_system))
         .route("/system/resources", get(system::get_resources))
         .route("/system/logs", get(system::get_logs))

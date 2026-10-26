@@ -128,6 +128,13 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'nav.system' },
   },
   {
+    path: '/system/mcp',
+    alias: ['/mcp-system'],
+    name: 'system-mcp',
+    component: () => import('@/pages/system/SystemMcpPage.vue'),
+    meta: { titleKey: 'nav.system' },
+  },
+  {
     path: '/system/notifications',
     alias: ['/notifications'],
     name: 'system-notifications',

@@ -1,5 +1,6 @@
-//! Authentication and MCP envelopes only; tool authority and dispatch belong to SystemMcp.
+//! Authentication and MCP envelopes only; tool authority and dispatch belong to SystemMcp / KnowledgeMcp.
 mod auth;
+mod knowledge;
 use super::AppState;
 use crate::tools::system_mcp::{SystemCaller, SystemMcp, SystemToolContext};
 use axum::{
@@ -34,13 +35,14 @@ struct AuthState {
     permits: Arc<tokio::sync::Semaphore>,
 }
 pub(super) fn router(state: &AppState) -> Router<AppState> {
-    if !state.config.system_mcp.http.enabled {
-        return Router::new();
-    }
-    let Ok(verifier) = auth::Verifier::new(&state.config) else {
-        return Router::new();
+    let sys = if state.config.system_mcp.http.enabled
+        && let Ok(verifier) = auth::Verifier::new(&state.config)
+    {
+        authenticated_router(state, verifier)
+    } else {
+        Router::new()
     };
-    authenticated_router(state, verifier)
+    sys.merge(knowledge::router(state))
 }
 fn authenticated_router(state: &AppState, verifier: auth::Verifier) -> Router<AppState> {
     let Some(core) = &state.system_mcp else {
