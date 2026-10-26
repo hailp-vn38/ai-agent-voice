@@ -117,3 +117,55 @@ pub(super) async fn ticket(State(state): State<AppState>, request: Request) -> R
         ),
     }
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReminderTargetInput {
+    session_id: String,
+    #[serde(alias = "target_device_id")]
+    device_id: String,
+}
+
+pub(super) async fn put_reminder_target(
+    State(state): State<AppState>,
+    request: Request,
+) -> Response {
+    let (request, input): (_, ReminderTargetInput) = match json(request).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if !valid_identity(&input.session_id) || !valid_identity(&input.device_id) {
+        return error(&request, StatusCode::BAD_REQUEST, "validation_failed");
+    }
+    let Some(session_agent_key) = state.web_assistant.session_agent_key(&input.session_id) else {
+        return error(&request, StatusCode::CONFLICT, "invalid_session");
+    };
+    let db = match database(&state) {
+        Ok(db) => db,
+        Err(e) => return e,
+    };
+    let device = match crate::database::devices::get_device_by(db, &input.device_id).await {
+        Ok(d) => d,
+        Err(sqlx::Error::RowNotFound) => return error(&request, StatusCode::NOT_FOUND, "not_found"),
+        Err(e) => return sql_error(&request, &e),
+    };
+    if device.kind != "physical" || device.enabled != 1 || device.agent_key != session_agent_key {
+        return error(&request, StatusCode::FORBIDDEN, "unauthorized_target");
+    }
+    match state.web_assistant.bind_reminder_target(
+        &input.session_id,
+        &session_agent_key,
+        device.id,
+        device.device_id.clone(),
+    ) {
+        Ok(expires_in_seconds) => Json(serde_json::json!({
+            "session_id": input.session_id,
+            "device_id": device.device_id,
+            "target_device_id": device.device_id,
+            "expires_in_seconds": expires_in_seconds,
+        }))
+        .into_response(),
+        Err("unauthorized_target") => error(&request, StatusCode::FORBIDDEN, "unauthorized_target"),
+        Err(code) => error(&request, StatusCode::CONFLICT, code),
+    }
+}

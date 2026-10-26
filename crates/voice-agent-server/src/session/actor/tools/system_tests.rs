@@ -144,3 +144,228 @@ async fn abort_discards_system_completion_and_cancels_waiting_read() {
         })
     );
 }
+
+#[tokio::test]
+async fn reminder_builtin_tools_enforce_live_grant_and_target_scope() {
+    let (_core, _context, db) = fixture(true, 4096).await;
+    let agent_id = crate::database::agents::get_agent_by(&db, "studio")
+        .await
+        .unwrap()
+        .id;
+    sqlx::query(
+        "INSERT INTO devices (device_id, agent_id, kind, enabled, created_at, updated_at) \
+         VALUES ('test-device', ?, 'physical', 1, 1000, 1000)",
+    )
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let notifications = crate::database::notifications::DeviceNotifications::with_clock(
+        (*db).clone(),
+        Arc::new(|| 1_800_000_000_000),
+    );
+    notifications
+        .set_grant("studio", true, 1, "grant-req-1")
+        .await
+        .unwrap();
+    let sessions = Arc::new(crate::services::active_device_sessions::ActiveDeviceSessions::default());
+    let coordinator = crate::services::notifications::ReminderCoordinator::new(
+        notifications.clone(),
+        Arc::clone(&sessions),
+    );
+    let device_row_id = db.device_row_id("test-device").await.unwrap().unwrap();
+    let handle = crate::services::notifications::SessionReminderTools {
+        coordinator: coordinator.clone(),
+        agent_id,
+        agent_key: "studio".into(),
+        default_timezone: "Asia/Ho_Chi_Minh".into(),
+        target: crate::services::notifications::SessionReminderTarget::Physical {
+            device_row_id,
+            device_id: "test-device".into(),
+        },
+    };
+    let mut actor = tests::session_with_external_mcp(Default::default())
+        .with_reminder_tools(Some(handle))
+        .with_tool_status(true);
+    assert!(actor.offers_answer_changing_tools());
+    assert_eq!(
+        actor
+            .available_llm_tools()
+            .iter()
+            .filter(|t| crate::tools::builtin::is_reminder_tool_name(&t.name))
+            .count(),
+        4
+    );
+
+    actor.begin_active_turn().unwrap();
+    actor
+        .commit_user_text("Nhắc tôi kiểm tra máy giặt sau 10 phút".into())
+        .unwrap();
+    actor.start_tool_batch(vec![
+        ToolCall {
+            id: "create-1".into(),
+            name: "server_create_reminder".into(),
+            arguments: serde_json::json!({
+                "message": "Kiểm tra máy giặt",
+                "delay_seconds": 600
+            }),
+        },
+        ToolCall {
+            id: "cross-device".into(),
+            name: "server_create_reminder".into(),
+            arguments: serde_json::json!({
+                "message": "Spoof",
+                "delay_seconds": 60,
+                "device_id": "other-device"
+            }),
+        },
+        ToolCall {
+            id: "list-1".into(),
+            name: "server_list_reminders".into(),
+            arguments: serde_json::json!({}),
+        },
+    ]);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while actor.tool_batch.is_some() {
+            actor.drain_async_call_completions();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let results: Vec<_> = actor
+        .llm_messages
+        .iter()
+        .filter_map(|message| match message {
+            ChatMessage::ToolResult {
+                tool_call_id,
+                content,
+            } => Some((
+                tool_call_id.as_str(),
+                serde_json::from_str::<serde_json::Value>(content).unwrap(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].1["ok"], true);
+    let created: serde_json::Value =
+        serde_json::from_str(results[0].1["content"].as_str().unwrap()).unwrap();
+    assert_eq!(created["status"], "saved");
+    assert_eq!(created["device_id"], "test-device");
+    assert_eq!(created["due_at_ms"], 1_800_000_600_000i64);
+    let reminder_id = created["reminder_id"].as_str().unwrap().to_owned();
+
+    assert_eq!(results[1].1["ok"], false);
+    assert_eq!(results[1].1["code"], "unauthorized_target");
+
+    assert_eq!(results[2].1["ok"], true);
+    let listed: serde_json::Value =
+        serde_json::from_str(results[2].1["content"].as_str().unwrap()).unwrap();
+    assert_eq!(listed["total"], 1);
+
+    // Revoke grant mid-session -> subsequent tool calls must fail with reminders_disabled
+    notifications
+        .set_grant("studio", false, 2, "grant-req-2")
+        .await
+        .unwrap();
+    actor.start_tool_batch(vec![ToolCall {
+        id: "cancel-revoked".into(),
+        name: "server_cancel_reminder".into(),
+        arguments: serde_json::json!({
+            "reminder_id": reminder_id,
+            "expected_revision": 1
+        }),
+    }]);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while actor.tool_batch.is_some() {
+            actor.drain_async_call_completions();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let last_result = actor
+        .llm_messages
+        .iter()
+        .rev()
+        .find_map(|message| match message {
+            ChatMessage::ToolResult { content, .. } => {
+                Some(serde_json::from_str::<serde_json::Value>(content).unwrap())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(last_result["ok"], false);
+    assert_eq!(last_result["code"], "reminders_disabled");
+}
+
+#[tokio::test]
+async fn web_assistant_reminder_tools_require_bound_physical_target() {
+    let (_core, _context, db) = fixture(true, 4096).await;
+    let agent_id = crate::database::agents::get_agent_by(&db, "studio")
+        .await
+        .unwrap()
+        .id;
+    sqlx::query(
+        "INSERT INTO devices (device_id, agent_id, kind, enabled, created_at, updated_at) \
+         VALUES ('test-device', ?, 'physical', 1, 1000, 1000)",
+    )
+    .bind(agent_id)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let notifications = crate::database::notifications::DeviceNotifications::with_clock(
+        (*db).clone(),
+        Arc::new(|| 1_800_000_000_000),
+    );
+    notifications
+        .set_grant("studio", true, 1, "grant-req-1")
+        .await
+        .unwrap();
+    let sessions = Arc::new(crate::services::active_device_sessions::ActiveDeviceSessions::default());
+    let coordinator = crate::services::notifications::ReminderCoordinator::new(
+        notifications,
+        Arc::clone(&sessions),
+    );
+    let bound_target = Arc::new(std::sync::Mutex::new(None));
+    let handle = crate::services::notifications::SessionReminderTools {
+        coordinator,
+        agent_id,
+        agent_key: "studio".into(),
+        default_timezone: "UTC".into(),
+        target: crate::services::notifications::SessionReminderTarget::WebAssistant {
+            assistant_device_id: "__system_default_device__".into(),
+            bound_target: Arc::clone(&bound_target),
+        },
+    };
+    let err = handle
+        .execute(
+            "web-sess-1",
+            "call-1",
+            "server_create_reminder",
+            serde_json::json!({"message": "Test", "delay_seconds": 60}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err, "target_selection_required");
+
+    let device_row_id = db.device_row_id("test-device").await.unwrap().unwrap();
+    *bound_target.lock().unwrap() = Some(crate::services::notifications::BoundReminderTarget {
+        device_row_id,
+        device_id: "test-device".into(),
+        expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(600),
+    });
+    let saved = handle
+        .execute(
+            "web-sess-1",
+            "call-2",
+            "server_create_reminder",
+            serde_json::json!({"message": "Test bound", "delay_seconds": 120}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved["status"], "saved");
+    assert_eq!(saved["device_id"], "test-device");
+}

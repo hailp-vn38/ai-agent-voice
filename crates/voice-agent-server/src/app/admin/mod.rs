@@ -207,6 +207,10 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
             get(assistant_device::get).put(assistant_device::put),
         )
         .route(
+            "/system/assistant-device/reminder-target",
+            put(assistant_device::put_reminder_target),
+        )
+        .route(
             "/assistant/ws-ticket",
             axum::routing::post(assistant_device::ticket),
         )

@@ -11,6 +11,9 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+pub(crate) const REMINDER_TARGET_TTL: Duration = Duration::from_secs(15 * 60);
+pub use crate::services::notifications::BoundReminderTarget;
+
 struct Binding {
     device: i64,
     identity: String,
@@ -19,10 +22,16 @@ struct Binding {
     origin: String,
     expires: Instant,
 }
+struct LiveSession {
+    agent_key: String,
+    close: Weak<CancellationToken>,
+    reminder_target: Arc<Mutex<Option<BoundReminderTarget>>>,
+}
 struct Tickets {
     pending: HashMap<[u8; 32], Binding>,
     issued: Vec<Instant>,
     sessions: Vec<Weak<CancellationToken>>,
+    live_sessions: HashMap<String, LiveSession>,
 }
 
 pub(crate) struct WebAssistantAuth {
@@ -38,6 +47,7 @@ impl Default for WebAssistantAuth {
                 pending: HashMap::new(),
                 issued: Vec::new(),
                 sessions: Vec::new(),
+                live_sessions: HashMap::new(),
             }),
             capacity: Arc::new(Semaphore::new(2)),
         }
@@ -52,6 +62,7 @@ pub(crate) struct Ticket {
 }
 pub(crate) struct Connection {
     pub(crate) close: Arc<CancellationToken>,
+    pub(crate) reminder_target: Arc<Mutex<Option<BoundReminderTarget>>>,
     _permit: OwnedSemaphorePermit,
 }
 impl WebAssistantAuth {
@@ -61,6 +72,11 @@ impl WebAssistantAuth {
     pub(crate) fn invalidate(&self) {
         let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
         store.pending.clear();
+        for (_, live) in store.live_sessions.drain() {
+            if let Ok(mut guard) = live.reminder_target.lock() {
+                *guard = None;
+            }
+        }
         for token in store.sessions.drain(..).filter_map(|t| t.upgrade()) {
             token.cancel();
         }
@@ -69,6 +85,66 @@ impl WebAssistantAuth {
         let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
         store.sessions.retain(|t| t.strong_count() != 0);
         store.sessions.push(Arc::downgrade(token));
+    }
+    pub(crate) fn register_session(
+        &self,
+        session_id: String,
+        agent_key: String,
+        connection: &Connection,
+    ) {
+        let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
+        store.live_sessions.retain(|_, s| {
+            s.close
+                .upgrade()
+                .is_some_and(|token| !token.is_cancelled())
+        });
+        store.live_sessions.insert(
+            session_id,
+            LiveSession {
+                agent_key,
+                close: Arc::downgrade(&connection.close),
+                reminder_target: Arc::clone(&connection.reminder_target),
+            },
+        );
+    }
+    pub(crate) fn session_agent_key(&self, session_id: &str) -> Option<String> {
+        let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
+        store.live_sessions.retain(|_, s| {
+            s.close
+                .upgrade()
+                .is_some_and(|token| !token.is_cancelled())
+        });
+        store.live_sessions.get(session_id).map(|s| s.agent_key.clone())
+    }
+    pub(crate) fn bind_reminder_target(
+        &self,
+        session_id: &str,
+        expected_agent_key: &str,
+        device_row_id: i64,
+        device_id: String,
+    ) -> Result<u64, &'static str> {
+        let mut store = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
+        store.live_sessions.retain(|_, s| {
+            s.close
+                .upgrade()
+                .is_some_and(|token| !token.is_cancelled())
+        });
+        let Some(live) = store.live_sessions.get(session_id) else {
+            return Err("invalid_session");
+        };
+        if live.agent_key != expected_agent_key {
+            return Err("unauthorized_target");
+        }
+        let mut guard = live
+            .reminder_target
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(BoundReminderTarget {
+            device_row_id,
+            device_id,
+            expires_at: Instant::now() + REMINDER_TARGET_TTL,
+        });
+        Ok(REMINDER_TARGET_TTL.as_secs())
     }
     pub(crate) fn issue(&self, device: &Device, origin: &str) -> Result<Ticket, &'static str> {
         let now = Instant::now();
@@ -141,6 +217,7 @@ impl WebAssistantAuth {
         store.sessions.push(Arc::downgrade(&close));
         Ok(Connection {
             close,
+            reminder_target: Arc::new(Mutex::new(None)),
             _permit: permit,
         })
     }

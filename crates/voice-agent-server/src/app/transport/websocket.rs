@@ -325,6 +325,50 @@ pub(crate) async fn handler(
     // key: a transcript row groups by the same WebSocket connection, so a second database-side
     // session identity would be a second thing to keep in step.
     let session_id = Uuid::new_v4().to_string();
+    if let Some(ref conn) = assistant_connection
+        && !profile.agent_key.is_empty()
+    {
+        assistant_auth.register_session(session_id.clone(), profile.agent_key.clone(), conn);
+    }
+    let reminder_tools = if let Some(ref database) = state.database
+        && profile.device_db_id > 0
+        && profile.agent_id > 0
+    {
+        match crate::database::notifications::DeviceNotifications::new(database.as_ref().clone())
+            .grant(&profile.agent_key)
+            .await
+        {
+            Ok((true, _)) => {
+                let coordinator =
+                    crate::services::notifications::ReminderCoordinator::from_database(
+                        database.as_ref().clone(),
+                        Arc::clone(&state.active_device_sessions),
+                    );
+                let target = match &assistant_connection {
+                    Some(conn) => {
+                        crate::services::notifications::SessionReminderTarget::WebAssistant {
+                            assistant_device_id: device_id.to_owned(),
+                            bound_target: Arc::clone(&conn.reminder_target),
+                        }
+                    }
+                    None => crate::services::notifications::SessionReminderTarget::Physical {
+                        device_row_id: profile.device_db_id,
+                        device_id: device_id.to_owned(),
+                    },
+                };
+                Some(crate::services::notifications::SessionReminderTools {
+                    coordinator,
+                    agent_id: profile.agent_id,
+                    agent_key: profile.agent_key.clone(),
+                    default_timezone: config.orchestrator.default_timezone.clone(),
+                    target,
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
     let transcript = state.transcript_capture(&session_id, &profile);
     let admission_gate = Arc::clone(state.admission_gate());
     // Resolve the immutable, Agent-scoped candidate snapshot before the upgrade closure owns state.
@@ -384,6 +428,7 @@ pub(crate) async fn handler(
                     metrics,
                     assistant_connection,
                     system_mcp,
+                    reminder_tools,
                     active_device_sessions: state.active_device_sessions.clone(),
                     database: state.database.clone(),
                 },
@@ -542,6 +587,7 @@ struct SocketRuntimes {
     active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     database: Option<Arc<crate::database::Database>>,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
+    reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
     assistant_connection: Option<super::super::assistant::Connection>,
     connect_started: Instant,
     metrics: Option<Arc<RuntimeMetrics>>,
@@ -758,16 +804,45 @@ async fn handle_socket(
             return;
         }
     };
+    let (reminder_event_tx, reminder_worker) = if physical_connection && hello.features.reminders {
+        let (tx, mut rx) = mpsc::channel::<crate::protocol::ReminderEvent>(8);
+        let db = database.clone();
+        let sessions = Arc::clone(&active_device_sessions);
+        let sid = session_id.clone();
+        let ingress = ingress_tx.clone();
+        let worker = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                handle_reminder_message(
+                    db.as_deref(),
+                    &sessions,
+                    device_db_id,
+                    &sid,
+                    event,
+                    &ingress,
+                )
+                .await;
+            }
+        });
+        (Some(tx), Some(worker))
+    } else {
+        (None, None)
+    };
     // Ticket 10: install Observe only when the Agent policy enables it. Best-effort and
     // admission-time: a resolution/DB failure degrades to `off`, never fails the session.
     let mut actor = actor
         .with_system_mcp(runtimes.system_mcp)
+        .with_reminder_tools(runtimes.reminder_tools)
         .with_transcript(runtimes.transcript)
         .with_speaker_observe(
             runtimes.speaker_observe.clone(),
             hello.features.speaker_status,
         )
         .with_admission_gate(runtimes.admission_gate)
+        .with_reminder_turn_wakeup(
+            (physical_connection && hello.features.reminders)
+                .then(|| Arc::clone(active_device_sessions.scheduler_wakeup())),
+        )
+        .with_reminder_events(reminder_event_tx.clone())
         .with_writer_outcome_probe_opt(writer_probe.clone())
         .with_client_capabilities(
             hello.features.aec,
@@ -991,11 +1066,11 @@ async fn handle_socket(
                 match parse_client_message(&text) {
                     Ok(message) => {
                         if let ClientMessage::Reminder { session_id: inbound, event } = message {
-                            if hello.features.reminders && inbound == session_id {
-                                handle_reminder_message(
-                                    database.as_deref(), &active_device_sessions, device_db_id,
-                                    &session_id, event, &ingress_tx,
-                                ).await;
+                            if hello.features.reminders
+                                && inbound == session_id
+                                && let Some(tx) = &reminder_event_tx
+                            {
+                                let _ = tx.try_send(event);
                             }
                             continue;
                         }
@@ -1042,6 +1117,22 @@ async fn handle_socket(
     }
     drop(ingress_tx);
     let _ = session.await;
+    drop(reminder_event_tx);
+    if let Some(worker) = reminder_worker {
+        let _ = worker.await;
+    }
+    if physical_connection
+        && hello.features.reminders
+        && let Some(database) = &database
+    {
+        let coordinator = crate::services::notifications::ReminderCoordinator::from_database(
+            (**database).clone(),
+            Arc::clone(&active_device_sessions),
+        );
+        let _ = coordinator
+            .on_session_closed(device_db_id, &session_id)
+            .await;
+    }
     drop(control_tx);
     drop(urgent_tx);
     // The actor is gone and no lane can produce another message, so the watch channel's last sender
@@ -1057,17 +1148,20 @@ async fn handle_socket(
 
 async fn handle_reminder_message(
     database: Option<&crate::database::Database>,
-    sessions: &crate::services::active_device_sessions::ActiveDeviceSessions,
+    sessions: &Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     device: i64,
     session_id: &str,
     event: crate::protocol::ReminderEvent,
     ingress: &mpsc::Sender<SessionEvent>,
 ) {
     let Some(database) = database else { return };
-    let notifications = crate::database::notifications::DeviceNotifications::new(database.clone());
+    let coordinator = crate::services::notifications::ReminderCoordinator::from_database(
+        database.clone(),
+        Arc::clone(sessions),
+    );
     match event {
         crate::protocol::ReminderEvent::SyncRequest { known_revision: _ } => {
-            let Ok(snapshot) = notifications.snapshot(device).await else {
+            let Ok(snapshot) = coordinator.repo().snapshot(device).await else {
                 return;
             };
             let snapshot_id = Uuid::new_v4().to_string();
@@ -1100,7 +1194,8 @@ async fn handle_reminder_message(
             else {
                 return;
             };
-            let _ = notifications
+            let _ = coordinator
+                .repo()
                 .acknowledge_snapshot(
                     device,
                     snapshot.revision,
@@ -1113,17 +1208,39 @@ async fn handle_reminder_message(
             reminder_id,
             attempt_id,
         } => {
-            let Ok(Some(revision)) = notifications
-                .complete_attempt(device, session_id, &reminder_id, &attempt_id)
+            sessions.clear_in_flight_reminder(device, session_id);
+            let Ok(Some(outcome)) = coordinator
+                .complete_attempt_with_outcome(device, session_id, &reminder_id, &attempt_id)
                 .await
             else {
                 return;
             };
-            sessions.sync_required(device, revision);
             let text = serde_json::json!({
                 "type":"reminder", "event":"delivery_result", "session_id":session_id,
-                "reminder_id":reminder_id, "attempt_id":attempt_id, "status":"completed", "revision":revision,
-            }).to_string();
+                "reminder_id":reminder_id, "attempt_id":attempt_id,
+                "outcome":"completed", "revision":outcome.schedule_revision,
+            })
+            .to_string();
+            let _ = ingress.try_send(SessionEvent::ReminderControl { text });
+        }
+        crate::protocol::ReminderEvent::Failed {
+            reminder_id,
+            attempt_id,
+            reason,
+        } => {
+            sessions.clear_in_flight_reminder(device, session_id);
+            let Ok(Some(outcome)) = coordinator
+                .fail_attempt(device, session_id, &reminder_id, &attempt_id, &reason)
+                .await
+            else {
+                return;
+            };
+            let text = serde_json::json!({
+                "type":"reminder", "event":"delivery_result", "session_id":session_id,
+                "reminder_id":reminder_id, "attempt_id":attempt_id,
+                "outcome":"failed", "revision":outcome.schedule_revision,
+            })
+            .to_string();
             let _ = ingress.try_send(SessionEvent::ReminderControl { text });
         }
     }

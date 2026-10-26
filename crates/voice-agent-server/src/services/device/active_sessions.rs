@@ -4,10 +4,10 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -16,6 +16,7 @@ pub struct ActiveDeviceSession {
     pub features: ClientFeatures,
     pub sender: mpsc::Sender<SessionEvent>,
     pub close: CancellationToken,
+    pub in_flight_reminder: Option<String>,
     last_speech: Option<Instant>,
     snapshots: HashMap<String, ReminderSnapshot>,
 }
@@ -26,10 +27,29 @@ pub struct ReminderSnapshot {
     pub item_ids: Vec<String>,
 }
 
-#[derive(Default)]
-pub struct ActiveDeviceSessions(Mutex<HashMap<i64, ActiveDeviceSession>>);
+pub struct ActiveDeviceSessions {
+    entries: Mutex<HashMap<i64, ActiveDeviceSession>>,
+    scheduler_wakeup: Arc<Notify>,
+}
+
+impl Default for ActiveDeviceSessions {
+    fn default() -> Self {
+        Self::with_wakeup(Arc::new(Notify::new()))
+    }
+}
 
 impl ActiveDeviceSessions {
+    pub fn with_wakeup(scheduler_wakeup: Arc<Notify>) -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            scheduler_wakeup,
+        }
+    }
+
+    pub fn scheduler_wakeup(&self) -> &Arc<Notify> {
+        &self.scheduler_wakeup
+    }
+
     pub fn register(
         &self,
         device: i64,
@@ -38,25 +58,32 @@ impl ActiveDeviceSessions {
         sender: mpsc::Sender<SessionEvent>,
         close: CancellationToken,
     ) {
-        let mut entries = self.0.lock().unwrap();
-        if let Some(old) = entries.get(&device) {
-            old.close.cancel();
+        let notify_scheduler = features.reminders;
+        {
+            let mut entries = self.entries.lock().unwrap();
+            if let Some(old) = entries.get(&device) {
+                old.close.cancel();
+            }
+            entries.insert(
+                device,
+                ActiveDeviceSession {
+                    session_id,
+                    features,
+                    sender,
+                    close,
+                    in_flight_reminder: None,
+                    last_speech: None,
+                    snapshots: HashMap::new(),
+                },
+            );
         }
-        entries.insert(
-            device,
-            ActiveDeviceSession {
-                session_id,
-                features,
-                sender,
-                close,
-                last_speech: None,
-                snapshots: HashMap::new(),
-            },
-        );
+        if notify_scheduler {
+            self.scheduler_wakeup.notify_one();
+        }
     }
 
     pub fn unregister(&self, device: i64, session_id: &str) {
-        let mut entries = self.0.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap();
         if entries
             .get(&device)
             .is_some_and(|s| s.session_id == session_id)
@@ -66,7 +93,7 @@ impl ActiveDeviceSessions {
     }
 
     pub fn current(&self, device: i64) -> Option<ActiveDeviceSession> {
-        self.0
+        self.entries
             .lock()
             .unwrap()
             .get(&device)
@@ -75,13 +102,71 @@ impl ActiveDeviceSessions {
     }
 
     pub fn active_device_ids(&self) -> Vec<i64> {
-        self.0
+        self.entries
             .lock()
             .unwrap()
             .iter()
             .filter(|(_, s)| !s.close.is_cancelled() && !s.sender.is_closed())
             .map(|(id, _)| *id)
             .collect()
+    }
+
+    pub fn active_reminder_device_ids(&self) -> Vec<i64> {
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, s)| {
+                !s.close.is_cancelled() && !s.sender.is_closed() && s.features.reminders
+            })
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    pub fn ready_reminder_devices(&self) -> Vec<(i64, String)> {
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, s)| {
+                !s.close.is_cancelled()
+                    && !s.sender.is_closed()
+                    && s.features.reminders
+                    && s.in_flight_reminder.is_none()
+            })
+            .map(|(id, s)| (*id, s.session_id.clone()))
+            .collect()
+    }
+
+    pub fn set_in_flight_reminder(&self, device: i64, session_id: &str, attempt_id: String) -> bool {
+        let mut entries = self.entries.lock().unwrap();
+        let Some(session) = entries.get_mut(&device).filter(|s| {
+            !s.close.is_cancelled()
+                && !s.sender.is_closed()
+                && s.session_id == session_id
+                && s.features.reminders
+        }) else {
+            return false;
+        };
+        session.in_flight_reminder = Some(attempt_id);
+        true
+    }
+
+    pub fn clear_in_flight_reminder(&self, device: i64, session_id: &str) {
+        let mut cleared = false;
+        {
+            let mut entries = self.entries.lock().unwrap();
+            if let Some(session) = entries
+                .get_mut(&device)
+                .filter(|s| s.session_id == session_id)
+                && session.in_flight_reminder.take().is_some()
+            {
+                cleared = true;
+            }
+        }
+        if cleared {
+            self.scheduler_wakeup.notify_one();
+        }
     }
 
     /// Best effort after a committed mutation. Reconnect always requests a complete snapshot.
@@ -106,7 +191,7 @@ impl ActiveDeviceSessions {
         revision: i64,
         item_ids: Vec<String>,
     ) -> bool {
-        let mut entries = self.0.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap();
         let Some(session) = entries
             .get_mut(&device)
             .filter(|s| s.session_id == session_id && s.features.reminders)
@@ -129,7 +214,7 @@ impl ActiveDeviceSessions {
         snapshot_id: &str,
         revision: i64,
     ) -> Option<ReminderSnapshot> {
-        let mut entries = self.0.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap();
         let session = entries
             .get_mut(&device)
             .filter(|s| s.session_id == session_id && s.features.reminders)?;
@@ -146,27 +231,30 @@ impl ActiveDeviceSessions {
         let (reply, received) = oneshot::channel();
         let session_id;
         {
-            let mut entries = self.0.lock().unwrap();
+            let mut entries = self.entries.lock().unwrap();
             let session = entries
                 .get_mut(&device)
                 .filter(|s| !s.close.is_cancelled() && !s.sender.is_closed())
                 .ok_or(DirectSpeechError::DeviceOffline)?;
             session_id = session.session_id.clone();
-            if matches!(
+            let is_reminder = matches!(
                 request.origin,
                 crate::session::SpeechOrigin::Reminder { .. }
-            ) {
+            );
+            if is_reminder {
                 if !session.features.reminders {
                     return Err(DirectSpeechError::UnsupportedFeature);
                 }
-            } else if !session.features.direct_tts {
-                return Err(DirectSpeechError::UnsupportedFeature);
-            }
-            if session
-                .last_speech
-                .is_some_and(|last| last.elapsed() < Duration::from_secs(1))
-            {
-                return Err(DirectSpeechError::RateLimited);
+            } else {
+                if !session.features.direct_tts {
+                    return Err(DirectSpeechError::UnsupportedFeature);
+                }
+                if session
+                    .last_speech
+                    .is_some_and(|last| last.elapsed() < Duration::from_secs(1))
+                {
+                    return Err(DirectSpeechError::RateLimited);
+                }
             }
             session
                 .sender
@@ -175,7 +263,9 @@ impl ActiveDeviceSessions {
                     mpsc::error::TrySendError::Full(_) => DirectSpeechError::CapacityReached,
                     mpsc::error::TrySendError::Closed(_) => DirectSpeechError::DeviceOffline,
                 })?;
-            session.last_speech = Some(Instant::now());
+            if !is_reminder {
+                session.last_speech = Some(Instant::now());
+            }
         }
         tokio::time::timeout(Duration::from_secs(2), received)
             .await

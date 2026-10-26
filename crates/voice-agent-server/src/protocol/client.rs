@@ -131,6 +131,11 @@ pub enum ReminderEvent {
         reminder_id: String,
         attempt_id: String,
     },
+    Failed {
+        reminder_id: String,
+        attempt_id: String,
+        reason: String,
+    },
 }
 
 impl ClientMessage {
@@ -220,6 +225,30 @@ fn parse_reminder_message(value: &Value) -> Result<ClientMessage, ProtocolError>
             ReminderEvent::Played {
                 reminder_id: reminder_id.into(),
                 attempt_id: attempt_id.into(),
+            }
+        }
+        Some("failed") => {
+            let id = |name| {
+                value
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .filter(|v| !v.is_empty() && v.len() <= 128)
+            };
+            let (Some(reminder_id), Some(attempt_id), Some(reason)) =
+                (id("reminder_id"), id("attempt_id"), id("reason"))
+            else {
+                return Ok(ClientMessage::Unknown);
+            };
+            if !matches!(
+                reason,
+                "output_unavailable" | "playback_aborted" | "decode_failed"
+            ) {
+                return Ok(ClientMessage::Unknown);
+            }
+            ReminderEvent::Failed {
+                reminder_id: reminder_id.into(),
+                attempt_id: attempt_id.into(),
+                reason: reason.into(),
             }
         }
         _ => return Ok(ClientMessage::Unknown),
@@ -337,6 +366,35 @@ mod tool_status_feature_tests {
                 r#"{"type":"reminder","event":"played","session_id":"s","reminder_id":"r"}"#
             ),
             Ok(ClientMessage::Unknown)
+        ));
+        assert!(matches!(
+            parse_client_message(
+                r#"{"type":"reminder","event":"failed","session_id":"s","reminder_id":"r","attempt_id":"a","reason":"output_unavailable"}"#
+            ),
+            Ok(ClientMessage::Reminder {
+                event: ReminderEvent::Failed { reminder_id, attempt_id, reason },
+                ..
+            }) if reminder_id == "r" && attempt_id == "a" && reason == "output_unavailable"
+        ));
+        assert!(matches!(
+            parse_client_message(
+                r#"{"type":"reminder","event":"failed","session_id":"s","reminder_id":"r","attempt_id":"a","reason":"unknown_reason"}"#
+            ),
+            Ok(ClientMessage::Unknown)
+        ));
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/voice_reminders_protocol_v1.json"
+        ))
+        .expect("fixture json");
+        assert!(matches!(
+            parse_client_message(&fixture["failed"].to_string()),
+            Ok(ClientMessage::Reminder {
+                session_id,
+                event: ReminderEvent::Failed { reminder_id, attempt_id, reason },
+            }) if session_id == "s-123"
+                && reminder_id == "r1"
+                && attempt_id == "a1"
+                && reason == "decode_failed"
         ));
     }
 }

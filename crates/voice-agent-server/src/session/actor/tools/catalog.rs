@@ -8,7 +8,8 @@ use crate::{
     tools::{
         builtin::{
             BuiltinTool, EXIT_TOOL_NAME, SWITCH_TEMPLATE_TOOL_NAME, exit_tool_definition,
-            is_task_suite_tool_name, switch_template_tool_definition,
+            is_legacy_reminder_tool_name, is_reminder_tool_name, is_task_suite_tool_name,
+            reminder_tool_definitions, switch_template_tool_definition,
         },
         device_mcp::LlmVisibleTool,
         external_mcp::{ResolvedExternalMcp, ResolvedExternalTool},
@@ -18,7 +19,10 @@ use crate::{
 /// A builtin tool must not be shadowed by, or shadow, a Device MCP tool. Sanitized MCP names can
 /// never contain a dot, so the dotted server action is unambiguous while the exit tool is filtered.
 pub(super) fn is_builtin_tool_name(name: &str) -> bool {
-    name == EXIT_TOOL_NAME || name == SWITCH_TEMPLATE_TOOL_NAME || is_task_suite_tool_name(name)
+    name == EXIT_TOOL_NAME
+        || name == SWITCH_TEMPLATE_TOOL_NAME
+        || is_task_suite_tool_name(name)
+        || is_reminder_tool_name(name)
 }
 
 /// Where one ToolCall goes, decided from the name the model used and nothing else.
@@ -41,7 +45,18 @@ impl SessionActor {
     pub(in super::super) fn available_llm_tools(&self) -> Vec<ToolDefinition> {
         let mut tools = vec![exit_tool_definition()];
         if let Some(ref handle) = self.job_submit {
-            tools.extend(handle.tool_definitions());
+            let defs = handle.tool_definitions();
+            if self.reminder_tools.is_some() {
+                tools.extend(
+                    defs.into_iter()
+                        .filter(|tool| !is_legacy_reminder_tool_name(&tool.name)),
+                );
+            } else {
+                tools.extend(defs);
+            }
+        }
+        if self.reminder_tools.is_some() {
+            tools.extend(reminder_tool_definitions());
         }
         if !self.switch_catalog.is_empty() {
             tools.push(switch_template_tool_definition(
@@ -85,6 +100,7 @@ impl SessionActor {
     /// Whether this session holds a tool that can change the final answer.
     pub(in super::super) fn offers_answer_changing_tools(&self) -> bool {
         (self.job_submit.is_some() && self.llm_runtime.supports_tools())
+            || self.reminder_tools.is_some()
             || !self.mcp.visible.is_empty()
             || !self.external_mcp.is_empty()
             || self
@@ -94,6 +110,14 @@ impl SessionActor {
     }
 
     pub(in super::super) fn resolve_tool(&self, name: &str) -> Option<ToolTarget> {
+        if is_reminder_tool_name(name)
+            || (self.reminder_tools.is_some() && is_legacy_reminder_tool_name(name))
+        {
+            return self
+                .reminder_tools
+                .as_ref()
+                .map(|_| ToolTarget::Builtin(BuiltinTool::Reminder));
+        }
         if is_task_suite_tool_name(name) {
             return self
                 .job_submit
@@ -130,7 +154,7 @@ impl SessionActor {
         calls
             .iter()
             .fold(McpResultDelivery::Silent, |selected, call| {
-                if is_task_suite_tool_name(&call.name) {
+                if is_task_suite_tool_name(&call.name) || is_reminder_tool_name(&call.name) {
                     return McpResultDelivery::LlmThenTts;
                 }
                 let delivery = self

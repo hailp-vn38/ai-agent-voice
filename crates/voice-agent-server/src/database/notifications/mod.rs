@@ -1,11 +1,13 @@
 //! Durable Device-owned notifications, shared by HTTP, tools and schedule delivery.
 mod aggregate;
+mod delivery;
 mod mutations;
 use super::{
     Database,
     audit::{AuditOutcome, audit},
 };
 pub use aggregate::AgentReminderQuery;
+pub use delivery::*;
 pub use mutations::UpdateReminder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,6 +15,41 @@ use sqlx::FromRow;
 use std::sync::Arc;
 
 pub const SNAPSHOT_LIMIT: i64 = 64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReminderSource {
+    Web,
+    Voice,
+    WebAssistant,
+}
+
+impl ReminderSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Web => "web",
+            Self::Voice => "voice",
+            Self::WebAssistant => "web_assistant",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "web" => Some(Self::Web),
+            "voice" => Some(Self::Voice),
+            "web_assistant" => Some(Self::WebAssistant),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MutationContext<'a> {
+    pub caller: &'a str,
+    pub request_id: &'a str,
+    pub audit_request_id: &'a str,
+    pub source: ReminderSource,
+    pub agent_scope: Option<&'a str>,
+}
 
 #[derive(Clone, Debug)]
 pub struct ReminderSnapshot {
@@ -91,6 +128,12 @@ impl DeviceNotifications {
         self.agent_scope = Some(key.into());
         self
     }
+    pub fn clock_now(&self) -> i64 {
+        (self.clock)()
+    }
+    pub fn database(&self) -> &Database {
+        &self.database
+    }
     /// Reads the fixed cache window in one transaction. The caller owns the ephemeral snapshot
     /// token because it is tied to a current WebSocket session, never persisted identity.
     pub async fn snapshot(
@@ -159,120 +202,19 @@ impl DeviceNotifications {
         Ok(())
     }
 
-    /// Claims one due item only while its pending row still exists. The caller must then fence the
-    /// claim against the current Device session before admitting speech.
-    pub async fn claim_due(
-        &self,
-        reminder_id: &str,
-        session_id: &str,
-    ) -> Result<Option<(DueReminder, String)>, NotificationError> {
-        let now = (self.clock)();
-        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let row = sqlx::query_as::<_, (String, i64, String)>("SELECT id,device_row_id,message FROM device_reminders WHERE id=? AND status='pending' AND due_at_ms<=? AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms<=?)")
-            .bind(reminder_id).bind(now).bind(now).fetch_optional(&mut *tx).await?;
-        let Some((reminder_id, device_row_id, message)) = row else {
-            tx.commit().await?;
-            return Ok(None);
-        };
-        let attempt_id = uuid::Uuid::new_v4().to_string();
-        let changed = sqlx::query("UPDATE device_reminders SET attempts_used=attempts_used+1,updated_at_ms=? WHERE id=? AND status='pending'")
-            .bind(now).bind(&reminder_id).execute(&mut *tx).await?.rows_affected();
-        if changed != 1 {
-            tx.commit().await?;
-            return Ok(None);
-        }
-        sqlx::query("INSERT INTO reminder_delivery_attempts(attempt_id,reminder_id,session_instance_id,status,lease_until_ms,created_at_ms,updated_at_ms) VALUES (?,?,?,'claimed',?,?,?)")
-            .bind(&attempt_id).bind(&reminder_id).bind(session_id).bind(now.saturating_add(120_000)).bind(now).bind(now).execute(&mut *tx).await?;
-        tx.commit().await?;
-        Ok(Some((
-            DueReminder {
-                reminder_id,
-                device_row_id,
-                message,
-            },
-            attempt_id,
-        )))
-    }
-
-    pub async fn due_ids(&self) -> Result<Vec<String>, NotificationError> {
-        let now = (self.clock)();
-        Ok(sqlx::query_scalar("SELECT id FROM device_reminders WHERE status='pending' AND due_at_ms<=? AND (next_attempt_at_ms IS NULL OR next_attempt_at_ms<=?) ORDER BY due_at_ms,id LIMIT 64")
-            .bind(now).bind(now).fetch_all(self.database.pool()).await?)
-    }
-
-    pub async fn due_device(&self, reminder_id: &str) -> Result<Option<i64>, NotificationError> {
-        Ok(sqlx::query_scalar(
-            "SELECT device_row_id FROM device_reminders WHERE id=? AND status='pending'",
-        )
-        .bind(reminder_id)
-        .fetch_optional(self.database.pool())
-        .await?)
-    }
-
-    pub async fn complete_attempt(
-        &self,
-        device_row_id: i64,
-        session_id: &str,
-        reminder_id: &str,
-        attempt_id: &str,
-    ) -> Result<Option<i64>, NotificationError> {
-        let now = (self.clock)();
-        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let valid = sqlx::query_scalar::<_, i64>("SELECT 1 FROM reminder_delivery_attempts a JOIN device_reminders r ON r.id=a.reminder_id WHERE a.attempt_id=? AND a.reminder_id=? AND a.session_instance_id=? AND a.status='claimed' AND r.device_row_id=? AND r.status='pending'")
-            .bind(attempt_id).bind(reminder_id).bind(session_id).bind(device_row_id).fetch_optional(&mut *tx).await?.is_some();
-        if !valid {
-            tx.commit().await?;
-            return Ok(None);
-        }
-        sqlx::query("UPDATE reminder_delivery_attempts SET status='played',updated_at_ms=? WHERE attempt_id=?").bind(now).bind(attempt_id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE device_reminders SET status='completed',completed_at_ms=?,updated_at_ms=? WHERE id=?").bind(now).bind(now).bind(reminder_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO device_reminder_sync(device_row_id,schedule_revision) VALUES (?,1) ON CONFLICT(device_row_id) DO UPDATE SET schedule_revision=schedule_revision+1").bind(device_row_id).execute(&mut *tx).await?;
-        let revision = sqlx::query_scalar(
-            "SELECT schedule_revision FROM device_reminder_sync WHERE device_row_id=?",
-        )
-        .bind(device_row_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(Some(revision))
-    }
-
-    /// An actor admission failure happens before the first playable packet, so it is not an
-    /// attempt. The session fence prevents this cleanup from touching a replacement claim.
-    pub async fn release_unstarted_attempt(
-        &self,
-        reminder_id: &str,
-        attempt_id: &str,
-        session_id: &str,
-    ) -> Result<(), NotificationError> {
-        let now = (self.clock)();
-        let mut tx = self.database.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let deleted = sqlx::query("DELETE FROM reminder_delivery_attempts WHERE attempt_id=? AND reminder_id=? AND session_instance_id=? AND status='claimed'")
-            .bind(attempt_id).bind(reminder_id).bind(session_id).execute(&mut *tx).await?.rows_affected();
-        if deleted == 1 {
-            sqlx::query("UPDATE device_reminders SET attempts_used=MAX(attempts_used-1,0),updated_at_ms=? WHERE id=? AND status='pending'")
-                .bind(now).bind(reminder_id).execute(&mut *tx).await?;
-        }
-        tx.commit().await?;
-        Ok(())
-    }
-    #[allow(clippy::too_many_arguments)] // Audit correlation is distinct from the durable mutation identity.
-    pub async fn create(
+    pub async fn create_with_context(
         &self,
         device_id: &str,
-        caller: &str,
-        request_id: &str,
+        ctx: &MutationContext<'_>,
         input: CreateReminder,
-        source: &str,
-        audit_request_id: &str,
-    ) -> Result<Reminder, NotificationError> {
-        if request_id.is_empty()
-            || request_id.len() > 128
-            || request_id.chars().any(char::is_control)
-            || !matches!(source, "web" | "voice" | "web_assistant")
+    ) -> Result<(Reminder, i64), NotificationError> {
+        if ctx.request_id.is_empty()
+            || ctx.request_id.len() > 128
+            || ctx.request_id.chars().any(char::is_control)
         {
             return Err(NotificationError::Invalid("validation_failed"));
         }
+        let scope = ctx.agent_scope.or(self.agent_scope.as_deref());
         let payload = serde_json::to_vec(&input)
             .map_err(|_| NotificationError::Invalid("validation_failed"))?;
         let hash = Sha256::digest(&payload)
@@ -283,16 +225,22 @@ impl DeviceNotifications {
         let (device_row_id, kind): (i64, String) =
             sqlx::query_as("SELECT d.id,d.kind FROM devices d JOIN agents a ON a.id=d.agent_id WHERE d.device_id=? AND (? IS NULL OR a.key=?)")
                 .bind(device_id)
-                .bind(self.agent_scope.as_deref()).bind(self.agent_scope.as_deref())
+                .bind(scope).bind(scope)
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or(NotificationError::NotFound)?;
         if kind != "physical" {
             return Err(NotificationError::Invalid("unauthorized_target"));
         }
-        if let Some((stored_hash,response)) = sqlx::query_as::<_,(String,String)>("SELECT payload_hash,response_json FROM reminder_mutation_keys WHERE caller_namespace=? AND request_id=? AND operation='create' AND device_row_id=?").bind(caller).bind(request_id).bind(device_row_id).fetch_optional(&mut *tx).await? {
-            if stored_hash!=hash { return Err(NotificationError::Conflict("idempotency_conflict")); }
-            return serde_json::from_str(&response).map_err(|_| NotificationError::Invalid("stored_response_invalid"));
+        if let Some((stored_hash, response)) = sqlx::query_as::<_, (String, String)>("SELECT payload_hash,response_json FROM reminder_mutation_keys WHERE caller_namespace=? AND request_id=? AND operation='create' AND device_row_id=?").bind(ctx.caller).bind(ctx.request_id).bind(device_row_id).fetch_optional(&mut *tx).await? {
+            if stored_hash != hash {
+                return Err(NotificationError::Conflict("idempotency_conflict"));
+            }
+            let mut reminder: Reminder = serde_json::from_str(&response)
+                .map_err(|_| NotificationError::Invalid("stored_response_invalid"))?;
+            reminder.sync_status = sync_status(&mut tx, device_row_id, &reminder).await?;
+            tx.commit().await?;
+            return Ok((reminder, device_row_id));
         }
         let now = (self.clock)();
         prune_keys(&mut tx, now).await?;
@@ -306,13 +254,7 @@ impl DeviceNotifications {
         if count >= 500 {
             return Err(NotificationError::Conflict("reminder_quota_exceeded"));
         }
-        sqlx::query("INSERT INTO device_reminder_sync(device_row_id,schedule_revision) VALUES (?,1) ON CONFLICT(device_row_id) DO UPDATE SET schedule_revision=schedule_revision+1").bind(device_row_id).execute(&mut *tx).await?;
-        let revision: i64 = sqlx::query_scalar(
-            "SELECT schedule_revision FROM device_reminder_sync WHERE device_row_id=?",
-        )
-        .bind(device_row_id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let revision = delivery::bump_schedule_revision(&mut tx, device_row_id).await?;
         let reminder = Reminder {
             id: uuid::Uuid::new_v4().to_string(),
             device_id: device_id.into(),
@@ -327,13 +269,13 @@ impl DeviceNotifications {
             updated_at_ms: now,
             sync_status: "pending".into(),
         };
-        sqlx::query("INSERT INTO device_reminders(id,device_row_id,message,due_at_ms,timezone,schedule_revision,source,created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,?,?,?,?)").bind(&reminder.id).bind(device_row_id).bind(&reminder.message).bind(due_at_ms).bind(&reminder.timezone).bind(revision).bind(source).bind(now).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO device_reminders(id,device_row_id,message,due_at_ms,timezone,schedule_revision,source,created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,?,?,?,?)").bind(&reminder.id).bind(device_row_id).bind(&reminder.message).bind(due_at_ms).bind(&reminder.timezone).bind(revision).bind(ctx.source.as_str()).bind(now).bind(now).execute(&mut *tx).await?;
         let response = serde_json::to_string(&reminder)
             .map_err(|_| NotificationError::Invalid("validation_failed"))?;
-        sqlx::query("INSERT INTO reminder_mutation_keys(caller_namespace,request_id,operation,device_row_id,payload_hash,response_json,created_at_ms) VALUES (?,?,'create',?,?,?,?)").bind(caller).bind(request_id).bind(device_row_id).bind(hash).bind(response).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO reminder_mutation_keys(caller_namespace,request_id,operation,device_row_id,payload_hash,response_json,created_at_ms) VALUES (?,?,'create',?,?,?,?)").bind(ctx.caller).bind(ctx.request_id).bind(device_row_id).bind(hash).bind(response).bind(now).execute(&mut *tx).await?;
         audit(
             &mut *tx,
-            audit_request_id,
+            ctx.audit_request_id,
             "device_reminder_schedule",
             Some(device_row_id),
             "create_reminder",
@@ -344,8 +286,9 @@ impl DeviceNotifications {
         )
         .await?;
         tx.commit().await?;
-        Ok(reminder)
+        Ok((reminder, device_row_id))
     }
+
     pub async fn list(
         &self,
         device_id: &str,
@@ -383,6 +326,23 @@ impl DeviceNotifications {
             .fetch_optional(self.database.pool())
             .await?
             .ok_or(NotificationError::NotFound)
+    }
+
+    pub async fn is_active_physical_device_for_agent(
+        &self,
+        device_row_id: i64,
+        device_id: &str,
+        agent_id: i64,
+    ) -> Result<bool, NotificationError> {
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT 1 FROM devices WHERE id = ? AND device_id = ? AND kind = 'physical' AND enabled = 1 AND agent_id = ?",
+        )
+        .bind(device_row_id)
+        .bind(device_id)
+        .bind(agent_id)
+        .fetch_optional(self.database.pool())
+        .await?
+        .is_some())
     }
     pub async fn set_grant(
         &self,
@@ -432,7 +392,7 @@ impl DeviceNotifications {
     }
 }
 
-async fn sync_status(
+pub(super) async fn sync_status(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device: i64,
     item: &Reminder,

@@ -157,6 +157,7 @@ pub struct SessionActor {
     /// belongs to the shared Tool-round Executor, which this snapshot exists to feed.
     external_mcp: SessionExternalMcp,
     system_mcp: Option<crate::tools::system_mcp::SessionSystemMcp>,
+    reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
     /// The Device tool review this Voice Session was admitted under, if any.  A session admitted
     /// without one keeps the legacy Device allowlist behavior; one admitted with a participating
     /// Agent only calls what that Agent approved for this Device incarnation.
@@ -193,6 +194,10 @@ pub struct SessionActor {
     /// only asks, so a Tool-round Executor cannot start new work after the application has stopped
     /// accepting it, whether or not this session ever observed the shutdown signal.
     admission_gate: std::sync::Arc<AdmissionGate>,
+    /// Optional wakeup for the reminder scheduler when this session returns to an idle turn boundary.
+    reminder_turn_wakeup: Option<std::sync::Arc<tokio::sync::Notify>>,
+    /// Optional channel to report server-side reminder playback failures/interruptions.
+    reminder_event_tx: Option<mpsc::Sender<crate::protocol::ReminderEvent>>,
     /// Installed only by a test harness; see [`WriterOutcomeProbe`].
     writer_probe: Option<std::sync::Arc<dyn WriterOutcomeProbe>>,
 }
@@ -432,6 +437,7 @@ struct AsyncCallCompletion {
 enum AsyncToolOutcome {
     External(Result<ExternalToolOutcome, ExternalMcpError>),
     System(Result<serde_json::Value, crate::tools::system_mcp::SystemToolError>),
+    Reminder(Result<serde_json::Value, &'static str>),
 }
 
 #[derive(Default)]

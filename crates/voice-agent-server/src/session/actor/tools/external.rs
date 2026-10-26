@@ -142,6 +142,20 @@ impl SessionActor {
                         Err(error) => self.complete_tool_call(in_flight, Err(&error.to_string())),
                     }
                 }
+                AsyncToolOutcome::Reminder(outcome) => {
+                    if let Some(batch) = self.tool_batch.as_mut() {
+                        batch.in_flight = None;
+                    }
+                    match outcome {
+                        Ok(value) => self.complete_tool_call(
+                            in_flight,
+                            Ok(serde_json::json!({
+                                "content": [{"type":"text", "text":value.to_string()}]
+                            })),
+                        ),
+                        Err(code) => self.complete_tool_call(in_flight, Err(code)),
+                    }
+                }
             }
         }
     }

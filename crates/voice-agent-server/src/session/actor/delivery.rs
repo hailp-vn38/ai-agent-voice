@@ -39,9 +39,11 @@ impl SessionActor {
         // Compose the System message once per turn, after the ASR/Speaker join.
         // Never mutate the immutable admission profile or persist speaker metadata in history.
         let speaker = self.speaker_context_for_turn.take();
-        let system = match crate::session::prompt::compose_turn_system(
+        let reminder_ctx = self.reminder_tools.as_ref().map(|rt| rt.turn_context());
+        let system = match crate::session::prompt::compose_turn_system_with_reminders(
             &self.profile.system_prompt,
             speaker.as_ref(),
+            reminder_ctx.as_ref(),
         ) {
             Ok(system) => system,
             Err(_) => {
@@ -649,6 +651,19 @@ impl SessionActor {
     pub(super) fn release_active_turn(&mut self) {
         let mut terminal_admission_failed = false;
         if self.direct_metadata && self.direct_request_id.is_some() {
+            if self.turn_status_outcome != "completed"
+                && let SpeechOrigin::Reminder {
+                    reminder_id,
+                    attempt_id,
+                } = &self.speech_origin
+                && let Some(tx) = &self.reminder_event_tx
+            {
+                let _ = tx.try_send(crate::protocol::ReminderEvent::Failed {
+                    reminder_id: reminder_id.clone(),
+                    attempt_id: attempt_id.clone(),
+                    reason: "playback_aborted".into(),
+                });
+            }
             let mut payload = self.direct_control("result");
             payload["outcome"] = serde_json::json!(self.turn_status_outcome);
             terminal_admission_failed = self

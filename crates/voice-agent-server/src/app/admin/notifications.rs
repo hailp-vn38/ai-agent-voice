@@ -1,5 +1,10 @@
 use super::*;
-use crate::database::notifications::{CreateReminder, DeviceNotifications, NotificationError};
+use crate::{
+    database::notifications::{
+        CreateReminder, DeviceNotifications, MutationContext, NotificationError, ReminderSource,
+    },
+    services::notifications::ReminderCoordinator,
+};
 fn failure(request: &Request, cause: NotificationError) -> Response {
     let (status, code) = match cause {
         NotificationError::Invalid("unauthorized_target") => {
@@ -32,14 +37,18 @@ pub(super) async fn create(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match notifications(database, &request)
-        .create(&device, "admin", key, input, "web", id(&request))
+    let ctx = MutationContext {
+        caller: "admin",
+        request_id: key,
+        audit_request_id: id(&request),
+        source: ReminderSource::Web,
+        agent_scope: agent_scope(&request),
+    };
+    match coordinator(&state, database, &request)
+        .create(&device, &ctx, input)
         .await
     {
-        Ok(v) => {
-            publish_sync(&state, &device, v.schedule_revision).await;
-            (StatusCode::CREATED, Json(v)).into_response()
-        }
+        Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
         Err(e) => failure(&request, e),
     }
 }
@@ -59,7 +68,7 @@ pub(super) async fn list(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match notifications(database, &request)
+    match coordinator(&state, database, &request)
         .list(
             &device,
             query.status.as_deref(),
@@ -68,21 +77,7 @@ pub(super) async fn list(
         )
         .await
     {
-        Ok(mut v) => {
-            if let Some(summary) = v.get_mut("schedule_summary").and_then(Value::as_object_mut) {
-                let id = database.device_row_id(&device).await.ok().flatten();
-                let session = id.and_then(|id| state.active_device_sessions.current(id));
-                summary.insert(
-                    "session_connected".into(),
-                    serde_json::json!(session.is_some()),
-                );
-                summary.insert(
-                    "reminder_capable".into(),
-                    serde_json::json!(session.is_some_and(|s| s.features.reminders)),
-                );
-            }
-            Json(v).into_response()
-        }
+        Ok(v) => Json(v).into_response(),
         Err(e) => failure(&request, e),
     }
 }
@@ -159,22 +154,18 @@ pub(super) async fn update(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match notifications(db, &request)
-        .update(
-            &device,
-            &reminder,
-            revision,
-            "admin",
-            key,
-            input,
-            id(&request),
-        )
+    let ctx = MutationContext {
+        caller: "admin",
+        request_id: key,
+        audit_request_id: id(&request),
+        source: ReminderSource::Web,
+        agent_scope: agent_scope(&request),
+    };
+    match coordinator(&state, db, &request)
+        .update(&device, &reminder, revision, &ctx, input)
         .await
     {
-        Ok(v) => {
-            publish_sync(&state, &device, v.schedule_revision).await;
-            Json(v).into_response()
-        }
+        Ok(v) => Json(v).into_response(),
         Err(e) => failure(&request, e),
     }
 }
@@ -202,8 +193,15 @@ pub(super) async fn cancel(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match notifications(db, &request)
-        .cancel(&device, &reminder, revision, "admin", key, id(&request))
+    let ctx = MutationContext {
+        caller: "admin",
+        request_id: key,
+        audit_request_id: id(&request),
+        source: ReminderSource::Web,
+        agent_scope: agent_scope(&request),
+    };
+    match coordinator(&state, db, &request)
+        .cancel(&device, &reminder, revision, &ctx)
         .await
     {
         Ok(v) => Json(v).into_response(),
@@ -221,23 +219,29 @@ fn mutation_key(request: &Request) -> Result<&str, Response> {
 
 #[derive(Clone)]
 struct AgentScope(String);
-fn notifications(database: &crate::database::Database, request: &Request) -> DeviceNotifications {
-    let service = DeviceNotifications::new(database.clone());
-    match request.extensions().get::<AgentScope>() {
-        Some(scope) => service.scoped_to_agent(&scope.0),
+
+fn agent_scope(request: &Request) -> Option<&str> {
+    request
+        .extensions()
+        .get::<AgentScope>()
+        .map(|s| s.0.as_str())
+}
+
+fn coordinator(
+    state: &AppState,
+    database: &crate::database::Database,
+    request: &Request,
+) -> ReminderCoordinator {
+    let service = ReminderCoordinator::from_database(
+        database.clone(),
+        std::sync::Arc::clone(&state.active_device_sessions),
+    );
+    match agent_scope(request) {
+        Some(scope) => service.scoped_to_agent(scope),
         None => service,
     }
 }
 
-async fn publish_sync(state: &AppState, device: &str, revision: i64) {
-    let Some(database) = &state.database else {
-        return;
-    };
-    let Ok(Some(id)) = database.device_row_id(device).await else {
-        return;
-    };
-    state.active_device_sessions.sync_required(id, revision);
-}
 pub(super) async fn agent_list(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -248,9 +252,12 @@ pub(super) async fn agent_list(
         Ok(v) => v,
         Err(e) => return e,
     };
-    match DeviceNotifications::new(db.clone())
-        .list_agent(&key, &query)
-        .await
+    match ReminderCoordinator::from_database(
+        db.clone(),
+        std::sync::Arc::clone(&state.active_device_sessions),
+    )
+    .list_agent(&key, &query)
+    .await
     {
         Ok(v) => Json(v).into_response(),
         Err(e) => failure(&request, e),

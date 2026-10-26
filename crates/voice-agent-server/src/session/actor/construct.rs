@@ -263,6 +263,7 @@ impl SessionActor {
             // Likewise no External MCP tools: a session only ever calls what admission resolved.
             external_mcp: SessionExternalMcp::default(),
             system_mcp: None,
+            reminder_tools: None,
             speech_output_config: crate::config::SpeechOutputConfig::default(),
             // Capture is opt-in, so an actor that is never bound archives nothing.
             transcript: None,
@@ -281,8 +282,34 @@ impl SessionActor {
             // An actor built outside an application has nothing to ask, so it starts with a gate
             // that stays open.  Production installs the real one before any turn can start.
             admission_gate: AdmissionGate::open(),
+            reminder_turn_wakeup: None,
+            reminder_event_tx: None,
             writer_probe: None,
         })
+    }
+
+    pub fn with_reminder_turn_wakeup(
+        mut self,
+        wakeup: Option<std::sync::Arc<tokio::sync::Notify>>,
+    ) -> Self {
+        self.reminder_turn_wakeup = wakeup;
+        self
+    }
+
+    pub fn with_reminder_events(
+        mut self,
+        tx: Option<mpsc::Sender<crate::protocol::ReminderEvent>>,
+    ) -> Self {
+        self.reminder_event_tx = tx;
+        self
+    }
+
+    pub fn with_reminder_tools(
+        mut self,
+        reminder_tools: Option<crate::services::notifications::SessionReminderTools>,
+    ) -> Self {
+        self.reminder_tools = reminder_tools;
+        self
     }
 
     /// Binds this Voice Session to the optional Persistent Transcript.

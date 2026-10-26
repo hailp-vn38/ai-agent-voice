@@ -45,6 +45,48 @@ impl SessionActor {
             }
             BuiltinTool::SwitchTemplate => self.execute_template_switch(call),
             BuiltinTool::TaskSuite => self.execute_task_suite(call),
+            BuiltinTool::Reminder => self.execute_reminder_tool(call),
+        }
+    }
+
+    pub(in super::super) fn execute_reminder_tool(&mut self, call: ToolCall) {
+        let Some(handle) = self.reminder_tools.clone() else {
+            self.complete_tool_call(call, Err("reminders_disabled"));
+            return;
+        };
+        let Some(turn) = self.turn.as_ref() else {
+            self.complete_tool_call(call, Err("no_active_turn"));
+            return;
+        };
+        let (turn_id, generation) = (turn.turn_id, turn.generation);
+        let cancellation = turn.cancellation.clone();
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            self.complete_tool_call(call, Err("device_notifications_unavailable"));
+            return;
+        };
+        let completions = self.async_calls_tx.clone();
+        let session_id = self.session_id.clone();
+        let dispatched = call.clone();
+        runtime.spawn(async move {
+            let outcome = tokio::select! {
+                biased;
+                () = cancellation.cancelled() => return,
+                outcome = handle.execute(&session_id, &dispatched.id, &dispatched.name, dispatched.arguments) => outcome,
+            };
+            let _ = completions.try_send(AsyncCallCompletion {
+                turn_id,
+                generation,
+                call_id: dispatched.id,
+                server_key: String::new(),
+                outcome: AsyncToolOutcome::Reminder(outcome),
+            });
+        });
+        if let Some(batch) = self.tool_batch.as_mut() {
+            batch.in_flight = Some(InFlightAsyncCall {
+                call,
+                turn_id,
+                generation,
+            });
         }
     }
 

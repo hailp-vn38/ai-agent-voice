@@ -76,8 +76,19 @@ impl DeviceNotifications {
             .push(" OFFSET ")
             .push_bind(i64::from(page - 1) * i64::from(size));
         let mut items: Vec<Reminder> = query.build_query_as().fetch_all(&mut *tx).await?;
+        let mut device_rows = std::collections::HashMap::<String, i64>::new();
         for item in &mut items {
-            item.sync_status = "pending".into();
+            let row_id = if let Some(&id) = device_rows.get(&item.device_id) {
+                id
+            } else {
+                let id: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE device_id=?")
+                    .bind(&item.device_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                device_rows.insert(item.device_id.clone(), id);
+                id
+            };
+            item.sync_status = sync_status(&mut tx, row_id, item).await?;
         }
         let mut count = QueryBuilder::<Sqlite>::new("SELECT count(*)");
         filter(&mut count, key, input, true);

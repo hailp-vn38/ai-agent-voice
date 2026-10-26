@@ -9,55 +9,44 @@ pub struct UpdateReminder {
     pub timezone: Option<String>,
 }
 impl DeviceNotifications {
-    #[allow(clippy::too_many_arguments)] // Route target, CAS, mutation identity and audit correlation are distinct boundaries.
-    pub async fn update(
+    pub async fn update_with_context(
         &self,
         device: &str,
         reminder: &str,
         revision: i64,
-        caller: &str,
-        key: &str,
+        ctx: &MutationContext<'_>,
         input: UpdateReminder,
-        audit_id: &str,
-    ) -> Result<Reminder, NotificationError> {
-        self.mutate(
-            device,
-            reminder,
-            revision,
-            caller,
-            key,
-            Some(input),
-            audit_id,
-        )
-        .await
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub async fn cancel(
-        &self,
-        device: &str,
-        reminder: &str,
-        revision: i64,
-        caller: &str,
-        key: &str,
-        audit_id: &str,
-    ) -> Result<Reminder, NotificationError> {
-        self.mutate(device, reminder, revision, caller, key, None, audit_id)
+    ) -> Result<(Reminder, i64), NotificationError> {
+        self.mutate(device, reminder, revision, ctx, Some(input))
             .await
     }
-    #[allow(clippy::too_many_arguments)]
+
+    pub async fn cancel_with_context(
+        &self,
+        device: &str,
+        reminder: &str,
+        revision: i64,
+        ctx: &MutationContext<'_>,
+    ) -> Result<(Reminder, i64), NotificationError> {
+        self.mutate(device, reminder, revision, ctx, None).await
+    }
+
     async fn mutate(
         &self,
         device: &str,
         reminder_id: &str,
         revision: i64,
-        caller: &str,
-        key: &str,
+        ctx: &MutationContext<'_>,
         input: Option<UpdateReminder>,
-        audit_id: &str,
-    ) -> Result<Reminder, NotificationError> {
-        if key.is_empty() || key.len() > 128 || key.chars().any(char::is_control) || revision < 1 {
+    ) -> Result<(Reminder, i64), NotificationError> {
+        if ctx.request_id.is_empty()
+            || ctx.request_id.len() > 128
+            || ctx.request_id.chars().any(char::is_control)
+            || revision < 1
+        {
             return Err(NotificationError::Invalid("validation_failed"));
         }
+        let scope = ctx.agent_scope.or(self.agent_scope.as_deref());
         let operation = if input.is_some() { "update" } else { "cancel" };
         let payload = serde_json::to_vec(&(reminder_id, revision, &input))
             .map_err(|_| NotificationError::Invalid("validation_failed"))?;
@@ -69,23 +58,29 @@ impl DeviceNotifications {
         let (owner, kind): (i64, String) =
             sqlx::query_as("SELECT d.id,d.kind FROM devices d JOIN agents a ON a.id=d.agent_id WHERE d.device_id=? AND (? IS NULL OR a.key=?)")
                 .bind(device)
-                .bind(self.agent_scope.as_deref()).bind(self.agent_scope.as_deref())
+                .bind(scope).bind(scope)
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or(NotificationError::NotFound)?;
         if kind != "physical" {
             return Err(NotificationError::Invalid("unauthorized_target"));
         }
-        if let Some((old,response))=sqlx::query_as::<_,(String,String)>("SELECT payload_hash,response_json FROM reminder_mutation_keys WHERE caller_namespace=? AND request_id=? AND operation=? AND device_row_id=?").bind(caller).bind(key).bind(operation).bind(owner).fetch_optional(&mut *tx).await? {
-            if hash!=old{return Err(NotificationError::Conflict("idempotency_conflict"));}
-            return serde_json::from_str(&response).map_err(|_|NotificationError::Invalid("stored_response_invalid"));
+        if let Some((old, response)) = sqlx::query_as::<_, (String, String)>("SELECT payload_hash,response_json FROM reminder_mutation_keys WHERE caller_namespace=? AND request_id=? AND operation=? AND device_row_id=?").bind(ctx.caller).bind(ctx.request_id).bind(operation).bind(owner).fetch_optional(&mut *tx).await? {
+            if hash != old {
+                return Err(NotificationError::Conflict("idempotency_conflict"));
+            }
+            let mut reminder: Reminder = serde_json::from_str(&response)
+                .map_err(|_| NotificationError::Invalid("stored_response_invalid"))?;
+            reminder.sync_status = sync_status(&mut tx, owner, &reminder).await?;
+            tx.commit().await?;
+            return Ok((reminder, owner));
         }
-        let mut reminder:Reminder=sqlx::query_as("SELECT r.id,d.device_id,r.message,r.due_at_ms,r.timezone,r.status,r.row_revision,r.schedule_revision,r.attempts_used,r.created_at_ms,r.updated_at_ms FROM device_reminders r JOIN devices d ON d.id=r.device_row_id WHERE r.id=? AND r.device_row_id=?").bind(reminder_id).bind(owner).fetch_optional(&mut *tx).await?.ok_or(NotificationError::NotFound)?;
+        let mut reminder: Reminder = sqlx::query_as("SELECT r.id,d.device_id,r.message,r.due_at_ms,r.timezone,r.status,r.row_revision,r.schedule_revision,r.attempts_used,r.created_at_ms,r.updated_at_ms FROM device_reminders r JOIN devices d ON d.id=r.device_row_id WHERE r.id=? AND r.device_row_id=?").bind(reminder_id).bind(owner).fetch_optional(&mut *tx).await?.ok_or(NotificationError::NotFound)?;
         if reminder.row_revision != revision {
             tx.rollback().await?;
             super::super::audit::audit_conflict_action(
                 self.database.pool(),
-                audit_id.into(),
+                ctx.audit_request_id.into(),
                 "device_reminder_schedule",
                 owner,
                 revision,
@@ -132,6 +127,10 @@ impl DeviceNotifications {
             reminder.timezone = timezone;
         } else {
             reminder.status = "cancelled".into();
+            sqlx::query("DELETE FROM reminder_delivery_attempts WHERE reminder_id=? AND status='claimed' AND started_at_ms IS NULL")
+                .bind(reminder_id)
+                .execute(&mut *tx)
+                .await?;
         }
         sqlx::query("UPDATE device_reminder_sync SET schedule_revision=schedule_revision+1 WHERE device_row_id=?").bind(owner).execute(&mut *tx).await?;
         let schedule: i64 = sqlx::query_scalar(
@@ -147,11 +146,11 @@ impl DeviceNotifications {
         sqlx::query("UPDATE device_reminders SET message=?,due_at_ms=?,timezone=?,status=?,row_revision=?,schedule_revision=?,updated_at_ms=?,cancelled_at_ms=?,next_attempt_at_ms=NULL WHERE id=? AND device_row_id=? AND row_revision=? AND status='pending'").bind(&reminder.message).bind(reminder.due_at_ms).bind(&reminder.timezone).bind(&reminder.status).bind(reminder.row_revision).bind(schedule).bind(now).bind(if operation=="cancel"{Some(now)}else{None}).bind(reminder_id).bind(owner).bind(revision).execute(&mut *tx).await?;
         let response = serde_json::to_string(&reminder)
             .map_err(|_| NotificationError::Invalid("validation_failed"))?;
-        sqlx::query("INSERT INTO reminder_mutation_keys(caller_namespace,request_id,operation,device_row_id,payload_hash,response_json,created_at_ms) VALUES (?,?,?,?,?,?,?)").bind(caller).bind(key).bind(operation).bind(owner).bind(hash).bind(response).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO reminder_mutation_keys(caller_namespace,request_id,operation,device_row_id,payload_hash,response_json,created_at_ms) VALUES (?,?,?,?,?,?,?)").bind(ctx.caller).bind(ctx.request_id).bind(operation).bind(owner).bind(hash).bind(response).bind(now).execute(&mut *tx).await?;
         prune_keys(&mut tx, now).await?;
         audit(
             &mut *tx,
-            audit_id,
+            ctx.audit_request_id,
             "device_reminder_schedule",
             Some(owner),
             operation,
@@ -162,6 +161,6 @@ impl DeviceNotifications {
         )
         .await?;
         tx.commit().await?;
-        Ok(reminder)
+        Ok((reminder, owner))
     }
 }

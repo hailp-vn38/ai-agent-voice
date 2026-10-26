@@ -1,43 +1,59 @@
 use crate::{
     database::notifications::DeviceNotifications,
-    services::device::active_sessions::ActiveDeviceSessions,
+    services::{
+        device::active_sessions::ActiveDeviceSessions, notifications::ReminderCoordinator,
+    },
     session::{DirectSpeechRequest, SpeechOrigin},
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-/// One bounded process task scans due rows. It never keeps a database claim for an offline
-/// Device: current-session admission happens before the durable attempt is created.
+const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+const BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(200);
+const MIN_ZERO_DEADLINE_BACKOFF: Duration = Duration::from_millis(25);
+
+/// Event-driven reminder scheduler. Wakes immediately on schedule mutations, device session
+/// registration, turn-boundary completion, or the exact next deadline (`due_at_ms`,
+/// `next_attempt_at_ms`, `lease_until_ms`, or 24-hour expiration).
 pub fn start(
     notifications: DeviceNotifications,
     sessions: Arc<ActiveDeviceSessions>,
     stopping: CancellationToken,
 ) {
+    let coordinator = ReminderCoordinator::new(notifications, Arc::clone(&sessions));
+    let wakeup = Arc::clone(coordinator.scheduler_wakeup());
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
-            tokio::select! {
-                _ = stopping.cancelled() => return,
-                _ = tick.tick() => {}
+            if stopping.is_cancelled() {
+                return;
             }
-            let Ok(ids) = notifications.due_ids().await else {
-                continue;
-            };
-            for id in ids {
-                // Read the owner/session before incrementing attempts: offline and busy work is
-                // deliberately not a delivery attempt.
-                let Ok(Some(device)) = notifications.due_device(&id).await else {
-                    continue;
-                };
-                let Some(session) = sessions.current(device).filter(|s| s.features.reminders)
+            let notified = wakeup.notified();
+            tokio::pin!(notified);
+
+            let _ = coordinator.reap_expired_leases_and_overdue().await;
+
+            let mut any_transient_rejection = false;
+            let ready_devices = sessions.ready_reminder_devices();
+            for (device_row_id, session_id) in ready_devices {
+                let Ok(Some((due, attempt_id))) = coordinator
+                    .repo()
+                    .claim_next_due_for_device(device_row_id, &session_id)
+                    .await
                 else {
                     continue;
                 };
-                let session_id = session.session_id;
-                let Ok(Some((due, attempt_id))) = notifications.claim_due(&id, &session_id).await
-                else {
+                if !sessions.set_in_flight_reminder(
+                    device_row_id,
+                    &session_id,
+                    attempt_id.clone(),
+                ) {
+                    let _ = coordinator
+                        .repo()
+                        .release_unstarted_attempt(&due.reminder_id, &attempt_id, &session_id)
+                        .await;
                     continue;
-                };
+                }
+                let estimated_audio_ms = ((due.message.chars().count() as i64) * 80).max(2_000);
                 let reminder_id = due.reminder_id;
                 let request = DirectSpeechRequest {
                     request_id: attempt_id.clone(),
@@ -47,11 +63,56 @@ pub fn start(
                         attempt_id: attempt_id.clone(),
                     },
                 };
-                if sessions.speak(device, request).await.is_err() {
-                    let _ = notifications
-                        .release_unstarted_attempt(&reminder_id, &attempt_id, &session_id)
-                        .await;
+                match sessions.speak(device_row_id, request).await {
+                    Ok(()) => {
+                        match coordinator
+                            .mark_attempt_started(
+                                &reminder_id,
+                                &attempt_id,
+                                &session_id,
+                                estimated_audio_ms,
+                            )
+                            .await
+                        {
+                            Ok(true) => {}
+                            _ => {
+                                sessions.clear_in_flight_reminder(device_row_id, &session_id);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        any_transient_rejection = true;
+                        sessions.clear_in_flight_reminder(device_row_id, &session_id);
+                        let _ = coordinator
+                            .repo()
+                            .release_unstarted_attempt(&reminder_id, &attempt_id, &session_id)
+                            .await;
+                    }
                 }
+            }
+
+            let sleep_duration = if any_transient_rejection {
+                BUSY_RETRY_INTERVAL
+            } else {
+                let online_ids = sessions.active_reminder_device_ids();
+                match coordinator.repo().next_deadline_ms(&online_ids).await {
+                    Ok(Some(deadline_ms)) => {
+                        let now_ms = coordinator.repo().clock_now();
+                        let delta_ms = deadline_ms.saturating_sub(now_ms);
+                        if delta_ms <= 0 {
+                            MIN_ZERO_DEADLINE_BACKOFF
+                        } else {
+                            Duration::from_millis(delta_ms as u64).min(IDLE_SWEEP_INTERVAL)
+                        }
+                    }
+                    _ => IDLE_SWEEP_INTERVAL,
+                }
+            };
+
+            tokio::select! {
+                _ = stopping.cancelled() => return,
+                _ = &mut notified => {}
+                _ = tokio::time::sleep(sleep_duration) => {}
             }
         }
     });

@@ -3994,29 +3994,37 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
         scheduled_at: None,
         timezone: None,
     };
-    let reminder = notifications
-        .create(
+    let audit_first = uuid::Uuid::new_v4().to_string();
+    let (reminder, _) = notifications
+        .create_with_context(
             "timing-device",
-            "clock-test",
-            "first",
+            &voice_agent_server::database::notifications::MutationContext {
+                caller: "clock-test",
+                request_id: "first",
+                audit_request_id: &audit_first,
+                source: voice_agent_server::database::notifications::ReminderSource::Web,
+                agent_scope: None,
+            },
             input.clone(),
-            "web",
-            &uuid::Uuid::new_v4().to_string(),
         )
         .await
         .unwrap();
     assert_eq!(reminder.due_at_ms, 1_800_000_600_000);
     let mut invalid = input.clone();
     invalid.scheduled_at = Some("2026-10-12T07:00:00+07:00".into());
+    let audit_bad = uuid::Uuid::new_v4().to_string();
     assert!(
         notifications
-            .create(
+            .create_with_context(
                 "timing-device",
-                "clock-test",
-                "bad",
+                &voice_agent_server::database::notifications::MutationContext {
+                    caller: "clock-test",
+                    request_id: "bad",
+                    audit_request_id: &audit_bad,
+                    source: voice_agent_server::database::notifications::ReminderSource::Web,
+                    agent_scope: None,
+                },
                 invalid,
-                "web",
-                &uuid::Uuid::new_v4().to_string()
             )
             .await
             .is_err()
@@ -4041,27 +4049,36 @@ async fn reminder_server_clock_validation_quota_and_agent_permission() {
         );
     }
     for i in 1..500 {
+        let req_id = format!("quota-{i}");
+        let audit_id = uuid::Uuid::new_v4().to_string();
         notifications
-            .create(
+            .create_with_context(
                 "timing-device",
-                "clock-test",
-                &format!("quota-{i}"),
+                &voice_agent_server::database::notifications::MutationContext {
+                    caller: "clock-test",
+                    request_id: &req_id,
+                    audit_request_id: &audit_id,
+                    source: voice_agent_server::database::notifications::ReminderSource::Web,
+                    agent_scope: None,
+                },
                 input.clone(),
-                "web",
-                &uuid::Uuid::new_v4().to_string(),
             )
             .await
             .unwrap();
     }
+    let audit_overflow = uuid::Uuid::new_v4().to_string();
     assert!(
         notifications
-            .create(
+            .create_with_context(
                 "timing-device",
-                "clock-test",
-                "overflow",
+                &voice_agent_server::database::notifications::MutationContext {
+                    caller: "clock-test",
+                    request_id: "overflow",
+                    audit_request_id: &audit_overflow,
+                    source: voice_agent_server::database::notifications::ReminderSource::Web,
+                    agent_scope: None,
+                },
                 input,
-                "web",
-                &uuid::Uuid::new_v4().to_string()
             )
             .await
             .is_err()
@@ -4762,6 +4779,17 @@ async fn agent_reminders_join_current_assignment_and_scope_mutations() {
             .unwrap()
             .status(),
         StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        client
+            .put(format!("{base}/api/admin/system/assistant-device/reminder-target"))
+            .bearer_auth("admin-test-token")
+            .json(&serde_json::json!({"session_id":"non-existent-session","device_id":"agg-two"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
     );
     task.abort();
 }

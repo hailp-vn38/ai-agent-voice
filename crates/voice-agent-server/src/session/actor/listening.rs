@@ -27,6 +27,7 @@ impl SessionActor {
                         self.phase = SessionPhase::Ready;
                         self.emit_turn_status("rejected", Some("empty_capture"));
                         self.turn_status_active = false;
+                        self.notify_reminder_turn_boundary_if_idle();
                     }
                 } else if matches!(
                     self.listening_mode,
@@ -47,6 +48,7 @@ impl SessionActor {
                     if self.turn.is_none() {
                         self.cancel_asr();
                         self.phase = SessionPhase::Ready;
+                        self.notify_reminder_turn_boundary_if_idle();
                     }
                 }
             }
@@ -222,6 +224,7 @@ impl SessionActor {
         self.auto_reset_pending = false;
         self.auto_retention.reset();
         self.phase = SessionPhase::Ready;
+        self.notify_reminder_turn_boundary_if_idle();
     }
 
     pub(super) fn abort_auto_turn(&mut self) {
@@ -476,6 +479,7 @@ impl SessionActor {
                 if self.llm_operation.is_none() && !self.tts_started {
                     self.phase = SessionPhase::Listening;
                 }
+                self.notify_reminder_turn_boundary_if_idle();
             }
             VadWorkerEvent::Closed { .. } if current_worker => self.vad_session = None,
             VadWorkerEvent::Failed { .. }

@@ -53,6 +53,15 @@ impl SessionActor {
         } else {
             self.phase = SessionPhase::Ready;
         }
+        self.notify_reminder_turn_boundary_if_idle();
+    }
+
+    pub(super) fn notify_reminder_turn_boundary_if_idle(&self) {
+        if !self.direct_speech_busy()
+            && let Some(wakeup) = &self.reminder_turn_wakeup
+        {
+            wakeup.notify_one();
+        }
     }
 
     pub(super) fn fail_closed(&mut self) {
