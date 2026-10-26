@@ -211,3 +211,26 @@ _Avoid_: canonical Wiki body, second knowledge store, Memory graph
 **Unresolved Wiki Link**:
 Liên kết có đích chưa tồn tại hoặc không phân giải được sang tài liệu hợp lệ trong kho tri thức; được ghi nhận riêng trên đồ thị và trong báo cáo `wiki_lint`, không tự động tạo trang mới.
 _Avoid_: verified edge, automatically created page
+
+## Multi-Channel Notifications
+
+**Notification**:
+Thông điệp bền vững phản ánh một sự kiện cần chú ý của hệ thống (Background Task kết thúc, lịch hẹn đến hạn, hoặc yêu cầu duyệt quản trị), độc lập với Reminder phát giọng nói trên Device.
+_Avoid_: Device Reminder, Job Change Signal, Tool Execution Status
+
+**Notification Inbox**:
+Hộp thư thông báo mặc định dành cho Admin trên giao diện quản trị, duy trì trạng thái chưa đọc/đã đọc của từng Notification.
+_Avoid_: ephemeral toast, Job Event log
+
+**Notification Channel**:
+Kênh đích nhận Notification, gồm kênh mặc định trên giao diện quản trị và các kênh nhắn tin bên ngoài đã cấu hình.
+_Avoid_: Direct Speech, Voice Session
+
+**Notification Channel Policy**:
+Quyết định quản trị xác định kênh thông báo nào được bật, đích nhận và những chủ đề sự kiện nào được phép chuyển phát qua kênh đó.
+_Avoid_: Agent Tool Allowlist, Reminder policy
+
+**Channel Delivery Attempt**:
+Một lần thử chuyển phát một Notification tới một Notification Channel bên ngoài, có kết quả độc lập với trạng thái đã đọc trong Notification Inbox.
+_Avoid_: Delivery Attempt (của Device Reminder)
+

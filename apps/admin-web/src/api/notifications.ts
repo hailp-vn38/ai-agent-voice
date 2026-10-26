@@ -741,18 +741,19 @@ export async function listenNotificationStream(
               try {
                 const parsed = JSON.parse(dataLines.join('\n')) as NotificationItem
                 if (parsed && typeof parsed.id === 'string') {
-                  handlers.onCreated?.(parsed)
+                  notifyCreated(parsed)
+                } else {
+                  notifyChanged()
                 }
               } catch {
-                // Ignore malformed SSE payload; trigger resync below.
+                notifyChanged()
               }
-              handlers.onChanged?.()
             } else if (
               eventName === 'unread_count_changed' ||
               eventName === 'resync_required' ||
               eventName === 'ready'
             ) {
-              handlers.onChanged?.()
+              notifyChanged()
             }
             eventName = ''
             dataLines = []
@@ -769,6 +770,10 @@ export async function listenNotificationStream(
   } catch {
     // When backend SSE endpoint is not deployed yet, in-memory demo pub/sub remains active.
   } finally {
-    signal.addEventListener('abort', () => unsubscribe(), { once: true })
+    if (signal.aborted) {
+      unsubscribe()
+    } else {
+      signal.addEventListener('abort', () => unsubscribe(), { once: true })
+    }
   }
 }

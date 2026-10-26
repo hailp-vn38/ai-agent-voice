@@ -57,6 +57,7 @@ pub(crate) struct SystemMcp {
         Arc<crate::tools::external_mcp::ExternalMcpManager>,
         Arc<dyn crate::database::secrets::SecretResolver>,
     )>,
+    notification_hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
     pending: proposals::PendingRequests,
 }
 
@@ -100,6 +101,7 @@ impl SystemMcp {
             metrics,
             max_result_chars,
             discovery: None,
+            notification_hub: None,
             pending: proposals::PendingRequests::default(),
         }
     }
@@ -110,6 +112,14 @@ impl SystemMcp {
         secrets: Arc<dyn crate::database::secrets::SecretResolver>,
     ) -> Self {
         self.discovery = manager.map(|manager| (manager, secrets));
+        self
+    }
+
+    pub(crate) fn with_notification_hub(
+        mut self,
+        hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
+    ) -> Self {
+        self.notification_hub = hub;
         self
     }
 

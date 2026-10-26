@@ -3,6 +3,7 @@
 mod background;
 mod knowledge;
 mod knowledge_processing;
+mod notification_hub;
 mod notifications;
 mod system_mcp;
 use super::AppState;
@@ -138,6 +139,28 @@ pub(super) fn router(state: AppState) -> Router<AppState> {
         )
         .route("/jobs/{id}/cancel", axum::routing::post(background::cancel))
         .route("/jobs/{id}/retry", axum::routing::post(background::retry))
+        .route("/notifications", get(notification_hub::list_inbox))
+        .route(
+            "/notifications/read",
+            axum::routing::post(notification_hub::mark_read),
+        )
+        .route(
+            "/notifications/purge",
+            axum::routing::post(notification_hub::purge_inbox),
+        )
+        .route("/notifications/stream", get(notification_hub::stream))
+        .route(
+            "/notifications/settings",
+            get(notification_hub::settings).put(notification_hub::save_settings),
+        )
+        .route(
+            "/notifications/channels/{channel}/test",
+            axum::routing::post(notification_hub::test_channel),
+        )
+        .route(
+            "/notifications/{id}",
+            axum::routing::delete(notification_hub::delete_item),
+        )
         .route("/agents/{key}/reminders", get(notifications::agent_list))
         .route(
             "/agents/{key}/devices/{device_id}/reminders",
@@ -621,15 +644,15 @@ async fn json<T: DeserializeOwned>(request: Request) -> Result<(Request, T), Res
     }
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(untagged)]
-enum Patch<T> {
+pub enum Patch<T> {
     Clear(Option<T>),
     #[default]
     Absent,
 }
 impl<T> Patch<T> {
-    fn value(self) -> Option<Option<T>> {
+    pub fn value(self) -> Option<Option<T>> {
         match self {
             Self::Absent => None,
             Self::Clear(v) => Some(v),

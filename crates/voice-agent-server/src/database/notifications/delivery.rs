@@ -328,6 +328,45 @@ impl DeviceNotifications {
         .await?)
     }
 
+    /// Returns reminders whose `due_at_ms` has arrived (regardless of whether the target Device
+    /// is online or offline) and have not yet been recorded in `notifications_inbox`.
+    pub async fn due_for_notification_hub(&self) -> Result<Vec<DueReminder>, NotificationError> {
+        let now = (self.clock)();
+        let rows: Vec<(String, i64, String, i64, String)> = sqlx::query_as(
+            "SELECT r.id, r.device_row_id, d.device_id, r.due_at_ms, r.message \
+             FROM device_reminders r \
+             JOIN devices d ON d.id = r.device_row_id \
+             WHERE r.status IN ('pending', 'expired') \
+               AND d.enabled = 1 \
+               AND r.due_at_ms <= ? \
+               AND r.due_at_ms + ? >= ? \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM notifications_inbox n \
+                   WHERE n.dedup_key = 'device_reminder_due:' || r.id \
+               ) \
+             ORDER BY r.due_at_ms, r.id \
+             LIMIT 64",
+        )
+        .bind(now)
+        .bind(LATENESS_GRACE_MS)
+        .bind(now)
+        .fetch_all(self.database.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(reminder_id, device_row_id, device_id, due_at_ms, message)| DueReminder {
+                    reminder_id,
+                    device_row_id,
+                    device_id,
+                    due_at_ms,
+                    message,
+                },
+            )
+            .collect())
+    }
+
     pub async fn complete_attempt(
         &self,
         device_row_id: i64,
@@ -820,7 +859,22 @@ impl DeviceNotifications {
             qb.build_query_scalar().fetch_one(self.database.pool()).await?
         };
 
-        Ok([min_lease, min_expiry, min_online_due]
+        let min_unnotified_due: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(r.due_at_ms) \
+             FROM device_reminders r \
+             JOIN devices d ON d.id = r.device_row_id \
+             WHERE r.status = 'pending' \
+               AND d.enabled = 1 \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM notifications_inbox n \
+                   WHERE n.dedup_key = 'device_reminder_due:' || r.id \
+               )",
+        )
+        .fetch_one(self.database.pool())
+        .await
+        .unwrap_or(None);
+
+        Ok([min_lease, min_expiry, min_online_due, min_unnotified_due]
             .into_iter()
             .flatten()
             .min())

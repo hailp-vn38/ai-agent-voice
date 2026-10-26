@@ -1,11 +1,13 @@
 use crate::{
     database::notifications::DeviceNotifications,
     services::{
-        device::active_sessions::ActiveDeviceSessions, notifications::ReminderCoordinator,
+        device::active_sessions::ActiveDeviceSessions,
+        notification_hub::{NotificationHub, bridge},
+        notifications::ReminderCoordinator,
     },
     session::{DirectSpeechRequest, SpeechOrigin},
 };
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
@@ -20,9 +22,19 @@ pub fn start(
     sessions: Arc<ActiveDeviceSessions>,
     stopping: CancellationToken,
 ) {
+    start_with_hub(notifications, sessions, None, stopping);
+}
+
+pub fn start_with_hub(
+    notifications: DeviceNotifications,
+    sessions: Arc<ActiveDeviceSessions>,
+    notification_hub: Option<Arc<NotificationHub>>,
+    stopping: CancellationToken,
+) {
     let coordinator = ReminderCoordinator::new(notifications, Arc::clone(&sessions));
     let wakeup = Arc::clone(coordinator.scheduler_wakeup());
     tokio::spawn(async move {
+        let mut notified_reminder_ids = HashSet::<String>::new();
         loop {
             if stopping.is_cancelled() {
                 return;
@@ -31,6 +43,17 @@ pub fn start(
             tokio::pin!(notified);
 
             let _ = coordinator.reap_expired_leases_and_overdue().await;
+
+            if let Some(ref hub) = notification_hub
+                && let Ok(due_for_hub) = coordinator.repo().due_for_notification_hub().await
+            {
+                for due in due_for_hub {
+                    if notified_reminder_ids.insert(due.reminder_id.clone()) {
+                        let input = bridge::from_due_device_reminder(&due);
+                        let _ = hub.publish(input).await;
+                    }
+                }
+            }
 
             let mut any_transient_rejection = false;
             let ready_devices = sessions.ready_reminder_devices();
@@ -42,6 +65,12 @@ pub fn start(
                 else {
                     continue;
                 };
+                if let Some(ref hub) = notification_hub
+                    && notified_reminder_ids.insert(due.reminder_id.clone())
+                {
+                    let input = bridge::from_due_device_reminder(&due);
+                    let _ = hub.publish(input).await;
+                }
                 if !sessions.set_in_flight_reminder(
                     device_row_id,
                     &session_id,

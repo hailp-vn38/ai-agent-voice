@@ -36,7 +36,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-mod admin;
+pub(crate) mod admin;
 mod assistant;
 mod enrollment;
 pub(crate) mod mcp_server;
@@ -102,14 +102,18 @@ pub fn new_lifecycle_from_grace_ms(grace_ms: u64) -> Arc<RuntimeLifecycle> {
     RuntimeLifecycle::new(Duration::from_millis(grace_ms))
 }
 pub fn router_with_state(mut state: AppState) -> Router {
+    if let Some(ref hub) = state.notification_hub {
+        hub.start_workers(state.lifecycle.stopping().clone());
+    }
     if !state
         .reminder_scheduler_started
         .swap(true, std::sync::atomic::Ordering::AcqRel)
         && let Some(database) = state.database.clone()
     {
-        crate::services::reminder_scheduler::start(
+        crate::services::reminder_scheduler::start_with_hub(
             crate::database::notifications::DeviceNotifications::new((*database).clone()),
             state.active_device_sessions.clone(),
+            state.notification_hub.clone(),
             state.lifecycle.stopping().clone(),
         );
     }
@@ -120,7 +124,8 @@ pub fn router_with_state(mut state: AppState) -> Router {
             state.system_metrics.clone(),
             state.config.llm.max_tool_result_chars,
         )
-        .with_discovery(state.external_mcp.clone(), state.secret_resolver.clone()),
+        .with_discovery(state.external_mcp.clone(), state.secret_resolver.clone())
+        .with_notification_hub(state.notification_hub.clone()),
     ));
     let vision_enabled = state.config.vision.enabled;
     let vision_config = state.config.vision.clone();
@@ -451,13 +456,20 @@ async fn prepare_background(state: &mut AppState) -> Result<(), BootstrapError> 
     if let (Some(task_mgr), Some(orch)) = (runtime.task_manager.clone(), runtime.orchestrator.clone()) {
         if let Ok(mut sub) = task_mgr.subscribe_all() {
             let stopping_sub = state.lifecycle.stopping().clone();
+            let notification_hub = state.notification_hub.clone();
             tokio::spawn(async move {
                 loop {
                     tokio::select! {
                         biased;
                         _ = stopping_sub.cancelled() => break,
                         item = sub.recv() => match item {
-                            Some(orchestrator_flow_rs::TaskFeedItem::Event(_)) => {}
+                            Some(orchestrator_flow_rs::TaskFeedItem::Event(ref ev)) => {
+                                if let Some(ref hub) = notification_hub
+                                    && let Some(input) = crate::services::notification_hub::bridge::from_task_event(ev)
+                                {
+                                    let _ = hub.publish(input).await;
+                                }
+                            }
                             Some(orchestrator_flow_rs::TaskFeedItem::ResyncRequired) => {
                                 tracing::warn!(
                                     event = "task_feed_resync_required",

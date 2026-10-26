@@ -2,6 +2,42 @@
 use super::knowledge::{wiki, wiki_error};
 use super::*;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+
+async fn publish_wiki_lint_if_needed(state: &AppState, lint: &llm_wiki::WikiLintReport) {
+    if lint.is_healthy {
+        return;
+    }
+    let Some(ref hub) = state.notification_hub else {
+        return;
+    };
+    let issue_count = lint.broken_links.len()
+        + lint.orphan_wiki_pages.len()
+        + lint.uningested_sources.len()
+        + lint.stale_wiki_pages.len();
+    let count = issue_count.max(1);
+    let payload = serde_json::to_vec(&(
+        &lint.broken_links,
+        &lint.orphan_wiki_pages,
+        &lint.uningested_sources,
+        &lint.stale_wiki_pages,
+    ))
+    .unwrap_or_default();
+    let digest = Sha256::digest(&payload);
+    let fingerprint: String = digest.iter().take(12).map(|b| format!("{b:02x}")).collect();
+    let summary = format!(
+        "Phát hiện {} liên kết hỏng, {} trang mồ côi, {} nguồn chưa biên dịch.",
+        lint.broken_links.len(),
+        lint.orphan_wiki_pages.len(),
+        lint.uningested_sources.len(),
+    );
+    let input = crate::services::notification_hub::bridge::from_wiki_lint_attention(
+        count,
+        &fingerprint,
+        &summary,
+    );
+    let _ = hub.publish(input).await;
+}
 
 pub(super) async fn analyze(
     State(state): State<AppState>,
@@ -48,12 +84,15 @@ pub(super) async fn reviews(
     };
     let limit = query.limit.unwrap_or(20).clamp(1, 200);
     match (engine.read_recent_logs(limit), engine.lint_wiki()) {
-        (Ok(logs), Ok(lint)) => Json(serde_json::json!({
-            "items": logs,
-            "lint": lint,
-            "next_cursor": Value::Null,
-        }))
-        .into_response(),
+        (Ok(logs), Ok(lint)) => {
+            publish_wiki_lint_if_needed(&state, &lint).await;
+            Json(serde_json::json!({
+                "items": logs,
+                "lint": lint,
+                "next_cursor": Value::Null,
+            }))
+            .into_response()
+        }
         (Err(err), _) | (_, Err(err)) => wiki_error(&req, err),
     }
 }
@@ -68,12 +107,15 @@ pub(super) async fn review(
         Err(resp) => return resp,
     };
     match engine.lint_wiki() {
-        Ok(lint) => Json(serde_json::json!({
-            "id": id,
-            "status": if lint.is_healthy { "approved" } else { "needs_attention" },
-            "lint": lint,
-        }))
-        .into_response(),
+        Ok(lint) => {
+            publish_wiki_lint_if_needed(&state, &lint).await;
+            Json(serde_json::json!({
+                "id": id,
+                "status": if lint.is_healthy { "approved" } else { "needs_attention" },
+                "lint": lint,
+            }))
+            .into_response()
+        }
         Err(err) => wiki_error(&req, err),
     }
 }

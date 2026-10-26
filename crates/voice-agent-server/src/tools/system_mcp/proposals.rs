@@ -162,13 +162,46 @@ impl SystemMcp {
             status: "pending",
         };
         requests.insert(
-            id,
+            id.clone(),
             Entry {
                 view: view.clone(),
                 caller: ctx.clone(),
                 expires: Instant::now() + Duration::from_secs(300),
             },
         );
+        drop(requests);
+        if let Some(hub) = self.notification_hub.clone() {
+            let summary = match &view.command {
+                Command::Server {
+                    server_key,
+                    enabled,
+                    ..
+                } => format!("Đề xuất bật={enabled} cho MCP server `{server_key}`."),
+                Command::Binding {
+                    agent_key,
+                    server_key,
+                    enabled,
+                    ..
+                } => format!(
+                    "Đề xuất bật={enabled} kết nối giữa Agent `{agent_key}` và MCP server `{server_key}`."
+                ),
+                Command::Review {
+                    agent_key,
+                    server_key,
+                    tool_name,
+                    allow,
+                    ..
+                } => format!(
+                    "Đề xuất allow={allow} cho công cụ `{tool_name}` của server `{server_key}` trên Agent `{agent_key}`."
+                ),
+            };
+            let input = crate::services::notification_hub::bridge::from_system_change_request(
+                &id, name, &summary,
+            );
+            tokio::spawn(async move {
+                let _ = hub.publish(input).await;
+            });
+        }
         Ok(json!(view))
     }
     pub(crate) fn change_requests(&self) -> Vec<ChangeRequest> {

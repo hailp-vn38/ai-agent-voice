@@ -85,6 +85,7 @@ pub struct AppState {
     pub active_device_sessions: Arc<crate::services::active_device_sessions::ActiveDeviceSessions>,
     /// Router construction may be repeated in tests; only one reminder scanner belongs to state.
     pub reminder_scheduler_started: Arc<std::sync::atomic::AtomicBool>,
+    pub notification_hub: Option<Arc<crate::services::notification_hub::NotificationHub>>,
     pub(crate) system_mcp: Option<Arc<crate::tools::system_mcp::SystemMcp>>,
     pub system_metrics: Arc<crate::services::system_metrics::SystemMetrics>,
     pub(crate) web_assistant: Arc<super::assistant::WebAssistantAuth>,
@@ -710,6 +711,12 @@ impl AppState {
             .with_config(Arc::clone(&config))
             .with_pilot_admission(pilot_admission.clone()),
         );
+        let notification_hub = database.as_ref().map(|database| {
+            crate::services::notification_hub::NotificationHub::with_default_adapters(
+                database.clone(),
+                Arc::clone(&secret_resolver),
+            )
+        });
         let state = Self {
             wiki_engine: None,
             orchestrator: None,
@@ -719,6 +726,7 @@ impl AppState {
             started_at: Instant::now(),
             active_device_sessions: Arc::new(Default::default()),
             reminder_scheduler_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            notification_hub,
             system_mcp: None,
             system_metrics: Arc::new(crate::services::system_metrics::SystemMetrics::new()),
             web_assistant: Arc::new(Default::default()),
@@ -791,6 +799,14 @@ impl AppState {
     /// Installs the test-only writer outcome probe; see [`WriterOutcomeProbe`].
     pub fn with_writer_outcome_probe(mut self, probe: Arc<dyn WriterOutcomeProbe>) -> Self {
         self.writer_outcome_probe = Some(probe);
+        self
+    }
+
+    pub fn with_notification_hub(
+        mut self,
+        hub: Arc<crate::services::notification_hub::NotificationHub>,
+    ) -> Self {
+        self.notification_hub = Some(hub);
         self
     }
 

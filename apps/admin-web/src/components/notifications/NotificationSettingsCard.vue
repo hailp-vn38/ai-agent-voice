@@ -48,7 +48,6 @@ const zaloTokenHint = ref<string | null>(null)
 const zaloTokenInput = ref('')
 const zaloClearToken = ref(false)
 const zaloRecipientId = ref('')
-const zaloApiBaseUrl = ref('https://bot-api.zapps.me')
 const zaloTopics = ref<NotificationTopic[]>([])
 const zaloTesting = ref(false)
 const zaloTestResult = ref<TestChannelOutput | null>(null)
@@ -511,33 +510,18 @@ onMounted(() => {
             </p>
           </div>
 
-          <div class="grid grid-cols-2 gap-2">
-            <label class="block space-y-1 text-xs">
-              <span class="font-medium text-muted-foreground">
-                {{ t('notifications.settings.zaloTargetId') }}
-              </span>
-              <input
-                v-model="zaloRecipientId"
-                data-testid="zalo-recipient-id"
-                type="text"
-                placeholder="zalo-user-or-group"
-                class="admin-input h-9 text-xs"
-              />
-            </label>
-
-            <label class="block space-y-1 text-xs">
-              <span class="font-medium text-muted-foreground">
-                {{ t('notifications.settings.apiBaseUrl') }}
-              </span>
-              <input
-                :value="zaloApiBaseUrl"
-                type="text"
-                readonly
-                disabled
-                class="admin-input h-9 text-xs"
-              />
-            </label>
-          </div>
+          <label class="block space-y-1 text-xs">
+            <span class="font-medium text-muted-foreground">
+              {{ t('notifications.settings.zaloTargetId') }}
+            </span>
+            <input
+              v-model="zaloRecipientId"
+              data-testid="zalo-recipient-id"
+              type="text"
+              placeholder="zalo-user-or-group"
+              class="admin-input h-9 text-xs"
+            />
+          </label>
 
           <!-- Subscribed Topics -->
           <div class="space-y-1.5">

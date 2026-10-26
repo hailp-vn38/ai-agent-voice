@@ -743,3 +743,8 @@ _Avoid_: synchronous HTTP ingest, unverified direct Wiki write
 ### Knowledge and Wiki language
 
 For Wiki Page, Source, Knowledge Revision, Memory Fact, Memory Summary, Search Projection, Physical Knowledge Folder, Raw Working Note, Wiki Link, Backlink, and Graph Projection, use the definitions in [GLOSSARY.md](GLOSSARY.md#knowledge-and-memory-v3).
+
+## Multi-Channel Notifications
+
+For Notification, Notification Inbox, Notification Channel, Notification Channel Policy, and Channel Delivery Attempt, use the definitions in [GLOSSARY.md](GLOSSARY.md#multi-channel-notifications).
+

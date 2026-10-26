@@ -71,6 +71,15 @@ pub fn mcp_secret_env(key: &str, auth_type: &str) -> Option<String> {
     Some(format!("VOICE_MCP_{}_TOKEN", env_key(key)?))
 }
 
+/// Fallback environment credential for outbound notification channels.
+pub fn notification_channel_secret_env(channel: &str) -> Option<&'static str> {
+    match channel {
+        "telegram" => Some("VOICE_NOTIFICATION_TELEGRAM_BOT_TOKEN"),
+        "zalo" => Some("VOICE_NOTIFICATION_ZALO_BOT_TOKEN"),
+        _ => None,
+    }
+}
+
 pub struct SecretValue(Zeroizing<String>);
 impl SecretValue {
     pub fn new(value: String) -> Self {

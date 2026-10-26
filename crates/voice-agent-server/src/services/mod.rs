@@ -1,4 +1,5 @@
 pub mod device;
+pub mod notification_hub;
 pub mod notifications;
 pub mod provider;
 pub mod system;

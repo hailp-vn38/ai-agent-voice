@@ -1,7 +1,7 @@
 # Multi-Channel Notification Hub (Web UI, Telegram Bot, Zalo Bot) — Hướng dẫn Triển khai Chi tiết
 
 > **Repository:** `voice-agent-server`  
-> **Đối chiếu code:** nhánh hiện tại (`ADR 0127` — `orchestrator-flow`, `llm-wiki-rs`, `voice-agent.db`)  
+> **Đối chiếu code:** nhánh hiện tại (`ADR 0127` + commit `39988c2a` — unified `ReminderCoordinator`, `orchestrator-flow`, `llm-wiki-rs`, `voice-agent.db`)  
 > **Kỷ luật thiết kế:** `/codebase-design` (**Module**, **Interface**, **Implementation**, **Depth**, **Seam**, **Adapter**, **Leverage**, **Locality**) & `/domain-modeling`  
 > **Mục tiêu:** Xây dựng một **Deep Module** duy nhất (`NotificationHub`) quản lý thông báo đa kênh: mặc định lưu bền vững & phát thời gian thực lên **Admin Web UI** (`web_ui`), đồng thời định tuyến bất đồng bộ qua **Telegram Bot** (`telegram`) và **Zalo Bot** (`zalo`) theo thiết lập của Admin.
 
@@ -11,7 +11,7 @@
 
 ### 1.1. Từ vựng Domain chuẩn hóa (`## Multi-Channel Notifications`)
 
-Để tách biệt hoàn toàn với [`DeviceNotifications`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/notifications/mod.rs#L74-L93) (vốn đang cài đặt **Reminder** thuộc sở hữu của một **Device** để phát **Direct Speech** qua phiên WebSocket), tài liệu này định nghĩa bộ thuật ngữ domain thuần túy (không chứa chi tiết cài đặt kỹ thuật) cho mục `## Multi-Channel Notifications` trong [`GLOSSARY.md`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/GLOSSARY.md) và [`CONTEXT.md`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/CONTEXT.md):
+Để tách biệt hoàn toàn với [`DeviceNotifications`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/notifications/mod.rs#L111-L115) và [`ReminderCoordinator`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/mod.rs#L21-L25) (vốn đang cài đặt **Reminder** thuộc sở hữu của một **Device** để phát **Direct Speech** qua phiên WebSocket), tài liệu này định nghĩa bộ thuật ngữ domain thuần túy (không chứa chi tiết cài đặt kỹ thuật) cho mục `## Multi-Channel Notifications` trong [`GLOSSARY.md`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/GLOSSARY.md) và [`CONTEXT.md`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/CONTEXT.md):
 
 - **Notification**: Thông điệp bền vững phản ánh một sự kiện cần chú ý của hệ thống (Background Task kết thúc, lịch hẹn đến hạn, hoặc yêu cầu duyệt quản trị), độc lập với Reminder phát giọng nói trên Device.
   - _Avoid_: `Device Reminder`, `Job Change Signal`, `Tool Execution Status`
@@ -24,24 +24,27 @@
 - **Channel Delivery Attempt**: Một lần thử chuyển phát một Notification tới một Notification Channel bên ngoài, có kết quả độc lập với trạng thái đã đọc trong Notification Inbox.
   - _Avoid_: `Delivery Attempt` (của Device Reminder)
 
-> **Quan hệ với `DeviceNotifications` (`device_reminders`)**:
-> - Bảng `device_reminders` và vòng quét [`services::reminder_scheduler::start`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs#L11-L58) phục vụ hợp đồng giao thức phần cứng (**Device Cache ACK**, **Playback ACK**, **Direct Speech** theo `ADR-0087..0091`) và giữ nguyên không thay đổi.
-> - Các lịch nhắc và tác vụ do người dùng/Agent tạo qua **Voice Task Tool Suite** (`task_create`, `reminder_create`) hoặc Admin UI được quản lý bởi `TaskManager` (`tasks.db`) và phát `TaskEvent` sang `NotificationHub` (đồng thời vẫn gọi [`deliver_task_reminder_to_devices`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L501-L544) để đọc qua loa nếu thiết bị đang kết nối).
+> **Quan hệ với `DeviceNotifications` (`device_reminders`), `ReminderCoordinator` & `TaskManager` (`tasks.db`)**:
+> - Từ commit `39988c2a`, toàn bộ công cụ giọng nói đặt lịch nhắc (`create_reminder`, `list_reminders`, `update_reminder`, `cancel_reminder` tại [`tools/builtin.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/tools/builtin.rs#L31-L82)) cùng REST API thiết bị đều hội tụ về [`ReminderCoordinator`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/mod.rs#L21-L25) và bộ lập lịch hướng sự kiện [`services::reminder_scheduler::start`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs#L18-L90) (hàm `deliver_task_reminder_to_devices` cũ trong `app/mod.rs` đã được gỡ bỏ).
+> - Bảng `device_reminders` và `services::reminder_scheduler::start` tiếp tục phục vụ hợp đồng giao thức phần cứng (**Device Cache ACK**, **Playback ACK**, **Direct Speech** theo `ADR-0087..0091`) và giữ nguyên không thay đổi.
+> - Để đảm bảo Admin luôn nhận được cảnh báo trên **Web UI**, **Telegram Bot** và **Zalo Bot** (ngay cả khi thiết bị vật lý hoặc Virtual Device đang offline), chủ đề `NotificationTopic::ReminderDue` được cấp dữ liệu từ **2 nguồn bổ trợ nhau**:
+>   1. **Từ `services::reminder_scheduler::start`** ([`reminder_scheduler.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs#L48-L85)): Khi một `DueReminder` được claim đến hạn (`claim_next_due_for_device`) hoặc hết hạn chờ thiết bị kết nối, scheduler đồng thời gọi `notification_hub.publish(...)` (chống trùng lặp bằng `dedup_key = "device_reminder_due:{reminder_id}"`).
+>   2. **Từ `TaskManager` (`tasks.db`)** trong [`prepare_background`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L451-L473): Khi một lịch nhắc/schedule thuộc `orchestrator-flow` phát `TaskEvent::ReminderDue { schedule }`, `prepare_background` chuyển tiếp sự kiện sang `notification_hub.publish(...)`.
 
 ### 1.2. Phạm vi thực hiện
 
 **Có làm:**
-- Lưu bền vững mọi **Notification** vào `voice-agent.db` (migration `0136_notification_hub.sql`) với khóa chống trùng lặp (`dedup_key`) để đảm bảo tính idempotent.
+- Lưu bền vững mọi **Notification** vào `voice-agent.db` (migration `0137_notification_hub.sql`) với khóa chống trùng lặp (`dedup_key`) để đảm bảo tính idempotent.
 - Kênh mặc định **Web UI** (`web_ui`): Luôn bật; hỗ trợ xem danh sách phân trang, lọc `unread`, đánh dấu đã đọc (`mark_read` từng mục hoặc tất cả), xóa thông báo (`delete_inbox`), và nhận sự kiện tức thời qua SSE (`GET /api/admin/notifications/stream`) để hiển thị **Badge đếm chưa đọc** + **Toast Notification**.
 - Kênh ngoại vi **Telegram Bot** (`telegram`) và **Zalo Bot** (`zalo`):
-  - Lưu trữ `bot_token` an toàn bằng [`CredentialCipher`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/security/credentials.rs#L64-L67) / [`SecretResolver`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/security/secrets.rs#L98-L103) với kiểu cập nhật tường minh [`Patch<SecretValue>`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/mod.rs#L620-L634) (write-only khi `PUT`, redacted metadata khi `GET`, hỗ trợ fallback biến môi trường `VOICE_NOTIFICATION_TELEGRAM_BOT_TOKEN` và `VOICE_NOTIFICATION_ZALO_BOT_TOKEN`).
+  - Lưu trữ `bot_token` an toàn bằng [`CredentialCipher`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/security/credentials.rs#L64-L67) / [`SecretResolver`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/security/secrets.rs#L98-L103) với kiểu cập nhật tường minh [`Patch<SecretValue>`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/mod.rs#L628-L642) (write-only khi `PUT`, redacted metadata khi `GET`, hỗ trợ fallback biến môi trường `VOICE_NOTIFICATION_TELEGRAM_BOT_TOKEN` và `VOICE_NOTIFICATION_ZALO_BOT_TOKEN`).
   - Cố định endpoint upstream chính thức của Telegram (`https://api.telegram.org`) và Zalo Bot (`https://bot-api.zapps.me`) trong production code; **không** cho phép ghi đè `api_base_url` qua Admin API nhằm ngăn chặn tấn công đánh cắp `Resource Credential` sang máy chủ giả mạo.
   - Ghi nhận **Admin Audit Event** (qua [`database/mutations/audit.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/mod.rs#L24)) cho mọi thao tác cập nhật cấu hình kênh hoặc khi xảy ra xung đột `409 Conflict` (`If-Match`).
   - Hàng đợi bền vững (`notification_outbox`) với trạng thái chuẩn (`pending`, `sending`, `sent`, `failed`) kèm background worker gửi bất đồng bộ, có timeout 10s mỗi lần gọi, tối đa 4 lần thử với exponential backoff (`5s`, `30s`, `120s`), hoàn toàn không làm chậm luồng `TaskManager` hay kênh **Web UI**.
   - Nút **"Gửi thông báo thử nghiệm"** (`POST /api/admin/notifications/channels/{channel}/test`) hỗ trợ kiểm tra cả cấu hình đang nhập trên form (draft) lẫn cấu hình đã lưu.
 
 **Không làm:**
-- Không thay đổi giao thức WebSocket của **Device** hoặc luồng **Direct Speech** trong [`deliver_task_reminder_to_devices`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L501-L544).
+- Không thay đổi giao thức WebSocket của **Device** hoặc cơ chế claim/ACK **Direct Speech** trong [`ReminderCoordinator`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/mod.rs#L21-L25) và [`services::reminder_scheduler::start`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs#L18-L90).
 - Không làm bot hội thoại 2 chiều (webhook nhận tin nhắn chat từ Telegram/Zalo để điều khiển ngược lại server) trong phase này; chỉ thực hiện chiều gửi thông báo (outbound notification delivery).
 
 ---
@@ -50,7 +53,7 @@
 
 ### 2.1. Tại sao gom vào một Deep Module duy nhất (`NotificationHub`)?
 
-Nếu để [`app/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs), [`app/admin/background.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/background.rs), [`app/admin/knowledge_processing.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge_processing.rs) hoặc [`app/admin/system_mcp.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/system_mcp.rs) tự đọc cấu hình kênh, tự format tin nhắn cho Telegram/Zalo và tự gọi HTTP, codebase sẽ sinh ra nhiều **shallow modules** với logic phân tán.
+Nếu để [`app/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs), [`services/notifications/reminder_scheduler.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs), [`app/admin/background.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/background.rs), [`app/admin/knowledge_processing.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge_processing.rs) hoặc [`tools/system_mcp/`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/tools/system_mcp/mod.rs) tự đọc cấu hình kênh, tự format tin nhắn cho Telegram/Zalo và tự gọi HTTP, codebase sẽ sinh ra nhiều **shallow modules** với logic phân tán.
 
 Thiết kế **`NotificationHub`** tại `crates/voice-agent-server/src/services/notification_hub/` đạt **Depth** cao:
 - **Small Interface**: Toàn bộ các nơi phát sinh sự kiện chỉ gọi **1 hàm duy nhất** `hub.publish(NotificationInput)`. Các route Admin chỉ gọi 5 hàm quản trị (`list_inbox`, `mark_read`, `delete_inbox`, `get_settings` / `update_settings`, `test_channel`).
@@ -101,9 +104,9 @@ Thiết kế **`NotificationHub`** tại `crates/voice-agent-server/src/services
 
 ---
 
-## 3. Thiết kế Cơ sở dữ liệu (`0136_notification_hub.sql`)
+## 3. Thiết kế Cơ sở dữ liệu (`0137_notification_hub.sql`)
 
-Tạo file migration mới tại `crates/voice-agent-server/migrations/0136_notification_hub.sql`:
+Tạo file migration mới tại [`crates/voice-agent-server/migrations/0137_notification_hub.sql`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/migrations/0137_notification_hub.sql):
 
 ```sql
 -- 1. Cấu hình kênh thông báo (Singleton state + Per-channel policy)
@@ -304,6 +307,7 @@ pub struct NotificationHub {
     adapters: HashMap<ExternalChannelKind, Arc<dyn OutboundChannelAdapter>>,
     web_tx: broadcast::Sender<NotificationSseEvent>,
     outbox_wake: Arc<Notify>,
+    workers_started: AtomicBool,
 }
 
 impl NotificationHub {
@@ -354,7 +358,8 @@ impl NotificationHub {
         input: TestChannelInput,
     ) -> Result<TestChannelOutput, NotificationHubError>;
 
-    /// Khởi chạy background worker xử lý `notification_outbox` và dọn dẹp theo `retention_days`.
+    /// Khởi chạy idempotent (`workers_started.swap(true, Ordering::AcqRel)`) cho background worker
+    /// xử lý `notification_outbox` và dọn dẹp theo `retention_days`, dừng sạch theo `RuntimeLifecycle::stopping()`.
     pub fn start_workers(self: &Arc<Self>, stopping: CancellationToken);
 }
 ```
@@ -445,7 +450,7 @@ pub trait OutboundChannelAdapter: Send + Sync {
    }
    ```
 2. **Xử lý `Patch<SecretValue>` và mã hóa khi `update_settings`**:
-   - Tái sử dụng kiểu [`Patch<T>`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/mod.rs#L620-L634) (hoặc nâng khả năng hiển thị lên `pub(crate) enum Patch<T>`):
+   - Tái sử dụng kiểu [`Patch<T>`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/mod.rs#L628-L642) (nâng khả năng hiển thị lên `pub(crate) enum Patch<T>`):
      - `Patch::Absent`: Giữ nguyên cột `encrypted_credential` hiện có trong DB.
      - `Patch::Clear(None)`: Đặt cột `encrypted_credential = NULL` (nếu kênh vẫn bật mà không có env fallback thì trả `400 Bad Request` với mã `"missing_bot_token"`).
      - `Patch::Clear(Some(secret))`: Gọi `secret_resolver.seal(&secret, scope)` với `scope = "notification_channel:telegram"` hoặc `"notification_channel:zalo"`:
@@ -464,33 +469,48 @@ pub trait OutboundChannelAdapter: Send + Sync {
      ```
    - Giải mã bằng `secret_resolver.resolve(&SecretRef::parse(secret_ref_str)?)` ngay trước khi gọi `adapter.send(&target, &payload)`.
 
-### 4.5. Đấu nối Toàn bộ 6 Chủ đề Sự kiện (`bridge.rs`, `app/mod.rs`, `knowledge_processing.rs`, `system_mcp.rs`)
+### 4.5. Đấu nối Toàn bộ 6 Chủ đề Sự kiện (`bridge.rs`, `reminder_scheduler.rs`, `app/mod.rs`, `knowledge_processing.rs`, `system_mcp/`)
 
-1. **Từ `TaskManager` (`prepare_background` trong [`crates/voice-agent-server/src/app/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L463-L484))**:
-   - Khi nhận [`TaskEvent::ReminderDue { schedule }`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/event.rs#L57-L59):
-     - Giữ nguyên lời gọi `deliver_task_reminder_to_devices(&active_sessions, &schedule).await`.
-     - Đồng thời gọi `notification_hub.publish(...)` với:
-       - `dedup_key`: `Some(format!("reminder_due:{}:{}", schedule.id, schedule.last_run_at.unwrap_or(schedule.updated_at)))`
+1. **Khởi tạo `NotificationHub` và Worker trong [`router_with_state`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L104-L125)**:
+   - Tại `AppState::build_from_config_with` ([`app/state.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/state.rs#L168-L195)) hoặc `router_with_state`, khi `state.database` tồn tại, khởi tạo `NotificationHub::new(db.clone(), state.secret_resolver.clone(), default_adapters())` và gọi `hub.start_workers(state.lifecycle.stopping().clone())` (tương tự cơ chế `state.reminder_scheduler_started` tại [`app/mod.rs#L105-L115`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L105-L115)).
+2. **Nguồn 1 (`ReminderDue` từ Device Reminders) — [`services::reminder_scheduler::start`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs#L18-L90)**:
+   - Truyền thêm `notification_hub: Option<Arc<NotificationHub>>` vào `services::reminder_scheduler::start`.
+   - Khi `claim_next_due_for_device` trả về `Some(due)` ([`reminder_scheduler.rs#L51`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs#L51)), bên cạnh việc gửi `SessionMessage::DeliverReminder` xuống phiên WebSocket của thiết bị, gọi `hub.publish(bridge::from_due_device_reminder(&due))`:
+     - `dedup_key`: `Some(format!("device_reminder_due:{}", due.reminder_id))` (đảm bảo nếu thiết bị retry playback nhiều lần cho cùng `reminder_id`, hộp thư Web UI và Telegram/Zalo chỉ nhận đúng 1 thông báo).
+     - `topic`: `NotificationTopic::ReminderDue`, `severity`: `NotificationSeverity::Warning`
+     - `title`: `"Nhắc nhở đến hạn"`
+     - `body`: `due.message.clone()`
+     - `source_kind`: `Some(NotificationSourceKind::Schedule)`, `source_id`: `Some(due.reminder_id.clone())`
+     - `metadata`: `json!({"device_row_id": due.device_row_id, "resource_href": "/devices"})`
+3. **Nguồn 2 (`ReminderDue`, `TaskCompleted`, `TaskFailed`, `ScheduleTriggered`, `WikiReviewRequired` từ `TaskManager`) — `prepare_background` trong [`crates/voice-agent-server/src/app/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L434-L487)**:
+   - Hiện tại vòng lặp `while let Ok(item) = sub.recv().await` ([`app/mod.rs#L451-L473`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L451-L473)) chỉ ghi `tracing::debug!` cho `TaskEvent::ReminderDue` và ghi `tracing::warn!("task_feed_resync_required")` cho `TaskFeedItem::ResyncRequired`.
+   - Nâng cấp vòng lặp để chuyển mọi `TaskFeedItem::Event(event)` qua `bridge::from_task_event(&event)` và gọi `notification_hub.publish(...)`:
+     - Khi nhận [`TaskEvent::ReminderDue { schedule }`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/event.rs#L57-L59):
+       - `dedup_key`: `Some(format!("task_reminder_due:{}:{}", schedule.id, schedule.last_run_at.unwrap_or(schedule.updated_at)))`
        - `topic`: `NotificationTopic::ReminderDue`, `severity`: `NotificationSeverity::Warning`
        - `title`: `format!("Nhắc nhở: {}", schedule.title)`
        - `body`: `schedule.notes.clone().unwrap_or_else(|| schedule.title.clone())`
        - `source_kind`: `Some(NotificationSourceKind::Schedule)`, `source_id`: `Some(schedule.id)`
-   - Khi nhận [`TaskEvent::TaskTerminal { task }`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/event.rs#L40-L42):
-     - Chỉ phát khi `task.status` là `TaskStatus::Completed` hoặc `TaskStatus::Failed`.
-     - Lấy nội dung tóm tắt từ các trường thực tế của [`TaskView`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/task.rs#L139-L163):
-       - Với `TaskStatus::Completed`: lấy `task.output_preview.as_deref().or(task.progress_summary.as_deref()).unwrap_or("Tác vụ đã hoàn tất.")` (giới hạn 1000 ký tự). Nếu `task.flow_id == "wiki"` và tạo ra bản nháp cần duyệt, có thể phát kèm hoặc phân loại `NotificationTopic::WikiReviewRequired`.
-       - Với `TaskStatus::Failed`: lấy `task.error_message.as_deref().or(task.progress_summary.as_deref()).unwrap_or("Tác vụ kết thúc với lỗi.")`.
-       - `source_kind`: `Some(NotificationSourceKind::Job)`, `source_id`: `Some(task.id)`
-   - Khi nhận [`TaskEvent::ScheduleTriggered { schedule, spawned_task_id }`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/event.rs#L60-L63):
-     - `dedup_key`: `Some(format!("schedule_triggered:{}:{}", schedule.id, spawned_task_id))`
-     - `topic`: `NotificationTopic::ScheduleTriggered`, `severity`: `NotificationSeverity::Info`
-     - `title`: `format!("Lịch định kỳ đã khởi chạy: {}", schedule.title)`
-     - `source_kind`: `Some(NotificationSourceKind::Job)`, `source_id`: `Some(spawned_task_id)`
-   - Khi gặp `TaskFeedItem::ResyncRequired`: tự động ngủ `200ms` và gọi lại `task_mgr.subscribe_all()` thay vì thoát hẳn vòng lặp.
-2. **Từ luồng Tri thức / Wiki ([`crates/voice-agent-server/src/app/admin/knowledge_processing.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge_processing.rs))**:
-   - Khi phát sinh đề xuất xuất bản hoặc bản nháp Wiki cần Admin xử lý (`Publication Proposal` / `Staged Wiki Draft`), gọi `notification_hub.publish(...)` với `topic: NotificationTopic::WikiReviewRequired`, `source_kind: Some(NotificationSourceKind::Wiki)`.
-3. **Từ luồng `System MCP` ([`crates/voice-agent-server/src/tools/system_mcp/`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/system_mcp.rs))**:
-   - Khi Studio Assistant tạo mới một **System Change Request** chờ Admin xác nhận, gọi `notification_hub.publish(...)` với `topic: NotificationTopic::SystemChangeRequest`, `severity: NotificationSeverity::Warning`, `source_kind: Some(NotificationSourceKind::System)`, `source_id: Some(request_id)`.
+     - Khi nhận [`TaskEvent::TaskTerminal { task }`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/event.rs#L40-L42):
+       - Chỉ phát khi `task.status` là `TaskStatus::Completed` hoặc `TaskStatus::Failed`.
+       - Lấy nội dung tóm tắt từ [`TaskView`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/task.rs#L139-L163):
+         - Với `TaskStatus::Completed`:
+           - Nếu tác vụ thuộc `WikiAutoFlowBinding` (`task.flow_id == "wiki"` hoặc `task.agent_id == "wiki_root"` được đăng ký tại [`services/task_flow/mod.rs#L226-L230`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/task_flow/mod.rs#L226-L230)): phân loại sang `NotificationTopic::WikiReviewRequired`, `severity: NotificationSeverity::Info`, `source_kind: Some(NotificationSourceKind::Wiki)`, `source_id: Some(task.id)`, `metadata: json!({"resource_href": "/knowledge"})`.
+           - Các tác vụ nền khác: `NotificationTopic::TaskCompleted`, `severity: NotificationSeverity::Success`, `body`: `task.output_preview.as_deref().or(task.progress_summary.as_deref()).unwrap_or("Tác vụ đã hoàn tất.")` (giới hạn 1000 ký tự), `source_kind: Some(NotificationSourceKind::Job)`, `source_id: Some(task.id)`.
+         - Với `TaskStatus::Failed`: `NotificationTopic::TaskFailed`, `severity: NotificationSeverity::Error`, `body`: `task.error_message.as_deref().or(task.progress_summary.as_deref()).unwrap_or("Tác vụ kết thúc với lỗi.")`, `source_kind: Some(NotificationSourceKind::Job)`, `source_id: Some(task.id)`.
+     - Khi nhận [`TaskEvent::ScheduleTriggered { schedule, spawned_task_id }`](file:///Users/lamphuchai/Desktop/project_rust/orchestrator_task_rs/src/types/event.rs#L60-L63):
+       - `dedup_key`: `Some(format!("schedule_triggered:{}:{}", schedule.id, spawned_task_id))`
+       - `topic`: `NotificationTopic::ScheduleTriggered`, `severity`: `NotificationSeverity::Info`
+       - `title`: `format!("Lịch định kỳ đã khởi chạy: {}", schedule.title)`
+       - `source_kind`: `Some(NotificationSourceKind::Job)`, `source_id`: `Some(spawned_task_id)`
+     - Khi gặp `TaskFeedItem::ResyncRequired`: giữ nguyên hành vi hiện có tại [`app/mod.rs#L465-L468`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L465-L468) (log `task_feed_resync_required` và tiếp tục nhận sự kiện trên `sub` mà không phá vỡ vòng lặp).
+4. **Nguồn 3 (`WikiReviewRequired` từ luồng Tri thức / Wiki) — [`app/admin/knowledge_processing.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge_processing.rs#L27-L61) & [`app/admin/knowledge/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge/mod.rs#L48-L62)**:
+   - Kiến trúc Knowledge trên server hiện tách thành 2 cụm:
+     - [`app/admin/knowledge/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge/mod.rs) + [`raw.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge/raw.rs): quản lý cây thư mục vật lý (`sources/`, `wiki/`) và gọi [`trigger_source_analysis`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge/mod.rs#L48-L62) $\rightarrow$ ủy quyền cho [`services::task_flow::submit_wiki_source_analysis`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/task_flow/mod.rs#L240-L274) (khi hoàn tất sẽ phát thông báo qua `TaskEvent::TaskTerminal` ở mục 3).
+     - [`app/admin/knowledge_processing.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge_processing.rs#L27-L61): khi `lint_wiki` phát hiện `report.status == "needs_attention"` (tồn tại `broken_links`, `orphan_pages` hoặc `staged_drafts` chờ duyệt), phát `NotificationTopic::WikiReviewRequired` với `source_kind: Some(NotificationSourceKind::Wiki)` và `dedup_key` băm theo danh sách vấn đề để tránh thông báo trùng.
+5. **Nguồn 4 (`SystemChangeRequest` từ `SystemMcp`) — [`tools/system_mcp/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/tools/system_mcp/mod.rs#L90-L115) & [`proposals.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/tools/system_mcp/proposals.rs#L88-L173)**:
+   - Bổ sung trường `notification_hub: Option<Arc<NotificationHub>>` và builder `.with_notification_hub(state.notification_hub.clone())` vào `SystemMcp` (gắn tại [`router_with_state` trong `app/mod.rs#L116-L124`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L116-L124)).
+   - Trong [`SystemMcp::propose`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/tools/system_mcp/proposals.rs#L157-L173), ngay khi thêm `ChangeRequest` (`mcp_request_server_change`, `mcp_request_agent_binding_change`, `mcp_request_tool_review`) vào `self.pending`, phát bất đồng bộ qua `notification_hub.publish(...)` với `dedup_key: Some(format!("system_change_request:{}", view.id))`, `topic: NotificationTopic::SystemChangeRequest`, `severity: NotificationSeverity::Warning`, `source_kind: Some(NotificationSourceKind::System)`, `source_id: Some(view.id.clone())`.
 
 ---
 
@@ -636,7 +656,7 @@ Do đó, `NotificationBell.vue` nhận prop `compact?: boolean` và được đ�
    - Khi `collapsed === true`: hiển thị nút icon `Bell` kèm chấm/số badge đỏ `unread_count`.
    - Khi `collapsed === false`: hiển thị hàng đầy đủ gồm icon `Bell`, nhãn *"Thông báo"* và badge `unread_count`.
 3. **Popover Inbox & Toast Stack**:
-   - Bấm vào `NotificationBell.vue` mở Popover/Drawer hiển thị danh sách thông báo, bộ lọc **Tất cả / Chưa đọc**, nút **Đánh dấu đã đọc tất cả**, trạng thái chuyển phát (`TG ✓`, `Zalo ✓`, `TG !`), và điều hướng thẳng tới `/jobs/:source_id` hoặc `/knowledge`.
+   - Bấm vào `NotificationBell.vue` mở Popover hiển thị danh sách thông báo (sử dụng `position: fixed` neo động theo tọa độ nút chuông để không bị cắt bởi `overflow-hidden` của `SidebarContent.vue`, đồng bộ hệ thống studio design tokens `bg-card`, `studio-panel`, `admin-input`), bộ lọc **Tất cả / Chưa đọc**, nút **Đánh dấu đã đọc tất cả**, trạng thái chuyển phát (`TG ✓`, `Zalo ✓`, `TG !`), và điều hướng thẳng tới `/jobs/:source_id` hoặc `/knowledge`.
    - Khi SSE `/api/admin/notifications/stream` bắn `notification_created` và `web_ui.toast_enabled === true`, hiển thị Toast góc dưới phải màn hình trong 6 giây.
 
 ### 6.2. Khu vực Thiết lập Kênh Thông báo (`NotificationSettingsCard.vue`)
@@ -681,26 +701,27 @@ Trong giai đoạn phía Rust server chưa triển khai các route `/api/admin/n
 
 ## 7. Danh sách File Thay đổi & Tạo mới Khi Triển khai
 
-### 7.1. Backend (`crates/voice-agent-server`) — `⏳ CHỜ TRIỂN KHAI`
+### 7.1. Backend (`crates/voice-agent-server`) — `✅ ĐÃ HOÀN THÀNH`
 
-| File | Hành động |
-| :--- | :--- |
-| `crates/voice-agent-server/migrations/0136_notification_hub.sql` | **NEW**: Tạo bảng `notification_settings_state`, `notification_channel_configs`, `notifications_inbox`, `notification_outbox`. |
-| `crates/voice-agent-server/src/database/security/secrets.rs` | Cập nhật: thêm `notification_channel_secret_env("telegram" \| "zalo")`. |
-| `crates/voice-agent-server/src/services/notification_hub/mod.rs` | **NEW**: Định nghĩa `NotificationHub` và public interface. |
-| `crates/voice-agent-server/src/services/notification_hub/types.rs` | **NEW**: Định nghĩa strong-typed enums, `NotificationContent`, DTOs và `Patch<SecretValue>` inputs. |
-| `crates/voice-agent-server/src/services/notification_hub/store.rs` | **NEW**: Thực thi SQLite queries cho Inbox, Outbox, CAS Settings + `Admin Audit Event` và Retention. |
-| `crates/voice-agent-server/src/services/notification_hub/adapters.rs` | **NEW**: Định nghĩa internal seam `OutboundChannelAdapter`, `TelegramBotAdapter`, `ZaloBotAdapter`, `RecordingChannelAdapter`. |
-| `crates/voice-agent-server/src/services/notification_hub/dispatcher.rs` | **NEW**: Outbox worker loop, retry backoff, message formatting. |
-| `crates/voice-agent-server/src/services/notification_hub/bridge.rs` | **NEW**: Chuyển đổi `TaskEvent`, Wiki Review và System Change Request sang `NotificationInput`. |
-| `crates/voice-agent-server/src/services/notification_hub/tests.rs` | **NEW**: Unit & integration tests cho `NotificationHub`. |
-| `crates/voice-agent-server/src/services/mod.rs` | Export `pub mod notification_hub;`. |
-| `crates/voice-agent-server/src/app/state.rs` | Thêm `pub notification_hub: Option<Arc<NotificationHub>>` vào `AppState`. |
-| `crates/voice-agent-server/src/app/mod.rs` | Khởi tạo `NotificationHub`, gắn `start_workers` và gọi `bridge` trong `prepare_background`. |
-| `crates/voice-agent-server/src/app/admin/knowledge_processing.rs` | Phát `NotificationTopic::WikiReviewRequired` qua `state.notification_hub` khi có bản nháp/đề xuất cần duyệt. |
-| `crates/voice-agent-server/src/tools/system_mcp/mod.rs` | Phát `NotificationTopic::SystemChangeRequest` qua `notification_hub` khi tạo yêu cầu thay đổi mới. |
-| `crates/voice-agent-server/src/app/admin/notification_hub.rs` | **NEW**: HTTP handlers cho `/api/admin/notifications*`. |
-| `crates/voice-agent-server/src/app/admin/mod.rs` | Nâng `Patch<T>` thành `pub(crate)` và mount các route `/notifications*` vào `admin::router`. |
+| File | Trạng thái | Hành động |
+| :--- | :--- | :--- |
+| [`crates/voice-agent-server/migrations/0137_notification_hub.sql`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/migrations/0137_notification_hub.sql) | ✅ Đã xong | **NEW**: Tạo bảng `notification_settings_state`, `notification_channel_configs`, `notifications_inbox`, `notification_outbox`. |
+| [`crates/voice-agent-server/src/database/security/secrets.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/database/security/secrets.rs) | ✅ Đã xong | Cập nhật: thêm `notification_channel_secret_env("telegram" \| "zalo")`. |
+| [`crates/voice-agent-server/src/services/notification_hub/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notification_hub/mod.rs) | ✅ Đã xong | **NEW**: Định nghĩa `NotificationHub` (`workers_started: AtomicBool`) và public interface. |
+| [`crates/voice-agent-server/src/services/notification_hub/types.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notification_hub/types.rs) | ✅ Đã xong | **NEW**: Định nghĩa strong-typed enums, `NotificationContent`, DTOs và `Patch<SecretValue>` inputs. |
+| [`crates/voice-agent-server/src/services/notification_hub/store.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notification_hub/store.rs) | ✅ Đã xong | **NEW**: Thực thi SQLite queries cho Inbox, Outbox, CAS Settings + `Admin Audit Event` và Retention. |
+| [`crates/voice-agent-server/src/services/notification_hub/adapters.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notification_hub/adapters.rs) | ✅ Đã xong | **NEW**: Định nghĩa internal seam `OutboundChannelAdapter`, `TelegramBotAdapter`, `ZaloBotAdapter`, `RecordingChannelAdapter`. |
+| [`crates/voice-agent-server/src/services/notification_hub/dispatcher.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notification_hub/dispatcher.rs) | ✅ Đã xong | **NEW**: Outbox worker loop, retry backoff, message formatting. |
+| [`crates/voice-agent-server/src/services/notification_hub/bridge.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notification_hub/bridge.rs) | ✅ Đã xong | **NEW**: Chuyển đổi `DueReminder` (từ `reminder_scheduler`), `TaskEvent` (gồm cả `WikiAutoFlowBinding` `wiki_root`), Wiki Lint và System Change Request sang `NotificationInput`. |
+| [`crates/voice-agent-server/src/services/notification_hub/tests.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notification_hub/tests.rs) | ✅ Đã xong | **NEW**: Unit & integration tests cho `NotificationHub` và Admin HTTP endpoints. |
+| [`crates/voice-agent-server/src/services/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/mod.rs) | ✅ Đã xong | Export `pub mod notification_hub;`. |
+| [`crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/services/notifications/reminder_scheduler.rs#L18-L90) | ✅ Đã xong | Cập nhật: thêm `start_with_hub` để phát `NotificationTopic::ReminderDue` khi `claim_next_due_for_device` trả về `Some(due)`. |
+| [`crates/voice-agent-server/src/app/state.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/state.rs#L65-L90) | ✅ Đã xong | Thêm `pub notification_hub: Option<Arc<NotificationHub>>` vào `AppState`. |
+| [`crates/voice-agent-server/src/app/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/mod.rs#L104-L130) | ✅ Đã xong | Khởi chạy `hub.start_workers(state.lifecycle.stopping().clone())`, truyền `state.notification_hub` vào `reminder_scheduler::start_with_hub`, `SystemMcp` và vòng lặp `prepare_background`. |
+| [`crates/voice-agent-server/src/app/admin/knowledge_processing.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/knowledge_processing.rs#L50-L82) | ✅ Đã xong | Phát `NotificationTopic::WikiReviewRequired` qua `state.notification_hub` khi `lint_wiki` báo `!lint.is_healthy`. |
+| [`crates/voice-agent-server/src/tools/system_mcp/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/tools/system_mcp/mod.rs#L90-L125) & [`proposals.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/tools/system_mcp/proposals.rs#L157-L200) | ✅ Đã xong | Thêm `.with_notification_hub(...)` và phát `NotificationTopic::SystemChangeRequest` trong `SystemMcp::propose` khi tạo yêu cầu thay đổi mới. |
+| [`crates/voice-agent-server/src/app/admin/notification_hub.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/notification_hub.rs) | ✅ Đã xong | **NEW**: HTTP handlers cho `/api/admin/notifications*`. |
+| [`crates/voice-agent-server/src/app/admin/mod.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/mod.rs#L140-L162) | ✅ Đã xong | Nâng `Patch<T>` và mount các route `/notifications*` vào `admin::router`. |
 
 ### 7.2. Frontend (`apps/admin-web`) — `✅ ĐÃ HOÀN THÀNH`
 
@@ -750,11 +771,11 @@ Tuân thủ nghiêm ngặt quy định tại [`AGENTS.md`](file:///Users/lamphuc
 ### 8.2. Lệnh chạy kiểm thử chuẩn
 
 ```bash
-# 1. Kiểm tra biên dịch và unit tests của module notification_hub
-./scripts/agent-test.sh test -p voice-agent-server notification_hub
+# 1. Kiểm tra biên dịch và unit/HTTP tests của module notification_hub
+./scripts/agent-test.sh targeted notification_hub voice-agent-server
 
-# 2. Kiểm tra tích hợp Admin HTTP API
-./scripts/agent-test.sh test -p voice-agent-server --test admin_api
+# 2. Kiểm tra kiểu và biên dịch toàn crate voice-agent-server
+./scripts/agent-test.sh check voice-agent-server
 
 # 3. Kiểm tra Frontend (TypeScript + Vitest + Build)
 ./scripts/agent-test.sh web typecheck
@@ -770,7 +791,11 @@ Tuân thủ nghiêm ngặt quy định tại [`AGENTS.md`](file:///Users/lamphuc
 - **Phạm vi**:
   - Hoàn thiện toàn bộ tầng DTOs, API client (`notificationsApi`), SSE listener (`listenNotificationStream`) và **Stateful Demo Store** (`apps/admin-web/src/api/notifications.ts`).
   - Hoàn thiện giao diện chuông thông báo toàn cục (`NotificationBell.vue`) trên cả Mobile header (`AdminShell.vue`) và Desktop sidebar (`SidebarContent.vue`), cùng bảng cấu hình 3 kênh **Web UI / Telegram Bot / Zalo Bot** (`NotificationSettingsCard.vue`) tại trang `/jobs/settings` (`BackgroundPage.vue`).
-  - Hoàn thiện kiểm thử đơn vị (TDD) và rà soát `/code-review` 2 trục (Standards & Spec): vượt qua `web typecheck`, `73/73` test files (`332` tests) và `web build`.
+  - Hoàn thiện kiểm thử đơn vị (TDD) và rà soát `/code-review` 2 trục (Standards & Spec): vượt qua `web typecheck`, `73/73` test files và `web build`.
 
-### Giai đoạn 2 — Rust Backend (`crates/voice-agent-server`) & Domain Docs (`⏳ TIẾP THEO`)
-- Triển khai migration `0136_notification_hub.sql`, module `services/notification_hub/`, tích hợp `TelegramBotAdapter` / `ZaloBotAdapter`, gắn bridge sự kiện từ `TaskService` / `knowledge_processing` / `system_mcp`, mở các route `/api/admin/notifications*` và cập nhật `GLOSSARY.md` + `CONTEXT.md`.
+### Giai đoạn 2 — Rust Backend (`crates/voice-agent-server`), Domain Docs & Kết nối Web (`✅ ĐÃ HOÀN THÀNH`)
+- **Phạm vi**:
+  - Bổ sung từ vựng chuẩn `## Multi-Channel Notifications` vào [`GLOSSARY.md`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/GLOSSARY.md) và [`CONTEXT.md`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/CONTEXT.md).
+  - Triển khai migration [`0137_notification_hub.sql`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/migrations/0137_notification_hub.sql), module `services/notification_hub/` (`mod.rs`, `types.rs`, `store.rs`, `adapters.rs`, `dispatcher.rs`, `bridge.rs`, `tests.rs`) với `TelegramBotAdapter`, `ZaloBotAdapter`, `RecordingChannelAdapter`.
+  - Đấu nối toàn bộ 6 chủ đề sự kiện từ `services::reminder_scheduler::start_with_hub`, `TaskManager` (`prepare_background`), `knowledge_processing::reviews` (`lint_wiki`) và `SystemMcp::propose`.
+  - Mở đầy đủ 8 route Admin HTTP `/api/admin/notifications*` tại [`app/admin/notification_hub.rs`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/crates/voice-agent-server/src/app/admin/notification_hub.rs) và nối trực tiếp luồng SSE thời gian thực `listenNotificationStream` vào `NotificationBell.vue`.

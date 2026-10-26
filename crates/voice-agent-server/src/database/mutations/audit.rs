@@ -5,7 +5,7 @@ use sqlx::{Executor, Sqlite, SqlitePool};
 /// The outcome and the reason a row failed travel as one value because they are never independent:
 /// a mismatched pair would be representable as two free strings and meaningless in practice.
 #[derive(Clone, Copy)]
-pub(in crate::database) enum AuditOutcome {
+pub(crate) enum AuditOutcome {
     Success,
     RevisionConflict,
 }
@@ -34,7 +34,7 @@ impl AuditOutcome {
 /// `affected_rows` are the only thing that identifies it.  Nothing about the text a purge deleted
 /// does: a purge must leave a countable trace, not a second copy of what it removed.
 #[allow(clippy::too_many_arguments)] // Each argument maps one-to-one to the immutable audit schema.
-pub(in crate::database) async fn audit<'e, E>(
+pub(crate) async fn audit<'e, E>(
     executor: E,
     request_id: &str,
     resource: &str,
@@ -64,7 +64,7 @@ where
         .map(|_| ())
 }
 
-pub(in crate::database) async fn audit_conflict(
+pub(crate) async fn audit_conflict(
     pool: &SqlitePool,
     request_id: String,
     resource: &str,
@@ -74,7 +74,7 @@ pub(in crate::database) async fn audit_conflict(
     audit_conflict_action(pool, request_id, resource, resource_id, expected, "update").await;
 }
 
-pub(in crate::database) async fn audit_conflict_action(
+pub(crate) async fn audit_conflict_action(
     pool: &SqlitePool,
     request_id: String,
     resource: &str,
