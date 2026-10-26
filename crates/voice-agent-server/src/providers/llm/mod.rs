@@ -73,6 +73,16 @@ pub fn llm_config_supports_tag(config_json: &str, required_tag: &str) -> bool {
         .any(|t| t == required_tag)
 }
 
+pub fn validate_template_provider_capability(
+    provider_type: &str,
+    config_json: &str,
+) -> Result<(), &'static str> {
+    if provider_type == "llm" && !llm_config_supports_tag(config_json, "chat") {
+        return Err("provider_capability_mismatch");
+    }
+    Ok(())
+}
+
 pub(crate) fn valid_generation_bounds(
     max_tokens: Option<u32>,
     context_limit_tokens: Option<u32>,

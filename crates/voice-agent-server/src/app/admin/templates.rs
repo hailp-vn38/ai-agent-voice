@@ -263,14 +263,11 @@ pub(super) async fn bind_template_provider(
         let Ok(snapshot) = reference.snapshot(&state.config) else {
             return error(&request, StatusCode::BAD_REQUEST, "invalid_provider");
         };
-        if provider_type == "llm"
-            && !crate::providers::llm::llm_config_supports_tag(&snapshot.config_json, "chat")
-        {
-            return error(
-                &request,
-                StatusCode::BAD_REQUEST,
-                "provider_capability_mismatch",
-            );
+        if let Err(code) = crate::providers::llm::validate_template_provider_capability(
+            &provider_type,
+            &snapshot.config_json,
+        ) {
+            return error(&request, StatusCode::BAD_REQUEST, code);
         }
         if state.provider_runtime_manager.is_none() {
             return error(

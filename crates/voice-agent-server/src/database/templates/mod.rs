@@ -211,11 +211,8 @@ impl Database {
                 if kind != provider_type || enabled != 1 {
                     return Err(WriteError::Invalid("invalid_provider"));
                 }
-                if kind == "llm"
-                    && !crate::providers::llm::llm_config_supports_tag(&config_json, "chat")
-                {
-                    return Err(WriteError::Invalid("provider_capability_mismatch"));
-                }
+                crate::providers::llm::validate_template_provider_capability(&kind, &config_json)
+                    .map_err(WriteError::Invalid)?;
                 ("database", Some(id), None)
             }
             crate::providers::config_catalog::ProviderOrigin::Config => {

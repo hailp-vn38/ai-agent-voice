@@ -65,7 +65,11 @@ const chatProviderOptions = computed(() =>
 function providerOptionsForAgent(agent: BackgroundAgentConfig | null): BackgroundProviderOption[] {
   if (!agent) return chatProviderOptions.value
   const allowedTags =
-    agent.id === 'media_creator' ? ['chat', 'image', 'video', 'audio'] : ['chat']
+    agent.allowed_capability_tags && agent.allowed_capability_tags.length > 0
+      ? agent.allowed_capability_tags
+      : agent.id === 'media_creator'
+        ? ['chat', 'image', 'video', 'audio']
+        : ['chat']
   return providerOptions.value.filter(option => providerSupportsAnyTag(option, allowedTags))
 }
 function formatProviderOptionLabel(option: BackgroundProviderOption): string {
@@ -569,8 +573,8 @@ onBeforeUnmount(() => controller?.abort())
                     <option :value="null">
                       {{ t('jobUi.inheritProvider') }} ({{ draft.worker_llm_provider }})
                     </option>
-                    <option v-for="option in providerOptions" :key="option.ref" :value="option.ref">
-                      {{ option.name }}{{ option.model && option.model !== option.name ? ` (${option.model})` : '' }} · {{ option.source }}
+                    <option v-for="option in providerOptionsForAgent(agent)" :key="option.ref" :value="option.ref">
+                      {{ formatProviderOptionLabel(option) }}
                     </option>
                   </select>
                 </label>

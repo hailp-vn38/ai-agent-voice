@@ -34,6 +34,15 @@ pub struct AgentSpec {
     pub default_subagents: &'static [&'static str],
 }
 
+impl AgentSpec {
+    pub const fn allowed_capability_tags(&self) -> &'static [&'static str] {
+        match self.id.as_bytes() {
+            b"media_creator" => &["chat", "image", "video", "audio"],
+            _ => &["chat"],
+        }
+    }
+}
+
 const SOURCE_COLLECTOR_TOOLS: &[&str] = &[
     "skill",
     "anydoc_inspect_pdf",

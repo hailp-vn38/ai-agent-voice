@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::app::AppState;
 use crate::config::{LlmInstanceConfig, OrchestratorSectionConfig};
 
-use super::specs::{AGENT_SPECS, AgentSpec};
+use super::specs::{AGENT_SPECS, AgentSpec, find_agent_spec};
 use super::{DEFAULT_ORCHESTRATOR_PROVIDER_REF, PersistedBackgroundSettings};
 
 #[derive(Clone, Debug)]
@@ -79,13 +79,9 @@ pub fn find_provider_by_tag<'a>(
 }
 
 pub(crate) fn agent_supports_provider(agent_id: &str, provider: &ResolvedLlmProvider) -> bool {
-    if agent_id == "media_creator" {
-        ["chat", "image", "video", "audio"]
-            .iter()
-            .any(|tag| provider.supports_tag(tag))
-    } else {
-        provider.supports_tag("chat")
-    }
+    let allowed = find_agent_spec(agent_id)
+        .map_or(&["chat"][..], AgentSpec::allowed_capability_tags);
+    allowed.iter().any(|tag| provider.supports_tag(tag))
 }
 
 pub fn default_orchestrator_provider(cfg: &OrchestratorSectionConfig) -> ResolvedLlmProvider {
@@ -467,6 +463,7 @@ pub fn project_agents_json(
                 "default_allowed_skills": eff.spec.default_allowed_skills,
                 "available_skills": eff.spec.available_skills,
                 "allowed_subagents": eff.allowed_subagents,
+                "allowed_capability_tags": eff.spec.allowed_capability_tags(),
                 "description": eff.description,
                 "default_description": eff.spec.default_description,
                 "system_prompt": eff.system_prompt,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ProviderConfigSchema, ProviderConfigField } from '@/api/types/providers'
+import { selectedMultiSelectValues, toggleMultiSelectConfigValue } from '@/domain/admin'
 const config = defineModel<Record<string, unknown>>({ required: true })
 const props = defineProps<{ schema?: ProviderConfigSchema; capabilities?: Record<string, unknown>; readonly?: boolean }>()
 function options(field: ProviderConfigField): Array<{ id: string; name: string }> {
@@ -17,18 +18,11 @@ function options(field: ProviderConfigField): Array<{ id: string; name: string }
   }) : []
 }
 function selectedValues(key: string): string[] {
-  const value = config.value[key]
-  return Array.isArray(value) ? value.map(String) : []
+  return selectedMultiSelectValues(config.value, key)
 }
 function toggleMultiSelect(key: string, item: string) {
   if (props.readonly) return
-  const current = new Set(selectedValues(key))
-  if (current.has(item)) current.delete(item)
-  else current.add(item)
-  const next = { ...config.value }
-  if (current.size === 0) delete next[key]
-  else next[key] = Array.from(current)
-  config.value = next
+  config.value = toggleMultiSelectConfigValue(config.value, key, item)
 }
 function update(key: string, value: unknown) {
   if (props.readonly) return

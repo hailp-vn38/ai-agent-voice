@@ -56,6 +56,38 @@ export function providerSupportsLlmTag(
   return effectiveLlmTags(provider).includes(tag)
 }
 
+export function templateCandidateProviders(
+  providers: readonly ProviderInstance[],
+  type: ProviderType,
+): ProviderInstance[] {
+  return providers.filter(
+    (provider) =>
+      provider.type === type && (type !== 'llm' || providerSupportsLlmTag(provider, 'chat')),
+  )
+}
+
+export function selectedMultiSelectValues(
+  config: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = config[key]
+  return Array.isArray(value) ? value.map(String) : []
+}
+
+export function toggleMultiSelectConfigValue(
+  config: Record<string, unknown>,
+  key: string,
+  item: string,
+): Record<string, unknown> {
+  const current = new Set(selectedMultiSelectValues(config, key))
+  if (current.has(item)) current.delete(item)
+  else current.add(item)
+  const next = { ...config }
+  if (current.size === 0) delete next[key]
+  else next[key] = Array.from(current)
+  return next
+}
+
 /**
  * Agent owns identity only, plus which template it defaults to. Language,
  * prompt and provider bindings belong to the global AgentTemplate it links.

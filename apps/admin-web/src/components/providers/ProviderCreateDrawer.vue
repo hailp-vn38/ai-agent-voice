@@ -7,6 +7,7 @@ import type { TemplateProviderType } from '@/api/types/templates'
 import { Button } from '@/components/ui/button'
 import ProviderTestPanel from './ProviderTestPanel.vue'
 import { useI18n } from '@/composables/useI18n'
+import { selectedMultiSelectValues, toggleMultiSelectConfigValue } from '@/domain/admin'
 import BaseModal from '@/components/admin/BaseModal.vue'
 
 const open = defineModel<boolean>({ required: true })
@@ -34,15 +35,10 @@ const config = computed(() => Object.fromEntries(Object.entries(form.config).fil
   (value !== '' && (!Array.isArray(value) || value.length > 0)) || fields.value.some((field) => field.key === key && field.required),
 )))
 function selectedMultiValues(key: string): string[] {
-  const value = form.config[key]
-  return Array.isArray(value) ? value.map(String) : []
+  return selectedMultiSelectValues(form.config, key)
 }
 function toggleMultiSelect(key: string, value: string) {
-  const current = new Set(selectedMultiValues(key))
-  if (current.has(value)) current.delete(value)
-  else current.add(value)
-  if (current.size === 0) delete form.config[key]
-  else form.config[key] = Array.from(current)
+  form.config = toggleMultiSelectConfigValue(form.config, key, value)
 }
 const supportsDiscovery = computed(() => descriptor.value?.supports_discovery === true || Boolean(descriptor.value?.capabilities?.supports_discovery))
 const advancedFields = computed(() => fields.value.filter((field) => field.advanced))
