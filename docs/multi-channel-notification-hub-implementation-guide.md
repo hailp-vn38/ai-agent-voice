@@ -659,9 +659,9 @@ Do đó, `NotificationBell.vue` nhận prop `compact?: boolean` và được đ�
    - Bấm vào `NotificationBell.vue` mở Popover hiển thị danh sách thông báo (sử dụng `position: fixed` neo động theo tọa độ nút chuông để không bị cắt bởi `overflow-hidden` của `SidebarContent.vue`, đồng bộ hệ thống studio design tokens `bg-card`, `studio-panel`, `admin-input`), bộ lọc **Tất cả / Chưa đọc**, nút **Đánh dấu đã đọc tất cả**, trạng thái chuyển phát (`TG ✓`, `Zalo ✓`, `TG !`), và điều hướng thẳng tới `/jobs/:source_id` hoặc `/knowledge`.
    - Khi SSE `/api/admin/notifications/stream` bắn `notification_created` và `web_ui.toast_enabled === true`, hiển thị Toast góc dưới phải màn hình trong 6 giây.
 
-### 6.2. Khu vực Thiết lập Kênh Thông báo (`NotificationSettingsCard.vue`)
+### 6.2. Trang Riêng Thiết lập Kênh Thông báo (`NotificationSettingsPage.vue` & `NotificationSettingsCard.vue`)
 
-Component `apps/admin-web/src/components/notifications/NotificationSettingsCard.vue` được nhúng vào trang Cấu hình Nền ([`BackgroundPage.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/pages/background/BackgroundPage.vue)):
+Vì thông báo dùng chung cho toàn hệ thống (không chỉ riêng Background Jobs), phần thiết lập kênh được đặt tại trang riêng [`NotificationSettingsPage.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/pages/notifications/NotificationSettingsPage.vue) ở route `/system/notifications` (alias `/notifications`), truy cập trực tiếp từ mục cài đặt **Hệ thống** ([`SystemView.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/views/SystemView.vue)) hoặc nút bánh răng cài đặt trong Popover của [`NotificationBell.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/components/notifications/NotificationBell.vue):
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -695,7 +695,7 @@ Trong giai đoạn phía Rust server chưa triển khai các route `/api/admin/n
   - Hộp thư khởi tạo sẵn 6 thông báo mẫu thuộc đủ 6 `NotificationTopic` kèm trạng thái chuyển phát (`sent`, `failed`) của `telegram` / `zalo`.
   - Hỗ trợ lọc **Tất cả / Chưa đọc**, đánh dấu đã đọc từng mục hoặc toàn bộ, xóa từng thông báo, dọn sạch thông báo đã đọc (`purgeRead`), và nút **Tạo thông báo demo (`simulateDemoNotification`)** phát sự kiện trực tiếp qua `subscribeNotificationEvents` để kích hoạt **Live Toast** (6 giây).
   - Hỗ trợ lưu cấu hình kênh (`updateSettings`) với đúng ngữ nghĩa `Patch<SecretValue>` cho `bot_token` (giữ nguyên khi để trống `undefined`, xóa khi `null`, hoặc sinh `masked_key` mới khi nhập chuỗi token) và kiểm tra gửi thử (`testChannel`) cho cả `telegram` và `zalo`.
-  - [`NotificationSettingsCard.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/components/notifications/NotificationSettingsCard.vue) được đặt độc lập với trạng thái tải `/api/admin/background/settings` trong [`BackgroundPage.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/pages/background/BackgroundPage.vue#L579) để luôn hiển thị và thao tác được ngay cả khi backend chưa chạy.
+  - Trang riêng [`NotificationSettingsPage.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/pages/notifications/NotificationSettingsPage.vue) (`/system/notifications` / `/notifications`) nhúng [`NotificationSettingsCard.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/components/notifications/NotificationSettingsCard.vue) hoạt động độc lập, luôn hiển thị và thao tác được cả khi backend thật đang chạy hoặc khi dùng chế độ demo fallback.
 
 ---
 
@@ -736,7 +736,9 @@ Trong giai đoạn phía Rust server chưa triển khai các route `/api/admin/n
 | [`apps/admin-web/src/components/notifications/NotificationSettingsCard.test.ts`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/components/notifications/NotificationSettingsCard.test.ts) | ✅ Đã xong | **NEW**: Component tests cho `Patch<SecretValue>` (`undefined`, `null`, `string`), hoàn tác xóa token và gửi tin nhắn thử. |
 | [`apps/admin-web/src/layouts/AdminShell.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/layouts/AdminShell.vue) | ✅ Đã xong | Tích hợp `NotificationBell` vào thanh `<header>` mobile (`lg:hidden`). |
 | [`apps/admin-web/src/components/SidebarContent.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/components/SidebarContent.vue) | ✅ Đã xong | Tích hợp `NotificationBell` vào khu vực tiện ích chân sidebar cho màn hình Desktop (cả `collapsed` và expanded). |
-| [`apps/admin-web/src/pages/background/BackgroundPage.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/pages/background/BackgroundPage.vue) | ✅ Đã xong | Hiển thị `NotificationSettingsCard.vue` trong trang cấu hình Background (`/jobs/settings`), hoạt động cả khi server chưa bật. |
+| [`apps/admin-web/src/pages/notifications/NotificationSettingsPage.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/pages/notifications/NotificationSettingsPage.vue) | ✅ Đã xong | **NEW**: Trang riêng cấu hình kênh thông báo hệ thống (`/system/notifications`, alias `/notifications`). |
+| [`apps/admin-web/src/pages/notifications/NotificationSettingsPage.test.ts`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/pages/notifications/NotificationSettingsPage.test.ts) | ✅ Đã xong | **NEW**: Kiểm thử trang riêng cấu hình thông báo và điều hướng quay về `/system`. |
+| [`apps/admin-web/src/views/SystemView.vue`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/views/SystemView.vue) | ✅ Đã xong | Thêm mục cài đặt **Kênh thông báo** trong trang Hệ thống (`/system`) dẫn sang `/system/notifications`. |
 | [`apps/admin-web/src/i18n/messages.ts`](file:///Users/lamphuchai/Desktop/project_rust/AI_Agent_Voice_rust/apps/admin-web/src/i18n/messages.ts) | ✅ Đã xong | Bổ sung từ khóa đa ngôn ngữ (`vi` / `en`) cho Notification Hub. |
 
 ### 7.3. Tài liệu Domain (`GLOSSARY.md` & `CONTEXT.md`)

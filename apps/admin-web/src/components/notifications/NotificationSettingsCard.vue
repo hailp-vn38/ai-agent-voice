@@ -175,7 +175,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="studio-panel space-y-5 p-5">
+  <section class="studio-panel space-y-5 p-5" data-testid="notification-settings-card">
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex items-start gap-3">
         <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet">

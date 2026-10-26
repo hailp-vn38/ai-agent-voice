@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { RefreshCcw } from '@lucide/vue'
+import { Bell, RefreshCcw, Settings2 } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { isApiError } from '@/api/errors'
 import { systemApi } from '@/api/system'
@@ -141,6 +142,30 @@ onBeforeUnmount(() => {
       </CardContent>
     </Card>
     <AssistantDeviceSettings />
+    <Card>
+      <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="grid size-10 shrink-0 place-items-center rounded-xl bg-studio-violet/10 text-studio-violet">
+            <Bell class="size-5" />
+          </div>
+          <div class="space-y-0.5">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {{ t('notifications.settings.eyebrow') }}
+            </p>
+            <CardTitle>{{ t('notifications.settings.title') }}</CardTitle>
+          </div>
+        </div>
+        <Button as-child variant="outline" size="sm" data-testid="system-open-notification-settings">
+          <RouterLink to="/system/notifications">
+            <Settings2 class="size-4" />
+            <span>{{ t('notifications.settings.title') }}</span>
+          </RouterLink>
+        </Button>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground">
+        {{ t('notifications.settings.description') }}
+      </CardContent>
+    </Card>
     <Card>
       <CardHeader><CardTitle>{{ t('system.server') }} / {{ t('system.transport') }}</CardTitle></CardHeader>
       <CardContent class="grid gap-3 break-words text-sm sm:grid-cols-2">

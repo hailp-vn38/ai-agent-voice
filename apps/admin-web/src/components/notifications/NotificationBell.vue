@@ -3,7 +3,7 @@ const mountedBellUids = new Set<number>()
 </script>
 
 <script setup lang="ts">
-import { Bell, CheckCheck, Sparkles, Trash2, X } from '@lucide/vue'
+import { Bell, CheckCheck, Settings2, Sparkles, Trash2, X } from '@lucide/vue'
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue'
 
 import {
@@ -204,6 +204,20 @@ async function simulateDemo(): Promise<void> {
   await refresh()
 }
 
+async function openSettingsPage(): Promise<void> {
+  open.value = false
+  if (props.onNavigate) {
+    await props.onNavigate('/system/notifications')
+  } else {
+    const globalRouter = (
+      instance?.appContext.config.globalProperties as {
+        $router?: { push?: (to: string) => unknown }
+      }
+    )?.$router
+    await globalRouter?.push?.('/system/notifications')
+  }
+}
+
 function topicLabel(topic: NotificationTopic): string {
   return t(`notifications.topic.${topic}` as MessageKey)
 }
@@ -331,6 +345,18 @@ onUnmounted(() => {
               >
                 <Sparkles class="size-3 text-studio-violet" />
                 <span>{{ t('notifications.simulateDemo') }}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                data-testid="notification-open-settings"
+                class="size-7"
+                :aria-label="t('notifications.settings.title')"
+                :title="t('notifications.settings.title')"
+                @click="openSettingsPage"
+              >
+                <Settings2 class="size-3.5" />
               </Button>
               <Button
                 type="button"

@@ -120,6 +120,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SystemView.vue'),
     meta: { titleKey: 'nav.system' },
   },
+  {
+    path: '/system/notifications',
+    alias: ['/notifications'],
+    name: 'system-notifications',
+    component: () => import('@/pages/notifications/NotificationSettingsPage.vue'),
+    meta: { titleKey: 'notifications.settings.title' },
+  },
   { path: '/:pathMatch(.*)*', redirect: '/overview' },
 ]
 
