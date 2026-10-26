@@ -233,7 +233,6 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     secret_resolver: Arc<dyn crate::database::secrets::SecretResolver>,
 ) -> Result<Router, BootstrapError> {
     let database = Database::connect(&config.database).await?;
-    let (plan, rows) = read_load_plan(&config, &database).await?;
     config.validate().map_err(|_| BootstrapError::Provider)?;
     // Every local provider this deployment declares gets its model files on disk before the server
     // binds, whether or not its runtime is built yet. Files already present are reused, so this
@@ -247,6 +246,7 @@ pub async fn startup_with_lifecycle_and_secret_resolver(
     if config.provider_runtime.is_some() {
         return managed_startup(config, database, secret_resolver, lifecycle).await;
     }
+    let (plan, rows) = read_load_plan(&config, &database).await?;
     // Provider runtimes are built here; their model files are already on disk from the pass above.
     let startup_config = config.clone();
     let startup_secret_resolver = Arc::clone(&secret_resolver);
@@ -373,11 +373,9 @@ async fn managed_startup(
         .provider_runtime
         .as_ref()
         .ok_or(BootstrapError::Provider)?;
-    // No catalog or provider set pins graphs beside the manager on this path.
-    let loaded = LoadedProviders {
-        providers: Default::default(),
-        runtimes: Default::default(),
-    };
+    // No voice catalog or provider set pins graphs beside the manager on this path;
+    // only the optional deployment-bound Vision runtime lives on AppState directly.
+    let loaded = crate::providers::load_vision(&config).map_err(|_| BootstrapError::Provider)?;
     let mut state = AppState::new_with_database_runtime_snapshot_resolver_and_shutdown(
         config.clone(),
         loaded,

@@ -94,6 +94,10 @@ impl LlmRuntime {
         self.admission.view_usage() != 0
     }
 
+    pub(crate) async fn wait_pilot_work_idle(&self) {
+        self.admission.wait_until_idle().await;
+    }
+
     pub fn new(provider: Arc<dyn LlmProvider>, capacity: usize, timeout: Duration) -> Self {
         Self::new_with_voice_reservation(provider, capacity, 1, timeout)
     }

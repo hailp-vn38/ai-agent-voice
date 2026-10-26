@@ -36,7 +36,7 @@ impl ProviderPrewarm {
             manager: Arc::downgrade(manager),
             pending: Arc::new(Mutex::new(HashMap::new())),
             notify: Arc::new(Notify::new()),
-            capacity: manager.prewarm_capacity(),
+            capacity: (manager.prewarm_capacity() * 4).max(8),
             metrics: manager.metrics().clone(),
         });
         let metrics = service.metrics.clone();
@@ -50,13 +50,27 @@ impl ProviderPrewarm {
                 // Coalesce rapid edits without holding a DB transaction or delaying their HTTP response.
                 tokio::select! { _ = stopping.cancelled() => break, _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {} }
                 let snapshots = std::mem::take(&mut *pending.lock().expect("prewarm queue poisoned"));
+                let mut batch_leases = std::collections::VecDeque::with_capacity(4);
                 for snapshot in snapshots.into_values() {
                     if stopping.is_cancelled() { break; }
                     let Some(manager) = manager.upgrade() else { return };
+                    // Hold at most one template's 4 active bindings simultaneously so cross-template
+                    // batches do not exhaust max_resources while earlier bindings in the same
+                    // template stay pinned until the template batch finishes.
+                    while batch_leases.len() >= 4 {
+                        batch_leases.pop_front();
+                    }
                     // No inference operation or inference capacity is consumed here. Busy
                     // speculation is dropped; explicit acquisition remains available.
-                    if matches!(manager.acquire_speculative(snapshot).await, Err(crate::services::provider_runtime::RuntimeError::Busy)) { metrics.increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent); }
+                    match manager.acquire_speculative(snapshot).await {
+                        Ok(lease) => batch_leases.push_back(lease),
+                        Err(crate::services::provider_runtime::RuntimeError::Busy) => {
+                            metrics.increment(crate::services::provider_runtime::RuntimeCounter::DroppedIntent);
+                        }
+                        Err(_) => {}
+                    }
                 }
+                drop(batch_leases);
             }
         });
         Some(service)

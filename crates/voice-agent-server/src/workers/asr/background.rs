@@ -18,7 +18,10 @@ impl AsrWorkerRuntime {
     pub fn open_background(&self) -> Result<AsrBackgroundOperation, AsrWorkerError> {
         let mut isolated = self.clone();
         let (tx, rx) = mpsc::channel();
-        isolated.events_tx = tx;
+        isolated.events_tx = EventSender {
+            tx,
+            waker: Default::default(),
+        };
         isolated.events_rx = Arc::new(Mutex::new(rx));
         let completed = Arc::new(AtomicBool::new(false));
         let identity =

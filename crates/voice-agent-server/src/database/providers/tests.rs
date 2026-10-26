@@ -153,7 +153,10 @@ fn llm_provider_config_accepts_generation_and_context_bounds() {
             .expect("valid LLM generation bounds should pass");
         let parsed: serde_json::Value = serde_json::from_str(&canonical).unwrap();
         assert_eq!(parsed["timeout_ms"], 300_000);
-        assert_eq!(parsed["reasoning_effort"], valid_payload["reasoning_effort"]);
+        assert_eq!(
+            parsed["reasoning_effort"],
+            valid_payload["reasoning_effort"]
+        );
         assert_eq!(
             parsed["context_limit_tokens"],
             valid_payload["context_limit_tokens"]
@@ -224,4 +227,3 @@ fn llm_provider_config_accepts_generation_and_context_bounds() {
         );
     }
 }
-

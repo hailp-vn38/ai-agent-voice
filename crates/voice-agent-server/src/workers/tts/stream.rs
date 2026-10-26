@@ -35,6 +35,7 @@ impl TtsWorkerRuntime {
             worker.reset_pending.store(true, Ordering::Release);
             let _ = worker.command_tx.try_send(WorkerCommand::Reset {
                 pending: worker.reset_pending.clone(),
+                notify: worker.reset_notify.clone(),
             });
         }
     }
@@ -148,6 +149,7 @@ impl TtsWorkerRuntime {
         let lease = TtsLease(state.next);
         state.next += 1;
         let cancelled = Arc::new(AtomicBool::new(false));
+        let backpressure = Arc::new(BackpressureWaker::default());
         let (events_tx, events_rx) = mpsc::sync_channel(self.config.command_capacity);
         state.workers[worker].busy = true;
         if let Some(stream) = stream {
@@ -164,6 +166,7 @@ impl TtsWorkerRuntime {
                 worker,
                 stream,
                 cancelled: Arc::clone(&cancelled),
+                backpressure: Arc::clone(&backpressure),
                 events: Arc::new(Mutex::new(events_rx)),
                 deadline: Instant::now() + self.config.final_timeout,
                 refresh_on_pcm: matches!(&request, TtsWorkRequest::Voice(_)),
@@ -178,6 +181,7 @@ impl TtsWorkerRuntime {
             .send(WorkerCommand::Start {
                 request,
                 cancelled,
+                backpressure,
                 events: events_tx,
             })
             .is_err()
@@ -212,10 +216,14 @@ impl TtsWorkerRuntime {
             .expect("TTS worker event receiver poisoned")
             .try_recv()
         {
-            Ok(event) => event,
+            Ok(event) => {
+                slot.backpressure.wake();
+                event
+            }
             Err(mpsc::TryRecvError::Empty) => {
                 if Instant::now() >= slot.deadline && slot.cleanup_deadline.is_none() {
                     slot.cancelled.store(true, Ordering::Release);
+                    slot.backpressure.wake();
                     slot.cleanup_deadline = Some(Instant::now() + self.config.cleanup_grace);
                     return Ok(Some(TtsWorkerEvent::TimedOut));
                 }
@@ -245,6 +253,7 @@ impl TtsWorkerRuntime {
             .get_mut(&lease)
             .ok_or(TtsWorkerError::UnknownLease)?;
         slot.cancelled.store(true, Ordering::Release);
+        slot.backpressure.wake();
         slot.cleanup_deadline = Some(Instant::now() + self.config.cleanup_grace);
         Ok(())
     }

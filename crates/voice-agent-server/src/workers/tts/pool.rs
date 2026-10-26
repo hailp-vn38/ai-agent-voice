@@ -4,7 +4,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    thread,
     time::Instant,
 };
 
@@ -40,6 +39,7 @@ pub(super) fn release_terminal(state: &mut State, lease: TtsLease) {
         worker.reset_pending.store(true, Ordering::Release);
         let _ = worker.command_tx.try_send(WorkerCommand::Reset {
             pending: worker.reset_pending.clone(),
+            notify: worker.reset_notify.clone(),
         });
     }
 }
@@ -89,16 +89,20 @@ pub(super) fn worker_loop(
     while let Ok(command) = commands.recv() {
         match command {
             WorkerCommand::Shutdown => break,
-            WorkerCommand::Reset { pending } => {
+            WorkerCommand::Reset { pending, notify } => {
                 if worker.reset().is_err() {
                     healthy.store(false, Ordering::Release);
+                    pending.store(false, Ordering::Release);
+                    notify.notify_waiters();
                     break;
                 }
                 pending.store(false, Ordering::Release);
+                notify.notify_waiters();
             }
             WorkerCommand::Start {
                 request,
                 cancelled,
+                backpressure,
                 events,
             } => {
                 let diagnostic = matches!(&request, TtsWorkRequest::Diagnostic { .. });
@@ -116,7 +120,7 @@ pub(super) fn worker_loop(
                             if cancelled.load(Ordering::Acquire) {
                                 return Err(TtsError::Failed);
                             }
-                            send_pcm_until_cancelled(&events, &cancelled, pcm)
+                            send_pcm_until_cancelled(&events, &cancelled, &backpressure, pcm)
                         })
                     }
                     TtsWorkRequest::Diagnostic { request, original } => worker
@@ -124,7 +128,7 @@ pub(super) fn worker_loop(
                             if cancelled.load(Ordering::Acquire) {
                                 return Err(TtsError::Failed);
                             }
-                            send_pcm_until_cancelled(&events, &cancelled, pcm)
+                            send_pcm_until_cancelled(&events, &cancelled, &backpressure, pcm)
                         }),
                 };
                 let event = if cancelled.load(Ordering::Acquire) {
@@ -146,6 +150,7 @@ pub(super) fn worker_loop(
 fn send_pcm_until_cancelled(
     events: &mpsc::SyncSender<TtsWorkerEvent>,
     cancelled: &AtomicBool,
+    backpressure: &BackpressureWaker,
     pcm: PcmF32Mono,
 ) -> Result<(), TtsError> {
     let mut pending = TtsWorkerEvent::Pcm(pcm);
@@ -157,7 +162,7 @@ fn send_pcm_until_cancelled(
             Ok(()) => return Ok(()),
             Err(mpsc::TrySendError::Full(event)) => {
                 pending = event;
-                thread::sleep(std::time::Duration::from_millis(1));
+                backpressure.wait_for_space(cancelled);
             }
             Err(mpsc::TrySendError::Disconnected(_)) => return Err(TtsError::Failed),
         }

@@ -326,7 +326,7 @@ impl Database {
         // Bounds are checked in SQL before copying persisted text. The one SELECT ends before build.
         type PrewarmRow = (i64, String, String, String, String, i64, Option<String>);
         let rows: Vec<PrewarmRow> = sqlx::query_as(
-        "SELECT DISTINCT p.id,p.key,p.type,p.adapter,p.config_json,p.revision,p.credential_json FROM providers p JOIN template_provider_bindings b ON b.provider_source='database' AND b.provider_id=p.id JOIN agent_templates t ON t.id=b.template_id WHERE p.enabled=1 AND t.enabled=1 AND (? IS NULL OR (p.id=? AND p.revision=?)) AND (? IS NULL OR t.id=?) AND length(CAST(p.config_json AS BLOB))<=65536 AND length(CAST(p.key AS BLOB))<=128 AND length(CAST(p.type AS BLOB))<=16 AND length(CAST(p.adapter AS BLOB))<=64 LIMIT 5"
+        "SELECT DISTINCT p.id,p.key,p.type,p.adapter,p.config_json,p.revision,p.credential_json FROM providers p JOIN template_provider_bindings b ON b.provider_source='database' AND b.provider_id=p.id JOIN agent_templates t ON t.id=b.template_id WHERE p.enabled=1 AND t.enabled=1 AND (? IS NULL OR (p.id=? AND p.revision=?)) AND (? IS NULL OR t.id=?) AND length(CAST(p.config_json AS BLOB))<=65536 AND length(CAST(p.key AS BLOB))<=128 AND length(CAST(p.type AS BLOB))<=16 AND length(CAST(p.adapter AS BLOB))<=64 ORDER BY b.provider_type, p.id LIMIT 5"
     ).bind(provider.map(|v|v.0)).bind(provider.map(|v|v.0)).bind(provider.map(|v|v.1)).bind(template).bind(template).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()

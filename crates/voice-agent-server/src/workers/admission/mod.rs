@@ -22,6 +22,7 @@ struct State {
     reserved_voice: usize,
     voice: usize,
     diagnostic: usize,
+    idle: Arc<tokio::sync::Notify>,
 }
 
 pub struct ProviderCapacityPermit {
@@ -57,6 +58,26 @@ impl ProviderRuntimeAdmission {
             })
             .sum()
     }
+    pub(crate) async fn wait_until_idle(&self) {
+        loop {
+            let waiters = {
+                let mut waiters = Vec::with_capacity(self.0.len());
+                for state in &self.0 {
+                    let state = state.lock().expect("provider admission poisoned");
+                    let used = state.voice + state.diagnostic;
+                    if used == 0 {
+                        return;
+                    }
+                    waiters.push(Box::pin(Arc::clone(&state.idle).notified_owned()));
+                }
+                waiters
+            };
+            if waiters.is_empty() {
+                return;
+            }
+            let _ = futures_util::future::select_all(waiters).await;
+        }
+    }
     pub fn new(total: usize, reserved_voice: usize) -> Self {
         assert!(total > 0 && reserved_voice > 0 && reserved_voice <= total);
         Self(vec![Arc::new(Mutex::new(State {
@@ -64,6 +85,7 @@ impl ProviderRuntimeAdmission {
             reserved_voice,
             voice: 0,
             diagnostic: 0,
+            idle: Arc::new(tokio::sync::Notify::new()),
         }))])
     }
     pub(crate) fn composed(&self, other: &Self) -> Self {
@@ -115,6 +137,9 @@ impl Drop for ProviderCapacityPermit {
                 ProviderWorkloadClass::Voice => state.voice -= 1,
                 ProviderWorkloadClass::Diagnostic => state.diagnostic -= 1,
                 ProviderWorkloadClass::Background => state.diagnostic -= 1,
+            }
+            if state.voice + state.diagnostic == 0 {
+                state.idle.notify_waiters();
             }
         }
     }

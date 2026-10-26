@@ -86,15 +86,16 @@ impl SessionActor {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 let _permit = permit;
-                while asr.pilot_work_pending()
-                    || vad.pilot_work_pending()
-                    || tts.pilot_work_pending()
-                    || llm.pilot_work_pending()
-                    || writer
-                        .as_ref()
-                        .is_some_and(|done| !*done.borrow() && done.has_changed().is_ok())
-                {
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                asr.wait_pilot_work_idle().await;
+                vad.wait_pilot_work_idle().await;
+                tts.wait_pilot_work_idle().await;
+                llm.wait_pilot_work_idle().await;
+                if let Some(mut done) = writer {
+                    while !*done.borrow_and_update() {
+                        if done.changed().await.is_err() {
+                            break;
+                        }
+                    }
                 }
             });
         } else {

@@ -168,3 +168,115 @@ fn vad_probability_and_reset_acknowledgement_keep_the_capture_cycle_identity() {
         Some(VadWorkerEvent::ResetDone { cycle: event_cycle, .. }) if event_cycle == cycle
     ));
 }
+
+#[test]
+fn sequential_asr_and_vad_sessions_reuse_pooled_native_threads() {
+    use std::{sync::Mutex, thread::ThreadId};
+
+    struct ThreadRecordingAsrSession(Arc<Mutex<Vec<ThreadId>>>);
+    impl AsrSession for ThreadRecordingAsrSession {
+        fn push_pcm(&mut self, _: &PcmF32Mono) -> Result<Vec<AsrEvent>, AsrError> {
+            Ok(Vec::new())
+        }
+        fn finish(&mut self) -> Result<AsrResult, AsrError> {
+            self.0.lock().unwrap().push(std::thread::current().id());
+            Ok(AsrResult::new("final"))
+        }
+        fn reset(&mut self) -> Result<(), AsrError> {
+            Ok(())
+        }
+        fn cancel(&mut self) {}
+    }
+
+    struct ThreadRecordingAsr(Arc<Mutex<Vec<ThreadId>>>);
+    impl AsrProvider for ThreadRecordingAsr {
+        fn open(&self) -> Result<Box<dyn AsrSession>, AsrError> {
+            Ok(Box::new(ThreadRecordingAsrSession(Arc::clone(&self.0))))
+        }
+    }
+
+    struct ThreadRecordingVadSession(Arc<Mutex<Vec<ThreadId>>>);
+    impl VadSession for ThreadRecordingVadSession {
+        fn push(&mut self, input: VadInput) -> Result<VadProbability, VadError> {
+            Ok(VadProbability {
+                start_sample: input.start_sample,
+                end_sample: input.start_sample + 512,
+                probability: 0.0,
+            })
+        }
+        fn reset(&mut self) -> Result<(), VadError> {
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), VadError> {
+            self.0.lock().unwrap().push(std::thread::current().id());
+            Ok(())
+        }
+    }
+
+    struct ThreadRecordingVad(Arc<Mutex<Vec<ThreadId>>>);
+    impl VadProvider for ThreadRecordingVad {
+        fn open(&self) -> Result<Box<dyn VadSession>, VadError> {
+            Ok(Box::new(ThreadRecordingVadSession(Arc::clone(&self.0))))
+        }
+        fn adapter(&self) -> &'static str {
+            "thread-recording"
+        }
+    }
+
+    let asr_threads = Arc::new(Mutex::new(Vec::new()));
+    let asr_runtime = AsrWorkerRuntime::try_new(
+        Arc::new(ThreadRecordingAsr(Arc::clone(&asr_threads))),
+        WorkerRuntimeConfig {
+            max_workers: 1,
+            voice_reserved_capacity: 1,
+            ..WorkerRuntimeConfig::default()
+        },
+    )
+    .unwrap();
+    asr_threads.lock().unwrap().clear();
+    for generation in 1..=3 {
+        let lease = asr_runtime.open(identity(generation)).unwrap();
+        assert!(matches!(
+            asr_runtime.recv_timeout(Duration::from_secs(1)),
+            Some(AsrWorkerEvent::Opened { .. })
+        ));
+        asr_runtime.send(lease, AsrCommand::Finish).unwrap();
+        assert!(matches!(
+            asr_runtime.recv_timeout(Duration::from_secs(1)),
+            Some(AsrWorkerEvent::Final { .. })
+        ));
+    }
+    let recorded_asr = asr_threads.lock().unwrap();
+    assert_eq!(recorded_asr.len(), 3);
+    assert!(recorded_asr.iter().all(|id| *id == recorded_asr[0]));
+    drop(recorded_asr);
+    assert!(asr_runtime.shutdown_acknowledged());
+
+    let vad_threads = Arc::new(Mutex::new(Vec::new()));
+    let vad_runtime = VadWorkerRuntime::try_new(
+        Arc::new(ThreadRecordingVad(Arc::clone(&vad_threads))),
+        WorkerRuntimeConfig {
+            max_workers: 1,
+            voice_reserved_capacity: 1,
+            ..WorkerRuntimeConfig::default()
+        },
+    )
+    .unwrap();
+    for generation in 1..=3 {
+        let lease = vad_runtime.open(identity(generation)).unwrap();
+        assert!(matches!(
+            vad_runtime.recv_timeout(Duration::from_secs(1)),
+            Some(VadWorkerEvent::Opened { .. })
+        ));
+        vad_runtime.send(lease, VadCommand::Close).unwrap();
+        assert!(matches!(
+            vad_runtime.recv_timeout(Duration::from_secs(1)),
+            Some(VadWorkerEvent::Closed { .. })
+        ));
+    }
+    let recorded_vad = vad_threads.lock().unwrap();
+    assert_eq!(recorded_vad.len(), 3);
+    assert!(recorded_vad.iter().all(|id| *id == recorded_vad[0]));
+    drop(recorded_vad);
+    assert!(vad_runtime.shutdown_acknowledged());
+}

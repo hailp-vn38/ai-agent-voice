@@ -1,12 +1,35 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
     thread,
 };
+
+#[derive(Default)]
+pub(super) struct BackpressureWaker {
+    mutex: Mutex<()>,
+    condvar: Condvar,
+}
+
+impl BackpressureWaker {
+    pub(super) fn wake(&self) {
+        let _guard = self.mutex.lock().expect("TTS backpressure waker poisoned");
+        self.condvar.notify_all();
+    }
+
+    pub(super) fn wait_for_space(&self, cancelled: &AtomicBool) {
+        let guard = self.mutex.lock().expect("TTS backpressure waker poisoned");
+        if !cancelled.load(Ordering::Acquire) {
+            let _ = self
+                .condvar
+                .wait_timeout(guard, std::time::Duration::from_millis(5))
+                .expect("TTS backpressure waker poisoned");
+        }
+    }
+}
 
 use tokio::time::Instant;
 
@@ -65,10 +88,12 @@ enum WorkerCommand {
     Start {
         request: TtsWorkRequest,
         cancelled: Arc<AtomicBool>,
+        backpressure: Arc<BackpressureWaker>,
         events: mpsc::SyncSender<TtsWorkerEvent>,
     },
     Reset {
         pending: Arc<AtomicBool>,
+        notify: Arc<tokio::sync::Notify>,
     },
     Shutdown,
 }
@@ -87,12 +112,14 @@ struct WorkerRecord {
     quarantined: bool,
     healthy: Arc<AtomicBool>,
     reset_pending: Arc<AtomicBool>,
+    reset_notify: Arc<tokio::sync::Notify>,
     thread: Option<thread::JoinHandle<()>>,
 }
 struct Slot {
     worker: usize,
     stream: Option<TtsStreamId>,
     cancelled: Arc<AtomicBool>,
+    backpressure: Arc<BackpressureWaker>,
     events: Arc<Mutex<mpsc::Receiver<TtsWorkerEvent>>>,
     deadline: Instant,
     refresh_on_pcm: bool,
@@ -148,6 +175,32 @@ impl TtsWorkerRuntime {
     /// Physical work remains occupied until terminal acknowledgement, including quarantine.
     pub(crate) fn pilot_work_pending(&self) -> bool {
         self.admission.view_usage() != 0 || self.reset_pending()
+    }
+    pub(crate) async fn wait_pilot_work_idle(&self) {
+        loop {
+            self.admission.wait_until_idle().await;
+            let reset_waiter = {
+                let state = self.state.lock().expect("TTS worker state poisoned");
+                state
+                    .workers
+                    .iter()
+                    .find(|worker| worker.reset_pending.load(Ordering::Acquire))
+                    .map(|worker| {
+                        let flag = Arc::clone(&worker.reset_pending);
+                        let notified = Arc::clone(&worker.reset_notify).notified_owned();
+                        (flag, notified)
+                    })
+            };
+            let Some((flag, notified)) = reset_waiter else {
+                if !self.pilot_work_pending() {
+                    return;
+                }
+                continue;
+            };
+            if flag.load(Ordering::Acquire) {
+                notified.await;
+            }
+        }
     }
     pub(crate) fn reset_pending(&self) -> bool {
         self.state
@@ -232,6 +285,7 @@ impl TtsWorkerRuntime {
                     quarantined: false,
                     healthy,
                     reset_pending: Arc::new(AtomicBool::new(false)),
+                    reset_notify: Arc::new(tokio::sync::Notify::new()),
                     thread: Some(thread),
                 });
             } else {

@@ -254,6 +254,32 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
         tts_providers.insert(id.clone(), provider);
     }
 
+    let vision = load_vision(config)?;
+
+    Ok(LoadedProviders {
+        providers: ProviderCatalog {
+            vad: vad_providers,
+            asr: asr_providers,
+            llm: llm_providers,
+            tts: tts_providers,
+            vision: vision.providers.vision,
+        },
+        runtimes: RuntimeCatalog {
+            speaker: HashMap::new(),
+            vad: vad_runtimes,
+            asr: asr_runtimes,
+            llm: llm_runtimes,
+            tts: tts_runtimes,
+            vision: vision.runtimes.vision,
+        },
+    })
+}
+
+pub(crate) fn load_vision(config: &AppConfig) -> Result<LoadedProviders, ProviderLoadError> {
+    config
+        .validate()
+        .map_err(|error| ProviderLoadError::Configuration(error.to_string()))?;
+    let registry = compiled_provider_registry();
     let mut vision_providers = HashMap::new();
     let mut vision_runtimes = HashMap::new();
     if config.vision.enabled {
@@ -280,22 +306,14 @@ pub(crate) fn load_local(config: &AppConfig) -> Result<LoadedProviders, Provider
             vision_providers.insert(id.clone(), provider);
         }
     }
-
     Ok(LoadedProviders {
         providers: ProviderCatalog {
-            vad: vad_providers,
-            asr: asr_providers,
-            llm: llm_providers,
-            tts: tts_providers,
             vision: vision_providers,
+            ..Default::default()
         },
         runtimes: RuntimeCatalog {
-            speaker: HashMap::new(),
-            vad: vad_runtimes,
-            asr: asr_runtimes,
-            llm: llm_runtimes,
-            tts: tts_runtimes,
             vision: vision_runtimes,
+            ..Default::default()
         },
     })
 }

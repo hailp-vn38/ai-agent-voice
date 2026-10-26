@@ -66,13 +66,16 @@ pub enum AsrWorkerError {
     QueueFull,
 }
 
+use super::supervision::EventSender;
+
 #[derive(Clone)]
 pub struct AsrWorkerRuntime {
     provider: Arc<dyn AsrProvider>,
     config: WorkerRuntimeConfig,
     state: Arc<Mutex<State>>,
     events_rx: Arc<Mutex<mpsc::Receiver<AsrWorkerEvent>>>,
-    events_tx: mpsc::Sender<AsrWorkerEvent>,
+    events_tx: EventSender<AsrWorkerEvent>,
+    waker: super::supervision::RuntimeWaker,
     routes: Arc<Mutex<HashMap<String, session_mpsc::Sender<AsrWorkerEvent>>>>,
     admission: ProviderRuntimeAdmission,
     pool: Option<Arc<pool::AsrSessionPool>>,
@@ -106,6 +109,10 @@ impl AsrWorkerRuntime {
         self.admission.view_usage() != 0
     }
 
+    pub(crate) async fn wait_pilot_work_idle(&self) {
+        self.admission.wait_until_idle().await;
+    }
+
     pub fn new(provider: Arc<dyn AsrProvider>, config: WorkerRuntimeConfig) -> Self {
         config.validate().expect("invalid worker runtime config");
         let admission =
@@ -119,6 +126,7 @@ impl AsrWorkerRuntime {
         admission: ProviderRuntimeAdmission,
     ) -> Self {
         let (events_tx, events_rx) = mpsc::channel();
+        let waker = super::supervision::RuntimeWaker::default();
         Self {
             provider,
             config,
@@ -128,7 +136,11 @@ impl AsrWorkerRuntime {
                 slots: HashMap::new(),
             })),
             events_rx: Arc::new(Mutex::new(events_rx)),
-            events_tx,
+            events_tx: EventSender {
+                tx: events_tx,
+                waker: waker.clone(),
+            },
+            waker,
             routes: Arc::new(Mutex::new(HashMap::new())),
             admission,
             pool: None,
@@ -252,27 +264,22 @@ impl AsrWorkerRuntime {
         );
         let provider = Arc::clone(&self.provider);
         let events_tx = self.events_tx.clone();
-        let spawn = thread::Builder::new()
-            .name("asr-native".into())
-            .spawn(move || {
-                let terminal =
-                    run_worker(provider, retained, identity, command_rx, events_tx.clone());
-                // Deferred acknowledgements are published only once the native worker has
-                // released its admission; `Cancel` may immediately be followed by `open`.
-                drop(thread_permit);
-                if let Some(event) = terminal {
-                    let _ = events_tx.send(event);
-                }
-                if let Some(completed) = completed {
-                    completed.store(true, std::sync::atomic::Ordering::Release);
-                }
-            });
-        match spawn {
-            Ok(handle) => state.threads.retain(handle),
-            Err(_) => {
-                state.slots.remove(&lease);
-                return Err(AsrWorkerError::Capacity);
+        let spawned = state.threads.execute("asr-native", move |busy_guard| {
+            let terminal = run_worker(provider, retained, identity, command_rx, events_tx.clone());
+            // Deferred acknowledgements are published only once the native worker has
+            // released its admission; `Cancel` may immediately be followed by `open`.
+            drop(thread_permit);
+            busy_guard.finish();
+            if let Some(event) = terminal {
+                let _ = events_tx.send(event);
             }
+            if let Some(completed) = completed {
+                completed.store(true, std::sync::atomic::Ordering::Release);
+            }
+        });
+        if !spawned {
+            state.slots.remove(&lease);
+            return Err(AsrWorkerError::Capacity);
         }
         Ok(lease)
     }
@@ -324,8 +331,36 @@ impl AsrWorkerRuntime {
             })?;
         if let Some(next) = next_state {
             slot.state = next;
+            drop(state);
+            self.waker.wake();
         }
         Ok(())
+    }
+
+    pub(in crate::workers) fn attach_supervisor(
+        &self,
+        waker: &Arc<super::supervision::SupervisorWaker>,
+    ) {
+        self.waker.register(waker);
+    }
+
+    pub(in crate::workers) fn next_timeout_deadline(&self) -> Option<Instant> {
+        let mut state = self.state.lock().expect("ASR worker state poisoned");
+        if state.slots.is_empty() {
+            state.threads.reap();
+            return None;
+        }
+        state
+            .slots
+            .values()
+            .filter(|slot| !slot.background)
+            .filter_map(|slot| match slot.state {
+                SlotState::Finishing { deadline } | SlotState::Cleaning { deadline } => {
+                    Some(deadline)
+                }
+                SlotState::Active | SlotState::Quarantined => None,
+            })
+            .min()
     }
 
     pub fn recv_timeout(&self, timeout: std::time::Duration) -> Option<AsrWorkerEvent> {
@@ -423,6 +458,9 @@ impl AsrWorkerRuntime {
                 return;
             }
             state.slots.remove(&lease);
+            if state.slots.is_empty() {
+                state.threads.reap();
+            }
         }
     }
 
@@ -453,7 +491,7 @@ fn run_worker(
     retained: Option<Box<dyn crate::providers::AsrSession>>,
     identity: WorkerIdentity,
     commands: mpsc::Receiver<AsrCommand>,
-    events: mpsc::Sender<AsrWorkerEvent>,
+    events: EventSender<AsrWorkerEvent>,
 ) -> Option<AsrWorkerEvent> {
     let retained_worker = retained.is_some();
     let Ok(mut session) = retained.map(Ok).unwrap_or_else(|| provider.open()) else {
@@ -514,7 +552,7 @@ fn run_worker(
 }
 
 fn publish_terminal(
-    events: &mpsc::Sender<AsrWorkerEvent>,
+    events: &EventSender<AsrWorkerEvent>,
     event: AsrWorkerEvent,
     retained: bool,
 ) -> Option<AsrWorkerEvent> {

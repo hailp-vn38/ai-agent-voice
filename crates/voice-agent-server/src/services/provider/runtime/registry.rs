@@ -221,8 +221,20 @@ impl ProviderRuntimeManager {
             },
             revision: 1,
         };
-        self.acquire_version_until(snapshot, version, deadline, None, None)
-            .await
+        for _ in 0..=self.limits.max_resources {
+            match self
+                .acquire_version_until(snapshot.clone(), version.clone(), deadline, None, None)
+                .await
+            {
+                Err(RuntimeError::MemoryPressure) => {
+                    if self.evict_pressure_until(deadline).await? == 0 {
+                        return Err(RuntimeError::MemoryPressure);
+                    }
+                }
+                outcome => return outcome,
+            }
+        }
+        Err(RuntimeError::MemoryPressure)
     }
 
     pub async fn acquire_draft_until(
@@ -358,10 +370,18 @@ impl ProviderRuntimeManager {
                 let shared = resource_key
                     .as_ref()
                     .and_then(|key| {
-                        registry
-                            .entries
-                            .iter()
-                            .find(|(v, e)| **v == e.owner && e.resource_key.as_ref() == Some(key))
+                        registry.entries.iter().find(|(v, e)| {
+                            **v == e.owner
+                                && e.bytes > 0
+                                && matches!(
+                                    e.state,
+                                    RuntimeState::Queued
+                                        | RuntimeState::Loading
+                                        | RuntimeState::Ready
+                                )
+                                && e.healthy()
+                                && e.resource_key.as_ref() == Some(key)
+                        })
                     })
                     .map(|(_, entry)| entry.alias());
                 if let Some(alias) = shared {
@@ -770,10 +790,10 @@ impl ProviderRuntimeManager {
             entry.health_flags.clone(),
             entry.physical_admission.clone(),
         );
-        for alias in registry
+        for (_, alias) in registry
             .entries
-            .values_mut()
-            .filter(|entry| entry.owner == *version && entry.bytes == 0)
+            .iter_mut()
+            .filter(|(candidate, entry)| **candidate != *version && entry.owner == *version)
         {
             alias.state = metadata.0;
             alias.resource = metadata.1.clone();

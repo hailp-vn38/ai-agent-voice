@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, mpsc},
-    thread,
     time::Instant,
 };
 use tokio::sync::mpsc as session_mpsc;
@@ -98,6 +97,8 @@ pub enum VadWorkerError {
     QueueFull,
 }
 
+use super::supervision::EventSender;
+
 #[derive(Clone)]
 pub struct VadWorkerRuntime {
     pool: Option<Arc<pool::VadSessionPool>>,
@@ -106,7 +107,8 @@ pub struct VadWorkerRuntime {
     config: WorkerRuntimeConfig,
     state: Arc<Mutex<State>>,
     events_rx: Arc<Mutex<mpsc::Receiver<VadWorkerEvent>>>,
-    events_tx: mpsc::Sender<VadWorkerEvent>,
+    events_tx: EventSender<VadWorkerEvent>,
+    waker: super::supervision::RuntimeWaker,
     routes: Arc<Mutex<HashMap<String, session_mpsc::Sender<VadWorkerEvent>>>>,
     admission: ProviderRuntimeAdmission,
 }
@@ -134,6 +136,10 @@ impl VadWorkerRuntime {
         self.admission.view_usage() != 0
     }
 
+    pub(crate) async fn wait_pilot_work_idle(&self) {
+        self.admission.wait_until_idle().await;
+    }
+
     pub fn new(provider: Arc<dyn VadProvider>, config: WorkerRuntimeConfig) -> Self {
         config.validate().expect("invalid worker runtime config");
         let admission =
@@ -147,6 +153,7 @@ impl VadWorkerRuntime {
         admission: ProviderRuntimeAdmission,
     ) -> Self {
         let (events_tx, events_rx) = mpsc::channel();
+        let waker = super::supervision::RuntimeWaker::default();
         Self {
             pool: None,
             unload: Arc::new(Mutex::new(())),
@@ -158,7 +165,11 @@ impl VadWorkerRuntime {
                 slots: HashMap::new(),
             })),
             events_rx: Arc::new(Mutex::new(events_rx)),
-            events_tx,
+            events_tx: EventSender {
+                tx: events_tx,
+                waker: waker.clone(),
+            },
+            waker,
             routes: Arc::new(Mutex::new(HashMap::new())),
             admission,
         }
@@ -287,21 +298,17 @@ impl VadWorkerRuntime {
         );
         let provider = Arc::clone(&self.provider);
         let events = self.events_tx.clone();
-        let spawn = thread::Builder::new()
-            .name("vad-native".into())
-            .spawn(move || {
-                let terminal = run_worker(provider, retained, identity, command_rx, events.clone());
-                drop(thread_permit);
-                if let Some(event) = terminal {
-                    let _ = events.send(event);
-                }
-            });
-        match spawn {
-            Ok(handle) => state.threads.retain(handle),
-            Err(_) => {
-                state.slots.remove(&lease);
-                return Err(VadWorkerError::Capacity);
+        let spawned = state.threads.execute("vad-native", move |busy_guard| {
+            let terminal = run_worker(provider, retained, identity, command_rx, events.clone());
+            drop(thread_permit);
+            busy_guard.finish();
+            if let Some(event) = terminal {
+                let _ = events.send(event);
             }
+        });
+        if !spawned {
+            state.slots.remove(&lease);
+            return Err(VadWorkerError::Capacity);
         }
         Ok(lease)
     }
@@ -361,8 +368,35 @@ impl VadWorkerRuntime {
             })?;
         if let Some(next_state) = next_state {
             slot.state = next_state;
+            drop(state);
+            self.waker.wake();
         }
         Ok(())
+    }
+
+    pub(in crate::workers) fn attach_supervisor(
+        &self,
+        waker: &Arc<super::supervision::SupervisorWaker>,
+    ) {
+        self.waker.register(waker);
+    }
+
+    pub(in crate::workers) fn next_timeout_deadline(&self) -> Option<Instant> {
+        let mut state = self.state.lock().expect("VAD worker state poisoned");
+        if state.slots.is_empty() {
+            state.threads.reap();
+            return None;
+        }
+        state
+            .slots
+            .values()
+            .filter_map(|slot| match slot.state {
+                SlotState::Resetting { deadline } | SlotState::Cleaning { deadline } => {
+                    Some(deadline)
+                }
+                SlotState::Active | SlotState::Quarantined => None,
+            })
+            .min()
     }
     pub fn try_recv(&self) -> Option<VadWorkerEvent> {
         let event = self
@@ -447,6 +481,9 @@ impl VadWorkerRuntime {
                     )
                 {
                     state.slots.remove(&lease);
+                    if state.slots.is_empty() {
+                        state.threads.reap();
+                    }
                 }
             }
             _ => {}
@@ -483,7 +520,7 @@ fn run_worker(
     retained: Option<Box<dyn VadSession>>,
     identity: WorkerIdentity,
     commands: mpsc::Receiver<VadCommand>,
-    events: mpsc::Sender<VadWorkerEvent>,
+    events: EventSender<VadWorkerEvent>,
 ) -> Option<VadWorkerEvent> {
     let retained_worker = retained.is_some();
     let Ok(mut session) = retained.map(Ok).unwrap_or_else(|| provider.open()) else {
@@ -586,7 +623,7 @@ fn run_worker(
 }
 
 fn publish_terminal(
-    events: &mpsc::Sender<VadWorkerEvent>,
+    events: &EventSender<VadWorkerEvent>,
     event: VadWorkerEvent,
     retained: bool,
 ) -> Option<VadWorkerEvent> {
